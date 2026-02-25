@@ -3,6 +3,8 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +45,6 @@ func (h *Handler) SetSNMPClient(client *snmp.SNMPClient) {
 func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-
 	if h.snmpClient == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("SNMP client not initialized"))
 		return
@@ -549,4 +550,51 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		"sessions": status.SessionCount,
 		"uptime":   status.Uptime,
 	}))
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required"`
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	// Verify current password
+	if err := h.authManager.ValidateCredentials(h.config.Auth.AdminUsername, req.CurrentPassword); err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
+		return
+	}
+
+	// Update password in config file
+	configPath := "/config/config.env"
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to read config"))
+		return
+	}
+
+	// Replace password line
+	newContent := fmt.Sprintf("ADMIN_PASSWORD=%s", req.NewPassword)
+
+	// Simple replacement
+	lines := ""
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(line, "ADMIN_PASSWORD=") {
+			lines += newContent + "\n"
+		} else {
+			lines += line + "\n"
+		}
+	}
+
+	if err := os.WriteFile(configPath, []byte(lines), 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save password"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully. Please restart the container."))
 }

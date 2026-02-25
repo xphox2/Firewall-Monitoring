@@ -162,5 +162,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		admin.GET("/api/settings", handler.GetSettings)
 		admin.POST("/api/settings", handler.UpdateSettings)
+		admin.POST("/api/settings/password", handler.ChangePassword)
 	}
 }

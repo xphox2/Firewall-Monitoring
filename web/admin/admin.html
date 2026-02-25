@@ -151,6 +151,23 @@
         <!-- Settings Page -->
         <div class="page" id="page-settings">
             <div class="card">
+                <h2>Admin Password</h2>
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <input type="password" id="current-password">
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="new-password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm New Password</label>
+                    <input type="password" id="confirm-password">
+                </div>
+                <button class="btn" onclick="changePassword()">Change Password</button>
+                <p style="margin-top: 10px; color: #8b949e; font-size: 0.85rem;">After changing password, restart the container for changes to take effect.</p>
+            </div>
+            <div class="card">
                 <h2>Alert Settings</h2>
                 <div class="settings-grid" id="settings-alerts"></div>
             </div>
@@ -632,6 +649,47 @@
             if (!confirm('Delete this connection?')) return;
             await fetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' });
             loadConnections();
+        }
+
+        async function changePassword() {
+            const current = document.getElementById('current-password').value;
+            const newPass = document.getElementById('new-password').value;
+            const confirm = document.getElementById('confirm-password').value;
+
+            if (!current || !newPass || !confirm) {
+                alert('Please fill in all password fields');
+                return;
+            }
+
+            if (newPass !== confirm) {
+                alert('New passwords do not match');
+                return;
+            }
+
+            if (newPass.length < 6) {
+                alert('Password must be at least 6 characters');
+                return;
+            }
+
+            const response = await fetch(`${API_BASE}/settings/password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    current_password: current,
+                    new_password: newPass
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                alert(result.message);
+                document.getElementById('current-password').value = '';
+                document.getElementById('new-password').value = '';
+                document.getElementById('confirm-password').value = '';
+            } else {
+                alert('Error: ' + result.error);
+            }
         }
 
         async function saveSettings() {
