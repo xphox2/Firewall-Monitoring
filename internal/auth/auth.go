@@ -84,12 +84,16 @@ func (am *AuthManager) getConfig() *config.Config {
 }
 
 func (am *AuthManager) ValidateCredentials(username, password string) error {
-	am.cleanOldAttempts(username)
-
 	cfg := am.config
 	if cfg == nil {
 		cfg = am.getConfig()
 	}
+
+	if cfg == nil {
+		return ErrInvalidCredentials
+	}
+
+	am.cleanOldAttempts(username)
 
 	if len(am.loginAttempts[username]) >= cfg.Auth.MaxLoginAttempts {
 		return ErrAccountLocked
@@ -98,7 +102,10 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	if am.db != nil {
 		adminRaw, err := am.db.GetAdminByUsername()
 		if err == nil && adminRaw != nil {
-			admin := adminRaw.(*AdminAuth)
+			admin, ok := adminRaw.(*AdminAuth)
+			if !ok {
+				return ErrInvalidCredentials
+			}
 			if username != admin.Username {
 				return ErrInvalidCredentials
 			}
@@ -130,7 +137,14 @@ func (am *AuthManager) hashPassword(password string) string {
 }
 
 func (am *AuthManager) cleanOldAttempts(username string) []time.Time {
-	cutoff := time.Now().Add(-am.getConfig().Auth.LockoutDuration)
+	cfg := am.config
+	if cfg == nil {
+		cfg = am.getConfig()
+	}
+	if cfg == nil {
+		return nil
+	}
+	cutoff := time.Now().Add(-cfg.Auth.LockoutDuration)
 	var valid []time.Time
 	for _, t := range am.loginAttempts[username] {
 		if t.After(cutoff) {
@@ -143,7 +157,14 @@ func (am *AuthManager) cleanOldAttempts(username string) []time.Time {
 
 func (am *AuthManager) IsLocked(username string) bool {
 	am.cleanOldAttempts(username)
-	return len(am.loginAttempts[username]) >= am.getConfig().Auth.MaxLoginAttempts
+	cfg := am.config
+	if cfg == nil {
+		cfg = am.getConfig()
+	}
+	if cfg == nil {
+		return false
+	}
+	return len(am.loginAttempts[username]) >= cfg.Auth.MaxLoginAttempts
 }
 
 func (am *AuthManager) GenerateToken(username string, userID uint) (string, error) {
