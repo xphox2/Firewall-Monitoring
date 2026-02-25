@@ -35,7 +35,7 @@ EOF
 fi
 
 # Create data directories
-mkdir -p /data
+mkdir -p /data /config
 
 echo "Starting FortiGate Monitor services..."
 

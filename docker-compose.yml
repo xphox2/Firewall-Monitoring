@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     network_mode: "host"
     volumes:
-      - fortigate_data:/data
+      - ./data:/data
 
 volumes:
-  fortigate_data:
+  data:
