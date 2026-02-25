@@ -17,7 +17,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fortigate-trap ./cmd/trap-
 # Stage 2: Final Alpine image
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates bash snmp
+RUN apk add --no-cache ca-certificates bash
 
 RUN mkdir -p /app /data /config
 
