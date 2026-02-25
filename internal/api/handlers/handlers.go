@@ -3,8 +3,6 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -564,37 +562,15 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Verify current password
 	if err := h.authManager.ValidateCredentials(h.config.Auth.AdminUsername, req.CurrentPassword); err != nil {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
 
-	// Update password in config file
-	configPath := "/config/config.env"
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to read config"))
+	if err := h.authManager.UpdatePassword(h.config.Auth.AdminUsername, req.NewPassword); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
 		return
 	}
 
-	// Replace password line
-	newContent := fmt.Sprintf("ADMIN_PASSWORD=%s", req.NewPassword)
-
-	// Simple replacement
-	lines := ""
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(line, "ADMIN_PASSWORD=") {
-			lines += newContent + "\n"
-		} else {
-			lines += line + "\n"
-		}
-	}
-
-	if err := os.WriteFile(configPath, []byte(lines), 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save password"))
-		return
-	}
-
-	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully. Please restart the container."))
+	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
 }

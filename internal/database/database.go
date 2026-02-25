@@ -62,6 +62,7 @@ func (d *Database) migrate() error {
 		&models.FortiGateTunnel{},
 		&models.FortiGateConnection{},
 		&models.SystemSetting{},
+		&models.Admin{},
 	)
 }
 
@@ -227,4 +228,63 @@ func (d *Database) UpsertSetting(setting *models.SystemSetting) error {
 	existing.Label = setting.Label
 	existing.Category = setting.Category
 	return d.db.Save(&existing).Error
+}
+
+func (d *Database) GetAdmin() (*models.Admin, error) {
+	var admin models.Admin
+	err := d.db.First(&admin).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &admin, err
+}
+
+func (d *Database) CreateAdmin(admin *models.Admin) error {
+	return d.db.Create(admin).Error
+}
+
+func (d *Database) UpdateAdmin(admin *models.Admin) error {
+	return d.db.Save(admin).Error
+}
+
+func (d *Database) InitAdmin(username, password string) error {
+	admin, err := d.GetAdmin()
+	if err != nil {
+		return err
+	}
+	if admin == nil {
+		return d.CreateAdmin(&models.Admin{Username: username, Password: password})
+	}
+	return nil
+}
+
+type AdminAuth struct {
+	ID       uint
+	Username string
+	Password string
+}
+
+type AdminDatabase interface {
+	GetAdminByUsername() (*AdminAuth, error)
+	UpdateAdminPassword(id uint, password string) error
+}
+
+func (d *Database) GetAdminByUsername() (interface{}, error) {
+	var admin models.Admin
+	err := d.db.First(&admin).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &AdminAuth{
+		ID:       admin.ID,
+		Username: admin.Username,
+		Password: admin.Password,
+	}, nil
+}
+
+func (d *Database) UpdateAdminPassword(id uint, password string) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).Update("password", password).Error
 }

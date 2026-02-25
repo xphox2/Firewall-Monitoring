@@ -44,7 +44,17 @@ func main() {
 		log.Println("Database initialized")
 	}
 
-	authManager := auth.NewAuthManager(cfg)
+	authManager := auth.NewAuthManager(cfg, db)
+
+	if db != nil {
+		hashedPassword, _ := authManager.HashPassword(cfg.Auth.AdminPassword)
+		if err := db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword); err != nil {
+			log.Printf("Warning: Failed to initialize admin: %v", err)
+		} else {
+			log.Println("Admin account initialized")
+		}
+	}
+
 	handler := handlers.NewHandler(cfg, authManager, db)
 
 	snmpClient, err := snmp.NewSNMPClient(cfg)

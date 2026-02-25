@@ -181,6 +181,14 @@ type SystemSetting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type Admin struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Username  string    `json:"username" gorm:"uniqueIndex;not null"`
+	Password  string    `json:"-" gorm:"not null"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func (SystemStatus) TableName() string        { return "system_status" }
 func (InterfaceStats) TableName() string      { return "interface_stats" }
 func (VPNStatus) TableName() string           { return "vpn_status" }
@@ -194,6 +202,7 @@ func (FortiGate) TableName() string           { return "fortigates" }
 func (FortiGateTunnel) TableName() string     { return "fortigate_tunnels" }
 func (FortiGateConnection) TableName() string { return "fortigate_connections" }
 func (SystemSetting) TableName() string       { return "system_settings" }
+func (Admin) TableName() string               { return "admins" }
 
 func (s *SystemStatus) ToJSON() string {
 	jsonBytes, _ := json.Marshal(s)

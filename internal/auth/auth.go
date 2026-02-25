@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -30,13 +29,28 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+type Database interface {
+	GetAdminByUsername() (interface{}, error)
+	UpdateAdminPassword(id uint, password string) error
+}
+
+type AdminAuth struct {
+	ID       uint
+	Username string
+	Password string
+}
+
 type AuthManager struct {
+	db            Database
+	config        *config.Config
 	configPath    string
 	loginAttempts map[string][]time.Time
 }
 
-func NewAuthManager(cfg *config.Config) *AuthManager {
+func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 	return &AuthManager{
+		db:            db,
+		config:        cfg,
 		configPath:    os.Getenv("CONFIG_FILE"),
 		loginAttempts: make(map[string][]time.Time),
 	}
@@ -70,19 +84,38 @@ func (am *AuthManager) getConfig() *config.Config {
 }
 
 func (am *AuthManager) ValidateCredentials(username, password string) error {
-	cfg := am.getConfig()
-
-	if username != cfg.Auth.AdminUsername {
-		return ErrInvalidCredentials
-	}
-
 	am.cleanOldAttempts(username)
+
+	cfg := am.config
+	if cfg == nil {
+		cfg = am.getConfig()
+	}
 
 	if len(am.loginAttempts[username]) >= cfg.Auth.MaxLoginAttempts {
 		return ErrAccountLocked
 	}
 
-	if password != am.getConfig().Auth.AdminPassword {
+	if am.db != nil {
+		adminRaw, err := am.db.GetAdminByUsername()
+		if err == nil && adminRaw != nil {
+			admin := adminRaw.(*AdminAuth)
+			if username != admin.Username {
+				return ErrInvalidCredentials
+			}
+			if !am.CheckPassword(password, admin.Password) {
+				am.loginAttempts[username] = append(am.loginAttempts[username], time.Now())
+				return ErrInvalidCredentials
+			}
+			am.loginAttempts[username] = []time.Time{}
+			return nil
+		}
+	}
+
+	if username != cfg.Auth.AdminUsername {
+		return ErrInvalidCredentials
+	}
+
+	if password != cfg.Auth.AdminPassword {
 		am.loginAttempts[username] = append(am.loginAttempts[username], time.Now())
 		return ErrInvalidCredentials
 	}
@@ -163,23 +196,35 @@ func (am *AuthManager) CheckPassword(password, hash string) bool {
 	return err == nil
 }
 
+func (am *AuthManager) UpdatePassword(username, newPassword string) error {
+	if am.db == nil {
+		return errors.New("database not configured")
+	}
+
+	adminRaw, err := am.db.GetAdminByUsername()
+	if err != nil {
+		return err
+	}
+	if adminRaw == nil {
+		return errors.New("admin not found")
+	}
+
+	admin := adminRaw.(*AdminAuth)
+
+	hashedPassword, err := am.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	return am.db.UpdateAdminPassword(admin.ID, hashedPassword)
+}
+
 func GenerateSecureToken(length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(bytes), nil
-}
-
-func RecordLoginAttempt(cfg *config.Config, username, ip, userAgent string, success bool) {
-	attempt := models.LoginAttempt{
-		Timestamp: time.Now(),
-		Username:  username,
-		IPAddress: ip,
-		Success:   success,
-		UserAgent: userAgent,
-	}
-	_ = attempt
 }
 
 func GetLockedIPs(attempts map[string][]time.Time, lockoutDuration time.Duration) []string {
