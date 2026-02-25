@@ -47,7 +47,7 @@ docker-compose*.yml
 
 # Scripts
 deploy.sh
-*.sh
+!entrypoint.sh
 
 # Docs
 docs/
