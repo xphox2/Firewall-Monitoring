@@ -151,6 +151,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		admin.GET("/api/fortigates", handler.GetFortiGates)
 		admin.POST("/api/fortigates", handler.CreateFortiGate)
+		admin.POST("/api/fortigates/test", handler.TestDeviceConnection)
 		admin.PUT("/api/fortigates/:id", handler.UpdateFortiGate)
 		admin.DELETE("/api/fortigates/:id", handler.DeleteFortiGate)
 

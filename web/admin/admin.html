@@ -220,6 +220,7 @@
                     <input type="text" id="device-description">
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="testDeviceConnection()">Test Connection</button>
                     <button type="button" class="btn secondary" onclick="closeDeviceModal()">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
@@ -513,6 +514,48 @@
 
         function closeDeviceModal() {
             document.getElementById('device-modal').classList.remove('active');
+        }
+
+        async function testDeviceConnection() {
+            const ip = document.getElementById('device-ip').value;
+            const port = document.getElementById('device-snmp-port').value || 161;
+            const community = document.getElementById('device-community').value || 'public';
+            
+            if (!ip) {
+                alert('Please enter an IP address first');
+                return;
+            }
+
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = 'Testing...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/fortigates/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ip_address: ip,
+                        snmp_port: parseInt(port),
+                        snmp_community: community,
+                        snmp_version: '2c'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success && result.data.online) {
+                    alert(`✅ Connection Successful!\n\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
+                } else {
+                    alert(`❌ Connection Failed\n\n${result.data?.message || 'Unknown error'}`);
+                }
+            } catch (err) {
+                alert(`❌ Error: ${err.message}`);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
         }
 
         document.getElementById('device-form').addEventListener('submit', async (e) => {

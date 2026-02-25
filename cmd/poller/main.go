@@ -7,59 +7,41 @@ import (
 	"syscall"
 	"time"
 
-	"fortiGate-Mon/internal/alerts"
 	"fortiGate-Mon/internal/config"
+	"fortiGate-Mon/internal/database"
 	"fortiGate-Mon/internal/models"
-	"fortiGate-Mon/internal/notifier"
 	"fortiGate-Mon/internal/snmp"
-	"fortiGate-Mon/internal/uptime"
 )
 
 type Poller struct {
-	config       *config.Config
-	snmpClient   *snmp.SNMPClient
-	alertManager *alerts.AlertManager
-	uptimeTrack  *uptime.UptimeTracker
-	stopChan     chan struct{}
+	cfg      *config.Config
+	db       *database.Database
+	stopChan chan struct{}
 }
 
-func NewPoller(cfg *config.Config) *Poller {
-	notif := notifier.NewNotifier(cfg)
-	alertMgr := alerts.NewAlertManager(cfg, notif)
-
+func NewPoller(cfg *config.Config, db *database.Database) *Poller {
 	return &Poller{
-		config:       cfg,
-		alertManager: alertMgr,
-		uptimeTrack:  uptime.NewUptimeTracker(cfg),
-		stopChan:     make(chan struct{}),
+		cfg:      cfg,
+		db:       db,
+		stopChan: make(chan struct{}),
 	}
-}
-
-func (p *Poller) Connect() error {
-	client, err := snmp.NewSNMPClient(p.config)
-	if err != nil {
-		return err
-	}
-	p.snmpClient = client
-	return nil
 }
 
 func (p *Poller) Start() error {
-	if p.config.SNMP.PollInterval < 30*time.Second {
-		p.config.SNMP.PollInterval = 30 * time.Second
+	if p.cfg.SNMP.PollInterval < 30*time.Second {
+		p.cfg.SNMP.PollInterval = 30 * time.Second
 	}
 
-	log.Printf("Starting SNMP poller with interval: %v", p.config.SNMP.PollInterval)
+	log.Printf("Starting SNMP poller with interval: %v", p.cfg.SNMP.PollInterval)
+	log.Println("Waiting for devices to be added via admin UI...")
 
-	ticker := time.NewTicker(p.config.SNMP.PollInterval)
+	ticker := time.NewTicker(p.cfg.SNMP.PollInterval)
 	defer ticker.Stop()
-
-	p.poll()
 
 	for {
 		select {
 		case <-ticker.C:
-			p.poll()
+			p.pollAllDevices()
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil
@@ -67,42 +49,76 @@ func (p *Poller) Start() error {
 	}
 }
 
-func (p *Poller) poll() {
-	if p.snmpClient == nil {
-		log.Println("SNMP client not connected")
+func (p *Poller) pollAllDevices() {
+	if p.db == nil {
+		log.Println("Database not connected, skipping poll")
 		return
 	}
 
-	status, err := p.snmpClient.GetSystemStatus()
+	devices, err := p.db.GetAllFortiGates()
 	if err != nil {
-		log.Printf("Error polling system status: %v", err)
+		log.Printf("Error getting devices: %v", err)
 		return
 	}
 
-	log.Printf("Polled - CPU: %.1f%%, Memory: %.1f%%, Sessions: %d",
-		status.CPUUsage, status.MemoryUsage, status.SessionCount)
-
-	if err := p.alertManager.CheckSystemStatus(status); err != nil {
-		log.Printf("Error checking alerts: %v", err)
+	if len(devices) == 0 {
+		log.Println("No devices configured, skipping poll")
+		return
 	}
 
-	interfaces, err := p.snmpClient.GetInterfaceStats()
-	if err != nil {
-		log.Printf("Error polling interface stats: %v", err)
-	} else {
-		if err := p.alertManager.CheckInterfaceStatus(interfaces); err != nil {
-			log.Printf("Error checking interface alerts: %v", err)
+	log.Printf("Polling %d devices...", len(devices))
+
+	for _, device := range devices {
+		if !device.Enabled {
+			continue
 		}
+		p.pollDevice(&device)
+	}
+}
+
+func (p *Poller) pollDevice(device *models.FortiGate) {
+	cfg := &config.Config{
+		SNMP: config.SNMPConfig{
+			FortiGateHost: device.IPAddress,
+			FortiGatePort: device.SNMPPort,
+			Community:     device.SNMPCommunity,
+			Version:       device.SNMPVersion,
+			Timeout:       5 * time.Second,
+			Retries:       2,
+		},
 	}
 
-	p.uptimeTrack.RecordUptime(status.Uptime)
+	client, err := snmp.NewSNMPClient(cfg)
+	if err != nil {
+		log.Printf("Device %s (%s): failed to connect - %v", device.Name, device.IPAddress, err)
+		p.updateDeviceStatus(device, "offline")
+		return
+	}
+	defer client.Close()
+
+	status, err := client.GetSystemStatus()
+	if err != nil {
+		log.Printf("Device %s (%s): poll error - %v", device.Name, device.IPAddress, err)
+		p.updateDeviceStatus(device, "offline")
+		return
+	}
+
+	log.Printf("Device %s (%s): CPU=%.1f%% Memory=%.1f%% Sessions=%d",
+		device.Name, device.IPAddress, status.CPUUsage, status.MemoryUsage, status.SessionCount)
+
+	p.updateDeviceStatus(device, "online")
+}
+
+func (p *Poller) updateDeviceStatus(device *models.FortiGate, status string) {
+	device.Status = status
+	device.LastPolled = time.Now()
+	if p.db != nil {
+		p.db.UpdateFortiGate(device)
+	}
 }
 
 func (p *Poller) Stop() error {
 	close(p.stopChan)
-	if p.snmpClient != nil {
-		return p.snmpClient.Close()
-	}
 	return nil
 }
 
@@ -112,13 +128,15 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting FortiGate SNMP Poller...")
 
-	poller := NewPoller(cfg)
-
-	if err := poller.Connect(); err != nil {
-		log.Printf("Failed to connect to SNMP: %v", err)
-		os.Exit(1)
+	db, err := database.NewDatabase(cfg)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to database: %v", err)
+	} else {
+		log.Println("Database connected")
+		defer db.Close()
 	}
-	defer poller.Stop()
+
+	poller := NewPoller(cfg, db)
 
 	go func() {
 		if err := poller.Start(); err != nil {
@@ -134,5 +152,3 @@ func main() {
 	poller.Stop()
 	log.Println("Poller exited")
 }
-
-var _ models.SystemStatus

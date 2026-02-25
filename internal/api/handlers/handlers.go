@@ -481,3 +481,72 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.SuccessResponse(dashboard))
 }
+
+type TestDeviceRequest struct {
+	IPAddress     string `json:"ip_address" binding:"required"`
+	SNMPPort      int    `json:"snmp_port"`
+	SNMPCommunity string `json:"snmp_community"`
+	SNMPVersion   string `json:"snmp_version"`
+}
+
+func (h *Handler) TestDeviceConnection(c *gin.Context) {
+	var req TestDeviceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	if req.SNMPPort == 0 {
+		req.SNMPPort = 161
+	}
+	if req.SNMPCommunity == "" {
+		req.SNMPCommunity = "public"
+	}
+	if req.SNMPVersion == "" {
+		req.SNMPVersion = "2c"
+	}
+
+	cfg := &config.Config{
+		SNMP: config.SNMPConfig{
+			FortiGateHost: req.IPAddress,
+			FortiGatePort: req.SNMPPort,
+			Community:     req.SNMPCommunity,
+			Version:       req.SNMPVersion,
+			Timeout:       10 * time.Second,
+			Retries:       1,
+		},
+	}
+
+	client, err := snmp.NewSNMPClient(cfg)
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success": false,
+			"message": "Failed to connect: " + err.Error(),
+			"online":  false,
+		}))
+		return
+	}
+	defer client.Close()
+
+	status, err := client.GetSystemStatus()
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success": false,
+			"message": "Failed to poll: " + err.Error(),
+			"online":  false,
+		}))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"success":  true,
+		"message":  "Connected successfully",
+		"online":   true,
+		"hostname": status.Hostname,
+		"version":  status.Version,
+		"cpu":      status.CPUUsage,
+		"memory":   status.MemoryUsage,
+		"sessions": status.SessionCount,
+		"uptime":   status.Uptime,
+	}))
+}
