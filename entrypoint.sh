@@ -37,6 +37,9 @@ fi
 # Create data directories
 mkdir -p /data /config
 
+# Export config file path
+export CONFIG_FILE=/config/config.env
+
 echo "Starting FortiGate Monitor services..."
 
 # Start all services in background
