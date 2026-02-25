@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FortiGate Monitor - Public Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; color: #fff; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header { text-align: center; padding: 30px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        header h1 { font-size: 2.5rem; margin-bottom: 10px; color: #00d4ff; }
+        header p { color: rgba(255,255,255,0.7); }
+        .status-banner { text-align: center; padding: 15px; margin: 20px 0; border-radius: 10px; }
+        .status-banner.online { background: rgba(0, 255, 136, 0.1); border: 1px solid rgba(0, 255, 136, 0.3); }
+        .status-banner.offline { background: rgba(255, 59, 48, 0.1); border: 1px solid rgba(255, 59, 48, 0.3); }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin: 30px 0; }
+        .card { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; border: 1px solid rgba(255,255,255,0.1); }
+        .card h3 { font-size: 0.9rem; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px; }
+        .card .value { font-size: 2.5rem; font-weight: 700; color: #00d4ff; }
+        .card .unit { font-size: 1rem; color: rgba(255,255,255,0.5); margin-left: 5px; }
+        .card .subtext { font-size: 0.85rem; color: rgba(255,255,255,0.4); margin-top: 10px; }
+        .progress-bar { height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin-top: 15px; }
+        .progress-bar .fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+        .progress-bar .fill.low { background: linear-gradient(90deg, #00ff88, #00d4ff); }
+        .progress-bar .fill.medium { background: linear-gradient(90deg, #ffd700, #ff9500); }
+        .progress-bar .fill.high { background: linear-gradient(90deg, #ff6b6b, #ff3b3b); }
+        .interfaces { margin-top: 30px; }
+        .interfaces h2 { margin-bottom: 20px; color: #00d4ff; }
+        .interface-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+        .interface-card { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .interface-card .name { font-weight: 600; font-size: 1.1rem; margin-bottom: 10px; }
+        .interface-card .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .interface-card .status.up { background: rgba(0, 255, 136, 0.2); color: #00ff88; }
+        .interface-card .status.down { background: rgba(255, 59, 48, 0.2); color: #ff3b3b; }
+        .interface-stats { display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.85rem; color: rgba(255,255,255,0.6); }
+        .uptime-badge { display: inline-block; background: linear-gradient(90deg, #00ff88, #00d4ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 1.2rem; font-weight: 700; }
+        .loading { text-align: center; padding: 50px; color: rgba(255,255,255,0.5); }
+        .error { text-align: center; padding: 50px; color: #ff6b6b; }
+        footer { text-align: center; padding: 30px; color: rgba(255,255,255,0.4); font-size: 0.85rem; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 50px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>FortiGate Monitor</h1>
+            <p>Real-time firewall status and performance metrics</p>
+        </header>
+
+        <div id="status-banner" class="status-banner online">
+            <span id="hostname">Loading...</span> | Status: <strong id="connection-status">Online</strong>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>Uptime</h3>
+                <div class="value" id="uptime">--</div>
+                <div class="subtext" id="uptime-percent"></div>
+            </div>
+            <div class="card">
+                <h3>CPU Usage</h3>
+                <div class="value"><span id="cpu">--</span><span class="unit">%</span></div>
+                <div class="progress-bar"><div class="fill" id="cpu-bar"></div></div>
+            </div>
+            <div class="card">
+                <h3>Memory Usage</h3>
+                <div class="value"><span id="memory">--</span><span class="unit">%</span></div>
+                <div class="progress-bar"><div class="fill" id="memory-bar"></div></div>
+            </div>
+            <div class="card">
+                <h3>Active Sessions</h3>
+                <div class="value" id="sessions">--</div>
+                <div class="subtext" id="sessions-peak"></div>
+            </div>
+        </div>
+
+        <div class="interfaces">
+            <h2>Network Interfaces</h2>
+            <div class="interface-grid" id="interfaces">
+                <div class="loading">Loading interfaces...</div>
+            </div>
+        </div>
+
+        <footer>
+            <p>FortiGate Monitor &copy; 2024 | <a href="/admin" style="color: #00d4ff;">Admin Login</a></p>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        let refreshInterval;
+
+        async function fetchDashboard() {
+            try {
+                const response = await fetch(`${API_BASE}/public/dashboard`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to fetch data');
+                }
+
+                updateDashboard(data.data);
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('connection-status').textContent = 'Offline';
+                document.getElementById('status-banner').className = 'status-banner offline';
+            }
+        }
+
+        async function fetchInterfaces() {
+            try {
+                const response = await fetch(`${API_BASE}/public/interfaces`);
+                const data = await response.json();
+
+                if (data.success) {
+                    updateInterfaces(data.data);
+                }
+            } catch (error) {
+                console.error('Error fetching interfaces:', error);
+            }
+        }
+
+        function updateDashboard(d) {
+            document.getElementById('hostname').textContent = d.hostname || 'FortiGate';
+            document.getElementById('uptime').textContent = d.uptime || '--';
+            document.getElementById('cpu').textContent = d.cpu?.toFixed(1) || '--';
+            document.getElementById('memory').textContent = d.memory?.toFixed(1) || '--';
+            document.getElementById('sessions').textContent = formatNumber(d.sessions) || '--';
+
+            updateProgressBar('cpu-bar', d.cpu);
+            updateProgressBar('memory-bar', d.memory);
+        }
+
+        function updateInterfaces(interfaces) {
+            const container = document.getElementById('interfaces');
+            
+            if (!interfaces || interfaces.length === 0) {
+                container.innerHTML = '<div class="loading">No interfaces found</div>';
+                return;
+            }
+
+            container.innerHTML = interfaces.map(iface => `
+                <div class="interface-card">
+                    <div class="name">${iface.name || `Interface ${iface.index}`}</div>
+                    <span class="status ${iface.status}">${iface.status.toUpperCase()}</span>
+                    <div class="interface-stats">
+                        <div>
+                            <div>↓ ${formatBytes(iface.in_bytes)}</div>
+                            <div>↑ ${formatBytes(iface.out_bytes)}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div>${formatSpeed(iface.speed)}</div>
+                            <div>${iface.in_errors + iface.out_errors} errors</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateProgressBar(id, value) {
+            const bar = document.getElementById(id);
+            if (!bar || value === undefined) return;
+
+            bar.style.width = `${Math.min(value, 100)}%`;
+            bar.className = 'fill';
+            
+            if (value >= 80) bar.classList.add('high');
+            else if (value >= 60) bar.classList.add('medium');
+            else bar.classList.add('low');
+        }
+
+        function formatNumber(num) {
+            if (!num) return '--';
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes) return '0 B';
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+        }
+
+        function formatSpeed(speed) {
+            if (!speed) return 'Unknown';
+            if (speed >= 1000000000) return (speed / 1000000000).toFixed(0) + ' Gbps';
+            if (speed >= 1000000) return (speed / 1000000).toFixed(0) + ' Mbps';
+            return (speed / 1000).toFixed(0) + ' Kbps';
+        }
+
+        fetchDashboard();
+        fetchInterfaces();
+        setInterval(() => { fetchDashboard(); fetchInterfaces(); }, 30000);
+    </script>
+</body>
+</html>

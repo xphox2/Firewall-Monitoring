@@ -1,0 +1,199 @@
+package uptime
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"sync"
+	"time"
+
+	"fortiGate-Mon/internal/config"
+	"fortiGate-Mon/internal/models"
+)
+
+type UptimeTracker struct {
+	config     *config.Config
+	mu         sync.RWMutex
+	baseline   *UptimeBaseline
+	downtime   float64
+	downEvents int
+	lastUptime uint64
+}
+
+type UptimeBaseline struct {
+	StartTime   time.Time `json:"start_time"`
+	StartUptime uint64    `json:"start_uptime"`
+}
+
+type UptimeStats struct {
+	UptimePercent  float64   `json:"uptime_percent"`
+	TotalDowntime  float64   `json:"total_downtime_seconds"`
+	DowntimeEvents int       `json:"downtime_events"`
+	CurrentUptime  uint64    `json:"current_uptime"`
+	StartTime      time.Time `json:"start_time"`
+}
+
+func NewUptimeTracker(cfg *config.Config) *UptimeTracker {
+	ut := &UptimeTracker{
+		config:     cfg,
+		downtime:   0,
+		downEvents: 0,
+		lastUptime: 0,
+	}
+
+	if cfg.Uptime.TrackingEnabled {
+		ut.loadBaseline()
+	}
+
+	return ut
+}
+
+func (ut *UptimeTracker) loadBaseline() {
+	if ut.config.Uptime.BaselineFile == "" {
+		return
+	}
+
+	data, err := os.ReadFile(ut.config.Uptime.BaselineFile)
+	if err != nil {
+		ut.baseline = &UptimeBaseline{
+			StartTime:   time.Now(),
+			StartUptime: 0,
+		}
+		return
+	}
+
+	var baseline UptimeBaseline
+	if err := json.Unmarshal(data, &baseline); err != nil {
+		ut.baseline = &UptimeBaseline{
+			StartTime:   time.Now(),
+			StartUptime: 0,
+		}
+		return
+	}
+
+	ut.baseline = &baseline
+}
+
+func (ut *UptimeTracker) saveBaseline() error {
+	if ut.config.Uptime.BaselineFile == "" {
+		return nil
+	}
+
+	data, err := json.Marshal(ut.baseline)
+	if err != nil {
+		return err
+	}
+
+	dir := ut.config.Uptime.BaselineFile[:len(ut.config.Uptime.BaselineFile)-len("/uptime.json")]
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(ut.config.Uptime.BaselineFile, data, 0644)
+}
+
+func (ut *UptimeTracker) RecordUptime(currentUptime uint64) {
+	ut.mu.Lock()
+	defer ut.mu.Unlock()
+
+	if ut.baseline == nil {
+		ut.baseline = &UptimeBaseline{
+			StartTime:   time.Now(),
+			StartUptime: currentUptime,
+		}
+		ut.saveBaseline()
+	}
+
+	if ut.lastUptime > 0 && currentUptime < ut.lastUptime {
+		ut.downEvents++
+	}
+
+	ut.lastUptime = currentUptime
+}
+
+func (ut *UptimeTracker) GetStats() UptimeStats {
+	ut.mu.RLock()
+	defer ut.mu.RUnlock()
+
+	stats := UptimeStats{
+		CurrentUptime:  ut.lastUptime,
+		DowntimeEvents: ut.downEvents,
+		TotalDowntime:  ut.downtime,
+	}
+
+	if ut.baseline != nil {
+		stats.StartTime = ut.baseline.StartTime
+	}
+
+	if ut.baseline != nil && ut.lastUptime > 0 {
+		elapsedTime := time.Since(ut.baseline.StartTime).Seconds()
+		deviceUptime := float64(ut.lastUptime-ut.baseline.StartUptime) / 100
+
+		if elapsedTime > 0 {
+			stats.UptimePercent = (deviceUptime / elapsedTime) * 100
+		}
+	}
+
+	return stats
+}
+
+func (ut *UptimeTracker) GetUptimeRecord() *models.UptimeRecord {
+	stats := ut.GetStats()
+
+	return &models.UptimeRecord{
+		Timestamp:      time.Now(),
+		DeviceUptime:   stats.CurrentUptime,
+		TotalDowntime:  stats.TotalDowntime,
+		UptimePercent:  stats.UptimePercent,
+		DowntimeEvents: stats.DowntimeEvents,
+	}
+}
+
+func (ut *UptimeTracker) CalculateFiveNines() string {
+	stats := ut.GetStats()
+
+	if stats.UptimePercent >= 99.999 {
+		return "Achieved"
+	}
+
+	targetDowntime := 3.1536
+	downtimeRemaining := targetDowntime - stats.TotalDowntime
+	if downtimeRemaining < 0 {
+		downtimeRemaining = 0
+	}
+
+	return fmt.Sprintf("%.2f seconds remaining for 99.999%% uptime", downtimeRemaining)
+}
+
+func (ut *UptimeTracker) Reset() error {
+	ut.mu.Lock()
+	defer ut.mu.Unlock()
+
+	ut.baseline = &UptimeBaseline{
+		StartTime:   time.Now(),
+		StartUptime: ut.lastUptime,
+	}
+	ut.downtime = 0
+	ut.downEvents = 0
+
+	return ut.saveBaseline()
+}
+
+func FormatUptime(uptime uint64) string {
+	seconds := uptime / 100
+
+	days := int(seconds) / 86400
+	hours := (int(seconds) % 86400) / 3600
+	minutes := (int(seconds) % 3600) / 60
+	secs := int(seconds) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm %ds", days, hours, minutes, secs)
+	} else if hours > 0 {
+		return fmt.Sprintf("%dh %dm %ds", hours, minutes, secs)
+	} else if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, secs)
+	} else {
+		return fmt.Sprintf("%ds", secs)
+	}
+}

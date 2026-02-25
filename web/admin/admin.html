@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FortiGate Monitor - Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
+        
+        .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
+        .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
+        .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
+        .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
+        .nav-item.danger { color: #f85149; }
+        
+        .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header h1 { font-size: 1.8rem; }
+        
+        .page { display: none; }
+        .page.active { display: block; }
+        
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
+        .card h2 { font-size: 1.2rem; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .card h2 button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        
+        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .btn:hover { background: #2ea043; }
+        .btn.danger { background: #da3633; }
+        .btn.secondary { background: #30363d; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
+        th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
+        tr:hover { background: #21262d; }
+        
+        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+        .status-badge.up, .status-badge.online { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .status-badge.down, .status-badge.offline { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .status-badge.warning { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
+        .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+        
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+        
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        
+        .connection-diagram { min-height: 400px; position: relative; background: #0d1117; border-radius: 8px; padding: 20px; }
+        .node { position: absolute; background: #21262d; border: 2px solid #30363d; border-radius: 8px; padding: 15px; min-width: 150px; text-align: center; cursor: pointer; }
+        .node.selected { border-color: #00d4ff; }
+        .node .name { font-weight: 600; margin-bottom: 5px; }
+        .node .ip { font-size: 0.8rem; color: #8b949e; }
+        .node .status { margin-top: 8px; }
+        
+        .connection-line { position: absolute; height: 3px; background: #30363d; transform-origin: left center; }
+        .connection-line.up { background: #3fb150; }
+        .connection-line.down { background: #f85149; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        
+        .loading { text-align: center; padding: 30px; color: #8b949e; }
+        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        
+        .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .setting-item { background: #0d1117; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
+        .setting-item label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 5px; }
+        .setting-item input { width: 100%; padding: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #fff; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>FortiGate Admin</h2>
+        <a class="nav-item active" data-page="dashboard">Dashboard</a>
+        <a class="nav-item" data-page="devices">Devices</a>
+        <a class="nav-item" data-page="connections">Connections</a>
+        <a class="nav-item" data-page="settings">Settings</a>
+        <a class="nav-item" data-page="alerts">Alerts</a>
+        <a class="nav-item" data-page="traps">SNMP Traps</a>
+        <a class="nav-item danger" id="logout-btn">Logout</a>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <h1 id="page-title">Dashboard</h1>
+        </div>
+
+        <!-- Dashboard Page -->
+        <div class="page active" id="page-dashboard">
+            <div class="grid">
+                <div class="card">
+                    <h3>Total Devices</h3>
+                    <div class="value" id="total-devices">--</div>
+                </div>
+                <div class="card">
+                    <h3>Online</h3>
+                    <div class="value" id="online-devices">--</div>
+                </div>
+                <div class="card">
+                    <h3>Offline</h3>
+                    <div class="value" id="offline-devices">--</div>
+                </div>
+                <div class="card">
+                    <h3>Active Connections</h3>
+                    <div class="value" id="active-connections">--</div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Recent Alerts</h2>
+                <table id="alerts-table">
+                    <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Devices Page -->
+        <div class="page" id="page-devices">
+            <div class="card">
+                <h2>FortiGate Devices <button class="btn" onclick="showDeviceModal()">+ Add Device</button></h2>
+                <table id="devices-table">
+                    <thead><tr><th>Name</th><th>IP Address</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Connections Page -->
+        <div class="page" id="page-connections">
+            <div class="card">
+                <h2>Network Connections <button class="btn" onclick="showConnectionModal()">+ Add Connection</button></h2>
+                <p style="color: #8b949e; margin-bottom: 20px;">Map IPSec and VXLAN tunnels between your FortiGate firewalls to visualize tunnel status.</p>
+                <table id="connections-table">
+                    <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h2>Connection Map</h2>
+                <div class="connection-diagram" id="connection-diagram">
+                    <div class="loading">Add devices and connections to see the network diagram</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div class="page" id="page-settings">
+            <div class="card">
+                <h2>Alert Settings</h2>
+                <div class="settings-grid" id="settings-alerts"></div>
+            </div>
+            <div class="card">
+                <h2>Notification Settings</h2>
+                <div class="settings-grid" id="settings-notifications"></div>
+            </div>
+            <div class="card">
+                <button class="btn" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+
+        <!-- Alerts Page -->
+        <div class="page" id="page-alerts">
+            <div class="card">
+                <h2>Alert History</h2>
+                <table id="alerts-full-table">
+                    <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Traps Page -->
+        <div class="page" id="page-traps">
+            <div class="card">
+                <h2>SNMP Trap Events</h2>
+                <table id="traps-table">
+                    <thead><tr><th>Time</th><th>Source IP</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Modal -->
+    <div class="modal" id="device-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="device-modal-title">Add FortiGate</h2>
+                <span onclick="closeDeviceModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <form id="device-form">
+                <input type="hidden" id="device-id">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="device-name" required>
+                </div>
+                <div class="form-group">
+                    <label>IP Address</label>
+                    <input type="text" id="device-ip" required>
+                </div>
+                <div class="form-group">
+                    <label>SNMP Port</label>
+                    <input type="number" id="device-snmp-port" value="161">
+                </div>
+                <div class="form-group">
+                    <label>SNMP Community</label>
+                    <input type="text" id="device-community" value="public">
+                </div>
+                <div class="form-group">
+                    <label>Location</label>
+                    <input type="text" id="device-location">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="device-description">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeDeviceModal()">Cancel</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Connection Modal -->
+    <div class="modal" id="connection-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Connection</h2>
+                <span onclick="closeConnectionModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <form id="connection-form">
+                <input type="hidden" id="connection-id">
+                <div class="form-group">
+                    <label>Connection Name</label>
+                    <input type="text" id="connection-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Source FortiGate</label>
+                    <select id="connection-source" required></select>
+                </div>
+                <div class="form-group">
+                    <label>Destination FortiGate</label>
+                    <select id="connection-dest" required></select>
+                </div>
+                <div class="form-group">
+                    <label>Connection Type</label>
+                    <select id="connection-type">
+                        <option value="ipsec">IPSec</option>
+                        <option value="vxlan">VXLAN</option>
+                        <option value="ssl">SSL VPN</option>
+                        <option value="wan">WAN Link</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <input type="text" id="connection-notes">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeConnectionModal()">Cancel</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/admin/api';
+        let currentDevices = [];
+        let currentConnections = [];
+
+        async function checkAuth() {
+            try {
+                await fetch(`${API_BASE}/dashboard`);
+            } catch (e) {
+                window.location.href = '/admin/login';
+            }
+        }
+
+        document.querySelectorAll('.nav-item[data-page]').forEach(item => {
+            item.addEventListener('click', () => {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.getElementById('page-' + item.dataset.page).classList.add('active');
+                document.getElementById('page-title').textContent = item.textContent;
+                loadPageData(item.dataset.page);
+            });
+        });
+
+        async function loadPageData(page) {
+            switch(page) {
+                case 'dashboard': await loadDashboard(); break;
+                case 'devices': await loadDevices(); break;
+                case 'connections': await loadConnections(); break;
+                case 'settings': await loadSettings(); break;
+                case 'alerts': await loadAlerts(); break;
+                case 'traps': await loadTraps(); break;
+            }
+        }
+
+        async function loadDashboard() {
+            const res = await fetch(`${API_BASE}/dashboard`);
+            const data = (await res.json()).data;
+            
+            document.getElementById('total-devices').textContent = data.fortigates?.length || 0;
+            document.getElementById('online-devices').textContent = data.fortigates?.filter(f => f.status === 'online').length || 0;
+            document.getElementById('offline-devices').textContent = data.fortigates?.filter(f => f.status === 'offline').length || 0;
+            document.getElementById('active-connections').textContent = data.connections?.filter(c => c.status === 'up').length || 0;
+            
+            const tbody = document.querySelector('#alerts-table tbody');
+            tbody.innerHTML = data.recent_alerts?.map(a => `
+                <tr>
+                    <td>${new Date(a.timestamp).toLocaleString()}</td>
+                    <td>FG-${a.fortigate_id}</td>
+                    <td>${a.alert_type}</td>
+                    <td><span class="status-badge ${a.severity}">${a.severity.toUpperCase()}</span></td>
+                    <td>${a.message}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+        }
+
+        async function loadDevices() {
+            const res = await fetch(`${API_BASE}/fortigates`);
+            const data = (await res.json()).data;
+            currentDevices = data || [];
+            
+            const tbody = document.querySelector('#devices-table tbody');
+            tbody.innerHTML = currentDevices.map(d => `
+                <tr>
+                    <td>${d.name}</td>
+                    <td>${d.ip_address}</td>
+                    <td>${d.location || '-'}</td>
+                    <td><span class="status-badge ${d.status}">${d.status.toUpperCase()}</span></td>
+                    <td>
+                        <button class="btn secondary" onclick="editDevice(${d.id})">Edit</button>
+                        <button class="btn danger" onclick="deleteDevice(${d.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="loading">No devices configured</td></tr>';
+        }
+
+        async function loadConnections() {
+            const [devicesRes, connsRes] = await Promise.all([
+                fetch(`${API_BASE}/fortigates`),
+                fetch(`${API_BASE}/connections`)
+            ]);
+            currentDevices = (await devicesRes.json()).data || [];
+            currentConnections = (await connsRes.json()).data || [];
+            
+            const tbody = document.querySelector('#connections-table tbody');
+            tbody.innerHTML = currentConnections.map(c => `
+                <tr>
+                    <td>${c.name}</td>
+                    <td>${c.source_fg?.name || c.source_fg_id}</td>
+                    <td>${c.dest_fg?.name || c.dest_fg_id}</td>
+                    <td>${c.connection_type?.toUpperCase() || 'IPSEC'}</td>
+                    <td><span class="status-badge ${c.status}">${c.status.toUpperCase()}</span></td>
+                    <td>
+                        <button class="btn danger" onclick="deleteConnection(${c.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('') || '<tr><td colspan="6" class="loading">No connections configured</td></tr>';
+            
+            drawConnectionDiagram();
+            populateDeviceSelects();
+        }
+
+        function drawConnectionDiagram() {
+            const container = document.getElementById('connection-diagram');
+            if (currentDevices.length === 0) {
+                container.innerHTML = '<div class="loading">Add devices to see the network diagram</div>';
+                return;
+            }
+            
+            const containerRect = container.getBoundingClientRect();
+            const centerX = containerRect.width / 2;
+            const centerY = containerRect.height / 2;
+            const radius = Math.min(centerX, centerY) - 80;
+            
+            container.innerHTML = '';
+            
+            currentDevices.forEach((device, i) => {
+                const angle = (2 * Math.PI * i) / currentDevices.length - Math.PI / 2;
+                const x = centerX + radius * Math.cos(angle) - 75;
+                const y = centerY + radius * Math.sin(angle) - 30;
+                
+                const node = document.createElement('div');
+                node.className = 'node';
+                node.style.left = x + 'px';
+                node.style.top = y + 'px';
+                node.innerHTML = `
+                    <div class="name">${device.name}</div>
+                    <div class="ip">${device.ip_address}</div>
+                    <div class="status"><span class="status-badge ${device.status}">${device.status}</span></div>
+                `;
+                container.appendChild(node);
+            });
+            
+            currentConnections.forEach(conn => {
+                const sourceIdx = currentDevices.findIndex(d => d.id === conn.source_fg_id);
+                const destIdx = currentDevices.findIndex(d => d.id === conn.dest_fg_id);
+                
+                if (sourceIdx >= 0 && destIdx >= 0) {
+                    const srcAngle = (2 * Math.PI * sourceIdx) / Math.PI / 2;
+                    const dstAngle = (2 * Math.PI * destIdx) currentDevices.length - / currentDevices.length - Math.PI / 2;
+                    
+                    const x1 = centerX + radius * Math.cos(srcAngle);
+                    const y1 = centerY + radius * Math.sin(srcAngle);
+                    const x2 = centerX + radius * Math.cos(dstAngle);
+                    const y2 = centerY + radius * Math.sin(dstAngle);
+                    
+                    const line = document.createElement('div');
+                    line.className = `connection-line ${conn.status}`;
+                    
+                    const length = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+                    const angle = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
+                    
+                    line.style.width = length + 'px';
+                    line.style.left = x1 + 'px';
+                    line.style.top = y1 + 'px';
+                    line.style.transform = `rotate(${angle}deg)`;
+                    
+                    container.appendChild(line);
+                }
+            });
+        }
+
+        async function loadSettings() {
+            const res = await fetch(`${API_BASE}/settings`);
+            const settings = (await res.json()).data || [];
+            
+            const alertSettings = settings.filter(s => s.category === 'alerts');
+            const notifSettings = settings.filter(s => s.category === 'notifications');
+            
+            document.getElementById('settings-alerts').innerHTML = [
+                { key: 'cpu_threshold', label: 'CPU Threshold (%)', value: 80, type: 'number' },
+                { key: 'memory_threshold', label: 'Memory Threshold (%)', value: 80, type: 'number' },
+                { key: 'disk_threshold', label: 'Disk Threshold (%)', value: 90, type: 'number' },
+                { key: 'session_threshold', label: 'Session Threshold', value: 100000, type: 'number' }
+            ].map(s => `
+                <div class="setting-item">
+                    <label>${s.label}</label>
+                    <input type="${s.type}" name="${s.key}" value="${alertSettings.find(x => x.key === s.key)?.value || s.value}">
+                </div>
+            `).join('');
+            
+            document.getElementById('settings-notifications').innerHTML = [
+                { key: 'email_enabled', label: 'Enable Email', type: 'checkbox' },
+                { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
+                { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' }
+            ].map(s => `
+                <div class="setting-item">
+                    <label>${s.label}</label>
+                    <input type="${s.type}" name="${s.key}" value="${notifSettings.find(x => x.key === s.key)?.value || ''}">
+                </div>
+            `).join('');
+        }
+
+        async function loadAlerts() {
+            const res = await fetch(`${API_BASE}/alerts`);
+            const alerts = (await res.json()).data || [];
+            
+            document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
+                <tr>
+                    <td>${new Date(a.timestamp).toLocaleString()}</td>
+                    <td>FG-${a.fortigate_id}</td>
+                    <td>${a.alert_type}</td>
+                    <td><span class="status-badge ${a.severity}">${a.severity.toUpperCase()}</span></td>
+                    <td>${a.message}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+        }
+
+        async function loadTraps() {
+            const res = await fetch(`${API_BASE}/traps`);
+            const traps = (await res.json()).data || [];
+            
+            document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
+                <tr>
+                    <td>${new Date(t.timestamp).toLocaleString()}</td>
+                    <td>${t.source_ip}</td>
+                    <td>${t.trap_type}</td>
+                    <td><span class="status-badge ${t.severity}">${t.severity.toUpperCase()}</span></td>
+                    <td>${t.message}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" class="loading">No traps</td></tr>';
+        }
+
+        function showDeviceModal(id = null) {
+            document.getElementById('device-modal').classList.add('active');
+            document.getElementById('device-modal-title').textContent = id ? 'Edit FortiGate' : 'Add FortiGate';
+            
+            if (id) {
+                const device = currentDevices.find(d => d.id === id);
+                document.getElementById('device-id').value = device.id;
+                document.getElementById('device-name').value = device.name;
+                document.getElementById('device-ip').value = device.ip_address;
+                document.getElementById('device-snmp-port').value = device.snmp_port || 161;
+                document.getElementById('device-community').value = device.snmp_community || 'public';
+                document.getElementById('device-location').value = device.location || '';
+                document.getElementById('device-description').value = device.description || '';
+            } else {
+                document.getElementById('device-form').reset();
+                document.getElementById('device-id').value = '';
+            }
+        }
+
+        function closeDeviceModal() {
+            document.getElementById('device-modal').classList.remove('active');
+        }
+
+        document.getElementById('device-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('device-id').value;
+            const data = {
+                name: document.getElementById('device-name').value,
+                ip_address: document.getElementById('device-ip').value,
+                snmp_port: parseInt(document.getElementById('device-snmp-port').value),
+                snmp_community: document.getElementById('device-community').value,
+                location: document.getElementById('device-location').value,
+                description: document.getElementById('device-description').value,
+                enabled: true
+            };
+            
+            const method = id ? 'PUT' : 'POST';
+            const url = id ? `${API_BASE}/fortigates/${id}` : `${API_BASE}/fortigates`;
+            
+            await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+            closeDeviceModal();
+            loadDevices();
+        });
+
+        async function editDevice(id) { showDeviceModal(id); }
+        
+        async function deleteDevice(id) {
+            if (!confirm('Delete this FortiGate?')) return;
+            await fetch(`${API_BASE}/fortigates/${id}`, { method: 'DELETE' });
+            loadDevices();
+        }
+
+        function populateDeviceSelects() {
+            const selects = ['connection-source', 'connection-dest'];
+            selects.forEach(sid => {
+                const sel = document.getElementById(sid);
+                sel.innerHTML = currentDevices.map(d => `<option value="${d.id}">${d.name} (${d.ip_address})</option>`).join('');
+            });
+        }
+
+        function showConnectionModal() {
+            if (currentDevices.length < 2) {
+                alert('You need at least 2 devices to create a connection');
+                return;
+            }
+            document.getElementById('connection-modal').classList.add('active');
+            document.getElementById('connection-form').reset();
+            populateDeviceSelects();
+        }
+
+        function closeConnectionModal() {
+            document.getElementById('connection-modal').classList.remove('active');
+        }
+
+        document.getElementById('connection-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                name: document.getElementById('connection-name').value,
+                source_fg_id: parseInt(document.getElementById('connection-source').value),
+                dest_fg_id: parseInt(document.getElementById('connection-dest').value),
+                connection_type: document.getElementById('connection-type').value,
+                notes: document.getElementById('connection-notes').value
+            };
+            
+            await fetch(`${API_BASE}/connections`, { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify(data) 
+            });
+            closeConnectionModal();
+            loadConnections();
+        });
+
+        async function deleteConnection(id) {
+            if (!confirm('Delete this connection?')) return;
+            await fetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' });
+            loadConnections();
+        }
+
+        async function saveSettings() {
+            const inputs = document.querySelectorAll('#settings-alerts input, #settings-notifications input');
+            const settings = Array.from(inputs).map(input => ({
+                key: input.name,
+                value: input.value,
+                category: ['email_enabled','slack_webhook','discord_webhook'].includes(input.name) ? 'notifications' : 'alerts',
+                type: input.type === 'checkbox' ? 'bool' : 'string'
+            }));
+            
+            await fetch(`${API_BASE}/settings`, { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify(settings) 
+            });
+            alert('Settings saved!');
+        }
+
+        document.getElementById('logout-btn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.href = '/';
+        });
+
+        checkAuth();
+        loadDashboard();
+    </script>
+</body>
+</html>
