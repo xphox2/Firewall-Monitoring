@@ -51,14 +51,9 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		return ErrAccountLocked
 	}
 
-	err := bcrypt.CompareHashAndPassword(
-		[]byte(am.hashPassword(am.config.Auth.AdminPassword)),
-		[]byte(password),
-	)
-
-	if err != nil {
+	if password != am.config.Auth.AdminPassword {
 		am.loginAttempts[username] = append(am.loginAttempts[username], time.Now())
-		return err
+		return ErrInvalidCredentials
 	}
 
 	am.loginAttempts[username] = []time.Time{}
