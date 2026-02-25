@@ -5,9 +5,8 @@ services:
     image: fortigate-mon:latest
     container_name: fortigate-mon
     restart: unless-stopped
-    ports:
-      - "8080:8080"
-      - "162:162/udp"
+    expose:
+      - "8080"
     volumes:
       - fortigate_data:/data
 
