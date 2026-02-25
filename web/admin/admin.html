@@ -408,8 +408,8 @@
                 const destIdx = currentDevices.findIndex(d => d.id === conn.dest_fg_id);
                 
                 if (sourceIdx >= 0 && destIdx >= 0) {
-                    const srcAngle = (2 * Math.PI * sourceIdx) / Math.PI / 2;
-                    const dstAngle = (2 * Math.PI * destIdx) currentDevices.length - / currentDevices.length - Math.PI / 2;
+                    const srcAngle = (2 * Math.PI * sourceIdx) / currentDevices.length - Math.PI / 2;
+                    const dstAngle = (2 * Math.PI * destIdx) / currentDevices.length - Math.PI / 2;
                     
                     const x1 = centerX + radius * Math.cos(srcAngle);
                     const y1 = centerY + radius * Math.sin(srcAngle);
