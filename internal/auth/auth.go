@@ -61,6 +61,11 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		}
 	}()
 
+	if am == nil {
+		log.Printf("[DEBUG] AuthManager is nil")
+		return ErrInvalidCredentials
+	}
+
 	log.Printf("[DEBUG] ValidateCredentials: user=%s", username)
 
 	am.attemptsMu.Lock()
