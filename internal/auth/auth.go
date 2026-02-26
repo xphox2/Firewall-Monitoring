@@ -55,6 +55,15 @@ func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 }
 
 func (am *AuthManager) ValidateCredentials(username, password string) error {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] ValidateCredentials: %v", r)
+		}
+	}()
+
+	log.Printf("[DEBUG] ValidateCredentials: user=%s", username)
+	log.Printf("[DEBUG] am.db=%v, am.config=%v", am.db != nil, am.config != nil)
+
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
 
@@ -70,13 +79,18 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	}
 
 	if len(attempts) >= maxAttempts {
+		log.Printf("[DEBUG] Account locked for %s", username)
 		return ErrAccountLocked
 	}
 
 	// Try database first
 	if am.db != nil {
+		log.Printf("[DEBUG] Checking database for admin")
 		adminRaw, err := am.db.GetAdminByUsername()
-		if err == nil && adminRaw != nil {
+		if err != nil {
+			log.Printf("[DEBUG] GetAdminByUsername error: %v", err)
+		} else if adminRaw != nil {
+			log.Printf("[DEBUG] Got admin from DB: %+v", adminRaw)
 			// Handle both auth.AdminAuth and database.AdminAuth types
 			switch admin := adminRaw.(type) {
 			case *database.AdminAuth:
@@ -126,10 +140,20 @@ func (am *AuthManager) CheckPassword(password, hash string) bool {
 }
 
 func (am *AuthManager) GenerateToken(username string, userID uint) (string, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] GenerateToken: %v", r)
+		}
+	}()
+
+	log.Printf("[DEBUG] GenerateToken: user=%s, userID=%d", username, userID)
+
 	secretKey := "dev-secret-key"
 	if am.config != nil && am.config.Server.JWTSecretKey != "" {
 		secretKey = am.config.Server.JWTSecretKey
 	}
+
+	log.Printf("[DEBUG] Using secretKey: %s", secretKey)
 
 	claims := Claims{
 		Username: username,
