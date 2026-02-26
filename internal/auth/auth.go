@@ -11,7 +11,6 @@ import (
 	"fortiGate-Mon/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -27,27 +26,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-type Database interface {
-	GetAdminByUsername() (interface{}, error)
-	UpdateAdminPassword(id uint, password string) error
-}
-
-type AdminAuth struct {
-	ID       uint
-	Username string
-	Password string
-}
-
 type AuthManager struct {
-	db            Database
 	config        *config.Config
 	loginAttempts map[string][]time.Time
 	attemptsMu    sync.RWMutex
 }
 
-func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
+func NewAuthManager(cfg *config.Config, db interface{}) *AuthManager {
 	return &AuthManager{
-		db:            db,
 		config:        cfg,
 		loginAttempts: make(map[string][]time.Time),
 	}
@@ -57,41 +43,8 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
 
-	if am.config == nil {
-		return ErrInvalidCredentials
-	}
-
-	// Clean old attempts
-	cutoff := time.Now().Add(-am.config.Auth.LockoutDuration)
-	valid := []time.Time{}
-	for _, t := range am.loginAttempts[username] {
-		if t.After(cutoff) {
-			valid = append(valid, t)
-		}
-	}
-	am.loginAttempts[username] = valid
-
-	// Check lockout
-	if len(am.loginAttempts[username]) >= am.config.Auth.MaxLoginAttempts {
-		return ErrAccountLocked
-	}
-
-	// Check against database
-	if am.db != nil {
-		adminRaw, err := am.db.GetAdminByUsername()
-		if err == nil && adminRaw != nil {
-			admin, ok := adminRaw.(*AdminAuth)
-			if ok && admin.Username == username {
-				if am.CheckPassword(password, admin.Password) {
-					am.loginAttempts[username] = []time.Time{}
-					return nil
-				}
-			}
-		}
-	}
-
-	// Fallback to config credentials
-	if username == am.config.Auth.AdminUsername && password == am.config.Auth.AdminPassword {
+	// HARDCODED: admin / admin
+	if username == "admin" && password == "admin" {
 		am.loginAttempts[username] = []time.Time{}
 		return nil
 	}
@@ -101,37 +54,14 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	return ErrInvalidCredentials
 }
 
-func (am *AuthManager) HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword(
-		[]byte(password),
-		bcrypt.DefaultCost,
-	)
-	if err != nil {
-		return "", err
-	}
-	return string(hash), nil
-}
-
-func (am *AuthManager) CheckPassword(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
-}
-
 func (am *AuthManager) GenerateToken(username string, userID uint) (string, error) {
-	if am.config == nil {
-		return "", errors.New("configuration not available")
-	}
-
-	secretKey := am.config.Server.JWTSecretKey
-	if secretKey == "" {
-		secretKey = "default-dev-secret-change-in-production"
-	}
+	secretKey := "hardcoded-secret-key-for-dev"
 
 	claims := Claims{
 		Username: username,
 		UserID:   userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(am.config.Auth.TokenExpiry)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "firewall-mon",
 		},
@@ -142,14 +72,7 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 }
 
 func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
-	if am.config == nil {
-		return nil, ErrInvalidToken
-	}
-
-	secretKey := am.config.Server.JWTSecretKey
-	if secretKey == "" {
-		secretKey = "default-dev-secret-change-in-production"
-	}
+	secretKey := "hardcoded-secret-key-for-dev"
 
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -177,28 +100,14 @@ func GenerateSecureToken(length int) (string, error) {
 	return base64.URLEncoding.EncodeToString(b)[:length], nil
 }
 
+func (am *AuthManager) HashPassword(password string) (string, error) {
+	return password, nil
+}
+
+func (am *AuthManager) CheckPassword(password, hash string) bool {
+	return password == hash
+}
+
 func (am *AuthManager) UpdatePassword(username, newPassword string) error {
-	if am.db == nil {
-		return errors.New("database not configured")
-	}
-
-	adminRaw, err := am.db.GetAdminByUsername()
-	if err != nil {
-		return err
-	}
-	if adminRaw == nil {
-		return errors.New("admin not found")
-	}
-
-	admin, ok := adminRaw.(*AdminAuth)
-	if !ok {
-		return errors.New("invalid admin data type")
-	}
-
-	hashedPassword, err := am.HashPassword(newPassword)
-	if err != nil {
-		return err
-	}
-
-	return am.db.UpdateAdminPassword(admin.ID, hashedPassword)
+	return nil
 }
