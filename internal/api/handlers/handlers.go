@@ -675,6 +675,11 @@ type ChangePasswordRequest struct {
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
+	if h.config == nil || h.authManager == nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Server not configured"))
+		return
+	}
+
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
