@@ -59,6 +59,32 @@ func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 }
 
 func (am *AuthManager) getConfig() *config.Config {
+	// Use cached config if available
+	if am.config != nil {
+		// Reload password from config file if it exists
+		if am.configPath != "" {
+			if data, err := os.ReadFile(am.configPath); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "ADMIN_PASSWORD=") {
+						parts := strings.SplitN(line, "=", 2)
+						if len(parts) == 2 {
+							am.config.Auth.AdminPassword = strings.TrimSpace(parts[1])
+						}
+					}
+					if strings.HasPrefix(line, "ADMIN_USERNAME=") {
+						parts := strings.SplitN(line, "=", 2)
+						if len(parts) == 2 {
+							am.config.Auth.AdminUsername = strings.TrimSpace(parts[1])
+						}
+					}
+				}
+			}
+		}
+		return am.config
+	}
+
+	// Fallback: load new config
 	cfg := config.Load()
 
 	// Reload password from config file if it exists
