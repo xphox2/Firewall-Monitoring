@@ -682,14 +682,9 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		}
 	}()
 
-	if h.config == nil || h.authManager == nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Server not configured"))
+	if h.db == nil || h.authManager == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
-	}
-
-	currentUsername := h.config.Auth.AdminUsername
-	if currentUsername == "" {
-		currentUsername = "admin"
 	}
 
 	var req ChangePasswordRequest
@@ -698,7 +693,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.authManager.ValidateCredentials(currentUsername, req.CurrentPassword); err != nil {
+	if err := h.authManager.ValidateCredentials("admin", req.CurrentPassword); err != nil {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
@@ -709,16 +704,12 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if h.db != nil {
-		err := h.db.UpdateAdminPassword(1, newHashedPassword)
-		if err == nil {
-			h.config.Auth.AdminPassword = req.NewPassword
-			c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
-			return
-		}
-		log.Printf("[DEBUG] DB update failed, using config fallback: %v", err)
+	err = h.db.UpdateAdminPassword(1, newHashedPassword)
+	if err != nil {
+		log.Printf("[DEBUG] UpdatePassword failed: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
+		return
 	}
 
-	h.config.Auth.AdminPassword = req.NewPassword
 	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
 }

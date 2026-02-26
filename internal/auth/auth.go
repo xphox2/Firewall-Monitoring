@@ -62,71 +62,66 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	}()
 
 	log.Printf("[DEBUG] ValidateCredentials: user=%s", username)
-	log.Printf("[DEBUG] am.db=%v, am.config=%v", am.db != nil, am.config != nil)
 
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
 
-	// Check lockout
 	maxAttempts := 5
 	if am.config != nil {
 		maxAttempts = am.config.Auth.MaxLoginAttempts
 	}
 
 	attempts := am.loginAttempts[username]
-	if attempts == nil {
-		attempts = []time.Time{}
-	}
-
 	if len(attempts) >= maxAttempts {
-		log.Printf("[DEBUG] Account locked for %s", username)
 		return ErrAccountLocked
 	}
 
-	// Try database first
-	if am.db != nil {
-		log.Printf("[DEBUG] Checking database for admin")
-		adminRaw, err := am.db.GetAdminByUsername()
-		if err != nil {
-			log.Printf("[DEBUG] GetAdminByUsername error: %v", err)
-		} else if adminRaw != nil {
-			log.Printf("[DEBUG] Got admin from DB: %+v", adminRaw)
-			// Handle both auth.AdminAuth and database.AdminAuth types
-			switch admin := adminRaw.(type) {
-			case *database.AdminAuth:
-				if admin.Username == username && admin.Password != "" {
-					if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
-						am.loginAttempts[username] = nil
-						return nil
-					}
-				}
-			case *AdminAuth:
-				if admin.Username == username && admin.Password != "" {
-					if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
-						am.loginAttempts[username] = nil
-						return nil
-					}
-				}
-			default:
-				log.Printf("[DEBUG] Unknown admin type: %T", adminRaw)
-			}
-		}
+	if am.db == nil {
+		log.Printf("[DEBUG] No database configured")
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
 	}
 
-	// Fallback: config credentials
-	if am.config != nil && am.config.Auth.AdminUsername != "" && am.config.Auth.AdminPassword != "" {
-		if username == am.config.Auth.AdminUsername && password == am.config.Auth.AdminPassword {
-			am.loginAttempts[username] = nil
-			return nil
-		}
+	adminRaw, err := am.db.GetAdminByUsername()
+	if err != nil {
+		log.Printf("[DEBUG] GetAdminByUsername error: %v", err)
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
 	}
 
-	// Record failed attempt
-	if attempts == nil {
-		attempts = []time.Time{}
+	if adminRaw == nil {
+		log.Printf("[DEBUG] No admin found in database")
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
 	}
-	am.loginAttempts[username] = append(attempts, time.Now())
-	return ErrInvalidCredentials
+
+	admin, ok := adminRaw.(*database.AdminAuth)
+	if !ok {
+		log.Printf("[DEBUG] Invalid admin type: %T", adminRaw)
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
+	}
+
+	if admin.Username != username {
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
+	}
+
+	if admin.Password == "" {
+		log.Printf("[DEBUG] Admin password is empty")
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
+	}
+
+	if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) != nil {
+		log.Printf("[DEBUG] Password mismatch")
+		am.loginAttempts[username] = append(attempts, time.Now())
+		return ErrInvalidCredentials
+	}
+
+	am.loginAttempts[username] = nil
+	log.Printf("[DEBUG] Login successful for user=%s", username)
+	return nil
 }
 
 func (am *AuthManager) HashPassword(password string) (string, error) {
