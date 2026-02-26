@@ -125,7 +125,7 @@ func Load() *Config {
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:    getEnv("ADMIN_PASSWORD", generateRandomPassword(16)),
+			AdminPassword:    getEnv("ADMIN_PASSWORD", getDefaultPassword()),
 			BcryptCost:       getIntEnv("BCRYPT_COST", 12),
 			TokenExpiry:      getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts: getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
@@ -160,6 +160,15 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+var defaultPassword string
+
+func getDefaultPassword() string {
+	if defaultPassword == "" {
+		defaultPassword = generateRandomPassword(16)
+	}
+	return defaultPassword
 }
 
 func generateRandomPassword(length int) string {
