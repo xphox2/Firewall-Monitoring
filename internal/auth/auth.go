@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"fortiGate-Mon/internal/config"
+	"fortiGate-Mon/internal/database"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -71,7 +72,16 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	if am.db != nil {
 		adminRaw, err := am.db.GetAdminByUsername()
 		if err == nil && adminRaw != nil {
-			if admin, ok := adminRaw.(*AdminAuth); ok {
+			// Handle both auth.AdminAuth and database.AdminAuth types
+			switch admin := adminRaw.(type) {
+			case *database.AdminAuth:
+				if admin.Username == username {
+					if admin.Password != "" && bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
+						am.loginAttempts[username] = nil
+						return nil
+					}
+				}
+			case *AdminAuth:
 				if admin.Username == username {
 					if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
 						am.loginAttempts[username] = nil

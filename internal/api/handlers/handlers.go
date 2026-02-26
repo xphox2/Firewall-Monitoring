@@ -90,6 +90,11 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 }
 
 func (h *Handler) Login(c *gin.Context) {
+	if h.authManager == nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Authentication not configured"))
+		return
+	}
+
 	var creds struct {
 		Username string `json:"username" binding:"required"`
 		Password string `json:"password" binding:"required"`
@@ -133,6 +138,7 @@ func (h *Handler) Login(c *gin.Context) {
 
 	token, err := h.authManager.GenerateToken(creds.Username, 1)
 	if err != nil {
+		log.Printf("ERROR: Failed to generate token for user %s: %v", creds.Username, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate token"))
 		return
 	}
@@ -157,8 +163,12 @@ func (h *Handler) Login(c *gin.Context) {
 }
 
 func (h *Handler) Logout(c *gin.Context) {
-	c.SetCookie("auth_token", "", -1, "/", "", h.config.Server.CookieSecure, true)
-	c.SetCookie("csrf_token", "", -1, "/", "", h.config.Server.CookieSecure, true)
+	cookieSecure := true
+	if h.config != nil {
+		cookieSecure = h.config.Server.CookieSecure
+	}
+	c.SetCookie("auth_token", "", -1, "/", "", cookieSecure, true)
+	c.SetCookie("csrf_token", "", -1, "/", "", cookieSecure, true)
 
 	c.JSON(http.StatusOK, models.MessageResponse("Logged out successfully"))
 }
