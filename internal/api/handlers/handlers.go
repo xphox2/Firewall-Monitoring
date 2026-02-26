@@ -675,8 +675,20 @@ type ChangePasswordRequest struct {
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] ChangePassword: %v", r)
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Internal server error"))
+		}
+	}()
+
 	if h.config == nil || h.authManager == nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Server not configured"))
+		return
+	}
+
+	if h.config.Auth.AdminUsername == "" {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Admin not configured"))
 		return
 	}
 
@@ -686,12 +698,16 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[DEBUG] ChangePassword: validating against username=%s", h.config.Auth.AdminUsername)
+
 	if err := h.authManager.ValidateCredentials(h.config.Auth.AdminUsername, req.CurrentPassword); err != nil {
+		log.Printf("[DEBUG] ChangePassword: validation failed: %v", err)
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
 
 	if err := h.authManager.UpdatePassword(h.config.Auth.AdminUsername, req.NewPassword); err != nil {
+		log.Printf("[DEBUG] ChangePassword: update failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
 		return
 	}
