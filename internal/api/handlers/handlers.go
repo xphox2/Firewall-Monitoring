@@ -138,9 +138,17 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	csrfToken, _ := auth.GenerateSecureToken(32)
+	if csrfToken == "" {
+		csrfToken = "fallback-csrf-token"
+	}
 
-	c.SetCookie("auth_token", token, 86400, "/", "", h.config.Server.CookieSecure, true)
-	c.SetCookie("csrf_token", csrfToken, 86400, "/", "", h.config.Server.CookieSecure, true)
+	cookieSecure := true
+	if h.config != nil {
+		cookieSecure = h.config.Server.CookieSecure
+	}
+
+	c.SetCookie("auth_token", token, 86400, "/", "", cookieSecure, true)
+	c.SetCookie("csrf_token", csrfToken, 86400, "/", "", cookieSecure, true)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":    "Login successful",
