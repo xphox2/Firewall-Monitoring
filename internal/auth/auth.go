@@ -76,9 +76,22 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		return ErrAccountLocked
 	}
 
-	// Simple auth: admin/admin or from config
-	if (username == "admin" && password == "admin") ||
-		(username == am.config.Auth.AdminUsername && password == am.config.Auth.AdminPassword) {
+	// Check against database
+	if am.db != nil {
+		adminRaw, err := am.db.GetAdminByUsername()
+		if err == nil && adminRaw != nil {
+			admin, ok := adminRaw.(*AdminAuth)
+			if ok && admin.Username == username {
+				if am.CheckPassword(password, admin.Password) {
+					am.loginAttempts[username] = []time.Time{}
+					return nil
+				}
+			}
+		}
+	}
+
+	// Fallback to config credentials
+	if username == am.config.Auth.AdminUsername && password == am.config.Auth.AdminPassword {
 		am.loginAttempts[username] = []time.Time{}
 		return nil
 	}
