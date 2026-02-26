@@ -121,6 +121,12 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 	if am.config == nil {
 		return "", errors.New("configuration not available")
 	}
+
+	secretKey := am.config.Server.JWTSecretKey
+	if secretKey == "" {
+		secretKey = "default-dev-secret-change-in-production"
+	}
+
 	claims := Claims{
 		Username: username,
 		UserID:   userID,
@@ -132,12 +138,17 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(am.config.Server.JWTSecretKey))
+	return token.SignedString([]byte(secretKey))
 }
 
 func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 	if am.config == nil {
 		return nil, ErrInvalidToken
+	}
+
+	secretKey := am.config.Server.JWTSecretKey
+	if secretKey == "" {
+		secretKey = "default-dev-secret-change-in-production"
 	}
 
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
