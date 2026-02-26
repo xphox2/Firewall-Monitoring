@@ -94,25 +94,27 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 			// Handle both auth.AdminAuth and database.AdminAuth types
 			switch admin := adminRaw.(type) {
 			case *database.AdminAuth:
-				if admin.Username == username {
-					if admin.Password != "" && bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
-						am.loginAttempts[username] = nil
-						return nil
-					}
-				}
-			case *AdminAuth:
-				if admin.Username == username {
+				if admin.Username == username && admin.Password != "" {
 					if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
 						am.loginAttempts[username] = nil
 						return nil
 					}
 				}
+			case *AdminAuth:
+				if admin.Username == username && admin.Password != "" {
+					if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
+						am.loginAttempts[username] = nil
+						return nil
+					}
+				}
+			default:
+				log.Printf("[DEBUG] Unknown admin type: %T", adminRaw)
 			}
 		}
 	}
 
 	// Fallback: config credentials
-	if am.config != nil {
+	if am.config != nil && am.config.Auth.AdminUsername != "" && am.config.Auth.AdminPassword != "" {
 		if username == am.config.Auth.AdminUsername && password == am.config.Auth.AdminPassword {
 			am.loginAttempts[username] = nil
 			return nil

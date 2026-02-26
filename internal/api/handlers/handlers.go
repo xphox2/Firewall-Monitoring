@@ -90,7 +90,11 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 }
 
 func (h *Handler) Login(c *gin.Context) {
+	log.Printf("[DEBUG] Login request received from %s", c.ClientIP())
+	log.Printf("[DEBUG] authManager = %v, config = %v", h.authManager, h.config)
+
 	if h.authManager == nil {
+		log.Printf("[DEBUG] FAILURE: authManager is NIL")
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Authentication not configured"))
 		return
 	}
@@ -154,7 +158,7 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	c.SetCookie("auth_token", token, 86400, "/", "", cookieSecure, true)
-	c.SetCookie("csrf_token", csrfToken, 86400, "/", "", cookieSecure, true)
+	c.SetCookie("csrf_token", csrfToken, 86400, "/", "", cookieSecure, false)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":    "Login successful",

@@ -100,7 +100,7 @@ func Load() *Config {
 			TLSKeyFile:     getEnv("SERVER_TLS_KEY", "/etc/fortigate-mon/tls.key"),
 			AdminSecretKey: getEnv("ADMIN_SECRET_KEY", ""),
 			JWTSecretKey:   getEnv("JWT_SECRET_KEY", ""),
-			CookieSecure:   getBoolEnv("COOKIE_SECURE", true),
+			CookieSecure:   getBoolEnv("COOKIE_SECURE", false),
 			CookieSameSite: getEnv("COOKIE_SAMESITE", "Strict"),
 		},
 		SNMP: SNMPConfig{
