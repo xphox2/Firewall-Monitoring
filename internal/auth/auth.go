@@ -64,7 +64,12 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		maxAttempts = am.config.Auth.MaxLoginAttempts
 	}
 
-	if len(am.loginAttempts[username]) >= maxAttempts {
+	attempts := am.loginAttempts[username]
+	if attempts == nil {
+		attempts = []time.Time{}
+	}
+
+	if len(attempts) >= maxAttempts {
 		return ErrAccountLocked
 	}
 
@@ -101,7 +106,10 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	}
 
 	// Record failed attempt
-	am.loginAttempts[username] = append(am.loginAttempts[username], time.Now())
+	if attempts == nil {
+		attempts = []time.Time{}
+	}
+	am.loginAttempts[username] = append(attempts, time.Now())
 	return ErrInvalidCredentials
 }
 
