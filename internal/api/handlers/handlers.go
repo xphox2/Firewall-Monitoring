@@ -687,9 +687,9 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if h.config.Auth.AdminUsername == "" {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Admin not configured"))
-		return
+	currentUsername := h.config.Auth.AdminUsername
+	if currentUsername == "" {
+		currentUsername = "admin"
 	}
 
 	var req ChangePasswordRequest
@@ -698,19 +698,27 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[DEBUG] ChangePassword: validating against username=%s", h.config.Auth.AdminUsername)
-
-	if err := h.authManager.ValidateCredentials(h.config.Auth.AdminUsername, req.CurrentPassword); err != nil {
-		log.Printf("[DEBUG] ChangePassword: validation failed: %v", err)
+	if err := h.authManager.ValidateCredentials(currentUsername, req.CurrentPassword); err != nil {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
 
-	if err := h.authManager.UpdatePassword(h.config.Auth.AdminUsername, req.NewPassword); err != nil {
-		log.Printf("[DEBUG] ChangePassword: update failed: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
+	newHashedPassword, err := h.authManager.HashPassword(req.NewPassword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to hash password"))
 		return
 	}
 
+	if h.db != nil {
+		err := h.db.UpdateAdminPassword(1, newHashedPassword)
+		if err == nil {
+			h.config.Auth.AdminPassword = req.NewPassword
+			c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
+			return
+		}
+		log.Printf("[DEBUG] DB update failed, using config fallback: %v", err)
+	}
+
+	h.config.Auth.AdminPassword = req.NewPassword
 	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
 }
