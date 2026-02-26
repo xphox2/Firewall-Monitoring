@@ -4,20 +4,21 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"fortiGate-Mon/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrTokenExpired       = errors.New("token has expired")
 	ErrInvalidToken       = errors.New("invalid token")
-	ErrAccountLocked      = errors.New("account is locked due to too many failed attempts")
+	ErrAccountLocked      = errors.New("account is locked")
 )
 
 type Claims struct {
@@ -26,14 +27,27 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+type Database interface {
+	GetAdminByUsername() (interface{}, error)
+	UpdateAdminPassword(id uint, password string) error
+}
+
+type AdminAuth struct {
+	ID       uint
+	Username string
+	Password string
+}
+
 type AuthManager struct {
+	db            Database
 	config        *config.Config
 	loginAttempts map[string][]time.Time
 	attemptsMu    sync.RWMutex
 }
 
-func NewAuthManager(cfg *config.Config, db interface{}) *AuthManager {
+func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 	return &AuthManager{
+		db:            db,
 		config:        cfg,
 		loginAttempts: make(map[string][]time.Time),
 	}
@@ -43,10 +57,37 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
 
-	// HARDCODED: admin / admin
-	if username == "admin" && password == "admin" {
-		am.loginAttempts[username] = []time.Time{}
-		return nil
+	// Check lockout
+	maxAttempts := 5
+	if am.config != nil {
+		maxAttempts = am.config.Auth.MaxLoginAttempts
+	}
+
+	if len(am.loginAttempts[username]) >= maxAttempts {
+		return ErrAccountLocked
+	}
+
+	// Try database first
+	if am.db != nil {
+		adminRaw, err := am.db.GetAdminByUsername()
+		if err == nil && adminRaw != nil {
+			if admin, ok := adminRaw.(*AdminAuth); ok {
+				if admin.Username == username {
+					if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) == nil {
+						am.loginAttempts[username] = nil
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback: config credentials
+	if am.config != nil {
+		if username == am.config.Auth.AdminUsername && password == am.config.Auth.AdminPassword {
+			am.loginAttempts[username] = nil
+			return nil
+		}
 	}
 
 	// Record failed attempt
@@ -54,8 +95,23 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	return ErrInvalidCredentials
 }
 
+func (am *AuthManager) HashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+func (am *AuthManager) CheckPassword(password, hash string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
 func (am *AuthManager) GenerateToken(username string, userID uint) (string, error) {
-	secretKey := "hardcoded-secret-key-for-dev"
+	secretKey := "dev-secret-key"
+	if am.config != nil && am.config.Server.JWTSecretKey != "" {
+		secretKey = am.config.Server.JWTSecretKey
+	}
 
 	claims := Claims{
 		Username: username,
@@ -63,7 +119,6 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "firewall-mon",
 		},
 	}
 
@@ -72,17 +127,18 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 }
 
 func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
-	secretKey := "hardcoded-secret-key-for-dev"
+	secretKey := "dev-secret-key"
+	if am.config != nil && am.config.Server.JWTSecretKey != "" {
+		secretKey = am.config.Server.JWTSecretKey
+	}
 
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
 		return []byte(secretKey), nil
 	})
 
 	if err != nil {
-		return nil, err
+		log.Printf("Token parse error: %v", err)
+		return nil, ErrInvalidToken
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
@@ -100,14 +156,28 @@ func GenerateSecureToken(length int) (string, error) {
 	return base64.URLEncoding.EncodeToString(b)[:length], nil
 }
 
-func (am *AuthManager) HashPassword(password string) (string, error) {
-	return password, nil
-}
-
-func (am *AuthManager) CheckPassword(password, hash string) bool {
-	return password == hash
-}
-
 func (am *AuthManager) UpdatePassword(username, newPassword string) error {
-	return nil
+	if am.db == nil {
+		return errors.New("database not configured")
+	}
+
+	adminRaw, err := am.db.GetAdminByUsername()
+	if err != nil {
+		return err
+	}
+	if adminRaw == nil {
+		return errors.New("admin not found")
+	}
+
+	admin, ok := adminRaw.(*AdminAuth)
+	if !ok {
+		return errors.New("invalid admin data")
+	}
+
+	hashedPassword, err := am.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	return am.db.UpdateAdminPassword(admin.ID, hashedPassword)
 }

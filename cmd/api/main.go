@@ -46,6 +46,12 @@ func main() {
 
 	authManager := auth.NewAuthManager(cfg, db)
 
+	// Initialize admin in database
+	if db != nil {
+		hashedPassword, _ := authManager.HashPassword(cfg.Auth.AdminPassword)
+		db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword)
+	}
+
 	handler := handlers.NewHandler(cfg, authManager, db)
 
 	snmpClient, err := snmp.NewSNMPClient(cfg)
