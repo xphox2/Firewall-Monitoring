@@ -125,7 +125,7 @@ func Load() *Config {
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:    getEnv("ADMIN_PASSWORD", getDefaultPassword()),
+			AdminPassword:    getEnv("ADMIN_PASSWORD", "admin"),
 			BcryptCost:       getIntEnv("BCRYPT_COST", 12),
 			TokenExpiry:      getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts: getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
