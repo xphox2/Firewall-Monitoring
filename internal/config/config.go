@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -104,7 +106,7 @@ func Load() *Config {
 		SNMP: SNMPConfig{
 			FortiGateHost:  getEnv("FORTIGATE_HOST", "192.168.1.1"),
 			FortiGatePort:  getIntEnv("FORTIGATE_SNMP_PORT", 161),
-			Community:      getEnv("SNMP_COMMUNITY", "public"),
+			Community:      getEnv("SNMP_COMMUNITY", ""),
 			Version:        getEnv("SNMP_VERSION", "2c"),
 			Timeout:        getDurationEnv("SNMP_TIMEOUT", 5*time.Second),
 			Retries:        getIntEnv("SNMP_RETRIES", 2),
@@ -123,7 +125,7 @@ func Load() *Config {
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:    getEnv("ADMIN_PASSWORD", "changeme123!"),
+			AdminPassword:    getEnv("ADMIN_PASSWORD", generateRandomPassword(16)),
 			BcryptCost:       getIntEnv("BCRYPT_COST", 12),
 			TokenExpiry:      getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts: getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
@@ -158,6 +160,16 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func generateRandomPassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+	b := make([]byte, length)
+	for i := range b {
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		b[i] = charset[n.Int64()]
+	}
+	return string(b)
 }
 
 func getIntEnv(key string, defaultValue int) int {

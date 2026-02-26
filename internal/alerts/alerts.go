@@ -30,7 +30,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier) *AlertManager
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	alerts := []models.Alert{}
 
-	am.mu.RLock()
+	am.mu.Lock()
 	now := time.Now()
 
 	if status.CPUUsage >= am.config.Alerts.CPUThreshold {
@@ -100,7 +100,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 			am.lastAlert[key] = now
 		}
 	}
-	am.mu.RUnlock()
+	am.mu.Unlock()
 
 	for _, alert := range alerts {
 		if err := am.notifier.SendAlert(&alert); err != nil {
@@ -114,7 +114,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats) error {
 	alerts := []models.Alert{}
 
-	am.mu.RLock()
+	am.mu.Lock()
 	now := time.Now()
 
 	for _, iface := range interfaces {
@@ -134,7 +134,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats)
 			}
 		}
 	}
-	am.mu.RUnlock()
+	am.mu.Unlock()
 
 	for _, alert := range alerts {
 		if err := am.notifier.SendAlert(&alert); err != nil {

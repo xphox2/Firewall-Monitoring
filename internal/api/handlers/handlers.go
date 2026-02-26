@@ -1,8 +1,9 @@
 package handlers
 
 import (
-	"fmt"
+	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -104,26 +105,30 @@ func (h *Handler) Login(c *gin.Context) {
 
 	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password); err != nil {
 		if h.db != nil {
-			h.db.SaveLoginAttempt(&models.LoginAttempt{
+			if err := h.db.SaveLoginAttempt(&models.LoginAttempt{
 				Timestamp: time.Now(),
 				Username:  creds.Username,
 				IPAddress: ip,
 				Success:   false,
 				UserAgent: userAgent,
-			})
+			}); err != nil {
+				log.Printf("Failed to save login attempt: %v", err)
+			}
 		}
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid credentials"))
 		return
 	}
 
 	if h.db != nil {
-		h.db.SaveLoginAttempt(&models.LoginAttempt{
+		if err := h.db.SaveLoginAttempt(&models.LoginAttempt{
 			Timestamp: time.Now(),
 			Username:  creds.Username,
 			IPAddress: ip,
 			Success:   true,
 			UserAgent: userAgent,
-		})
+		}); err != nil {
+			log.Printf("Failed to save login attempt: %v", err)
+		}
 	}
 
 	token, err := h.authManager.GenerateToken(creds.Username, 1)
@@ -165,8 +170,14 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 		return
 	}
 
-	interfaces, _ := h.snmpClient.GetInterfaceStats()
-	sensors, _ := h.snmpClient.GetHardwareSensors()
+	interfaces, err := h.snmpClient.GetInterfaceStats()
+	if err != nil {
+		log.Printf("Failed to get interface stats: %v", err)
+	}
+	sensors, err := h.snmpClient.GetHardwareSensors()
+	if err != nil {
+		log.Printf("Failed to get hardware sensors: %v", err)
+	}
 
 	var recentAlerts []models.Alert
 	if h.db != nil {
@@ -295,13 +306,27 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 	}
 
 	id := c.Param("id")
-	var idUint uint
-	fmt.Sscanf(id, "%d", &idUint)
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
 
-	fg, err := h.db.GetFortiGate(idUint)
+	fg, err := h.db.GetFortiGate(uint(idUint))
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("FortiGate not found"))
 		return
+	}
+
+	allowedFields := map[string]bool{
+		"name":           true,
+		"hostname":       true,
+		"ip_address":     true,
+		"snmp_port":      true,
+		"snmp_community": true,
+		"location":       true,
+		"description":    true,
+		"enabled":        true,
 	}
 
 	var updates map[string]interface{}
@@ -310,7 +335,19 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.Gorm().Model(fg).Updates(updates).Error; err != nil {
+	filteredUpdates := make(map[string]interface{})
+	for key, value := range updates {
+		if allowedFields[key] {
+			filteredUpdates[key] = value
+		}
+	}
+
+	if len(filteredUpdates) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		return
+	}
+
+	if err := h.db.Gorm().Model(fg).Updates(filteredUpdates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update FortiGate"))
 		return
 	}
@@ -325,10 +362,13 @@ func (h *Handler) DeleteFortiGate(c *gin.Context) {
 	}
 
 	id := c.Param("id")
-	var idUint uint
-	fmt.Sscanf(id, "%d", &idUint)
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
 
-	if err := h.db.DeleteFortiGate(idUint); err != nil {
+	if err := h.db.DeleteFortiGate(uint(idUint)); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete FortiGate"))
 		return
 	}
@@ -379,10 +419,24 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	}
 
 	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
 	var conn models.FortiGateConnection
-	if err := h.db.Gorm().First(&conn, id).Error; err != nil {
+	if err := h.db.Gorm().First(&conn, idUint).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
 		return
+	}
+
+	allowedFields := map[string]bool{
+		"name":         true,
+		"source_fg_id": true,
+		"dest_fg_id":   true,
+		"description":  true,
+		"enabled":      true,
 	}
 
 	var updates map[string]interface{}
@@ -391,7 +445,19 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.Gorm().Model(&conn).Updates(updates).Error; err != nil {
+	filteredUpdates := make(map[string]interface{})
+	for key, value := range updates {
+		if allowedFields[key] {
+			filteredUpdates[key] = value
+		}
+	}
+
+	if len(filteredUpdates) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		return
+	}
+
+	if err := h.db.Gorm().Model(&conn).Updates(filteredUpdates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update connection"))
 		return
 	}
@@ -406,7 +472,13 @@ func (h *Handler) DeleteFortiGateConnection(c *gin.Context) {
 	}
 
 	id := c.Param("id")
-	if err := h.db.Gorm().Delete(&models.FortiGateConnection{}, id).Error; err != nil {
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	if err := h.db.Gorm().Delete(&models.FortiGateConnection{}, idUint).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete connection"))
 		return
 	}
@@ -441,7 +513,25 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	allowedKeys := map[string]bool{
+		"cpu_threshold":     true,
+		"memory_threshold":  true,
+		"disk_threshold":    true,
+		"session_threshold": true,
+		"email_enabled":     true,
+		"slack_webhook":     true,
+		"discord_webhook":   true,
+		"webhook_url":       true,
+	}
+
+	var validSettings []models.SystemSetting
 	for _, s := range settings {
+		if allowedKeys[s.Key] {
+			validSettings = append(validSettings, s)
+		}
+	}
+
+	for _, s := range validSettings {
 		existing := models.SystemSetting{Key: s.Key}
 		if err := h.db.Gorm().FirstOrCreate(&existing, models.SystemSetting{Key: s.Key}).Error; err != nil {
 			continue
@@ -450,7 +540,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			existing.Value = s.Value
 			existing.Label = s.Label
 			existing.Category = s.Category
-			h.db.Gorm().Save(&existing)
+			if err := h.db.Gorm().Save(&existing).Error; err != nil {
+				log.Printf("Failed to save setting %s: %v", s.Key, err)
+				continue
+			}
 		}
 	}
 
@@ -464,13 +557,19 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 	}
 
 	var fortigates []models.FortiGate
-	h.db.Gorm().Find(&fortigates)
+	if err := h.db.Gorm().Find(&fortigates).Error; err != nil {
+		log.Printf("Failed to get fortigates: %v", err)
+	}
 
 	var connections []models.FortiGateConnection
-	h.db.Gorm().Preload("SourceFG").Preload("DestFG").Find(&connections)
+	if err := h.db.Gorm().Preload("SourceFG").Preload("DestFG").Find(&connections).Error; err != nil {
+		log.Printf("Failed to get connections: %v", err)
+	}
 
 	var recentAlerts []models.Alert
-	h.db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts)
+	if err := h.db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
+		log.Printf("Failed to get recent alerts: %v", err)
+	}
 
 	dashboard := models.DashboardData{
 		FortiGates:   fortigates,

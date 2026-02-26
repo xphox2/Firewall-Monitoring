@@ -3,7 +3,9 @@ package uptime
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -84,24 +86,46 @@ func (ut *UptimeTracker) saveBaseline() error {
 		return err
 	}
 
-	dir := ut.config.Uptime.BaselineFile[:len(ut.config.Uptime.BaselineFile)-len("/uptime.json")]
+	dir := filepath.Dir(ut.config.Uptime.BaselineFile)
+	if dir == "." {
+		dir = "/var/lib/fortigate-mon"
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	return os.WriteFile(ut.config.Uptime.BaselineFile, data, 0644)
+	return os.WriteFile(ut.config.Uptime.BaselineFile, data, 0600)
+}
+
+func (ut *UptimeTracker) saveBaselineToFile(baseline *UptimeBaseline) error {
+	if ut.config.Uptime.BaselineFile == "" {
+		return nil
+	}
+
+	data, err := json.Marshal(baseline)
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(ut.config.Uptime.BaselineFile)
+	if dir == "." {
+		dir = "/var/lib/fortigate-mon"
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(ut.config.Uptime.BaselineFile, data, 0600)
 }
 
 func (ut *UptimeTracker) RecordUptime(currentUptime uint64) {
 	ut.mu.Lock()
-	defer ut.mu.Unlock()
 
 	if ut.baseline == nil {
 		ut.baseline = &UptimeBaseline{
 			StartTime:   time.Now(),
 			StartUptime: currentUptime,
 		}
-		ut.saveBaseline()
 	}
 
 	if ut.lastUptime > 0 && currentUptime < ut.lastUptime {
@@ -109,6 +133,13 @@ func (ut *UptimeTracker) RecordUptime(currentUptime uint64) {
 	}
 
 	ut.lastUptime = currentUptime
+
+	baselineToSave := ut.baseline
+	ut.mu.Unlock()
+
+	if err := ut.saveBaselineToFile(baselineToSave); err != nil {
+		log.Printf("Failed to save baseline: %v", err)
+	}
 }
 
 func (ut *UptimeTracker) GetStats() UptimeStats {
@@ -167,7 +198,6 @@ func (ut *UptimeTracker) CalculateFiveNines() string {
 
 func (ut *UptimeTracker) Reset() error {
 	ut.mu.Lock()
-	defer ut.mu.Unlock()
 
 	ut.baseline = &UptimeBaseline{
 		StartTime:   time.Now(),
@@ -176,7 +206,10 @@ func (ut *UptimeTracker) Reset() error {
 	ut.downtime = 0
 	ut.downEvents = 0
 
-	return ut.saveBaseline()
+	baselineToSave := ut.baseline
+	ut.mu.Unlock()
+
+	return ut.saveBaselineToFile(baselineToSave)
 }
 
 func FormatUptime(uptime uint64) string {

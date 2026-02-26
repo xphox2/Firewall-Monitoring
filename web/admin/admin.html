@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FortiGate Monitor - Admin</title>
+    <title>Firewall Monitor - Admin</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
@@ -292,6 +292,23 @@
         let currentDevices = [];
         let currentConnections = [];
 
+        function getCsrfToken() {
+            const cookies = document.cookie.split(';');
+            for (let c of cookies) {
+                const [k, v] = c.trim().split('=');
+                if (k === 'csrf_token') return v;
+            }
+            return '';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const s = String(str);
+            return s.replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
         async function checkAuth() {
             try {
                 await fetch(`${API_BASE}/dashboard`);
@@ -323,7 +340,7 @@
         }
 
         async function loadDashboard() {
-            const res = await fetch(`${API_BASE}/dashboard`);
+            const res = await fetch(`${API_BASE}/dashboard`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
             const data = (await res.json()).data;
             
             document.getElementById('total-devices').textContent = data.fortigates?.length || 0;
@@ -336,25 +353,25 @@
                 <tr>
                     <td>${new Date(a.timestamp).toLocaleString()}</td>
                     <td>FG-${a.fortigate_id}</td>
-                    <td>${a.alert_type}</td>
-                    <td><span class="status-badge ${a.severity}">${a.severity.toUpperCase()}</span></td>
-                    <td>${a.message}</td>
+                    <td>${escapeHtml(a.alert_type)}</td>
+                    <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
+                    <td>${escapeHtml(a.message)}</td>
                 </tr>
             `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
         }
 
         async function loadDevices() {
-            const res = await fetch(`${API_BASE}/fortigates`);
+            const res = await fetch(`${API_BASE}/fortigates`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
             const data = (await res.json()).data;
             currentDevices = data || [];
             
             const tbody = document.querySelector('#devices-table tbody');
             tbody.innerHTML = currentDevices.map(d => `
                 <tr>
-                    <td>${d.name}</td>
-                    <td>${d.ip_address}</td>
-                    <td>${d.location || '-'}</td>
-                    <td><span class="status-badge ${d.status}">${d.status.toUpperCase()}</span></td>
+                    <td>${escapeHtml(d.name)}</td>
+                    <td>${escapeHtml(d.ip_address)}</td>
+                    <td>${escapeHtml(d.location) || '-'}</td>
+                    <td><span class="status-badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
                     <td>
                         <button class="btn secondary" onclick="editDevice(${d.id})">Edit</button>
                         <button class="btn danger" onclick="deleteDevice(${d.id})">Delete</button>
@@ -365,8 +382,8 @@
 
         async function loadConnections() {
             const [devicesRes, connsRes] = await Promise.all([
-                fetch(`${API_BASE}/fortigates`),
-                fetch(`${API_BASE}/connections`)
+                fetch(`${API_BASE}/fortigates`, { headers: { 'X-CSRF-Token': getCsrfToken() } }),
+                fetch(`${API_BASE}/connections`, { headers: { 'X-CSRF-Token': getCsrfToken() } })
             ]);
             currentDevices = (await devicesRes.json()).data || [];
             currentConnections = (await connsRes.json()).data || [];
@@ -374,11 +391,11 @@
             const tbody = document.querySelector('#connections-table tbody');
             tbody.innerHTML = currentConnections.map(c => `
                 <tr>
-                    <td>${c.name}</td>
-                    <td>${c.source_fg?.name || c.source_fg_id}</td>
-                    <td>${c.dest_fg?.name || c.dest_fg_id}</td>
-                    <td>${c.connection_type?.toUpperCase() || 'IPSEC'}</td>
-                    <td><span class="status-badge ${c.status}">${c.status.toUpperCase()}</span></td>
+                    <td>${escapeHtml(c.name)}</td>
+                    <td>${escapeHtml(c.source_fg?.name) || c.source_fg_id}</td>
+                    <td>${escapeHtml(c.dest_fg?.name) || c.dest_fg_id}</td>
+                    <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
+                    <td><span class="status-badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
                     <td>
                         <button class="btn danger" onclick="deleteConnection(${c.id})">Delete</button>
                     </td>
@@ -413,9 +430,9 @@
                 node.style.left = x + 'px';
                 node.style.top = y + 'px';
                 node.innerHTML = `
-                    <div class="name">${device.name}</div>
-                    <div class="ip">${device.ip_address}</div>
-                    <div class="status"><span class="status-badge ${device.status}">${device.status}</span></div>
+                    <div class="name">${escapeHtml(device.name)}</div>
+                    <div class="ip">${escapeHtml(device.ip_address)}</div>
+                    <div class="status"><span class="status-badge ${escapeHtml(device.status)}">${escapeHtml(device.status)}</span></div>
                 `;
                 container.appendChild(node);
             });
@@ -450,7 +467,7 @@
         }
 
         async function loadSettings() {
-            const res = await fetch(`${API_BASE}/settings`);
+            const res = await fetch(`${API_BASE}/settings`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
             const settings = (await res.json()).data || [];
             
             const alertSettings = settings.filter(s => s.category === 'alerts');
@@ -481,31 +498,31 @@
         }
 
         async function loadAlerts() {
-            const res = await fetch(`${API_BASE}/alerts`);
+            const res = await fetch(`${API_BASE}/alerts`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
             const alerts = (await res.json()).data || [];
             
             document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
                 <tr>
                     <td>${new Date(a.timestamp).toLocaleString()}</td>
                     <td>FG-${a.fortigate_id}</td>
-                    <td>${a.alert_type}</td>
-                    <td><span class="status-badge ${a.severity}">${a.severity.toUpperCase()}</span></td>
-                    <td>${a.message}</td>
+                    <td>${escapeHtml(a.alert_type)}</td>
+                    <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
+                    <td>${escapeHtml(a.message)}</td>
                 </tr>
             `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
         }
 
         async function loadTraps() {
-            const res = await fetch(`${API_BASE}/traps`);
+            const res = await fetch(`${API_BASE}/traps`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
             const traps = (await res.json()).data || [];
             
             document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
                 <tr>
                     <td>${new Date(t.timestamp).toLocaleString()}</td>
-                    <td>${t.source_ip}</td>
-                    <td>${t.trap_type}</td>
-                    <td><span class="status-badge ${t.severity}">${t.severity.toUpperCase()}</span></td>
-                    <td>${t.message}</td>
+                    <td>${escapeHtml(t.source_ip)}</td>
+                    <td>${escapeHtml(t.trap_type)}</td>
+                    <td><span class="status-badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
+                    <td>${escapeHtml(t.message)}</td>
                 </tr>
             `).join('') || '<tr><td colspan="5" class="loading">No traps</td></tr>';
         }
@@ -551,7 +568,10 @@
             try {
                 const response = await fetch(`${API_BASE}/fortigates/test`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': getCsrfToken()
+                    },
                     body: JSON.stringify({
                         ip_address: ip,
                         snmp_port: parseInt(port),
@@ -591,7 +611,7 @@
             const method = id ? 'PUT' : 'POST';
             const url = id ? `${API_BASE}/fortigates/${id}` : `${API_BASE}/fortigates`;
             
-            await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+            await fetch(url, { method, headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}, body: JSON.stringify(data) });
             closeDeviceModal();
             loadDevices();
         });
@@ -600,7 +620,7 @@
         
         async function deleteDevice(id) {
             if (!confirm('Delete this FortiGate?')) return;
-            await fetch(`${API_BASE}/fortigates/${id}`, { method: 'DELETE' });
+            await fetch(`${API_BASE}/fortigates/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': getCsrfToken() } });
             loadDevices();
         }
 
@@ -608,7 +628,7 @@
             const selects = ['connection-source', 'connection-dest'];
             selects.forEach(sid => {
                 const sel = document.getElementById(sid);
-                sel.innerHTML = currentDevices.map(d => `<option value="${d.id}">${d.name} (${d.ip_address})</option>`).join('');
+                sel.innerHTML = currentDevices.map(d => `<option value="${d.id}">${escapeHtml(d.name)} (${escapeHtml(d.ip_address)})</option>`).join('');
             });
         }
 
@@ -638,7 +658,7 @@
             
             await fetch(`${API_BASE}/connections`, { 
                 method: 'POST', 
-                headers: {'Content-Type': 'application/json'}, 
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}, 
                 body: JSON.stringify(data) 
             });
             closeConnectionModal();
@@ -647,7 +667,7 @@
 
         async function deleteConnection(id) {
             if (!confirm('Delete this connection?')) return;
-            await fetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' });
+            await fetch(`${API_BASE}/connections/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': getCsrfToken() } });
             loadConnections();
         }
 
@@ -673,7 +693,10 @@
 
             const response = await fetch(`${API_BASE}/settings/password`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': getCsrfToken()
+                },
                 body: JSON.stringify({
                     current_password: current,
                     new_password: newPass
@@ -703,7 +726,7 @@
             
             await fetch(`${API_BASE}/settings`, { 
                 method: 'POST', 
-                headers: {'Content-Type': 'application/json'}, 
+                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}, 
                 body: JSON.stringify(settings) 
             });
             alert('Settings saved!');

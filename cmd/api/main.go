@@ -47,7 +47,11 @@ func main() {
 	authManager := auth.NewAuthManager(cfg, db)
 
 	if db != nil {
-		hashedPassword, _ := authManager.HashPassword(cfg.Auth.AdminPassword)
+		hashedPassword, err := authManager.HashPassword(cfg.Auth.AdminPassword)
+		if err != nil {
+			log.Printf("Warning: Failed to hash admin password: %v", err)
+			hashedPassword = ""
+		}
 		if err := db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword); err != nil {
 			log.Printf("Warning: Failed to initialize admin: %v", err)
 		} else {
@@ -135,6 +139,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 	admin := router.Group("/admin")
 	admin.Use(middleware.AdminAuth(authManager))
+	admin.Use(middleware.CSRFProtection())
 	{
 		admin.GET("", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", nil)

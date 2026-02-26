@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FortiGate Monitor - Public Dashboard</title>
+    <title>Firewall Monitor - Public Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; color: #fff; }
@@ -43,7 +43,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>FortiGate Monitor</h1>
+            <h1>Firewall Monitor</h1>
             <p>Real-time firewall status and performance metrics</p>
         </header>
 
@@ -82,13 +82,21 @@
         </div>
 
         <footer>
-            <p>FortiGate Monitor &copy; 2024 | <a href="/admin" style="color: #00d4ff;">Admin Login</a></p>
+            <p>Firewall Monitor &copy; 2024 | <a href="/admin" style="color: #00d4ff;">Admin Login</a></p>
         </footer>
     </div>
 
     <script>
         const API_BASE = '/api';
         let refreshInterval;
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const s = String(str);
+            return s.replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
 
         async function fetchDashboard() {
             try {
@@ -141,8 +149,8 @@
 
             container.innerHTML = interfaces.map(iface => `
                 <div class="interface-card">
-                    <div class="name">${iface.name || `Interface ${iface.index}`}</div>
-                    <span class="status ${iface.status}">${iface.status.toUpperCase()}</span>
+                    <div class="name">${escapeHtml(iface.name) || `Interface ${iface.index}`}</div>
+                    <span class="status ${escapeHtml(iface.status)}">${escapeHtml(iface.status).toUpperCase()}</span>
                     <div class="interface-stats">
                         <div>
                             <div>↓ ${formatBytes(iface.in_bytes)}</div>

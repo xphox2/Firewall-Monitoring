@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/smtp"
 	"time"
 
 	"fortiGate-Mon/internal/config"
@@ -60,9 +61,13 @@ func (n *Notifier) SendAlert(alert *models.Alert) error {
 }
 
 func (n *Notifier) sendEmail(alert *models.Alert) error {
-	subject := fmt.Sprintf("[%s] FortiGate Alert: %s", alert.Severity, alert.AlertType)
+	if n.config.Alerts.SMTPHost == "" {
+		return nil
+	}
+
+	subject := fmt.Sprintf("[%s] Firewall Alert: %s", alert.Severity, alert.AlertType)
 	body := fmt.Sprintf(`
-FortiGate Monitoring Alert
+Firewall Monitoring Alert
 ===========================
 
 Type: %s
@@ -74,12 +79,23 @@ Metric: %s
 Current Value: %.2f
 Threshold: %.2f
 
-This is an automated alert from your FortiGate monitoring system.
+This is an automated alert from your Firewall monitoring system.
 `, alert.AlertType, alert.Severity, alert.Timestamp.Format(time.RFC3339),
 		alert.Message, alert.MetricName, alert.CurrentValue, alert.Threshold)
 
-	_ = subject
-	_ = body
+	addr := fmt.Sprintf("%s:%d", n.config.Alerts.SMTPHost, n.config.Alerts.SMTPPort)
+
+	var auth smtp.Auth
+	if n.config.Alerts.SMTPUsername != "" {
+		auth = smtp.PlainAuth("", n.config.Alerts.SMTPUsername, n.config.Alerts.SMTPPassword, n.config.Alerts.SMTPHost)
+	}
+
+	err := smtp.SendMail(addr, auth, n.config.Alerts.SMTPFrom,
+		[]string{n.config.Alerts.SMTPTo}, []byte("Subject: "+subject+"\n\n"+body))
+
+	if err != nil {
+		return fmt.Errorf("failed to send email: %w", err)
+	}
 
 	return nil
 }
@@ -96,9 +112,9 @@ func (n *Notifier) sendSlack(alert *models.Alert) error {
 		"attachments": []map[string]interface{}{
 			{
 				"color":  color,
-				"title":  fmt.Sprintf("FortiGate Alert: %s", alert.AlertType),
+				"title":  fmt.Sprintf("Firewall Alert: %s", alert.AlertType),
 				"text":   alert.Message,
-				"footer": "FortiGate Monitor",
+				"footer": "Firewall Monitor",
 				"ts":     alert.Timestamp.Unix(),
 				"fields": []map[string]interface{}{
 					{"title": "Severity", "value": alert.Severity, "short": true},
@@ -148,12 +164,12 @@ func (n *Notifier) sendDiscord(alert *models.Alert) error {
 	payload := map[string]interface{}{
 		"embeds": []map[string]interface{}{
 			{
-				"title":       fmt.Sprintf("FortiGate Alert: %s", alert.AlertType),
+				"title":       fmt.Sprintf("Firewall Alert: %s", alert.AlertType),
 				"description": alert.Message,
 				"color":       color,
 				"timestamp":   alert.Timestamp.Format(time.RFC3339),
 				"footer": map[string]interface{}{
-					"text": "FortiGate Monitor",
+					"text": "Firewall Monitor",
 				},
 				"fields": []map[string]interface{}{
 					{"name": "Severity", "value": alert.Severity, "inline": true},

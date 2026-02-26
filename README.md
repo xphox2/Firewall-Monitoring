@@ -1,6 +1,6 @@
-# FortiGate Monitor
+# Firewall Monitor
 
-A comprehensive FortiGate firewall monitoring system with SNMP polling, trap reception, alerting, and uptime tracking.
+A comprehensive firewall monitoring system with SNMP polling, trap reception, alerting, and uptime tracking.
 
 ## Features
 

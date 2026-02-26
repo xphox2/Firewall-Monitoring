@@ -52,7 +52,7 @@ func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 
 func CSRFProtection() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Method == "POST" {
+		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" || c.Request.Method == "PATCH" {
 			csrfToken := c.GetHeader("X-CSRF-Token")
 			cookieToken, err := c.Cookie("csrf_token")
 			if err != nil || csrfToken == "" || csrfToken != cookieToken {
@@ -108,18 +108,14 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 		if origin != "" {
 			allowed := false
 			for _, allowedOrigin := range allowedOrigins {
-				if origin == allowedOrigin || allowedOrigin == "*" {
+				if origin == allowedOrigin {
 					allowed = true
 					break
 				}
 			}
 
 			if allowed {
-				if allowedOrigins[0] == "*" {
-					c.Header("Access-Control-Allow-Origin", "*")
-				} else {
-					c.Header("Access-Control-Allow-Origin", origin)
-				}
+				c.Header("Access-Control-Allow-Origin", origin)
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
 				c.Header("Access-Control-Allow-Credentials", "true")

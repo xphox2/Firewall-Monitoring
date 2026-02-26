@@ -121,7 +121,9 @@ func (t *TrapReceiver) formatTrapMessage(v gosnmp.SnmpPDU, oid string) string {
 	switch v.Type {
 	case gosnmp.OctetString:
 		sb.WriteString(": ")
-		sb.WriteString(string(v.Value.([]byte)))
+		if val, ok := v.Value.([]byte); ok {
+			sb.WriteString(string(val))
+		}
 	case gosnmp.Integer, gosnmp.Counter32, gosnmp.Gauge32, gosnmp.TimeTicks:
 		sb.WriteString(": ")
 		sb.WriteString(fmt.Sprintf("%d", v.Value))

@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"fortiGate-Mon/internal/config"
@@ -27,7 +28,10 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		dbPath = "/data/fortigate.db"
 	}
 
-	dir := dbPath[:len(dbPath)-len("/fortigate.db")]
+	dir := filepath.Dir(dbPath)
+	if dir == "." {
+		dir = "/data"
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
@@ -38,6 +42,15 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(1 * time.Minute)
 
 	d := &Database{db: db}
 	if err := d.migrate(); err != nil {
@@ -149,11 +162,21 @@ func (d *Database) GetLoginAttempts(since time.Time, limit int) ([]models.LoginA
 func (d *Database) CleanupOldData(days int) error {
 	cutoff := time.Now().AddDate(0, 0, -days)
 
-	d.db.Where("timestamp < ?", cutoff).Delete(&models.SystemStatus{})
-	d.db.Where("timestamp < ?", cutoff).Delete(&models.InterfaceStats{})
-	d.db.Where("timestamp < ?", cutoff).Delete(&models.TrapEvent{})
-	d.db.Where("timestamp < ?", cutoff).Delete(&models.LoginAttempt{})
-	d.db.Where("acknowledged = true AND timestamp < ?", cutoff).Delete(&models.Alert{})
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.SystemStatus{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup system_status: %w", err)
+	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.InterfaceStats{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup interface_stats: %w", err)
+	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.TrapEvent{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup trap_event: %w", err)
+	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.LoginAttempt{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup login_attempt: %w", err)
+	}
+	if err := d.db.Where("acknowledged = true AND timestamp < ?", cutoff).Delete(&models.Alert{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup alert: %w", err)
+	}
 
 	return nil
 }

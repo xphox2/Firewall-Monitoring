@@ -118,7 +118,12 @@ func (p *Poller) updateDeviceStatus(device *models.FortiGate, status string) {
 }
 
 func (p *Poller) Stop() error {
-	close(p.stopChan)
+	select {
+	case <-p.stopChan:
+		return nil
+	default:
+		close(p.stopChan)
+	}
 	return nil
 }
 

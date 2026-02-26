@@ -38,7 +38,7 @@ usage() {
 }
 
 build() {
-    log_info "Building FortiGate Monitor..."
+    log_info "Building Firewall Monitor..."
 
     if [ ! -f "go.mod" ]; then
         log_info "Initializing Go module..."
@@ -119,7 +119,7 @@ install_local() {
         exit 1
     fi
 
-    log_info "Installing FortiGate Monitor..."
+    log_info "Installing Firewall Monitor..."
 
     mkdir -p ${INSTALL_DIR}
     mkdir -p ${DATA_DIR}
@@ -145,9 +145,9 @@ install_local() {
     fi
 
     log_info "Creating systemd services..."
-    create_systemd_service "api" "${INSTALL_DIR}/fortigate-api" "FortiGate API Server"
-    create_systemd_service "poller" "${INSTALL_DIR}/fortigate-poller" "FortiGate SNMP Poller"
-    create_systemd_service "trap" "${INSTALL_DIR}/fortigate-trap" "FortiGate Trap Receiver"
+    create_systemd_service "api" "${INSTALL_DIR}/fortigate-api" "Firewall Monitor API Server"
+    create_systemd_service "poller" "${INSTALL_DIR}/fortigate-poller" "Firewall Monitor SNMP Poller"
+    create_systemd_service "trap" "${INSTALL_DIR}/fortigate-trap" "Firewall Monitor Trap Receiver"
 
     systemctl daemon-reload
     log_info "Installation complete!"

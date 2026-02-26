@@ -62,6 +62,16 @@ var (
 	TrapAVOversize    = ".1.3.6.1.4.1.12356.101.2.0.602"
 )
 
+func safeString(v interface{}) string {
+	if s, ok := v.([]byte); ok {
+		return string(s)
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 type SNMPClient struct {
 	config *config.Config
 	client *gosnmp.GoSNMP
@@ -146,9 +156,9 @@ func (s *SNMPClient) GetSystemStatus() (*models.SystemStatus, error) {
 	for _, pdu := range result.Variables {
 		switch pdu.Name {
 		case OIDSystemHostname:
-			status.Hostname = string(pdu.Value.([]byte))
+			status.Hostname = safeString(pdu.Value)
 		case OIDSystemVersion:
-			status.Version = string(pdu.Value.([]byte))
+			status.Version = safeString(pdu.Value)
 		case OIDSystemCPU:
 			status.CPUUsage = float64(gosnmp.ToBigInt(pdu.Value).Int64())
 		case OIDSystemMemory:
@@ -184,7 +194,7 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 		if strings.HasPrefix(name, OIDIfDescr) {
 			ifIndex = getIndexFromOID(name, OIDIfDescr)
 			iface := getOrCreateInterface(interfaces, ifIndex)
-			iface.Name = string(pdu.Value.([]byte))
+			iface.Name = safeString(pdu.Value)
 			interfaces[ifIndex] = iface
 		} else if strings.HasPrefix(name, OIDIfType) {
 			ifIndex = getIndexFromOID(name, OIDIfType)

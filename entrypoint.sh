@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "=== FortiGate Monitor Starting ==="
+echo "=== Firewall Monitor Starting ==="
 
 # Create config from environment or use default
 if [ ! -f /config/config.env ]; then
@@ -26,7 +26,7 @@ SMTP_HOST=${SMTP_HOST:-}
 SMTP_PORT=${SMTP_PORT:-587}
 SMTP_USERNAME=${SMTP_USERNAME:-}
 SMTP_PASSWORD=${SMTP_PASSWORD:-}
-SMTP_FROM=${SMTP_FROM:-fortigate-mon@example.com}
+SMTP_FROM=${SMTP_FROM:-firewall-mon@example.com}
 SMTP_TO=${SMTP_TO:-admin@example.com}
 SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
 DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
@@ -40,7 +40,7 @@ mkdir -p /data /config
 # Export config file path
 export CONFIG_FILE=/config/config.env
 
-echo "Starting FortiGate Monitor services..."
+echo "Starting Firewall Monitor services..."
 
 # Start all services in background
 echo "Starting API server..."
