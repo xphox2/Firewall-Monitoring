@@ -213,7 +213,7 @@ func (am *AuthManager) UpdatePassword(username, newPassword string) error {
 		return errors.New("admin not found")
 	}
 
-	admin, ok := adminRaw.(*AdminAuth)
+	admin, ok := adminRaw.(*database.AdminAuth)
 	if !ok {
 		return errors.New("invalid admin data")
 	}

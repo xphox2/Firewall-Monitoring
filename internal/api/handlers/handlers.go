@@ -573,24 +573,22 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 }
 
 func (h *Handler) GetDashboardAll(c *gin.Context) {
-	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
-		return
-	}
+	fortigates := []models.FortiGate{}
+	connections := []models.FortiGateConnection{}
+	recentAlerts := []models.Alert{}
 
-	var fortigates []models.FortiGate
-	if err := h.db.Gorm().Find(&fortigates).Error; err != nil {
-		log.Printf("Failed to get fortigates: %v", err)
-	}
+	if h.db != nil {
+		if err := h.db.Gorm().Find(&fortigates).Error; err != nil {
+			log.Printf("Failed to get fortigates: %v", err)
+		}
 
-	var connections []models.FortiGateConnection
-	if err := h.db.Gorm().Preload("SourceFG").Preload("DestFG").Find(&connections).Error; err != nil {
-		log.Printf("Failed to get connections: %v", err)
-	}
+		if err := h.db.Gorm().Preload("SourceFG").Preload("DestFG").Find(&connections).Error; err != nil {
+			log.Printf("Failed to get connections: %v", err)
+		}
 
-	var recentAlerts []models.Alert
-	if err := h.db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
-		log.Printf("Failed to get recent alerts: %v", err)
+		if err := h.db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
+			log.Printf("Failed to get recent alerts: %v", err)
+		}
 	}
 
 	dashboard := models.DashboardData{
