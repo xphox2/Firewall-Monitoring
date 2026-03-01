@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.3] - 2026-02-28
+
+### Security
+- CSRF tokens are now HMAC-signed and tied to auth session (replaces double-submit cookie)
+- `GetAdminByUsername` now queries by username parameter instead of returning first admin
+- Admin password no longer logged in plaintext at startup (printed once to stderr only)
+- Error messages from SNMP test connections are sanitized (no internal error leaks)
+- Port range validation added for SNMP test device endpoint
+
+### Fixed
+- `ChangePassword` uses actual admin ID from JWT claims instead of hardcoded ID=1
+- `Login` uses actual admin ID from database for JWT token generation
+- SQLite `MaxOpenConns` set to 1 with WAL mode to prevent "database is locked" errors
+- SNMP `Close()` guards against nil `Conn` to prevent panic
+- `AdminAuth` middleware returns 401 JSON for API routes instead of HTML redirect
+- `UpdateFortiGate` and `UpdateFortiGateConnection` return fresh data after update
+- `snmp_version` added to allowed fields for FortiGate updates
+- Alert cooldown keys no longer include metric values (cooldown now works correctly)
+- Email notifications include proper MIME headers (From, To, Content-Type)
+- `FormatUptime` uses `uint64` arithmetic to prevent int overflow on 32-bit systems
+- Uptime percentage capped at 100% and guarded against uint64 underflow
+- `HashPassword` error is now fatal at startup instead of silently ignored
+- Poller polls immediately on startup instead of waiting for first interval
+- `loadEnvFile` errors are now logged to stderr
+- Removed duplicate `saveBaseline` method in uptime tracker
+
 ## [0.8.2] - 2026-02-28
 
 ### Security

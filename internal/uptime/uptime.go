@@ -76,27 +76,6 @@ func (ut *UptimeTracker) loadBaseline() {
 	ut.baseline = &baseline
 }
 
-func (ut *UptimeTracker) saveBaseline() error {
-	if ut.config.Uptime.BaselineFile == "" {
-		return nil
-	}
-
-	data, err := json.Marshal(ut.baseline)
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(ut.config.Uptime.BaselineFile)
-	if dir == "." {
-		dir = "/var/lib/fortigate-mon"
-	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(ut.config.Uptime.BaselineFile, data, 0600)
-}
-
 func (ut *UptimeTracker) saveBaselineToFile(baseline *UptimeBaseline) error {
 	if ut.config.Uptime.BaselineFile == "" {
 		return nil
@@ -158,10 +137,18 @@ func (ut *UptimeTracker) GetStats() UptimeStats {
 
 	if ut.baseline != nil && ut.lastUptime > 0 {
 		elapsedTime := time.Since(ut.baseline.StartTime).Seconds()
-		deviceUptime := float64(ut.lastUptime-ut.baseline.StartUptime) / 100
+		// Guard against uint64 underflow if device rebooted
+		var deviceUptime float64
+		if ut.lastUptime >= ut.baseline.StartUptime {
+			deviceUptime = float64(ut.lastUptime-ut.baseline.StartUptime) / 100
+		}
 
-		if elapsedTime > 0 {
-			stats.UptimePercent = (deviceUptime / elapsedTime) * 100
+		if elapsedTime > 0 && deviceUptime > 0 {
+			pct := (deviceUptime / elapsedTime) * 100
+			if pct > 100 {
+				pct = 100
+			}
+			stats.UptimePercent = pct
 		}
 	}
 
@@ -215,10 +202,10 @@ func (ut *UptimeTracker) Reset() error {
 func FormatUptime(uptime uint64) string {
 	seconds := uptime / 100
 
-	days := int(seconds) / 86400
-	hours := (int(seconds) % 86400) / 3600
-	minutes := (int(seconds) % 3600) / 60
-	secs := int(seconds) % 60
+	days := seconds / 86400
+	hours := (seconds % 86400) / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
 
 	if days > 0 {
 		return fmt.Sprintf("%dd %dh %dm %ds", days, hours, minutes, secs)

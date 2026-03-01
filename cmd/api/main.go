@@ -48,17 +48,22 @@ func main() {
 
 	// Initialize admin in database
 	if db != nil {
-		hashedPassword, _ := authManager.HashPassword(cfg.Auth.AdminPassword)
+		hashedPassword, err := authManager.HashPassword(cfg.Auth.AdminPassword)
+		if err != nil {
+			log.Fatalf("Failed to hash admin password: %v", err)
+		}
 		db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword)
 	}
 
 	if cfg.IsGeneratedPassword() {
-		log.Printf("========================================")
-		log.Printf("AUTO-GENERATED ADMIN PASSWORD")
+		log.Println("========================================")
+		log.Println("AUTO-GENERATED ADMIN PASSWORD")
 		log.Printf("Username: %s", cfg.Auth.AdminUsername)
-		log.Printf("Password: %s", cfg.Auth.AdminPassword)
-		log.Printf("Set ADMIN_PASSWORD env var to use your own.")
-		log.Printf("========================================")
+		log.Printf("Password has been auto-generated.")
+		log.Println("Check container logs at startup or set ADMIN_PASSWORD env var.")
+		// Print password only once to stderr for retrieval
+		fmt.Fprintf(os.Stderr, "Generated admin password: %s\n", cfg.Auth.AdminPassword)
+		log.Println("========================================")
 	}
 
 	handler := handlers.NewHandler(cfg, authManager, db)
@@ -142,7 +147,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 	admin := router.Group("/admin")
 	admin.Use(middleware.AdminAuth(authManager))
-	admin.Use(middleware.CSRFProtection())
+	admin.Use(middleware.CSRFProtection(cfg))
 	{
 		admin.GET("", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", nil)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"fortiGate-Mon/internal/auth"
 	"fortiGate-Mon/internal/config"
 	"fortiGate-Mon/internal/models"
 
@@ -43,14 +44,18 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
+	// Enable WAL mode for better concurrent read performance
+	db.Exec("PRAGMA journal_mode=WAL")
+	db.Exec("PRAGMA busy_timeout=5000")
+
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
-	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetConnMaxLifetime(5 * time.Minute)
-	sqlDB.SetConnMaxIdleTime(1 * time.Minute)
+	// SQLite only supports one writer at a time; MaxOpenConns=1 prevents "database is locked" errors
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetConnMaxLifetime(0)
 
 	d := &Database{db: db}
 	if err := d.migrate(); err != nil {
@@ -315,27 +320,16 @@ func (d *Database) InitAdmin(username, password string) error {
 	return nil
 }
 
-type AdminAuth struct {
-	ID       uint
-	Username string
-	Password string
-}
-
-type AdminDatabase interface {
-	GetAdminByUsername() (*AdminAuth, error)
-	UpdateAdminPassword(id uint, password string) error
-}
-
-func (d *Database) GetAdminByUsername() (interface{}, error) {
+func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) {
 	var admin models.Admin
-	err := d.db.First(&admin).Error
+	err := d.db.Where("username = ?", username).First(&admin).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &AdminAuth{
+	return &auth.AdminAuth{
 		ID:       admin.ID,
 		Username: admin.Username,
 		Password: admin.Password,

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"fortiGate-Mon/internal/api/middleware"
 	"fortiGate-Mon/internal/auth"
 	"fortiGate-Mon/internal/config"
 	"fortiGate-Mon/internal/database"
@@ -166,17 +167,21 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 	}
 
-	token, err := h.authManager.GenerateToken(creds.Username, 1)
+	// Get admin record to use real ID in token
+	adminRecord, adminErr := h.db.GetAdminByUsername(creds.Username)
+	var adminID uint = 1
+	if adminErr == nil && adminRecord != nil {
+		adminID = adminRecord.ID
+	}
+
+	token, err := h.authManager.GenerateToken(creds.Username, adminID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate token"))
 		return
 	}
 
-	csrfToken, err := auth.GenerateSecureToken(32)
-	if err != nil || csrfToken == "" {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate security token"))
-		return
-	}
+	// Generate HMAC-signed CSRF token tied to the auth token
+	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
 
 	cookieSecure := true
 	if h.config != nil {
@@ -391,6 +396,7 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 		"ip_address":     true,
 		"snmp_port":      true,
 		"snmp_community": true,
+		"snmp_version":   true,
 		"location":       true,
 		"description":    true,
 		"enabled":        true,
@@ -419,7 +425,13 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(fg))
+	// Re-fetch to return fresh data
+	updated, err := h.db.GetFortiGate(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(fg))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(updated))
 }
 
 func (h *Handler) DeleteFortiGate(c *gin.Context) {
@@ -532,7 +544,13 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(conn))
+	// Re-fetch to return fresh data with preloaded relations
+	var updated models.FortiGateConnection
+	if err := h.db.Gorm().Preload("SourceFG").Preload("DestFG").First(&updated, idUint).Error; err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(conn))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(updated))
 }
 
 func (h *Handler) DeleteFortiGateConnection(c *gin.Context) {
@@ -702,6 +720,10 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	if req.SNMPPort == 0 {
 		req.SNMPPort = 161
 	}
+	if req.SNMPPort < 1 || req.SNMPPort > 65535 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
+		return
+	}
 	if req.SNMPCommunity == "" {
 		req.SNMPCommunity = "public"
 	}
@@ -722,9 +744,10 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 
 	client, err := snmp.NewSNMPClient(cfg)
 	if err != nil {
+		log.Printf("TestDevice connect error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"success": false,
-			"message": "Failed to connect: " + err.Error(),
+			"message": "Failed to connect to device",
 			"online":  false,
 		}))
 		return
@@ -733,9 +756,10 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 
 	status, err := client.GetSystemStatus()
 	if err != nil {
+		log.Printf("TestDevice poll error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"success": false,
-			"message": "Failed to poll: " + err.Error(),
+			"message": "Failed to poll device",
 			"online":  false,
 		}))
 		return
@@ -782,9 +806,14 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Get username from JWT claims
+	// Get username and user ID from JWT claims
 	username, exists := c.Get("username")
 	if !exists {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		return
+	}
+	userID, uidExists := c.Get("user_id")
+	if !uidExists {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
 		return
 	}
@@ -801,7 +830,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	err = h.db.UpdateAdminPassword(1, hashedPassword)
+	err = h.db.UpdateAdminPassword(userID.(uint), hashedPassword)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
 		return

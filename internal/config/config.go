@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"os"
 	"strconv"
@@ -225,7 +226,10 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 
 func init() {
 	if configFile := os.Getenv("CONFIG_FILE"); configFile != "" {
-		loadEnvFile(configFile)
+		if err := loadEnvFile(configFile); err != nil {
+			// Use fmt since log may not be initialized in init()
+			fmt.Fprintf(os.Stderr, "Warning: failed to load config file %s: %v\n", configFile, err)
+		}
 	}
 }
 

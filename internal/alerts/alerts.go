@@ -34,7 +34,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	now := time.Now()
 
 	if status.CPUUsage >= am.config.Alerts.CPUThreshold {
-		key := fmt.Sprintf("cpu_%f", status.CPUUsage)
+		key := "cpu_high"
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
@@ -51,7 +51,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 
 	if status.MemoryUsage >= am.config.Alerts.MemoryThreshold {
-		key := fmt.Sprintf("memory_%f", status.MemoryUsage)
+		key := "memory_high"
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
@@ -68,7 +68,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 
 	if status.DiskUsage >= am.config.Alerts.DiskThreshold {
-		key := fmt.Sprintf("disk_%f", status.DiskUsage)
+		key := "disk_high"
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
@@ -85,7 +85,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 
 	if status.SessionCount >= am.config.Alerts.SessionThreshold {
-		key := fmt.Sprintf("sessions_%d", status.SessionCount)
+		key := "sessions_high"
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,

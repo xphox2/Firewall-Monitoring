@@ -90,8 +90,11 @@ This is an automated alert from your Firewall monitoring system.
 		auth = smtp.PlainAuth("", n.config.Alerts.SMTPUsername, n.config.Alerts.SMTPPassword, n.config.Alerts.SMTPHost)
 	}
 
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		n.config.Alerts.SMTPFrom, n.config.Alerts.SMTPTo, subject, body)
+
 	err := smtp.SendMail(addr, auth, n.config.Alerts.SMTPFrom,
-		[]string{n.config.Alerts.SMTPTo}, []byte("Subject: "+subject+"\n\n"+body))
+		[]string{n.config.Alerts.SMTPTo}, []byte(msg))
 
 	if err != nil {
 		return fmt.Errorf("failed to send email: %w", err)

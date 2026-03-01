@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/database"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -29,15 +28,15 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-type Database interface {
-	GetAdminByUsername() (interface{}, error)
-	UpdateAdminPassword(id uint, password string) error
-}
-
 type AdminAuth struct {
 	ID       uint
 	Username string
 	Password string
+}
+
+type Database interface {
+	GetAdminByUsername(username string) (*AdminAuth, error)
+	UpdateAdminPassword(id uint, password string) error
 }
 
 type AuthManager struct {
@@ -90,24 +89,8 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		return ErrInvalidCredentials
 	}
 
-	adminRaw, err := am.db.GetAdminByUsername()
-	if err != nil {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
-		return ErrInvalidCredentials
-	}
-
-	if adminRaw == nil {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
-		return ErrInvalidCredentials
-	}
-
-	admin, ok := adminRaw.(*database.AdminAuth)
-	if !ok {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
-		return ErrInvalidCredentials
-	}
-
-	if admin.Username != username {
+	admin, err := am.db.GetAdminByUsername(username)
+	if err != nil || admin == nil {
 		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
@@ -206,17 +189,12 @@ func (am *AuthManager) UpdatePassword(username, newPassword string) error {
 		return errors.New("database not configured")
 	}
 
-	adminRaw, err := am.db.GetAdminByUsername()
+	admin, err := am.db.GetAdminByUsername(username)
 	if err != nil {
 		return err
 	}
-	if adminRaw == nil {
+	if admin == nil {
 		return errors.New("admin not found")
-	}
-
-	admin, ok := adminRaw.(*database.AdminAuth)
-	if !ok {
-		return errors.New("invalid admin data")
 	}
 
 	hashedPassword, err := am.HashPassword(newPassword)

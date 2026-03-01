@@ -33,7 +33,9 @@ func (p *Poller) Start() error {
 	}
 
 	log.Printf("Starting SNMP poller with interval: %v", p.cfg.SNMP.PollInterval)
-	log.Println("Waiting for devices to be added via admin UI...")
+
+	// Poll immediately on startup
+	p.pollAllDevices()
 
 	ticker := time.NewTicker(p.cfg.SNMP.PollInterval)
 	defer ticker.Stop()

@@ -106,8 +106,8 @@ func NewSNMPClient(cfg *config.Config) (*SNMPClient, error) {
 }
 
 func (s *SNMPClient) Close() error {
-	if s.client != nil {
-		s.client.Conn.Close()
+	if s.client != nil && s.client.Conn != nil {
+		return s.client.Conn.Close()
 	}
 	return nil
 }

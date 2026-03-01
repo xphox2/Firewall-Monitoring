@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"strings"
@@ -83,15 +86,13 @@ func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, err := c.Cookie("auth_token")
 		if err != nil {
-			c.Redirect(http.StatusFound, "/admin/login")
-			c.Abort()
+			handleAuthFailure(c)
 			return
 		}
 
 		claims, err := authManager.ValidateToken(token)
 		if err != nil {
-			c.Redirect(http.StatusFound, "/admin/login")
-			c.Abort()
+			handleAuthFailure(c)
 			return
 		}
 
@@ -101,15 +102,53 @@ func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 	}
 }
 
-func CSRFProtection() gin.HandlerFunc {
+func handleAuthFailure(c *gin.Context) {
+	// API routes get 401 JSON; page routes get redirected
+	if strings.HasPrefix(c.Request.URL.Path, "/admin/api/") {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+	} else {
+		c.Redirect(http.StatusFound, "/admin/login")
+	}
+	c.Abort()
+}
+
+// GenerateCSRFToken creates an HMAC-signed CSRF token tied to the auth token
+func GenerateCSRFToken(authToken, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(authToken))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" || c.Request.Method == "PATCH" {
 			csrfToken := c.GetHeader("X-CSRF-Token")
-			cookieToken, err := c.Cookie("csrf_token")
-			if err != nil || csrfToken == "" || csrfToken != cookieToken {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error": "CSRF validation failed",
-				})
+			if csrfToken == "" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.Abort()
+				return
+			}
+
+			authToken, err := c.Cookie("auth_token")
+			if err != nil || authToken == "" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.Abort()
+				return
+			}
+
+			secret := ""
+			if cfg != nil {
+				secret = cfg.Server.JWTSecretKey
+			}
+			if secret == "" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.Abort()
+				return
+			}
+
+			expected := GenerateCSRFToken(authToken, secret)
+			if !hmac.Equal([]byte(csrfToken), []byte(expected)) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
 				c.Abort()
 				return
 			}
