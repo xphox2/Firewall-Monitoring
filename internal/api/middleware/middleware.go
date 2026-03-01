@@ -22,6 +22,7 @@ type ipRateLimiter struct {
 	mu       sync.RWMutex
 	rate     rate.Limit
 	burst    int
+	stop     chan struct{}
 }
 
 type rateLimiterEntry struct {
@@ -34,6 +35,7 @@ func newIPRateLimiter(r rate.Limit, burst int) *ipRateLimiter {
 		limiters: make(map[string]*rateLimiterEntry),
 		rate:     r,
 		burst:    burst,
+		stop:     make(chan struct{}),
 	}
 	go rl.cleanup()
 	return rl
@@ -54,15 +56,21 @@ func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
 }
 
 func (rl *ipRateLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
 	for {
-		time.Sleep(5 * time.Minute)
-		rl.mu.Lock()
-		for ip, entry := range rl.limiters {
-			if time.Since(entry.lastSeen) > 10*time.Minute {
-				delete(rl.limiters, ip)
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			for ip, entry := range rl.limiters {
+				if time.Since(entry.lastSeen) > 10*time.Minute {
+					delete(rl.limiters, ip)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stop:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 

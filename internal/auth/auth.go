@@ -78,7 +78,11 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 			recentAttempts = append(recentAttempts, t)
 		}
 	}
-	am.loginAttempts[username] = recentAttempts
+	if len(recentAttempts) == 0 {
+		delete(am.loginAttempts, username)
+	} else {
+		am.loginAttempts[username] = recentAttempts
+	}
 
 	if len(recentAttempts) >= maxAttempts {
 		return ErrAccountLocked
@@ -106,7 +110,7 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	}
 
 	// Successful login clears attempts
-	am.loginAttempts[username] = nil
+	delete(am.loginAttempts, username)
 	return nil
 }
 
@@ -177,11 +181,17 @@ func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 }
 
 func GenerateSecureToken(length int) (string, error) {
-	b := make([]byte, length)
+	// Compute enough random bytes so base64 output >= desired length
+	needed := (length*3 + 3) / 4
+	b := make([]byte, needed)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(b)[:length], nil
+	encoded := base64.URLEncoding.EncodeToString(b)
+	if len(encoded) < length {
+		return encoded, nil
+	}
+	return encoded[:length], nil
 }
 
 func (am *AuthManager) UpdatePassword(username, newPassword string) error {

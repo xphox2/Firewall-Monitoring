@@ -35,10 +35,10 @@ var (
 	OIDIfInDiscards    = ".1.3.6.1.2.1.2.2.1.13"
 	OIDIfInErrors      = ".1.3.6.1.2.1.2.2.1.14"
 	OIDIfOutOctets     = ".1.3.6.1.2.1.2.2.1.16"
-	OIDIfOutUcastPkts  = ".1.3.6.1.2.1.2.2.1.18"
-	OIDIfOutNUcastPkts = ".1.3.6.1.2.1.2.2.1.19"
-	OIDIfOutDiscards   = ".1.3.6.1.2.1.2.2.1.20"
-	OIDIfOutErrors     = ".1.3.6.1.2.1.2.2.1.21"
+	OIDIfOutUcastPkts  = ".1.3.6.1.2.1.2.2.1.17"
+	OIDIfOutNUcastPkts = ".1.3.6.1.2.1.2.2.1.18"
+	OIDIfOutDiscards   = ".1.3.6.1.2.1.2.2.1.19"
+	OIDIfOutErrors     = ".1.3.6.1.2.1.2.2.1.20"
 
 	OIDHWSensorTable = ".1.3.6.1.4.1.12356.101.4.3.2"
 	OIDHWSensorCount = ".1.3.6.1.4.1.12356.101.4.3.1"
@@ -272,7 +272,10 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 	}
 
 	result := make([]models.InterfaceStats, 0, len(interfaces))
-	for _, iface := range interfaces {
+	for idx, iface := range interfaces {
+		if idx < 0 {
+			continue // skip entries with invalid OID index
+		}
 		iface.Timestamp = time.Now()
 		result = append(result, iface)
 	}
@@ -302,10 +305,11 @@ func getIndexFromOID(oid, base string) int {
 	parts := strings.Split(partial, ".")
 	if len(parts) > 0 {
 		var index int
-		fmt.Sscanf(parts[0], "%d", &index)
-		return index
+		if n, _ := fmt.Sscanf(parts[0], "%d", &index); n == 1 {
+			return index
+		}
 	}
-	return 0
+	return -1
 }
 
 func getOrCreateInterface(interfaces map[int]models.InterfaceStats, index int) models.InterfaceStats {

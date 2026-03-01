@@ -60,7 +60,7 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 
 	trap := &models.TrapEvent{
 		Timestamp: time.Now(),
-		SourceIP:  addr.String(),
+		SourceIP:  addr.IP.String(),
 	}
 
 	for _, v := range packet.Variables {

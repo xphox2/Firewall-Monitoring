@@ -207,7 +207,10 @@ func (SystemSetting) TableName() string       { return "system_settings" }
 func (Admin) TableName() string               { return "admins" }
 
 func (s *SystemStatus) ToJSON() string {
-	jsonBytes, _ := json.Marshal(s)
+	jsonBytes, err := json.Marshal(s)
+	if err != nil {
+		return "{}"
+	}
 	return string(jsonBytes)
 }
 

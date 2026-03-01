@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -134,6 +135,12 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	// Reject oversized passwords to prevent bcrypt CPU exhaustion DoS
+	if len(creds.Password) > 1024 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid credentials"))
+		return
+	}
+
 	ip := c.ClientIP()
 	userAgent := c.Request.UserAgent()
 
@@ -215,6 +222,12 @@ func (h *Handler) Login(c *gin.Context) {
 }
 
 func (h *Handler) Logout(c *gin.Context) {
+	// Only clear cookies if an auth token is present (prevents cross-origin logout)
+	if _, err := c.Cookie("auth_token"); err != nil {
+		c.JSON(http.StatusOK, models.MessageResponse("Already logged out"))
+		return
+	}
+
 	cookieSecure := h.config != nil && h.config.Server.CookieSecure
 
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -412,8 +425,11 @@ func (h *Handler) CreateFortiGate(c *gin.Context) {
 		return
 	}
 
-	// Validate SNMP port if provided
-	if fg.SNMPPort != 0 && (fg.SNMPPort < 1 || fg.SNMPPort > 65535) {
+	// Default and validate SNMP port
+	if fg.SNMPPort == 0 {
+		fg.SNMPPort = 161
+	}
+	if fg.SNMPPort < 1 || fg.SNMPPort > 65535 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
 		return
 	}
@@ -564,6 +580,24 @@ func (h *Handler) CreateFortiGateConnection(c *gin.Context) {
 		return
 	}
 
+	// Validate required FK references
+	if conn.SourceFGID == 0 || conn.DestFGID == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination FortiGate IDs are required"))
+		return
+	}
+	if conn.SourceFGID == conn.DestFGID {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination cannot be the same device"))
+		return
+	}
+	if _, err := h.db.GetFortiGate(conn.SourceFGID); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source FortiGate not found"))
+		return
+	}
+	if _, err := h.db.GetFortiGate(conn.DestFGID); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination FortiGate not found"))
+		return
+	}
+
 	conn.Status = "unknown"
 	if err := h.db.CreateConnection(&conn); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create connection"))
@@ -613,6 +647,30 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 		validStatuses := map[string]bool{"unknown": true, "up": true, "down": true}
 		if s, isStr := statusVal.(string); !isStr || !validStatuses[s] {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid status value"))
+			return
+		}
+	}
+
+	// Validate FK references if being updated
+	if srcVal, ok := updates["source_fg_id"]; ok {
+		srcID, isNum := srcVal.(float64)
+		if !isNum || srcID < 1 {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid source FortiGate ID"))
+			return
+		}
+		if _, err := h.db.GetFortiGate(uint(srcID)); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Source FortiGate not found"))
+			return
+		}
+	}
+	if dstVal, ok := updates["dest_fg_id"]; ok {
+		dstID, isNum := dstVal.(float64)
+		if !isNum || dstID < 1 {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid destination FortiGate ID"))
+			return
+		}
+		if _, err := h.db.GetFortiGate(uint(dstID)); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination FortiGate not found"))
 			return
 		}
 	}
@@ -716,9 +774,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	var failedKeys []string
 	for _, s := range validSettings {
 		existing := models.SystemSetting{Key: s.Key}
 		if err := h.db.Gorm().FirstOrCreate(&existing, models.SystemSetting{Key: s.Key}).Error; err != nil {
+			log.Printf("Failed to find/create setting %s: %v", s.Key, err)
+			failedKeys = append(failedKeys, s.Key)
 			continue
 		}
 		if !s.IsSecret || s.Value != "" {
@@ -727,11 +788,16 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			existing.Category = s.Category
 			if err := h.db.Gorm().Save(&existing).Error; err != nil {
 				log.Printf("Failed to save setting %s: %v", s.Key, err)
+				failedKeys = append(failedKeys, s.Key)
 				continue
 			}
 		}
 	}
 
+	if len(failedKeys) > 0 {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys))))
+		return
+	}
 	c.JSON(http.StatusOK, models.MessageResponse("Settings updated"))
 }
 
@@ -781,6 +847,13 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 
 		if err := h.db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
 			log.Printf("Failed to get recent alerts: %v", err)
+		}
+	}
+
+	// Redact SNMP community strings
+	for i := range fortigates {
+		if fortigates[i].SNMPCommunity != "" {
+			fortigates[i].SNMPCommunity = "********"
 		}
 	}
 
@@ -939,33 +1012,34 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
 }
 
-// isValidExternalIP validates that the IP is a valid, non-loopback, non-internal address
-// to prevent SSRF attacks against internal services.
-func isValidExternalIP(ipStr string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		// Could be a hostname - allow it but block obvious internal names
-		lower := strings.ToLower(ipStr)
-		if lower == "localhost" || strings.HasPrefix(lower, "127.") {
-			return false
-		}
+// isBlockedIP checks if an IP address is loopback, unspecified, or link-local.
+func isBlockedIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true
 	}
+	return false
+}
 
-	// Block loopback (127.x.x.x, ::1)
-	if ip.IsLoopback() {
-		return false
+// isValidExternalIP validates that the IP/hostname does not resolve to a blocked address
+// to prevent SSRF attacks against internal services.
+func isValidExternalIP(ipStr string) bool {
+	// Try parsing as IP first
+	ip := net.ParseIP(ipStr)
+	if ip != nil {
+		return !isBlockedIP(ip)
 	}
 
-	// Block unspecified (0.0.0.0, ::)
-	if ip.IsUnspecified() {
+	// It's a hostname - resolve it and validate all resolved IPs
+	addrs, err := net.LookupHost(ipStr)
+	if err != nil {
+		// Cannot resolve - reject to be safe
 		return false
 	}
-
-	// Block link-local (169.254.x.x, fe80::)
-	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return false
+	for _, addr := range addrs {
+		resolved := net.ParseIP(addr)
+		if resolved != nil && isBlockedIP(resolved) {
+			return false
+		}
 	}
-
-	return true
+	return len(addrs) > 0
 }

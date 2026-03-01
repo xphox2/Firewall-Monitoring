@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.8.5] - 2026-02-28
+
+### Security
+- Login handler rejects passwords >1024 chars to prevent bcrypt CPU exhaustion DoS
+- SSRF fix: `isValidExternalIP` now resolves hostnames and validates all resolved IPs (blocks DNS rebinding)
+- SNMP community strings redacted in `GetDashboardAll` response (was only redacted in `GetFortiGates`)
+- Logout requires valid `auth_token` cookie before clearing session (prevents cross-origin logout)
+- Removed untrusted `GetRealIP` middleware that blindly trusted `X-Real-IP`/`X-Forwarded-For` headers
+- Rate limiter cleanup goroutine now stoppable via channel (prevents goroutine leak)
+- Login attempts map entries deleted when empty (prevents unbounded memory growth from username spraying)
+
+### Fixed
+- SNMP OIDs for ifOutUcastPkts/NUcastPkts/Discards/Errors corrected (were off by one, producing wrong interface stats)
+- `getIndexFromOID` returns -1 on parse failure instead of 0 (no longer collides with valid index 0)
+- `formatNumber(0)` now displays `0` instead of `--` on public dashboard
+- Double refresh timer eliminated on public dashboard (settings timer replaces default)
+- `UpdateSettings` reports errors to client instead of silently continuing with "Settings updated"
+- `CreateFortiGate` defaults SNMP port to 161 when 0 (prevents invalid port 0 in database)
+- `CreateFortiGateConnection` validates SourceFGID/DestFGID exist and are different
+- `UpdateFortiGateConnection` validates FK references when source/dest IDs are changed
+- `DeleteFortiGate` cascades delete to all related records (SystemStatus, InterfaceStats, VPN, HA, sensors, alerts, uptime, traps)
+- `GenerateSecureToken` computes correct random byte count for any output length (prevents potential panic)
+- Uptime baseline directory created with 0700 permissions (was 0755)
+- Trap receiver stores `addr.IP.String()` instead of `addr.String()` (removes port from stored IP)
+- `SystemStatus.ToJSON()` returns `{}` on marshal error instead of empty string
+- Alert cooldown map pruning added to prevent unbounded growth
+
+### Added
+- AlertManager integrated into poller: threshold alerts and interface-down alerts now fire on each poll
+- Concurrent device polling with semaphore (max 5 simultaneous SNMP connections)
+
 ## [0.8.4] - 2026-02-28
 
 ### Security

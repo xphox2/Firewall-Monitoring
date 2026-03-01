@@ -170,6 +170,18 @@ func (am *AlertManager) canAlert(key string, now time.Time) bool {
 	return true
 }
 
+// PruneExpiredCooldowns removes expired cooldown entries to prevent unbounded map growth.
+func (am *AlertManager) PruneExpiredCooldowns() {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	now := time.Now()
+	for key, lastTime := range am.lastAlert {
+		if now.Sub(lastTime) > am.alertCooldown*2 {
+			delete(am.lastAlert, key)
+		}
+	}
+}
+
 func (am *AlertManager) SetCooldown(duration time.Duration) {
 	am.mu.Lock()
 	defer am.mu.Unlock()

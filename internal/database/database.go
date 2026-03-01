@@ -248,8 +248,21 @@ func (d *Database) UpdateFortiGate(fg *models.FortiGate) error {
 
 func (d *Database) DeleteFortiGate(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("fortigate_id = ?", id).Delete(&models.FortiGateTunnel{}).Error; err != nil {
-			return err
+		// Delete all related monitoring data
+		for _, model := range []interface{}{
+			&models.SystemStatus{},
+			&models.InterfaceStats{},
+			&models.VPNStatus{},
+			&models.HAStatus{},
+			&models.HardwareSensor{},
+			&models.Alert{},
+			&models.UptimeRecord{},
+			&models.TrapEvent{},
+			&models.FortiGateTunnel{},
+		} {
+			if err := tx.Where("fortigate_id = ?", id).Delete(model).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("source_fg_id = ? OR dest_fg_id = ?", id, id).Delete(&models.FortiGateConnection{}).Error; err != nil {
 			return err

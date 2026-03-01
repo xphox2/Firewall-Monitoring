@@ -4,26 +4,31 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"fortiGate-Mon/internal/alerts"
 	"fortiGate-Mon/internal/config"
 	"fortiGate-Mon/internal/database"
 	"fortiGate-Mon/internal/models"
+	"fortiGate-Mon/internal/notifier"
 	"fortiGate-Mon/internal/snmp"
 )
 
 type Poller struct {
-	cfg      *config.Config
-	db       *database.Database
-	stopChan chan struct{}
+	cfg          *config.Config
+	db           *database.Database
+	alertManager *alerts.AlertManager
+	stopChan     chan struct{}
 }
 
-func NewPoller(cfg *config.Config, db *database.Database) *Poller {
+func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager) *Poller {
 	return &Poller{
-		cfg:      cfg,
-		db:       db,
-		stopChan: make(chan struct{}),
+		cfg:          cfg,
+		db:           db,
+		alertManager: am,
+		stopChan:     make(chan struct{}),
 	}
 }
 
@@ -82,12 +87,22 @@ func (p *Poller) pollAllDevices() {
 
 	log.Printf("Polling %d devices...", len(devices))
 
-	for _, device := range devices {
-		if !device.Enabled {
+	// Poll devices concurrently with a semaphore to limit concurrent SNMP connections
+	sem := make(chan struct{}, 5) // max 5 concurrent polls
+	var wg sync.WaitGroup
+	for i := range devices {
+		if !devices[i].Enabled {
 			continue
 		}
-		p.pollDevice(&device)
+		wg.Add(1)
+		sem <- struct{}{} // acquire semaphore
+		go func(device *models.FortiGate) {
+			defer wg.Done()
+			defer func() { <-sem }() // release semaphore
+			p.pollDevice(device)
+		}(&devices[i])
 	}
+	wg.Wait()
 }
 
 func (p *Poller) pollDevice(device *models.FortiGate) {
@@ -129,16 +144,31 @@ func (p *Poller) pollDevice(device *models.FortiGate) {
 		}
 	}
 
+	// Check alert thresholds
+	if p.alertManager != nil {
+		if err := p.alertManager.CheckSystemStatus(status); err != nil {
+			log.Printf("Device %s: alert check error - %v", device.Name, err)
+		}
+	}
+
 	// Save interface stats to database
 	interfaces, err := client.GetInterfaceStats()
-	if err == nil && len(interfaces) > 0 && p.db != nil {
-		now := time.Now()
-		for i := range interfaces {
-			interfaces[i].FortiGateID = device.ID
-			interfaces[i].Timestamp = now
+	if err == nil && len(interfaces) > 0 {
+		if p.db != nil {
+			now := time.Now()
+			for i := range interfaces {
+				interfaces[i].FortiGateID = device.ID
+				interfaces[i].Timestamp = now
+			}
+			if err := p.db.SaveInterfaceStats(interfaces); err != nil {
+				log.Printf("Device %s: failed to save interface stats - %v", device.Name, err)
+			}
 		}
-		if err := p.db.SaveInterfaceStats(interfaces); err != nil {
-			log.Printf("Device %s: failed to save interface stats - %v", device.Name, err)
+		// Check interface alerts
+		if p.alertManager != nil {
+			if err := p.alertManager.CheckInterfaceStatus(interfaces); err != nil {
+				log.Printf("Device %s: interface alert check error - %v", device.Name, err)
+			}
 		}
 	}
 
@@ -178,7 +208,10 @@ func main() {
 	log.Println("Database connected")
 	defer db.Close()
 
-	poller := NewPoller(cfg, db)
+	notif := notifier.NewNotifier(cfg)
+	alertManager := alerts.NewAlertManager(cfg, notif)
+
+	poller := NewPoller(cfg, db, alertManager)
 
 	go func() {
 		if err := poller.Start(); err != nil {

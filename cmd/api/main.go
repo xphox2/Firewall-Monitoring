@@ -123,7 +123,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.RateLimiter(cfg))
-	router.Use(middleware.GetRealIP())
 
 	router.Static("/static", "./static")
 	router.LoadHTMLGlob("./web/**/*.html")

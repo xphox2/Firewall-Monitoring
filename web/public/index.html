@@ -227,7 +227,7 @@
         }
 
         function formatNumber(num) {
-            if (!num) return '--';
+            if (num === null || num === undefined) return '--';
             return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
 
@@ -248,7 +248,10 @@
         fetchDisplaySettings();
         fetchDashboard();
         fetchInterfaces();
-        refreshTimer = setInterval(() => { fetchDashboard(); fetchInterfaces(); }, 30000);
+        // Default timer; applyDisplaySettings() will replace with configured interval
+        if (!refreshTimer) {
+            refreshTimer = setInterval(() => { fetchDashboard(); fetchInterfaces(); }, 30000);
+        }
     </script>
 </body>
 </html>
