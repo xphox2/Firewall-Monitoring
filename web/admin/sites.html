@@ -91,54 +91,416 @@
                     <label>Country</label>
                     <select id="site-country">
                         <option value="">Select Country</option>
-                        <option value="USA">United States</option>
-                        <option value="CAN">Canada</option>
-                        <option value="GBR">United Kingdom</option>
-                        <option value="DEU">Germany</option>
-                        <option value="FRA">France</option>
-                        <option value="NLD">Netherlands</option>
-                        <option value="AUS">Australia</option>
-                        <option value="JPN">Japan</option>
-                        <option value="SGP">Singapore</option>
-                        <option value="BRA">Brazil</option>
-                        <option value="IND">India</option>
-                        <option value="OTHER">Other</option>
+                        <optgroup label="North America">
+                            <option value="USA">United States</option>
+                            <option value="CAN">Canada</option>
+                            <option value="MEX">Mexico</option>
+                        </optgroup>
+                        <optgroup label="Central America &amp; Caribbean">
+                            <option value="CRI">Costa Rica</option>
+                            <option value="CUB">Cuba</option>
+                            <option value="DOM">Dominican Republic</option>
+                            <option value="GTM">Guatemala</option>
+                            <option value="HND">Honduras</option>
+                            <option value="JAM">Jamaica</option>
+                            <option value="NIC">Nicaragua</option>
+                            <option value="PAN">Panama</option>
+                            <option value="PRI">Puerto Rico</option>
+                            <option value="SLV">El Salvador</option>
+                            <option value="TTO">Trinidad and Tobago</option>
+                        </optgroup>
+                        <optgroup label="South America">
+                            <option value="ARG">Argentina</option>
+                            <option value="BOL">Bolivia</option>
+                            <option value="BRA">Brazil</option>
+                            <option value="CHL">Chile</option>
+                            <option value="COL">Colombia</option>
+                            <option value="ECU">Ecuador</option>
+                            <option value="GUY">Guyana</option>
+                            <option value="PER">Peru</option>
+                            <option value="PRY">Paraguay</option>
+                            <option value="SUR">Suriname</option>
+                            <option value="URY">Uruguay</option>
+                            <option value="VEN">Venezuela</option>
+                        </optgroup>
+                        <optgroup label="Western Europe">
+                            <option value="GBR">United Kingdom</option>
+                            <option value="IRL">Ireland</option>
+                            <option value="FRA">France</option>
+                            <option value="DEU">Germany</option>
+                            <option value="NLD">Netherlands</option>
+                            <option value="BEL">Belgium</option>
+                            <option value="LUX">Luxembourg</option>
+                            <option value="AUT">Austria</option>
+                            <option value="CHE">Switzerland</option>
+                        </optgroup>
+                        <optgroup label="Northern Europe">
+                            <option value="DNK">Denmark</option>
+                            <option value="FIN">Finland</option>
+                            <option value="ISL">Iceland</option>
+                            <option value="NOR">Norway</option>
+                            <option value="SWE">Sweden</option>
+                        </optgroup>
+                        <optgroup label="Southern Europe">
+                            <option value="ESP">Spain</option>
+                            <option value="PRT">Portugal</option>
+                            <option value="ITA">Italy</option>
+                            <option value="GRC">Greece</option>
+                            <option value="HRV">Croatia</option>
+                            <option value="SVN">Slovenia</option>
+                            <option value="MLT">Malta</option>
+                            <option value="CYP">Cyprus</option>
+                        </optgroup>
+                        <optgroup label="Eastern Europe">
+                            <option value="POL">Poland</option>
+                            <option value="CZE">Czech Republic</option>
+                            <option value="SVK">Slovakia</option>
+                            <option value="HUN">Hungary</option>
+                            <option value="ROU">Romania</option>
+                            <option value="BGR">Bulgaria</option>
+                            <option value="UKR">Ukraine</option>
+                            <option value="BLR">Belarus</option>
+                            <option value="MDA">Moldova</option>
+                            <option value="SRB">Serbia</option>
+                            <option value="BIH">Bosnia and Herzegovina</option>
+                            <option value="MNE">Montenegro</option>
+                            <option value="MKD">North Macedonia</option>
+                            <option value="ALB">Albania</option>
+                            <option value="EST">Estonia</option>
+                            <option value="LVA">Latvia</option>
+                            <option value="LTU">Lithuania</option>
+                        </optgroup>
+                        <optgroup label="Russia &amp; Central Asia">
+                            <option value="RUS">Russia</option>
+                            <option value="KAZ">Kazakhstan</option>
+                            <option value="UZB">Uzbekistan</option>
+                            <option value="TKM">Turkmenistan</option>
+                            <option value="KGZ">Kyrgyzstan</option>
+                            <option value="TJK">Tajikistan</option>
+                            <option value="GEO">Georgia</option>
+                            <option value="ARM">Armenia</option>
+                            <option value="AZE">Azerbaijan</option>
+                        </optgroup>
+                        <optgroup label="Middle East">
+                            <option value="TUR">Turkey</option>
+                            <option value="ISR">Israel</option>
+                            <option value="SAU">Saudi Arabia</option>
+                            <option value="ARE">United Arab Emirates</option>
+                            <option value="QAT">Qatar</option>
+                            <option value="KWT">Kuwait</option>
+                            <option value="BHR">Bahrain</option>
+                            <option value="OMN">Oman</option>
+                            <option value="JOR">Jordan</option>
+                            <option value="LBN">Lebanon</option>
+                            <option value="IRQ">Iraq</option>
+                            <option value="IRN">Iran</option>
+                            <option value="YEM">Yemen</option>
+                        </optgroup>
+                        <optgroup label="South Asia">
+                            <option value="IND">India</option>
+                            <option value="PAK">Pakistan</option>
+                            <option value="BGD">Bangladesh</option>
+                            <option value="LKA">Sri Lanka</option>
+                            <option value="NPL">Nepal</option>
+                            <option value="MMR">Myanmar</option>
+                            <option value="AFG">Afghanistan</option>
+                        </optgroup>
+                        <optgroup label="East Asia">
+                            <option value="CHN">China</option>
+                            <option value="JPN">Japan</option>
+                            <option value="KOR">South Korea</option>
+                            <option value="PRK">North Korea</option>
+                            <option value="TWN">Taiwan</option>
+                            <option value="MNG">Mongolia</option>
+                            <option value="HKG">Hong Kong</option>
+                            <option value="MAC">Macau</option>
+                        </optgroup>
+                        <optgroup label="Southeast Asia">
+                            <option value="SGP">Singapore</option>
+                            <option value="MYS">Malaysia</option>
+                            <option value="IDN">Indonesia</option>
+                            <option value="THA">Thailand</option>
+                            <option value="VNM">Vietnam</option>
+                            <option value="PHL">Philippines</option>
+                            <option value="KHM">Cambodia</option>
+                            <option value="LAO">Laos</option>
+                            <option value="BRN">Brunei</option>
+                        </optgroup>
+                        <optgroup label="Oceania">
+                            <option value="AUS">Australia</option>
+                            <option value="NZL">New Zealand</option>
+                            <option value="FJI">Fiji</option>
+                            <option value="PNG">Papua New Guinea</option>
+                            <option value="WSM">Samoa</option>
+                            <option value="TON">Tonga</option>
+                            <option value="GUM">Guam</option>
+                        </optgroup>
+                        <optgroup label="North Africa">
+                            <option value="EGY">Egypt</option>
+                            <option value="LBY">Libya</option>
+                            <option value="TUN">Tunisia</option>
+                            <option value="DZA">Algeria</option>
+                            <option value="MAR">Morocco</option>
+                        </optgroup>
+                        <optgroup label="West Africa">
+                            <option value="NGA">Nigeria</option>
+                            <option value="GHA">Ghana</option>
+                            <option value="SEN">Senegal</option>
+                            <option value="CIV">Ivory Coast</option>
+                            <option value="CMR">Cameroon</option>
+                            <option value="MLI">Mali</option>
+                            <option value="BFA">Burkina Faso</option>
+                            <option value="NER">Niger</option>
+                        </optgroup>
+                        <optgroup label="East Africa">
+                            <option value="KEN">Kenya</option>
+                            <option value="ETH">Ethiopia</option>
+                            <option value="TZA">Tanzania</option>
+                            <option value="UGA">Uganda</option>
+                            <option value="RWA">Rwanda</option>
+                            <option value="SDN">Sudan</option>
+                            <option value="SSD">South Sudan</option>
+                            <option value="SOM">Somalia</option>
+                            <option value="ERI">Eritrea</option>
+                            <option value="DJI">Djibouti</option>
+                            <option value="MUS">Mauritius</option>
+                        </optgroup>
+                        <optgroup label="Southern Africa">
+                            <option value="ZAF">South Africa</option>
+                            <option value="ZWE">Zimbabwe</option>
+                            <option value="ZMB">Zambia</option>
+                            <option value="MOZ">Mozambique</option>
+                            <option value="BWA">Botswana</option>
+                            <option value="NAM">Namibia</option>
+                            <option value="AGO">Angola</option>
+                            <option value="MWI">Malawi</option>
+                            <option value="MDG">Madagascar</option>
+                        </optgroup>
+                        <optgroup label="Central Africa">
+                            <option value="COD">DR Congo</option>
+                            <option value="COG">Congo</option>
+                            <option value="GAB">Gabon</option>
+                            <option value="TCD">Chad</option>
+                            <option value="CAF">Central African Republic</option>
+                        </optgroup>
+                        <optgroup label="Other">
+                            <option value="OTHER">Other</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Region</label>
                     <select id="site-region">
                         <option value="">Select Region</option>
-                        <option value="US-East">US East</option>
-                        <option value="US-West">US West</option>
-                        <option value="US-Central">US Central</option>
-                        <option value="EU-West">EU West</option>
-                        <option value="EU-Central">EU Central</option>
-                        <option value="APAC">Asia Pacific</option>
-                        <option value="LATAM">Latin America</option>
-                        <option value="OTHER">Other</option>
+                        <optgroup label="Americas">
+                            <option value="US-East">US East</option>
+                            <option value="US-Central">US Central</option>
+                            <option value="US-West">US West</option>
+                            <option value="Canada">Canada</option>
+                            <option value="LATAM">Latin America (All)</option>
+                            <option value="LATAM-North">Latin America North (Mexico/Central America/Caribbean)</option>
+                            <option value="LATAM-South">Latin America South</option>
+                        </optgroup>
+                        <optgroup label="Europe">
+                            <option value="EU-West">EU West (UK/Ireland/France/Benelux)</option>
+                            <option value="EU-Central">EU Central (DACH/Poland/Czech)</option>
+                            <option value="EU-North">EU North (Nordics/Baltics)</option>
+                            <option value="EU-South">EU South (Iberia/Italy/Greece)</option>
+                            <option value="EU-East">EU East (Romania/Bulgaria/Balkans)</option>
+                        </optgroup>
+                        <optgroup label="Middle East &amp; Africa">
+                            <option value="MEA-Gulf">Middle East Gulf (UAE/Saudi/Qatar)</option>
+                            <option value="MEA-Levant">Middle East Levant (Turkey/Israel/Jordan)</option>
+                            <option value="Africa-North">North Africa</option>
+                            <option value="Africa-West">West Africa</option>
+                            <option value="Africa-East">East Africa</option>
+                            <option value="Africa-South">Southern Africa</option>
+                        </optgroup>
+                        <optgroup label="Asia Pacific">
+                            <option value="APAC">Asia Pacific (All)</option>
+                            <option value="APAC-East">East Asia (China/Japan/Korea)</option>
+                            <option value="APAC-SE">Southeast Asia (Singapore/Thailand/Indonesia)</option>
+                            <option value="APAC-South">South Asia (India/Pakistan/Bangladesh)</option>
+                            <option value="APAC-ANZ">Australia &amp; New Zealand</option>
+                            <option value="APAC-Pacific">Pacific Islands</option>
+                        </optgroup>
+                        <optgroup label="Russia &amp; CIS">
+                            <option value="CIS-West">Russia West / CIS West</option>
+                            <option value="CIS-East">Russia East / Central Asia</option>
+                        </optgroup>
+                        <optgroup label="Other">
+                            <option value="OTHER">Other</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Timezone</label>
                     <select id="site-timezone">
                         <option value="">Select Timezone</option>
-                        <option value="America/New_York">Eastern Time (ET)</option>
-                        <option value="America/Chicago">Central Time (CT)</option>
-                        <option value="America/Denver">Mountain Time (MT)</option>
-                        <option value="America/Los_Angeles">Pacific Time (PT)</option>
-                        <option value="America/Anchorage">Alaska Time (AKT)</option>
-                        <option value="Pacific/Honolulu">Hawaii Time (HST)</option>
-                        <option value="Europe/London">London (GMT/BST)</option>
-                        <option value="Europe/Paris">Paris (CET/CEST)</option>
-                        <option value="Europe/Berlin">Berlin (CET/CEST)</option>
-                        <option value="Europe/Amsterdam">Amsterdam (CET/CEST)</option>
-                        <option value="Asia/Tokyo">Tokyo (JST)</option>
-                        <option value="Asia/Singapore">Singapore (SGT)</option>
-                        <option value="Asia/Dubai">Dubai (GST)</option>
-                        <option value="Asia/Kolkata">India (IST)</option>
-                        <option value="Australia/Sydney">Sydney (AEST/AEDT)</option>
-                        <option value="America/Sao_Paulo">Sao Paulo (BRT)</option>
+                        <optgroup label="UTC">
+                            <option value="UTC">UTC (Coordinated Universal Time)</option>
+                        </optgroup>
+                        <optgroup label="Americas - North">
+                            <option value="America/St_Johns">Newfoundland (UTC-3:30)</option>
+                            <option value="America/Halifax">Atlantic Time (UTC-4)</option>
+                            <option value="America/New_York">Eastern Time (UTC-5)</option>
+                            <option value="America/Chicago">Central Time (UTC-6)</option>
+                            <option value="America/Denver">Mountain Time (UTC-7)</option>
+                            <option value="America/Los_Angeles">Pacific Time (UTC-8)</option>
+                            <option value="America/Anchorage">Alaska (UTC-9)</option>
+                            <option value="Pacific/Honolulu">Hawaii (UTC-10)</option>
+                            <option value="America/Toronto">Toronto (UTC-5)</option>
+                            <option value="America/Vancouver">Vancouver (UTC-8)</option>
+                            <option value="America/Winnipeg">Winnipeg (UTC-6)</option>
+                            <option value="America/Edmonton">Edmonton (UTC-7)</option>
+                            <option value="America/Mexico_City">Mexico City (UTC-6)</option>
+                            <option value="America/Tijuana">Tijuana (UTC-8)</option>
+                        </optgroup>
+                        <optgroup label="Americas - Central &amp; Caribbean">
+                            <option value="America/Panama">Panama (UTC-5)</option>
+                            <option value="America/Costa_Rica">Costa Rica (UTC-6)</option>
+                            <option value="America/Havana">Havana (UTC-5)</option>
+                            <option value="America/Jamaica">Jamaica (UTC-5)</option>
+                            <option value="America/Puerto_Rico">Puerto Rico (UTC-4)</option>
+                            <option value="America/Guatemala">Guatemala (UTC-6)</option>
+                        </optgroup>
+                        <optgroup label="Americas - South">
+                            <option value="America/Bogota">Bogota (UTC-5)</option>
+                            <option value="America/Lima">Lima (UTC-5)</option>
+                            <option value="America/Caracas">Caracas (UTC-4)</option>
+                            <option value="America/Guyana">Guyana (UTC-4)</option>
+                            <option value="America/La_Paz">La Paz (UTC-4)</option>
+                            <option value="America/Santiago">Santiago (UTC-4)</option>
+                            <option value="America/Sao_Paulo">Sao Paulo (UTC-3)</option>
+                            <option value="America/Argentina/Buenos_Aires">Buenos Aires (UTC-3)</option>
+                            <option value="America/Montevideo">Montevideo (UTC-3)</option>
+                            <option value="America/Asuncion">Asuncion (UTC-4)</option>
+                        </optgroup>
+                        <optgroup label="Europe - Western">
+                            <option value="Atlantic/Reykjavik">Reykjavik (UTC+0)</option>
+                            <option value="Europe/London">London (UTC+0/+1)</option>
+                            <option value="Europe/Dublin">Dublin (UTC+0/+1)</option>
+                            <option value="Europe/Lisbon">Lisbon (UTC+0/+1)</option>
+                            <option value="Europe/Paris">Paris (UTC+1/+2)</option>
+                            <option value="Europe/Brussels">Brussels (UTC+1/+2)</option>
+                            <option value="Europe/Amsterdam">Amsterdam (UTC+1/+2)</option>
+                            <option value="Europe/Luxembourg">Luxembourg (UTC+1/+2)</option>
+                        </optgroup>
+                        <optgroup label="Europe - Central">
+                            <option value="Europe/Berlin">Berlin (UTC+1/+2)</option>
+                            <option value="Europe/Zurich">Zurich (UTC+1/+2)</option>
+                            <option value="Europe/Vienna">Vienna (UTC+1/+2)</option>
+                            <option value="Europe/Prague">Prague (UTC+1/+2)</option>
+                            <option value="Europe/Warsaw">Warsaw (UTC+1/+2)</option>
+                            <option value="Europe/Budapest">Budapest (UTC+1/+2)</option>
+                            <option value="Europe/Rome">Rome (UTC+1/+2)</option>
+                            <option value="Europe/Madrid">Madrid (UTC+1/+2)</option>
+                        </optgroup>
+                        <optgroup label="Europe - Northern">
+                            <option value="Europe/Stockholm">Stockholm (UTC+1/+2)</option>
+                            <option value="Europe/Oslo">Oslo (UTC+1/+2)</option>
+                            <option value="Europe/Copenhagen">Copenhagen (UTC+1/+2)</option>
+                            <option value="Europe/Helsinki">Helsinki (UTC+2/+3)</option>
+                        </optgroup>
+                        <optgroup label="Europe - Eastern">
+                            <option value="Europe/Athens">Athens (UTC+2/+3)</option>
+                            <option value="Europe/Bucharest">Bucharest (UTC+2/+3)</option>
+                            <option value="Europe/Sofia">Sofia (UTC+2/+3)</option>
+                            <option value="Europe/Kyiv">Kyiv (UTC+2/+3)</option>
+                            <option value="Europe/Vilnius">Vilnius (UTC+2/+3)</option>
+                            <option value="Europe/Riga">Riga (UTC+2/+3)</option>
+                            <option value="Europe/Tallinn">Tallinn (UTC+2/+3)</option>
+                            <option value="Europe/Chisinau">Chisinau (UTC+2/+3)</option>
+                            <option value="Europe/Minsk">Minsk (UTC+3)</option>
+                            <option value="Europe/Moscow">Moscow (UTC+3)</option>
+                            <option value="Europe/Istanbul">Istanbul (UTC+3)</option>
+                        </optgroup>
+                        <optgroup label="Middle East">
+                            <option value="Asia/Jerusalem">Jerusalem (UTC+2/+3)</option>
+                            <option value="Asia/Beirut">Beirut (UTC+2/+3)</option>
+                            <option value="Asia/Amman">Amman (UTC+3)</option>
+                            <option value="Asia/Baghdad">Baghdad (UTC+3)</option>
+                            <option value="Asia/Riyadh">Riyadh (UTC+3)</option>
+                            <option value="Asia/Qatar">Qatar (UTC+3)</option>
+                            <option value="Asia/Dubai">Dubai (UTC+4)</option>
+                            <option value="Asia/Muscat">Muscat (UTC+4)</option>
+                            <option value="Asia/Tehran">Tehran (UTC+3:30)</option>
+                        </optgroup>
+                        <optgroup label="Africa">
+                            <option value="Africa/Casablanca">Casablanca (UTC+0/+1)</option>
+                            <option value="Africa/Algiers">Algiers (UTC+1)</option>
+                            <option value="Africa/Tunis">Tunis (UTC+1)</option>
+                            <option value="Africa/Cairo">Cairo (UTC+2)</option>
+                            <option value="Africa/Johannesburg">Johannesburg (UTC+2)</option>
+                            <option value="Africa/Harare">Harare (UTC+2)</option>
+                            <option value="Africa/Nairobi">Nairobi (UTC+3)</option>
+                            <option value="Africa/Dar_es_Salaam">Dar es Salaam (UTC+3)</option>
+                            <option value="Africa/Addis_Ababa">Addis Ababa (UTC+3)</option>
+                            <option value="Africa/Lagos">Lagos (UTC+1)</option>
+                            <option value="Africa/Accra">Accra (UTC+0)</option>
+                            <option value="Africa/Dakar">Dakar (UTC+0)</option>
+                            <option value="Africa/Abidjan">Abidjan (UTC+0)</option>
+                            <option value="Africa/Khartoum">Khartoum (UTC+2)</option>
+                            <option value="Indian/Mauritius">Mauritius (UTC+4)</option>
+                            <option value="Indian/Antananarivo">Antananarivo (UTC+3)</option>
+                        </optgroup>
+                        <optgroup label="South Asia">
+                            <option value="Asia/Karachi">Karachi (UTC+5)</option>
+                            <option value="Asia/Kolkata">India / Kolkata (UTC+5:30)</option>
+                            <option value="Asia/Colombo">Colombo (UTC+5:30)</option>
+                            <option value="Asia/Kathmandu">Kathmandu (UTC+5:45)</option>
+                            <option value="Asia/Dhaka">Dhaka (UTC+6)</option>
+                            <option value="Asia/Yangon">Yangon (UTC+6:30)</option>
+                        </optgroup>
+                        <optgroup label="Central Asia &amp; Russia">
+                            <option value="Asia/Kabul">Kabul (UTC+4:30)</option>
+                            <option value="Asia/Tashkent">Tashkent (UTC+5)</option>
+                            <option value="Asia/Almaty">Almaty (UTC+6)</option>
+                            <option value="Asia/Tbilisi">Tbilisi (UTC+4)</option>
+                            <option value="Asia/Yerevan">Yerevan (UTC+4)</option>
+                            <option value="Asia/Baku">Baku (UTC+4)</option>
+                            <option value="Asia/Yekaterinburg">Yekaterinburg (UTC+5)</option>
+                            <option value="Asia/Novosibirsk">Novosibirsk (UTC+7)</option>
+                            <option value="Asia/Krasnoyarsk">Krasnoyarsk (UTC+7)</option>
+                            <option value="Asia/Irkutsk">Irkutsk (UTC+8)</option>
+                            <option value="Asia/Vladivostok">Vladivostok (UTC+10)</option>
+                            <option value="Asia/Kamchatka">Kamchatka (UTC+12)</option>
+                        </optgroup>
+                        <optgroup label="East Asia">
+                            <option value="Asia/Shanghai">Shanghai / Beijing (UTC+8)</option>
+                            <option value="Asia/Hong_Kong">Hong Kong (UTC+8)</option>
+                            <option value="Asia/Macau">Macau (UTC+8)</option>
+                            <option value="Asia/Taipei">Taipei (UTC+8)</option>
+                            <option value="Asia/Tokyo">Tokyo (UTC+9)</option>
+                            <option value="Asia/Seoul">Seoul (UTC+9)</option>
+                            <option value="Asia/Ulaanbaatar">Ulaanbaatar (UTC+8)</option>
+                        </optgroup>
+                        <optgroup label="Southeast Asia">
+                            <option value="Asia/Singapore">Singapore (UTC+8)</option>
+                            <option value="Asia/Kuala_Lumpur">Kuala Lumpur (UTC+8)</option>
+                            <option value="Asia/Jakarta">Jakarta (UTC+7)</option>
+                            <option value="Asia/Makassar">Makassar (UTC+8)</option>
+                            <option value="Asia/Bangkok">Bangkok (UTC+7)</option>
+                            <option value="Asia/Ho_Chi_Minh">Ho Chi Minh (UTC+7)</option>
+                            <option value="Asia/Manila">Manila (UTC+8)</option>
+                            <option value="Asia/Phnom_Penh">Phnom Penh (UTC+7)</option>
+                            <option value="Asia/Brunei">Brunei (UTC+8)</option>
+                        </optgroup>
+                        <optgroup label="Oceania">
+                            <option value="Australia/Perth">Perth (UTC+8)</option>
+                            <option value="Australia/Adelaide">Adelaide (UTC+9:30/+10:30)</option>
+                            <option value="Australia/Darwin">Darwin (UTC+9:30)</option>
+                            <option value="Australia/Brisbane">Brisbane (UTC+10)</option>
+                            <option value="Australia/Sydney">Sydney (UTC+10/+11)</option>
+                            <option value="Australia/Melbourne">Melbourne (UTC+10/+11)</option>
+                            <option value="Australia/Hobart">Hobart (UTC+10/+11)</option>
+                            <option value="Pacific/Auckland">Auckland (UTC+12/+13)</option>
+                            <option value="Pacific/Fiji">Fiji (UTC+12/+13)</option>
+                            <option value="Pacific/Port_Moresby">Port Moresby (UTC+10)</option>
+                            <option value="Pacific/Guam">Guam (UTC+10)</option>
+                            <option value="Pacific/Apia">Apia (UTC+13)</option>
+                            <option value="Pacific/Tongatapu">Tongatapu (UTC+13)</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="form-group">
@@ -213,8 +575,14 @@
                     window.location.href = '/admin/login';
                     return Promise.reject(new Error('Not authenticated'));
                 }
-                if (res.status === 419) {
-                    return Promise.reject(new Error('CSRF validation failed - please refresh the page'));
+                if (res.status === 403) {
+                    return res.json().then(function(err) {
+                        var msg = err.error || 'Forbidden';
+                        if (msg.indexOf('CSRF') !== -1) {
+                            msg += ' - please refresh the page and try again';
+                        }
+                        throw new Error(msg);
+                    });
                 }
                 if (!res.ok) {
                     return res.json().then(function(err) { throw new Error(err.error || 'Request failed'); });

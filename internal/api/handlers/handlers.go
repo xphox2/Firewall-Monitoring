@@ -219,7 +219,7 @@ func (h *Handler) Login(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "csrf_token",
@@ -228,7 +228,7 @@ func (h *Handler) Login(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: false,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -253,7 +253,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "csrf_token",
@@ -262,7 +262,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	c.JSON(http.StatusOK, models.MessageResponse("Logged out successfully"))

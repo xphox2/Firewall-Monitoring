@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.1] - 2026-02-28
+
+### Fixed
+- **CSRF cookie issue**: Changed SameSite from Strict to Lax on auth and CSRF cookies to prevent CSRF validation failures after login redirects and bookmark navigation
+- **CSRF error handling**: Frontend now properly handles HTTP 403 CSRF errors with clear guidance to refresh the page
+
+### Improved
+- **Full world coverage for sites**: Expanded country dropdown from 11 to 140+ countries organized by geographic region (Americas, Europe, Middle East, Africa, Asia, Oceania)
+- **Comprehensive region list**: Expanded from 7 to 24 regions covering all continents (US East/Central/West, Canada, LATAM, EU West/Central/North/South/East, Middle East Gulf/Levant, Africa North/West/East/South, APAC East/SE/South/ANZ/Pacific, Russia/CIS)
+- **Complete timezone coverage**: Expanded from 16 to 100+ IANA timezones covering every UTC offset worldwide, organized by geographic area with UTC offset labels
+
 ## [0.10.0] - 2026-02-28
 
 ### Added
