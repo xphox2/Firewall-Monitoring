@@ -38,11 +38,10 @@ func main() {
 
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
-		log.Printf("Warning: Failed to initialize database: %v", err)
-	} else {
-		defer db.Close()
-		log.Println("Database initialized")
+		log.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Close()
+	log.Println("Database initialized")
 
 	authManager := auth.NewAuthManager(cfg, db)
 
@@ -65,6 +64,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Generated admin password: %s\n", cfg.Auth.AdminPassword)
 		log.Println("========================================")
 	}
+
+	// Clear plaintext password from memory after initialization
+	cfg.Auth.AdminPassword = ""
 
 	handler := handlers.NewHandler(cfg, authManager, db)
 

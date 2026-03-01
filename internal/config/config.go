@@ -176,7 +176,11 @@ func generateRandomPassword(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
 	b := make([]byte, length)
 	for i := range b {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Fatal: crypto/rand failed: %v\n", err)
+			os.Exit(1)
+		}
 		b[i] = charset[n.Int64()]
 	}
 	return string(b)
@@ -249,6 +253,13 @@ func loadEnvFile(filename string) error {
 		if len(parts) == 2 {
 			key := strings.TrimSpace(parts[0])
 			value := strings.TrimSpace(parts[1])
+			// Strip surrounding quotes (single or double)
+			if len(value) >= 2 {
+				if (value[0] == '"' && value[len(value)-1] == '"') ||
+					(value[0] == '\'' && value[len(value)-1] == '\'') {
+					value = value[1 : len(value)-1]
+				}
+			}
 			if key != "" && os.Getenv(key) == "" {
 				os.Setenv(key, value)
 			}

@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,10 +170,12 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	// Get admin record to use real ID in token
-	adminRecord, adminErr := h.db.GetAdminByUsername(creds.Username)
 	var adminID uint = 1
-	if adminErr == nil && adminRecord != nil {
-		adminID = adminRecord.ID
+	if h.db != nil {
+		adminRecord, adminErr := h.db.GetAdminByUsername(creds.Username)
+		if adminErr == nil && adminRecord != nil {
+			adminID = adminRecord.ID
+		}
 	}
 
 	token, err := h.authManager.GenerateToken(creds.Username, adminID)
@@ -183,13 +187,26 @@ func (h *Handler) Login(c *gin.Context) {
 	// Generate HMAC-signed CSRF token tied to the auth token
 	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
 
-	cookieSecure := true
-	if h.config != nil {
-		cookieSecure = h.config.Server.CookieSecure
-	}
+	cookieSecure := h.config != nil && h.config.Server.CookieSecure
 
-	c.SetCookie("auth_token", token, 86400, "/", "", cookieSecure, true)
-	c.SetCookie("csrf_token", csrfToken, 86400, "/", "", cookieSecure, false)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		MaxAge:   86400,
+		Path:     "/",
+		Secure:   cookieSecure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "csrf_token",
+		Value:    csrfToken,
+		MaxAge:   86400,
+		Path:     "/",
+		Secure:   cookieSecure,
+		HttpOnly: false,
+		SameSite: http.SameSiteStrictMode,
+	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"message":    "Login successful",
@@ -198,12 +215,26 @@ func (h *Handler) Login(c *gin.Context) {
 }
 
 func (h *Handler) Logout(c *gin.Context) {
-	cookieSecure := true
-	if h.config != nil {
-		cookieSecure = h.config.Server.CookieSecure
-	}
-	c.SetCookie("auth_token", "", -1, "/", "", cookieSecure, true)
-	c.SetCookie("csrf_token", "", -1, "/", "", cookieSecure, true)
+	cookieSecure := h.config != nil && h.config.Server.CookieSecure
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "auth_token",
+		Value:    "",
+		MaxAge:   -1,
+		Path:     "/",
+		Secure:   cookieSecure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "csrf_token",
+		Value:    "",
+		MaxAge:   -1,
+		Path:     "/",
+		Secure:   cookieSecure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
 
 	c.JSON(http.StatusOK, models.MessageResponse("Logged out successfully"))
 }
@@ -347,6 +378,13 @@ func (h *Handler) GetFortiGates(c *gin.Context) {
 		return
 	}
 
+	// Redact SNMP community strings from response
+	for i := range fortigates {
+		if fortigates[i].SNMPCommunity != "" {
+			fortigates[i].SNMPCommunity = "********"
+		}
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(fortigates))
 }
 
@@ -359,6 +397,24 @@ func (h *Handler) CreateFortiGate(c *gin.Context) {
 	var fg models.FortiGate
 	if err := c.ShouldBindJSON(&fg); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	// Validate required fields
+	if strings.TrimSpace(fg.Name) == "" || strings.TrimSpace(fg.IPAddress) == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name and IP address are required"))
+		return
+	}
+
+	// Validate IP to prevent SSRF
+	if !isValidExternalIP(fg.IPAddress) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+		return
+	}
+
+	// Validate SNMP port if provided
+	if fg.SNMPPort != 0 && (fg.SNMPPort < 1 || fg.SNMPPort > 65535) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
 		return
 	}
 
@@ -418,6 +474,32 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 	if len(filteredUpdates) == 0 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
 		return
+	}
+
+	// Validate snmp_port is a valid number if present
+	if portVal, ok := filteredUpdates["snmp_port"]; ok {
+		port, isNum := portVal.(float64) // JSON numbers decode as float64
+		if !isNum || port < 1 || port > 65535 || port != float64(int(port)) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
+			return
+		}
+	}
+
+	// Validate ip_address if present
+	if ipVal, ok := filteredUpdates["ip_address"]; ok {
+		ipStr, isStr := ipVal.(string)
+		if !isStr || !isValidExternalIP(ipStr) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+			return
+		}
+	}
+
+	// Validate enabled is boolean if present
+	if enabledVal, ok := filteredUpdates["enabled"]; ok {
+		if _, isBool := enabledVal.(bool); !isBool {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for enabled"))
+			return
+		}
 	}
 
 	if err := h.db.Gorm().Model(fg).Updates(filteredUpdates).Error; err != nil {
@@ -515,7 +597,6 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 		"source_fg_id":    true,
 		"dest_fg_id":      true,
 		"description":     true,
-		"enabled":         true,
 		"connection_type": true,
 		"notes":           true,
 		"status":          true,
@@ -525,6 +606,15 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	if err := c.ShouldBindJSON(&updates); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
 		return
+	}
+
+	// Validate status enum if provided
+	if statusVal, ok := updates["status"]; ok {
+		validStatuses := map[string]bool{"unknown": true, "up": true, "down": true}
+		if s, isStr := statusVal.(string); !isStr || !validStatuses[s] {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid status value"))
+			return
+		}
 	}
 
 	filteredUpdates := make(map[string]interface{})
@@ -731,6 +821,12 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		req.SNMPVersion = "2c"
 	}
 
+	// Validate IP to prevent SSRF against internal services
+	if !isValidExternalIP(req.IPAddress) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+		return
+	}
+
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
 			FortiGateHost: req.IPAddress,
@@ -800,9 +896,13 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Enforce minimum password length
+	// Enforce password length constraints
 	if len(req.NewPassword) < 8 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("New password must be at least 8 characters"))
+		return
+	}
+	if len(req.NewPassword) > 72 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("New password must be at most 72 characters"))
 		return
 	}
 
@@ -837,4 +937,35 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
+}
+
+// isValidExternalIP validates that the IP is a valid, non-loopback, non-internal address
+// to prevent SSRF attacks against internal services.
+func isValidExternalIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		// Could be a hostname - allow it but block obvious internal names
+		lower := strings.ToLower(ipStr)
+		if lower == "localhost" || strings.HasPrefix(lower, "127.") {
+			return false
+		}
+		return true
+	}
+
+	// Block loopback (127.x.x.x, ::1)
+	if ip.IsLoopback() {
+		return false
+	}
+
+	// Block unspecified (0.0.0.0, ::)
+	if ip.IsUnspecified() {
+		return false
+	}
+
+	// Block link-local (169.254.x.x, fe80::)
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+
+	return true
 }

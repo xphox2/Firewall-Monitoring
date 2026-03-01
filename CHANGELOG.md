@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.8.4] - 2026-02-28
+
+### Security
+- SSRF prevention: IP validation blocks loopback, unspecified, and link-local addresses in TestDevice and CreateFortiGate
+- Input validation for `UpdateFortiGate`: validates `snmp_port` range, `ip_address` format, and `enabled` boolean type
+- Required field validation for `CreateFortiGate` (name and IP address)
+- SNMP community string validated on incoming traps (rejects mismatched community)
+- HSTS header only sent over TLS connections (prevents issues with plain HTTP setups)
+- Database directory created with 0700 permissions instead of 0755
+- 72-character max password length enforced (bcrypt limit)
+- `SameSite=Strict` on auth and CSRF cookies via `http.SetCookie`
+- SNMP community strings redacted in `GetFortiGates` API response
+- Status enum validation for connection updates (only `unknown`, `up`, `down` allowed)
+- Plaintext admin password cleared from config memory after hashing
+
+### Fixed
+- Database initialization is now fatal in both API server and poller (prevents nil pointer panics)
+- Login handler nil-deref guard when database unavailable for admin lookup
+- `generateRandomPassword` exits on `crypto/rand` failure instead of nil pointer panic
+- `CalculateFiveNines` target downtime corrected from 3.1536 to 315.576 seconds/year
+- `updateDeviceStatus` errors now logged in poller
+- Admin initialization logs when admin already exists instead of silently skipping
+- Env file parser strips surrounding quotes from values (single and double)
+
+### Added
+- Periodic data cleanup in poller (removes data older than 90 days, runs daily)
+
 ## [0.8.3] - 2026-02-28
 
 ### Security

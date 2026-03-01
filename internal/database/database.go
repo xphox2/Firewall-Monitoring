@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,7 +34,7 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	if dir == "." {
 		dir = "/data"
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
@@ -317,6 +318,7 @@ func (d *Database) InitAdmin(username, password string) error {
 	if admin == nil {
 		return d.CreateAdmin(&models.Admin{Username: username, Password: password})
 	}
+	log.Printf("Admin user already exists, skipping initialization")
 	return nil
 }
 

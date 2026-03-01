@@ -31,6 +31,10 @@ func (t *TrapReceiver) Start(handler func(*models.TrapEvent)) error {
 	t.handler = handler
 
 	t.server.OnNewTrap = func(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
+		// Validate community string if configured
+		if t.config.SNMP.TrapCommunity != "" && packet.Community != t.config.SNMP.TrapCommunity {
+			return
+		}
 		trap := t.parseTrap(packet, addr)
 		if trap != nil && t.handler != nil {
 			t.handler(trap)

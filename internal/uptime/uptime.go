@@ -174,7 +174,7 @@ func (ut *UptimeTracker) CalculateFiveNines() string {
 		return "Achieved"
 	}
 
-	targetDowntime := 3.1536
+	targetDowntime := 315.576 // Max allowed downtime per year for 99.999% uptime (5 min 15.576 sec)
 	downtimeRemaining := targetDowntime - stats.TotalDowntime
 	if downtimeRemaining < 0 {
 		downtimeRemaining = 0

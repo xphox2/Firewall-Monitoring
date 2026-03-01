@@ -40,10 +40,22 @@ func (p *Poller) Start() error {
 	ticker := time.NewTicker(p.cfg.SNMP.PollInterval)
 	defer ticker.Stop()
 
+	// Cleanup old data daily
+	cleanupTicker := time.NewTicker(24 * time.Hour)
+	defer cleanupTicker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
 			p.pollAllDevices()
+		case <-cleanupTicker.C:
+			if p.db != nil {
+				if err := p.db.CleanupOldData(90); err != nil {
+					log.Printf("Data cleanup error: %v", err)
+				} else {
+					log.Println("Old data cleanup completed (>90 days)")
+				}
+			}
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil
@@ -137,7 +149,9 @@ func (p *Poller) updateDeviceStatus(device *models.FortiGate, status string) {
 	device.Status = status
 	device.LastPolled = time.Now()
 	if p.db != nil {
-		p.db.UpdateFortiGate(device)
+		if err := p.db.UpdateFortiGate(device); err != nil {
+			log.Printf("Device %s: failed to update status - %v", device.Name, err)
+		}
 	}
 }
 
@@ -159,11 +173,10 @@ func main() {
 
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
-		log.Printf("Warning: Failed to connect to database: %v", err)
-	} else {
-		log.Println("Database connected")
-		defer db.Close()
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	log.Println("Database connected")
+	defer db.Close()
 
 	poller := NewPoller(cfg, db)
 
