@@ -1,6 +1,7 @@
 package ping
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"net"
@@ -277,7 +278,7 @@ func Ping(host string, timeout time.Duration) (latency float64, ttl int, err err
 	switch rm.Type {
 	case ipv4.ICMPTypeEchoReply:
 	case ipv4.ICMPTypeDestinationUnreachable:
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("destination unreachable")
 	}
 
 	_ = peer

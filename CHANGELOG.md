@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.10] - 2026-03-01
+
+### Fixed
+- **Ping destination unreachable**: `Ping()` now returns `fmt.Errorf("destination unreachable")` instead of stale nil error, which caused unreachable hosts to be reported as successful
+
 ## [0.10.9] - 2026-03-01
 
 ### Fixed
