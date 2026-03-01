@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"log"
+	"fmt"
 	"sync"
 	"time"
 
@@ -20,6 +20,7 @@ var (
 	ErrTokenExpired       = errors.New("token has expired")
 	ErrInvalidToken       = errors.New("invalid token")
 	ErrAccountLocked      = errors.New("account is locked")
+	ErrNoJWTSecret        = errors.New("JWT secret key not configured")
 )
 
 type Claims struct {
@@ -55,82 +56,83 @@ func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 }
 
 func (am *AuthManager) ValidateCredentials(username, password string) error {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[PANIC] ValidateCredentials: %v", r)
-		}
-	}()
-
 	if am == nil {
-		log.Printf("[DEBUG] AuthManager is nil")
 		return ErrInvalidCredentials
 	}
-
-	log.Printf("[DEBUG] ValidateCredentials: user=%s", username)
 
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()
 
 	maxAttempts := 5
+	lockoutDuration := 15 * time.Minute
 	if am.config != nil {
 		maxAttempts = am.config.Auth.MaxLoginAttempts
+		lockoutDuration = am.config.Auth.LockoutDuration
 	}
 
+	// Filter out attempts older than lockout duration
+	cutoff := time.Now().Add(-lockoutDuration)
 	attempts := am.loginAttempts[username]
-	if len(attempts) >= maxAttempts {
+	recentAttempts := make([]time.Time, 0, len(attempts))
+	for _, t := range attempts {
+		if t.After(cutoff) {
+			recentAttempts = append(recentAttempts, t)
+		}
+	}
+	am.loginAttempts[username] = recentAttempts
+
+	if len(recentAttempts) >= maxAttempts {
 		return ErrAccountLocked
 	}
 
 	if am.db == nil {
-		log.Printf("[DEBUG] No database configured")
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	adminRaw, err := am.db.GetAdminByUsername()
 	if err != nil {
-		log.Printf("[DEBUG] GetAdminByUsername error: %v", err)
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if adminRaw == nil {
-		log.Printf("[DEBUG] No admin found in database")
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	admin, ok := adminRaw.(*database.AdminAuth)
 	if !ok {
-		log.Printf("[DEBUG] Invalid admin type: %T", adminRaw)
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if admin.Username != username {
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if admin.Password == "" {
-		log.Printf("[DEBUG] Admin password is empty")
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) != nil {
-		log.Printf("[DEBUG] Password mismatch")
-		am.loginAttempts[username] = append(attempts, time.Now())
+		am.loginAttempts[username] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
+	// Successful login clears attempts
 	am.loginAttempts[username] = nil
-	log.Printf("[DEBUG] Login successful for user=%s", username)
 	return nil
 }
 
 func (am *AuthManager) HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	cost := bcrypt.DefaultCost
+	if am.config != nil && am.config.Auth.BcryptCost > 0 {
+		cost = am.config.Auth.BcryptCost
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
 	if err != nil {
 		return "", err
 	}
@@ -142,26 +144,22 @@ func (am *AuthManager) CheckPassword(password, hash string) bool {
 }
 
 func (am *AuthManager) GenerateToken(username string, userID uint) (string, error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[PANIC] GenerateToken: %v", r)
-		}
-	}()
-
-	log.Printf("[DEBUG] GenerateToken: user=%s, userID=%d", username, userID)
-
-	secretKey := "dev-secret-key"
-	if am.config != nil && am.config.Server.JWTSecretKey != "" {
-		secretKey = am.config.Server.JWTSecretKey
+	if am.config == nil || am.config.Server.JWTSecretKey == "" {
+		return "", ErrNoJWTSecret
 	}
 
-	log.Printf("[DEBUG] Using secretKey: %s", secretKey)
+	secretKey := am.config.Server.JWTSecretKey
+
+	tokenExpiry := 24 * time.Hour
+	if am.config.Auth.TokenExpiry > 0 {
+		tokenExpiry = am.config.Auth.TokenExpiry
+	}
 
 	claims := Claims{
 		Username: username,
 		UserID:   userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
@@ -171,17 +169,20 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 }
 
 func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
-	secretKey := "dev-secret-key"
-	if am.config != nil && am.config.Server.JWTSecretKey != "" {
-		secretKey = am.config.Server.JWTSecretKey
+	if am.config == nil || am.config.Server.JWTSecretKey == "" {
+		return nil, ErrNoJWTSecret
 	}
 
+	secretKey := am.config.Server.JWTSecretKey
+
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(secretKey), nil
 	})
 
 	if err != nil {
-		log.Printf("Token parse error: %v", err)
 		return nil, ErrInvalidToken
 	}
 

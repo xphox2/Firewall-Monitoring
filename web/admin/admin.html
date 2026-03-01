@@ -7,75 +7,80 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
-        
+
         .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
         .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
         .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
         .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
         .nav-item.danger { color: #f85149; }
-        
+
         .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
         .header h1 { font-size: 1.8rem; }
-        
+
         .page { display: none; }
         .page.active { display: block; }
-        
+
         .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
         .card h2 { font-size: 1.2rem; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .card h2 button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
-        
+
         .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
         .btn:hover { background: #2ea043; }
         .btn.danger { background: #da3633; }
         .btn.secondary { background: #30363d; }
-        
+
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
         th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
         tr:hover { background: #21262d; }
-        
+
         .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
         .status-badge.up, .status-badge.online { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
         .status-badge.down, .status-badge.offline { background: rgba(248, 81, 73, 0.15); color: #f85149; }
         .status-badge.warning { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
         .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
-        
+
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
         .form-group input, .form-group select { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
-        
+
         .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
         .modal.active { display: flex; }
         .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
         .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
         .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-        
+
         .connection-diagram { min-height: 400px; position: relative; background: #0d1117; border-radius: 8px; padding: 20px; }
         .node { position: absolute; background: #21262d; border: 2px solid #30363d; border-radius: 8px; padding: 15px; min-width: 150px; text-align: center; cursor: pointer; }
         .node.selected { border-color: #00d4ff; }
         .node .name { font-weight: 600; margin-bottom: 5px; }
         .node .ip { font-size: 0.8rem; color: #8b949e; }
         .node .status { margin-top: 8px; }
-        
+
         .connection-line { position: absolute; height: 3px; background: #30363d; transform-origin: left center; }
         .connection-line.up { background: #3fb150; }
         .connection-line.down { background: #f85149; }
-        
+
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        
+
         .loading { text-align: center; padding: 30px; color: #8b949e; }
         .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        
+
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
         .setting-item { background: #0d1117; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
         .setting-item label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 5px; }
         .setting-item input { width: 100%; padding: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #fff; }
+
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #30363d; }
+        .toggle-row:last-child { border-bottom: none; }
+        .toggle-row label { color: #c9d1d9; font-size: 0.9rem; }
+        .toggle-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: #238636; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2>FortiGate Admin</h2>
+        <h2>Firewall Monitor</h2>
         <a class="nav-item active" data-page="dashboard">Dashboard</a>
         <a class="nav-item" data-page="devices">Devices</a>
         <a class="nav-item" data-page="connections">Connections</a>
@@ -165,7 +170,40 @@
                     <input type="password" id="confirm-password">
                 </div>
                 <button class="btn" onclick="changePassword()">Change Password</button>
-                <p style="margin-top: 10px; color: #8b949e; font-size: 0.85rem;">After changing password, restart the container for changes to take effect.</p>
+            </div>
+            <div class="card">
+                <h2>Public Dashboard Display</h2>
+                <p style="color: #8b949e; margin-bottom: 15px;">Control which cards are visible on the public dashboard.</p>
+                <div id="display-settings">
+                    <div class="toggle-row">
+                        <label>Show Hostname</label>
+                        <input type="checkbox" name="public_show_hostname" checked>
+                    </div>
+                    <div class="toggle-row">
+                        <label>Show Uptime</label>
+                        <input type="checkbox" name="public_show_uptime" checked>
+                    </div>
+                    <div class="toggle-row">
+                        <label>Show CPU Usage</label>
+                        <input type="checkbox" name="public_show_cpu" checked>
+                    </div>
+                    <div class="toggle-row">
+                        <label>Show Memory Usage</label>
+                        <input type="checkbox" name="public_show_memory" checked>
+                    </div>
+                    <div class="toggle-row">
+                        <label>Show Active Sessions</label>
+                        <input type="checkbox" name="public_show_sessions" checked>
+                    </div>
+                    <div class="toggle-row">
+                        <label>Show Network Interfaces</label>
+                        <input type="checkbox" name="public_show_interfaces" checked>
+                    </div>
+                    <div class="setting-item" style="margin-top: 15px;">
+                        <label>Public Dashboard Refresh Interval (seconds)</label>
+                        <input type="number" name="public_refresh_interval" value="30" min="10" max="300">
+                    </div>
+                </div>
             </div>
             <div class="card">
                 <h2>Alert Settings</h2>
@@ -291,6 +329,7 @@
         const API_BASE = '/admin/api';
         let currentDevices = [];
         let currentConnections = [];
+        let adminRefreshTimer;
 
         function getCsrfToken() {
             const cookies = document.cookie.split(';');
@@ -309,11 +348,29 @@
             })[c]);
         }
 
-        async function checkAuth() {
+        async function apiFetch(url, options = {}) {
             try {
-                await fetch(`${API_BASE}/dashboard`);
+                const res = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'X-CSRF-Token': getCsrfToken(),
+                        ...options.headers
+                    }
+                });
+                if (res.status === 401 || res.status === 302) {
+                    window.location.href = '/admin/login';
+                    return null;
+                }
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: 'Request failed' }));
+                    throw new Error(err.error || 'Request failed');
+                }
+                return await res.json();
             } catch (e) {
-                window.location.href = '/admin/login';
+                if (e.message === 'Failed to fetch') {
+                    console.error('Network error - server may be down');
+                }
+                throw e;
             }
         }
 
@@ -340,70 +397,84 @@
         }
 
         async function loadDashboard() {
-            const res = await fetch(`${API_BASE}/dashboard`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
-            const data = (await res.json()).data;
-            
-            document.getElementById('total-devices').textContent = data.fortigates?.length || 0;
-            document.getElementById('online-devices').textContent = data.fortigates?.filter(f => f.status === 'online').length || 0;
-            document.getElementById('offline-devices').textContent = data.fortigates?.filter(f => f.status === 'offline').length || 0;
-            document.getElementById('active-connections').textContent = data.connections?.filter(c => c.status === 'up').length || 0;
-            
-            const tbody = document.querySelector('#alerts-table tbody');
-            tbody.innerHTML = data.recent_alerts?.map(a => `
-                <tr>
-                    <td>${new Date(a.timestamp).toLocaleString()}</td>
-                    <td>FG-${a.fortigate_id}</td>
-                    <td>${escapeHtml(a.alert_type)}</td>
-                    <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
-                    <td>${escapeHtml(a.message)}</td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+            try {
+                const result = await apiFetch(`${API_BASE}/dashboard`);
+                if (!result) return;
+                const data = result.data;
+
+                document.getElementById('total-devices').textContent = data.fortigates?.length || 0;
+                document.getElementById('online-devices').textContent = data.fortigates?.filter(f => f.status === 'online').length || 0;
+                document.getElementById('offline-devices').textContent = data.fortigates?.filter(f => f.status === 'offline').length || 0;
+                document.getElementById('active-connections').textContent = data.connections?.filter(c => c.status === 'up').length || 0;
+
+                const tbody = document.querySelector('#alerts-table tbody');
+                tbody.innerHTML = data.recent_alerts?.map(a => `
+                    <tr>
+                        <td>${new Date(a.timestamp).toLocaleString()}</td>
+                        <td>FG-${a.fortigate_id}</td>
+                        <td>${escapeHtml(a.alert_type)}</td>
+                        <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
+                        <td>${escapeHtml(a.message)}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+            } catch (e) {
+                console.error('Failed to load dashboard:', e);
+            }
         }
 
         async function loadDevices() {
-            const res = await fetch(`${API_BASE}/fortigates`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
-            const data = (await res.json()).data;
-            currentDevices = data || [];
-            
-            const tbody = document.querySelector('#devices-table tbody');
-            tbody.innerHTML = currentDevices.map(d => `
-                <tr>
-                    <td>${escapeHtml(d.name)}</td>
-                    <td>${escapeHtml(d.ip_address)}</td>
-                    <td>${escapeHtml(d.location) || '-'}</td>
-                    <td><span class="status-badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
-                    <td>
-                        <button class="btn secondary" onclick="editDevice(${d.id})">Edit</button>
-                        <button class="btn danger" onclick="deleteDevice(${d.id})">Delete</button>
-                    </td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" class="loading">No devices configured</td></tr>';
+            try {
+                const result = await apiFetch(`${API_BASE}/fortigates`);
+                if (!result) return;
+                currentDevices = result.data || [];
+
+                const tbody = document.querySelector('#devices-table tbody');
+                tbody.innerHTML = currentDevices.map(d => `
+                    <tr>
+                        <td>${escapeHtml(d.name)}</td>
+                        <td>${escapeHtml(d.ip_address)}</td>
+                        <td>${escapeHtml(d.location) || '-'}</td>
+                        <td><span class="status-badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
+                        <td>
+                            <button class="btn secondary" onclick="editDevice(${d.id})">Edit</button>
+                            <button class="btn danger" onclick="deleteDevice(${d.id})">Delete</button>
+                        </td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5" class="loading">No devices configured</td></tr>';
+            } catch (e) {
+                console.error('Failed to load devices:', e);
+            }
         }
 
         async function loadConnections() {
-            const [devicesRes, connsRes] = await Promise.all([
-                fetch(`${API_BASE}/fortigates`, { headers: { 'X-CSRF-Token': getCsrfToken() } }),
-                fetch(`${API_BASE}/connections`, { headers: { 'X-CSRF-Token': getCsrfToken() } })
-            ]);
-            currentDevices = (await devicesRes.json()).data || [];
-            currentConnections = (await connsRes.json()).data || [];
-            
-            const tbody = document.querySelector('#connections-table tbody');
-            tbody.innerHTML = currentConnections.map(c => `
-                <tr>
-                    <td>${escapeHtml(c.name)}</td>
-                    <td>${escapeHtml(c.source_fg?.name) || c.source_fg_id}</td>
-                    <td>${escapeHtml(c.dest_fg?.name) || c.dest_fg_id}</td>
-                    <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
-                    <td><span class="status-badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
-                    <td>
-                        <button class="btn danger" onclick="deleteConnection(${c.id})">Delete</button>
-                    </td>
-                </tr>
-            `).join('') || '<tr><td colspan="6" class="loading">No connections configured</td></tr>';
-            
-            drawConnectionDiagram();
-            populateDeviceSelects();
+            try {
+                const [devicesResult, connsResult] = await Promise.all([
+                    apiFetch(`${API_BASE}/fortigates`),
+                    apiFetch(`${API_BASE}/connections`)
+                ]);
+                if (!devicesResult || !connsResult) return;
+                currentDevices = devicesResult.data || [];
+                currentConnections = connsResult.data || [];
+
+                const tbody = document.querySelector('#connections-table tbody');
+                tbody.innerHTML = currentConnections.map(c => `
+                    <tr>
+                        <td>${escapeHtml(c.name)}</td>
+                        <td>${escapeHtml(c.source_fg?.name) || c.source_fg_id}</td>
+                        <td>${escapeHtml(c.dest_fg?.name) || c.dest_fg_id}</td>
+                        <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
+                        <td><span class="status-badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
+                        <td>
+                            <button class="btn danger" onclick="deleteConnection(${c.id})">Delete</button>
+                        </td>
+                    </tr>
+                `).join('') || '<tr><td colspan="6" class="loading">No connections configured</td></tr>';
+
+                drawConnectionDiagram();
+                populateDeviceSelects();
+            } catch (e) {
+                console.error('Failed to load connections:', e);
+            }
         }
 
         function drawConnectionDiagram() {
@@ -412,19 +483,19 @@
                 container.innerHTML = '<div class="loading">Add devices to see the network diagram</div>';
                 return;
             }
-            
+
             const containerRect = container.getBoundingClientRect();
             const centerX = containerRect.width / 2;
             const centerY = containerRect.height / 2;
             const radius = Math.min(centerX, centerY) - 80;
-            
+
             container.innerHTML = '';
-            
+
             currentDevices.forEach((device, i) => {
                 const angle = (2 * Math.PI * i) / currentDevices.length - Math.PI / 2;
                 const x = centerX + radius * Math.cos(angle) - 75;
                 const y = centerY + radius * Math.sin(angle) - 30;
-                
+
                 const node = document.createElement('div');
                 node.className = 'node';
                 node.style.left = x + 'px';
@@ -436,101 +507,131 @@
                 `;
                 container.appendChild(node);
             });
-            
+
             currentConnections.forEach(conn => {
                 const sourceIdx = currentDevices.findIndex(d => d.id === conn.source_fg_id);
                 const destIdx = currentDevices.findIndex(d => d.id === conn.dest_fg_id);
-                
+
                 if (sourceIdx >= 0 && destIdx >= 0) {
                     const srcAngle = (2 * Math.PI * sourceIdx) / currentDevices.length - Math.PI / 2;
                     const dstAngle = (2 * Math.PI * destIdx) / currentDevices.length - Math.PI / 2;
-                    
+
                     const x1 = centerX + radius * Math.cos(srcAngle);
                     const y1 = centerY + radius * Math.sin(srcAngle);
                     const x2 = centerX + radius * Math.cos(dstAngle);
                     const y2 = centerY + radius * Math.sin(dstAngle);
-                    
+
                     const line = document.createElement('div');
                     line.className = `connection-line ${conn.status}`;
-                    
+
                     const length = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
                     const angle = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
-                    
+
                     line.style.width = length + 'px';
                     line.style.left = x1 + 'px';
                     line.style.top = y1 + 'px';
                     line.style.transform = `rotate(${angle}deg)`;
-                    
+
                     container.appendChild(line);
                 }
             });
         }
 
         async function loadSettings() {
-            const res = await fetch(`${API_BASE}/settings`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
-            const settings = (await res.json()).data || [];
-            
-            const alertSettings = settings.filter(s => s.category === 'alerts');
-            const notifSettings = settings.filter(s => s.category === 'notifications');
-            
-            document.getElementById('settings-alerts').innerHTML = [
-                { key: 'cpu_threshold', label: 'CPU Threshold (%)', value: 80, type: 'number' },
-                { key: 'memory_threshold', label: 'Memory Threshold (%)', value: 80, type: 'number' },
-                { key: 'disk_threshold', label: 'Disk Threshold (%)', value: 90, type: 'number' },
-                { key: 'session_threshold', label: 'Session Threshold', value: 100000, type: 'number' }
-            ].map(s => `
-                <div class="setting-item">
-                    <label>${s.label}</label>
-                    <input type="${s.type}" name="${s.key}" value="${alertSettings.find(x => x.key === s.key)?.value || s.value}">
-                </div>
-            `).join('');
-            
-            document.getElementById('settings-notifications').innerHTML = [
-                { key: 'email_enabled', label: 'Enable Email', type: 'checkbox' },
-                { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
-                { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' }
-            ].map(s => `
-                <div class="setting-item">
-                    <label>${s.label}</label>
-                    <input type="${s.type}" name="${s.key}" value="${notifSettings.find(x => x.key === s.key)?.value || ''}">
-                </div>
-            `).join('');
+            try {
+                const result = await apiFetch(`${API_BASE}/settings`);
+                if (!result) return;
+                const settings = result.data || [];
+
+                const alertSettings = settings.filter(s => s.category === 'alerts');
+                const notifSettings = settings.filter(s => s.category === 'notifications');
+
+                document.getElementById('settings-alerts').innerHTML = [
+                    { key: 'cpu_threshold', label: 'CPU Threshold (%)', value: 80, type: 'number' },
+                    { key: 'memory_threshold', label: 'Memory Threshold (%)', value: 80, type: 'number' },
+                    { key: 'disk_threshold', label: 'Disk Threshold (%)', value: 90, type: 'number' },
+                    { key: 'session_threshold', label: 'Session Threshold', value: 100000, type: 'number' }
+                ].map(s => `
+                    <div class="setting-item">
+                        <label>${s.label}</label>
+                        <input type="${s.type}" name="${s.key}" value="${alertSettings.find(x => x.key === s.key)?.value || s.value}">
+                    </div>
+                `).join('');
+
+                document.getElementById('settings-notifications').innerHTML = [
+                    { key: 'email_enabled', label: 'Enable Email', type: 'checkbox' },
+                    { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
+                    { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' }
+                ].map(s => {
+                    const savedVal = notifSettings.find(x => x.key === s.key)?.value || '';
+                    if (s.type === 'checkbox') {
+                        const checked = savedVal === 'true' ? 'checked' : '';
+                        return `<div class="setting-item"><label>${s.label}</label><input type="checkbox" name="${s.key}" ${checked}></div>`;
+                    }
+                    return `<div class="setting-item"><label>${s.label}</label><input type="text" name="${s.key}" value="${savedVal}"></div>`;
+                }).join('');
+
+                // Load display settings
+                const displayResult = await apiFetch(`${API_BASE}/display-settings`);
+                if (displayResult && displayResult.data) {
+                    const ds = displayResult.data;
+                    document.querySelectorAll('#display-settings input[type="checkbox"]').forEach(cb => {
+                        cb.checked = ds[cb.name] !== 'false';
+                    });
+                    const refreshInput = document.querySelector('#display-settings input[name="public_refresh_interval"]');
+                    if (refreshInput && ds['public_refresh_interval']) {
+                        refreshInput.value = ds['public_refresh_interval'];
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load settings:', e);
+            }
         }
 
         async function loadAlerts() {
-            const res = await fetch(`${API_BASE}/alerts`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
-            const alerts = (await res.json()).data || [];
-            
-            document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
-                <tr>
-                    <td>${new Date(a.timestamp).toLocaleString()}</td>
-                    <td>FG-${a.fortigate_id}</td>
-                    <td>${escapeHtml(a.alert_type)}</td>
-                    <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
-                    <td>${escapeHtml(a.message)}</td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+            try {
+                const result = await apiFetch(`${API_BASE}/alerts`);
+                if (!result) return;
+                const alerts = result.data || [];
+
+                document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
+                    <tr>
+                        <td>${new Date(a.timestamp).toLocaleString()}</td>
+                        <td>FG-${a.fortigate_id}</td>
+                        <td>${escapeHtml(a.alert_type)}</td>
+                        <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
+                        <td>${escapeHtml(a.message)}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+            } catch (e) {
+                console.error('Failed to load alerts:', e);
+            }
         }
 
         async function loadTraps() {
-            const res = await fetch(`${API_BASE}/traps`, { headers: { 'X-CSRF-Token': getCsrfToken() } });
-            const traps = (await res.json()).data || [];
-            
-            document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
-                <tr>
-                    <td>${new Date(t.timestamp).toLocaleString()}</td>
-                    <td>${escapeHtml(t.source_ip)}</td>
-                    <td>${escapeHtml(t.trap_type)}</td>
-                    <td><span class="status-badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
-                    <td>${escapeHtml(t.message)}</td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" class="loading">No traps</td></tr>';
+            try {
+                const result = await apiFetch(`${API_BASE}/traps`);
+                if (!result) return;
+                const traps = result.data || [];
+
+                document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
+                    <tr>
+                        <td>${new Date(t.timestamp).toLocaleString()}</td>
+                        <td>${escapeHtml(t.source_ip)}</td>
+                        <td>${escapeHtml(t.trap_type)}</td>
+                        <td><span class="status-badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
+                        <td>${escapeHtml(t.message)}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5" class="loading">No traps</td></tr>';
+            } catch (e) {
+                console.error('Failed to load traps:', e);
+            }
         }
 
         function showDeviceModal(id = null) {
             document.getElementById('device-modal').classList.add('active');
             document.getElementById('device-modal-title').textContent = id ? 'Edit FortiGate' : 'Add FortiGate';
-            
+
             if (id) {
                 const device = currentDevices.find(d => d.id === id);
                 document.getElementById('device-id').value = device.id;
@@ -554,7 +655,7 @@
             const ip = document.getElementById('device-ip').value;
             const port = document.getElementById('device-snmp-port').value || 161;
             const community = document.getElementById('device-community').value || 'public';
-            
+
             if (!ip) {
                 alert('Please enter an IP address first');
                 return;
@@ -566,12 +667,9 @@
             btn.disabled = true;
 
             try {
-                const response = await fetch(`${API_BASE}/fortigates/test`, {
+                const result = await apiFetch(`${API_BASE}/fortigates/test`, {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'X-CSRF-Token': getCsrfToken()
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ip_address: ip,
                         snmp_port: parseInt(port),
@@ -579,16 +677,14 @@
                         snmp_version: '2c'
                     })
                 });
-                
-                const result = await response.json();
-                
-                if (result.success && result.data.online) {
-                    alert(`✅ Connection Successful!\n\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
+
+                if (result && result.data?.online) {
+                    alert(`Connection Successful!\n\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
                 } else {
-                    alert(`❌ Connection Failed\n\n${result.data?.message || 'Unknown error'}`);
+                    alert(`Connection Failed\n\n${result?.data?.message || 'Unknown error'}`);
                 }
             } catch (err) {
-                alert(`❌ Error: ${err.message}`);
+                alert(`Error: ${err.message}`);
             } finally {
                 btn.textContent = originalText;
                 btn.disabled = false;
@@ -607,21 +703,28 @@
                 description: document.getElementById('device-description').value,
                 enabled: true
             };
-            
-            const method = id ? 'PUT' : 'POST';
-            const url = id ? `${API_BASE}/fortigates/${id}` : `${API_BASE}/fortigates`;
-            
-            await fetch(url, { method, headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}, body: JSON.stringify(data) });
-            closeDeviceModal();
-            loadDevices();
+
+            try {
+                const method = id ? 'PUT' : 'POST';
+                const url = id ? `${API_BASE}/fortigates/${id}` : `${API_BASE}/fortigates`;
+                await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+                closeDeviceModal();
+                loadDevices();
+            } catch (err) {
+                alert('Error saving device: ' + err.message);
+            }
         });
 
         async function editDevice(id) { showDeviceModal(id); }
-        
+
         async function deleteDevice(id) {
             if (!confirm('Delete this FortiGate?')) return;
-            await fetch(`${API_BASE}/fortigates/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': getCsrfToken() } });
-            loadDevices();
+            try {
+                await apiFetch(`${API_BASE}/fortigates/${id}`, { method: 'DELETE' });
+                loadDevices();
+            } catch (err) {
+                alert('Error deleting device: ' + err.message);
+            }
         }
 
         function populateDeviceSelects() {
@@ -655,81 +758,108 @@
                 connection_type: document.getElementById('connection-type').value,
                 notes: document.getElementById('connection-notes').value
             };
-            
-            await fetch(`${API_BASE}/connections`, { 
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}, 
-                body: JSON.stringify(data) 
-            });
-            closeConnectionModal();
-            loadConnections();
+
+            try {
+                await apiFetch(`${API_BASE}/connections`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                closeConnectionModal();
+                loadConnections();
+            } catch (err) {
+                alert('Error creating connection: ' + err.message);
+            }
         });
 
         async function deleteConnection(id) {
             if (!confirm('Delete this connection?')) return;
-            await fetch(`${API_BASE}/connections/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': getCsrfToken() } });
-            loadConnections();
+            try {
+                await apiFetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' });
+                loadConnections();
+            } catch (err) {
+                alert('Error deleting connection: ' + err.message);
+            }
         }
 
         async function changePassword() {
             const current = document.getElementById('current-password').value;
             const newPass = document.getElementById('new-password').value;
-            const confirm = document.getElementById('confirm-password').value;
+            const confirmPass = document.getElementById('confirm-password').value;
 
-            if (!current || !newPass || !confirm) {
+            if (!current || !newPass || !confirmPass) {
                 alert('Please fill in all password fields');
                 return;
             }
 
-            if (newPass !== confirm) {
+            if (newPass !== confirmPass) {
                 alert('New passwords do not match');
                 return;
             }
 
-            if (newPass.length < 6) {
-                alert('Password must be at least 6 characters');
+            if (newPass.length < 8) {
+                alert('Password must be at least 8 characters');
                 return;
             }
 
-            const response = await fetch(`${API_BASE}/settings/password`, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'X-CSRF-Token': getCsrfToken()
-                },
-                body: JSON.stringify({
-                    current_password: current,
-                    new_password: newPass
-                })
-            });
+            try {
+                const result = await apiFetch(`${API_BASE}/settings/password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        current_password: current,
+                        new_password: newPass
+                    })
+                });
 
-            const result = await response.json();
-
-            if (result.success) {
-                alert(result.message);
-                document.getElementById('current-password').value = '';
-                document.getElementById('new-password').value = '';
-                document.getElementById('confirm-password').value = '';
-            } else {
-                alert('Error: ' + result.error);
+                if (result && result.success) {
+                    alert(result.message);
+                    document.getElementById('current-password').value = '';
+                    document.getElementById('new-password').value = '';
+                    document.getElementById('confirm-password').value = '';
+                } else {
+                    alert('Error: ' + (result?.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
             }
         }
 
         async function saveSettings() {
-            const inputs = document.querySelectorAll('#settings-alerts input, #settings-notifications input');
-            const settings = Array.from(inputs).map(input => ({
-                key: input.name,
-                value: input.value,
-                category: ['email_enabled','slack_webhook','discord_webhook'].includes(input.name) ? 'notifications' : 'alerts',
-                type: input.type === 'checkbox' ? 'bool' : 'string'
-            }));
-            
-            await fetch(`${API_BASE}/settings`, { 
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}, 
-                body: JSON.stringify(settings) 
+            const settings = [];
+
+            // Alert and notification settings
+            document.querySelectorAll('#settings-alerts input, #settings-notifications input').forEach(input => {
+                const value = input.type === 'checkbox' ? String(input.checked) : input.value;
+                settings.push({
+                    key: input.name,
+                    value: value,
+                    category: ['email_enabled','slack_webhook','discord_webhook'].includes(input.name) ? 'notifications' : 'alerts',
+                    type: input.type === 'checkbox' ? 'bool' : 'string'
+                });
             });
-            alert('Settings saved!');
+
+            // Public display settings
+            document.querySelectorAll('#display-settings input').forEach(input => {
+                const value = input.type === 'checkbox' ? String(input.checked) : input.value;
+                settings.push({
+                    key: input.name,
+                    value: value,
+                    category: 'display',
+                    type: input.type === 'checkbox' ? 'bool' : 'string'
+                });
+            });
+
+            try {
+                await apiFetch(`${API_BASE}/settings`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+                alert('Settings saved!');
+            } catch (err) {
+                alert('Error saving settings: ' + err.message);
+            }
         }
 
         document.getElementById('logout-btn').addEventListener('click', async (e) => {
@@ -738,8 +868,16 @@
             window.location.href = '/';
         });
 
-        checkAuth();
+        // Initial load
         loadDashboard();
+
+        // Auto-refresh dashboard every 30s
+        adminRefreshTimer = setInterval(() => {
+            const activePage = document.querySelector('.page.active');
+            if (activePage && activePage.id === 'page-dashboard') {
+                loadDashboard();
+            }
+        }, 30000);
     </script>
 </body>
 </html>

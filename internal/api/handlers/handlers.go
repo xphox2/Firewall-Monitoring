@@ -44,57 +44,79 @@ func (h *Handler) SetSNMPClient(client *snmp.SNMPClient) {
 func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	if h.snmpClient == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("SNMP client not initialized"))
-		return
+
+	// Try SNMP first
+	if h.snmpClient != nil {
+		status, err := h.snmpClient.GetSystemStatus()
+		if err == nil {
+			uptimeStats := h.uptimeTrack.GetStats()
+			publicData := gin.H{
+				"hostname":     status.Hostname,
+				"version":      status.Version,
+				"uptime":       uptime.FormatUptime(status.Uptime),
+				"uptime_raw":   status.Uptime,
+				"cpu":          status.CPUUsage,
+				"memory":       status.MemoryUsage,
+				"sessions":     status.SessionCount,
+				"uptime_stats": uptimeStats,
+			}
+			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+			return
+		}
 	}
 
-	status, err := h.snmpClient.GetSystemStatus()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get system status"))
-		return
+	// Fall back to database
+	if h.db != nil {
+		status, err := h.db.GetLatestSystemStatus()
+		if err == nil && status != nil {
+			uptimeStats := h.uptimeTrack.GetStats()
+			publicData := gin.H{
+				"hostname":     status.Hostname,
+				"version":      status.Version,
+				"uptime":       uptime.FormatUptime(status.Uptime),
+				"uptime_raw":   status.Uptime,
+				"cpu":          status.CPUUsage,
+				"memory":       status.MemoryUsage,
+				"sessions":     status.SessionCount,
+				"uptime_stats": uptimeStats,
+				"cached":       true,
+				"cached_at":    status.Timestamp,
+			}
+			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+			return
+		}
 	}
 
-	uptimeStats := h.uptimeTrack.GetStats()
-
-	publicData := gin.H{
-		"hostname":     status.Hostname,
-		"version":      status.Version,
-		"uptime":       uptime.FormatUptime(status.Uptime),
-		"uptime_raw":   status.Uptime,
-		"cpu":          status.CPUUsage,
-		"memory":       status.MemoryUsage,
-		"sessions":     status.SessionCount,
-		"uptime_stats": uptimeStats,
-	}
-
-	c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No monitoring data available"))
 }
 
 func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if h.snmpClient == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("SNMP client not initialized"))
-		return
+	// Try SNMP first
+	if h.snmpClient != nil {
+		interfaces, err := h.snmpClient.GetInterfaceStats()
+		if err == nil {
+			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
+			return
+		}
 	}
 
-	interfaces, err := h.snmpClient.GetInterfaceStats()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface stats"))
-		return
+	// Fall back to database
+	if h.db != nil {
+		interfaces, err := h.db.GetLatestInterfaceStats()
+		if err == nil && len(interfaces) > 0 {
+			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
+			return
+		}
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
+	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No interface data available"))
 }
 
 func (h *Handler) Login(c *gin.Context) {
-	log.Printf("[DEBUG] Login request received from %s", c.ClientIP())
-	log.Printf("[DEBUG] authManager = %v, config = %v", h.authManager, h.config)
-
 	if h.authManager == nil {
-		log.Printf("[DEBUG] FAILURE: authManager is NIL")
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Authentication not configured"))
 		return
 	}
@@ -114,42 +136,46 @@ func (h *Handler) Login(c *gin.Context) {
 
 	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password); err != nil {
 		if h.db != nil {
-			if err := h.db.SaveLoginAttempt(&models.LoginAttempt{
+			if dbErr := h.db.SaveLoginAttempt(&models.LoginAttempt{
 				Timestamp: time.Now(),
 				Username:  creds.Username,
 				IPAddress: ip,
 				Success:   false,
 				UserAgent: userAgent,
-			}); err != nil {
-				log.Printf("Failed to save login attempt: %v", err)
+			}); dbErr != nil {
+				log.Printf("Failed to save login attempt: %v", dbErr)
 			}
+		}
+		if err == auth.ErrAccountLocked {
+			c.JSON(http.StatusTooManyRequests, models.ErrorResponse("Account temporarily locked due to too many failed attempts"))
+			return
 		}
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid credentials"))
 		return
 	}
 
 	if h.db != nil {
-		if err := h.db.SaveLoginAttempt(&models.LoginAttempt{
+		if dbErr := h.db.SaveLoginAttempt(&models.LoginAttempt{
 			Timestamp: time.Now(),
 			Username:  creds.Username,
 			IPAddress: ip,
 			Success:   true,
 			UserAgent: userAgent,
-		}); err != nil {
-			log.Printf("Failed to save login attempt: %v", err)
+		}); dbErr != nil {
+			log.Printf("Failed to save login attempt: %v", dbErr)
 		}
 	}
 
 	token, err := h.authManager.GenerateToken(creds.Username, 1)
 	if err != nil {
-		log.Printf("ERROR: Failed to generate token for user %s: %v", creds.Username, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate token"))
 		return
 	}
 
-	csrfToken, _ := auth.GenerateSecureToken(32)
-	if csrfToken == "" {
-		csrfToken = "fallback-csrf-token"
+	csrfToken, err := auth.GenerateSecureToken(32)
+	if err != nil || csrfToken == "" {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate security token"))
+		return
 	}
 
 	cookieSecure := true
@@ -181,24 +207,43 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if h.snmpClient == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("SNMP client not initialized"))
-		return
+	var status *models.SystemStatus
+	var interfaces []models.InterfaceStats
+	var sensors []models.HardwareSensor
+
+	// Try SNMP first
+	if h.snmpClient != nil {
+		s, err := h.snmpClient.GetSystemStatus()
+		if err == nil {
+			status = s
+		}
+		ifaces, err := h.snmpClient.GetInterfaceStats()
+		if err == nil {
+			interfaces = ifaces
+		}
+		hw, err := h.snmpClient.GetHardwareSensors()
+		if err == nil {
+			sensors = hw
+		}
 	}
 
-	status, err := h.snmpClient.GetSystemStatus()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get system status"))
-		return
+	// Fall back to DB if SNMP unavailable
+	if status == nil && h.db != nil {
+		s, err := h.db.GetLatestSystemStatus()
+		if err == nil && s != nil {
+			status = s
+		}
+	}
+	if len(interfaces) == 0 && h.db != nil {
+		ifaces, err := h.db.GetLatestInterfaceStats()
+		if err == nil {
+			interfaces = ifaces
+		}
 	}
 
-	interfaces, err := h.snmpClient.GetInterfaceStats()
-	if err != nil {
-		log.Printf("Failed to get interface stats: %v", err)
-	}
-	sensors, err := h.snmpClient.GetHardwareSensors()
-	if err != nil {
-		log.Printf("Failed to get hardware sensors: %v", err)
+	if status == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No monitoring data available"))
+		return
 	}
 
 	var recentAlerts []models.Alert
@@ -454,11 +499,14 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	}
 
 	allowedFields := map[string]bool{
-		"name":         true,
-		"source_fg_id": true,
-		"dest_fg_id":   true,
-		"description":  true,
-		"enabled":      true,
+		"name":            true,
+		"source_fg_id":    true,
+		"dest_fg_id":      true,
+		"description":     true,
+		"enabled":         true,
+		"connection_type": true,
+		"notes":           true,
+		"status":          true,
 	}
 
 	var updates map[string]interface{}
@@ -536,14 +584,21 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	allowedKeys := map[string]bool{
-		"cpu_threshold":     true,
-		"memory_threshold":  true,
-		"disk_threshold":    true,
-		"session_threshold": true,
-		"email_enabled":     true,
-		"slack_webhook":     true,
-		"discord_webhook":   true,
-		"webhook_url":       true,
+		"cpu_threshold":            true,
+		"memory_threshold":         true,
+		"disk_threshold":           true,
+		"session_threshold":        true,
+		"email_enabled":            true,
+		"slack_webhook":            true,
+		"discord_webhook":          true,
+		"webhook_url":              true,
+		"public_show_hostname":     true,
+		"public_show_uptime":       true,
+		"public_show_cpu":          true,
+		"public_show_memory":       true,
+		"public_show_sessions":     true,
+		"public_show_interfaces":   true,
+		"public_refresh_interval":  true,
 	}
 
 	var validSettings []models.SystemSetting
@@ -570,6 +625,36 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.MessageResponse("Settings updated"))
+}
+
+func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
+	defaults := map[string]string{
+		"public_show_hostname":    "true",
+		"public_show_uptime":      "true",
+		"public_show_cpu":         "true",
+		"public_show_memory":      "true",
+		"public_show_sessions":    "true",
+		"public_show_interfaces":  "true",
+		"public_refresh_interval": "30",
+	}
+
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(defaults))
+		return
+	}
+
+	var settings []models.SystemSetting
+	h.db.Gorm().Where("`key` LIKE ?", "public_%").Find(&settings)
+
+	result := make(map[string]string)
+	for k, v := range defaults {
+		result[k] = v
+	}
+	for _, s := range settings {
+		result[s.Key] = s.Value
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
 }
 
 func (h *Handler) GetDashboardAll(c *gin.Context) {
@@ -691,21 +776,34 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	currentPassword := req.CurrentPassword
-	newPassword := req.NewPassword
+	// Enforce minimum password length
+	if len(req.NewPassword) < 8 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("New password must be at least 8 characters"))
+		return
+	}
 
-	_ = currentPassword
+	// Get username from JWT claims
+	username, exists := c.Get("username")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		return
+	}
 
-	hashedPassword, err := h.authManager.HashPassword(newPassword)
+	// Validate current password
+	if err := h.authManager.ValidateCredentials(username.(string), req.CurrentPassword); err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
+		return
+	}
+
+	hashedPassword, err := h.authManager.HashPassword(req.NewPassword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to hash password"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to process password"))
 		return
 	}
 
 	err = h.db.UpdateAdminPassword(1, hashedPassword)
 	if err != nil {
-		log.Printf("[DEBUG] UpdateAdminPassword error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password: "+err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
 		return
 	}
 

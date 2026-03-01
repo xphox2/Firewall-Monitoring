@@ -157,17 +157,19 @@ type FortiGateTunnel struct {
 }
 
 type FortiGateConnection struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	Name           string    `json:"name" gorm:"not null"`
-	SourceFGID     uint      `json:"source_fg_id" gorm:"not null;index"`
-	SourceTunnelID uint      `json:"source_tunnel_id"`
-	DestFGID       uint      `json:"dest_fg_id" gorm:"not null;index"`
-	DestTunnelID   uint      `json:"dest_tunnel_id"`
-	ConnectionType string    `json:"connection_type" gorm:"default:ipsec"`
-	Status         string    `json:"status" gorm:"default:unknown"`
-	Latency        float64   `json:"latency"`
-	LastCheck      time.Time `json:"last_check"`
-	Notes          string    `json:"notes"`
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	Name           string     `json:"name" gorm:"not null"`
+	SourceFGID     uint       `json:"source_fg_id" gorm:"not null;index"`
+	SourceFG       *FortiGate `json:"source_fg,omitempty" gorm:"foreignKey:SourceFGID"`
+	SourceTunnelID uint       `json:"source_tunnel_id"`
+	DestFGID       uint       `json:"dest_fg_id" gorm:"not null;index"`
+	DestFG         *FortiGate `json:"dest_fg,omitempty" gorm:"foreignKey:DestFGID"`
+	DestTunnelID   uint       `json:"dest_tunnel_id"`
+	ConnectionType string     `json:"connection_type" gorm:"default:ipsec"`
+	Status         string     `json:"status" gorm:"default:unknown"`
+	Latency        float64    `json:"latency"`
+	LastCheck      time.Time  `json:"last_check"`
+	Notes          string     `json:"notes"`
 }
 
 type SystemSetting struct {

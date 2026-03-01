@@ -102,6 +102,34 @@ func (d *Database) GetInterfaceStats(limit int) ([]models.InterfaceStats, error)
 	return stats, err
 }
 
+func (d *Database) GetLatestSystemStatus() (*models.SystemStatus, error) {
+	var status models.SystemStatus
+	err := d.db.Order("timestamp DESC").First(&status).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func (d *Database) GetLatestInterfaceStats() ([]models.InterfaceStats, error) {
+	// Get the most recent timestamp
+	var latest models.InterfaceStats
+	if err := d.db.Order("timestamp DESC").First(&latest).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// Get all interfaces from that timestamp
+	var stats []models.InterfaceStats
+	err := d.db.Where("timestamp = ?", latest.Timestamp).Find(&stats).Error
+	return stats, err
+}
+
 func (d *Database) SaveAlert(alert *models.Alert) error {
 	return d.db.Create(alert).Error
 }
@@ -213,9 +241,15 @@ func (d *Database) UpdateFortiGate(fg *models.FortiGate) error {
 }
 
 func (d *Database) DeleteFortiGate(id uint) error {
-	d.db.Where("fortigate_id = ?", id).Delete(&models.FortiGateTunnel{})
-	d.db.Where("source_fg_id = ? OR dest_fg_id = ?", id, id).Delete(&models.FortiGateConnection{})
-	return d.db.Delete(&models.FortiGate{}, id).Error
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("fortigate_id = ?", id).Delete(&models.FortiGateTunnel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("source_fg_id = ? OR dest_fg_id = ?", id, id).Delete(&models.FortiGateConnection{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&models.FortiGate{}, id).Error
+	})
 }
 
 func (d *Database) GetAllConnections() ([]models.FortiGateConnection, error) {

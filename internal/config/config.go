@@ -125,7 +125,7 @@ func Load() *Config {
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:    getEnv("ADMIN_PASSWORD", "admin"),
+			AdminPassword:    getEnv("ADMIN_PASSWORD", getDefaultPassword()),
 			BcryptCost:       getIntEnv("BCRYPT_COST", 12),
 			TokenExpiry:      getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
 			MaxLoginAttempts: getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
@@ -179,6 +179,12 @@ func generateRandomPassword(length int) string {
 		b[i] = charset[n.Int64()]
 	}
 	return string(b)
+}
+
+// IsGeneratedPassword returns true if the admin password was auto-generated (not set via env)
+func (c *Config) IsGeneratedPassword() bool {
+	_, exists := os.LookupEnv("ADMIN_PASSWORD")
+	return !exists
 }
 
 func getIntEnv(key string, defaultValue int) int {

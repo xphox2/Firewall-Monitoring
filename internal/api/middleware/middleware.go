@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"fortiGate-Mon/internal/auth"
@@ -13,11 +14,61 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type ipRateLimiter struct {
+	limiters map[string]*rateLimiterEntry
+	mu       sync.RWMutex
+	rate     rate.Limit
+	burst    int
+}
+
+type rateLimiterEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+func newIPRateLimiter(r rate.Limit, burst int) *ipRateLimiter {
+	rl := &ipRateLimiter{
+		limiters: make(map[string]*rateLimiterEntry),
+		rate:     r,
+		burst:    burst,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	entry, exists := rl.limiters[ip]
+	if !exists {
+		limiter := rate.NewLimiter(rl.rate, rl.burst)
+		rl.limiters[ip] = &rateLimiterEntry{limiter: limiter, lastSeen: time.Now()}
+		return limiter
+	}
+	entry.lastSeen = time.Now()
+	return entry.limiter
+}
+
+func (rl *ipRateLimiter) cleanup() {
+	for {
+		time.Sleep(5 * time.Minute)
+		rl.mu.Lock()
+		for ip, entry := range rl.limiters {
+			if time.Since(entry.lastSeen) > 10*time.Minute {
+				delete(rl.limiters, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
 func RateLimiter(cfg *config.Config) gin.HandlerFunc {
-	limiter := rate.NewLimiter(rate.Limit(10), 20)
+	limiter := newIPRateLimiter(rate.Limit(10), 20)
 
 	return func(c *gin.Context) {
-		if !limiter.Allow() {
+		ip := c.ClientIP()
+		if !limiter.getLimiter(ip).Allow() {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "Rate limit exceeded",
 			})

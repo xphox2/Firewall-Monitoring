@@ -37,6 +37,7 @@
         .uptime-badge { display: inline-block; background: linear-gradient(90deg, #00ff88, #00d4ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 1.2rem; font-weight: 700; }
         .loading { text-align: center; padding: 50px; color: rgba(255,255,255,0.5); }
         .error { text-align: center; padding: 50px; color: #ff6b6b; }
+        .hidden { display: none !important; }
         footer { text-align: center; padding: 30px; color: rgba(255,255,255,0.4); font-size: 0.85rem; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 50px; }
     </style>
 </head>
@@ -52,29 +53,29 @@
         </div>
 
         <div class="grid">
-            <div class="card">
+            <div class="card" id="card-uptime">
                 <h3>Uptime</h3>
                 <div class="value" id="uptime">--</div>
                 <div class="subtext" id="uptime-percent"></div>
             </div>
-            <div class="card">
+            <div class="card" id="card-cpu">
                 <h3>CPU Usage</h3>
                 <div class="value"><span id="cpu">--</span><span class="unit">%</span></div>
                 <div class="progress-bar"><div class="fill" id="cpu-bar"></div></div>
             </div>
-            <div class="card">
+            <div class="card" id="card-memory">
                 <h3>Memory Usage</h3>
                 <div class="value"><span id="memory">--</span><span class="unit">%</span></div>
                 <div class="progress-bar"><div class="fill" id="memory-bar"></div></div>
             </div>
-            <div class="card">
+            <div class="card" id="card-sessions">
                 <h3>Active Sessions</h3>
                 <div class="value" id="sessions">--</div>
                 <div class="subtext" id="sessions-peak"></div>
             </div>
         </div>
 
-        <div class="interfaces">
+        <div class="interfaces" id="card-interfaces">
             <h2>Network Interfaces</h2>
             <div class="interface-grid" id="interfaces">
                 <div class="loading">Loading interfaces...</div>
@@ -82,13 +83,14 @@
         </div>
 
         <footer>
-            <p>Firewall Monitor &copy; 2024 | <a href="/admin" style="color: #00d4ff;">Admin Login</a></p>
+            <p>Firewall Monitor &copy; <span id="footer-year"></span> | <a href="/admin" style="color: #00d4ff;">Admin Login</a></p>
         </footer>
     </div>
 
     <script>
         const API_BASE = '/api';
-        let refreshInterval;
+        let refreshTimer;
+        let displaySettings = {};
 
         function escapeHtml(str) {
             if (!str) return '';
@@ -98,9 +100,53 @@
             })[c]);
         }
 
+        document.getElementById('footer-year').textContent = new Date().getFullYear();
+
+        async function fetchDisplaySettings() {
+            try {
+                const response = await fetch(`${API_BASE}/public/display-settings`);
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data.success && data.data) {
+                    displaySettings = data.data;
+                    applyDisplaySettings();
+                }
+            } catch (error) {
+                console.error('Error fetching display settings:', error);
+            }
+        }
+
+        function applyDisplaySettings() {
+            const mapping = {
+                'public_show_hostname': 'status-banner',
+                'public_show_uptime': 'card-uptime',
+                'public_show_cpu': 'card-cpu',
+                'public_show_memory': 'card-memory',
+                'public_show_sessions': 'card-sessions',
+                'public_show_interfaces': 'card-interfaces'
+            };
+
+            for (const [key, elementId] of Object.entries(mapping)) {
+                const el = document.getElementById(elementId);
+                if (el && displaySettings[key] === 'false') {
+                    el.classList.add('hidden');
+                } else if (el) {
+                    el.classList.remove('hidden');
+                }
+            }
+
+            // Update refresh interval
+            const interval = parseInt(displaySettings['public_refresh_interval']) || 30;
+            if (refreshTimer) clearInterval(refreshTimer);
+            refreshTimer = setInterval(() => { fetchDashboard(); fetchInterfaces(); }, interval * 1000);
+        }
+
         async function fetchDashboard() {
             try {
                 const response = await fetch(`${API_BASE}/public/dashboard`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch data');
+                }
                 const data = await response.json();
 
                 if (!data.success) {
@@ -118,6 +164,7 @@
         async function fetchInterfaces() {
             try {
                 const response = await fetch(`${API_BASE}/public/interfaces`);
+                if (!response.ok) return;
                 const data = await response.json();
 
                 if (data.success) {
@@ -130,6 +177,8 @@
 
         function updateDashboard(d) {
             document.getElementById('hostname').textContent = d.hostname || 'FortiGate';
+            document.getElementById('connection-status').textContent = 'Online';
+            document.getElementById('status-banner').className = 'status-banner online';
             document.getElementById('uptime').textContent = d.uptime || '--';
             document.getElementById('cpu').textContent = d.cpu?.toFixed(1) || '--';
             document.getElementById('memory').textContent = d.memory?.toFixed(1) || '--';
@@ -141,7 +190,7 @@
 
         function updateInterfaces(interfaces) {
             const container = document.getElementById('interfaces');
-            
+
             if (!interfaces || interfaces.length === 0) {
                 container.innerHTML = '<div class="loading">No interfaces found</div>';
                 return;
@@ -153,8 +202,8 @@
                     <span class="status ${escapeHtml(iface.status)}">${escapeHtml(iface.status).toUpperCase()}</span>
                     <div class="interface-stats">
                         <div>
-                            <div>↓ ${formatBytes(iface.in_bytes)}</div>
-                            <div>↑ ${formatBytes(iface.out_bytes)}</div>
+                            <div>&darr; ${formatBytes(iface.in_bytes)}</div>
+                            <div>&uarr; ${formatBytes(iface.out_bytes)}</div>
                         </div>
                         <div style="text-align: right;">
                             <div>${formatSpeed(iface.speed)}</div>
@@ -171,7 +220,7 @@
 
             bar.style.width = `${Math.min(value, 100)}%`;
             bar.className = 'fill';
-            
+
             if (value >= 80) bar.classList.add('high');
             else if (value >= 60) bar.classList.add('medium');
             else bar.classList.add('low');
@@ -196,9 +245,10 @@
             return (speed / 1000).toFixed(0) + ' Kbps';
         }
 
+        fetchDisplaySettings();
         fetchDashboard();
         fetchInterfaces();
-        setInterval(() => { fetchDashboard(); fetchInterfaces(); }, 30000);
+        refreshTimer = setInterval(() => { fetchDashboard(); fetchInterfaces(); }, 30000);
     </script>
 </body>
 </html>

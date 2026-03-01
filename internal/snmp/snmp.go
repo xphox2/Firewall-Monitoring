@@ -274,7 +274,6 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 	result := make([]models.InterfaceStats, 0, len(interfaces))
 	for _, iface := range interfaces {
 		iface.Timestamp = time.Now()
-		iface.Index = iface.Index
 		result = append(result, iface)
 	}
 

@@ -52,6 +52,15 @@ func main() {
 		db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword)
 	}
 
+	if cfg.IsGeneratedPassword() {
+		log.Printf("========================================")
+		log.Printf("AUTO-GENERATED ADMIN PASSWORD")
+		log.Printf("Username: %s", cfg.Auth.AdminUsername)
+		log.Printf("Password: %s", cfg.Auth.AdminPassword)
+		log.Printf("Set ADMIN_PASSWORD env var to use your own.")
+		log.Printf("========================================")
+	}
+
 	handler := handlers.NewHandler(cfg, authManager, db)
 
 	snmpClient, err := snmp.NewSNMPClient(cfg)
@@ -125,6 +134,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.GET("/health", handler.GetHealth)
 		api.GET("/public/dashboard", handler.GetPublicDashboard)
 		api.GET("/public/interfaces", handler.GetPublicInterfaces)
+		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
 
 		api.POST("/auth/login", handler.Login)
 		api.POST("/auth/logout", handler.Logout)
@@ -171,5 +181,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/settings", handler.GetSettings)
 		admin.POST("/api/settings", handler.UpdateSettings)
 		admin.POST("/api/settings/password", handler.ChangePassword)
+		admin.GET("/api/display-settings", handler.GetPublicDisplaySettings)
 	}
 }

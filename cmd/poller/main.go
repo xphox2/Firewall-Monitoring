@@ -106,6 +106,28 @@ func (p *Poller) pollDevice(device *models.FortiGate) {
 	log.Printf("Device %s (%s): CPU=%.1f%% Memory=%.1f%% Sessions=%d",
 		device.Name, device.IPAddress, status.CPUUsage, status.MemoryUsage, status.SessionCount)
 
+	// Save system status to database
+	if p.db != nil {
+		status.FortiGateID = device.ID
+		status.Timestamp = time.Now()
+		if err := p.db.SaveSystemStatus(status); err != nil {
+			log.Printf("Device %s: failed to save status - %v", device.Name, err)
+		}
+	}
+
+	// Save interface stats to database
+	interfaces, err := client.GetInterfaceStats()
+	if err == nil && len(interfaces) > 0 && p.db != nil {
+		now := time.Now()
+		for i := range interfaces {
+			interfaces[i].FortiGateID = device.ID
+			interfaces[i].Timestamp = now
+		}
+		if err := p.db.SaveInterfaceStats(interfaces); err != nil {
+			log.Printf("Device %s: failed to save interface stats - %v", device.Name, err)
+		}
+	}
+
 	p.updateDeviceStatus(device, "online")
 }
 
