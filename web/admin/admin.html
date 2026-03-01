@@ -334,14 +334,21 @@
         let currentDevices = [];
         let currentConnections = [];
         let adminRefreshTimer;
+        let csrfTokenCache = '';
+
+        async function fetchCsrfToken() {
+            try {
+                const res = await fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' });
+                const data = await res.json();
+                csrfTokenCache = data.csrf_token || '';
+            } catch (e) {
+                console.error('Failed to fetch CSRF token:', e);
+            }
+            return csrfTokenCache;
+        }
 
         function getCsrfToken() {
-            const cookies = document.cookie.split(';');
-            for (let c of cookies) {
-                const [k, v] = c.trim().split('=');
-                if (k === 'csrf_token') return v;
-            }
-            return '';
+            return csrfTokenCache;
         }
 
         function escapeHtml(str) {
@@ -872,8 +879,8 @@
             window.location.href = '/';
         });
 
-        // Initial load
-        loadDashboard();
+        // Initial load: fetch CSRF token first
+        fetchCsrfToken().then(() => loadDashboard());
 
         // Auto-refresh dashboard every 30s
         adminRefreshTimer = setInterval(() => {

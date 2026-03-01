@@ -61,7 +61,7 @@
         <a class="nav-item" href="/admin/network">Network</a>
         <a class="nav-item active" href="/admin/probe-pending">Pending Approvals</a>
         <a class="nav-item" href="/admin/settings">Settings</a>
-        <a class="nav-item danger" href="/admin/logout">Logout</a>
+        <a class="nav-item danger" href="#" onclick="doLogout(); return false;">Logout</a>
     </div>
 
     <div class="main">
@@ -105,15 +105,19 @@
         var API_BASE = '/admin/api';
         var pendingProbes = [];
         var allProbes = [];
+        var csrfTokenCache = '';
+
+        function fetchCsrfToken() {
+            return fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    csrfTokenCache = data.csrf_token || '';
+                    return csrfTokenCache;
+                })['catch'](function() { return ''; });
+        }
 
         function getCsrfToken() {
-            var cookies = document.cookie.split(';');
-            for (var i = 0; i < cookies.length; i++) {
-                var c = cookies[i].trim();
-                var parts = c.split('=');
-                if (parts[0] === 'csrf_token') return parts[1];
-            }
-            return '';
+            return csrfTokenCache;
         }
 
         function escapeHtml(str) {
@@ -242,8 +246,18 @@
             });
         };
 
+        window.doLogout = function() {
+            apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
+                window.location.href = '/admin/login';
+            })['catch'](function() {
+                window.location.href = '/admin/login';
+            });
+        };
+
         console.log('[Pending] Starting load...');
-        loadProbes();
+        fetchCsrfToken().then(function() {
+            loadProbes();
+        });
     })();
     </script>
 </body>

@@ -268,6 +268,26 @@ func (h *Handler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("Logged out successfully"))
 }
 
+// GetCSRFToken returns a fresh CSRF token derived from the current auth cookie.
+// This is more reliable than reading the csrf_token cookie from JavaScript.
+func (h *Handler) GetCSRFToken(c *gin.Context) {
+	authToken, err := c.Cookie("auth_token")
+	if err != nil || authToken == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authenticated"})
+		return
+	}
+	secret := ""
+	if h.config != nil {
+		secret = h.config.Server.JWTSecretKey
+	}
+	if secret == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server misconfiguration"})
+		return
+	}
+	token := middleware.GenerateCSRFToken(authToken, secret)
+	c.JSON(http.StatusOK, gin.H{"csrf_token": token})
+}
+
 func (h *Handler) GetAdminDashboard(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

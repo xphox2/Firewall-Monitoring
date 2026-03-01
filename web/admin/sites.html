@@ -56,7 +56,7 @@
         <a class="nav-item" href="/admin/network">Network</a>
         <a class="nav-item" href="/admin/probe-pending">Pending Approvals</a>
         <a class="nav-item" href="/admin/settings">Settings</a>
-        <a class="nav-item danger" href="/admin/logout">Logout</a>
+        <a class="nav-item danger" href="#" onclick="doLogout(); return false;">Logout</a>
     </div>
 
     <div class="main">
@@ -526,15 +526,23 @@
         var API_BASE = '/admin/api';
         var sites = [];
         var editingId = null;
+        var csrfTokenCache = '';
+
+        function fetchCsrfToken() {
+            return fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    csrfTokenCache = data.csrf_token || '';
+                    console.log('[Sites] CSRF token fetched from server:', csrfTokenCache ? 'ok' : 'EMPTY');
+                    return csrfTokenCache;
+                })['catch'](function(err) {
+                    console.error('[Sites] Failed to fetch CSRF token:', err);
+                    return '';
+                });
+        }
 
         function getCsrfToken() {
-            var cookies = document.cookie.split(';');
-            for (var i = 0; i < cookies.length; i++) {
-                var c = cookies[i].trim();
-                var parts = c.split('=');
-                if (parts[0] === 'csrf_token') return parts[1];
-            }
-            return '';
+            return csrfTokenCache;
         }
 
         function escapeHtml(str) {
@@ -714,9 +722,19 @@
             });
         };
 
-        // Load on init
+        window.doLogout = function() {
+            apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
+                window.location.href = '/admin/login';
+            })['catch'](function() {
+                window.location.href = '/admin/login';
+            });
+        };
+
+        // Load on init: fetch CSRF token first, then load sites
         console.log('[Sites] Starting load...');
-        loadSites();
+        fetchCsrfToken().then(function() {
+            loadSites();
+        });
     })();
     </script>
 </body>

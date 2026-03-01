@@ -171,6 +171,8 @@ func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 
 			expected := GenerateCSRFToken(authToken, secret)
 			if !hmac.Equal([]byte(csrfToken), []byte(expected)) {
+				log.Printf("[CSRF] Token mismatch: got=%q (len=%d) expected=%q (len=%d) authToken_len=%d",
+					csrfToken, len(csrfToken), expected, len(expected), len(authToken))
 				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF token invalid"})
 				c.Abort()
 				return

@@ -193,6 +193,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "network.html", nil)
 		})
 
+		admin.GET("/api/csrf-token", handler.GetCSRFToken)
 		admin.GET("/api/dashboard", handler.GetDashboardAll)
 		admin.GET("/api/dashboard/:id", handler.GetAdminDashboard)
 		admin.GET("/api/alerts", handler.GetAlerts)
