@@ -78,6 +78,10 @@ type SNMPClient struct {
 }
 
 func NewSNMPClient(cfg *config.Config) (*SNMPClient, error) {
+	if cfg.SNMP.FortiGatePort < 1 || cfg.SNMP.FortiGatePort > 65535 {
+		return nil, fmt.Errorf("invalid SNMP port: %d", cfg.SNMP.FortiGatePort)
+	}
+
 	version := gosnmp.Version2c
 	if cfg.SNMP.Version == "3" {
 		version = gosnmp.Version3
@@ -191,22 +195,23 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 		name := pdu.Name
 		var ifIndex int
 
-		if strings.HasPrefix(name, OIDIfDescr) {
+		// Use OID+"." prefix to prevent collisions (e.g., .2 matching .20)
+		if strings.HasPrefix(name, OIDIfDescr+".") {
 			ifIndex = getIndexFromOID(name, OIDIfDescr)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.Name = safeString(pdu.Value)
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfType) {
+		} else if strings.HasPrefix(name, OIDIfType+".") {
 			ifIndex = getIndexFromOID(name, OIDIfType)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.Type = int(gosnmp.ToBigInt(pdu.Value).Int64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfSpeed) {
+		} else if strings.HasPrefix(name, OIDIfSpeed+".") {
 			ifIndex = getIndexFromOID(name, OIDIfSpeed)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.Speed = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfOperStatus) {
+		} else if strings.HasPrefix(name, OIDIfOperStatus+".") {
 			ifIndex = getIndexFromOID(name, OIDIfOperStatus)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			status := gosnmp.ToBigInt(pdu.Value).Int64()
@@ -218,7 +223,7 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 				iface.Status = "unknown"
 			}
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfAdminStatus) {
+		} else if strings.HasPrefix(name, OIDIfAdminStatus+".") {
 			ifIndex = getIndexFromOID(name, OIDIfAdminStatus)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			status := gosnmp.ToBigInt(pdu.Value).Int64()
@@ -228,42 +233,42 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 				iface.AdminStatus = "down"
 			}
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfInOctets) {
+		} else if strings.HasPrefix(name, OIDIfInOctets+".") {
 			ifIndex = getIndexFromOID(name, OIDIfInOctets)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.InBytes = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfInUcastPkts) {
+		} else if strings.HasPrefix(name, OIDIfInUcastPkts+".") {
 			ifIndex = getIndexFromOID(name, OIDIfInUcastPkts)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.InPackets = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfInErrors) {
+		} else if strings.HasPrefix(name, OIDIfInErrors+".") {
 			ifIndex = getIndexFromOID(name, OIDIfInErrors)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.InErrors = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfInDiscards) {
+		} else if strings.HasPrefix(name, OIDIfInDiscards+".") {
 			ifIndex = getIndexFromOID(name, OIDIfInDiscards)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.InDiscards = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfOutOctets) {
+		} else if strings.HasPrefix(name, OIDIfOutOctets+".") {
 			ifIndex = getIndexFromOID(name, OIDIfOutOctets)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.OutBytes = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfOutUcastPkts) {
+		} else if strings.HasPrefix(name, OIDIfOutUcastPkts+".") {
 			ifIndex = getIndexFromOID(name, OIDIfOutUcastPkts)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.OutPackets = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfOutErrors) {
+		} else if strings.HasPrefix(name, OIDIfOutErrors+".") {
 			ifIndex = getIndexFromOID(name, OIDIfOutErrors)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.OutErrors = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
 			interfaces[ifIndex] = iface
-		} else if strings.HasPrefix(name, OIDIfOutDiscards) {
+		} else if strings.HasPrefix(name, OIDIfOutDiscards+".") {
 			ifIndex = getIndexFromOID(name, OIDIfOutDiscards)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.OutDiscards = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())

@@ -10,13 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"fortiGate-Mon/internal/alerts"
 	"fortiGate-Mon/internal/api/handlers"
 	"fortiGate-Mon/internal/api/middleware"
 	"fortiGate-Mon/internal/auth"
 	"fortiGate-Mon/internal/config"
 	"fortiGate-Mon/internal/database"
-	"fortiGate-Mon/internal/notifier"
 	"fortiGate-Mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
@@ -77,9 +75,6 @@ func main() {
 		handler.SetSNMPClient(snmpClient)
 		defer snmpClient.Close()
 	}
-
-	notif := notifier.NewNotifier(cfg)
-	_ = alerts.NewAlertManager(cfg, notif)
 
 	setupRoutes(router, cfg, handler, authManager)
 
@@ -142,7 +137,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.GET("/public/interfaces", handler.GetPublicInterfaces)
 		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
 
-		api.POST("/auth/login", handler.Login)
+		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)
 		api.POST("/auth/logout", handler.Logout)
 	}
 

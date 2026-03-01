@@ -90,6 +90,21 @@ func RateLimiter(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+func LoginRateLimiter() gin.HandlerFunc {
+	limiter := newIPRateLimiter(rate.Limit(1), 5) // 1 req/s, burst of 5
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if !limiter.getLimiter(ip).Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Too many login attempts, please try again later",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, err := c.Cookie("auth_token")
@@ -202,50 +217,3 @@ func RequestLogger() gin.HandlerFunc {
 	}
 }
 
-func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-
-		if origin != "" {
-			allowed := false
-			for _, allowedOrigin := range allowedOrigins {
-				if origin == allowedOrigin {
-					allowed = true
-					break
-				}
-			}
-
-			if allowed {
-				c.Header("Access-Control-Allow-Origin", origin)
-				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
-				c.Header("Access-Control-Allow-Credentials", "true")
-			}
-		}
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-
-		c.Next()
-	}
-}
-
-func GetRealIP() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		realIP := c.Request.Header.Get("X-Real-IP")
-		if realIP == "" {
-			forwarded := c.Request.Header.Get("X-Forwarded-For")
-			if forwarded != "" {
-				ips := strings.Split(forwarded, ",")
-				realIP = strings.TrimSpace(ips[0])
-			}
-		}
-		if realIP == "" {
-			realIP = c.ClientIP()
-		}
-		c.Set("real_ip", realIP)
-		c.Next()
-	}
-}

@@ -195,11 +195,15 @@ func (h *Handler) Login(c *gin.Context) {
 	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
 
 	cookieSecure := h.config != nil && h.config.Server.CookieSecure
+	cookieMaxAge := 86400
+	if h.config != nil && h.config.Auth.TokenExpiry > 0 {
+		cookieMaxAge = int(h.config.Auth.TokenExpiry.Seconds())
+	}
 
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
 		Value:    token,
-		MaxAge:   86400,
+		MaxAge:   cookieMaxAge,
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
@@ -208,7 +212,7 @@ func (h *Handler) Login(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "csrf_token",
 		Value:    csrfToken,
-		MaxAge:   86400,
+		MaxAge:   cookieMaxAge,
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: false,
@@ -687,6 +691,20 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 		return
 	}
 
+	// Validate source and dest won't be the same after update
+	effectiveSrc := conn.SourceFGID
+	effectiveDst := conn.DestFGID
+	if srcVal, ok := filteredUpdates["source_fg_id"]; ok {
+		effectiveSrc = uint(srcVal.(float64))
+	}
+	if dstVal, ok := filteredUpdates["dest_fg_id"]; ok {
+		effectiveDst = uint(dstVal.(float64))
+	}
+	if effectiveSrc == effectiveDst {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination cannot be the same device"))
+		return
+	}
+
 	if err := h.db.Gorm().Model(&conn).Updates(filteredUpdates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update connection"))
 		return
@@ -714,8 +732,13 @@ func (h *Handler) DeleteFortiGateConnection(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.Gorm().Delete(&models.FortiGateConnection{}, idUint).Error; err != nil {
+	result := h.db.Gorm().Delete(&models.FortiGateConnection{}, idUint)
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete connection"))
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
 		return
 	}
 
@@ -991,8 +1014,19 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	usernameStr, ok := username.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Invalid session data"))
+		return
+	}
+	userIDUint, ok := userID.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Invalid session data"))
+		return
+	}
+
 	// Validate current password
-	if err := h.authManager.ValidateCredentials(username.(string), req.CurrentPassword); err != nil {
+	if err := h.authManager.ValidateCredentials(usernameStr, req.CurrentPassword); err != nil {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
@@ -1003,7 +1037,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	err = h.db.UpdateAdminPassword(userID.(uint), hashedPassword)
+	err = h.db.UpdateAdminPassword(userIDUint, hashedPassword)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
 		return

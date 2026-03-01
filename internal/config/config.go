@@ -89,6 +89,9 @@ type UptimeConfig struct {
 }
 
 func Load() *Config {
+	// Clear the module-level default password after building the config
+	defer func() { defaultPassword = "" }()
+
 	return &Config{
 		Server: ServerConfig{
 			Host:           getEnv("SERVER_HOST", "0.0.0.0"),

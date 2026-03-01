@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/smtp"
+	"strings"
 	"time"
 
 	"fortiGate-Mon/internal/config"
@@ -65,7 +66,13 @@ func (n *Notifier) sendEmail(alert *models.Alert) error {
 		return nil
 	}
 
-	subject := fmt.Sprintf("[%s] Firewall Alert: %s", alert.Severity, alert.AlertType)
+	// Sanitize header values to prevent email header injection
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+		return s
+	}
+	subject := fmt.Sprintf("[%s] Firewall Alert: %s", sanitize(alert.Severity), sanitize(alert.AlertType))
 	body := fmt.Sprintf(`
 Firewall Monitoring Alert
 ===========================

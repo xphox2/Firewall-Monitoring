@@ -61,6 +61,9 @@ func (p *Poller) Start() error {
 					log.Println("Old data cleanup completed (>90 days)")
 				}
 			}
+			if p.alertManager != nil {
+				p.alertManager.PruneExpiredCooldowns()
+			}
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil

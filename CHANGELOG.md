@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.6] - 2026-02-28
+
+### Security
+- Login-specific rate limiter (1 req/s, burst 5) added to `/api/auth/login` endpoint
+- Email subject headers sanitized to prevent header injection via alert fields
+- Module-level `defaultPassword` variable cleared after config load
+- Auth cookie `MaxAge` synced with JWT `TokenExpiry` config (was hardcoded 86400s)
+
+### Fixed
+- OID prefix collision: `HasPrefix` checks now use OID+`"."` to prevent `.2` matching `.20`
+- Type assertions in `ChangePassword` use two-value form (prevents panic on invalid session data)
+- `DeleteFortiGateConnection` checks `RowsAffected` and returns 404 when connection not found
+- `UpdateFortiGateConnection` validates source and dest won't be the same device after update
+- SNMP port range validated in `NewSNMPClient` (rejects port < 1 or > 65535)
+
+### Removed
+- Unused `GetRealIP` middleware (blindly trusted `X-Real-IP`/`X-Forwarded-For` headers)
+- Unused `CORSMiddleware` function
+- Unused `AlertManager` and `Notifier` creation in API server (alerts are handled by poller)
+
+### Changed
+- Alert cooldown map pruning now runs periodically in poller cleanup ticker
+
 ## [0.8.5] - 2026-02-28
 
 ### Security
