@@ -2,7 +2,7 @@
 
 set -e
 
-APP_NAME="fortigate-mon"
+APP_NAME="firewall-mon"
 INSTALL_DIR="/opt/${APP_NAME}"
 DATA_DIR="/var/lib/${APP_NAME}"
 CONFIG_DIR="/etc/${APP_NAME}"
@@ -42,20 +42,20 @@ build() {
 
     if [ ! -f "go.mod" ]; then
         log_info "Initializing Go module..."
-        go mod init fortiGate-Mon
+        go mod init firewall-mon
     fi
 
     log_info "Downloading dependencies..."
     go mod tidy
 
     log_info "Building API server..."
-    go build -o bin/fortigate-api ./cmd/api
+    go build -o bin/fwmon-api ./cmd/api
 
     log_info "Building SNMP poller..."
-    go build -o bin/fortigate-poller ./cmd/poller
+    go build -o bin/fwmon-poller ./cmd/poller
 
     log_info "Building trap receiver..."
-    go build -o bin/fortigate-trap ./cmd/trap-receiver
+    go build -o bin/fwmon-trap ./cmd/trap-receiver
 
     log_info "Build complete!"
     ls -la bin/
@@ -103,14 +103,14 @@ deploy_remote() {
 
     log_info "Installing files on remote..."
     ssh ${SSH_OPTS} ${USER}@${HOST} << 'EOF'
-        sudo cp /tmp/web/* /opt/fortigate-mon/ -r
-        sudo cp /tmp/config.env.example /etc/fortigate-mon/config.env
-        sudo chmod +x /opt/fortigate-mon/fortigate-*
-        sudo cp /etc/systemd/system/fortigate-*.service /tmp/ 2>/dev/null || true
+        sudo cp /tmp/web/* /opt/firewall-mon/ -r
+        sudo cp /tmp/config.env.example /etc/firewall-mon/config.env
+        sudo chmod +x /opt/firewall-mon/fwmon-*
+        sudo cp /etc/systemd/system/fwmon-*.service /tmp/ 2>/dev/null || true
 EOF
 
     log_info "Deployment complete!"
-    log_info "Connect to server and run: sudo /opt/fortigate-mon/scripts/install.sh"
+    log_info "Connect to server and run: sudo /opt/firewall-mon/scripts/install.sh"
 }
 
 install_local() {
@@ -145,9 +145,9 @@ install_local() {
     fi
 
     log_info "Creating systemd services..."
-    create_systemd_service "api" "${INSTALL_DIR}/fortigate-api" "Firewall Monitor API Server"
-    create_systemd_service "poller" "${INSTALL_DIR}/fortigate-poller" "Firewall Monitor SNMP Poller"
-    create_systemd_service "trap" "${INSTALL_DIR}/fortigate-trap" "Firewall Monitor Trap Receiver"
+    create_systemd_service "api" "${INSTALL_DIR}/fwmon-api" "Firewall Monitor API Server"
+    create_systemd_service "poller" "${INSTALL_DIR}/fwmon-poller" "Firewall Monitor SNMP Poller"
+    create_systemd_service "trap" "${INSTALL_DIR}/fwmon-trap" "Firewall Monitor Trap Receiver"
 
     systemctl daemon-reload
     log_info "Installation complete!"
@@ -158,7 +158,7 @@ create_systemd_service() {
     local binary=$2
     local desc=$3
 
-    cat > ${SYSTEMD_DIR}/fortigate-${name}.service << EOF
+    cat > ${SYSTEMD_DIR}/fwmon-${name}.service << EOF
 [Unit]
 Description=${desc}
 After=network.target
@@ -176,7 +176,7 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-    log_info "Created fortigate-${name}.service"
+    log_info "Created fwmon-${name}.service"
 }
 
 start_services() {
@@ -186,9 +186,9 @@ start_services() {
     fi
 
     log_info "Starting services..."
-    systemctl start fortigate-api
-    systemctl start fortigate-poller
-    systemctl start fortigate-trap
+    systemctl start fwmon-api
+    systemctl start fwmon-poller
+    systemctl start fwmon-trap
     log_info "Services started!"
 }
 
@@ -199,9 +199,9 @@ stop_services() {
     fi
 
     log_info "Stopping services..."
-    systemctl stop fortigate-api 2>/dev/null || true
-    systemctl stop fortigate-poller 2>/dev/null || true
-    systemctl stop fortigate-trap 2>/dev/null || true
+    systemctl stop fwmon-api 2>/dev/null || true
+    systemctl stop fwmon-poller 2>/dev/null || true
+    systemctl stop fwmon-trap 2>/dev/null || true
     log_info "Services stopped!"
 }
 
@@ -211,9 +211,9 @@ restart_services() {
 }
 
 status_services() {
-    systemctl status fortigate-api --no-pager || true
-    systemctl status fortigate-poller --no-pager || true
-    systemctl status fortigate-trap --no-pager || true
+    systemctl status fwmon-api --no-pager || true
+    systemctl status fwmon-poller --no-pager || true
+    systemctl status fwmon-trap --no-pager || true
 }
 
 COMMAND=${1:-}

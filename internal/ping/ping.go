@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"fortiGate-Mon/internal/database"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/models"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -91,9 +91,9 @@ func (p *PingCollector) run() {
 }
 
 func (p *PingCollector) collectAll() {
-	fortigates, err := p.DB.GetAllFortiGates()
+	devices, err := p.DB.GetAllDevices()
 	if err != nil {
-		log.Printf("[Ping] Failed to get FortiGates: %v", err)
+		log.Printf("[Ping] Failed to get devices: %v", err)
 		return
 	}
 
@@ -103,7 +103,7 @@ func (p *PingCollector) collectAll() {
 		return
 	}
 
-	for _, fg := range fortigates {
+	for _, fg := range devices {
 		if !fg.Enabled {
 			continue
 		}
@@ -118,7 +118,7 @@ func (p *PingCollector) collectAll() {
 	}
 }
 
-func (p *PingCollector) pingTarget(fg models.FortiGate, probe models.Probe) {
+func (p *PingCollector) pingTarget(fg models.Device, probe models.Probe) {
 	targetIP := fg.IPAddress
 
 	var totalLatency float64
@@ -144,11 +144,11 @@ func (p *PingCollector) pingTarget(fg models.FortiGate, probe models.Probe) {
 		packetLoss = float64(p.Config.Count-successCount) / float64(p.Config.Count) * 100
 
 		result := &models.PingResult{
-			Timestamp:   time.Now(),
-			FortiGateID: fg.ID,
-			ProbeID:     probe.ID,
-			TargetIP:    targetIP,
-			Success:     true,
+			Timestamp:  time.Now(),
+			DeviceID:   fg.ID,
+			ProbeID:    probe.ID,
+			TargetIP:   targetIP,
+			Success:    true,
 			Latency:     avgLatency,
 			PacketLoss:  packetLoss,
 			TTL:         ttl,
@@ -164,7 +164,7 @@ func (p *PingCollector) pingTarget(fg models.FortiGate, probe models.Probe) {
 
 		result := &models.PingResult{
 			Timestamp:    time.Now(),
-			FortiGateID:  fg.ID,
+			DeviceID:     fg.ID,
 			ProbeID:      probe.ID,
 			TargetIP:     targetIP,
 			Success:      false,
@@ -182,8 +182,8 @@ func (p *PingCollector) pingTarget(fg models.FortiGate, probe models.Probe) {
 	}
 }
 
-func (p *PingCollector) updateStats(fgID uint, probeID uint, targetIP string, latency float64, packetLoss float64) {
-	existing, err := p.DB.GetPingStatsByTarget(fgID, probeID, targetIP)
+func (p *PingCollector) updateStats(deviceID uint, probeID uint, targetIP string, latency float64, packetLoss float64) {
+	existing, err := p.DB.GetPingStatsByTarget(deviceID, probeID, targetIP)
 	if err != nil {
 		log.Printf("[Ping] Failed to get existing stats: %v", err)
 		return
@@ -191,8 +191,8 @@ func (p *PingCollector) updateStats(fgID uint, probeID uint, targetIP string, la
 
 	if existing == nil {
 		stats := &models.PingStats{
-			FortiGateID: fgID,
-			ProbeID:     probeID,
+			DeviceID: deviceID,
+			ProbeID:  probeID,
 			TargetIP:    targetIP,
 			MinLatency:  latency,
 			MaxLatency:  latency,

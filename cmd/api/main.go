@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"fortiGate-Mon/internal/api/handlers"
-	"fortiGate-Mon/internal/api/middleware"
-	"fortiGate-Mon/internal/auth"
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/database"
-	"fortiGate-Mon/internal/snmp"
+	"firewall-mon/internal/api/handlers"
+	"firewall-mon/internal/api/middleware"
+	"firewall-mon/internal/auth"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -129,7 +129,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.RateLimiter(cfg))
-	router.Use(middleware.BodySizeLimit(1 << 20)) // 1MB max request body
+	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
 
 	router.Static("/static", "./static")
 	router.LoadHTMLGlob("./web/**/*.html")
@@ -153,6 +153,17 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		api.POST("/probes/register", handler.RegisterProbe)
 		api.POST("/probes/heartbeat", handler.ProbeHeartbeat)
+
+		// Probe data ingestion endpoints (no admin auth - probe-facing)
+		api.POST("/probes/:id/syslog", handler.ReceiveSyslogMessages)
+		api.POST("/probes/:id/traps", handler.ReceiveTrapEvents)
+		api.POST("/probes/:id/flows", handler.ReceiveFlowSamples)
+		api.POST("/probes/:id/pings", handler.ReceivePingResults)
+		api.POST("/probes/:id/system-status", handler.ReceiveSystemStatuses)
+		api.POST("/probes/:id/interface-stats", handler.ReceiveInterfaceStats)
+
+		// Probe fetches its assigned devices
+		api.GET("/probes/:id/devices", handler.GetProbeDevices)
 	}
 
 	admin := router.Group("/admin")
@@ -193,6 +204,22 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "probe-pending.html", nil)
 		})
 
+		admin.GET("/syslog", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
+		admin.GET("/flows", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
+		admin.GET("/alerts", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
+		admin.GET("/traps", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/network", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "network.html", nil)
 		})
@@ -205,11 +232,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/uptime", handler.GetUptime)
 		admin.POST("/api/uptime/reset", handler.ResetUptime)
 
-		admin.GET("/api/fortigates", handler.GetFortiGates)
-		admin.POST("/api/fortigates", handler.CreateFortiGate)
-		admin.POST("/api/fortigates/test", handler.TestDeviceConnection)
-		admin.PUT("/api/fortigates/:id", handler.UpdateFortiGate)
-		admin.DELETE("/api/fortigates/:id", handler.DeleteFortiGate)
+		admin.GET("/api/devices", handler.GetDevices)
+		admin.POST("/api/devices", handler.CreateDevice)
+		admin.POST("/api/devices/test", handler.TestDeviceConnection)
+		admin.PUT("/api/devices/:id", handler.UpdateDevice)
+		admin.DELETE("/api/devices/:id", handler.DeleteDevice)
 
 		admin.GET("/api/sites", handler.GetSites)
 		admin.POST("/api/sites", handler.CreateSite)
@@ -228,10 +255,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/probes/:id/reject", handler.RejectProbe)
 		admin.POST("/api/probes/:id/regenerate-key", handler.RegenerateProbeKey)
 
-		admin.GET("/api/connections", handler.GetFortiGateConnections)
-		admin.POST("/api/connections", handler.CreateFortiGateConnection)
-		admin.PUT("/api/connections/:id", handler.UpdateFortiGateConnection)
-		admin.DELETE("/api/connections/:id", handler.DeleteFortiGateConnection)
+		admin.GET("/api/syslog", handler.GetSyslogMessages)
+		admin.GET("/api/flows", handler.GetFlowSamples)
+		admin.GET("/api/probes/:id/stats", handler.GetProbeStats)
+
+		admin.GET("/api/connections", handler.GetDeviceConnections)
+		admin.POST("/api/connections", handler.CreateDeviceConnection)
+		admin.PUT("/api/connections/:id", handler.UpdateDeviceConnection)
+		admin.DELETE("/api/connections/:id", handler.DeleteDeviceConnection)
 
 		admin.POST("/api/logout", handler.Logout)
 

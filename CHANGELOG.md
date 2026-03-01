@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.10.6] - 2026-03-01
+
+### Changed
+- **Full vendor-agnostic rebrand**: Renamed all "FortiGate" references to generic "Device" terminology throughout models, API routes, handlers, database, config, UI, and deployment files
+- **Go module rename**: `fortiGate-Mon` → `firewall-mon`
+- **Model renames**: `FortiGate` → `Device`, `FortiGateTunnel` → `DeviceTunnel`, `FortiGateConnection` → `DeviceConnection`, `SiteFortiGate` → `SiteDevice`
+- **DB table renames**: `fortigates` → `devices`, `fortigate_tunnels` → `device_tunnels`, `fortigate_connections` → `device_connections`, `site_fortigates` → `site_devices`
+- **API route renames**: `/api/fortigates` → `/api/devices`
+- **JSON field renames**: `fortigate_id` → `device_id`, `source_fg_id` → `source_device_id`, `dest_fg_id` → `dest_device_id`, `fortigates` → `devices`
+- **Config field renames**: `FortiGateHost`/`FortiGatePort` → `SNMPHost`/`SNMPPort`, env vars `FORTIGATE_HOST` → `SNMP_HOST`, `FORTIGATE_SNMP_PORT` → `SNMP_PORT`
+- **Binary renames**: `fortigate-api` → `fwmon-api`, `fortigate-poller` → `fwmon-poller`, `fortigate-trap` → `fwmon-trap`, `fortigate-probe` → `fwmon-probe`
+- **Docker renames**: service/image/container `fortigate-mon` → `firewall-mon`
+- **Default paths**: `/data/fortigate.db` → `/data/firewall-mon.db`, `/etc/fortigate-mon/` → `/etc/firewall-mon/`, `/var/lib/fortigate-mon/` → `/var/lib/firewall-mon/`
+- **SNMP OIDs**: FortiGate-specific OID constants and vendor-specific trap logic remain unchanged with clarifying comments added
+- **Note**: Pre-production DB migration — GORM AutoMigrate creates new tables but won't rename old ones; users should reinitialize
+
+## [0.10.5] - 2026-03-01
+
+### Added
+- **Probe data ingestion endpoints**: Server now accepts data from probes via `POST /api/probes/:id/{syslog,traps,flows,pings,system-status,interface-stats}` — probes no longer get 404 when relaying data
+- **FlowSample model & DB methods**: Full GORM model for sFlow data with `SaveFlowSamples()`, `GetFlowSamples()`, AutoMigrate, and cleanup
+- **FortiGate-to-Probe assignment**: `ProbeID` field on FortiGate model allows assigning devices to specific probes for SNMP polling
+- **TrapEvent ProbeID**: Trap events now track which probe sent them
+- **Probe device endpoint**: `GET /api/probes/:id/devices` lets probes fetch their assigned FortiGates with SNMP credentials
+- **Probe SNMP polling**: Probe now fetches assigned devices every 5 minutes and polls each via SNMP every 60 seconds, relaying SystemStatus and InterfaceStats back to server
+- **Admin syslog page**: New `/admin/syslog` page with filters (probe, device, severity, text search), expandable messages, pagination, and auto-refresh toggle
+- **Admin flows page**: New `/admin/flows` page with filters (probe, protocol, src/dst IP) and pagination
+- **Admin probe stats endpoint**: `GET /admin/api/probes/:id/stats` returns syslog/trap/flow/ping counts per probe
+- **Admin syslog/flows API endpoints**: `GET /admin/api/syslog` and `GET /admin/api/flows` with query filtering
+- **Dashboard probe health cards**: Each probe shows name, site, status (animated pulse dot), last seen, and data counts
+- **Dashboard recent activity feed**: Combined syslog + trap events sorted by timestamp
+- **Device form probe/site dropdowns**: Add/edit device modal now includes Probe and Site selection
+- **Device table columns**: Probe and Site columns shown in device list with preloaded data
+
+### Changed
+- **Admin UI overhaul**: Redesigned sidebar with sectioned navigation (Monitoring, Data, Infrastructure), stat cards on dashboard, improved typography and spacing
+- **Body size limit**: Increased from 1MB to 5MB to handle syslog/sFlow batch submissions
+- **GetAllFortiGates/GetFortiGate**: Now preload Site and Probe associations
+- **UpdateFortiGate**: Allowed fields now include `probe_id` and `site_id`
+- **Styling**: Animated pulsing status dots, color-coded severity badges, monospace font for IPs, sticky table headers, page transition animations, expandable syslog messages
+
 ## [0.10.4] - 2026-02-28
 
 ### Fixed

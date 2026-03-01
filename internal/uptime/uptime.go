@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
 )
 
 type UptimeTracker struct {
@@ -88,7 +88,7 @@ func (ut *UptimeTracker) saveBaselineToFile(baseline *UptimeBaseline) error {
 
 	dir := filepath.Dir(ut.config.Uptime.BaselineFile)
 	if dir == "." {
-		dir = "/var/lib/fortigate-mon"
+		dir = "/var/lib/firewall-mon"
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err

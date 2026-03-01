@@ -38,8 +38,8 @@ type ServerConfig struct {
 }
 
 type SNMPConfig struct {
-	FortiGateHost  string
-	FortiGatePort  int
+	SNMPHost  string
+	SNMPPort  int
 	Community      string
 	Version        string
 	Timeout        time.Duration
@@ -129,16 +129,16 @@ func Load() *Config {
 			WriteTimeout:   getDurationEnv("SERVER_WRITE_TIMEOUT", 30*time.Second),
 			IdleTimeout:    getDurationEnv("SERVER_IDLE_TIMEOUT", 120*time.Second),
 			EnableTLS:      getBoolEnv("SERVER_ENABLE_TLS", false),
-			TLSCertFile:    getEnv("SERVER_TLS_CERT", "/etc/fortigate-mon/tls.crt"),
-			TLSKeyFile:     getEnv("SERVER_TLS_KEY", "/etc/fortigate-mon/tls.key"),
+			TLSCertFile:    getEnv("SERVER_TLS_CERT", "/etc/firewall-mon/tls.crt"),
+			TLSKeyFile:     getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
 			AdminSecretKey: getEnv("ADMIN_SECRET_KEY", ""),
 			JWTSecretKey:   getEnv("JWT_SECRET_KEY", ""),
 			CookieSecure:   getBoolEnv("COOKIE_SECURE", false),
 			CookieSameSite: getEnv("COOKIE_SAMESITE", "Strict"),
 		},
 		SNMP: SNMPConfig{
-			FortiGateHost:  getEnv("FORTIGATE_HOST", "192.168.1.1"),
-			FortiGatePort:  getIntEnv("FORTIGATE_SNMP_PORT", 161),
+			SNMPHost:  getEnv("SNMP_HOST", "192.168.1.1"),
+			SNMPPort:  getIntEnv("SNMP_PORT", 161),
 			Community:      getEnv("SNMP_COMMUNITY", ""),
 			Version:        getEnv("SNMP_VERSION", "2c"),
 			Timeout:        getDurationEnv("SNMP_TIMEOUT", 5*time.Second),
@@ -156,10 +156,10 @@ func Load() *Config {
 			Type:     getEnv("DB_TYPE", "sqlite"),
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getIntEnv("DB_PORT", 5432),
-			Name:     getEnv("DB_NAME", "fortigate_mon"),
-			User:     getEnv("DB_USER", "fortigate_mon"),
+			Name:     getEnv("DB_NAME", "firewall_mon"),
+			User:     getEnv("DB_USER", "firewall_mon"),
 			Password: getEnv("DB_PASSWORD", ""),
-			FilePath: getEnv("DB_FILE_PATH", "/data/fortigate.db"),
+			FilePath: getEnv("DB_FILE_PATH", "/data/firewall-mon.db"),
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
@@ -175,7 +175,7 @@ func Load() *Config {
 			SMTPPort:           getIntEnv("SMTP_PORT", 587),
 			SMTPUsername:       getEnv("SMTP_USERNAME", ""),
 			SMTPPassword:       getEnv("SMTP_PASSWORD", ""),
-			SMTPFrom:           getEnv("SMTP_FROM", "fortigate-mon@example.com"),
+			SMTPFrom:           getEnv("SMTP_FROM", "firewall-mon@example.com"),
 			SMTPTo:             getEnv("SMTP_TO", "admin@example.com"),
 			SlackWebhookURL:    getEnv("SLACK_WEBHOOK_URL", ""),
 			DiscordWebhookURL:  getEnv("DISCORD_WEBHOOK_URL", ""),
@@ -187,7 +187,7 @@ func Load() *Config {
 			InterfaceDownAlert: getBoolEnv("INTERFACE_DOWN_ALERT", true),
 		},
 		Uptime: UptimeConfig{
-			BaselineFile:    getEnv("UPTIME_BASELINE_FILE", "/var/lib/fortigate-mon/uptime.json"),
+			BaselineFile:    getEnv("UPTIME_BASELINE_FILE", "/var/lib/firewall-mon/uptime.json"),
 			TrackingEnabled: getBoolEnv("UPTIME_TRACKING_ENABLED", true),
 		},
 		Probe: ProbeConfig{
@@ -196,10 +196,10 @@ func Load() *Config {
 			ListenPort:        getIntEnv("PROBE_LISTEN_PORT", 8089),
 			ServerURL:         getEnv("PROBE_SERVER_URL", "https://stats.technicallabs.org"),
 			EnableTLS:         getBoolEnv("PROBE_TLS_ENABLED", false),
-			TLSCertFile:       getEnv("PROBE_TLS_CERT", "/etc/fortigate-mon/probe.crt"),
-			TLSKeyFile:        getEnv("PROBE_TLS_KEY", "/etc/fortigate-mon/probe.key"),
-			ClientTLSCertFile: getEnv("PROBE_CLIENT_TLS_CERT", "/etc/fortigate-mon/client.crt"),
-			ClientTLSKeyFile:  getEnv("PROBE_CLIENT_TLS_KEY", "/etc/fortigate-mon/client.key"),
+			TLSCertFile:       getEnv("PROBE_TLS_CERT", "/etc/firewall-mon/probe.crt"),
+			TLSKeyFile:        getEnv("PROBE_TLS_KEY", "/etc/firewall-mon/probe.key"),
+			ClientTLSCertFile: getEnv("PROBE_CLIENT_TLS_CERT", "/etc/firewall-mon/client.crt"),
+			ClientTLSKeyFile:  getEnv("PROBE_CLIENT_TLS_KEY", "/etc/firewall-mon/client.key"),
 			EnableMTLS:        getBoolEnv("PROBE_MTLS_ENABLED", false),
 			ICMPEnabled:       getBoolEnv("PROBE_ICMP_ENABLED", true),
 			ICMPInterval:      getDurationEnv("PROBE_ICMP_INTERVAL", 30*time.Second),

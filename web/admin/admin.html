@@ -6,153 +6,355 @@
     <title>Firewall Monitor - Admin</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
 
-        .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
-        .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
-        .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
-        .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
+        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
+        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
+        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
+        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
+        .nav-section { margin-bottom: 16px; }
+        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
+        .nav-item:hover { background: #21262d; color: #e6edf3; }
+        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
         .nav-item.danger { color: #f85149; }
+        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
+        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
 
-        .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-        .header h1 { font-size: 1.8rem; }
+        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
 
         .page { display: none; }
-        .page.active { display: block; }
+        .page.active { display: block; animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
-        .card h2 { font-size: 1.2rem; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .card h2 button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .card-header h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; }
 
-        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .stat-card .stat-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .stat-card .stat-value.good { color: #3fb950; }
+        .stat-card .stat-value.bad { color: #f85149; }
+        .stat-card .stat-value.accent { color: #58a6ff; }
+
+        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
         .btn:hover { background: #2ea043; }
         .btn.danger { background: #da3633; }
-        .btn.secondary { background: #30363d; }
+        .btn.danger:hover { background: #e5534b; }
+        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
+        .btn.secondary:hover { background: #30363d; }
+        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
 
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
-        th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
-        tr:hover { background: #21262d; }
+        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; background: #161b22; }
+        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
+        tr:hover { background: #1c2128; }
+        .table-wrap { max-height: 500px; overflow-y: auto; border-radius: 6px; }
 
-        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
-        .status-badge.up, .status-badge.online { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
-        .status-badge.down, .status-badge.offline { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-        .status-badge.warning { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
-        .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+        .badge.online, .badge.up, .badge.approved { background: rgba(63,185,80,0.15); color: #3fb950; }
+        .badge.offline, .badge.down, .badge.rejected { background: rgba(248,81,73,0.15); color: #f85149; }
+        .badge.warning, .badge.pending { background: rgba(210,153,34,0.15); color: #d2992a; }
+        .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
+        .badge.info { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .badge.emergency, .badge.critical { background: rgba(248,81,73,0.25); color: #ff7b72; }
+        .badge.error { background: rgba(248,81,73,0.15); color: #f85149; }
+        .badge.notice { background: rgba(56,139,253,0.1); color: #58a6ff; }
+        .badge.debug { background: rgba(139,148,158,0.1); color: #8b949e; }
 
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
-        .form-group input, .form-group select { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+        .mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.84rem; }
 
-        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+        .pulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        .pulse-dot.online { background: #3fb950; animation: pulse 2s infinite; }
+        .pulse-dot.offline { background: #f85149; }
+        .pulse-dot.pending { background: #d2992a; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(63,185,80,0.4); } 50% { box-shadow: 0 0 0 4px rgba(63,185,80,0); } }
+
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
+        .form-group input:focus, .form-group select:focus { border-color: #58a6ff; outline: none; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; }
         .modal.active { display: flex; }
-        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
-        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 520px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .modal-header h2 { font-size: 1.1rem; color: #e6edf3; }
+        .modal-close { cursor: pointer; font-size: 1.3rem; color: #8b949e; background: none; border: none; padding: 4px; }
+        .modal-close:hover { color: #e6edf3; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+        .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+        .filter-bar select, .filter-bar input { padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.82rem; }
+        .filter-bar .search-input { min-width: 200px; }
+        .auto-refresh-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #8b949e; margin-left: auto; }
+        .auto-refresh-toggle input { accent-color: #238636; }
+
+        .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }
+        .probe-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
+        .probe-card .probe-name { font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
+        .probe-card .probe-meta { font-size: 0.78rem; color: #8b949e; }
+        .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+        .probe-card .probe-stat { text-align: center; }
+        .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; }
 
         .connection-diagram { min-height: 400px; position: relative; background: #0d1117; border-radius: 8px; padding: 20px; }
         .node { position: absolute; background: #21262d; border: 2px solid #30363d; border-radius: 8px; padding: 15px; min-width: 150px; text-align: center; cursor: pointer; }
-        .node.selected { border-color: #00d4ff; }
+        .node.selected { border-color: #58a6ff; }
         .node .name { font-weight: 600; margin-bottom: 5px; }
         .node .ip { font-size: 0.8rem; color: #8b949e; }
         .node .status { margin-top: 8px; }
-
         .connection-line { position: absolute; height: 3px; background: #30363d; transform-origin: left center; }
-        .connection-line.up { background: #3fb150; }
+        .connection-line.up { background: #3fb950; }
         .connection-line.down { background: #f85149; }
 
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+        .loading { text-align: center; padding: 30px; color: #484f58; }
+        .empty-state { text-align: center; padding: 40px 20px; color: #484f58; }
+        .empty-state .empty-icon { font-size: 2rem; margin-bottom: 8px; }
 
-        .loading { text-align: center; padding: 30px; color: #8b949e; }
-        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+        .setting-item { background: #0d1117; padding: 12px; border-radius: 6px; }
+        .setting-item label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
+        .setting-item input { width: 100%; padding: 7px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-size: 0.85rem; }
 
-        .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-        .setting-item { background: #0d1117; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
-        .setting-item label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 5px; }
-        .setting-item input { width: 100%; padding: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #fff; }
-
-        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #30363d; }
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; }
         .toggle-row:last-child { border-bottom: none; }
-        .toggle-row label { color: #c9d1d9; font-size: 0.9rem; }
-        .toggle-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: #238636; }
+        .toggle-row label { color: #c9d1d9; font-size: 0.88rem; }
+        .toggle-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: #238636; }
+
+        .expandable-msg { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+        .expandable-msg.expanded { white-space: normal; overflow: visible; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2>Firewall Monitor</h2>
-        <a class="nav-item active" data-page="dashboard">Dashboard</a>
-        <a class="nav-item" data-page="devices">Devices</a>
-        <a class="nav-item" data-page="connections">Connections</a>
-        <a class="nav-item" href="/admin/probes">Probes</a>
-        <a class="nav-item" href="/admin/sites">Sites</a>
-        <a class="nav-item" href="/admin/network">Network</a>
-        <a class="nav-item" href="/admin/probe-pending">Pending Approvals</a>
-        <a class="nav-item" data-page="settings">Settings</a>
-        <a class="nav-item" data-page="alerts">Alerts</a>
-        <a class="nav-item" data-page="traps">SNMP Traps</a>
-        <a class="nav-item danger" id="logout-btn">Logout</a>
+        <div class="sidebar-header">
+            <h2>Firewall Monitor</h2>
+            <div class="subtitle">Administration Panel</div>
+        </div>
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Monitoring</div>
+                <a class="nav-item active" data-page="dashboard"><span class="nav-icon">&#9632;</span> Dashboard</a>
+                <a class="nav-item" data-page="devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" data-page="connections"><span class="nav-icon">&#8644;</span> Connections</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <a class="nav-item" data-page="syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
+                <a class="nav-item" data-page="flows"><span class="nav-icon">&#8674;</span> Flows</a>
+                <a class="nav-item" data-page="alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
+                <a class="nav-item" data-page="traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Infrastructure</div>
+                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
+                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
+                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
+                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            </div>
+            <div class="nav-section">
+                <a class="nav-item" data-page="settings"><span class="nav-icon">&#9881;</span> Settings</a>
+            </div>
+        </div>
+        <div class="sidebar-footer">
+            <a class="nav-item danger" id="logout-btn"><span class="nav-icon">&#10140;</span> Logout</a>
+        </div>
     </div>
 
     <div class="main">
-        <div class="header">
+        <div class="page-header">
             <h1 id="page-title">Dashboard</h1>
         </div>
 
         <!-- Dashboard Page -->
         <div class="page active" id="page-dashboard">
-            <div class="grid">
-                <div class="card">
-                    <h3>Total Devices</h3>
-                    <div class="value" id="total-devices">--</div>
+            <div class="stat-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Devices</div>
+                    <div class="stat-value accent" id="total-devices">--</div>
                 </div>
-                <div class="card">
-                    <h3>Online</h3>
-                    <div class="value" id="online-devices">--</div>
+                <div class="stat-card">
+                    <div class="stat-label">Online</div>
+                    <div class="stat-value good" id="online-devices">--</div>
                 </div>
-                <div class="card">
-                    <h3>Offline</h3>
-                    <div class="value" id="offline-devices">--</div>
+                <div class="stat-card">
+                    <div class="stat-label">Offline</div>
+                    <div class="stat-value bad" id="offline-devices">--</div>
                 </div>
-                <div class="card">
-                    <h3>Active Connections</h3>
-                    <div class="value" id="active-connections">--</div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Probes</div>
+                    <div class="stat-value accent" id="active-probes">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Syslog Messages</div>
+                    <div class="stat-value" id="syslog-count">--</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Trap Events</div>
+                    <div class="stat-value" id="trap-count">--</div>
                 </div>
             </div>
             <div class="card">
-                <h2>Recent Alerts</h2>
-                <table id="alerts-table">
-                    <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
-                    <tbody></tbody>
-                </table>
+                <div class="card-header">
+                    <h2>Probe Health</h2>
+                </div>
+                <div class="probe-cards" id="probe-health-cards">
+                    <div class="loading">Loading probes...</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h2>Recent Activity</h2>
+                </div>
+                <div class="table-wrap">
+                    <table id="recent-activity-table">
+                        <thead><tr><th>Time</th><th>Source</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
         <!-- Devices Page -->
         <div class="page" id="page-devices">
             <div class="card">
-                <h2>FortiGate Devices <button class="btn" onclick="showDeviceModal()">+ Add Device</button></h2>
-                <table id="devices-table">
-                    <thead><tr><th>Name</th><th>IP Address</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead>
-                    <tbody></tbody>
-                </table>
+                <div class="card-header">
+                    <h2>Devices</h2>
+                    <button class="btn" onclick="showDeviceModal()">+ Add Device</button>
+                </div>
+                <div class="table-wrap">
+                    <table id="devices-table">
+                        <thead><tr><th>Name</th><th>IP Address</th><th>Probe</th><th>Site</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
         <!-- Connections Page -->
         <div class="page" id="page-connections">
             <div class="card">
-                <h2>Network Connections <button class="btn" onclick="showConnectionModal()">+ Add Connection</button></h2>
-                <p style="color: #8b949e; margin-bottom: 20px;">Map IPSec and VXLAN tunnels between your FortiGate firewalls to visualize tunnel status.</p>
-                <table id="connections-table">
-                    <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
-                    <tbody></tbody>
-                </table>
+                <div class="card-header">
+                    <h2>Network Connections</h2>
+                    <button class="btn" onclick="showConnectionModal()">+ Add Connection</button>
+                </div>
+                <p style="color: #484f58; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
+                <div class="table-wrap">
+                    <table id="connections-table">
+                        <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
             <div class="card">
-                <h2>Connection Map</h2>
+                <div class="card-header"><h2>Connection Map</h2></div>
                 <div class="connection-diagram" id="connection-diagram">
                     <div class="loading">Add devices and connections to see the network diagram</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Syslog Page -->
+        <div class="page" id="page-syslog">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Syslog Messages</h2>
+                </div>
+                <div class="filter-bar">
+                    <select id="syslog-filter-probe"><option value="">All Probes</option></select>
+                    <select id="syslog-filter-device"><option value="">All Devices</option></select>
+                    <select id="syslog-filter-severity">
+                        <option value="">All Severities</option>
+                        <option value="0">Emergency</option>
+                        <option value="1">Alert</option>
+                        <option value="2">Critical</option>
+                        <option value="3">Error</option>
+                        <option value="4">Warning</option>
+                        <option value="5">Notice</option>
+                        <option value="6">Info</option>
+                        <option value="7">Debug</option>
+                    </select>
+                    <input type="text" class="search-input" id="syslog-filter-search" placeholder="Search messages...">
+                    <button class="btn secondary sm" onclick="loadSyslog()">Apply</button>
+                    <div class="auto-refresh-toggle">
+                        <input type="checkbox" id="syslog-auto-refresh">
+                        <label for="syslog-auto-refresh">Auto-refresh</label>
+                    </div>
+                </div>
+                <div class="table-wrap" style="max-height: 600px;">
+                    <table id="syslog-table">
+                        <thead><tr><th>Time</th><th>Source IP</th><th>Hostname</th><th>Severity</th><th>App</th><th>Message</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 12px; text-align: center;">
+                    <button class="btn secondary" id="syslog-load-more" onclick="loadMoreSyslog()">Load More</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flows Page -->
+        <div class="page" id="page-flows">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Flow Samples</h2>
+                </div>
+                <div class="filter-bar">
+                    <select id="flows-filter-probe"><option value="">All Probes</option></select>
+                    <select id="flows-filter-protocol">
+                        <option value="">All Protocols</option>
+                        <option value="6">TCP</option>
+                        <option value="17">UDP</option>
+                        <option value="1">ICMP</option>
+                    </select>
+                    <input type="text" id="flows-filter-src" placeholder="Src IP...">
+                    <input type="text" id="flows-filter-dst" placeholder="Dst IP...">
+                    <button class="btn secondary sm" onclick="loadFlows()">Apply</button>
+                </div>
+                <div class="table-wrap" style="max-height: 600px;">
+                    <table id="flows-table">
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th>&#8594;</th><th>Dst IP:Port</th><th>Protocol</th><th>Bytes</th><th>Packets</th><th>Rate</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 12px; text-align: center;">
+                    <button class="btn secondary" onclick="loadMoreFlows()">Load More</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts Page -->
+        <div class="page" id="page-alerts">
+            <div class="card">
+                <div class="card-header"><h2>Alert History</h2></div>
+                <div class="table-wrap">
+                    <table id="alerts-full-table">
+                        <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Traps Page -->
+        <div class="page" id="page-traps">
+            <div class="card">
+                <div class="card-header"><h2>SNMP Trap Events</h2></div>
+                <div class="table-wrap">
+                    <table id="traps-table">
+                        <thead><tr><th>Time</th><th>Source IP</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -160,87 +362,49 @@
         <!-- Settings Page -->
         <div class="page" id="page-settings">
             <div class="card">
-                <h2>Admin Password</h2>
+                <div class="card-header"><h2>Admin Password</h2></div>
                 <div class="form-group">
                     <label>Current Password</label>
                     <input type="password" id="current-password" autocomplete="current-password">
                 </div>
-                <div class="form-group">
-                    <label>New Password</label>
-                    <input type="password" id="new-password" autocomplete="new-password">
-                </div>
-                <div class="form-group">
-                    <label>Confirm New Password</label>
-                    <input type="password" id="confirm-password" autocomplete="new-password">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <input type="password" id="new-password" autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label>Confirm New Password</label>
+                        <input type="password" id="confirm-password" autocomplete="new-password">
+                    </div>
                 </div>
                 <button class="btn" onclick="changePassword()">Change Password</button>
             </div>
             <div class="card">
-                <h2>Public Dashboard Display</h2>
-                <p style="color: #8b949e; margin-bottom: 15px;">Control which cards are visible on the public dashboard.</p>
+                <div class="card-header"><h2>Public Dashboard Display</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Control which cards are visible on the public dashboard.</p>
                 <div id="display-settings">
-                    <div class="toggle-row">
-                        <label>Show Hostname</label>
-                        <input type="checkbox" name="public_show_hostname" checked>
-                    </div>
-                    <div class="toggle-row">
-                        <label>Show Uptime</label>
-                        <input type="checkbox" name="public_show_uptime" checked>
-                    </div>
-                    <div class="toggle-row">
-                        <label>Show CPU Usage</label>
-                        <input type="checkbox" name="public_show_cpu" checked>
-                    </div>
-                    <div class="toggle-row">
-                        <label>Show Memory Usage</label>
-                        <input type="checkbox" name="public_show_memory" checked>
-                    </div>
-                    <div class="toggle-row">
-                        <label>Show Active Sessions</label>
-                        <input type="checkbox" name="public_show_sessions" checked>
-                    </div>
-                    <div class="toggle-row">
-                        <label>Show Network Interfaces</label>
-                        <input type="checkbox" name="public_show_interfaces" checked>
-                    </div>
-                    <div class="setting-item" style="margin-top: 15px;">
+                    <div class="toggle-row"><label>Show Hostname</label><input type="checkbox" name="public_show_hostname" checked></div>
+                    <div class="toggle-row"><label>Show Uptime</label><input type="checkbox" name="public_show_uptime" checked></div>
+                    <div class="toggle-row"><label>Show CPU Usage</label><input type="checkbox" name="public_show_cpu" checked></div>
+                    <div class="toggle-row"><label>Show Memory Usage</label><input type="checkbox" name="public_show_memory" checked></div>
+                    <div class="toggle-row"><label>Show Active Sessions</label><input type="checkbox" name="public_show_sessions" checked></div>
+                    <div class="toggle-row"><label>Show Network Interfaces</label><input type="checkbox" name="public_show_interfaces" checked></div>
+                    <div class="setting-item" style="margin-top: 12px;">
                         <label>Public Dashboard Refresh Interval (seconds)</label>
                         <input type="number" name="public_refresh_interval" value="30" min="10" max="300">
                     </div>
                 </div>
             </div>
             <div class="card">
-                <h2>Alert Settings</h2>
+                <div class="card-header"><h2>Alert Settings</h2></div>
                 <div class="settings-grid" id="settings-alerts"></div>
             </div>
             <div class="card">
-                <h2>Notification Settings</h2>
+                <div class="card-header"><h2>Notification Settings</h2></div>
                 <div class="settings-grid" id="settings-notifications"></div>
             </div>
             <div class="card">
                 <button class="btn" onclick="saveSettings()">Save Settings</button>
-            </div>
-        </div>
-
-        <!-- Alerts Page -->
-        <div class="page" id="page-alerts">
-            <div class="card">
-                <h2>Alert History</h2>
-                <table id="alerts-full-table">
-                    <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Traps Page -->
-        <div class="page" id="page-traps">
-            <div class="card">
-                <h2>SNMP Trap Events</h2>
-                <table id="traps-table">
-                    <thead><tr><th>Time</th><th>Source IP</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
-                    <tbody></tbody>
-                </table>
             </div>
         </div>
     </div>
@@ -249,34 +413,50 @@
     <div class="modal" id="device-modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 id="device-modal-title">Add FortiGate</h2>
-                <span onclick="closeDeviceModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+                <h2 id="device-modal-title">Add Device</h2>
+                <button class="modal-close" onclick="closeDeviceModal()">&times;</button>
             </div>
             <form id="device-form">
                 <input type="hidden" id="device-id">
-                <div class="form-group">
-                    <label>Name</label>
-                    <input type="text" id="device-name" required>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" id="device-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>IP Address *</label>
+                        <input type="text" id="device-ip" required>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>IP Address</label>
-                    <input type="text" id="device-ip" required>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>SNMP Port</label>
+                        <input type="number" id="device-snmp-port" value="161">
+                    </div>
+                    <div class="form-group">
+                        <label>SNMP Community</label>
+                        <input type="text" id="device-community" value="public">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>SNMP Port</label>
-                    <input type="number" id="device-snmp-port" value="161">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Probe</label>
+                        <select id="device-probe"><option value="">None</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Site</label>
+                        <select id="device-site"><option value="">None</option></select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>SNMP Community</label>
-                    <input type="text" id="device-community" value="public">
-                </div>
-                <div class="form-group">
-                    <label>Location</label>
-                    <input type="text" id="device-location">
-                </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <input type="text" id="device-description">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Location</label>
+                        <input type="text" id="device-location">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="device-description">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" onclick="testDeviceConnection()">Test Connection</button>
@@ -292,34 +472,38 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Add Connection</h2>
-                <span onclick="closeConnectionModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+                <button class="modal-close" onclick="closeConnectionModal()">&times;</button>
             </div>
             <form id="connection-form">
                 <input type="hidden" id="connection-id">
                 <div class="form-group">
-                    <label>Connection Name</label>
+                    <label>Connection Name *</label>
                     <input type="text" id="connection-name" required>
                 </div>
-                <div class="form-group">
-                    <label>Source FortiGate</label>
-                    <select id="connection-source" required></select>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Source Device</label>
+                        <select id="connection-source" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Destination Device</label>
+                        <select id="connection-dest" required></select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Destination FortiGate</label>
-                    <select id="connection-dest" required></select>
-                </div>
-                <div class="form-group">
-                    <label>Connection Type</label>
-                    <select id="connection-type">
-                        <option value="ipsec">IPSec</option>
-                        <option value="vxlan">VXLAN</option>
-                        <option value="ssl">SSL VPN</option>
-                        <option value="wan">WAN Link</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Notes</label>
-                    <input type="text" id="connection-notes">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Connection Type</label>
+                        <select id="connection-type">
+                            <option value="ipsec">IPSec</option>
+                            <option value="vxlan">VXLAN</option>
+                            <option value="ssl">SSL VPN</option>
+                            <option value="wan">WAN Link</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <input type="text" id="connection-notes">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" onclick="closeConnectionModal()">Cancel</button>
@@ -333,8 +517,26 @@
         const API_BASE = '/admin/api';
         let currentDevices = [];
         let currentConnections = [];
+        let currentProbes = [];
+        let currentSites = [];
         let adminRefreshTimer;
+        let syslogRefreshTimer;
         let csrfTokenCache = '';
+        let syslogOffset = 0;
+        let flowsOffset = 0;
+
+        const SEVERITY_NAMES = ['Emergency','Alert','Critical','Error','Warning','Notice','Info','Debug'];
+        const PROTOCOL_NAMES = {1:'ICMP',6:'TCP',17:'UDP',47:'GRE',50:'ESP',51:'AH',89:'OSPF'};
+
+        function severityBadgeClass(sev) {
+            if (sev <= 1) return 'emergency';
+            if (sev === 2) return 'critical';
+            if (sev === 3) return 'error';
+            if (sev === 4) return 'warning';
+            if (sev === 5) return 'notice';
+            if (sev === 6) return 'info';
+            return 'debug';
+        }
 
         async function fetchCsrfToken() {
             try {
@@ -347,26 +549,35 @@
             return csrfTokenCache;
         }
 
-        function getCsrfToken() {
-            return csrfTokenCache;
-        }
+        function getCsrfToken() { return csrfTokenCache; }
 
         function escapeHtml(str) {
             if (!str) return '';
             const s = String(str);
-            return s.replace(/[&<>"']/g, c => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            })[c]);
+            return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const units = ['B','KB','MB','GB','TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+        }
+
+        function timeAgo(dateStr) {
+            const d = new Date(dateStr);
+            const s = Math.floor((Date.now() - d) / 1000);
+            if (s < 60) return s + 's ago';
+            if (s < 3600) return Math.floor(s/60) + 'm ago';
+            if (s < 86400) return Math.floor(s/3600) + 'h ago';
+            return Math.floor(s/86400) + 'd ago';
         }
 
         async function apiFetch(url, options = {}) {
             try {
                 const res = await fetch(url, {
                     ...options,
-                    headers: {
-                        'X-CSRF-Token': getCsrfToken(),
-                        ...options.headers
-                    }
+                    headers: { 'X-CSRF-Token': getCsrfToken(), ...options.headers }
                 });
                 if (res.status === 401 || res.status === 302) {
                     window.location.href = '/admin/login';
@@ -378,21 +589,22 @@
                 }
                 return await res.json();
             } catch (e) {
-                if (e.message === 'Failed to fetch') {
-                    console.error('Network error - server may be down');
-                }
+                if (e.message === 'Failed to fetch') console.error('Network error');
                 throw e;
             }
         }
 
+        // Navigation
         document.querySelectorAll('.nav-item[data-page]').forEach(item => {
             item.addEventListener('click', () => {
                 document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
                 item.classList.add('active');
                 document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                document.getElementById('page-' + item.dataset.page).classList.add('active');
-                document.getElementById('page-title').textContent = item.textContent;
-                loadPageData(item.dataset.page);
+                const page = item.dataset.page;
+                document.getElementById('page-' + page).classList.add('active');
+                document.getElementById('page-title').textContent = item.textContent.trim();
+                history.pushState(null, '', '/admin/' + (page === 'dashboard' ? '' : page));
+                loadPageData(page);
             });
         });
 
@@ -401,6 +613,8 @@
                 case 'dashboard': await loadDashboard(); break;
                 case 'devices': await loadDevices(); break;
                 case 'connections': await loadConnections(); break;
+                case 'syslog': await loadSyslog(); break;
+                case 'flows': await loadFlows(); break;
                 case 'settings': await loadSettings(); break;
                 case 'alerts': await loadAlerts(); break;
                 case 'traps': await loadTraps(); break;
@@ -409,25 +623,80 @@
 
         async function loadDashboard() {
             try {
-                const result = await apiFetch(`${API_BASE}/dashboard`);
-                if (!result) return;
-                const data = result.data;
+                const [dashResult, probesResult, syslogResult, trapsResult] = await Promise.all([
+                    apiFetch(`${API_BASE}/dashboard`),
+                    apiFetch(`${API_BASE}/probes`),
+                    apiFetch(`${API_BASE}/syslog?limit=10`),
+                    apiFetch(`${API_BASE}/traps?limit=10`)
+                ]);
+                if (!dashResult) return;
+                const data = dashResult.data;
+                const probes = probesResult?.data || [];
+                const syslog = syslogResult?.data || [];
+                const traps = trapsResult?.data || [];
 
-                document.getElementById('total-devices').textContent = data.fortigates?.length || 0;
-                document.getElementById('online-devices').textContent = data.fortigates?.filter(f => f.status === 'online').length || 0;
-                document.getElementById('offline-devices').textContent = data.fortigates?.filter(f => f.status === 'offline').length || 0;
-                document.getElementById('active-connections').textContent = data.connections?.filter(c => c.status === 'up').length || 0;
+                document.getElementById('total-devices').textContent = data.devices?.length || 0;
+                document.getElementById('online-devices').textContent = data.devices?.filter(f => f.status === 'online').length || 0;
+                document.getElementById('offline-devices').textContent = data.devices?.filter(f => f.status === 'offline').length || 0;
 
-                const tbody = document.querySelector('#alerts-table tbody');
-                tbody.innerHTML = data.recent_alerts?.map(a => `
+                const activeProbes = probes.filter(p => p.approval_status === 'approved' && p.status === 'online');
+                document.getElementById('active-probes').textContent = activeProbes.length;
+                document.getElementById('syslog-count').textContent = syslog.length;
+                document.getElementById('trap-count').textContent = traps.length;
+
+                // Probe health cards
+                const probeContainer = document.getElementById('probe-health-cards');
+                if (probes.length === 0) {
+                    probeContainer.innerHTML = '<div class="empty-state">No probes configured</div>';
+                } else {
+                    probeContainer.innerHTML = probes.map(p => {
+                        const statusClass = p.status === 'online' ? 'online' : (p.status === 'offline' ? 'offline' : 'pending');
+                        const lastSeen = p.last_seen ? timeAgo(p.last_seen) : 'Never';
+                        return `<div class="probe-card">
+                            <div class="probe-name"><span class="pulse-dot ${statusClass}"></span>${escapeHtml(p.name)}</div>
+                            <div class="probe-meta">${escapeHtml(p.site?.name || 'No Site')} &middot; ${escapeHtml(p.approval_status)} &middot; Last seen: ${lastSeen}</div>
+                            <div class="probe-stats" id="probe-stats-${p.id}">
+                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Syslog</div></div>
+                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Traps</div></div>
+                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Flows</div></div>
+                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Pings</div></div>
+                            </div>
+                        </div>`;
+                    }).join('');
+
+                    // Load stats for each probe
+                    for (const p of probes) {
+                        apiFetch(`${API_BASE}/probes/${p.id}/stats`).then(r => {
+                            if (!r?.data) return;
+                            const el = document.getElementById('probe-stats-' + p.id);
+                            if (el) {
+                                const d = r.data;
+                                el.innerHTML = `
+                                    <div class="probe-stat"><div class="val">${d.syslog || 0}</div><div class="lbl">Syslog</div></div>
+                                    <div class="probe-stat"><div class="val">${d.traps || 0}</div><div class="lbl">Traps</div></div>
+                                    <div class="probe-stat"><div class="val">${d.flows || 0}</div><div class="lbl">Flows</div></div>
+                                    <div class="probe-stat"><div class="val">${d.pings || 0}</div><div class="lbl">Pings</div></div>`;
+                            }
+                        }).catch(() => {});
+                    }
+                }
+
+                // Recent activity: combine syslog + traps, sort by timestamp
+                const activity = [];
+                syslog.forEach(m => activity.push({ time: m.timestamp, source: m.source_ip || m.hostname, type: 'syslog', severity: SEVERITY_NAMES[m.severity] || 'Unknown', message: m.message }));
+                traps.forEach(t => activity.push({ time: t.timestamp, source: t.source_ip, type: 'trap', severity: t.severity, message: t.message }));
+                activity.sort((a,b) => new Date(b.time) - new Date(a.time));
+
+                const tbody = document.querySelector('#recent-activity-table tbody');
+                tbody.innerHTML = activity.slice(0, 15).map(a => `
                     <tr>
-                        <td>${new Date(a.timestamp).toLocaleString()}</td>
-                        <td>FG-${a.fortigate_id}</td>
-                        <td>${escapeHtml(a.alert_type)}</td>
-                        <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
-                        <td>${escapeHtml(a.message)}</td>
+                        <td>${new Date(a.time).toLocaleString()}</td>
+                        <td class="mono">${escapeHtml(a.source)}</td>
+                        <td><span class="badge ${a.type === 'syslog' ? 'info' : 'warning'}">${a.type}</span></td>
+                        <td><span class="badge ${severityBadgeClass(SEVERITY_NAMES.indexOf(a.severity))}">${escapeHtml(a.severity)}</span></td>
+                        <td>${escapeHtml(a.message?.substring(0, 120))}</td>
                     </tr>
-                `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
+                `).join('') || '<tr><td colspan="5" class="empty-state">No recent activity</td></tr>';
             } catch (e) {
                 console.error('Failed to load dashboard:', e);
             }
@@ -435,32 +704,64 @@
 
         async function loadDevices() {
             try {
-                const result = await apiFetch(`${API_BASE}/fortigates`);
-                if (!result) return;
-                currentDevices = result.data || [];
+                const [devResult, probeResult, siteResult] = await Promise.all([
+                    apiFetch(`${API_BASE}/devices`),
+                    apiFetch(`${API_BASE}/probes`),
+                    apiFetch(`${API_BASE}/sites`)
+                ]);
+                if (!devResult) return;
+                currentDevices = devResult.data || [];
+                currentProbes = probeResult?.data || [];
+                currentSites = siteResult?.data || [];
+
+                // Populate device modal dropdowns
+                populateProbeSelect('device-probe');
+                populateSiteSelect('device-site');
 
                 const tbody = document.querySelector('#devices-table tbody');
                 tbody.innerHTML = currentDevices.map(d => `
                     <tr>
-                        <td>${escapeHtml(d.name)}</td>
-                        <td>${escapeHtml(d.ip_address)}</td>
-                        <td>${escapeHtml(d.location) || '-'}</td>
-                        <td><span class="status-badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
+                        <td><strong>${escapeHtml(d.name)}</strong>${d.description ? '<br><span style="color:#484f58;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : ''}</td>
+                        <td class="mono">${escapeHtml(d.ip_address)}</td>
+                        <td>${d.probe ? escapeHtml(d.probe.name) : '<span style="color:#484f58">-</span>'}</td>
+                        <td>${d.site ? escapeHtml(d.site.name) : '<span style="color:#484f58">-</span>'}</td>
+                        <td>${escapeHtml(d.location) || '<span style="color:#484f58">-</span>'}</td>
+                        <td><span class="pulse-dot ${d.status === 'online' ? 'online' : 'offline'}"></span><span class="badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
                         <td>
-                            <button class="btn secondary" onclick="editDevice(${d.id})">Edit</button>
-                            <button class="btn danger" onclick="deleteDevice(${d.id})">Delete</button>
+                            <button class="btn secondary sm" onclick="editDevice(${d.id})">Edit</button>
+                            <button class="btn danger sm" onclick="deleteDevice(${d.id})">Delete</button>
                         </td>
                     </tr>
-                `).join('') || '<tr><td colspan="5" class="loading">No devices configured</td></tr>';
+                `).join('') || '<tr><td colspan="7" class="empty-state">No devices configured</td></tr>';
             } catch (e) {
                 console.error('Failed to load devices:', e);
             }
         }
 
+        function populateProbeSelect(selectId) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            const current = sel.value;
+            sel.innerHTML = '<option value="">None</option>' + currentProbes.map(p =>
+                `<option value="${p.id}">${escapeHtml(p.name)}${p.site ? ' (' + escapeHtml(p.site.name) + ')' : ''}</option>`
+            ).join('');
+            sel.value = current;
+        }
+
+        function populateSiteSelect(selectId) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            const current = sel.value;
+            sel.innerHTML = '<option value="">None</option>' + currentSites.map(s =>
+                `<option value="${s.id}">${escapeHtml(s.name)}${s.region ? ' - ' + escapeHtml(s.region) : ''}</option>`
+            ).join('');
+            sel.value = current;
+        }
+
         async function loadConnections() {
             try {
                 const [devicesResult, connsResult] = await Promise.all([
-                    apiFetch(`${API_BASE}/fortigates`),
+                    apiFetch(`${API_BASE}/devices`),
                     apiFetch(`${API_BASE}/connections`)
                 ]);
                 if (!devicesResult || !connsResult) return;
@@ -471,15 +772,13 @@
                 tbody.innerHTML = currentConnections.map(c => `
                     <tr>
                         <td>${escapeHtml(c.name)}</td>
-                        <td>${escapeHtml(c.source_fg?.name) || c.source_fg_id}</td>
-                        <td>${escapeHtml(c.dest_fg?.name) || c.dest_fg_id}</td>
+                        <td>${escapeHtml(c.source_device?.name) || c.source_device_id}</td>
+                        <td>${escapeHtml(c.dest_device?.name) || c.dest_device_id}</td>
                         <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
-                        <td><span class="status-badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
-                        <td>
-                            <button class="btn danger" onclick="deleteConnection(${c.id})">Delete</button>
-                        </td>
+                        <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
+                        <td><button class="btn danger sm" onclick="deleteConnection(${c.id})">Delete</button></td>
                     </tr>
-                `).join('') || '<tr><td colspan="6" class="loading">No connections configured</td></tr>';
+                `).join('') || '<tr><td colspan="6" class="empty-state">No connections configured</td></tr>';
 
                 drawConnectionDiagram();
                 populateDeviceSelects();
@@ -488,64 +787,195 @@
             }
         }
 
-        function drawConnectionDiagram() {
-            const container = document.getElementById('connection-diagram');
-            if (currentDevices.length === 0) {
-                container.innerHTML = '<div class="loading">Add devices to see the network diagram</div>';
-                return;
-            }
-
-            const containerRect = container.getBoundingClientRect();
-            const centerX = containerRect.width / 2;
-            const centerY = containerRect.height / 2;
-            const radius = Math.min(centerX, centerY) - 80;
-
-            container.innerHTML = '';
-
-            currentDevices.forEach((device, i) => {
-                const angle = (2 * Math.PI * i) / currentDevices.length - Math.PI / 2;
-                const x = centerX + radius * Math.cos(angle) - 75;
-                const y = centerY + radius * Math.sin(angle) - 30;
-
-                const node = document.createElement('div');
-                node.className = 'node';
-                node.style.left = x + 'px';
-                node.style.top = y + 'px';
-                node.innerHTML = `
-                    <div class="name">${escapeHtml(device.name)}</div>
-                    <div class="ip">${escapeHtml(device.ip_address)}</div>
-                    <div class="status"><span class="status-badge ${escapeHtml(device.status)}">${escapeHtml(device.status)}</span></div>
-                `;
-                container.appendChild(node);
-            });
-
-            currentConnections.forEach(conn => {
-                const sourceIdx = currentDevices.findIndex(d => d.id === conn.source_fg_id);
-                const destIdx = currentDevices.findIndex(d => d.id === conn.dest_fg_id);
-
-                if (sourceIdx >= 0 && destIdx >= 0) {
-                    const srcAngle = (2 * Math.PI * sourceIdx) / currentDevices.length - Math.PI / 2;
-                    const dstAngle = (2 * Math.PI * destIdx) / currentDevices.length - Math.PI / 2;
-
-                    const x1 = centerX + radius * Math.cos(srcAngle);
-                    const y1 = centerY + radius * Math.sin(srcAngle);
-                    const x2 = centerX + radius * Math.cos(dstAngle);
-                    const y2 = centerY + radius * Math.sin(dstAngle);
-
-                    const line = document.createElement('div');
-                    line.className = `connection-line ${conn.status}`;
-
-                    const length = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
-                    const angle = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
-
-                    line.style.width = length + 'px';
-                    line.style.left = x1 + 'px';
-                    line.style.top = y1 + 'px';
-                    line.style.transform = `rotate(${angle}deg)`;
-
-                    container.appendChild(line);
+        async function loadSyslog() {
+            syslogOffset = 0;
+            try {
+                // Populate filter dropdowns
+                if (currentProbes.length === 0) {
+                    const pr = await apiFetch(`${API_BASE}/probes`);
+                    currentProbes = pr?.data || [];
                 }
-            });
+                if (currentDevices.length === 0) {
+                    const dr = await apiFetch(`${API_BASE}/devices`);
+                    currentDevices = dr?.data || [];
+                }
+                populateFilterProbes('syslog-filter-probe');
+                populateFilterDevices('syslog-filter-device');
+
+                const params = buildSyslogParams(100);
+                const result = await apiFetch(`${API_BASE}/syslog?${params}`);
+                if (!result) return;
+                const messages = result.data || [];
+
+                renderSyslogTable(messages, false);
+                syslogOffset = messages.length;
+            } catch (e) {
+                console.error('Failed to load syslog:', e);
+            }
+        }
+
+        function buildSyslogParams(limit) {
+            const parts = [`limit=${limit}`];
+            const probe = document.getElementById('syslog-filter-probe')?.value;
+            const device = document.getElementById('syslog-filter-device')?.value;
+            const severity = document.getElementById('syslog-filter-severity')?.value;
+            const search = document.getElementById('syslog-filter-search')?.value;
+            if (probe) parts.push('probe_id=' + probe);
+            if (device) parts.push('device_id=' + device);
+            if (severity !== '') parts.push('severity=' + severity);
+            if (search) parts.push('search=' + encodeURIComponent(search));
+            return parts.join('&');
+        }
+
+        function renderSyslogTable(messages, append) {
+            const tbody = document.querySelector('#syslog-table tbody');
+            const html = messages.map(m => `
+                <tr>
+                    <td style="white-space:nowrap;">${new Date(m.timestamp).toLocaleString()}</td>
+                    <td class="mono">${escapeHtml(m.source_ip)}</td>
+                    <td>${escapeHtml(m.hostname)}</td>
+                    <td><span class="badge ${severityBadgeClass(m.severity)}">${SEVERITY_NAMES[m.severity] || m.severity}</span></td>
+                    <td>${escapeHtml(m.app_name)}</td>
+                    <td class="expandable-msg" onclick="this.classList.toggle('expanded')">${escapeHtml(m.message)}</td>
+                </tr>
+            `).join('');
+            if (append) tbody.innerHTML += html;
+            else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No syslog messages</td></tr>';
+        }
+
+        async function loadMoreSyslog() {
+            const params = buildSyslogParams(100);
+            const result = await apiFetch(`${API_BASE}/syslog?${params}&offset=${syslogOffset}`);
+            if (result?.data?.length) {
+                renderSyslogTable(result.data, true);
+                syslogOffset += result.data.length;
+            }
+        }
+
+        async function loadFlows() {
+            flowsOffset = 0;
+            try {
+                if (currentProbes.length === 0) {
+                    const pr = await apiFetch(`${API_BASE}/probes`);
+                    currentProbes = pr?.data || [];
+                }
+                populateFilterProbes('flows-filter-probe');
+
+                const params = buildFlowParams(100);
+                const result = await apiFetch(`${API_BASE}/flows?${params}`);
+                if (!result) return;
+                const samples = result.data || [];
+
+                renderFlowsTable(samples, false);
+                flowsOffset = samples.length;
+            } catch (e) {
+                console.error('Failed to load flows:', e);
+            }
+        }
+
+        function buildFlowParams(limit) {
+            const parts = [`limit=${limit}`];
+            const probe = document.getElementById('flows-filter-probe')?.value;
+            const proto = document.getElementById('flows-filter-protocol')?.value;
+            const src = document.getElementById('flows-filter-src')?.value;
+            const dst = document.getElementById('flows-filter-dst')?.value;
+            if (probe) parts.push('probe_id=' + probe);
+            if (proto) parts.push('protocol=' + proto);
+            if (src) parts.push('src_addr=' + encodeURIComponent(src));
+            if (dst) parts.push('dst_addr=' + encodeURIComponent(dst));
+            return parts.join('&');
+        }
+
+        function renderFlowsTable(samples, append) {
+            const tbody = document.querySelector('#flows-table tbody');
+            const html = samples.map(f => `
+                <tr>
+                    <td style="white-space:nowrap;">${new Date(f.timestamp).toLocaleString()}</td>
+                    <td class="mono">${escapeHtml(f.src_addr)}:${f.src_port}</td>
+                    <td>&#8594;</td>
+                    <td class="mono">${escapeHtml(f.dst_addr)}:${f.dst_port}</td>
+                    <td>${PROTOCOL_NAMES[f.protocol] || f.protocol}</td>
+                    <td>${formatBytes(f.bytes)}</td>
+                    <td>${f.packets}</td>
+                    <td>${f.sampling_rate ? '1:' + f.sampling_rate : '-'}</td>
+                </tr>
+            `).join('');
+            if (append) tbody.innerHTML += html;
+            else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples</td></tr>';
+        }
+
+        async function loadMoreFlows() {
+            const params = buildFlowParams(100);
+            const result = await apiFetch(`${API_BASE}/flows?${params}&offset=${flowsOffset}`);
+            if (result?.data?.length) {
+                renderFlowsTable(result.data, true);
+                flowsOffset += result.data.length;
+            }
+        }
+
+        function populateFilterProbes(selectId) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            sel.innerHTML = '<option value="">All Probes</option>' + currentProbes.map(p =>
+                `<option value="${p.id}">${escapeHtml(p.name)}</option>`
+            ).join('');
+        }
+
+        function populateFilterDevices(selectId) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            sel.innerHTML = '<option value="">All Devices</option>' + currentDevices.map(d =>
+                `<option value="${d.id}">${escapeHtml(d.name)}</option>`
+            ).join('');
+        }
+
+        // Syslog auto-refresh
+        document.getElementById('syslog-auto-refresh')?.addEventListener('change', function() {
+            if (this.checked) {
+                syslogRefreshTimer = setInterval(() => {
+                    if (document.querySelector('#page-syslog.active')) loadSyslog();
+                }, 10000);
+            } else {
+                clearInterval(syslogRefreshTimer);
+            }
+        });
+
+        async function loadAlerts() {
+            try {
+                const result = await apiFetch(`${API_BASE}/alerts`);
+                if (!result) return;
+                const alerts = result.data || [];
+                document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
+                    <tr>
+                        <td>${new Date(a.timestamp).toLocaleString()}</td>
+                        <td>DEV-${a.device_id}</td>
+                        <td>${escapeHtml(a.alert_type)}</td>
+                        <td><span class="badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
+                        <td>${escapeHtml(a.message)}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5" class="empty-state">No alerts</td></tr>';
+            } catch (e) {
+                console.error('Failed to load alerts:', e);
+            }
+        }
+
+        async function loadTraps() {
+            try {
+                const result = await apiFetch(`${API_BASE}/traps`);
+                if (!result) return;
+                const traps = result.data || [];
+                document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
+                    <tr>
+                        <td>${new Date(t.timestamp).toLocaleString()}</td>
+                        <td class="mono">${escapeHtml(t.source_ip)}</td>
+                        <td>${escapeHtml(t.trap_type)}</td>
+                        <td><span class="badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
+                        <td>${escapeHtml(t.message)}</td>
+                    </tr>
+                `).join('') || '<tr><td colspan="5" class="empty-state">No traps</td></tr>';
+            } catch (e) {
+                console.error('Failed to load traps:', e);
+            }
         }
 
         async function loadSettings() {
@@ -582,124 +1012,72 @@
                     return `<div class="setting-item"><label>${s.label}</label><input type="text" name="${s.key}" value="${escapeHtml(savedVal)}"></div>`;
                 }).join('');
 
-                // Load display settings
                 const displayResult = await apiFetch(`${API_BASE}/display-settings`);
-                if (displayResult && displayResult.data) {
+                if (displayResult?.data) {
                     const ds = displayResult.data;
                     document.querySelectorAll('#display-settings input[type="checkbox"]').forEach(cb => {
                         cb.checked = ds[cb.name] !== 'false';
                     });
                     const refreshInput = document.querySelector('#display-settings input[name="public_refresh_interval"]');
-                    if (refreshInput && ds['public_refresh_interval']) {
-                        refreshInput.value = ds['public_refresh_interval'];
-                    }
+                    if (refreshInput && ds['public_refresh_interval']) refreshInput.value = ds['public_refresh_interval'];
                 }
             } catch (e) {
                 console.error('Failed to load settings:', e);
             }
         }
 
-        async function loadAlerts() {
-            try {
-                const result = await apiFetch(`${API_BASE}/alerts`);
-                if (!result) return;
-                const alerts = result.data || [];
-
-                document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
-                    <tr>
-                        <td>${new Date(a.timestamp).toLocaleString()}</td>
-                        <td>FG-${a.fortigate_id}</td>
-                        <td>${escapeHtml(a.alert_type)}</td>
-                        <td><span class="status-badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
-                        <td>${escapeHtml(a.message)}</td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5" class="loading">No alerts</td></tr>';
-            } catch (e) {
-                console.error('Failed to load alerts:', e);
-            }
-        }
-
-        async function loadTraps() {
-            try {
-                const result = await apiFetch(`${API_BASE}/traps`);
-                if (!result) return;
-                const traps = result.data || [];
-
-                document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
-                    <tr>
-                        <td>${new Date(t.timestamp).toLocaleString()}</td>
-                        <td>${escapeHtml(t.source_ip)}</td>
-                        <td>${escapeHtml(t.trap_type)}</td>
-                        <td><span class="status-badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
-                        <td>${escapeHtml(t.message)}</td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5" class="loading">No traps</td></tr>';
-            } catch (e) {
-                console.error('Failed to load traps:', e);
-            }
-        }
-
+        // Device modal
         function showDeviceModal(id = null) {
             document.getElementById('device-modal').classList.add('active');
-            document.getElementById('device-modal-title').textContent = id ? 'Edit FortiGate' : 'Add FortiGate';
+            document.getElementById('device-modal-title').textContent = id ? 'Edit Device' : 'Add Device';
+            populateProbeSelect('device-probe');
+            populateSiteSelect('device-site');
 
             if (id) {
-                const device = currentDevices.find(d => d.id === id);
-                document.getElementById('device-id').value = device.id;
-                document.getElementById('device-name').value = device.name;
-                document.getElementById('device-ip').value = device.ip_address;
-                document.getElementById('device-snmp-port').value = device.snmp_port || 161;
-                document.getElementById('device-community').value = device.snmp_community || 'public';
-                document.getElementById('device-location').value = device.location || '';
-                document.getElementById('device-description').value = device.description || '';
+                const d = currentDevices.find(d => d.id === id);
+                document.getElementById('device-id').value = d.id;
+                document.getElementById('device-name').value = d.name;
+                document.getElementById('device-ip').value = d.ip_address;
+                document.getElementById('device-snmp-port').value = d.snmp_port || 161;
+                document.getElementById('device-community').value = d.snmp_community || 'public';
+                document.getElementById('device-probe').value = d.probe_id || '';
+                document.getElementById('device-site').value = d.site_id || '';
+                document.getElementById('device-location').value = d.location || '';
+                document.getElementById('device-description').value = d.description || '';
             } else {
                 document.getElementById('device-form').reset();
                 document.getElementById('device-id').value = '';
+                document.getElementById('device-snmp-port').value = '161';
+                document.getElementById('device-community').value = 'public';
             }
         }
 
-        function closeDeviceModal() {
-            document.getElementById('device-modal').classList.remove('active');
-        }
+        function closeDeviceModal() { document.getElementById('device-modal').classList.remove('active'); }
 
         async function testDeviceConnection() {
             const ip = document.getElementById('device-ip').value;
             const port = document.getElementById('device-snmp-port').value || 161;
             const community = document.getElementById('device-community').value || 'public';
-
-            if (!ip) {
-                alert('Please enter an IP address first');
-                return;
-            }
+            if (!ip) { alert('Please enter an IP address first'); return; }
 
             const btn = event.target;
-            const originalText = btn.textContent;
+            const orig = btn.textContent;
             btn.textContent = 'Testing...';
             btn.disabled = true;
 
             try {
-                const result = await apiFetch(`${API_BASE}/fortigates/test`, {
+                const result = await apiFetch(`${API_BASE}/devices/test`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ip_address: ip,
-                        snmp_port: parseInt(port),
-                        snmp_community: community,
-                        snmp_version: '2c'
-                    })
+                    body: JSON.stringify({ ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: '2c' })
                 });
-
-                if (result && result.data?.online) {
-                    alert(`Connection Successful!\n\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
+                if (result?.data?.online) {
+                    alert(`Connected!\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
                 } else {
-                    alert(`Connection Failed\n\n${result?.data?.message || 'Unknown error'}`);
+                    alert(`Failed: ${result?.data?.message || 'Unknown error'}`);
                 }
-            } catch (err) {
-                alert(`Error: ${err.message}`);
-            } finally {
-                btn.textContent = originalText;
-                btn.disabled = false;
-            }
+            } catch (err) { alert('Error: ' + err.message); }
+            finally { btn.textContent = orig; btn.disabled = false; }
         }
 
         document.getElementById('device-form').addEventListener('submit', async (e) => {
@@ -714,163 +1092,147 @@
                 description: document.getElementById('device-description').value,
                 enabled: true
             };
+            const probeVal = document.getElementById('device-probe').value;
+            const siteVal = document.getElementById('device-site').value;
+            if (probeVal) data.probe_id = parseInt(probeVal);
+            else data.probe_id = null;
+            if (siteVal) data.site_id = parseInt(siteVal);
+            else data.site_id = null;
 
             try {
                 const method = id ? 'PUT' : 'POST';
-                const url = id ? `${API_BASE}/fortigates/${id}` : `${API_BASE}/fortigates`;
+                const url = id ? `${API_BASE}/devices/${id}` : `${API_BASE}/devices`;
                 await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
                 closeDeviceModal();
                 loadDevices();
-            } catch (err) {
-                alert('Error saving device: ' + err.message);
-            }
+            } catch (err) { alert('Error saving device: ' + err.message); }
         });
 
-        async function editDevice(id) { showDeviceModal(id); }
+        function editDevice(id) { showDeviceModal(id); }
 
         async function deleteDevice(id) {
-            if (!confirm('Delete this FortiGate?')) return;
+            if (!confirm('Delete this device and all its data?')) return;
             try {
-                await apiFetch(`${API_BASE}/fortigates/${id}`, { method: 'DELETE' });
+                await apiFetch(`${API_BASE}/devices/${id}`, { method: 'DELETE' });
                 loadDevices();
-            } catch (err) {
-                alert('Error deleting device: ' + err.message);
+            } catch (err) { alert('Error: ' + err.message); }
+        }
+
+        // Connection diagram
+        function drawConnectionDiagram() {
+            const container = document.getElementById('connection-diagram');
+            if (currentDevices.length === 0) {
+                container.innerHTML = '<div class="loading">Add devices to see the network diagram</div>';
+                return;
             }
+            const containerRect = container.getBoundingClientRect();
+            const centerX = containerRect.width / 2;
+            const centerY = containerRect.height / 2;
+            const radius = Math.min(centerX, centerY) - 80;
+            container.innerHTML = '';
+
+            currentDevices.forEach((device, i) => {
+                const angle = (2 * Math.PI * i) / currentDevices.length - Math.PI / 2;
+                const x = centerX + radius * Math.cos(angle) - 75;
+                const y = centerY + radius * Math.sin(angle) - 30;
+                const node = document.createElement('div');
+                node.className = 'node';
+                node.style.left = x + 'px';
+                node.style.top = y + 'px';
+                node.innerHTML = `<div class="name">${escapeHtml(device.name)}</div><div class="ip">${escapeHtml(device.ip_address)}</div><div class="status"><span class="badge ${escapeHtml(device.status)}">${escapeHtml(device.status)}</span></div>`;
+                container.appendChild(node);
+            });
+
+            currentConnections.forEach(conn => {
+                const srcIdx = currentDevices.findIndex(d => d.id === conn.source_device_id);
+                const dstIdx = currentDevices.findIndex(d => d.id === conn.dest_device_id);
+                if (srcIdx >= 0 && dstIdx >= 0) {
+                    const srcA = (2 * Math.PI * srcIdx) / currentDevices.length - Math.PI / 2;
+                    const dstA = (2 * Math.PI * dstIdx) / currentDevices.length - Math.PI / 2;
+                    const x1 = centerX + radius * Math.cos(srcA), y1 = centerY + radius * Math.sin(srcA);
+                    const x2 = centerX + radius * Math.cos(dstA), y2 = centerY + radius * Math.sin(dstA);
+                    const line = document.createElement('div');
+                    line.className = `connection-line ${conn.status}`;
+                    const len = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+                    const ang = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
+                    line.style.width = len + 'px';
+                    line.style.left = x1 + 'px';
+                    line.style.top = y1 + 'px';
+                    line.style.transform = `rotate(${ang}deg)`;
+                    container.appendChild(line);
+                }
+            });
         }
 
         function populateDeviceSelects() {
-            const selects = ['connection-source', 'connection-dest'];
-            selects.forEach(sid => {
+            ['connection-source', 'connection-dest'].forEach(sid => {
                 const sel = document.getElementById(sid);
                 sel.innerHTML = currentDevices.map(d => `<option value="${d.id}">${escapeHtml(d.name)} (${escapeHtml(d.ip_address)})</option>`).join('');
             });
         }
 
         function showConnectionModal() {
-            if (currentDevices.length < 2) {
-                alert('You need at least 2 devices to create a connection');
-                return;
-            }
+            if (currentDevices.length < 2) { alert('You need at least 2 devices'); return; }
             document.getElementById('connection-modal').classList.add('active');
             document.getElementById('connection-form').reset();
             populateDeviceSelects();
         }
-
-        function closeConnectionModal() {
-            document.getElementById('connection-modal').classList.remove('active');
-        }
+        function closeConnectionModal() { document.getElementById('connection-modal').classList.remove('active'); }
 
         document.getElementById('connection-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const data = {
                 name: document.getElementById('connection-name').value,
-                source_fg_id: parseInt(document.getElementById('connection-source').value),
-                dest_fg_id: parseInt(document.getElementById('connection-dest').value),
+                source_device_id: parseInt(document.getElementById('connection-source').value),
+                dest_device_id: parseInt(document.getElementById('connection-dest').value),
                 connection_type: document.getElementById('connection-type').value,
                 notes: document.getElementById('connection-notes').value
             };
-
             try {
-                await apiFetch(`${API_BASE}/connections`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(data)
-                });
+                await apiFetch(`${API_BASE}/connections`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
                 closeConnectionModal();
                 loadConnections();
-            } catch (err) {
-                alert('Error creating connection: ' + err.message);
-            }
+            } catch (err) { alert('Error: ' + err.message); }
         });
 
         async function deleteConnection(id) {
             if (!confirm('Delete this connection?')) return;
-            try {
-                await apiFetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' });
-                loadConnections();
-            } catch (err) {
-                alert('Error deleting connection: ' + err.message);
-            }
+            try { await apiFetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' }); loadConnections(); }
+            catch (err) { alert('Error: ' + err.message); }
         }
 
         async function changePassword() {
             const current = document.getElementById('current-password').value;
             const newPass = document.getElementById('new-password').value;
             const confirmPass = document.getElementById('confirm-password').value;
-
-            if (!current || !newPass || !confirmPass) {
-                alert('Please fill in all password fields');
-                return;
-            }
-
-            if (newPass !== confirmPass) {
-                alert('New passwords do not match');
-                return;
-            }
-
-            if (newPass.length < 8) {
-                alert('Password must be at least 8 characters');
-                return;
-            }
-
+            if (!current || !newPass || !confirmPass) { alert('Please fill in all password fields'); return; }
+            if (newPass !== confirmPass) { alert('New passwords do not match'); return; }
+            if (newPass.length < 8) { alert('Password must be at least 8 characters'); return; }
             try {
                 const result = await apiFetch(`${API_BASE}/settings/password`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        current_password: current,
-                        new_password: newPass
-                    })
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ current_password: current, new_password: newPass })
                 });
-
-                if (result && result.success) {
+                if (result?.success) {
                     alert(result.message);
                     document.getElementById('current-password').value = '';
                     document.getElementById('new-password').value = '';
                     document.getElementById('confirm-password').value = '';
-                } else {
-                    alert('Error: ' + (result?.error || 'Unknown error'));
-                }
-            } catch (err) {
-                alert('Error: ' + err.message);
-            }
+                } else { alert('Error: ' + (result?.error || 'Unknown error')); }
+            } catch (err) { alert('Error: ' + err.message); }
         }
 
         async function saveSettings() {
             const settings = [];
-
-            // Alert and notification settings
             document.querySelectorAll('#settings-alerts input, #settings-notifications input').forEach(input => {
-                const value = input.type === 'checkbox' ? String(input.checked) : input.value;
-                settings.push({
-                    key: input.name,
-                    value: value,
-                    category: ['email_enabled','slack_webhook','discord_webhook'].includes(input.name) ? 'notifications' : 'alerts',
-                    type: input.type === 'checkbox' ? 'bool' : 'string'
-                });
+                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value,
+                    category: ['email_enabled','slack_webhook','discord_webhook'].includes(input.name) ? 'notifications' : 'alerts', type: input.type === 'checkbox' ? 'bool' : 'string' });
             });
-
-            // Public display settings
             document.querySelectorAll('#display-settings input').forEach(input => {
-                const value = input.type === 'checkbox' ? String(input.checked) : input.value;
-                settings.push({
-                    key: input.name,
-                    value: value,
-                    category: 'display',
-                    type: input.type === 'checkbox' ? 'bool' : 'string'
-                });
+                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
             });
-
-            try {
-                await apiFetch(`${API_BASE}/settings`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(settings)
-                });
-                alert('Settings saved!');
-            } catch (err) {
-                alert('Error saving settings: ' + err.message);
-            }
+            try { await apiFetch(`${API_BASE}/settings`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }); alert('Settings saved!'); }
+            catch (err) { alert('Error: ' + err.message); }
         }
 
         document.getElementById('logout-btn').addEventListener('click', async (e) => {
@@ -879,12 +1241,12 @@
             window.location.href = '/';
         });
 
-        // Activate tab based on URL path (e.g. /admin/devices -> devices tab)
         function activateTabFromUrl() {
             const path = window.location.pathname.replace(/\/$/, '');
             const segments = path.split('/');
             const lastSegment = segments[segments.length - 1];
-            const pageMap = { 'dashboard': 'dashboard', 'devices': 'devices', 'connections': 'connections', 'settings': 'settings' };
+            const pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
+                'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps' };
             const page = pageMap[lastSegment];
             if (page) {
                 document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
@@ -893,23 +1255,18 @@
                 document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
                 const pageEl = document.getElementById('page-' + page);
                 if (pageEl) pageEl.classList.add('active');
-                document.getElementById('page-title').textContent = navItem ? navItem.textContent : page;
+                document.getElementById('page-title').textContent = navItem ? navItem.textContent.trim() : page;
                 return page;
             }
             return 'dashboard';
         }
 
         const initialPage = activateTabFromUrl();
-
-        // Initial load: fetch CSRF token first
         fetchCsrfToken().then(() => loadPageData(initialPage));
 
-        // Auto-refresh dashboard every 30s
         adminRefreshTimer = setInterval(() => {
             const activePage = document.querySelector('.page.active');
-            if (activePage && activePage.id === 'page-dashboard') {
-                loadDashboard();
-            }
+            if (activePage?.id === 'page-dashboard') loadDashboard();
         }, 30000);
     </script>
 </body>

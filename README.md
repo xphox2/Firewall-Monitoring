@@ -1,13 +1,13 @@
 # Firewall Monitor
 
-A comprehensive firewall monitoring system with SNMP polling, trap reception, alerting, and uptime tracking.
+A comprehensive, vendor-agnostic firewall monitoring system with SNMP polling, trap reception, alerting, and uptime tracking. Currently supports FortiGate devices via Fortinet enterprise OIDs, with a generic architecture ready for any SNMP-capable firewall.
 
 ## Features
 
 - **Public Dashboard**: Display firewall status without authentication
 - **Secure Admin Panel**: Protected by JWT authentication with rate limiting
 - **SNMP Polling**: Comprehensive monitoring with configurable intervals (default 60s to avoid firewall overload)
-- **SNMP Trap Receiver**: Listen for FortiGate traps and generate alerts
+- **SNMP Trap Receiver**: Listen for SNMP traps and generate alerts
 - **Alerting System**: Email, Slack, Discord, and webhook notifications
 - **Uptime Tracking**: 99.99999% (five nines) uptime calculation
 - **Secure**: CSRF protection, secure headers, rate limiting, account lockout
@@ -15,19 +15,24 @@ A comprehensive firewall monitoring system with SNMP polling, trap reception, al
 ## Architecture
 
 ```
-fortiGate-Mon/
+firewall-mon/
 ├── cmd/
 │   ├── api/          # Main API server (Gin web server)
 │   ├── poller/       # SNMP polling daemon
+│   ├── probe/        # Remote site probe collector
 │   └── trap-receiver/ # SNMP trap listener
 ├── internal/
 │   ├── config/      # Configuration management
 │   ├── auth/        # JWT authentication & security
-│   ├── snmp/        # SNMP client & trap receiver
+│   ├── snmp/        # SNMP client & trap receiver (FortiGate OIDs)
 │   ├── alerts/      # Alert threshold checking
 │   ├── notifier/    # Email/webhook notifications
 │   ├── uptime/      # Uptime calculation
 │   ├── models/      # Data structures
+│   ├── relay/       # Probe relay client
+│   ├── ping/        # ICMP ping collector
+│   ├── syslog/      # Syslog receiver
+│   ├── sflow/       # sFlow receiver
 │   └── api/
 │       ├── handlers/ # HTTP handlers
 │       └── middleware/ # Security middleware
@@ -43,7 +48,7 @@ fortiGate-Mon/
 
 - Go 1.21+
 - Linux server (tested on Ubuntu/Debian)
-- FortiGate with SNMP enabled
+- SNMP-enabled firewall device
 
 ### Build
 
@@ -66,14 +71,14 @@ sudo ./deploy.sh start
 
 ### Configuration
 
-1. Copy `config.env.example` to `/etc/fortigate-mon/config.env`
-2. Update the FortiGate host and SNMP community
+1. Copy `config.env.example` to `/etc/firewall-mon/config.env`
+2. Update `SNMP_HOST` and SNMP community
 3. Set strong admin credentials
 4. Configure alert thresholds
 
 ## SNMP OIDs Monitored
 
-### System Status
+### System Status (FortiGate enterprise OIDs)
 - CPU Usage (`1.3.6.1.4.1.12356.101.4.1.3`)
 - Memory Usage (`1.3.6.1.4.1.12356.101.4.1.4`)
 - Disk Usage (`1.3.6.1.4.1.12356.101.4.1.6`)
@@ -86,7 +91,7 @@ sudo ./deploy.sh start
 ### Hardware Sensors (via `fgHwSensorTable`)
 - Temperature, Voltage, Power, Fans
 
-### Traps Supported
+### Traps Supported (FortiGate enterprise traps)
 - VPN Tunnel Up/Down
 - HA Failover
 - IPS Signatures & Anomalies
@@ -112,17 +117,18 @@ sudo ./deploy.sh start
 ### Admin (Protected)
 - `GET /admin` - Admin dashboard
 - `POST /api/auth/login` - Login
-- `POST /api/auth/logout` - Logout
+- `POST /admin/api/logout` - Logout
 - `GET /admin/api/dashboard` - Full dashboard data
+- `GET /admin/api/devices` - Device management
 - `GET /admin/api/alerts` - Alert history
 - `GET /admin/api/uptime` - Uptime stats
 - `POST /admin/api/uptime/reset` - Reset uptime tracking
 
 ## Monitoring Intervals
 
-To avoid overloading the FortiGate:
+Recommended intervals to avoid overloading devices:
 - System stats: 60 seconds
-- Interface stats: 60-120 seconds  
+- Interface stats: 60-120 seconds
 - Hardware sensors: 300 seconds
 - Full system walk: 300 seconds
 

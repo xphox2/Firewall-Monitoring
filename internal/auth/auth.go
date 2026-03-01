@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"fortiGate-Mon/internal/config"
+	"firewall-mon/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"

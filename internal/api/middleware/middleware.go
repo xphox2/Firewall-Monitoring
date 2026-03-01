@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"fortiGate-Mon/internal/auth"
-	"fortiGate-Mon/internal/config"
+	"firewall-mon/internal/auth"
+	"firewall-mon/internal/config"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"

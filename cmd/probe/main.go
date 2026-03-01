@@ -9,13 +9,13 @@ import (
 	"syscall"
 	"time"
 
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
-	"fortiGate-Mon/internal/ping"
-	"fortiGate-Mon/internal/relay"
-	"fortiGate-Mon/internal/sflow"
-	"fortiGate-Mon/internal/snmp"
-	"fortiGate-Mon/internal/syslog"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
+	"firewall-mon/internal/ping"
+	"firewall-mon/internal/relay"
+	"firewall-mon/internal/sflow"
+	"firewall-mon/internal/snmp"
+	"firewall-mon/internal/syslog"
 )
 
 type ProbeConfig struct {
@@ -221,6 +221,7 @@ func (p *Probe) Start() error {
 	fmt.Println()
 
 	go p.startHeartbeat()
+	go p.startSNMPPolling()
 
 	return nil
 }
@@ -238,6 +239,93 @@ func (p *Probe) startHeartbeat() {
 				log.Printf("Heartbeat failed: %v", err)
 			}
 		}
+	}
+}
+
+func (p *Probe) startSNMPPolling() {
+	// Fetch device list every 5 minutes, poll each device every 60s
+	fetchTicker := time.NewTicker(5 * time.Minute)
+	defer fetchTicker.Stop()
+
+	var devices []relay.DeviceInfo
+
+	// Initial fetch
+	if fetched, err := p.RelayClient.FetchDevices(); err != nil {
+		log.Printf("Initial device fetch failed: %v", err)
+	} else {
+		devices = fetched
+		log.Printf("Fetched %d assigned devices for SNMP polling", len(devices))
+	}
+
+	pollTicker := time.NewTicker(60 * time.Second)
+	defer pollTicker.Stop()
+
+	for {
+		select {
+		case <-p.stopChan:
+			return
+		case <-fetchTicker.C:
+			if fetched, err := p.RelayClient.FetchDevices(); err != nil {
+				log.Printf("Device fetch failed: %v", err)
+			} else {
+				devices = fetched
+				log.Printf("Refreshed device list: %d devices", len(devices))
+			}
+		case <-pollTicker.C:
+			for _, dev := range devices {
+				if !dev.Enabled {
+					continue
+				}
+				go p.pollDevice(dev)
+			}
+		}
+	}
+}
+
+func (p *Probe) pollDevice(dev relay.DeviceInfo) {
+	cfg := &config.Config{
+		SNMP: config.SNMPConfig{
+			SNMPHost: dev.IPAddress,
+			SNMPPort: dev.SNMPPort,
+			Community:     dev.SNMPCommunity,
+			Version:       dev.SNMPVersion,
+			Timeout:       10 * time.Second,
+			Retries:       1,
+		},
+	}
+
+	client, err := snmp.NewSNMPClient(cfg)
+	if err != nil {
+		log.Printf("SNMP connect failed for %s (%s): %v", dev.Name, dev.IPAddress, err)
+		return
+	}
+	defer client.Close()
+
+	status, err := client.GetSystemStatus()
+	if err != nil {
+		log.Printf("SNMP poll failed for %s (%s): %v", dev.Name, dev.IPAddress, err)
+		return
+	}
+
+	status.DeviceID = dev.ID
+	status.Timestamp = time.Now()
+	if err := p.RelayClient.SendSystemStatuses([]models.SystemStatus{*status}); err != nil {
+		log.Printf("Failed to send system status for %s: %v", dev.Name, err)
+	}
+
+	ifaces, err := client.GetInterfaceStats()
+	if err != nil {
+		log.Printf("SNMP interface poll failed for %s: %v", dev.Name, err)
+		return
+	}
+
+	now := time.Now()
+	for i := range ifaces {
+		ifaces[i].DeviceID = dev.ID
+		ifaces[i].Timestamp = now
+	}
+	if err := p.RelayClient.SendInterfaceStats(ifaces); err != nil {
+		log.Printf("Failed to send interface stats for %s: %v", dev.Name, err)
 	}
 }
 

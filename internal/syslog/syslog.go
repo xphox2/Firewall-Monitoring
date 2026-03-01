@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fortiGate-Mon/internal/database"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/models"
 )
 
 const (
@@ -219,7 +219,7 @@ func ParseRFC5424(data []byte) (*models.SyslogMessage, error) {
 		structuredData := string(parts[7])
 		if structuredData != "-" {
 			msg.StructuredData = structuredData
-			msg.FortiGateID = extractFortiGateID(msg.Hostname, structuredData)
+			msg.DeviceID = extractDeviceID(msg.Hostname, structuredData)
 		}
 	}
 
@@ -273,7 +273,7 @@ func ParseTimestamp(version int, ts string) (time.Time, error) {
 	return time.Now(), fmt.Errorf("failed to parse timestamp: %s", ts)
 }
 
-func extractFortiGateID(hostname, structuredData string) uint {
+func extractDeviceID(hostname, structuredData string) uint {
 	if hostname != "" && hostname != "-" {
 		hostname = strings.ToLower(hostname)
 		if strings.HasPrefix(hostname, "fg") || strings.HasPrefix(hostname, "fgt") {
@@ -289,7 +289,7 @@ func extractFortiGateID(hostname, structuredData string) uint {
 						}
 					}
 					if numStr != "" {
-						if id := parseFortiGateID(numStr); id > 0 {
+						if id := parseDeviceID(numStr); id > 0 {
 							return id
 						}
 					}
@@ -304,7 +304,7 @@ func extractFortiGateID(hostname, structuredData string) uint {
 			for sdID, params := range sdData {
 				if strings.Contains(strings.ToLower(sdID), "fortigate") || strings.Contains(strings.ToLower(sdID), "fgt") {
 					if id, ok := params["device-id"]; ok {
-						if fgID := parseFortiGateID(id); fgID > 0 {
+						if fgID := parseDeviceID(id); fgID > 0 {
 							return fgID
 						}
 					}
@@ -315,7 +315,7 @@ func extractFortiGateID(hostname, structuredData string) uint {
 		re := regexp.MustCompile(`\[(\d+)\]`)
 		matches := re.FindStringSubmatch(structuredData)
 		if len(matches) > 1 {
-			if id := parseFortiGateID(matches[1]); id > 0 {
+			if id := parseDeviceID(matches[1]); id > 0 {
 				return id
 			}
 		}
@@ -324,7 +324,7 @@ func extractFortiGateID(hostname, structuredData string) uint {
 	return 0
 }
 
-func parseFortiGateID(idStr string) uint {
+func parseDeviceID(idStr string) uint {
 	idStr = strings.TrimPrefix(idStr, "0")
 	if idStr == "" {
 		return 0

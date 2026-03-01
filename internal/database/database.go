@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"fortiGate-Mon/internal/auth"
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/auth"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -27,7 +27,7 @@ func (d *Database) Gorm() *gorm.DB {
 func NewDatabase(cfg *config.Config) (*Database, error) {
 	dbPath := cfg.Database.FilePath
 	if dbPath == "" {
-		dbPath = "/data/fortigate.db"
+		dbPath = "/data/firewall-mon.db"
 	}
 
 	dir := filepath.Dir(dbPath)
@@ -77,9 +77,9 @@ func (d *Database) migrate() error {
 		&models.Alert{},
 		&models.UptimeRecord{},
 		&models.LoginAttempt{},
-		&models.FortiGate{},
-		&models.FortiGateTunnel{},
-		&models.FortiGateConnection{},
+		&models.Device{},
+		&models.DeviceTunnel{},
+		&models.DeviceConnection{},
 		&models.SystemSetting{},
 		&models.Admin{},
 		&models.Site{},
@@ -89,6 +89,7 @@ func (d *Database) migrate() error {
 		&models.PingResult{},
 		&models.PingStats{},
 		&models.SyslogMessage{},
+		&models.FlowSample{},
 		&models.SiteDatabase{},
 	)
 }
@@ -222,6 +223,9 @@ func (d *Database) CleanupOldData(days int) error {
 	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup syslog_message: %w", err)
 	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.FlowSample{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup flow_sample: %w", err)
+	}
 
 	return nil
 }
@@ -234,30 +238,30 @@ func (d *Database) Close() error {
 	return sqlDB.Close()
 }
 
-func (d *Database) GetAllFortiGates() ([]models.FortiGate, error) {
-	var fgs []models.FortiGate
-	err := d.db.Find(&fgs).Error
-	return fgs, err
+func (d *Database) GetAllDevices() ([]models.Device, error) {
+	var devices []models.Device
+	err := d.db.Preload("Site").Preload("Probe").Find(&devices).Error
+	return devices, err
 }
 
-func (d *Database) GetFortiGate(id uint) (*models.FortiGate, error) {
-	var fg models.FortiGate
-	err := d.db.First(&fg, id).Error
+func (d *Database) GetDevice(id uint) (*models.Device, error) {
+	var device models.Device
+	err := d.db.Preload("Site").Preload("Probe").First(&device, id).Error
 	if err != nil {
 		return nil, err
 	}
-	return &fg, nil
+	return &device, nil
 }
 
-func (d *Database) CreateFortiGate(fg *models.FortiGate) error {
-	return d.db.Create(fg).Error
+func (d *Database) CreateDevice(device *models.Device) error {
+	return d.db.Create(device).Error
 }
 
-func (d *Database) UpdateFortiGate(fg *models.FortiGate) error {
-	return d.db.Save(fg).Error
+func (d *Database) UpdateDevice(device *models.Device) error {
+	return d.db.Save(device).Error
 }
 
-func (d *Database) DeleteFortiGate(id uint) error {
+func (d *Database) DeleteDevice(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		// Delete all related monitoring data
 		for _, model := range []interface{}{
@@ -269,35 +273,35 @@ func (d *Database) DeleteFortiGate(id uint) error {
 			&models.Alert{},
 			&models.UptimeRecord{},
 			&models.TrapEvent{},
-			&models.FortiGateTunnel{},
+			&models.DeviceTunnel{},
 		} {
-			if err := tx.Where("fortigate_id = ?", id).Delete(model).Error; err != nil {
+			if err := tx.Where("device_id = ?", id).Delete(model).Error; err != nil {
 				return err
 			}
 		}
-		if err := tx.Where("source_fg_id = ? OR dest_fg_id = ?", id, id).Delete(&models.FortiGateConnection{}).Error; err != nil {
+		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
 			return err
 		}
-		return tx.Delete(&models.FortiGate{}, id).Error
+		return tx.Delete(&models.Device{}, id).Error
 	})
 }
 
-func (d *Database) GetAllConnections() ([]models.FortiGateConnection, error) {
-	var conns []models.FortiGateConnection
-	err := d.db.Preload("SourceFG").Preload("DestFG").Find(&conns).Error
+func (d *Database) GetAllConnections() ([]models.DeviceConnection, error) {
+	var conns []models.DeviceConnection
+	err := d.db.Preload("SourceDevice").Preload("DestDevice").Find(&conns).Error
 	return conns, err
 }
 
-func (d *Database) CreateConnection(conn *models.FortiGateConnection) error {
+func (d *Database) CreateConnection(conn *models.DeviceConnection) error {
 	return d.db.Create(conn).Error
 }
 
-func (d *Database) UpdateConnection(conn *models.FortiGateConnection) error {
+func (d *Database) UpdateConnection(conn *models.DeviceConnection) error {
 	return d.db.Save(conn).Error
 }
 
 func (d *Database) DeleteConnection(id uint) error {
-	return d.db.Delete(&models.FortiGateConnection{}, id).Error
+	return d.db.Delete(&models.DeviceConnection{}, id).Error
 }
 
 func (d *Database) GetAllSettings() ([]models.SystemSetting, error) {
@@ -403,7 +407,7 @@ func (d *Database) DeleteSite(id uint) error {
 		if err := tx.Where("site_id = ?", id).Delete(&models.Probe{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("site_id = ?", id).Delete(&models.FortiGate{}).Error; err != nil {
+		if err := tx.Where("site_id = ?", id).Delete(&models.Device{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&models.Site{}, id).Error
@@ -546,15 +550,15 @@ func (d *Database) SavePingResult(result *models.PingResult) error {
 	return d.db.Create(result).Error
 }
 
-func (d *Database) GetPingResults(fortigateID uint, limit int) ([]models.PingResult, error) {
+func (d *Database) GetPingResults(deviceID uint, limit int) ([]models.PingResult, error) {
 	var results []models.PingResult
-	err := d.db.Where("fortigate_id = ?", fortigateID).Order("timestamp DESC").Limit(limit).Find(&results).Error
+	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(limit).Find(&results).Error
 	return results, err
 }
 
-func (d *Database) GetLatestPingStats(fortigateID uint, probeID uint) (*models.PingStats, error) {
+func (d *Database) GetLatestPingStats(deviceID uint, probeID uint) (*models.PingStats, error) {
 	var stats models.PingStats
-	err := d.db.Where("fortigate_id = ? AND probe_id = ?", fortigateID, probeID).First(&stats).Error
+	err := d.db.Where("device_id = ? AND probe_id = ?", deviceID, probeID).First(&stats).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
@@ -565,9 +569,9 @@ func (d *Database) SavePingStats(stats *models.PingStats) error {
 	return d.db.Save(stats).Error
 }
 
-func (d *Database) GetPingStatsByTarget(fortigateID uint, probeID uint, targetIP string) (*models.PingStats, error) {
+func (d *Database) GetPingStatsByTarget(deviceID uint, probeID uint, targetIP string) (*models.PingStats, error) {
 	var stats models.PingStats
-	err := d.db.Where("fortigate_id = ? AND probe_id = ? AND target_ip = ?", fortigateID, probeID, targetIP).First(&stats).Error
+	err := d.db.Where("device_id = ? AND probe_id = ? AND target_ip = ?", deviceID, probeID, targetIP).First(&stats).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}
@@ -584,10 +588,29 @@ func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) 
 	return messages, err
 }
 
-func (d *Database) GetSyslogMessagesByFortiGate(fgID uint, limit int) ([]models.SyslogMessage, error) {
+func (d *Database) GetSyslogMessagesByDevice(deviceID uint, limit int) ([]models.SyslogMessage, error) {
 	var messages []models.SyslogMessage
-	err := d.db.Where("fortigate_id = ?", fgID).Order("timestamp DESC").Limit(limit).Find(&messages).Error
+	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(limit).Find(&messages).Error
 	return messages, err
+}
+
+func (d *Database) SaveFlowSamples(samples []models.FlowSample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	return d.db.Create(&samples).Error
+}
+
+func (d *Database) GetFlowSamples(limit int) ([]models.FlowSample, error) {
+	var samples []models.FlowSample
+	err := d.db.Order("timestamp DESC").Limit(limit).Find(&samples).Error
+	return samples, err
+}
+
+func (d *Database) GetDevicesByProbe(probeID uint) ([]models.Device, error) {
+	var devices []models.Device
+	err := d.db.Where("probe_id = ?", probeID).Preload("Site").Find(&devices).Error
+	return devices, err
 }
 
 func (d *Database) CreateSiteDatabase(siteID uint, dbPath string, isRemote bool) (*models.SiteDatabase, error) {
@@ -690,7 +713,7 @@ func (d *Database) CreateSiteDatabaseFile(siteID uint, basePath string) (*models
 	sqlDB.SetConnMaxLifetime(0)
 
 	if err := siteDB.AutoMigrate(
-		&models.SiteFortiGate{},
+		&models.SiteDevice{},
 		&models.SiteSystemStatus{},
 		&models.SiteInterfaceStats{},
 		&models.SiteTrapEvent{},
@@ -778,22 +801,22 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-func (d *Database) SaveSiteFortiGate(siteID uint, fg *models.SiteFortiGate) error {
+func (d *Database) SaveSiteDevice(siteID uint, device *models.SiteDevice) error {
 	db, err := d.GetOrCreateSiteDB(siteID)
 	if err != nil {
 		return err
 	}
-	return db.Create(fg).Error
+	return db.Create(device).Error
 }
 
-func (d *Database) GetSiteFortiGates(siteID uint) ([]models.SiteFortiGate, error) {
+func (d *Database) GetSiteDevices(siteID uint) ([]models.SiteDevice, error) {
 	db, err := d.GetOrCreateSiteDB(siteID)
 	if err != nil {
 		return nil, err
 	}
-	var fgs []models.SiteFortiGate
-	err = db.Find(&fgs).Error
-	return fgs, err
+	var devices []models.SiteDevice
+	err = db.Find(&devices).Error
+	return devices, err
 }
 
 func (d *Database) SaveSiteSystemStatus(siteID uint, status *models.SiteSystemStatus) error {
@@ -879,13 +902,13 @@ func (d *Database) SaveSitePingResult(siteID uint, result *models.SitePingResult
 	return db.Create(result).Error
 }
 
-func (d *Database) GetSitePingResults(siteID uint, fortigateID uint, limit int) ([]models.SitePingResult, error) {
+func (d *Database) GetSitePingResults(siteID uint, deviceID uint, limit int) ([]models.SitePingResult, error) {
 	db, err := d.GetOrCreateSiteDB(siteID)
 	if err != nil {
 		return nil, err
 	}
 	var results []models.SitePingResult
-	err = db.Where("fortigate_id = ?", fortigateID).Order("timestamp DESC").Limit(limit).Find(&results).Error
+	err = db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(limit).Find(&results).Error
 	return results, err
 }
 
@@ -897,13 +920,13 @@ func (d *Database) SaveSitePingStats(siteID uint, stats *models.SitePingStats) e
 	return db.Save(stats).Error
 }
 
-func (d *Database) GetSitePingStats(siteID uint, fortigateID uint, probeID uint) ([]models.SitePingStats, error) {
+func (d *Database) GetSitePingStats(siteID uint, deviceID uint, probeID uint) ([]models.SitePingStats, error) {
 	db, err := d.GetOrCreateSiteDB(siteID)
 	if err != nil {
 		return nil, err
 	}
 	var stats []models.SitePingStats
-	err = db.Where("fortigate_id = ? AND probe_id = ?", fortigateID, probeID).Find(&stats).Error
+	err = db.Where("device_id = ? AND probe_id = ?", deviceID, probeID).Find(&stats).Error
 	return stats, err
 }
 

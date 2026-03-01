@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/models"
 )
 
 type RelayConfig struct {
@@ -45,7 +45,7 @@ type RelayClient struct {
 type TrapEvent struct {
 	ID          uint      `json:"id"`
 	Timestamp   time.Time `json:"timestamp"`
-	FortiGateID uint      `json:"fortigate_id"`
+	DeviceID    uint      `json:"device_id"`
 	ProbeID     uint      `json:"probe_id"`
 	SourceIP    string    `json:"source_ip"`
 	TrapOID     string    `json:"trap_oid"`
@@ -57,7 +57,7 @@ type TrapEvent struct {
 type PingResult struct {
 	ID           uint      `json:"id"`
 	Timestamp    time.Time `json:"timestamp"`
-	FortiGateID  uint      `json:"fortigate_id"`
+	DeviceID     uint      `json:"device_id"`
 	ProbeID      uint      `json:"probe_id"`
 	TargetIP     string    `json:"target_ip"`
 	Success      bool      `json:"success"`
@@ -70,7 +70,7 @@ type PingResult struct {
 type SyslogMessage struct {
 	ID             uint      `json:"id"`
 	Timestamp      time.Time `json:"timestamp"`
-	FortiGateID    uint      `json:"fortigate_id"`
+	DeviceID       uint      `json:"device_id"`
 	ProbeID        uint      `json:"probe_id"`
 	Hostname       string    `json:"hostname"`
 	AppName        string    `json:"app_name"`
@@ -87,7 +87,7 @@ type SyslogMessage struct {
 type FlowSample struct {
 	ID              uint      `json:"id"`
 	Timestamp       time.Time `json:"timestamp"`
-	FortiGateID     uint      `json:"fortigate_id"`
+	DeviceID        uint      `json:"device_id"`
 	ProbeID         uint      `json:"probe_id"`
 	SamplerAddress  string    `json:"sampler_address"`
 	SequenceNumber  uint32    `json:"sequence_number"`
@@ -496,7 +496,7 @@ func ConvertModelTrapEvent(m *models.TrapEvent) *TrapEvent {
 	return &TrapEvent{
 		ID:          m.ID,
 		Timestamp:   m.Timestamp,
-		FortiGateID: m.FortiGateID,
+		DeviceID:    m.DeviceID,
 		SourceIP:    m.SourceIP,
 		TrapOID:     m.TrapOID,
 		TrapType:    m.TrapType,
@@ -509,7 +509,7 @@ func ConvertModelPingResult(m *models.PingResult) *PingResult {
 	return &PingResult{
 		ID:           m.ID,
 		Timestamp:    m.Timestamp,
-		FortiGateID:  m.FortiGateID,
+		DeviceID:     m.DeviceID,
 		ProbeID:      m.ProbeID,
 		TargetIP:     m.TargetIP,
 		Success:      m.Success,
@@ -524,10 +524,95 @@ func (r *RelayClient) GetProbeID() uint {
 	return r.probeID
 }
 
+type DeviceInfo struct {
+	ID            uint   `json:"id"`
+	Name          string `json:"name"`
+	IPAddress     string `json:"ip_address"`
+	SNMPPort      int    `json:"snmp_port"`
+	SNMPCommunity string `json:"snmp_community"`
+	SNMPVersion   string `json:"snmp_version"`
+	Enabled       bool   `json:"enabled"`
+}
+
+type DevicesResponse struct {
+	Success bool         `json:"success"`
+	Data    []DeviceInfo `json:"data"`
+}
+
+func (r *RelayClient) FetchDevices() ([]DeviceInfo, error) {
+	if !r.approved.Load() {
+		return nil, fmt.Errorf("probe not approved")
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/devices"
+	resp, err := r.httpClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch devices: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("fetch devices returned status %d", resp.StatusCode)
+	}
+
+	var result DevicesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode devices response: %w", err)
+	}
+
+	return result.Data, nil
+}
+
+func (r *RelayClient) SendSystemStatuses(statuses []models.SystemStatus) error {
+	if !r.approved.Load() {
+		return fmt.Errorf("probe not approved")
+	}
+
+	jsonData, err := json.Marshal(statuses)
+	if err != nil {
+		return fmt.Errorf("failed to marshal system statuses: %w", err)
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/system-status"
+	resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send system statuses: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("send system statuses returned status %d", resp.StatusCode)
+}
+
+func (r *RelayClient) SendInterfaceStats(stats []models.InterfaceStats) error {
+	if !r.approved.Load() {
+		return fmt.Errorf("probe not approved")
+	}
+
+	jsonData, err := json.Marshal(stats)
+	if err != nil {
+		return fmt.Errorf("failed to marshal interface stats: %w", err)
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/interface-stats"
+	resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send interface stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("send interface stats returned status %d", resp.StatusCode)
+}
+
 func ConvertModelSyslogMessage(m *models.SyslogMessage) *SyslogMessage {
 	return &SyslogMessage{
 		Timestamp:      m.Timestamp,
-		FortiGateID:    m.FortiGateID,
+		DeviceID:       m.DeviceID,
 		ProbeID:        m.ProbeID,
 		Hostname:       m.Hostname,
 		AppName:        m.AppName,

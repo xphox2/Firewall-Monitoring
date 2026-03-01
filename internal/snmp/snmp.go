@@ -5,12 +5,13 @@ import (
 	"strings"
 	"time"
 
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
 
 	"github.com/gosnmp/gosnmp"
 )
 
+// FortiGate-specific SNMP OIDs (Fortinet enterprise MIB 1.3.6.1.4.1.12356)
 var (
 	OIDSystemCPU       = ".1.3.6.1.4.1.12356.101.4.1.3"
 	OIDSystemMemory    = ".1.3.6.1.4.1.12356.101.4.1.4"
@@ -82,8 +83,8 @@ type SNMPClient struct {
 }
 
 func NewSNMPClient(cfg *config.Config) (*SNMPClient, error) {
-	if cfg.SNMP.FortiGatePort < 1 || cfg.SNMP.FortiGatePort > 65535 {
-		return nil, fmt.Errorf("invalid SNMP port: %d", cfg.SNMP.FortiGatePort)
+	if cfg.SNMP.SNMPPort < 1 || cfg.SNMP.SNMPPort > 65535 {
+		return nil, fmt.Errorf("invalid SNMP port: %d", cfg.SNMP.SNMPPort)
 	}
 
 	version := gosnmp.Version2c
@@ -94,8 +95,8 @@ func NewSNMPClient(cfg *config.Config) (*SNMPClient, error) {
 	}
 
 	client := &gosnmp.GoSNMP{
-		Target:    cfg.SNMP.FortiGateHost,
-		Port:      uint16(cfg.SNMP.FortiGatePort),
+		Target:    cfg.SNMP.SNMPHost,
+		Port:      uint16(cfg.SNMP.SNMPPort),
 		Community: cfg.SNMP.Community,
 		Version:   version,
 		Timeout:   cfg.SNMP.Timeout,

@@ -202,11 +202,11 @@
                     <input type="text" id="connection-name" required>
                 </div>
                 <div class="form-group">
-                    <label>Source FortiGate</label>
+                    <label>Source Device</label>
                     <select id="connection-source" required></select>
                 </div>
                 <div class="form-group">
-                    <label>Destination FortiGate</label>
+                    <label>Destination Device</label>
                     <select id="connection-dest" required></select>
                 </div>
                 <div class="form-group">
@@ -310,7 +310,7 @@
         async function loadData() {
             try {
                 const [devicesResult, connectionsResult, sitesResult] = await Promise.all([
-                    apiFetch(`${API_BASE}/fortigates`),
+                    apiFetch(`${API_BASE}/devices`),
                     apiFetch(`${API_BASE}/connections`),
                     apiFetch(`${API_BASE}/sites`)
                 ]);
@@ -396,8 +396,8 @@
             svg.appendChild(defs);
 
             currentConnections.forEach(conn => {
-                const srcIdx = currentDevices.findIndex(d => d.id === conn.source_fg_id);
-                const dstIdx = currentDevices.findIndex(d => d.id === conn.dest_fg_id);
+                const srcIdx = currentDevices.findIndex(d => d.id === conn.source_device_id);
+                const dstIdx = currentDevices.findIndex(d => d.id === conn.dest_device_id);
                 
                 if (srcIdx >= 0 && dstIdx >= 0) {
                     const srcSiteId = currentDevices[srcIdx].site_id || 0;
@@ -486,8 +486,8 @@
             tbody.innerHTML = currentConnections.map(c => `
                 <tr>
                     <td>${escapeHtml(c.name)}</td>
-                    <td>${escapeHtml(c.source_fg?.name) || 'FG-' + c.source_fg_id}</td>
-                    <td>${escapeHtml(c.dest_fg?.name) || 'FG-' + c.dest_fg_id}</td>
+                    <td>${escapeHtml(c.source_device?.name) || 'DEV-' + c.source_device_id}</td>
+                    <td>${escapeHtml(c.dest_device?.name) || 'DEV-' + c.dest_device_id}</td>
                     <td><span class="type-badge ${c.connection_type}">${escapeHtml(c.connection_type || 'ipsec').toUpperCase()}</span></td>
                     <td><span class="status-badge ${c.status}">${escapeHtml(c.status || 'unknown').toUpperCase()}</span></td>
                     <td>
@@ -522,8 +522,8 @@
                     <h4>${escapeHtml(conn.name)}</h4>
                     <p><strong>Type:</strong> <span class="type-badge ${conn.connection_type}">${escapeHtml(conn.connection_type || 'ipsec').toUpperCase()}</span></p>
                     <p><strong>Status:</strong> <span class="status-badge ${conn.status}">${escapeHtml(conn.status || 'unknown').toUpperCase()}</span></p>
-                    <p><strong>Source:</strong> ${escapeHtml(conn.source_fg?.name) || 'FG-' + conn.source_fg_id}</p>
-                    <p><strong>Destination:</strong> ${escapeHtml(conn.dest_fg?.name) || 'FG-' + conn.dest_fg_id}</p>
+                    <p><strong>Source:</strong> ${escapeHtml(conn.source_device?.name) || 'DEV-' + conn.source_device_id}</p>
+                    <p><strong>Destination:</strong> ${escapeHtml(conn.dest_device?.name) || 'DEV-' + conn.dest_device_id}</p>
                     <p><strong>Latency:</strong> ${conn.latency ? conn.latency + 'ms' : '-'}</p>
                     <p><strong>Last Check:</strong> ${conn.last_check ? new Date(conn.last_check).toLocaleString() : 'Never'}</p>
                     ${conn.notes ? `<p><strong>Notes:</strong> ${escapeHtml(conn.notes)}</p>` : ''}
@@ -534,7 +534,7 @@
         }
 
         function showSiteDetails(site) {
-            const fortigates = currentDevices.filter(d => d.site_id === site.id);
+            const siteDevices = currentDevices.filter(d => d.site_id === site.id);
             document.getElementById('details-title').textContent = 'Site Details';
             document.getElementById('details-content').innerHTML = `
                 <div class="connection-info">
@@ -542,7 +542,7 @@
                     <p><strong>Region:</strong> ${escapeHtml(site.region) || '-'}</p>
                     <p><strong>Country:</strong> ${escapeHtml(site.country) || '-'}</p>
                     <p><strong>Timezone:</strong> ${escapeHtml(site.timezone) || '-'}</p>
-                    <p><strong>Firewalls:</strong> ${fortigates.length}</p>
+                    <p><strong>Firewalls:</strong> ${siteDevices.length}</p>
                     <p><strong>Address:</strong> ${escapeHtml(site.address) || '-'}</p>
                 </div>
                 <button class="btn small secondary" onclick="window.location.href='/admin/sites'">Go to Sites</button>
@@ -584,8 +584,8 @@
             document.getElementById('connection-type').value = conn.connection_type || 'ipsec';
             document.getElementById('connection-notes').value = conn.notes || '';
             populateDeviceSelects();
-            document.getElementById('connection-source').value = conn.source_fg_id;
-            document.getElementById('connection-dest').value = conn.dest_fg_id;
+            document.getElementById('connection-source').value = conn.source_device_id;
+            document.getElementById('connection-dest').value = conn.dest_device_id;
         }
 
         function closeConnectionModal() {
@@ -597,13 +597,13 @@
             const id = document.getElementById('connection-id').value;
             const data = {
                 name: document.getElementById('connection-name').value,
-                source_fg_id: parseInt(document.getElementById('connection-source').value),
-                dest_fg_id: parseInt(document.getElementById('connection-dest').value),
+                source_device_id: parseInt(document.getElementById('connection-source').value),
+                dest_device_id: parseInt(document.getElementById('connection-dest').value),
                 connection_type: document.getElementById('connection-type').value,
                 notes: document.getElementById('connection-notes').value
             };
 
-            if (data.source_fg_id === data.dest_fg_id) {
+            if (data.source_device_id === data.dest_device_id) {
                 alert('Source and destination cannot be the same');
                 return;
             }

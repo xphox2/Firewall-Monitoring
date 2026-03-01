@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	"fortiGate-Mon/internal/alerts"
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/database"
-	"fortiGate-Mon/internal/models"
-	"fortiGate-Mon/internal/notifier"
-	"fortiGate-Mon/internal/snmp"
+	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/models"
+	"firewall-mon/internal/notifier"
+	"firewall-mon/internal/snmp"
 )
 
 type Poller struct {
@@ -82,7 +82,7 @@ func (p *Poller) pollAllDevices() {
 		p.alertManager.RefreshThresholds(p.db.Gorm())
 	}
 
-	devices, err := p.db.GetAllFortiGates()
+	devices, err := p.db.GetAllDevices()
 	if err != nil {
 		log.Printf("Error getting devices: %v", err)
 		return
@@ -104,7 +104,7 @@ func (p *Poller) pollAllDevices() {
 		}
 		wg.Add(1)
 		sem <- struct{}{} // acquire semaphore
-		go func(device *models.FortiGate) {
+		go func(device *models.Device) {
 			defer wg.Done()
 			defer func() { <-sem }() // release semaphore
 			p.pollDevice(device)
@@ -113,11 +113,11 @@ func (p *Poller) pollAllDevices() {
 	wg.Wait()
 }
 
-func (p *Poller) pollDevice(device *models.FortiGate) {
+func (p *Poller) pollDevice(device *models.Device) {
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
-			FortiGateHost: device.IPAddress,
-			FortiGatePort: device.SNMPPort,
+			SNMPHost: device.IPAddress,
+			SNMPPort: device.SNMPPort,
 			Community:     device.SNMPCommunity,
 			Version:       device.SNMPVersion,
 			Timeout:       5 * time.Second,
@@ -145,7 +145,7 @@ func (p *Poller) pollDevice(device *models.FortiGate) {
 
 	// Save system status to database
 	if p.db != nil {
-		status.FortiGateID = device.ID
+		status.DeviceID = device.ID
 		status.Timestamp = time.Now()
 		if err := p.db.SaveSystemStatus(status); err != nil {
 			log.Printf("Device %s: failed to save status - %v", device.Name, err)
@@ -165,7 +165,7 @@ func (p *Poller) pollDevice(device *models.FortiGate) {
 		if p.db != nil {
 			now := time.Now()
 			for i := range interfaces {
-				interfaces[i].FortiGateID = device.ID
+				interfaces[i].DeviceID = device.ID
 				interfaces[i].Timestamp = now
 			}
 			if err := p.db.SaveInterfaceStats(interfaces); err != nil {
@@ -183,11 +183,11 @@ func (p *Poller) pollDevice(device *models.FortiGate) {
 	p.updateDeviceStatus(device, "online")
 }
 
-func (p *Poller) updateDeviceStatus(device *models.FortiGate, status string) {
+func (p *Poller) updateDeviceStatus(device *models.Device, status string) {
 	device.Status = status
 	device.LastPolled = time.Now()
 	if p.db != nil {
-		if err := p.db.UpdateFortiGate(device); err != nil {
+		if err := p.db.UpdateDevice(device); err != nil {
 			log.Printf("Device %s: failed to update status - %v", device.Name, err)
 		}
 	}
@@ -207,7 +207,7 @@ func main() {
 	cfg := config.Load()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("Starting FortiGate SNMP Poller...")
+	log.Println("Starting SNMP Poller...")
 
 	db, err := database.NewDatabase(cfg)
 	if err != nil {

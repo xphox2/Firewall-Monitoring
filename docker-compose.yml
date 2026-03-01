@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  fortigate-mon:
-    image: fortigate-mon:latest
-    container_name: fortigate-mon
+  firewall-mon:
+    image: firewall-mon:latest
+    container_name: firewall-mon
     restart: unless-stopped
     network_mode: "host"
     volumes:

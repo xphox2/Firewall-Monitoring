@@ -8,7 +8,7 @@ import (
 type SystemStatus struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	Timestamp    time.Time `json:"timestamp"`
-	FortiGateID  uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID     uint      `json:"device_id" gorm:"index"`
 	Hostname     string    `json:"hostname"`
 	Version      string    `json:"version"`
 	CPUUsage     float64   `json:"cpu_usage"`
@@ -23,7 +23,7 @@ type SystemStatus struct {
 type InterfaceStats struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Timestamp   time.Time `json:"timestamp"`
-	FortiGateID uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID    uint      `json:"device_id" gorm:"index"`
 	Name        string    `json:"name"`
 	Index       int       `json:"index"`
 	Type        int       `json:"type"`
@@ -44,7 +44,7 @@ type InterfaceStats struct {
 type VPNStatus struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Timestamp   time.Time `json:"timestamp"`
-	FortiGateID uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID    uint      `json:"device_id" gorm:"index"`
 	TunnelName  string    `json:"tunnel_name"`
 	RemoteIP    string    `json:"remote_ip"`
 	Status      string    `json:"status"`
@@ -58,7 +58,7 @@ type VPNStatus struct {
 type HAStatus struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
 	Timestamp       time.Time `json:"timestamp"`
-	FortiGateID     uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID        uint      `json:"device_id" gorm:"index"`
 	ClusterName     string    `json:"cluster_name"`
 	Mode            string    `json:"mode"`
 	MasterIP        string    `json:"master_ip"`
@@ -72,7 +72,7 @@ type HAStatus struct {
 type HardwareSensor struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Timestamp   time.Time `json:"timestamp"`
-	FortiGateID uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID    uint      `json:"device_id" gorm:"index"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
 	Value       float64   `json:"value"`
@@ -83,7 +83,8 @@ type HardwareSensor struct {
 type TrapEvent struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Timestamp   time.Time `json:"timestamp"`
-	FortiGateID uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID    uint      `json:"device_id" gorm:"index"`
+	ProbeID     uint      `json:"probe_id" gorm:"index"`
 	SourceIP    string    `json:"source_ip"`
 	TrapOID     string    `json:"trap_oid"`
 	TrapType    string    `json:"trap_type"`
@@ -95,7 +96,7 @@ type TrapEvent struct {
 type Alert struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	Timestamp    time.Time `json:"timestamp"`
-	FortiGateID  uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID     uint      `json:"device_id" gorm:"index"`
 	AlertType    string    `json:"alert_type"`
 	Severity     string    `json:"severity"`
 	Message      string    `json:"message"`
@@ -109,7 +110,7 @@ type Alert struct {
 type UptimeRecord struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	Timestamp      time.Time `json:"timestamp"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	DeviceUptime   uint64    `json:"device_uptime"`
 	TotalDowntime  float64   `json:"total_downtime_seconds"`
 	UptimePercent  float64   `json:"uptime_percent"`
@@ -125,7 +126,7 @@ type LoginAttempt struct {
 	UserAgent string    `json:"user_agent"`
 }
 
-type FortiGate struct {
+type Device struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
 	Name          string    `json:"name" gorm:"uniqueIndex;not null"`
 	Hostname      string    `json:"hostname"`
@@ -136,6 +137,8 @@ type FortiGate struct {
 	Enabled       bool      `json:"enabled" gorm:"default:true"`
 	SiteID        *uint     `json:"site_id" gorm:"index"`
 	Site          *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	ProbeID       *uint     `json:"probe_id" gorm:"index"`
+	Probe         *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
 	Location      string    `json:"location"`
 	Description   string    `json:"description"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -144,9 +147,9 @@ type FortiGate struct {
 	Status        string    `json:"status" gorm:"default:unknown"`
 }
 
-type FortiGateTunnel struct {
+type DeviceTunnel struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
-	FortiGateID   uint      `json:"fortigate_id" gorm:"not null;index"`
+	DeviceID      uint      `json:"device_id" gorm:"not null;index"`
 	Name          string    `json:"name" gorm:"not null"`
 	RemoteGateway string    `json:"remote_gateway"`
 	LocalSubnet   string    `json:"local_subnet"`
@@ -158,14 +161,14 @@ type FortiGateTunnel struct {
 	LastChange    time.Time `json:"last_change"`
 }
 
-type FortiGateConnection struct {
+type DeviceConnection struct {
 	ID             uint       `json:"id" gorm:"primaryKey"`
 	Name           string     `json:"name" gorm:"not null"`
-	SourceFGID     uint       `json:"source_fg_id" gorm:"not null;index"`
-	SourceFG       *FortiGate `json:"source_fg,omitempty" gorm:"foreignKey:SourceFGID"`
+	SourceDeviceID uint       `json:"source_device_id" gorm:"not null;index"`
+	SourceDevice   *Device    `json:"source_device,omitempty" gorm:"foreignKey:SourceDeviceID"`
 	SourceTunnelID uint       `json:"source_tunnel_id"`
-	DestFGID       uint       `json:"dest_fg_id" gorm:"not null;index"`
-	DestFG         *FortiGate `json:"dest_fg,omitempty" gorm:"foreignKey:DestFGID"`
+	DestDeviceID   uint       `json:"dest_device_id" gorm:"not null;index"`
+	DestDevice     *Device    `json:"dest_device,omitempty" gorm:"foreignKey:DestDeviceID"`
 	DestTunnelID   uint       `json:"dest_tunnel_id"`
 	ConnectionType string     `json:"connection_type" gorm:"default:ipsec"`
 	Status         string     `json:"status" gorm:"default:unknown"`
@@ -266,7 +269,7 @@ type ProbeHeartbeat struct {
 type PingResult struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	Timestamp    time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID  uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID     uint      `json:"device_id" gorm:"index"`
 	ProbeID      uint      `json:"probe_id" gorm:"index"`
 	TargetIP     string    `json:"target_ip"`
 	Success      bool      `json:"success"`
@@ -278,7 +281,7 @@ type PingResult struct {
 
 type PingStats struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
-	FortiGateID uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID    uint      `json:"device_id" gorm:"index"`
 	ProbeID     uint      `json:"probe_id" gorm:"index"`
 	TargetIP    string    `json:"target_ip"`
 	MinLatency  float64   `json:"min_latency"`
@@ -298,9 +301,9 @@ func (TrapEvent) TableName() string           { return "trap_events" }
 func (Alert) TableName() string               { return "alerts" }
 func (UptimeRecord) TableName() string        { return "uptime_records" }
 func (LoginAttempt) TableName() string        { return "login_attempts" }
-func (FortiGate) TableName() string           { return "fortigates" }
-func (FortiGateTunnel) TableName() string     { return "fortigate_tunnels" }
-func (FortiGateConnection) TableName() string { return "fortigate_connections" }
+func (Device) TableName() string              { return "devices" }
+func (DeviceTunnel) TableName() string        { return "device_tunnels" }
+func (DeviceConnection) TableName() string    { return "device_connections" }
 func (SystemSetting) TableName() string       { return "system_settings" }
 func (Admin) TableName() string               { return "admins" }
 func (Site) TableName() string                { return "sites" }
@@ -313,7 +316,7 @@ func (PingStats) TableName() string           { return "ping_stats" }
 type SyslogMessage struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	Hostname       string    `json:"hostname"`
 	AppName        string    `json:"app_name"`
@@ -330,6 +333,29 @@ type SyslogMessage struct {
 
 func (SyslogMessage) TableName() string { return "syslog_messages" }
 
+type FlowSample struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	Timestamp       time.Time `json:"timestamp" gorm:"index"`
+	DeviceID        uint      `json:"device_id" gorm:"index"`
+	ProbeID         uint      `json:"probe_id" gorm:"index"`
+	SamplerAddress  string    `json:"sampler_address"`
+	SequenceNumber  uint32    `json:"sequence_number"`
+	SamplingRate    uint32    `json:"sampling_rate"`
+	SrcAddr         string    `json:"src_addr"`
+	DstAddr         string    `json:"dst_addr"`
+	SrcPort         uint16    `json:"src_port"`
+	DstPort         uint16    `json:"dst_port"`
+	Protocol        uint8     `json:"protocol"`
+	Bytes           uint64    `json:"bytes"`
+	Packets         uint64    `json:"packets"`
+	InputIfIndex    uint32    `json:"input_if_index"`
+	OutputIfIndex   uint32    `json:"output_if_index"`
+	TCPFlags        uint8     `json:"tcp_flags"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (FlowSample) TableName() string { return "flow_samples" }
+
 type SiteDatabase struct {
 	ID           uint       `json:"id" gorm:"primaryKey"`
 	SiteID       uint       `json:"site_id" gorm:"uniqueIndex;not null"`
@@ -344,7 +370,7 @@ type SiteDatabase struct {
 
 func (SiteDatabase) TableName() string { return "site_databases" }
 
-type SiteFortiGate struct {
+type SiteDevice struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	LocalID        uint      `json:"local_id"` // ID from the site-specific database
@@ -361,13 +387,13 @@ type SiteFortiGate struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-func (SiteFortiGate) TableName() string { return "site_fortigates" }
+func (SiteDevice) TableName() string { return "site_devices" }
 
 type SiteSystemStatus struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	Hostname       string    `json:"hostname"`
 	Version        string    `json:"version"`
 	CPUUsage       float64   `json:"cpu_usage"`
@@ -386,7 +412,7 @@ type SiteInterfaceStats struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	Name           string    `json:"name"`
 	Index          int       `json:"index"`
 	Type           int       `json:"type"`
@@ -411,7 +437,7 @@ type SiteTrapEvent struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	SourceIP       string    `json:"source_ip"`
 	TrapOID        string    `json:"trap_oid"`
 	TrapType       string    `json:"trap_type"`
@@ -427,7 +453,7 @@ type SiteAlert struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	AlertType      string    `json:"alert_type"`
 	Severity       string    `json:"severity"`
 	Message        string    `json:"message"`
@@ -445,7 +471,7 @@ type SitePingResult struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	TargetIP       string    `json:"target_ip"`
 	Success        bool      `json:"success"`
@@ -461,7 +487,7 @@ func (SitePingResult) TableName() string { return "site_ping_results" }
 type SitePingStats struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	TargetIP       string    `json:"target_ip"`
 	MinLatency     float64   `json:"min_latency"`
@@ -479,7 +505,7 @@ type SiteSyslogMessage struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"index"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	Hostname       string    `json:"hostname"`
 	AppName        string    `json:"app_name"`
@@ -505,7 +531,7 @@ func (s *SystemStatus) ToJSON() string {
 }
 
 type DashboardData struct {
-	FortiGates      []FortiGate           `json:"fortigates"`
+	Devices         []Device              `json:"devices"`
 	SystemStatus    SystemStatus          `json:"system_status"`
 	Interfaces      []InterfaceStats      `json:"interfaces"`
 	VPNStatus       []VPNStatus           `json:"vpn_status"`
@@ -513,7 +539,7 @@ type DashboardData struct {
 	HardwareSensors []HardwareSensor      `json:"hardware_sensors"`
 	RecentAlerts    []Alert               `json:"recent_alerts"`
 	UptimeData      *UptimeRecord         `json:"uptime_data"`
-	Connections     []FortiGateConnection `json:"connections"`
+	Connections     []DeviceConnection    `json:"connections"`
 }
 
 type APIResponse struct {

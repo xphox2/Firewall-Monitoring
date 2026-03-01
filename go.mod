@@ -1,4 +1,4 @@
-module fortiGate-Mon
+module firewall-mon
 
 go 1.21
 

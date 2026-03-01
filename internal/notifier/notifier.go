@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
 )
 
 type Notifier struct {

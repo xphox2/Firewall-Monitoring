@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
 
 	"github.com/gosnmp/gosnmp"
 )
@@ -66,6 +66,7 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 	for _, v := range packet.Variables {
 		oid := v.Name
 
+		// FortiGate enterprise trap OID prefix (Fortinet MIB)
 		if strings.HasPrefix(oid, ".1.3.6.1.4.1.12356.101.2.0") {
 			trap.TrapOID = oid
 			trap.TrapType = t.getTrapType(oid)
@@ -75,7 +76,7 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 		}
 	}
 
-	// Return nil if no FortiGate trap OID was found
+	// Return nil if no recognized trap OID was found
 	if trap.TrapOID == "" {
 		return nil
 	}

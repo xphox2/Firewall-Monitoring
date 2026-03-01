@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"fortiGate-Mon/internal/api/middleware"
-	"fortiGate-Mon/internal/auth"
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/database"
-	"fortiGate-Mon/internal/models"
-	"fortiGate-Mon/internal/snmp"
-	"fortiGate-Mon/internal/uptime"
+	"firewall-mon/internal/api/middleware"
+	"firewall-mon/internal/auth"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/models"
+	"firewall-mon/internal/snmp"
+	"firewall-mon/internal/uptime"
 
 	"github.com/gin-gonic/gin"
 )
@@ -415,72 +415,72 @@ func (h *Handler) GetHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(health))
 }
 
-func (h *Handler) GetFortiGates(c *gin.Context) {
+func (h *Handler) GetDevices(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.FortiGate{}))
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.Device{}))
 		return
 	}
 
-	fortigates, err := h.db.GetAllFortiGates()
+	devices, err := h.db.GetAllDevices()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get FortiGates"))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
 		return
 	}
 
 	// Redact SNMP community strings from response
-	for i := range fortigates {
-		if fortigates[i].SNMPCommunity != "" {
-			fortigates[i].SNMPCommunity = "********"
+	for i := range devices {
+		if devices[i].SNMPCommunity != "" {
+			devices[i].SNMPCommunity = "********"
 		}
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(fortigates))
+	c.JSON(http.StatusOK, models.SuccessResponse(devices))
 }
 
-func (h *Handler) CreateFortiGate(c *gin.Context) {
+func (h *Handler) CreateDevice(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
 	}
 
-	var fg models.FortiGate
-	if err := c.ShouldBindJSON(&fg); err != nil {
+	var device models.Device
+	if err := c.ShouldBindJSON(&device); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
 		return
 	}
 
 	// Validate required fields
-	if strings.TrimSpace(fg.Name) == "" || strings.TrimSpace(fg.IPAddress) == "" {
+	if strings.TrimSpace(device.Name) == "" || strings.TrimSpace(device.IPAddress) == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name and IP address are required"))
 		return
 	}
 
 	// Validate IP to prevent SSRF
-	if !isValidExternalIP(fg.IPAddress) {
+	if !isValidExternalIP(device.IPAddress) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
 		return
 	}
 
 	// Default and validate SNMP port
-	if fg.SNMPPort == 0 {
-		fg.SNMPPort = 161
+	if device.SNMPPort == 0 {
+		device.SNMPPort = 161
 	}
-	if fg.SNMPPort < 1 || fg.SNMPPort > 65535 {
+	if device.SNMPPort < 1 || device.SNMPPort > 65535 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
 		return
 	}
 
-	fg.Status = "unknown"
-	if err := h.db.CreateFortiGate(&fg); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create FortiGate"))
+	device.Status = "unknown"
+	if err := h.db.CreateDevice(&device); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create device"))
 		return
 	}
 
-	fg.SNMPCommunity = "********"
-	c.JSON(http.StatusCreated, models.SuccessResponse(fg))
+	device.SNMPCommunity = "********"
+	c.JSON(http.StatusCreated, models.SuccessResponse(device))
 }
 
-func (h *Handler) UpdateFortiGate(c *gin.Context) {
+func (h *Handler) UpdateDevice(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
@@ -493,9 +493,9 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 		return
 	}
 
-	fg, err := h.db.GetFortiGate(uint(idUint))
+	device, err := h.db.GetDevice(uint(idUint))
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("FortiGate not found"))
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Device not found"))
 		return
 	}
 
@@ -509,6 +509,8 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 		"location":       true,
 		"description":    true,
 		"enabled":        true,
+		"site_id":        true,
+		"probe_id":       true,
 	}
 
 	var updates map[string]interface{}
@@ -555,23 +557,23 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 		}
 	}
 
-	if err := h.db.Gorm().Model(fg).Updates(filteredUpdates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update FortiGate"))
+	if err := h.db.Gorm().Model(device).Updates(filteredUpdates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update device"))
 		return
 	}
 
 	// Re-fetch to return fresh data
-	updated, err := h.db.GetFortiGate(uint(idUint))
+	updated, err := h.db.GetDevice(uint(idUint))
 	if err != nil {
-		fg.SNMPCommunity = "********"
-		c.JSON(http.StatusOK, models.SuccessResponse(fg))
+		device.SNMPCommunity = "********"
+		c.JSON(http.StatusOK, models.SuccessResponse(device))
 		return
 	}
 	updated.SNMPCommunity = "********"
 	c.JSON(http.StatusOK, models.SuccessResponse(updated))
 }
 
-func (h *Handler) DeleteFortiGate(c *gin.Context) {
+func (h *Handler) DeleteDevice(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
@@ -584,12 +586,12 @@ func (h *Handler) DeleteFortiGate(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteFortiGate(uint(idUint)); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete FortiGate"))
+	if err := h.db.DeleteDevice(uint(idUint)); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete device"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("FortiGate deleted"))
+	c.JSON(http.StatusOK, models.MessageResponse("Device deleted"))
 }
 
 func (h *Handler) GetSites(c *gin.Context) {
@@ -804,9 +806,9 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("Site deleted"))
 }
 
-func (h *Handler) GetFortiGateConnections(c *gin.Context) {
+func (h *Handler) GetDeviceConnections(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.FortiGateConnection{}))
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.DeviceConnection{}))
 		return
 	}
 
@@ -819,33 +821,33 @@ func (h *Handler) GetFortiGateConnections(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(connections))
 }
 
-func (h *Handler) CreateFortiGateConnection(c *gin.Context) {
+func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
 	}
 
-	var conn models.FortiGateConnection
+	var conn models.DeviceConnection
 	if err := c.ShouldBindJSON(&conn); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
 		return
 	}
 
 	// Validate required FK references
-	if conn.SourceFGID == 0 || conn.DestFGID == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination FortiGate IDs are required"))
+	if conn.SourceDeviceID == 0 || conn.DestDeviceID == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination device IDs are required"))
 		return
 	}
-	if conn.SourceFGID == conn.DestFGID {
+	if conn.SourceDeviceID == conn.DestDeviceID {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination cannot be the same device"))
 		return
 	}
-	if _, err := h.db.GetFortiGate(conn.SourceFGID); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source FortiGate not found"))
+	if _, err := h.db.GetDevice(conn.SourceDeviceID); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source device not found"))
 		return
 	}
-	if _, err := h.db.GetFortiGate(conn.DestFGID); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination FortiGate not found"))
+	if _, err := h.db.GetDevice(conn.DestDeviceID); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination device not found"))
 		return
 	}
 
@@ -858,7 +860,7 @@ func (h *Handler) CreateFortiGateConnection(c *gin.Context) {
 	c.JSON(http.StatusCreated, models.SuccessResponse(conn))
 }
 
-func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
+func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
@@ -871,20 +873,20 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 		return
 	}
 
-	var conn models.FortiGateConnection
+	var conn models.DeviceConnection
 	if err := h.db.Gorm().First(&conn, idUint).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
 		return
 	}
 
 	allowedFields := map[string]bool{
-		"name":            true,
-		"source_fg_id":    true,
-		"dest_fg_id":      true,
-		"description":     true,
-		"connection_type": true,
-		"notes":           true,
-		"status":          true,
+		"name":             true,
+		"source_device_id": true,
+		"dest_device_id":   true,
+		"description":      true,
+		"connection_type":  true,
+		"notes":            true,
+		"status":           true,
 	}
 
 	var updates map[string]interface{}
@@ -903,25 +905,25 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	}
 
 	// Validate FK references if being updated
-	if srcVal, ok := updates["source_fg_id"]; ok {
+	if srcVal, ok := updates["source_device_id"]; ok {
 		srcID, isNum := srcVal.(float64)
 		if !isNum || srcID < 1 {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid source FortiGate ID"))
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid source device ID"))
 			return
 		}
-		if _, err := h.db.GetFortiGate(uint(srcID)); err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Source FortiGate not found"))
+		if _, err := h.db.GetDevice(uint(srcID)); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Source device not found"))
 			return
 		}
 	}
-	if dstVal, ok := updates["dest_fg_id"]; ok {
+	if dstVal, ok := updates["dest_device_id"]; ok {
 		dstID, isNum := dstVal.(float64)
 		if !isNum || dstID < 1 {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid destination FortiGate ID"))
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid destination device ID"))
 			return
 		}
-		if _, err := h.db.GetFortiGate(uint(dstID)); err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination FortiGate not found"))
+		if _, err := h.db.GetDevice(uint(dstID)); err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination device not found"))
 			return
 		}
 	}
@@ -939,14 +941,14 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	}
 
 	// Validate source and dest won't be the same after update
-	effectiveSrc := conn.SourceFGID
-	effectiveDst := conn.DestFGID
-	if srcVal, ok := filteredUpdates["source_fg_id"]; ok {
+	effectiveSrc := conn.SourceDeviceID
+	effectiveDst := conn.DestDeviceID
+	if srcVal, ok := filteredUpdates["source_device_id"]; ok {
 		if srcID, isNum := srcVal.(float64); isNum {
 			effectiveSrc = uint(srcID)
 		}
 	}
-	if dstVal, ok := filteredUpdates["dest_fg_id"]; ok {
+	if dstVal, ok := filteredUpdates["dest_device_id"]; ok {
 		if dstID, isNum := dstVal.(float64); isNum {
 			effectiveDst = uint(dstID)
 		}
@@ -962,15 +964,15 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	}
 
 	// Re-fetch to return fresh data with preloaded relations
-	var updated models.FortiGateConnection
-	if err := h.db.Gorm().Preload("SourceFG").Preload("DestFG").First(&updated, idUint).Error; err != nil {
+	var updated models.DeviceConnection
+	if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").First(&updated, idUint).Error; err != nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(conn))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(updated))
 }
 
-func (h *Handler) DeleteFortiGateConnection(c *gin.Context) {
+func (h *Handler) DeleteDeviceConnection(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
@@ -983,7 +985,7 @@ func (h *Handler) DeleteFortiGateConnection(c *gin.Context) {
 		return
 	}
 
-	result := h.db.Gorm().Delete(&models.FortiGateConnection{}, idUint)
+	result := h.db.Gorm().Delete(&models.DeviceConnection{}, idUint)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete connection"))
 		return
@@ -1520,16 +1522,16 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 }
 
 func (h *Handler) GetDashboardAll(c *gin.Context) {
-	fortigates := []models.FortiGate{}
-	connections := []models.FortiGateConnection{}
+	devices := []models.Device{}
+	connections := []models.DeviceConnection{}
 	recentAlerts := []models.Alert{}
 
 	if h.db != nil {
-		if err := h.db.Gorm().Find(&fortigates).Error; err != nil {
-			log.Printf("Failed to get fortigates: %v", err)
+		if err := h.db.Gorm().Find(&devices).Error; err != nil {
+			log.Printf("Failed to get devices: %v", err)
 		}
 
-		if err := h.db.Gorm().Preload("SourceFG").Preload("DestFG").Find(&connections).Error; err != nil {
+		if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Find(&connections).Error; err != nil {
 			log.Printf("Failed to get connections: %v", err)
 		}
 
@@ -1539,14 +1541,14 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 	}
 
 	// Redact SNMP community strings
-	for i := range fortigates {
-		if fortigates[i].SNMPCommunity != "" {
-			fortigates[i].SNMPCommunity = "********"
+	for i := range devices {
+		if devices[i].SNMPCommunity != "" {
+			devices[i].SNMPCommunity = "********"
 		}
 	}
 
 	dashboard := models.DashboardData{
-		FortiGates:   fortigates,
+		Devices:      devices,
 		RecentAlerts: recentAlerts,
 		Connections:  connections,
 	}
@@ -1590,8 +1592,8 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
-			FortiGateHost: req.IPAddress,
-			FortiGatePort: req.SNMPPort,
+			SNMPHost: req.IPAddress,
+			SNMPPort: req.SNMPPort,
 			Community:     req.SNMPCommunity,
 			Version:       req.SNMPVersion,
 			Timeout:       10 * time.Second,
@@ -1893,4 +1895,315 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// validateProbe parses probe ID from URL param and checks it exists and is approved.
+func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return nil, false
+	}
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid probe ID"))
+		return nil, false
+	}
+	probe, err := h.db.GetProbe(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		return nil, false
+	}
+	if probe.ApprovalStatus != "approved" {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("Probe not approved"))
+		return nil, false
+	}
+	// Update last_seen on any data submission
+	h.db.Gorm().Model(probe).Update("last_seen", time.Now())
+	return probe, true
+}
+
+func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var messages []models.SyslogMessage
+	if err := c.ShouldBindJSON(&messages); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(messages) > 1000 {
+		messages = messages[:1000]
+	}
+	saved := 0
+	for i := range messages {
+		messages[i].ProbeID = probe.ID
+		if messages[i].Timestamp.IsZero() {
+			messages[i].Timestamp = time.Now()
+		}
+		if err := h.db.SaveSyslogMessage(&messages[i]); err != nil {
+			log.Printf("Failed to save syslog message: %v", err)
+			continue
+		}
+		saved++
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+}
+
+func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var traps []models.TrapEvent
+	if err := c.ShouldBindJSON(&traps); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(traps) > 1000 {
+		traps = traps[:1000]
+	}
+	saved := 0
+	for i := range traps {
+		traps[i].ProbeID = probe.ID
+		if traps[i].Timestamp.IsZero() {
+			traps[i].Timestamp = time.Now()
+		}
+		if err := h.db.SaveTrapEvent(&traps[i]); err != nil {
+			log.Printf("Failed to save trap event: %v", err)
+			continue
+		}
+		saved++
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+}
+
+func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var samples []models.FlowSample
+	if err := c.ShouldBindJSON(&samples); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(samples) > 1000 {
+		samples = samples[:1000]
+	}
+	for i := range samples {
+		samples[i].ProbeID = probe.ID
+		if samples[i].Timestamp.IsZero() {
+			samples[i].Timestamp = time.Now()
+		}
+	}
+	if err := h.db.SaveFlowSamples(samples); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save flow samples"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(samples)}))
+}
+
+func (h *Handler) ReceivePingResults(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var results []models.PingResult
+	if err := c.ShouldBindJSON(&results); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(results) > 1000 {
+		results = results[:1000]
+	}
+	saved := 0
+	for i := range results {
+		results[i].ProbeID = probe.ID
+		if results[i].Timestamp.IsZero() {
+			results[i].Timestamp = time.Now()
+		}
+		if err := h.db.SavePingResult(&results[i]); err != nil {
+			log.Printf("Failed to save ping result: %v", err)
+			continue
+		}
+		saved++
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+}
+
+func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var statuses []models.SystemStatus
+	if err := c.ShouldBindJSON(&statuses); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(statuses) > 100 {
+		statuses = statuses[:100]
+	}
+	saved := 0
+	for i := range statuses {
+		_ = probe // probe validated above
+		if statuses[i].Timestamp.IsZero() {
+			statuses[i].Timestamp = time.Now()
+		}
+		if err := h.db.SaveSystemStatus(&statuses[i]); err != nil {
+			log.Printf("Failed to save system status: %v", err)
+			continue
+		}
+		saved++
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+}
+
+func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var stats []models.InterfaceStats
+	if err := c.ShouldBindJSON(&stats); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(stats) > 1000 {
+		stats = stats[:1000]
+	}
+	for i := range stats {
+		_ = probe
+		if stats[i].Timestamp.IsZero() {
+			stats[i].Timestamp = time.Now()
+		}
+	}
+	if err := h.db.SaveInterfaceStats(stats); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface stats"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+}
+
+// Admin viewing endpoints
+
+func (h *Handler) GetSyslogMessages(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.SyslogMessage{}))
+		return
+	}
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+
+	query := h.db.Gorm().Order("timestamp DESC").Limit(limit)
+
+	if probeID := c.Query("probe_id"); probeID != "" {
+		query = query.Where("probe_id = ?", probeID)
+	}
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if severity := c.Query("severity"); severity != "" {
+		if s, err := strconv.Atoi(severity); err == nil {
+			query = query.Where("severity <= ?", s)
+		}
+	}
+	if search := c.Query("search"); search != "" {
+		like := "%" + search + "%"
+		query = query.Where("message LIKE ? OR hostname LIKE ? OR app_name LIKE ?", like, like, like)
+	}
+
+	var messages []models.SyslogMessage
+	if err := query.Find(&messages).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get syslog messages"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(messages))
+}
+
+func (h *Handler) GetFlowSamples(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.FlowSample{}))
+		return
+	}
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+
+	query := h.db.Gorm().Order("timestamp DESC").Limit(limit)
+
+	if probeID := c.Query("probe_id"); probeID != "" {
+		query = query.Where("probe_id = ?", probeID)
+	}
+	if src := c.Query("src_addr"); src != "" {
+		query = query.Where("src_addr = ?", src)
+	}
+	if dst := c.Query("dst_addr"); dst != "" {
+		query = query.Where("dst_addr = ?", dst)
+	}
+	if proto := c.Query("protocol"); proto != "" {
+		query = query.Where("protocol = ?", proto)
+	}
+
+	var samples []models.FlowSample
+	if err := query.Find(&samples).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow samples"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(samples))
+}
+
+func (h *Handler) GetProbeStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	var syslogCount, trapCount, flowCount, pingCount int64
+	h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", idUint).Count(&syslogCount)
+	h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ?", idUint).Count(&trapCount)
+	h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ?", idUint).Count(&flowCount)
+	h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ?", idUint).Count(&pingCount)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"probe_id": idUint,
+		"syslog":   syslogCount,
+		"traps":    trapCount,
+		"flows":    flowCount,
+		"pings":    pingCount,
+	}))
+}
+
+func (h *Handler) GetProbeDevices(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.Device{}))
+		return
+	}
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+	devices, err := h.db.GetDevicesByProbe(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(devices))
 }

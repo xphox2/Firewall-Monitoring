@@ -12,7 +12,7 @@ type FlowSample struct {
 	ID             uint64          `json:"id"`
 	Timestamp      time.Time       `json:"timestamp"`
 	ProbeID        uint32          `json:"probe_id"`
-	FortiGateID    uint32          `json:"fortigate_id"`
+	DeviceID       uint32          `json:"device_id"`
 	SequenceNumber uint32          `json:"sequence_number"`
 	SourceID       uint32          `json:"source_id"`
 	SamplingRate   uint32          `json:"sampling_rate"`
@@ -26,7 +26,7 @@ type CounterSample struct {
 	ID          uint64    `json:"id"`
 	Timestamp   time.Time `json:"timestamp"`
 	ProbeID     uint32    `json:"probe_id"`
-	FortiGateID uint32    `json:"fortigate_id"`
+	DeviceID    uint32    `json:"device_id"`
 	IfIndex     uint32    `json:"if_index"`
 	IfType      uint32    `json:"if_type"`
 	IfSpeed     uint64    `json:"if_speed"`

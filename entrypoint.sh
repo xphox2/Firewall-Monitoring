@@ -7,8 +7,8 @@ echo "=== Firewall Monitor Starting ==="
 if [ ! -f /config/config.env ]; then
     echo "Creating config from environment..."
     cat > /config/config.env << EOF
-FORTIGATE_HOST=${FORTIGATE_HOST:-192.168.1.1}
-FORTIGATE_SNMP_PORT=${FORTIGATE_SNMP_PORT:-161}
+SNMP_HOST=${SNMP_HOST:-192.168.1.1}
+SNMP_PORT=${SNMP_PORT:-161}
 SNMP_COMMUNITY=${SNMP_COMMUNITY:-public}
 SNMP_VERSION=${SNMP_VERSION:-2c}
 SNMP_POLL_INTERVAL=${SNMP_POLL_INTERVAL:-60s}
@@ -45,15 +45,15 @@ echo "Starting Firewall Monitor services..."
 # Start all services in background
 echo "Starting API server..."
 export CONFIG_FILE=/config/config.env
-./fortigate-api &
+./fwmon-api &
 API_PID=$!
 
 echo "Starting SNMP poller..."
-./fortigate-poller &
+./fwmon-poller &
 POLLER_PID=$!
 
 echo "Starting trap receiver..."
-./fortigate-trap &
+./fwmon-trap &
 TRAP_PID=$!
 
 echo "All services started!"

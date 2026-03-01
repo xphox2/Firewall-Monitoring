@@ -6,18 +6,18 @@ import (
 	"os/signal"
 	"syscall"
 
-	"fortiGate-Mon/internal/alerts"
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
-	"fortiGate-Mon/internal/notifier"
-	"fortiGate-Mon/internal/snmp"
+	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
+	"firewall-mon/internal/notifier"
+	"firewall-mon/internal/snmp"
 )
 
 func main() {
 	cfg := config.Load()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Println("Starting FortiGate SNMP Trap Receiver...")
+	log.Println("Starting SNMP Trap Receiver...")
 
 	trapReceiver, err := snmp.NewTrapReceiver(cfg)
 	if err != nil {

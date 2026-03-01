@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"fortiGate-Mon/internal/config"
-	"fortiGate-Mon/internal/models"
-	"fortiGate-Mon/internal/notifier"
+	"firewall-mon/internal/config"
+	"firewall-mon/internal/models"
+	"firewall-mon/internal/notifier"
 
 	"gorm.io/gorm"
 )
