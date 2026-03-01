@@ -19,6 +19,7 @@ type Config struct {
 	Auth     AuthConfig
 	Alerts   AlertsConfig
 	Uptime   UptimeConfig
+	Probe    ProbeConfig
 }
 
 type ServerConfig struct {
@@ -96,6 +97,26 @@ type UptimeConfig struct {
 	TrackingEnabled bool
 }
 
+type ProbeConfig struct {
+	EnableProbeServer bool
+	ListenAddress     string
+	ListenPort        int
+	ServerURL         string
+	EnableTLS         bool
+	TLSCertFile       string
+	TLSKeyFile        string
+	ClientTLSCertFile string
+	ClientTLSKeyFile  string
+	EnableMTLS        bool
+	ICMPEnabled       bool
+	ICMPInterval      time.Duration
+	SyslogEnabled     bool
+	SyslogPort        int
+	SyslogUseTLS      bool
+	SFlowEnabled      bool
+	SFlowPort         int
+}
+
 func Load() *Config {
 	// Clear the module-level default password after building the config
 	defer func() { defaultPassword = "" }()
@@ -168,6 +189,25 @@ func Load() *Config {
 		Uptime: UptimeConfig{
 			BaselineFile:    getEnv("UPTIME_BASELINE_FILE", "/var/lib/fortigate-mon/uptime.json"),
 			TrackingEnabled: getBoolEnv("UPTIME_TRACKING_ENABLED", true),
+		},
+		Probe: ProbeConfig{
+			EnableProbeServer: getBoolEnv("PROBE_SERVER_ENABLED", false),
+			ListenAddress:     getEnv("PROBE_LISTEN_ADDRESS", "0.0.0.0"),
+			ListenPort:        getIntEnv("PROBE_LISTEN_PORT", 8089),
+			ServerURL:         getEnv("PROBE_SERVER_URL", "https://stats.technicallabs.org"),
+			EnableTLS:         getBoolEnv("PROBE_TLS_ENABLED", false),
+			TLSCertFile:       getEnv("PROBE_TLS_CERT", "/etc/fortigate-mon/probe.crt"),
+			TLSKeyFile:        getEnv("PROBE_TLS_KEY", "/etc/fortigate-mon/probe.key"),
+			ClientTLSCertFile: getEnv("PROBE_CLIENT_TLS_CERT", "/etc/fortigate-mon/client.crt"),
+			ClientTLSKeyFile:  getEnv("PROBE_CLIENT_TLS_KEY", "/etc/fortigate-mon/client.key"),
+			EnableMTLS:        getBoolEnv("PROBE_MTLS_ENABLED", false),
+			ICMPEnabled:       getBoolEnv("PROBE_ICMP_ENABLED", true),
+			ICMPInterval:      getDurationEnv("PROBE_ICMP_INTERVAL", 30*time.Second),
+			SyslogEnabled:     getBoolEnv("PROBE_SYSLOG_ENABLED", true),
+			SyslogPort:        getIntEnv("PROBE_SYSLOG_PORT", 514),
+			SyslogUseTLS:      getBoolEnv("PROBE_SYSLOG_TLS", false),
+			SFlowEnabled:      getBoolEnv("PROBE_SFLOW_ENABLED", true),
+			SFlowPort:         getIntEnv("PROBE_SFLOW_PORT", 6343),
 		},
 	}
 }

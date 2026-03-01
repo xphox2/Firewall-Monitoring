@@ -172,6 +172,22 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/probes", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "probes.html", nil)
+		})
+
+		admin.GET("/sites", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "sites.html", nil)
+		})
+
+		admin.GET("/network", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "network.html", nil)
+		})
+
+		admin.GET("/probe-pending", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "probe-pending.html", nil)
+		})
+
 		admin.GET("/api/dashboard", handler.GetDashboardAll)
 		admin.GET("/api/dashboard/:id", handler.GetAdminDashboard)
 		admin.GET("/api/alerts", handler.GetAlerts)
@@ -184,6 +200,22 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/fortigates/test", handler.TestDeviceConnection)
 		admin.PUT("/api/fortigates/:id", handler.UpdateFortiGate)
 		admin.DELETE("/api/fortigates/:id", handler.DeleteFortiGate)
+
+		admin.GET("/api/sites", handler.GetSites)
+		admin.POST("/api/sites", handler.CreateSite)
+		admin.PUT("/api/sites/:id", handler.UpdateSite)
+		admin.DELETE("/api/sites/:id", handler.DeleteSite)
+		admin.GET("/api/sites/:id", handler.GetSite)
+
+		admin.GET("/api/probes", handler.GetProbes)
+		admin.POST("/api/probes", handler.CreateProbe)
+		admin.PUT("/api/probes/:id", handler.UpdateProbe)
+		admin.DELETE("/api/probes/:id", handler.DeleteProbe)
+		admin.GET("/api/probes/:id", handler.GetProbe)
+		admin.POST("/api/probes/test", handler.TestProbeConnection)
+		admin.GET("/api/probes/pending", handler.GetPendingProbes)
+		admin.POST("/api/probes/:id/approve", handler.ApproveProbe)
+		admin.POST("/api/probes/:id/reject", handler.RejectProbe)
 
 		admin.GET("/api/connections", handler.GetFortiGateConnections)
 		admin.POST("/api/connections", handler.CreateFortiGateConnection)

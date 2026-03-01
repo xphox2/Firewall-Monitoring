@@ -134,6 +134,8 @@ type FortiGate struct {
 	SNMPCommunity string    `json:"snmp_community" gorm:"default:public"`
 	SNMPVersion   string    `json:"snmp_version" gorm:"default:2c"`
 	Enabled       bool      `json:"enabled" gorm:"default:true"`
+	SiteID        *uint     `json:"site_id" gorm:"index"`
+	Site          *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
 	Location      string    `json:"location"`
 	Description   string    `json:"description"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -191,6 +193,97 @@ type Admin struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type Site struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	Name         string    `json:"name" gorm:"uniqueIndex;not null"`
+	Region       string    `json:"region"`
+	Country      string    `json:"country"`
+	Address      string    `json:"address"`
+	Timezone     string    `json:"timezone"`
+	ParentSiteID *uint     `json:"parent_site_id" gorm:"index"`
+	ParentSite   *Site     `json:"parent_site,omitempty" gorm:"foreignKey:ParentSiteID"`
+	Description  string    `json:"description"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Probes       []Probe   `json:"probes,omitempty" gorm:"foreignKey:SiteID"`
+}
+
+type Probe struct {
+	ID              uint       `json:"id" gorm:"primaryKey"`
+	Name            string     `json:"name" gorm:"uniqueIndex;not null"`
+	SiteID          uint       `json:"site_id" gorm:"not null;index"`
+	Site            *Site      `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	ListenAddress   string     `json:"listen_address"`
+	ListenPort      int        `json:"listen_port" gorm:"default:8089"`
+	Enabled         bool       `json:"enabled" gorm:"default:true"`
+	Status          string     `json:"status" gorm:"default:pending"`          // pending, approved, rejected, offline
+	ApprovalStatus  string     `json:"approval_status" gorm:"default:pending"` // pending, approved, rejected
+	ApprovedAt      *time.Time `json:"approved_at"`
+	ApprovedBy      *uint      `json:"approved_by"`
+	RejectedAt      *time.Time `json:"rejected_at"`
+	RejectedReason  string     `json:"rejected_reason"`
+	RegistrationKey string     `json:"registration_key" gorm:"uniqueIndex"` // Unique key for probe registration
+	LastSeen        time.Time  `json:"last_seen"`
+	TLSCertPath     string     `json:"tls_cert_path"`
+	TLSKeyPath      string     `json:"tls_key_path"`
+	ServerURL       string     `json:"server_url"`
+	ServerTLSCert   string     `json:"server_tls_cert"`
+	Description     string     `json:"description"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type ProbeApproval struct {
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	ProbeID        uint       `json:"probe_id" gorm:"uniqueIndex;not null"`
+	Probe          *Probe     `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
+	RequestedAt    time.Time  `json:"requested_at"`
+	ApprovedAt     *time.Time `json:"approved_at"`
+	ApprovedBy     *uint      `json:"approved_by"`
+	ApprovedByUser string     `json:"approved_by_user"`
+	RejectedAt     *time.Time `json:"rejected_at"`
+	RejectedReason string     `json:"rejected_reason"`
+	Status         string     `json:"status" gorm:"default:pending"` // pending, approved, rejected
+	Notes          string     `json:"notes"`
+}
+
+type ProbeHeartbeat struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	ProbeID   uint      `json:"probe_id" gorm:"index;not null"`
+	Probe     *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
+	Status    string    `json:"status"` // online, offline
+	IPAddress string    `json:"ip_address"`
+	Version   string    `json:"version"`
+	Uptime    uint64    `json:"uptime"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type PingResult struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	Timestamp    time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID  uint      `json:"fortigate_id" gorm:"index"`
+	ProbeID      uint      `json:"probe_id" gorm:"index"`
+	TargetIP     string    `json:"target_ip"`
+	Success      bool      `json:"success"`
+	Latency      float64   `json:"latency"`
+	PacketLoss   float64   `json:"packet_loss"`
+	TTL          int       `json:"ttl"`
+	ErrorMessage string    `json:"error_message"`
+}
+
+type PingStats struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	FortiGateID uint      `json:"fortigate_id" gorm:"index"`
+	ProbeID     uint      `json:"probe_id" gorm:"index"`
+	TargetIP    string    `json:"target_ip"`
+	MinLatency  float64   `json:"min_latency"`
+	MaxLatency  float64   `json:"max_latency"`
+	AvgLatency  float64   `json:"avg_latency"`
+	PacketLoss  float64   `json:"packet_loss"`
+	Samples     int       `json:"samples"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 func (SystemStatus) TableName() string        { return "system_status" }
 func (InterfaceStats) TableName() string      { return "interface_stats" }
 func (VPNStatus) TableName() string           { return "vpn_status" }
@@ -205,6 +298,198 @@ func (FortiGateTunnel) TableName() string     { return "fortigate_tunnels" }
 func (FortiGateConnection) TableName() string { return "fortigate_connections" }
 func (SystemSetting) TableName() string       { return "system_settings" }
 func (Admin) TableName() string               { return "admins" }
+func (Site) TableName() string                { return "sites" }
+func (Probe) TableName() string               { return "probes" }
+func (ProbeApproval) TableName() string       { return "probe_approvals" }
+func (ProbeHeartbeat) TableName() string      { return "probe_heartbeats" }
+func (PingResult) TableName() string          { return "ping_results" }
+func (PingStats) TableName() string           { return "ping_stats" }
+
+type SyslogMessage struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	ProbeID        uint      `json:"probe_id" gorm:"index"`
+	Hostname       string    `json:"hostname"`
+	AppName        string    `json:"app_name"`
+	ProcessID      string    `json:"process_id"`
+	MessageID      string    `json:"message_id"`
+	StructuredData string    `json:"structured_data"`
+	Message        string    `json:"message"`
+	Priority       int       `json:"priority"`
+	Facility       int       `json:"facility"`
+	Severity       int       `json:"severity"`
+	SourceIP       string    `json:"source_ip"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SyslogMessage) TableName() string { return "syslog_messages" }
+
+type SiteDatabase struct {
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	SiteID       uint       `json:"site_id" gorm:"uniqueIndex;not null"`
+	Site         *Site      `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	DatabasePath string     `json:"database_path" gorm:"not null"`
+	IsRemote     bool       `json:"is_remote" gorm:"default:false"`
+	LastSync     *time.Time `json:"last_sync"`
+	Status       string     `json:"status" gorm:"default:active"` // active, syncing, error
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+func (SiteDatabase) TableName() string { return "site_databases" }
+
+type SiteFortiGate struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	LocalID        uint      `json:"local_id"` // ID from the site-specific database
+	Name           string    `json:"name" gorm:"not null"`
+	Hostname       string    `json:"hostname"`
+	IPAddress      string    `json:"ip_address" gorm:"not null"`
+	SNMPPort       int       `json:"snmp_port" gorm:"default:161"`
+	SNMPCommunity  string    `json:"snmp_community" gorm:"default:public"`
+	SNMPVersion    string    `json:"snmp_version" gorm:"default:2c"`
+	Enabled        bool      `json:"enabled" gorm:"default:true"`
+	Location       string    `json:"location"`
+	Description    string    `json:"description"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+func (SiteFortiGate) TableName() string { return "site_fortigates" }
+
+type SiteSystemStatus struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	Hostname       string    `json:"hostname"`
+	Version        string    `json:"version"`
+	CPUUsage       float64   `json:"cpu_usage"`
+	MemoryUsage    float64   `json:"memory_usage"`
+	MemoryTotal    uint64    `json:"memory_total"`
+	DiskUsage      float64   `json:"disk_usage"`
+	DiskTotal      uint64    `json:"disk_total"`
+	SessionCount   int       `json:"session_count"`
+	Uptime         uint64    `json:"uptime"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SiteSystemStatus) TableName() string { return "site_system_status" }
+
+type SiteInterfaceStats struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	Name           string    `json:"name"`
+	Index          int       `json:"index"`
+	Type           int       `json:"type"`
+	Speed          uint64    `json:"speed"`
+	Status         string    `json:"status"`
+	InBytes        uint64    `json:"in_bytes"`
+	InPackets      uint64    `json:"in_packets"`
+	InErrors       uint64    `json:"in_errors"`
+	InDiscards     uint64    `json:"in_discards"`
+	OutBytes       uint64    `json:"out_bytes"`
+	OutPackets     uint64    `json:"out_packets"`
+	OutErrors      uint64    `json:"out_errors"`
+	OutDiscards    uint64    `json:"out_discards"`
+	AdminStatus    string    `json:"admin_status"`
+	Description    string    `json:"description"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SiteInterfaceStats) TableName() string { return "site_interface_stats" }
+
+type SiteTrapEvent struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	SourceIP       string    `json:"source_ip"`
+	TrapOID        string    `json:"trap_oid"`
+	TrapType       string    `json:"trap_type"`
+	Severity       string    `json:"severity"`
+	Message        string    `json:"message"`
+	Processed      bool      `json:"processed"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SiteTrapEvent) TableName() string { return "site_trap_events" }
+
+type SiteAlert struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	AlertType      string    `json:"alert_type"`
+	Severity       string    `json:"severity"`
+	Message        string    `json:"message"`
+	MetricName     string    `json:"metric_name"`
+	Threshold      float64   `json:"threshold"`
+	CurrentValue   float64   `json:"current_value"`
+	Notified       bool      `json:"notified"`
+	Acknowledged   bool      `json:"acknowledged"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SiteAlert) TableName() string { return "site_alerts" }
+
+type SitePingResult struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	ProbeID        uint      `json:"probe_id" gorm:"index"`
+	TargetIP       string    `json:"target_ip"`
+	Success        bool      `json:"success"`
+	Latency        float64   `json:"latency"`
+	PacketLoss     float64   `json:"packet_loss"`
+	TTL            int       `json:"ttl"`
+	ErrorMessage   string    `json:"error_message"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SitePingResult) TableName() string { return "site_ping_results" }
+
+type SitePingStats struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	ProbeID        uint      `json:"probe_id" gorm:"index"`
+	TargetIP       string    `json:"target_ip"`
+	MinLatency     float64   `json:"min_latency"`
+	MaxLatency     float64   `json:"max_latency"`
+	AvgLatency     float64   `json:"avg_latency"`
+	PacketLoss     float64   `json:"packet_loss"`
+	Samples        int       `json:"samples"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SitePingStats) TableName() string { return "site_ping_stats" }
+
+type SiteSyslogMessage struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	SiteDatabaseID uint      `json:"site_database_id" gorm:"index;not null"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index"`
+	FortiGateID    uint      `json:"fortigate_id" gorm:"index"`
+	ProbeID        uint      `json:"probe_id" gorm:"index"`
+	Hostname       string    `json:"hostname"`
+	AppName        string    `json:"app_name"`
+	ProcessID      string    `json:"process_id"`
+	MessageID      string    `json:"message_id"`
+	StructuredData string    `json:"structured_data"`
+	Message        string    `json:"message"`
+	Priority       int       `json:"priority"`
+	Facility       int       `json:"facility"`
+	Severity       int       `json:"severity"`
+	SourceIP       string    `json:"source_ip"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (SiteSyslogMessage) TableName() string { return "site_syslog_messages" }
 
 func (s *SystemStatus) ToJSON() string {
 	jsonBytes, err := json.Marshal(s)

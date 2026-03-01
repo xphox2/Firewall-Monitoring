@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network - Firewall Monitor Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
+
+        .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
+        .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
+        .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
+        .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
+        .nav-item.danger { color: #f85149; }
+
+        .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header h1 { font-size: 1.8rem; }
+
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
+        .card h2 { font-size: 1.2rem; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .card h2 button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+
+        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .btn:hover { background: #2ea043; }
+        .btn.danger { background: #da3633; }
+        .btn.secondary { background: #30363d; }
+        .btn.small { padding: 4px 10px; font-size: 0.8rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
+        th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
+        tr:hover { background: #21262d; }
+
+        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+        .status-badge.up { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .status-badge.down { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+        .loading { text-align: center; padding: 30px; color: #8b949e; }
+        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+
+        .network-container { position: relative; min-height: 500px; background: #0d1117; border-radius: 8px; overflow: hidden; }
+        
+        .site-container {
+            position: absolute;
+            background: #161b22;
+            border: 2px solid #30363d;
+            border-radius: 12px;
+            padding: 15px;
+            min-width: 180px;
+        }
+        .site-container.selected { border-color: #00d4ff; }
+        .site-header { font-weight: 600; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #30363d; }
+        
+        .firewall-node {
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .firewall-node:hover { border-color: #00d4ff; }
+        .firewall-node.selected { border-color: #00d4ff; background: #30363d; }
+        .firewall-name { font-weight: 600; font-size: 0.9rem; }
+        .firewall-ip { font-size: 0.75rem; color: #8b949e; }
+        
+        .connection-line {
+            position: absolute;
+            height: 3px;
+            transform-origin: left center;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .connection-line.up { background: #3fb150; }
+        .connection-line.down { background: #f85149; }
+        .connection-line.unknown { background: #8b949e; }
+        
+        .legend { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background: #161b22; border-radius: 8px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+        .legend-line { width: 30px; height: 3px; border-radius: 2px; }
+        .legend-line.up { background: #3fb150; }
+        .legend-line.down { background: #f85149; }
+        .legend-line.unknown { background: #8b949e; }
+
+        .details-panel {
+            position: fixed;
+            right: -350px;
+            top: 0;
+            width: 350px;
+            height: 100vh;
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            padding: 20px;
+            transition: right 0.3s;
+            z-index: 150;
+            overflow-y: auto;
+        }
+        .details-panel.open { right: 0; }
+        .details-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #30363d; }
+        .details-close { cursor: pointer; font-size: 1.5rem; }
+
+        .type-legend { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+        .type-badge { padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; background: #30363d; }
+        .type-badge.ipsec { background: rgba(0, 212, 255, 0.15); color: #00d4ff; }
+        .type-badge.vxlan { background: rgba(163, 113, 247, 0.15); color: #a371f7; }
+        .type-badge.ssl { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .type-badge.wan { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
+
+        .connection-info { background: #0d1117; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
+        .connection-info h4 { font-size: 0.9rem; margin-bottom: 8px; }
+        .connection-info p { font-size: 0.85rem; color: #8b949e; margin-bottom: 5px; }
+        
+        #network-svg { width: 100%; height: 500px; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Firewall Monitor</h2>
+        <a class="nav-item" href="/admin">Dashboard</a>
+        <a class="nav-item" href="/admin/devices">Devices</a>
+        <a class="nav-item" href="/admin/connections">Connections</a>
+        <a class="nav-item" href="/admin/probes">Probes</a>
+        <a class="nav-item" href="/admin/sites">Sites</a>
+        <a class="nav-item active" href="/admin/network">Network</a>
+        <a class="nav-item" href="/admin/probe-pending">Pending Approvals</a>
+        <a class="nav-item" href="/admin/settings">Settings</a>
+        <a class="nav-item danger" id="logout-btn">Logout</a>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <h1>Network Diagram</h1>
+            <button class="btn" onclick="showAddConnectionModal()">+ Add Connection</button>
+        </div>
+
+        <div class="error" id="error-msg" style="display: none;"></div>
+        <div class="success" id="success-msg" style="display: none;"></div>
+
+        <div class="legend">
+            <div class="legend-item"><div class="legend-line up"></div> Up</div>
+            <div class="legend-item"><div class="legend-line down"></div> Down</div>
+            <div class="legend-item"><div class="legend-line unknown"></div> Unknown</div>
+            <div class="type-legend">
+                <span class="type-badge ipsec">IPSec</span>
+                <span class="type-badge vxlan">VXLAN</span>
+                <span class="type-badge ssl">SSL VPN</span>
+                <span class="type-badge wan">WAN</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Network Map</h2>
+            <div class="network-container" id="network-container">
+                <svg id="network-svg"></svg>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Connections List</h2>
+            <table id="connections-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Source</th>
+                        <th>Destination</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Connection Modal -->
+    <div class="modal" id="connection-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Connection</h2>
+                <span onclick="closeConnectionModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <form id="connection-form">
+                <input type="hidden" id="connection-id">
+                <div class="form-group">
+                    <label>Connection Name</label>
+                    <input type="text" id="connection-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Source FortiGate</label>
+                    <select id="connection-source" required></select>
+                </div>
+                <div class="form-group">
+                    <label>Destination FortiGate</label>
+                    <select id="connection-dest" required></select>
+                </div>
+                <div class="form-group">
+                    <label>Connection Type</label>
+                    <select id="connection-type">
+                        <option value="ipsec">IPSec</option>
+                        <option value="vxlan">VXLAN</option>
+                        <option value="ssl">SSL VPN</option>
+                        <option value="wan">WAN Link</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <input type="text" id="connection-notes">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeConnectionModal()">Cancel</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Details Panel -->
+    <div class="details-panel" id="details-panel">
+        <div class="details-header">
+            <h2 id="details-title">Details</h2>
+            <span class="details-close" onclick="closeDetailsPanel()">&times;</span>
+        </div>
+        <div id="details-content"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/admin/api';
+        let currentDevices = [];
+        let currentConnections = [];
+        let currentSites = [];
+        let selectedNode = null;
+
+        function getCsrfToken() {
+            const cookies = document.cookie.split(';');
+            for (let c of cookies) {
+                const [k, v] = c.trim().split('=');
+                if (k === 'csrf_token') return v;
+            }
+            return '';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const s = String(str);
+            return s.replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        async function apiFetch(url, options = {}) {
+            try {
+                const res = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'X-CSRF-Token': getCsrfToken(),
+                        ...options.headers
+                    }
+                });
+                if (res.status === 401 || res.status === 302) {
+                    window.location.href = '/admin/login';
+                    return null;
+                }
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: 'Request failed' }));
+                    throw new Error(err.error || 'Request failed');
+                }
+                return await res.json();
+            } catch (e) {
+                throw e;
+            }
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('error-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        function showSuccess(msg) {
+            const el = document.getElementById('success-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        async function loadData() {
+            try {
+                const [devicesResult, connectionsResult, sitesResult] = await Promise.all([
+                    apiFetch(`${API_BASE}/fortigates`),
+                    apiFetch(`${API_BASE}/connections`),
+                    apiFetch(`${API_BASE}/sites`)
+                ]);
+                
+                currentDevices = devicesResult?.data || [];
+                currentConnections = connectionsResult?.data || [];
+                currentSites = sitesResult?.data || [];
+                
+                renderNetworkDiagram();
+                renderConnectionsTable();
+            } catch (e) {
+                showError('Failed to load data: ' + e.message);
+            }
+        }
+
+        function renderNetworkDiagram() {
+            const svg = document.getElementById('network-svg');
+            svg.innerHTML = '';
+            
+            if (currentDevices.length === 0) {
+                svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#8b949e">No devices to display</text>';
+                return;
+            }
+
+            const container = document.getElementById('network-container');
+            const width = container.clientWidth || 800;
+            const height = 500;
+            
+            const siteGroups = {};
+            currentDevices.forEach(d => {
+                const siteId = d.site_id || 0;
+                if (!siteGroups[siteId]) siteGroups[siteId] = [];
+                siteGroups[siteId].push(d);
+            });
+
+            const sitePositions = {};
+            const siteIds = Object.keys(siteGroups);
+            const siteCount = siteIds.length;
+            
+            siteIds.forEach((siteId, idx) => {
+                const angle = (2 * Math.PI * idx) / siteCount - Math.PI / 2;
+                const radius = Math.min(width, height) / 3;
+                const centerX = width / 2 + radius * Math.cos(angle);
+                const centerY = height / 2 + radius * Math.sin(angle);
+                sitePositions[siteId] = { x: centerX, y: centerY };
+            });
+
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            
+            const arrowMarkerUp = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            arrowMarkerUp.setAttribute('id', 'arrow-up');
+            arrowMarkerUp.setAttribute('markerWidth', '10');
+            arrowMarkerUp.setAttribute('markerHeight', '10');
+            arrowMarkerUp.setAttribute('refX', '9');
+            arrowMarkerUp.setAttribute('refY', '3');
+            arrowMarkerUp.setAttribute('orient', 'auto');
+            arrowMarkerUp.setAttribute('markerUnits', 'strokeWidth');
+            arrowMarkerUp.innerHTML = '<path d="M0,0 L0,6 L9,3 z" fill="#3fb150" />';
+            defs.appendChild(arrowMarkerUp);
+            
+            const arrowMarkerDown = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            arrowMarkerDown.setAttribute('id', 'arrow-down');
+            arrowMarkerDown.setAttribute('markerWidth', '10');
+            arrowMarkerDown.setAttribute('markerHeight', '10');
+            arrowMarkerDown.setAttribute('refX', '9');
+            arrowMarkerDown.setAttribute('refY', '3');
+            arrowMarkerDown.setAttribute('orient', 'auto');
+            arrowMarkerDown.setAttribute('markerUnits', 'strokeWidth');
+            arrowMarkerDown.innerHTML = '<path d="M0,0 L0,6 L9,3 z" fill="#f85149" />';
+            defs.appendChild(arrowMarkerDown);
+            
+            const arrowMarkerUnknown = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            arrowMarkerUnknown.setAttribute('id', 'arrow-unknown');
+            arrowMarkerUnknown.setAttribute('markerWidth', '10');
+            arrowMarkerUnknown.setAttribute('markerHeight', '10');
+            arrowMarkerUnknown.setAttribute('refX', '9');
+            arrowMarkerUnknown.setAttribute('refY', '3');
+            arrowMarkerUnknown.setAttribute('orient', 'auto');
+            arrowMarkerUnknown.setAttribute('markerUnits', 'strokeWidth');
+            arrowMarkerUnknown.innerHTML = '<path d="M0,0 L0,6 L9,3 z" fill="#8b949e" />';
+            defs.appendChild(arrowMarkerUnknown);
+            
+            svg.appendChild(defs);
+
+            currentConnections.forEach(conn => {
+                const srcIdx = currentDevices.findIndex(d => d.id === conn.source_fg_id);
+                const dstIdx = currentDevices.findIndex(d => d.id === conn.dest_fg_id);
+                
+                if (srcIdx >= 0 && dstIdx >= 0) {
+                    const srcSiteId = currentDevices[srcIdx].site_id || 0;
+                    const dstSiteId = currentDevices[dstIdx].site_id || 0;
+                    
+                    const srcPos = sitePositions[srcSiteId] || { x: width/2, y: height/2 };
+                    const dstPos = sitePositions[dstSiteId] || { x: width/2, y: height/2 };
+                    
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('x1', srcPos.x);
+                    line.setAttribute('y1', srcPos.y);
+                    line.setAttribute('x2', dstPos.x);
+                    line.setAttribute('y2', dstPos.y);
+                    line.setAttribute('stroke', conn.status === 'up' ? '#3fb150' : conn.status === 'down' ? '#f85149' : '#8b949e');
+                    line.setAttribute('stroke-width', '2');
+                    line.setAttribute('marker-end', `url(#arrow-${conn.status})`);
+                    line.style.cursor = 'pointer';
+                    line.addEventListener('click', () => showConnectionDetails(conn));
+                    svg.appendChild(line);
+                }
+            });
+
+            Object.entries(siteGroups).forEach(([siteId, devices]) => {
+                const pos = sitePositions[siteId] || { x: width/2, y: height/2 };
+                const site = currentSites.find(s => s.id === parseInt(siteId));
+                
+                const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                g.setAttribute('transform', `translate(${pos.x - 70}, ${pos.y - 40})`);
+                
+                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                rect.setAttribute('width', '140');
+                rect.setAttribute('height', `${30 + devices.length * 35}`);
+                rect.setAttribute('rx', '8');
+                rect.setAttribute('fill', '#161b22');
+                rect.setAttribute('stroke', '#30363d');
+                rect.setAttribute('stroke-width', '2');
+                rect.style.cursor = 'pointer';
+                rect.addEventListener('click', () => site && showSiteDetails(site));
+                g.appendChild(rect);
+                
+                const title = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                title.setAttribute('x', '70');
+                title.setAttribute('y', '20');
+                title.setAttribute('text-anchor', 'middle');
+                title.setAttribute('fill', '#fff');
+                title.setAttribute('font-weight', '600');
+                title.textContent = site ? site.name : 'Unassigned';
+                g.appendChild(title);
+
+                devices.forEach((device, idx) => {
+                    const fwY = 35 + idx * 35;
+                    
+                    const fwRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    fwRect.setAttribute('x', '10');
+                    fwRect.setAttribute('y', fwY);
+                    fwRect.setAttribute('width', '120');
+                    fwRect.setAttribute('height', '28');
+                    fwRect.setAttribute('rx', '4');
+                    fwRect.setAttribute('fill', '#21262d');
+                    fwRect.setAttribute('stroke', device.status === 'online' ? '#3fb150' : device.status === 'offline' ? '#f85149' : '#30363d');
+                    fwRect.setAttribute('stroke-width', '1');
+                    fwRect.style.cursor = 'pointer';
+                    fwRect.addEventListener('click', (e) => { e.stopPropagation(); showDeviceDetails(device); });
+                    g.appendChild(fwRect);
+
+                    const fwName = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    fwName.setAttribute('x', '15');
+                    fwName.setAttribute('y', fwY + 18);
+                    fwName.setAttribute('fill', '#fff');
+                    fwName.setAttribute('font-size', '12');
+                    fwName.textContent = device.name.substring(0, 12);
+                    g.appendChild(fwName);
+                });
+
+                svg.appendChild(g);
+            });
+        }
+
+        function renderConnectionsTable() {
+            const tbody = document.querySelector('#connections-table tbody');
+            if (currentConnections.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="loading">No connections configured</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = currentConnections.map(c => `
+                <tr>
+                    <td>${escapeHtml(c.name)}</td>
+                    <td>${escapeHtml(c.source_fg?.name) || 'FG-' + c.source_fg_id}</td>
+                    <td>${escapeHtml(c.dest_fg?.name) || 'FG-' + c.dest_fg_id}</td>
+                    <td><span class="type-badge ${c.connection_type}">${escapeHtml(c.connection_type || 'ipsec').toUpperCase()}</span></td>
+                    <td><span class="status-badge ${c.status}">${escapeHtml(c.status || 'unknown').toUpperCase()}</span></td>
+                    <td>
+                        <button class="btn small secondary" onclick="editConnection(${c.id})">Edit</button>
+                        <button class="btn small danger" onclick="deleteConnection(${c.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function showDeviceDetails(device) {
+            selectedNode = device;
+            document.getElementById('details-title').textContent = 'Firewall Details';
+            document.getElementById('details-content').innerHTML = `
+                <div class="connection-info">
+                    <h4>${escapeHtml(device.name)}</h4>
+                    <p><strong>IP:</strong> ${escapeHtml(device.ip_address)}</p>
+                    <p><strong>Status:</strong> <span class="status-badge ${device.status}">${device.status || 'unknown'}</span></p>
+                    <p><strong>Location:</strong> ${escapeHtml(device.location) || '-'}</p>
+                    <p><strong>Site:</strong> ${device.site?.name || 'Unassigned'}</p>
+                    <p><strong>Last Polled:</strong> ${device.last_polled ? new Date(device.last_polled).toLocaleString() : 'Never'}</p>
+                </div>
+                <button class="btn small secondary" onclick="window.location.href='/admin/devices'">Go to Devices</button>
+            `;
+            document.getElementById('details-panel').classList.add('open');
+        }
+
+        function showConnectionDetails(conn) {
+            document.getElementById('details-title').textContent = 'Connection Details';
+            document.getElementById('details-content').innerHTML = `
+                <div class="connection-info">
+                    <h4>${escapeHtml(conn.name)}</h4>
+                    <p><strong>Type:</strong> <span class="type-badge ${conn.connection_type}">${escapeHtml(conn.connection_type || 'ipsec').toUpperCase()}</span></p>
+                    <p><strong>Status:</strong> <span class="status-badge ${conn.status}">${escapeHtml(conn.status || 'unknown').toUpperCase()}</span></p>
+                    <p><strong>Source:</strong> ${escapeHtml(conn.source_fg?.name) || 'FG-' + conn.source_fg_id}</p>
+                    <p><strong>Destination:</strong> ${escapeHtml(conn.dest_fg?.name) || 'FG-' + conn.dest_fg_id}</p>
+                    <p><strong>Latency:</strong> ${conn.latency ? conn.latency + 'ms' : '-'}</p>
+                    <p><strong>Last Check:</strong> ${conn.last_check ? new Date(conn.last_check).toLocaleString() : 'Never'}</p>
+                    ${conn.notes ? `<p><strong>Notes:</strong> ${escapeHtml(conn.notes)}</p>` : ''}
+                </div>
+                <button class="btn small danger" onclick="deleteConnection(${conn.id})">Delete Connection</button>
+            `;
+            document.getElementById('details-panel').classList.add('open');
+        }
+
+        function showSiteDetails(site) {
+            const fortigates = currentDevices.filter(d => d.site_id === site.id);
+            document.getElementById('details-title').textContent = 'Site Details';
+            document.getElementById('details-content').innerHTML = `
+                <div class="connection-info">
+                    <h4>${escapeHtml(site.name)}</h4>
+                    <p><strong>Region:</strong> ${escapeHtml(site.region) || '-'}</p>
+                    <p><strong>Country:</strong> ${escapeHtml(site.country) || '-'}</p>
+                    <p><strong>Timezone:</strong> ${escapeHtml(site.timezone) || '-'}</p>
+                    <p><strong>Firewalls:</strong> ${fortigates.length}</p>
+                    <p><strong>Address:</strong> ${escapeHtml(site.address) || '-'}</p>
+                </div>
+                <button class="btn small secondary" onclick="window.location.href='/admin/sites'">Go to Sites</button>
+            `;
+            document.getElementById('details-panel').classList.add('open');
+        }
+
+        function closeDetailsPanel() {
+            document.getElementById('details-panel').classList.remove('open');
+            selectedNode = null;
+        }
+
+        function populateDeviceSelects() {
+            const sourceSel = document.getElementById('connection-source');
+            const destSel = document.getElementById('connection-dest');
+            const options = currentDevices.map(d => `<option value="${d.id}">${escapeHtml(d.name)} (${escapeHtml(d.ip_address)})</option>`).join('');
+            sourceSel.innerHTML = options;
+            destSel.innerHTML = options;
+        }
+
+        function showAddConnectionModal() {
+            if (currentDevices.length < 2) {
+                alert('You need at least 2 devices to create a connection');
+                return;
+            }
+            document.getElementById('connection-modal').classList.add('active');
+            document.getElementById('connection-form').reset();
+            document.getElementById('connection-id').value = '';
+            populateDeviceSelects();
+        }
+
+        function editConnection(id) {
+            const conn = currentConnections.find(c => c.id === id);
+            if (!conn) return;
+            
+            document.getElementById('connection-modal').classList.add('active');
+            document.getElementById('connection-id').value = conn.id;
+            document.getElementById('connection-name').value = conn.name;
+            document.getElementById('connection-type').value = conn.connection_type || 'ipsec';
+            document.getElementById('connection-notes').value = conn.notes || '';
+            populateDeviceSelects();
+            document.getElementById('connection-source').value = conn.source_fg_id;
+            document.getElementById('connection-dest').value = conn.dest_fg_id;
+        }
+
+        function closeConnectionModal() {
+            document.getElementById('connection-modal').classList.remove('active');
+        }
+
+        document.getElementById('connection-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('connection-id').value;
+            const data = {
+                name: document.getElementById('connection-name').value,
+                source_fg_id: parseInt(document.getElementById('connection-source').value),
+                dest_fg_id: parseInt(document.getElementById('connection-dest').value),
+                connection_type: document.getElementById('connection-type').value,
+                notes: document.getElementById('connection-notes').value
+            };
+
+            if (data.source_fg_id === data.dest_fg_id) {
+                alert('Source and destination cannot be the same');
+                return;
+            }
+
+            try {
+                const method = id ? 'PUT' : 'POST';
+                const url = id ? `${API_BASE}/connections/${id}` : `${API_BASE}/connections`;
+                await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+                closeConnectionModal();
+                loadData();
+                showSuccess(id ? 'Connection updated' : 'Connection created');
+            } catch (err) {
+                showError('Error saving connection: ' + err.message);
+            }
+        });
+
+        async function deleteConnection(id) {
+            if (!confirm('Delete this connection?')) return;
+            try {
+                await apiFetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' });
+                loadData();
+                closeDetailsPanel();
+                showSuccess('Connection deleted');
+            } catch (err) {
+                showError('Error deleting connection: ' + err.message);
+            }
+        }
+
+        document.getElementById('logout-btn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            await apiFetch('/admin/api/logout', { method: 'POST' });
+            window.location.href = '/';
+        });
+
+        loadData();
+        
+        window.addEventListener('resize', () => {
+            renderNetworkDiagram();
+        });
+    </script>
+</body>
+</html>

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -570,6 +572,218 @@ func (h *Handler) DeleteFortiGate(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("FortiGate deleted"))
 }
 
+func (h *Handler) GetSites(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.Site{}))
+		return
+	}
+
+	sites, err := h.db.GetAllSites()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to fetch sites"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(sites))
+}
+
+func (h *Handler) GetSite(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	site, err := h.db.GetSite(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Site not found"))
+		return
+	}
+
+	var children []models.Site
+	h.db.Gorm().Where("parent_site_id = ?", idUint).Find(&children)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"data":     site,
+		"children": children,
+	})
+}
+
+func (h *Handler) CreateSite(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	var site models.Site
+	if err := c.ShouldBindJSON(&site); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	if strings.TrimSpace(site.Name) == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name is required"))
+		return
+	}
+
+	existing, err := h.db.GetSiteByName(site.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check existing site"))
+		return
+	}
+	if existing != nil {
+		c.JSON(http.StatusConflict, models.ErrorResponse("Site with this name already exists"))
+		return
+	}
+
+	if site.ParentSiteID != nil && *site.ParentSiteID > 0 {
+		parent, err := h.db.GetSite(*site.ParentSiteID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
+			return
+		}
+		if parent == nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
+			return
+		}
+	}
+
+	if err := h.db.CreateSite(&site); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create site"))
+		return
+	}
+
+	c.JSON(http.StatusCreated, models.SuccessResponse(site))
+}
+
+func (h *Handler) UpdateSite(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	site, err := h.db.GetSite(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Site not found"))
+		return
+	}
+
+	allowedFields := map[string]bool{
+		"name":           true,
+		"region":         true,
+		"country":        true,
+		"address":        true,
+		"timezone":       true,
+		"parent_site_id": true,
+		"description":    true,
+	}
+
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	if parentIDVal, ok := updates["parent_site_id"]; ok {
+		if parentIDVal == nil {
+			updates["parent_site_id"] = nil
+		} else if pid, isNum := parentIDVal.(float64); isNum && pid > 0 {
+			parent, err := h.db.GetSite(uint(pid))
+			if err != nil || parent == nil {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
+				return
+			}
+			if uint(pid) == uint(idUint) {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Site cannot be its own parent"))
+				return
+			}
+		}
+	}
+
+	filteredUpdates := make(map[string]interface{})
+	for key, value := range updates {
+		if allowedFields[key] {
+			filteredUpdates[key] = value
+		}
+	}
+
+	if len(filteredUpdates) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		return
+	}
+
+	if nameVal, ok := filteredUpdates["name"]; ok {
+		if nameStr, isStr := nameVal.(string); isStr {
+			existing, err := h.db.GetSiteByName(nameStr)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check existing site"))
+				return
+			}
+			if existing != nil && existing.ID != uint(idUint) {
+				c.JSON(http.StatusConflict, models.ErrorResponse("Site with this name already exists"))
+				return
+			}
+		}
+	}
+
+	if err := h.db.Gorm().Model(site).Updates(filteredUpdates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update site"))
+		return
+	}
+
+	updated, err := h.db.GetSite(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(site))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(updated))
+}
+
+func (h *Handler) DeleteSite(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	var children []models.Site
+	if err := h.db.Gorm().Where("parent_site_id = ?", idUint).Find(&children).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check child sites"))
+		return
+	}
+	if len(children) > 0 {
+		c.JSON(http.StatusConflict, models.ErrorResponse("Cannot delete site with child sites"))
+		return
+	}
+
+	if err := h.db.DeleteSite(uint(idUint)); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete site"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Site deleted"))
+}
+
 func (h *Handler) GetFortiGateConnections(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.FortiGateConnection{}))
@@ -762,6 +976,371 @@ func (h *Handler) DeleteFortiGateConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("Connection deleted"))
 }
 
+func (h *Handler) GetProbes(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.Probe{}))
+		return
+	}
+
+	probes, err := h.db.GetAllProbes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to fetch probes"))
+		return
+	}
+
+	for i := range probes {
+		probes[i].TLSCertPath = "********"
+		probes[i].TLSKeyPath = "********"
+		probes[i].ServerTLSCert = "********"
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(probes))
+}
+
+func (h *Handler) GetProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	probe, err := h.db.GetProbe(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		return
+	}
+
+	probe.TLSCertPath = "********"
+	probe.TLSKeyPath = "********"
+	probe.ServerTLSCert = "********"
+
+	c.JSON(http.StatusOK, models.SuccessResponse(probe))
+}
+
+func (h *Handler) CreateProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	var probe models.Probe
+	if err := c.ShouldBindJSON(&probe); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	if strings.TrimSpace(probe.Name) == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name is required"))
+		return
+	}
+
+	existing, _ := h.db.GetProbeByName(probe.Name)
+	if existing != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Probe with this name already exists"))
+		return
+	}
+
+	if probe.SiteID > 0 {
+		_, err := h.db.GetSite(probe.SiteID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Site not found"))
+			return
+		}
+	}
+
+	if probe.ListenPort == 0 {
+		probe.ListenPort = 8089
+	}
+	if probe.ListenPort < 1 || probe.ListenPort > 65535 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid listen port"))
+		return
+	}
+
+	probe.Status = "offline"
+
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		log.Printf("Failed to generate registration key: %v", err)
+	} else {
+		probe.RegistrationKey = hex.EncodeToString(keyBytes)
+	}
+
+	if err := h.db.CreateProbe(&probe); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create probe"))
+		return
+	}
+
+	probe.TLSCertPath = "********"
+	probe.TLSKeyPath = "********"
+	probe.ServerTLSCert = "********"
+	c.JSON(http.StatusCreated, models.SuccessResponse(probe))
+}
+
+func (h *Handler) UpdateProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	probe, err := h.db.GetProbe(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		return
+	}
+
+	allowedFields := map[string]bool{
+		"name":           true,
+		"site_id":        true,
+		"listen_address": true,
+		"listen_port":    true,
+		"enabled":        true,
+		"server_url":     true,
+		"description":    true,
+	}
+
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	filteredUpdates := make(map[string]interface{})
+	for key, value := range updates {
+		if allowedFields[key] {
+			filteredUpdates[key] = value
+		}
+	}
+
+	if len(filteredUpdates) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		return
+	}
+
+	if portVal, ok := filteredUpdates["listen_port"]; ok {
+		port, isNum := portVal.(float64)
+		if !isNum || port < 1 || port > 65535 || port != float64(int(port)) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid listen port"))
+			return
+		}
+	}
+
+	if siteIDVal, ok := filteredUpdates["site_id"]; ok {
+		siteID, isNum := siteIDVal.(float64)
+		if !isNum || siteID < 0 {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid site ID"))
+			return
+		}
+		if siteID > 0 {
+			_, err := h.db.GetSite(uint(siteID))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Site not found"))
+				return
+			}
+		}
+	}
+
+	if enabledVal, ok := filteredUpdates["enabled"]; ok {
+		if _, isBool := enabledVal.(bool); !isBool {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for enabled"))
+			return
+		}
+	}
+
+	if err := h.db.Gorm().Model(probe).Updates(filteredUpdates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update probe"))
+		return
+	}
+
+	updated, err := h.db.GetProbe(uint(idUint))
+	if err != nil {
+		probe.TLSCertPath = "********"
+		probe.TLSKeyPath = "********"
+		probe.ServerTLSCert = "********"
+		c.JSON(http.StatusOK, models.SuccessResponse(probe))
+		return
+	}
+	updated.TLSCertPath = "********"
+	updated.TLSKeyPath = "********"
+	updated.ServerTLSCert = "********"
+	c.JSON(http.StatusOK, models.SuccessResponse(updated))
+}
+
+func (h *Handler) DeleteProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	if err := h.db.DeleteProbe(uint(idUint)); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete probe"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Probe deleted"))
+}
+
+func (h *Handler) GetPendingProbes(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]models.Probe{}))
+		return
+	}
+
+	probes, err := h.db.GetPendingProbes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to fetch pending probes"))
+		return
+	}
+
+	for i := range probes {
+		probes[i].TLSCertPath = "********"
+		probes[i].TLSKeyPath = "********"
+		probes[i].ServerTLSCert = "********"
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(probes))
+}
+
+type ApproveProbeRequest struct {
+	Notes string `json:"notes"`
+}
+
+func (h *Handler) ApproveProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	var req ApproveProbeRequest
+	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		return
+	}
+	adminID, ok := userID.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Invalid session data"))
+		return
+	}
+
+	if err := h.db.ApproveProbe(uint(idUint), adminID); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to approve probe"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Probe approved successfully"))
+}
+
+type RejectProbeRequest struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+func (h *Handler) RejectProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	var req RejectProbeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Reason is required"))
+		return
+	}
+
+	if _, exists := c.Get("user_id"); !exists {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		return
+	}
+
+	if err := h.db.RejectProbe(uint(idUint), req.Reason); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to reject probe"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Probe rejected successfully"))
+}
+
+type TestProbeRequest struct {
+	ListenAddress string `json:"listen_address" binding:"required"`
+	ListenPort    int    `json:"listen_port"`
+	ServerURL     string `json:"server_url"`
+	TLSCertPath   string `json:"tls_cert_path"`
+	TLSKeyPath    string `json:"tls_key_path"`
+}
+
+func (h *Handler) TestProbeConnection(c *gin.Context) {
+	var req TestProbeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	if req.ListenPort == 0 {
+		req.ListenPort = 8089
+	}
+	if req.ListenPort < 1 || req.ListenPort > 65535 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid listen port"))
+		return
+	}
+
+	address := fmt.Sprintf("%s:%d", req.ListenAddress, req.ListenPort)
+
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success": false,
+			"message": "Failed to connect to probe",
+			"online":  false,
+		}))
+		return
+	}
+	defer conn.Close()
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"success": true,
+		"message": "Connected successfully",
+		"online":  true,
+	}))
+}
+
 func (h *Handler) GetSettings(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.SystemSetting{}))
@@ -797,21 +1376,21 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	allowedKeys := map[string]bool{
-		"cpu_threshold":            true,
-		"memory_threshold":         true,
-		"disk_threshold":           true,
-		"session_threshold":        true,
-		"email_enabled":            true,
-		"slack_webhook":            true,
-		"discord_webhook":          true,
-		"webhook_url":              true,
-		"public_show_hostname":     true,
-		"public_show_uptime":       true,
-		"public_show_cpu":          true,
-		"public_show_memory":       true,
-		"public_show_sessions":     true,
-		"public_show_interfaces":   true,
-		"public_refresh_interval":  true,
+		"cpu_threshold":           true,
+		"memory_threshold":        true,
+		"disk_threshold":          true,
+		"session_threshold":       true,
+		"email_enabled":           true,
+		"slack_webhook":           true,
+		"discord_webhook":         true,
+		"webhook_url":             true,
+		"public_show_hostname":    true,
+		"public_show_uptime":      true,
+		"public_show_cpu":         true,
+		"public_show_memory":      true,
+		"public_show_sessions":    true,
+		"public_show_interfaces":  true,
+		"public_refresh_interval": true,
 	}
 
 	var validSettings []models.SystemSetting

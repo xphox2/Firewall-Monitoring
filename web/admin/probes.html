@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Probes - Firewall Monitor Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
+
+        .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
+        .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
+        .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
+        .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
+        .nav-item.danger { color: #f85149; }
+
+        .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header h1 { font-size: 1.8rem; }
+
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
+        .card h2 { font-size: 1.2rem; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .card h2 button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+
+        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .btn:hover { background: #2ea043; }
+        .btn.danger { background: #da3633; }
+        .btn.secondary { background: #30363d; }
+        .btn.small { padding: 4px 10px; font-size: 0.8rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
+        th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
+        tr:hover { background: #21262d; }
+
+        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+        .status-badge.up, .status-badge.online, .status-badge.approved { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .status-badge.down, .status-badge.offline, .status-badge.rejected { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .status-badge.warning, .status-badge.pending { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
+        .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+        .loading { text-align: center; padding: 30px; color: #8b949e; }
+        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .section-header h3 { font-size: 1rem; color: #8b949e; }
+
+        .pending-section { border: 2px solid #f0883e; }
+        .pending-section h2 { color: #f0883e; }
+
+        .actions { display: flex; gap: 5px; }
+
+        .key-display { background: #0d1117; padding: 10px; border-radius: 6px; font-family: monospace; word-break: break-all; margin-top: 5px; }
+        .key-warning { color: #f0883e; font-size: 0.8rem; margin-top: 5px; }
+
+        .filter-tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .filter-tab { padding: 8px 16px; background: #21262d; border: none; border-radius: 6px; color: #8b949e; cursor: pointer; }
+        .filter-tab.active { background: #238636; color: #fff; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Firewall Monitor</h2>
+        <a class="nav-item" href="/admin">Dashboard</a>
+        <a class="nav-item" href="/admin/devices">Devices</a>
+        <a class="nav-item" href="/admin/connections">Connections</a>
+        <a class="nav-item active" href="/admin/probes">Probes</a>
+        <a class="nav-item" href="/admin/sites">Sites</a>
+        <a class="nav-item" href="/admin/network">Network</a>
+        <a class="nav-item" href="/admin/probe-pending">Pending Approvals</a>
+        <a class="nav-item" href="/admin/settings">Settings</a>
+        <a class="nav-item danger" id="logout-btn">Logout</a>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <h1>Probe Management</h1>
+            <button class="btn" onclick="showAddModal()">+ Add Probe</button>
+        </div>
+
+        <div class="error" id="error-msg" style="display: none;"></div>
+        <div class="success" id="success-msg" style="display: none;"></div>
+
+        <div class="card">
+            <div class="section-header">
+                <h3>All Probes</h3>
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-filter="all">All</button>
+                    <button class="filter-tab" data-filter="pending">Pending</button>
+                    <button class="filter-tab" data-filter="approved">Approved</button>
+                    <button class="filter-tab" data-filter="rejected">Rejected</button>
+                </div>
+            </div>
+            <table id="probes-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Site</th>
+                        <th>Status</th>
+                        <th>Last Seen</th>
+                        <th>Listen Address</th>
+                        <th>Registration Key</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Add/Edit Probe Modal -->
+    <div class="modal" id="probe-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="probe-modal-title">Add Probe</h2>
+                <span onclick="closeProbeModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <form id="probe-form">
+                <input type="hidden" id="probe-id">
+                <div class="form-group">
+                    <label>Probe Name</label>
+                    <input type="text" id="probe-name" required>
+                </div>
+                <div class="form-group">
+                    <label>Site</label>
+                    <select id="probe-site" required>
+                        <option value="">Select a site</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Listen Address</label>
+                    <input type="text" id="probe-address" value="0.0.0.0">
+                </div>
+                <div class="form-group">
+                    <label>Listen Port</label>
+                    <input type="number" id="probe-port" value="8089">
+                </div>
+                <div class="form-group">
+                    <label>Server URL</label>
+                    <input type="text" id="probe-server-url" placeholder="https://your-server.com">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="probe-description" rows="3"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeProbeModal()">Cancel</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Registration Key Modal -->
+    <div class="modal" id="key-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Registration Key Created</h2>
+                <span onclick="closeKeyModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <p style="color: #f0883e; margin-bottom: 15px;">Copy this key now. It will not be shown again!</p>
+            <div class="key-display" id="new-reg-key"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn" onclick="copyKey()">Copy to Clipboard</button>
+                <button type="button" class="btn secondary" onclick="closeKeyModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/admin/api';
+        let currentProbes = [];
+        let currentSites = [];
+        let showKey = null;
+
+        function getCsrfToken() {
+            const cookies = document.cookie.split(';');
+            for (let c of cookies) {
+                const [k, v] = c.trim().split('=');
+                if (k === 'csrf_token') return v;
+            }
+            return '';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const s = String(str);
+            return s.replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        async function apiFetch(url, options = {}) {
+            try {
+                const res = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'X-CSRF-Token': getCsrfToken(),
+                        ...options.headers
+                    }
+                });
+                if (res.status === 401 || res.status === 302) {
+                    window.location.href = '/admin/login';
+                    return null;
+                }
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: 'Request failed' }));
+                    throw new Error(err.error || 'Request failed');
+                }
+                return await res.json();
+            } catch (e) {
+                throw e;
+            }
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('error-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        function showSuccess(msg) {
+            const el = document.getElementById('success-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        async function loadProbes() {
+            try {
+                const result = await apiFetch(`${API_BASE}/probes`);
+                if (!result) return;
+                currentProbes = result.data || [];
+                renderProbes(currentProbes);
+            } catch (e) {
+                showError('Failed to load probes: ' + e.message);
+            }
+        }
+
+        async function loadSites() {
+            try {
+                const result = await apiFetch(`${API_BASE}/sites`);
+                if (!result) return;
+                currentSites = result.data || [];
+                populateSiteSelect();
+            } catch (e) {
+                console.error('Failed to load sites:', e);
+            }
+        }
+
+        function populateSiteSelect() {
+            const select = document.getElementById('probe-site');
+            select.innerHTML = '<option value="">Select a site</option>' + 
+                currentSites.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+        }
+
+        function renderProbes(probes) {
+            const tbody = document.querySelector('#probes-table tbody');
+            if (probes.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="loading">No probes configured</td></tr>';
+                return;
+            }
+            tbody.innerHTML = probes.map(p => `
+                <tr>
+                    <td>${escapeHtml(p.name)}</td>
+                    <td>${escapeHtml(p.site?.name || '-')}</td>
+                    <td><span class="status-badge ${escapeHtml(p.status)}">${escapeHtml(p.status).toUpperCase()}</span></td>
+                    <td>${p.last_seen ? new Date(p.last_seen).toLocaleString() : 'Never'}</td>
+                    <td>${escapeHtml(p.listen_address)}:${p.listen_port}</td>
+                    <td>${p.registration_key ? '******' : '-'}</td>
+                    <td class="actions">
+                        ${p.status === 'pending' ? `<button class="btn small" onclick="approveProbe(${p.id})">Approve</button>` : ''}
+                        ${p.status === 'pending' ? `<button class="btn small danger" onclick="rejectProbe(${p.id})">Reject</button>` : ''}
+                        <button class="btn small secondary" onclick="testConnection(${p.id})">Test</button>
+                        <button class="btn small secondary" onclick="editProbe(${p.id})">Edit</button>
+                        <button class="btn small danger" onclick="deleteProbe(${p.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function showAddModal() {
+            document.getElementById('probe-modal').classList.add('active');
+            document.getElementById('probe-modal-title').textContent = 'Add Probe';
+            document.getElementById('probe-form').reset();
+            document.getElementById('probe-id').value = '';
+            loadSites();
+        }
+
+        function closeProbeModal() {
+            document.getElementById('probe-modal').classList.remove('active');
+        }
+
+        function editProbe(id) {
+            const probe = currentProbes.find(p => p.id === id);
+            if (!probe) return;
+            
+            loadSites().then(() => {
+                document.getElementById('probe-modal').classList.add('active');
+                document.getElementById('probe-modal-title').textContent = 'Edit Probe';
+                document.getElementById('probe-id').value = probe.id;
+                document.getElementById('probe-name').value = probe.name;
+                document.getElementById('probe-site').value = probe.site_id || '';
+                document.getElementById('probe-address').value = probe.listen_address || '0.0.0.0';
+                document.getElementById('probe-port').value = probe.listen_port || 8089;
+                document.getElementById('probe-server-url').value = probe.server_url || '';
+                document.getElementById('probe-description').value = probe.description || '';
+            });
+        }
+
+        document.getElementById('probe-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('probe-id').value;
+            const data = {
+                name: document.getElementById('probe-name').value,
+                site_id: parseInt(document.getElementById('probe-site').value),
+                listen_address: document.getElementById('probe-address').value,
+                listen_port: parseInt(document.getElementById('probe-port').value),
+                server_url: document.getElementById('probe-server-url').value,
+                description: document.getElementById('probe-description').value,
+                enabled: true
+            };
+
+            try {
+                const method = id ? 'PUT' : 'POST';
+                const url = id ? `${API_BASE}/probes/${id}` : `${API_BASE}/probes`;
+                const result = await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+                
+                closeProbeModal();
+                loadProbes();
+                
+                if (!id && result && result.data) {
+                    showKey = result.data.registration_key;
+                    document.getElementById('new-reg-key').textContent = showKey;
+                    document.getElementById('key-modal').classList.add('active');
+                } else {
+                    showSuccess(id ? 'Probe updated' : 'Probe created');
+                }
+            } catch (err) {
+                showError('Error saving probe: ' + err.message);
+            }
+        });
+
+        function closeKeyModal() {
+            document.getElementById('key-modal').classList.remove('active');
+            showKey = null;
+        }
+
+        function copyKey() {
+            if (showKey) {
+                navigator.clipboard.writeText(showKey);
+                showSuccess('Key copied to clipboard');
+            }
+        }
+
+        async function deleteProbe(id) {
+            if (!confirm('Delete this probe?')) return;
+            try {
+                await apiFetch(`${API_BASE}/probes/${id}`, { method: 'DELETE' });
+                loadProbes();
+                showSuccess('Probe deleted');
+            } catch (err) {
+                showError('Error deleting probe: ' + err.message);
+            }
+        }
+
+        async function approveProbe(id) {
+            try {
+                await apiFetch(`${API_BASE}/probes/${id}/approve`, { 
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ notes: '' })
+                });
+                loadProbes();
+                showSuccess('Probe approved');
+            } catch (err) {
+                showError('Error approving probe: ' + err.message);
+            }
+        }
+
+        async function rejectProbe(id) {
+            const reason = prompt('Enter rejection reason:');
+            if (!reason) return;
+            try {
+                await apiFetch(`${API_BASE}/probes/${id}/reject`, { 
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ reason })
+                });
+                loadProbes();
+                showSuccess('Probe rejected');
+            } catch (err) {
+                showError('Error rejecting probe: ' + err.message);
+            }
+        }
+
+        async function testConnection(id) {
+            const probe = currentProbes.find(p => p.id === id);
+            if (!probe) return;
+
+            const btn = event.target;
+            btn.textContent = 'Testing...';
+            btn.disabled = true;
+
+            try {
+                const result = await apiFetch(`${API_BASE}/probes/test`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        listen_address: probe.listen_address,
+                        listen_port: probe.listen_port
+                    })
+                });
+
+                if (result && result.data?.online) {
+                    alert('Connection successful!');
+                } else {
+                    alert('Connection failed: ' + (result?.data?.message || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            } finally {
+                btn.textContent = 'Test';
+                btn.disabled = false;
+            }
+        }
+
+        document.querySelectorAll('.filter-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const filter = tab.dataset.filter;
+                if (filter === 'all') {
+                    renderProbes(currentProbes);
+                } else {
+                    renderProbes(currentProbes.filter(p => p.status === filter));
+                }
+            });
+        });
+
+        document.getElementById('logout-btn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            await apiFetch('/admin/api/logout', { method: 'POST' });
+            window.location.href = '/';
+        });
+
+        loadProbes();
+    </script>
+</body>
+</html>

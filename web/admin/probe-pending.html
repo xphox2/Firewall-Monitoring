@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pending Approvals - Firewall Monitor Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
+
+        .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
+        .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
+        .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
+        .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
+        .nav-item.danger { color: #f85149; }
+
+        .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header h1 { font-size: 1.8rem; }
+        .header .badge { background: #f0883e; color: #fff; padding: 2px 10px; border-radius: 12px; font-size: 0.9rem; margin-left: 10px; }
+
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
+        .card h2 { font-size: 1.2rem; margin-bottom: 20px; }
+
+        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .btn:hover { background: #2ea043; }
+        .btn.danger { background: #da3633; }
+        .btn.secondary { background: #30363d; }
+        .btn.small { padding: 6px 12px; font-size: 0.85rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
+        th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
+        tr:hover { background: #21262d; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 450px; max-width: 90%; }
+        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+        .loading { text-align: center; padding: 30px; color: #8b949e; }
+        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+
+        .pending-section { border: 2px solid #f0883e; }
+        .pending-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .pending-header h2 { color: #f0883e; margin: 0; }
+        .pending-count { background: #f0883e; color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 0.9rem; }
+
+        .probe-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 15px; }
+        .probe-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .probe-name { font-size: 1.1rem; font-weight: 600; }
+        .probe-time { font-size: 0.85rem; color: #8b949e; }
+        .probe-details { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 15px; }
+        .probe-detail { font-size: 0.9rem; }
+        .probe-detail span { color: #8b949e; }
+        .probe-actions { display: flex; gap: 10px; border-top: 1px solid #30363d; padding-top: 15px; }
+
+        .empty-state { text-align: center; padding: 60px 20px; }
+        .empty-icon { font-size: 3rem; margin-bottom: 15px; }
+        .empty-title { font-size: 1.2rem; margin-bottom: 10px; }
+        .empty-text { color: #8b949e; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>Firewall Monitor</h2>
+        <a class="nav-item" href="/admin">Dashboard</a>
+        <a class="nav-item" href="/admin/devices">Devices</a>
+        <a class="nav-item" href="/admin/connections">Connections</a>
+        <a class="nav-item" href="/admin/probes">Probes</a>
+        <a class="nav-item" href="/admin/sites">Sites</a>
+        <a class="nav-item" href="/admin/network">Network</a>
+        <a class="nav-item active" href="/admin/probe-pending">Pending Approvals</a>
+        <a class="nav-item" href="/admin/settings">Settings</a>
+        <a class="nav-item danger" id="logout-btn">Logout</a>
+    </div>
+
+    <div class="main">
+        <div class="header">
+            <h1>Pending Probe Approvals</h1>
+        </div>
+
+        <div class="error" id="error-msg" style="display: none;"></div>
+        <div class="success" id="success-msg" style="display: none;"></div>
+
+        <div class="card pending-section" id="pending-section">
+            <div class="pending-header">
+                <h2>Pending Requests</h2>
+                <span class="pending-count" id="pending-count">0</span>
+            </div>
+            <div id="pending-list"></div>
+        </div>
+
+        <div class="card">
+            <h2>Recently Processed</h2>
+            <div id="processed-list"></div>
+        </div>
+    </div>
+
+    <!-- Approve Modal -->
+    <div class="modal" id="approve-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Approve Probe</h2>
+                <span onclick="closeApproveModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <p style="margin-bottom: 15px; color: #8b949e;">You are about to approve the following probe:</p>
+            <div class="probe-card" id="approve-probe-details"></div>
+            <form id="approve-form">
+                <input type="hidden" id="approve-probe-id">
+                <div class="form-group">
+                    <label>Approval Notes (optional)</label>
+                    <textarea id="approve-notes" rows="3" placeholder="Add any notes about this approval..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeApproveModal()">Cancel</button>
+                    <button type="submit" class="btn">Approve</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reject Modal -->
+    <div class="modal" id="reject-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Reject Probe</h2>
+                <span onclick="closeRejectModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+            </div>
+            <p style="margin-bottom: 15px; color: #8b949e;">You are about to reject the following probe:</p>
+            <div class="probe-card" id="reject-probe-details"></div>
+            <form id="reject-form">
+                <input type="hidden" id="reject-probe-id">
+                <div class="form-group">
+                    <label>Rejection Reason <span style="color: #f85149;">*</span></label>
+                    <textarea id="reject-reason" rows="3" placeholder="Reason for rejection (required)" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeRejectModal()">Cancel</button>
+                    <button type="submit" class="btn danger">Reject</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/admin/api';
+        let currentPending = [];
+        let allProbes = [];
+
+        function getCsrfToken() {
+            const cookies = document.cookie.split(';');
+            for (let c of cookies) {
+                const [k, v] = c.trim().split('=');
+                if (k === 'csrf_token') return v;
+            }
+            return '';
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const s = String(str);
+            return s.replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+
+        async function apiFetch(url, options = {}) {
+            try {
+                const res = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'X-CSRF-Token': getCsrfToken(),
+                        ...options.headers
+                    }
+                });
+                if (res.status === 401 || res.status === 302) {
+                    window.location.href = '/admin/login';
+                    return null;
+                }
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ error: 'Request failed' }));
+                    throw new Error(err.error || 'Request failed');
+                }
+                return await res.json();
+            } catch (e) {
+                throw e;
+            }
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('error-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        function showSuccess(msg) {
+            const el = document.getElementById('success-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        async function loadProbes() {
+            try {
+                const [pendingResult, allResult] = await Promise.all([
+                    apiFetch(`${API_BASE}/probes/pending`),
+                    apiFetch(`${API_BASE}/probes`)
+                ]);
+                
+                currentPending = pendingResult?.data || [];
+                allProbes = allResult?.data || [];
+                
+                renderPending();
+                renderProcessed();
+            } catch (e) {
+                showError('Failed to load probes: ' + e.message);
+            }
+        }
+
+        function renderPending() {
+            document.getElementById('pending-count').textContent = currentPending.length;
+            const container = document.getElementById('pending-list');
+            
+            if (currentPending.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">✓</div>
+                        <div class="empty-title">No pending requests</div>
+                        <div class="empty-text">All probe requests have been processed.</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = currentPending.map(p => `
+                <div class="probe-card">
+                    <div class="probe-header">
+                        <span class="probe-name">${escapeHtml(p.name)}</span>
+                        <span class="probe-time">Requested: ${p.created_at ? new Date(p.created_at).toLocaleString() : 'Unknown'}</span>
+                    </div>
+                    <div class="probe-details">
+                        <div class="probe-detail"><span>Site:</span> ${escapeHtml(p.site?.name || 'Not assigned')}</div>
+                        <div class="probe-detail"><span>Listen:</span> ${escapeHtml(p.listen_address)}:${p.listen_port}</div>
+                        <div class="probe-detail"><span>Status:</span> ${p.status}</div>
+                        <div class="probe-detail"><span>ID:</span> #${p.id}</div>
+                    </div>
+                    <div class="probe-actions">
+                        <button class="btn small" onclick="showApproveModal(${p.id})">Approve</button>
+                        <button class="btn small danger" onclick="showRejectModal(${p.id})">Reject</button>
+                        <button class="btn small secondary" onclick="viewProbeDetails(${p.id})">Details</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderProcessed() {
+            const processed = allProbes.filter(p => p.status === 'approved' || p.status === 'rejected');
+            const container = document.getElementById('processed-list');
+            
+            if (processed.length === 0) {
+                container.innerHTML = '<div class="loading">No processed probes yet</div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Site</th>
+                            <th>Status</th>
+                            <th>Processed</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${processed.slice(0, 10).map(p => `
+                            <tr>
+                                <td>${escapeHtml(p.name)}</td>
+                                <td>${escapeHtml(p.site?.name || '-')}</td>
+                                <td><span class="status-badge ${p.status}">${p.status.toUpperCase()}</span></td>
+                                <td>${p.approved_at ? new Date(p.approved_at).toLocaleString() : p.rejected_at ? new Date(p.rejected_at).toLocaleString() : '-'}</td>
+                                <td>${escapeHtml(p.rejected_reason || '-')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function showApproveModal(id) {
+            const probe = currentPending.find(p => p.id === id);
+            if (!probe) return;
+            
+            document.getElementById('approve-probe-id').value = id;
+            document.getElementById('approve-probe-details').innerHTML = `
+                <div class="probe-header">
+                    <span class="probe-name">${escapeHtml(probe.name)}</span>
+                </div>
+                <div class="probe-details">
+                    <div class="probe-detail"><span>Site:</span> ${escapeHtml(probe.site?.name || 'Not assigned')}</div>
+                    <div class="probe-detail"><span>Listen:</span> ${escapeHtml(probe.listen_address)}:${probe.listen_port}</div>
+                </div>
+            `;
+            document.getElementById('approve-notes').value = '';
+            document.getElementById('approve-modal').classList.add('active');
+        }
+
+        function closeApproveModal() {
+            document.getElementById('approve-modal').classList.remove('active');
+        }
+
+        function showRejectModal(id) {
+            const probe = currentPending.find(p => p.id === id);
+            if (!probe) return;
+            
+            document.getElementById('reject-probe-id').value = id;
+            document.getElementById('reject-probe-details').innerHTML = `
+                <div class="probe-header">
+                    <span class="probe-name">${escapeHtml(probe.name)}</span>
+                </div>
+                <div class="probe-details">
+                    <div class="probe-detail"><span>Site:</span> ${escapeHtml(probe.site?.name || 'Not assigned')}</div>
+                    <div class="probe-detail"><span>Listen:</span> ${escapeHtml(probe.listen_address)}:${probe.listen_port}</div>
+                </div>
+            `;
+            document.getElementById('reject-reason').value = '';
+            document.getElementById('reject-modal').classList.add('active');
+        }
+
+        function closeRejectModal() {
+            document.getElementById('reject-modal').classList.remove('active');
+        }
+
+        document.getElementById('approve-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('approve-probe-id').value;
+            const notes = document.getElementById('approve-notes').value;
+            
+            try {
+                await apiFetch(`${API_BASE}/probes/${id}/approve`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ notes })
+                });
+                closeApproveModal();
+                loadProbes();
+                showSuccess('Probe approved successfully');
+            } catch (err) {
+                showError('Error approving probe: ' + err.message);
+            }
+        });
+
+        document.getElementById('reject-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('reject-probe-id').value;
+            const reason = document.getElementById('reject-reason').value;
+            
+            if (!reason.trim()) {
+                alert('Please provide a rejection reason');
+                return;
+            }
+            
+            try {
+                await apiFetch(`${API_BASE}/probes/${id}/reject`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ reason })
+                });
+                closeRejectModal();
+                loadProbes();
+                showSuccess('Probe rejected');
+            } catch (err) {
+                showError('Error rejecting probe: ' + err.message);
+            }
+        });
+
+        function viewProbeDetails(id) {
+            const probe = currentPending.find(p => p.id === id) || allProbes.find(p => p.id === id);
+            if (!probe) return;
+            
+            const details = `
+                <strong>Name:</strong> ${escapeHtml(probe.name)}<br>
+                <strong>Site:</strong> ${escapeHtml(probe.site?.name || 'Not assigned')}<br>
+                <strong>Listen Address:</strong> ${escapeHtml(probe.listen_address)}:${probe.listen_port}<br>
+                <strong>Server URL:</strong> ${escapeHtml(probe.server_url) || '-'}<br>
+                <strong>Status:</strong> ${probe.status}<br>
+                <strong>Created:</strong> ${probe.created_at ? new Date(probe.created_at).toLocaleString() : 'Unknown'}<br>
+                <strong>Description:</strong> ${escapeHtml(probe.description) || '-'}
+            `;
+            alert('Probe Details:\n\n' + details.replace(/<br>/g, '\n'));
+        }
+
+        document.getElementById('logout-btn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            await apiFetch('/admin/api/logout', { method: 'POST' });
+            window.location.href = '/';
+        });
+
+        loadProbes();
+        
+        setInterval(loadProbes, 30000);
+    </script>
+</body>
+</html>

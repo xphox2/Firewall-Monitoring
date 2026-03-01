@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.10.0] - 2026-02-28
+
+### Added
+- **Probe Approval System**: Approve/reject workflow for probes before they can send data
+- **Probe Registration**: Unique registration key for probe authentication
+- **Probe Relay Client**: Client that collects all data and forwards to central server
+- **Probe Command**: New `cmd/probe` for running probe collectors at remote sites
+- **Per-Site Databases**: Database-per-site architecture for easier device cleanup
+- **Probe Heartbeat**: Track probe online/offline status
+- **Server URL**: Default set to stats.technicallabs.org
+
+### Admin UI
+- **Probes Page**: Full CRUD, approval actions, registration key management
+- **Sites Page**: Tree view of hierarchical sites with firewall/probe listing
+- **Network Diagram**: Visual SVG-based network topology
+- **Pending Approvals Page**: Dedicated page for approving/rejecting probes
+
+### Configuration
+- PROBE_NAME, PROBE_SITE_ID, PROBE_REGISTRATION_KEY (required for probe)
+- PROBE_SERVER_URL (default: https://stats.technicallabs.org)
+
+## [0.9.0] - 2026-02-28
+
+### Added
+- **Site Model**: Hierarchical location support with parent-child relationships (Region > Data Center > Rack)
+- **Probe Model**: Distributed collector architecture for multi-location monitoring
+- **Probe API Endpoints**: Full CRUD operations for probe management
+- **Site API Endpoints**: Full CRUD operations for site management
+- **FortiGate-Site Linking**: FortiGate model now supports SiteID for organization
+- **TLS/mTLS Support**: Configuration for secure probe-to-server communication
+- **ICMP Ping Collector**: Active ping monitoring with latency tracking and statistics
+- **Syslog Receiver**: RFC 5424 compliant syslog collection (UDP/TCP/TLS)
+- **sFlow Receiver**: Basic sFlow v5 skeleton for flow sampling
+- **Network Diagram Support**: Connection tracking between firewalls enhanced
+
+### Configuration
+- New `ProbeConfig` section with:
+  - `PROBE_SERVER_ENABLED` - Enable probe mode
+  - `PROBE_LISTEN_ADDRESS/PORT` - Local listener config
+  - `PROBE_SERVER_URL` - Central server URL
+  - `PROBE_TLS_ENABLED` / `PROBE_MTLS_ENABLED` - TLS options
+  - `PROBE_ICMP_ENABLED` - ICMP ping toggle
+  - `PROBE_SYSLOG_ENABLED` / `PROBE_SYSLOG_PORT` - Syslog config
+  - `PROBE_SFLOW_ENABLED` / `PROBE_SFLOW_PORT` - sFlow config
+
 ## [0.8.8] - 2026-02-28
 
 ### Added
