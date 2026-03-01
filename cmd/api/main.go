@@ -186,17 +186,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "probe-pending.html", nil)
 		})
 
-		admin.GET("/probe-pending", func(c *gin.Context) {
-			log.Println("Serving probe-pending.html")
-			c.HTML(http.StatusOK, "probe-pending.html", nil)
-		})
-
 		admin.GET("/network", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "network.html", nil)
-		})
-
-		admin.GET("/probe-pending", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "probe-pending.html", nil)
 		})
 
 		admin.GET("/api/dashboard", handler.GetDashboardAll)

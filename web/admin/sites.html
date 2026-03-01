@@ -92,6 +92,9 @@
     </div>
 
     <div class="main">
+        <div id="loading-indicator" style="padding:50px;text-align:center;color:#8b949e;">
+            Loading...
+        </div>
         <div class="header">
             <h1>Site Management</h1>
             <button class="btn" onclick="showAddModal()">+ Add Site</button>
@@ -154,6 +157,20 @@
     </div>
 
     <script>
+        // Immediate indicator that script is running
+        console.log('Sites page script starting...');
+        
+        window.onerror = function(msg, url, line, col, error) {
+            console.error('JavaScript Error:', msg, 'at line', line);
+            var errDiv = document.createElement('div');
+            errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:20px;z-index:9999';
+            errDiv.innerHTML = '<h2>Error loading page</h2><pre>' + msg + '</pre><p>Line: ' + line + '</p>';
+            document.body.innerHTML = '';
+            document.body.appendChild(errDiv);
+            return true;
+        };
+
+        console.log('Sites page loading...');
         const API_BASE = '/admin/api';
         let currentSites = [];
         let currentFortigates = [];
@@ -161,7 +178,11 @@
 
         window.onerror = function(msg, url, line, col, error) {
             console.error('JavaScript Error:', msg, 'at line', line);
-            document.body.innerHTML = '<div style="padding: 50px; color: red;"><h2>Error loading page</h2><pre>' + msg + '</pre><p>Line: ' + line + '</p></div>';
+            var errDiv = document.createElement('div');
+            errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:20px;z-index:9999';
+            errDiv.innerHTML = '<h2>Error loading page</h2><pre>' + msg + '</pre><p>Line: ' + line + '</p>';
+            document.body.innerHTML = '';
+            document.body.appendChild(errDiv);
             return true;
         };
 
