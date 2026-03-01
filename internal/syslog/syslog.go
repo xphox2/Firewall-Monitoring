@@ -111,9 +111,8 @@ func (s *SyslogReceiver) handleConnection(conn net.Conn) {
 	buf := make([]byte, MaxMessageSize)
 	var messageBuf bytes.Buffer
 
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-
 	for {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, err := conn.Read(buf)
 		if err != nil {
 			break
@@ -147,9 +146,10 @@ func (s *SyslogReceiver) handleConnection(conn net.Conn) {
 			}
 
 			if msg != nil {
-				msg.SourceIP = conn.RemoteAddr().String()
-				if idx := strings.LastIndex(msg.SourceIP, ":"); idx != -1 {
-					msg.SourceIP = msg.SourceIP[:idx]
+				if host, _, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
+					msg.SourceIP = host
+				} else {
+					msg.SourceIP = conn.RemoteAddr().String()
 				}
 
 				if err := s.DB.SaveSyslogMessage(msg); err != nil {

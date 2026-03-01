@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.9] - 2026-03-01
+
+### Fixed
+- **Syslog TCP read deadline**: Moved `SetReadDeadline` inside read loop so it resets per-read instead of expiring 60s after connection start
+- **Syslog TCP IPv6 source IP**: Use `net.SplitHostPort()` instead of `strings.LastIndex(":")` which breaks on IPv6 addresses
+
 ## [0.10.8] - 2026-03-01
 
 ### Fixed
