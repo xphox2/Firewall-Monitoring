@@ -222,6 +222,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/probes/pending", handler.GetPendingProbes)
 		admin.POST("/api/probes/:id/approve", handler.ApproveProbe)
 		admin.POST("/api/probes/:id/reject", handler.RejectProbe)
+		admin.POST("/api/probes/:id/regenerate-key", handler.RegenerateProbeKey)
 
 		admin.GET("/api/connections", handler.GetFortiGateConnections)
 		admin.POST("/api/connections", handler.CreateFortiGateConnection)

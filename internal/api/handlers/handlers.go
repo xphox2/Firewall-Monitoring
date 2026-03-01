@@ -1096,6 +1096,20 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		return
 	}
 
+	// Create SystemSetting so RegisterProbe can look up this probe by key
+	if probe.RegistrationKey != "" {
+		setting := models.SystemSetting{
+			Key:      "probe_registration_" + probe.RegistrationKey,
+			Value:    probe.Name,
+			Type:     "string",
+			Label:    "Probe Registration Key for " + probe.Name,
+			Category: "probes",
+		}
+		if err := h.db.Gorm().Create(&setting).Error; err != nil {
+			log.Printf("Warning: Failed to create registration setting for probe %s: %v", probe.Name, err)
+		}
+	}
+
 	probe.TLSCertPath = "********"
 	probe.TLSKeyPath = "********"
 	probe.ServerTLSCert = "********"
@@ -1768,43 +1782,89 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 
 	existingProbe := &models.Probe{}
 	err = h.db.Gorm().Where("name = ?", setting.Value).First(existingProbe).Error
-	if err == nil && existingProbe.ID > 0 {
-		if existingProbe.ApprovalStatus == "approved" {
-			c.JSON(http.StatusOK, gin.H{
-				"success":    true,
-				"probe_id":   existingProbe.ID,
-				"probe_name": existingProbe.Name,
-				"approved":   true,
-			})
-			return
-		}
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Probe pending approval"})
+	if err != nil || existingProbe.ID == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Probe not found — it may have been deleted"})
 		return
 	}
 
-	probeName := "probe-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-
-	probe := &models.Probe{
-		Name:            probeName,
-		RegistrationKey: req.RegistrationKey,
-		Status:          "online",
-		ApprovalStatus:  "approved",
-		ApprovedAt:      func() *time.Time { t := time.Now(); return &t }(),
-	}
-
-	if err := h.db.Gorm().Create(probe).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to register probe"})
+	// If already approved and online, just return success
+	if existingProbe.ApprovalStatus == "approved" && existingProbe.Status == "online" {
+		c.JSON(http.StatusOK, gin.H{
+			"success":    true,
+			"probe_id":   existingProbe.ID,
+			"probe_name": existingProbe.Name,
+			"approved":   true,
+		})
 		return
 	}
 
-	h.db.Gorm().Model(&models.SystemSetting{}).Where("key = ?", "probe_registration_"+req.RegistrationKey).Update("used", "true")
+	// Link the remote probe: set online, auto-approve (admin created it explicitly)
+	now := time.Now()
+	h.db.Gorm().Model(existingProbe).Updates(map[string]interface{}{
+		"status":          "online",
+		"approval_status": "approved",
+		"approved_at":     now,
+		"last_seen":       now,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
-		"probe_id":   probe.ID,
-		"probe_name": probe.Name,
+		"probe_id":   existingProbe.ID,
+		"probe_name": existingProbe.Name,
 		"approved":   true,
 	})
+}
+
+func (h *Handler) RegenerateProbeKey(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	probe, err := h.db.GetProbe(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		return
+	}
+
+	// Delete old SystemSetting for the previous key
+	if probe.RegistrationKey != "" {
+		h.db.Gorm().Where("key = ?", "probe_registration_"+probe.RegistrationKey).Delete(&models.SystemSetting{})
+	}
+
+	// Generate new key
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate key"))
+		return
+	}
+	newKey := hex.EncodeToString(keyBytes)
+
+	// Update probe record
+	h.db.Gorm().Model(probe).Update("registration_key", newKey)
+
+	// Create new SystemSetting
+	setting := models.SystemSetting{
+		Key:      "probe_registration_" + newKey,
+		Value:    probe.Name,
+		Type:     "string",
+		Label:    "Probe Registration Key for " + probe.Name,
+		Category: "probes",
+	}
+	if err := h.db.Gorm().Create(&setting).Error; err != nil {
+		log.Printf("Warning: Failed to create registration setting for probe %s: %v", probe.Name, err)
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"registration_key": newKey,
+	}))
 }
 
 func (h *Handler) ProbeHeartbeat(c *gin.Context) {

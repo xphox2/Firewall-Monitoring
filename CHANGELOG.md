@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.3] - 2026-02-28
+
+### Fixed
+- **Broken probe registration flow**: `CreateProbe` now creates the `SystemSetting` entry that `RegisterProbe` expects, so remote probes can actually register
+- **Duplicate probe on registration**: `RegisterProbe` now links to the existing admin-created probe instead of creating a duplicate with an auto-generated name
+- **Probe auto-approval**: When a remote probe registers with an admin-created key, it is automatically approved and set online
+
+### Added
+- **Regenerate registration key**: New endpoint `POST /api/probes/:id/regenerate-key` lets admins regenerate a lost key (old key is immediately invalidated)
+- **Deploy Instructions modal**: After creating a probe, shows copy-paste-ready environment variables (`PROBE_NAME`, `PROBE_SITE_ID`, `PROBE_REGISTRATION_KEY`, `PROBE_SERVER_URL`) for the remote machine
+- **Deploy Info button**: Each probe in the table has a "Deploy Info" button to retrieve deployment instructions at any time
+
+### Changed
+- **Simplified Add Probe form**: Removed technical deployment fields (Listen Address, Listen Port, Server URL) that belong on the remote machine, not in admin config
+- **Cleaner probe table**: Replaced Listen Address and Registration Key columns with Approval status column; shows description inline under probe name
+- **Filter tabs**: Now filter by approval status (pending/approved/rejected) instead of connection status
+
 ## [0.10.2] - 2026-02-28
 
 ### Fixed

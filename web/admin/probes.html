@@ -19,24 +19,28 @@
         .header h1 { font-size: 1.8rem; }
 
         .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
-        .card h2 { font-size: 1.2rem; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .card h2 button { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
 
-        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
         .btn:hover { background: #2ea043; }
         .btn.danger { background: #da3633; }
+        .btn.danger:hover { background: #f85149; }
         .btn.secondary { background: #30363d; }
+        .btn.secondary:hover { background: #484f58; }
+        .btn.info { background: #1f6feb; }
+        .btn.info:hover { background: #388bfd; }
         .btn.small { padding: 4px 10px; font-size: 0.8rem; }
+        .btn.warning { background: #9e6a03; }
+        .btn.warning:hover { background: #bb8009; }
 
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
         th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
         tr:hover { background: #21262d; }
 
-        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
-        .status-badge.up, .status-badge.online, .status-badge.approved { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
-        .status-badge.down, .status-badge.offline, .status-badge.rejected { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-        .status-badge.warning, .status-badge.pending { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
+        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
+        .status-badge.online, .status-badge.approved { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .status-badge.offline, .status-badge.rejected { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .status-badge.pending { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
         .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
 
         .form-group { margin-bottom: 15px; }
@@ -45,7 +49,7 @@
 
         .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
         .modal.active { display: flex; }
-        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 600px; max-width: 90%; max-height: 90vh; overflow-y: auto; }
         .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
         .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 
@@ -56,19 +60,29 @@
         .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
         .section-header h3 { font-size: 1rem; color: #8b949e; }
 
-        .pending-section { border: 2px solid #f0883e; }
-        .pending-section h2 { color: #f0883e; }
-
-        .actions { display: flex; gap: 5px; }
-
-        .key-display { background: #0d1117; padding: 10px; border-radius: 6px; font-family: monospace; word-break: break-all; margin-top: 5px; }
-        .key-warning { color: #f0883e; font-size: 0.8rem; margin-top: 5px; }
+        .actions { display: flex; gap: 5px; flex-wrap: wrap; }
 
         .filter-tabs { display: flex; gap: 10px; margin-bottom: 20px; }
         .filter-tab { padding: 8px 16px; background: #21262d; border: none; border-radius: 6px; color: #8b949e; cursor: pointer; }
         .filter-tab.active { background: #238636; color: #fff; }
 
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .deploy-section { margin-top: 20px; }
+        .deploy-section h3 { font-size: 1.1rem; margin-bottom: 15px; color: #58a6ff; }
+        .deploy-instructions { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
+        .deploy-instructions p { color: #8b949e; margin-bottom: 12px; font-size: 0.9rem; line-height: 1.5; }
+        .deploy-instructions .step { margin-bottom: 16px; }
+        .deploy-instructions .step-label { color: #fff; font-weight: 600; margin-bottom: 6px; font-size: 0.9rem; }
+
+        .env-block { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.6; position: relative; white-space: pre-wrap; word-break: break-all; color: #e6edf3; }
+        .env-block .env-key { color: #79c0ff; }
+        .env-block .env-val { color: #a5d6ff; }
+
+        .copy-btn { position: absolute; top: 8px; right: 8px; background: #30363d; border: 1px solid #484f58; color: #8b949e; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+        .copy-btn:hover { background: #484f58; color: #fff; }
+
+        .key-display { background: #0d1117; padding: 12px; border-radius: 6px; font-family: monospace; word-break: break-all; border: 1px solid #30363d; color: #58a6ff; font-size: 0.9rem; }
+
+        .info-text { color: #8b949e; font-size: 0.85rem; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -110,9 +124,8 @@
                         <th>Name</th>
                         <th>Site</th>
                         <th>Status</th>
+                        <th>Approval</th>
                         <th>Last Seen</th>
-                        <th>Listen Address</th>
-                        <th>Registration Key</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -121,7 +134,7 @@
         </div>
     </div>
 
-    <!-- Add/Edit Probe Modal -->
+    <!-- Add/Edit Probe Modal (simplified: Name, Site, Description only) -->
     <div class="modal" id="probe-modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -132,7 +145,7 @@
                 <input type="hidden" id="probe-id">
                 <div class="form-group">
                     <label>Probe Name</label>
-                    <input type="text" id="probe-name" required>
+                    <input type="text" id="probe-name" required placeholder="e.g. nyc-office-probe">
                 </div>
                 <div class="form-group">
                     <label>Site</label>
@@ -141,20 +154,8 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Listen Address</label>
-                    <input type="text" id="probe-address" value="0.0.0.0">
-                </div>
-                <div class="form-group">
-                    <label>Listen Port</label>
-                    <input type="number" id="probe-port" value="8089">
-                </div>
-                <div class="form-group">
-                    <label>Server URL</label>
-                    <input type="text" id="probe-server-url" placeholder="https://your-server.com">
-                </div>
-                <div class="form-group">
                     <label>Description</label>
-                    <textarea id="probe-description" rows="3"></textarea>
+                    <textarea id="probe-description" rows="3" placeholder="Optional description of this probe's purpose"></textarea>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" onclick="closeProbeModal()">Cancel</button>
@@ -164,18 +165,37 @@
         </div>
     </div>
 
-    <!-- Registration Key Modal -->
-    <div class="modal" id="key-modal">
+    <!-- Deploy Instructions Modal -->
+    <div class="modal" id="deploy-modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Registration Key Created</h2>
-                <span onclick="closeKeyModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+                <h2>Deploy Probe</h2>
+                <span onclick="closeDeployModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
             </div>
-            <p style="color: #f0883e; margin-bottom: 15px;">Copy this key now. It will not be shown again!</p>
-            <div class="key-display" id="new-reg-key"></div>
+            <div class="deploy-instructions">
+                <div class="step">
+                    <div class="step-label">1. Registration Key</div>
+                    <div class="key-display" id="deploy-key"></div>
+                    <div style="margin-top: 8px; display: flex; gap: 8px;">
+                        <button class="btn small secondary" onclick="copyDeployKey()">Copy Key</button>
+                        <button class="btn small warning" onclick="regenerateKey()">Regenerate Key</button>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-label">2. Environment Variables</div>
+                    <p>Set these on the remote machine where the probe binary will run:</p>
+                    <div class="env-block" id="deploy-env">
+                        <button class="copy-btn" onclick="copyEnvBlock()">Copy</button>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-label">3. Run the Probe</div>
+                    <p>Start the probe binary on your remote machine. It will automatically register with the server using the key above.</p>
+                </div>
+            </div>
+            <input type="hidden" id="deploy-probe-id">
             <div class="modal-footer">
-                <button type="button" class="btn" onclick="copyKey()">Copy to Clipboard</button>
-                <button type="button" class="btn secondary" onclick="closeKeyModal()">Close</button>
+                <button type="button" class="btn secondary" onclick="closeDeployModal()">Close</button>
             </div>
         </div>
     </div>
@@ -184,8 +204,8 @@
         const API_BASE = '/admin/api';
         let currentProbes = [];
         let currentSites = [];
-        let showKey = null;
         let csrfTokenCache = '';
+        let currentDeployProbe = null;
 
         async function fetchCsrfToken() {
             try {
@@ -271,33 +291,40 @@
 
         function populateSiteSelect() {
             const select = document.getElementById('probe-site');
-            select.innerHTML = '<option value="">Select a site</option>' + 
+            select.innerHTML = '<option value="">Select a site</option>' +
                 currentSites.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+        }
+
+        function getServerUrl() {
+            return window.location.origin;
         }
 
         function renderProbes(probes) {
             const tbody = document.querySelector('#probes-table tbody');
             if (probes.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="loading">No probes configured</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="loading">No probes configured</td></tr>';
                 return;
             }
-            tbody.innerHTML = probes.map(p => `
+            tbody.innerHTML = probes.map(p => {
+                const approvalStatus = p.approval_status || 'pending';
+                const lastSeen = p.last_seen && p.last_seen !== '0001-01-01T00:00:00Z'
+                    ? new Date(p.last_seen).toLocaleString() : 'Never';
+                return `
                 <tr>
-                    <td>${escapeHtml(p.name)}</td>
+                    <td><strong>${escapeHtml(p.name)}</strong>${p.description ? '<br><span class="info-text">' + escapeHtml(p.description) + '</span>' : ''}</td>
                     <td>${escapeHtml(p.site?.name || '-')}</td>
-                    <td><span class="status-badge ${escapeHtml(p.status)}">${escapeHtml(p.status).toUpperCase()}</span></td>
-                    <td>${p.last_seen ? new Date(p.last_seen).toLocaleString() : 'Never'}</td>
-                    <td>${escapeHtml(p.listen_address)}:${p.listen_port}</td>
-                    <td>${p.registration_key ? '******' : '-'}</td>
+                    <td><span class="status-badge ${escapeHtml(p.status)}">${escapeHtml(p.status || 'offline').toUpperCase()}</span></td>
+                    <td><span class="status-badge ${escapeHtml(approvalStatus)}">${escapeHtml(approvalStatus).toUpperCase()}</span></td>
+                    <td>${lastSeen}</td>
                     <td class="actions">
-                        ${p.status === 'pending' ? `<button class="btn small" onclick="approveProbe(${p.id})">Approve</button>` : ''}
-                        ${p.status === 'pending' ? `<button class="btn small danger" onclick="rejectProbe(${p.id})">Reject</button>` : ''}
-                        <button class="btn small secondary" onclick="testConnection(${p.id})">Test</button>
+                        <button class="btn small info" onclick="showDeployInfo(${p.id})">Deploy Info</button>
+                        ${approvalStatus === 'pending' ? `<button class="btn small" onclick="approveProbe(${p.id})">Approve</button>` : ''}
+                        ${approvalStatus === 'pending' ? `<button class="btn small danger" onclick="rejectProbe(${p.id})">Reject</button>` : ''}
                         <button class="btn small secondary" onclick="editProbe(${p.id})">Edit</button>
                         <button class="btn small danger" onclick="deleteProbe(${p.id})">Delete</button>
                     </td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
         }
 
         function showAddModal() {
@@ -315,16 +342,13 @@
         function editProbe(id) {
             const probe = currentProbes.find(p => p.id === id);
             if (!probe) return;
-            
+
             loadSites().then(() => {
                 document.getElementById('probe-modal').classList.add('active');
                 document.getElementById('probe-modal-title').textContent = 'Edit Probe';
                 document.getElementById('probe-id').value = probe.id;
                 document.getElementById('probe-name').value = probe.name;
                 document.getElementById('probe-site').value = probe.site_id || '';
-                document.getElementById('probe-address').value = probe.listen_address || '0.0.0.0';
-                document.getElementById('probe-port').value = probe.listen_port || 8089;
-                document.getElementById('probe-server-url').value = probe.server_url || '';
                 document.getElementById('probe-description').value = probe.description || '';
             });
         }
@@ -335,9 +359,6 @@
             const data = {
                 name: document.getElementById('probe-name').value,
                 site_id: parseInt(document.getElementById('probe-site').value),
-                listen_address: document.getElementById('probe-address').value,
-                listen_port: parseInt(document.getElementById('probe-port').value),
-                server_url: document.getElementById('probe-server-url').value,
                 description: document.getElementById('probe-description').value,
                 enabled: true
             };
@@ -346,14 +367,14 @@
                 const method = id ? 'PUT' : 'POST';
                 const url = id ? `${API_BASE}/probes/${id}` : `${API_BASE}/probes`;
                 const result = await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
-                
+
                 closeProbeModal();
                 loadProbes();
-                
+
                 if (!id && result && result.data) {
-                    showKey = result.data.registration_key;
-                    document.getElementById('new-reg-key').textContent = showKey;
-                    document.getElementById('key-modal').classList.add('active');
+                    // New probe created — show deploy instructions immediately
+                    showDeployInfoForProbe(result.data);
+                    showSuccess('Probe created — copy the deploy instructions below');
                 } else {
                     showSuccess(id ? 'Probe updated' : 'Probe created');
                 }
@@ -362,15 +383,91 @@
             }
         });
 
-        function closeKeyModal() {
-            document.getElementById('key-modal').classList.remove('active');
-            showKey = null;
+        function showDeployInfoForProbe(probe) {
+            currentDeployProbe = probe;
+            document.getElementById('deploy-probe-id').value = probe.id;
+
+            const key = probe.registration_key || '(no key — click Regenerate Key)';
+            document.getElementById('deploy-key').textContent = key;
+
+            const serverUrl = getServerUrl();
+            const envContent = `PROBE_NAME=${probe.name}\nPROBE_SITE_ID=${probe.site_id || 0}\nPROBE_REGISTRATION_KEY=${probe.registration_key || 'MISSING'}\nPROBE_SERVER_URL=${serverUrl}`;
+
+            const envBlock = document.getElementById('deploy-env');
+            // Keep the copy button, set env text
+            envBlock.innerHTML = '<button class="copy-btn" onclick="copyEnvBlock()">Copy</button>' +
+                escapeHtml(envContent);
+
+            document.getElementById('deploy-modal').classList.add('active');
         }
 
-        function copyKey() {
-            if (showKey) {
-                navigator.clipboard.writeText(showKey);
+        async function showDeployInfo(id) {
+            const probe = currentProbes.find(p => p.id === id);
+            if (!probe) return;
+
+            // Fetch full probe data to get the registration key
+            try {
+                const result = await apiFetch(`${API_BASE}/probes/${id}`);
+                if (result && result.data) {
+                    showDeployInfoForProbe(result.data);
+                }
+            } catch (err) {
+                showError('Failed to load probe details: ' + err.message);
+            }
+        }
+
+        function closeDeployModal() {
+            document.getElementById('deploy-modal').classList.remove('active');
+            currentDeployProbe = null;
+        }
+
+        function copyDeployKey() {
+            const key = document.getElementById('deploy-key').textContent;
+            if (key && !key.startsWith('(')) {
+                navigator.clipboard.writeText(key);
                 showSuccess('Key copied to clipboard');
+            }
+        }
+
+        function copyEnvBlock() {
+            const envBlock = document.getElementById('deploy-env');
+            // Get text content excluding the copy button text
+            const text = envBlock.textContent.replace('Copy', '').trim();
+            navigator.clipboard.writeText(text);
+            showSuccess('Environment variables copied to clipboard');
+        }
+
+        async function regenerateKey() {
+            const probeId = document.getElementById('deploy-probe-id').value;
+            if (!probeId) return;
+
+            if (!confirm('Regenerate the registration key? The old key will stop working immediately.')) return;
+
+            try {
+                const result = await apiFetch(`${API_BASE}/probes/${probeId}/regenerate-key`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+
+                if (result && result.data) {
+                    const newKey = result.data.registration_key;
+                    document.getElementById('deploy-key').textContent = newKey;
+
+                    // Update env block
+                    if (currentDeployProbe) {
+                        currentDeployProbe.registration_key = newKey;
+                        const serverUrl = getServerUrl();
+                        const envContent = `PROBE_NAME=${currentDeployProbe.name}\nPROBE_SITE_ID=${currentDeployProbe.site_id || 0}\nPROBE_REGISTRATION_KEY=${newKey}\nPROBE_SERVER_URL=${serverUrl}`;
+                        const envBlock = document.getElementById('deploy-env');
+                        envBlock.innerHTML = '<button class="copy-btn" onclick="copyEnvBlock()">Copy</button>' +
+                            escapeHtml(envContent);
+                    }
+
+                    showSuccess('Registration key regenerated');
+                    loadProbes();
+                }
+            } catch (err) {
+                showError('Error regenerating key: ' + err.message);
             }
         }
 
@@ -387,7 +484,7 @@
 
         async function approveProbe(id) {
             try {
-                await apiFetch(`${API_BASE}/probes/${id}/approve`, { 
+                await apiFetch(`${API_BASE}/probes/${id}/approve`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ notes: '' })
@@ -403,7 +500,7 @@
             const reason = prompt('Enter rejection reason:');
             if (!reason) return;
             try {
-                await apiFetch(`${API_BASE}/probes/${id}/reject`, { 
+                await apiFetch(`${API_BASE}/probes/${id}/reject`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ reason })
@@ -415,37 +512,6 @@
             }
         }
 
-        async function testConnection(id) {
-            const probe = currentProbes.find(p => p.id === id);
-            if (!probe) return;
-
-            const btn = event.target;
-            btn.textContent = 'Testing...';
-            btn.disabled = true;
-
-            try {
-                const result = await apiFetch(`${API_BASE}/probes/test`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        listen_address: probe.listen_address,
-                        listen_port: probe.listen_port
-                    })
-                });
-
-                if (result && result.data?.online) {
-                    alert('Connection successful!');
-                } else {
-                    alert('Connection failed: ' + (result?.data?.message || 'Unknown error'));
-                }
-            } catch (err) {
-                alert('Error: ' + err.message);
-            } finally {
-                btn.textContent = 'Test';
-                btn.disabled = false;
-            }
-        }
-
         document.querySelectorAll('.filter-tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
@@ -454,7 +520,7 @@
                 if (filter === 'all') {
                     renderProbes(currentProbes);
                 } else {
-                    renderProbes(currentProbes.filter(p => p.status === filter));
+                    renderProbes(currentProbes.filter(p => (p.approval_status || 'pending') === filter));
                 }
             });
         });
