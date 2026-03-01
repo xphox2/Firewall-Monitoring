@@ -52,6 +52,15 @@ func main() {
 		db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword)
 	}
 
+	// Periodically prune expired login attempts to prevent unbounded map growth
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			authManager.PruneExpiredAttempts()
+		}
+	}()
+
 	if cfg.IsGeneratedPassword() {
 		log.Println("========================================")
 		log.Println("AUTO-GENERATED ADMIN PASSWORD")
@@ -79,11 +88,12 @@ func main() {
 	setupRoutes(router, cfg, handler, authManager)
 
 	server := &http.Server{
-		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
-		Handler:      router,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		Addr:           fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
+		Handler:        router,
+		ReadTimeout:    cfg.Server.ReadTimeout,
+		WriteTimeout:   cfg.Server.WriteTimeout,
+		IdleTimeout:    cfg.Server.IdleTimeout,
+		MaxHeaderBytes: 1 << 16, // 64KB
 	}
 
 	go func() {
@@ -118,6 +128,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.RateLimiter(cfg))
+	router.Use(middleware.BodySizeLimit(1 << 20)) // 1MB max request body
 
 	router.Static("/static", "./static")
 	router.LoadHTMLGlob("./web/**/*.html")
@@ -138,7 +149,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
 
 		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)
-		api.POST("/auth/logout", handler.Logout)
 	}
 
 	admin := router.Group("/admin")
@@ -178,6 +188,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/connections", handler.CreateFortiGateConnection)
 		admin.PUT("/api/connections/:id", handler.UpdateFortiGateConnection)
 		admin.DELETE("/api/connections/:id", handler.DeleteFortiGateConnection)
+
+		admin.POST("/api/logout", handler.Logout)
 
 		admin.GET("/api/settings", handler.GetSettings)
 		admin.POST("/api/settings", handler.UpdateSettings)

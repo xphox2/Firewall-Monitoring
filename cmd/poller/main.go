@@ -77,6 +77,11 @@ func (p *Poller) pollAllDevices() {
 		return
 	}
 
+	// Refresh alert thresholds from DB so admin UI changes take effect
+	if p.alertManager != nil {
+		p.alertManager.RefreshThresholds(p.db.Gorm())
+	}
+
 	devices, err := p.db.GetAllFortiGates()
 	if err != nil {
 		log.Printf("Error getting devices: %v", err)

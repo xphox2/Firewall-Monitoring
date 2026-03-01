@@ -194,6 +194,32 @@ func GenerateSecureToken(length int) (string, error) {
 	return encoded[:length], nil
 }
 
+// PruneExpiredAttempts removes login attempt entries where all attempts have expired.
+func (am *AuthManager) PruneExpiredAttempts() {
+	lockoutDuration := 15 * time.Minute
+	if am.config != nil {
+		lockoutDuration = am.config.Auth.LockoutDuration
+	}
+	cutoff := time.Now().Add(-lockoutDuration)
+
+	am.attemptsMu.Lock()
+	defer am.attemptsMu.Unlock()
+
+	for username, attempts := range am.loginAttempts {
+		recent := make([]time.Time, 0, len(attempts))
+		for _, t := range attempts {
+			if t.After(cutoff) {
+				recent = append(recent, t)
+			}
+		}
+		if len(recent) == 0 {
+			delete(am.loginAttempts, username)
+		} else {
+			am.loginAttempts[username] = recent
+		}
+	}
+}
+
 func (am *AuthManager) UpdatePassword(username, newPassword string) error {
 	if am.db == nil {
 		return errors.New("database not configured")

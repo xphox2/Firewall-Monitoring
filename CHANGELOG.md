@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.7] - 2026-02-28
+
+### Security
+- Logout endpoint moved inside CSRF-protected admin group (`POST /admin/api/logout`)
+- Request body size limit middleware (1MB) prevents memory exhaustion via oversized JSON
+- `MaxHeaderBytes` (64KB) set on HTTP server to limit header-based DoS
+- Login attempts map periodically pruned (10-minute ticker) to prevent unbounded memory growth
+
+### Fixed
+- **Admin settings now applied at runtime**: `AlertManager.RefreshThresholds()` reads threshold settings from DB before each poll cycle, making admin UI changes effective without restart
+- Trap OID prefix includes leading dot (`.1.3.6.1.4.1.12356.101.2.0`) to match gosnmp output format
+- `GetHardwareSensors` now parses sensor name, value, and alarm status from FortiGate HW sensor sub-OIDs instead of returning empty structs
+- Admin HTML logout button uses `apiFetch` with CSRF token instead of plain `fetch`
+
 ## [0.8.6] - 2026-02-28
 
 ### Security

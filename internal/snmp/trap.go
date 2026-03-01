@@ -66,7 +66,7 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 	for _, v := range packet.Variables {
 		oid := v.Name
 
-		if strings.HasPrefix(oid, "1.3.6.1.4.1.12356.101.2.0") {
+		if strings.HasPrefix(oid, ".1.3.6.1.4.1.12356.101.2.0") {
 			trap.TrapOID = oid
 			trap.TrapType = t.getTrapType(oid)
 			trap.Severity = t.getTrapSeverity(oid)

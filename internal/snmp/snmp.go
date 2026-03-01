@@ -41,6 +41,10 @@ var (
 	OIDIfOutErrors     = ".1.3.6.1.2.1.2.2.1.20"
 
 	OIDHWSensorTable = ".1.3.6.1.4.1.12356.101.4.3.2"
+	OIDHWSensorEntry = ".1.3.6.1.4.1.12356.101.4.3.2.1"
+	OIDHWSensorName  = ".1.3.6.1.4.1.12356.101.4.3.2.1.2"
+	OIDHWSensorValue = ".1.3.6.1.4.1.12356.101.4.3.2.1.3"
+	OIDHWSensorAlarm = ".1.3.6.1.4.1.12356.101.4.3.2.1.4"
 	OIDHWSensorCount = ".1.3.6.1.4.1.12356.101.4.3.1"
 
 	OIDHaTable     = ".1.3.6.1.4.1.12356.101.13.2.1"
@@ -289,20 +293,60 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 }
 
 func (s *SNMPClient) GetHardwareSensors() ([]models.HardwareSensor, error) {
-	pdus, err := s.Walk(OIDHWSensorTable)
+	pdus, err := s.Walk(OIDHWSensorEntry)
 	if err != nil {
 		return nil, err
 	}
 
-	var sensors []models.HardwareSensor
-	for range pdus {
-		sensor := models.HardwareSensor{
-			Timestamp: time.Now(),
+	sensorMap := make(map[int]*models.HardwareSensor)
+
+	for _, pdu := range pdus {
+		name := pdu.Name
+		if strings.HasPrefix(name, OIDHWSensorName+".") {
+			idx := getIndexFromOID(name, OIDHWSensorName)
+			if idx < 0 {
+				continue
+			}
+			sensor := getOrCreateSensor(sensorMap, idx)
+			sensor.Name = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, OIDHWSensorValue+".") {
+			idx := getIndexFromOID(name, OIDHWSensorValue)
+			if idx < 0 {
+				continue
+			}
+			sensor := getOrCreateSensor(sensorMap, idx)
+			sensor.Value = float64(gosnmp.ToBigInt(pdu.Value).Int64())
+		} else if strings.HasPrefix(name, OIDHWSensorAlarm+".") {
+			idx := getIndexFromOID(name, OIDHWSensorAlarm)
+			if idx < 0 {
+				continue
+			}
+			sensor := getOrCreateSensor(sensorMap, idx)
+			alarm := gosnmp.ToBigInt(pdu.Value).Int64()
+			if alarm == 0 {
+				sensor.Status = "normal"
+			} else {
+				sensor.Status = "alarm"
+			}
 		}
-		sensors = append(sensors, sensor)
 	}
 
+	now := time.Now()
+	sensors := make([]models.HardwareSensor, 0, len(sensorMap))
+	for _, sensor := range sensorMap {
+		sensor.Timestamp = now
+		sensors = append(sensors, *sensor)
+	}
 	return sensors, nil
+}
+
+func getOrCreateSensor(sensors map[int]*models.HardwareSensor, index int) *models.HardwareSensor {
+	if s, exists := sensors[index]; exists {
+		return s
+	}
+	s := &models.HardwareSensor{}
+	sensors[index] = s
+	return s
 }
 
 func getIndexFromOID(oid, base string) int {

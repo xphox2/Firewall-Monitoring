@@ -2,12 +2,16 @@ package alerts
 
 import (
 	"fmt"
+	"log"
+	"strconv"
 	"sync"
 	"time"
 
 	"fortiGate-Mon/internal/config"
 	"fortiGate-Mon/internal/models"
 	"fortiGate-Mon/internal/notifier"
+
+	"gorm.io/gorm"
 )
 
 type AlertManager struct {
@@ -178,6 +182,46 @@ func (am *AlertManager) PruneExpiredCooldowns() {
 	for key, lastTime := range am.lastAlert {
 		if now.Sub(lastTime) > am.alertCooldown*2 {
 			delete(am.lastAlert, key)
+		}
+	}
+}
+
+// RefreshThresholds reads alert threshold settings from the database and updates
+// the running config. This ensures admin UI changes take effect without restart.
+func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+
+	var settings []models.SystemSetting
+	if err := db.Where("`key` IN ?", []string{
+		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
+	}).Find(&settings).Error; err != nil {
+		log.Printf("RefreshThresholds: failed to read settings: %v", err)
+		return
+	}
+
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	for _, s := range settings {
+		switch s.Key {
+		case "cpu_threshold":
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+				am.config.Alerts.CPUThreshold = v
+			}
+		case "memory_threshold":
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+				am.config.Alerts.MemoryThreshold = v
+			}
+		case "disk_threshold":
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+				am.config.Alerts.DiskThreshold = v
+			}
+		case "session_threshold":
+			if v, err := strconv.Atoi(s.Value); err == nil && v > 0 {
+				am.config.Alerts.SessionThreshold = v
+			}
 		}
 	}
 }

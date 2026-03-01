@@ -864,7 +864,7 @@
 
         document.getElementById('logout-btn').addEventListener('click', async (e) => {
             e.preventDefault();
-            await fetch('/api/auth/logout', { method: 'POST' });
+            await apiFetch('/admin/api/logout', { method: 'POST' });
             window.location.href = '/';
         });
 

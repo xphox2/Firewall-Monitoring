@@ -180,6 +180,16 @@ func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// BodySizeLimit rejects request bodies larger than maxBytes.
+func BodySizeLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		}
+		c.Next()
+	}
+}
+
 func SecureHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
