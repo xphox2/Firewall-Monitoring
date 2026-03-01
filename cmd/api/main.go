@@ -167,6 +167,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/devices", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/settings", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})

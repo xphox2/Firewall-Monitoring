@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.4] - 2026-02-28
+
+### Fixed
+- **404 on /admin/devices**: Added missing route so navigating directly to `/admin/devices` works
+- **URL-based tab activation**: Navigating to `/admin/devices`, `/admin/connections`, or `/admin/settings` now activates the correct tab in the SPA instead of always showing dashboard
+
 ## [0.10.3] - 2026-02-28
 
 ### Fixed

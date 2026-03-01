@@ -879,8 +879,30 @@
             window.location.href = '/';
         });
 
+        // Activate tab based on URL path (e.g. /admin/devices -> devices tab)
+        function activateTabFromUrl() {
+            const path = window.location.pathname.replace(/\/$/, '');
+            const segments = path.split('/');
+            const lastSegment = segments[segments.length - 1];
+            const pageMap = { 'dashboard': 'dashboard', 'devices': 'devices', 'connections': 'connections', 'settings': 'settings' };
+            const page = pageMap[lastSegment];
+            if (page) {
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
+                if (navItem) navItem.classList.add('active');
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                const pageEl = document.getElementById('page-' + page);
+                if (pageEl) pageEl.classList.add('active');
+                document.getElementById('page-title').textContent = navItem ? navItem.textContent : page;
+                return page;
+            }
+            return 'dashboard';
+        }
+
+        const initialPage = activateTabFromUrl();
+
         // Initial load: fetch CSRF token first
-        fetchCsrfToken().then(() => loadDashboard());
+        fetchCsrfToken().then(() => loadPageData(initialPage));
 
         // Auto-refresh dashboard every 30s
         adminRefreshTimer = setInterval(() => {
