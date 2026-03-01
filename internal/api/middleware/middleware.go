@@ -147,14 +147,14 @@ func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" || c.Request.Method == "PATCH" {
 			csrfToken := c.GetHeader("X-CSRF-Token")
 			if csrfToken == "" {
-				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF token missing"})
 				c.Abort()
 				return
 			}
 
 			authToken, err := c.Cookie("auth_token")
 			if err != nil || authToken == "" {
-				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "Not authenticated"})
 				c.Abort()
 				return
 			}
@@ -164,14 +164,14 @@ func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 				secret = cfg.Server.JWTSecretKey
 			}
 			if secret == "" {
-				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "Server misconfiguration: JWT_SECRET_KEY not set"})
 				c.Abort()
 				return
 			}
 
 			expected := GenerateCSRFToken(authToken, secret)
 			if !hmac.Equal([]byte(csrfToken), []byte(expected)) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF validation failed"})
+				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF token invalid"})
 				c.Abort()
 				return
 			}
@@ -229,4 +229,3 @@ func RequestLogger() gin.HandlerFunc {
 		}
 	}
 }
-
