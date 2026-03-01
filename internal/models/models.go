@@ -211,19 +211,19 @@ type Site struct {
 type Probe struct {
 	ID              uint       `json:"id" gorm:"primaryKey"`
 	Name            string     `json:"name" gorm:"uniqueIndex;not null"`
-	SiteID          uint       `json:"site_id" gorm:"not null;index"`
+	SiteID          uint       `json:"site_id" gorm:"index"`
 	Site            *Site      `json:"site,omitempty" gorm:"foreignKey:SiteID"`
-	ListenAddress   string     `json:"listen_address"`
-	ListenPort      int        `json:"listen_port" gorm:"default:8089"`
+	RegistrationKey string     `json:"registration_key" gorm:"uniqueIndex"`
 	Enabled         bool       `json:"enabled" gorm:"default:true"`
-	Status          string     `json:"status" gorm:"default:pending"`          // pending, approved, rejected, offline
-	ApprovalStatus  string     `json:"approval_status" gorm:"default:pending"` // pending, approved, rejected
+	Status          string     `json:"status" gorm:"default:pending"`
+	ApprovalStatus  string     `json:"approval_status" gorm:"default:pending"`
 	ApprovedAt      *time.Time `json:"approved_at"`
 	ApprovedBy      *uint      `json:"approved_by"`
 	RejectedAt      *time.Time `json:"rejected_at"`
 	RejectedReason  string     `json:"rejected_reason"`
-	RegistrationKey string     `json:"registration_key" gorm:"uniqueIndex"` // Unique key for probe registration
 	LastSeen        time.Time  `json:"last_seen"`
+	ListenAddress   string     `json:"listen_address"`
+	ListenPort      int        `json:"listen_port" gorm:"default:8089"`
 	TLSCertPath     string     `json:"tls_cert_path"`
 	TLSKeyPath      string     `json:"tls_key_path"`
 	ServerURL       string     `json:"server_url"`
@@ -231,6 +231,11 @@ type Probe struct {
 	Description     string     `json:"description"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type ProbeSite struct {
+	ProbeID uint `json:"probe_id" gorm:"primaryKey"`
+	SiteID  uint `json:"site_id" gorm:"primaryKey"`
 }
 
 type ProbeApproval struct {

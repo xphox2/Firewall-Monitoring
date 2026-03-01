@@ -150,6 +150,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
 
 		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)
+
+		api.POST("/probes/register", handler.RegisterProbe)
+		api.POST("/probes/heartbeat", handler.ProbeHeartbeat)
 	}
 
 	admin := router.Group("/admin")

@@ -1719,3 +1719,98 @@ func isValidExternalIP(ipStr string) bool {
 	}
 	return len(addrs) > 0
 }
+
+func (h *Handler) RegisterProbe(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Database not available"})
+		return
+	}
+
+	var req struct {
+		RegistrationKey string `json:"registration_key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request"})
+		return
+	}
+
+	if req.RegistrationKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Registration key required"})
+		return
+	}
+
+	var setting models.SystemSetting
+	err := h.db.Gorm().Where("key = ?", "probe_registration_"+req.RegistrationKey).First(&setting).Error
+	if err != nil || setting.Value == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "Invalid registration key"})
+		return
+	}
+
+	existingProbe := &models.Probe{}
+	err = h.db.Gorm().Where("name = ?", setting.Value).First(existingProbe).Error
+	if err == nil && existingProbe.ID > 0 {
+		if existingProbe.ApprovalStatus == "approved" {
+			c.JSON(http.StatusOK, gin.H{
+				"success":    true,
+				"probe_id":   existingProbe.ID,
+				"probe_name": existingProbe.Name,
+				"approved":   true,
+			})
+			return
+		}
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Probe pending approval"})
+		return
+	}
+
+	probeName := "probe-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	probe := &models.Probe{
+		Name:            probeName,
+		RegistrationKey: req.RegistrationKey,
+		Status:          "online",
+		ApprovalStatus:  "approved",
+		ApprovedAt:      func() *time.Time { t := time.Now(); return &t }(),
+	}
+
+	if err := h.db.Gorm().Create(probe).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Failed to register probe"})
+		return
+	}
+
+	h.db.Gorm().Model(&models.SystemSetting{}).Where("key = ?", "probe_registration_"+req.RegistrationKey).Update("used", "true")
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"probe_id":   probe.ID,
+		"probe_name": probe.Name,
+		"approved":   true,
+	})
+}
+
+func (h *Handler) ProbeHeartbeat(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not available"})
+		return
+	}
+
+	var req struct {
+		ProbeID uint   `json:"probe_id"`
+		Status  string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	if req.ProbeID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Probe ID required"})
+		return
+	}
+
+	h.db.Gorm().Model(&models.Probe{}).Where("id = ?", req.ProbeID).Updates(map[string]interface{}{
+		"last_seen": time.Now(),
+		"status":    req.Status,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
