@@ -28,7 +28,8 @@
         tr:hover { background: #21262d; }
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
-        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+        .form-group select, .form-group textarea { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+        .form-group input { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
         .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
         .modal.active { display: flex; }
         .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 500px; max-width: 90%; }
@@ -81,25 +82,68 @@
             </div>
             <form id="site-form" onsubmit="saveSite(event)">
                 <input type="hidden" id="site-id">
+                <input type="hidden" id="csrf-token" name="csrf_token">
                 <div class="form-group">
                     <label>Site Name *</label>
                     <input type="text" id="site-name" required>
                 </div>
                 <div class="form-group">
-                    <label>Region</label>
-                    <input type="text" id="site-region" placeholder="e.g., North America">
+                    <label>Country</label>
+                    <select id="site-country">
+                        <option value="">Select Country</option>
+                        <option value="USA">United States</option>
+                        <option value="CAN">Canada</option>
+                        <option value="GBR">United Kingdom</option>
+                        <option value="DEU">Germany</option>
+                        <option value="FRA">France</option>
+                        <option value="NLD">Netherlands</option>
+                        <option value="AUS">Australia</option>
+                        <option value="JPN">Japan</option>
+                        <option value="SGP">Singapore</option>
+                        <option value="BRA">Brazil</option>
+                        <option value="IND">India</option>
+                        <option value="OTHER">Other</option>
+                    </select>
                 </div>
                 <div class="form-group">
-                    <label>Country</label>
-                    <input type="text" id="site-country" placeholder="e.g., United States">
+                    <label>Region</label>
+                    <select id="site-region">
+                        <option value="">Select Region</option>
+                        <option value="US-East">US East</option>
+                        <option value="US-West">US West</option>
+                        <option value="US-Central">US Central</option>
+                        <option value="EU-West">EU West</option>
+                        <option value="EU-Central">EU Central</option>
+                        <option value="APAC">Asia Pacific</option>
+                        <option value="LATAM">Latin America</option>
+                        <option value="OTHER">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Timezone</label>
+                    <select id="site-timezone">
+                        <option value="">Select Timezone</option>
+                        <option value="America/New_York">Eastern Time (ET)</option>
+                        <option value="America/Chicago">Central Time (CT)</option>
+                        <option value="America/Denver">Mountain Time (MT)</option>
+                        <option value="America/Los_Angeles">Pacific Time (PT)</option>
+                        <option value="America/Anchorage">Alaska Time (AKT)</option>
+                        <option value="Pacific/Honolulu">Hawaii Time (HST)</option>
+                        <option value="Europe/London">London (GMT/BST)</option>
+                        <option value="Europe/Paris">Paris (CET/CEST)</option>
+                        <option value="Europe/Berlin">Berlin (CET/CEST)</option>
+                        <option value="Europe/Amsterdam">Amsterdam (CET/CEST)</option>
+                        <option value="Asia/Tokyo">Tokyo (JST)</option>
+                        <option value="Asia/Singapore">Singapore (SGT)</option>
+                        <option value="Asia/Dubai">Dubai (GST)</option>
+                        <option value="Asia/Kolkata">India (IST)</option>
+                        <option value="Australia/Sydney">Sydney (AEST/AEDT)</option>
+                        <option value="America/Sao_Paulo">Sao Paulo (BRT)</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label>Address</label>
                     <textarea id="site-address" rows="2" placeholder="Physical address"></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Timezone</label>
-                    <input type="text" id="site-timezone" placeholder="e.g., America/New_York">
                 </div>
                 <div class="form-group">
                     <label>Description</label>
@@ -152,17 +196,25 @@
 
         function apiFetch(url, options) {
             options = options || {};
+            var csrfToken = getCsrfToken();
+            console.log('[Sites] API Request:', options.method || 'GET', url, 'CSRF:', csrfToken ? 'present' : 'MISSING');
+            
             return fetch(url, {
                 method: options.method || 'GET',
                 headers: Object.assign({
-                    'X-CSRF-Token': getCsrfToken(),
+                    'X-CSRF-Token': csrfToken,
                     'Content-Type': 'application/json'
                 }, options.headers || {}),
-                body: options.body ? JSON.stringify(options.body) : undefined
+                body: options.body ? JSON.stringify(options.body) : undefined,
+                credentials: 'same-origin'
             }).then(function(res) {
+                console.log('[Sites] Response:', res.status, res.statusText);
                 if (res.status === 401 || res.status === 302) {
                     window.location.href = '/admin/login';
                     return Promise.reject(new Error('Not authenticated'));
+                }
+                if (res.status === 419) {
+                    return Promise.reject(new Error('CSRF validation failed - please refresh the page'));
                 }
                 if (!res.ok) {
                     return res.json().then(function(err) { throw new Error(err.error || 'Request failed'); });
@@ -215,7 +267,9 @@
             document.getElementById('modal-title').textContent = 'Add Site';
             document.getElementById('site-form').reset();
             document.getElementById('site-id').value = '';
+            document.getElementById('csrf-token').value = getCsrfToken();
             document.getElementById('site-modal').classList.add('active');
+            console.log('[Sites] Add modal opened, CSRF set');
         };
 
         window.editSite = function(id) {
@@ -237,7 +291,9 @@
             document.getElementById('site-address').value = site.address || '';
             document.getElementById('site-timezone').value = site.timezone || '';
             document.getElementById('site-description').value = site.description || '';
+            document.getElementById('csrf-token').value = getCsrfToken();
             document.getElementById('site-modal').classList.add('active');
+            console.log('[Sites] Edit modal opened for site:', id);
         };
 
         window.closeModal = function() {
@@ -247,6 +303,9 @@
         window.saveSite = function(e) {
             e.preventDefault();
             
+            var csrfToken = getCsrfToken();
+            console.log('[Sites] Saving with CSRF:', csrfToken ? 'present' : 'MISSING');
+            
             var data = {
                 name: document.getElementById('site-name').value,
                 region: document.getElementById('site-region').value,
@@ -255,6 +314,8 @@
                 timezone: document.getElementById('site-timezone').value,
                 description: document.getElementById('site-description').value
             };
+            
+            console.log('[Sites] Saving data:', JSON.stringify(data));
             
             var url = API_BASE + '/sites';
             var method = 'POST';
@@ -269,6 +330,7 @@
                 showSuccess(editingId ? 'Site updated' : 'Site created');
                 loadSites();
             })['catch'](function(err) {
+                console.error('[Sites] Save error:', err);
                 showError('Error saving site: ' + err.message);
             });
         };
