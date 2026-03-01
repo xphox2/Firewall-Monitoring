@@ -6,54 +6,65 @@
     <title>Probes - Firewall Monitor Admin</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #fff; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
 
-        .sidebar { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; padding: 20px; z-index: 100; }
-        .sidebar h2 { color: #00d4ff; font-size: 1.3rem; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; }
-        .nav-item { display: block; padding: 12px 15px; color: #8b949e; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: all 0.2s; cursor: pointer; }
-        .nav-item:hover, .nav-item.active { background: #21262d; color: #fff; }
+        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
+        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
+        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
+        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
+        .nav-section { margin-bottom: 16px; }
+        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
+        .nav-item:hover { background: #21262d; color: #e6edf3; }
+        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
         .nav-item.danger { color: #f85149; }
+        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
+        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
 
-        .main { margin-left: 250px; padding: 30px; min-height: 100vh; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-        .header h1 { font-size: 1.8rem; }
+        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
 
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 25px; margin-bottom: 20px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
 
-        .btn { background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
         .btn:hover { background: #2ea043; }
         .btn.danger { background: #da3633; }
-        .btn.danger:hover { background: #f85149; }
-        .btn.secondary { background: #30363d; }
-        .btn.secondary:hover { background: #484f58; }
+        .btn.danger:hover { background: #e5534b; }
+        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
+        .btn.secondary:hover { background: #30363d; }
         .btn.info { background: #1f6feb; }
         .btn.info:hover { background: #388bfd; }
-        .btn.small { padding: 4px 10px; font-size: 0.8rem; }
+        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
         .btn.warning { background: #9e6a03; }
         .btn.warning:hover { background: #bb8009; }
 
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }
-        th { color: #8b949e; font-weight: 500; font-size: 0.85rem; }
-        tr:hover { background: #21262d; }
+        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
+        tr:hover { background: #1c2128; }
 
-        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
-        .status-badge.online, .status-badge.approved { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
-        .status-badge.offline, .status-badge.rejected { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-        .status-badge.pending { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
-        .status-badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+        .badge.online, .badge.approved { background: rgba(63,185,80,0.15); color: #3fb950; }
+        .badge.offline, .badge.rejected { background: rgba(248,81,73,0.15); color: #f85149; }
+        .badge.pending { background: rgba(210,153,34,0.15); color: #d2992a; }
+        .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
 
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; color: #8b949e; font-size: 0.9rem; }
-        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #fff; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
+        .form-group input:focus, .form-group select:focus { border-color: #58a6ff; outline: none; }
 
-        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; }
         .modal.active { display: flex; }
-        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; width: 600px; max-width: 90%; max-height: 90vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 600px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .modal-header h2 { font-size: 1.1rem; color: #e6edf3; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-        .loading { text-align: center; padding: 30px; color: #8b949e; }
+        .loading { text-align: center; padding: 30px; color: #484f58; }
         .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
         .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
 
@@ -63,7 +74,7 @@
         .actions { display: flex; gap: 5px; flex-wrap: wrap; }
 
         .filter-tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-        .filter-tab { padding: 8px 16px; background: #21262d; border: none; border-radius: 6px; color: #8b949e; cursor: pointer; }
+        .filter-tab { padding: 8px 16px; background: #21262d; border: none; border-radius: 6px; color: #8b949e; cursor: pointer; font-size: 0.82rem; }
         .filter-tab.active { background: #238636; color: #fff; }
 
         .deploy-section { margin-top: 20px; }
@@ -71,7 +82,7 @@
         .deploy-instructions { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
         .deploy-instructions p { color: #8b949e; margin-bottom: 12px; font-size: 0.9rem; line-height: 1.5; }
         .deploy-instructions .step { margin-bottom: 16px; }
-        .deploy-instructions .step-label { color: #fff; font-weight: 600; margin-bottom: 6px; font-size: 0.9rem; }
+        .deploy-instructions .step-label { color: #e6edf3; font-weight: 600; margin-bottom: 6px; font-size: 0.9rem; }
 
         .env-block { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.6; position: relative; white-space: pre-wrap; word-break: break-all; color: #e6edf3; }
         .env-block .env-key { color: #79c0ff; }
@@ -87,20 +98,42 @@
 </head>
 <body>
     <div class="sidebar">
-        <h2>Firewall Monitor</h2>
-        <a class="nav-item" href="/admin">Dashboard</a>
-        <a class="nav-item" href="/admin/devices">Devices</a>
-        <a class="nav-item" href="/admin/connections">Connections</a>
-        <a class="nav-item active" href="/admin/probes">Probes</a>
-        <a class="nav-item" href="/admin/sites">Sites</a>
-        <a class="nav-item" href="/admin/network">Network</a>
-        <a class="nav-item" href="/admin/probe-pending">Pending Approvals</a>
-        <a class="nav-item" href="/admin/settings">Settings</a>
-        <a class="nav-item danger" id="logout-btn">Logout</a>
+        <div class="sidebar-header">
+            <h2>Firewall Monitor</h2>
+            <div class="subtitle">Admin Panel</div>
+        </div>
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Monitoring</div>
+                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
+                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
+                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
+                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
+                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Infrastructure</div>
+                <a class="nav-item active" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
+                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
+                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
+                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            </div>
+            <div class="nav-section">
+                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
+            </div>
+        </div>
+        <div class="sidebar-footer">
+            <a class="nav-item danger" id="logout-btn"><span class="nav-icon">&#10140;</span> Logout</a>
+        </div>
     </div>
 
     <div class="main">
-        <div class="header">
+        <div class="page-header">
             <h1>Probe Management</h1>
             <button class="btn" onclick="showAddModal()">+ Add Probe</button>
         </div>
@@ -177,8 +210,8 @@
                     <div class="step-label">1. Registration Key</div>
                     <div class="key-display" id="deploy-key"></div>
                     <div style="margin-top: 8px; display: flex; gap: 8px;">
-                        <button class="btn small secondary" onclick="copyDeployKey()">Copy Key</button>
-                        <button class="btn small warning" onclick="regenerateKey()">Regenerate Key</button>
+                        <button class="btn sm secondary" onclick="copyDeployKey()">Copy Key</button>
+                        <button class="btn sm warning" onclick="regenerateKey()">Regenerate Key</button>
                     </div>
                 </div>
                 <div class="step">
@@ -313,15 +346,15 @@
                 <tr>
                     <td><strong>${escapeHtml(p.name)}</strong>${p.description ? '<br><span class="info-text">' + escapeHtml(p.description) + '</span>' : ''}</td>
                     <td>${escapeHtml(p.site?.name || '-')}</td>
-                    <td><span class="status-badge ${escapeHtml(p.status)}">${escapeHtml(p.status || 'offline').toUpperCase()}</span></td>
-                    <td><span class="status-badge ${escapeHtml(approvalStatus)}">${escapeHtml(approvalStatus).toUpperCase()}</span></td>
+                    <td><span class="badge ${escapeHtml(p.status)}">${escapeHtml(p.status || 'offline').toUpperCase()}</span></td>
+                    <td><span class="badge ${escapeHtml(approvalStatus)}">${escapeHtml(approvalStatus).toUpperCase()}</span></td>
                     <td>${lastSeen}</td>
                     <td class="actions">
-                        <button class="btn small info" onclick="showDeployInfo(${p.id})">Deploy Info</button>
-                        ${approvalStatus === 'pending' ? `<button class="btn small" onclick="approveProbe(${p.id})">Approve</button>` : ''}
-                        ${approvalStatus === 'pending' ? `<button class="btn small danger" onclick="rejectProbe(${p.id})">Reject</button>` : ''}
-                        <button class="btn small secondary" onclick="editProbe(${p.id})">Edit</button>
-                        <button class="btn small danger" onclick="deleteProbe(${p.id})">Delete</button>
+                        <button class="btn sm info" onclick="showDeployInfo(${p.id})">Deploy Info</button>
+                        ${approvalStatus === 'pending' ? `<button class="btn sm" onclick="approveProbe(${p.id})">Approve</button>` : ''}
+                        ${approvalStatus === 'pending' ? `<button class="btn sm danger" onclick="rejectProbe(${p.id})">Reject</button>` : ''}
+                        <button class="btn sm secondary" onclick="editProbe(${p.id})">Edit</button>
+                        <button class="btn sm danger" onclick="deleteProbe(${p.id})">Delete</button>
                     </td>
                 </tr>`;
             }).join('');
