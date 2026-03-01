@@ -159,6 +159,12 @@
         let currentFortigates = [];
         let currentProbes = [];
 
+        window.onerror = function(msg, url, line, col, error) {
+            console.error('JavaScript Error:', msg, 'at line', line);
+            document.body.innerHTML = '<div style="padding: 50px; color: red;"><h2>Error loading page</h2><pre>' + msg + '</pre><p>Line: ' + line + '</p></div>';
+            return true;
+        };
+
         function getCsrfToken() {
             const cookies = document.cookie.split(';');
             for (let c of cookies) {
