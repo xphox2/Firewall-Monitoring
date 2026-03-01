@@ -174,7 +174,7 @@ func ParseRFC5424(data []byte) (*models.SyslogMessage, error) {
 		return nil, fmt.Errorf("invalid syslog format: too few parts")
 	}
 
-	priority, err := ParsePriority(parts[0][1])
+	priority, err := ParsePriority(parts[0])
 	if err != nil {
 		return nil, err
 	}
@@ -235,11 +235,15 @@ type priorityResult struct {
 	severity int
 }
 
-func ParsePriority(b byte) (priorityResult, error) {
-	if b < '0' || b > '9' {
-		return priorityResult{}, fmt.Errorf("invalid priority byte: %c", b)
+func ParsePriority(b []byte) (priorityResult, error) {
+	if len(b) < 3 || b[0] != '<' {
+		return priorityResult{}, fmt.Errorf("invalid priority format")
 	}
-	val := int(b - '0')
+	end := bytes.IndexByte(b, '>')
+	if end < 0 {
+		return priorityResult{}, fmt.Errorf("invalid priority format: no closing >")
+	}
+	val := bytesToInt(b[1:end])
 	if val > 191 {
 		return priorityResult{}, fmt.Errorf("priority value out of range: %d", val)
 	}

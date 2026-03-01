@@ -1889,7 +1889,13 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		return
 	}
 
-	h.db.Gorm().Model(&models.Probe{}).Where("id = ?", req.ProbeID).Updates(map[string]interface{}{
+	var probe models.Probe
+	if err := h.db.Gorm().First(&probe, req.ProbeID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Probe not found"})
+		return
+	}
+
+	h.db.Gorm().Model(&probe).Updates(map[string]interface{}{
 		"last_seen": time.Now(),
 		"status":    req.Status,
 	})
@@ -2190,17 +2196,11 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 }
 
 func (h *Handler) GetProbeDevices(c *gin.Context) {
-	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.Device{}))
+	probe, ok := h.validateProbe(c)
+	if !ok {
 		return
 	}
-	id := c.Param("id")
-	idUint, err := strconv.ParseUint(id, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
-		return
-	}
-	devices, err := h.db.GetDevicesByProbe(uint(idUint))
+	devices, err := h.db.GetDevicesByProbe(probe.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
 		return

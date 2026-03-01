@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.7] - 2026-03-01
+
+### Fixed
+- **Syslog ParsePriority**: Rewrote to parse full `<NNN>` priority format (e.g. `<134>` → facility 16, severity 6) instead of only single-digit priorities 0–9
+- **Relay sendBatch body leak**: Changed `defer resp.Body.Close()` inside retry loop to direct close, preventing response body accumulation on retries
+- **Heartbeat endpoint security**: Added probe existence check — unknown probe IDs now return 404 instead of silently updating
+- **GetProbeDevices security**: Added `validateProbe()` call so unapproved or nonexistent probes cannot enumerate devices
+
 ## [0.10.6] - 2026-03-01
 
 ### Changed

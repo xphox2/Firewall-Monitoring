@@ -438,20 +438,22 @@ func (r *RelayClient) sendBatch(endpoint string, data interface{}) {
 			time.Sleep(time.Duration(retries+1) * time.Second)
 			continue
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		status := resp.StatusCode
+		resp.Body.Close()
+
+		if status >= 200 && status < 300 {
 			log.Printf("Sent %d %s to server", countItems(data), endpoint)
 			return
 		}
 
-		if resp.StatusCode == 404 {
+		if status == 404 {
 			r.approved.Store(false)
 			log.Printf("Probe no longer approved")
 			return
 		}
 
-		log.Printf("Failed to send %s batch: status %d", endpoint, resp.StatusCode)
+		log.Printf("Failed to send %s batch: status %d", endpoint, status)
 		time.Sleep(time.Duration(retries+1) * time.Second)
 	}
 }
