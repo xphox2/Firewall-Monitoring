@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gosnmp/gosnmp"
 )
 
 type Config struct {
@@ -44,6 +46,12 @@ type SNMPConfig struct {
 	PollInterval   time.Duration
 	TrapListenAddr string
 	TrapCommunity  string
+	// SNMPv3 fields
+	V3Username string
+	V3AuthType string // "MD5", "SHA", "SHA224", "SHA256", "SHA384", "SHA512", ""
+	V3AuthPass string
+	V3PrivType string // "DES", "AES", "AES192", "AES256", ""
+	V3PrivPass string
 }
 
 type DatabaseConfig struct {
@@ -117,6 +125,11 @@ func Load() *Config {
 			PollInterval:   getDurationEnv("SNMP_POLL_INTERVAL", 60*time.Second),
 			TrapListenAddr: getEnv("SNMP_TRAP_LISTEN", "0.0.0.0:162"),
 			TrapCommunity:  getEnv("SNMP_TRAP_COMMUNITY", "public"),
+			V3Username:     getEnv("SNMP_V3_USERNAME", ""),
+			V3AuthType:     getEnv("SNMP_V3_AUTH_TYPE", ""),
+			V3AuthPass:     getEnv("SNMP_V3_AUTH_PASS", ""),
+			V3PrivType:     getEnv("SNMP_V3_PRIV_TYPE", ""),
+			V3PrivPass:     getEnv("SNMP_V3_PRIV_PASS", ""),
 		},
 		Database: DatabaseConfig{
 			Type:     getEnv("DB_TYPE", "sqlite"),
@@ -156,6 +169,55 @@ func Load() *Config {
 			BaselineFile:    getEnv("UPTIME_BASELINE_FILE", "/var/lib/fortigate-mon/uptime.json"),
 			TrackingEnabled: getBoolEnv("UPTIME_TRACKING_ENABLED", true),
 		},
+	}
+}
+
+// V3MsgFlags returns the SNMPv3 message flags based on configured auth/priv.
+func (s *SNMPConfig) V3MsgFlags() gosnmp.SnmpV3MsgFlags {
+	hasAuth := s.V3AuthType != "" && s.V3AuthPass != ""
+	hasPriv := s.V3PrivType != "" && s.V3PrivPass != ""
+	if hasAuth && hasPriv {
+		return gosnmp.AuthPriv
+	}
+	if hasAuth {
+		return gosnmp.AuthNoPriv
+	}
+	return gosnmp.NoAuthNoPriv
+}
+
+// V3AuthProto returns the gosnmp authentication protocol.
+func (s *SNMPConfig) V3AuthProto() gosnmp.SnmpV3AuthProtocol {
+	switch strings.ToUpper(s.V3AuthType) {
+	case "MD5":
+		return gosnmp.MD5
+	case "SHA":
+		return gosnmp.SHA
+	case "SHA224":
+		return gosnmp.SHA224
+	case "SHA256":
+		return gosnmp.SHA256
+	case "SHA384":
+		return gosnmp.SHA384
+	case "SHA512":
+		return gosnmp.SHA512
+	default:
+		return gosnmp.NoAuth
+	}
+}
+
+// V3PrivProto returns the gosnmp privacy protocol.
+func (s *SNMPConfig) V3PrivProto() gosnmp.SnmpV3PrivProtocol {
+	switch strings.ToUpper(s.V3PrivType) {
+	case "DES":
+		return gosnmp.DES
+	case "AES":
+		return gosnmp.AES
+	case "AES192":
+		return gosnmp.AES192
+	case "AES256":
+		return gosnmp.AES256
+	default:
+		return gosnmp.NoPriv
 	}
 }
 

@@ -159,15 +159,15 @@
                 <h2>Admin Password</h2>
                 <div class="form-group">
                     <label>Current Password</label>
-                    <input type="password" id="current-password">
+                    <input type="password" id="current-password" autocomplete="current-password">
                 </div>
                 <div class="form-group">
                     <label>New Password</label>
-                    <input type="password" id="new-password">
+                    <input type="password" id="new-password" autocomplete="new-password">
                 </div>
                 <div class="form-group">
                     <label>Confirm New Password</label>
-                    <input type="password" id="confirm-password">
+                    <input type="password" id="confirm-password" autocomplete="new-password">
                 </div>
                 <button class="btn" onclick="changePassword()">Change Password</button>
             </div>
@@ -554,7 +554,7 @@
                 ].map(s => `
                     <div class="setting-item">
                         <label>${s.label}</label>
-                        <input type="${s.type}" name="${s.key}" value="${alertSettings.find(x => x.key === s.key)?.value || s.value}">
+                        <input type="${s.type}" name="${s.key}" value="${escapeHtml(alertSettings.find(x => x.key === s.key)?.value || String(s.value))}">
                     </div>
                 `).join('');
 
@@ -568,7 +568,7 @@
                         const checked = savedVal === 'true' ? 'checked' : '';
                         return `<div class="setting-item"><label>${s.label}</label><input type="checkbox" name="${s.key}" ${checked}></div>`;
                     }
-                    return `<div class="setting-item"><label>${s.label}</label><input type="text" name="${s.key}" value="${savedVal}"></div>`;
+                    return `<div class="setting-item"><label>${s.label}</label><input type="text" name="${s.key}" value="${escapeHtml(savedVal)}"></div>`;
                 }).join('');
 
                 // Load display settings

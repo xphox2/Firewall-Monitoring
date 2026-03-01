@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.8] - 2026-02-28
+
+### Added
+- **SNMPv3 support**: Full USM security with auth (MD5/SHA/SHA224-512) and privacy (DES/AES/AES192/AES256) protocols via `SNMP_V3_*` env vars
+
+### Security
+- Stored XSS fix: settings values escaped with `escapeHtml()` in admin UI form inputs
+- SNMP community string redacted in `CreateFortiGate` and `UpdateFortiGate` responses
+- `GetSettings` masks `IsSecret=true` values as `"********"`
+- `UpdateSettings` validates value types: numeric ranges for thresholds, booleans for toggles, minimum 5 for refresh interval
+- Rate limiter bypass fixed: `SetTrustedProxies(nil)` prevents `X-Forwarded-For` spoofing
+- `ChangePassword` no longer triggers login rate-limiter lockout (uses `CheckPassword` directly)
+- `CurrentPassword` length capped at 1024 bytes in `ChangePassword`
+- Username length capped at 255 characters in login to prevent map/DB bloat
+- User-Agent truncated to 512 characters before storage
+- `Referrer-Policy: strict-origin-when-cross-origin` header added
+- `Cache-Control: no-store` header added to prevent caching of authenticated responses
+- Password form fields have proper `autocomplete` attributes
+
+### Fixed
+- `ProcessTrap` now uses cooldown to prevent notification floods from trap storms
+- Alert notification failure no longer aborts remaining alerts in the same cycle (logs error, continues)
+- Trap OID loop breaks on first match instead of silently overwriting with last varbind
+- `parseTrap` returns nil when no FortiGate trap OID matches (prevents empty trap objects)
+- Bare type assertions in `UpdateFortiGateConnection` replaced with safe two-value form
+
 ## [0.8.7] - 2026-02-28
 
 ### Security

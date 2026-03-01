@@ -102,6 +102,19 @@ func NewSNMPClient(cfg *config.Config) (*SNMPClient, error) {
 		Retries:   cfg.SNMP.Retries,
 	}
 
+	// Configure SNMPv3 security parameters
+	if version == gosnmp.Version3 {
+		client.SecurityModel = gosnmp.UserSecurityModel
+		client.MsgFlags = cfg.SNMP.V3MsgFlags()
+		client.SecurityParameters = &gosnmp.UsmSecurityParameters{
+			UserName:                 cfg.SNMP.V3Username,
+			AuthenticationProtocol:   cfg.SNMP.V3AuthProto(),
+			AuthenticationPassphrase: cfg.SNMP.V3AuthPass,
+			PrivacyProtocol:          cfg.SNMP.V3PrivProto(),
+			PrivacyPassphrase:        cfg.SNMP.V3PrivPass,
+		}
+	}
+
 	err := client.Connect()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to SNMP: %w", err)

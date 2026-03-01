@@ -141,8 +141,18 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	// Reject oversized usernames to prevent map/DB bloat
+	if len(creds.Username) > 255 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid credentials"))
+		return
+	}
+
 	ip := c.ClientIP()
 	userAgent := c.Request.UserAgent()
+	// Truncate user agent to prevent stored XSS and DB bloat
+	if len(userAgent) > 512 {
+		userAgent = userAgent[:512]
+	}
 
 	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password); err != nil {
 		if h.db != nil {
@@ -444,6 +454,7 @@ func (h *Handler) CreateFortiGate(c *gin.Context) {
 		return
 	}
 
+	fg.SNMPCommunity = "********"
 	c.JSON(http.StatusCreated, models.SuccessResponse(fg))
 }
 
@@ -530,9 +541,11 @@ func (h *Handler) UpdateFortiGate(c *gin.Context) {
 	// Re-fetch to return fresh data
 	updated, err := h.db.GetFortiGate(uint(idUint))
 	if err != nil {
+		fg.SNMPCommunity = "********"
 		c.JSON(http.StatusOK, models.SuccessResponse(fg))
 		return
 	}
+	updated.SNMPCommunity = "********"
 	c.JSON(http.StatusOK, models.SuccessResponse(updated))
 }
 
@@ -695,10 +708,14 @@ func (h *Handler) UpdateFortiGateConnection(c *gin.Context) {
 	effectiveSrc := conn.SourceFGID
 	effectiveDst := conn.DestFGID
 	if srcVal, ok := filteredUpdates["source_fg_id"]; ok {
-		effectiveSrc = uint(srcVal.(float64))
+		if srcID, isNum := srcVal.(float64); isNum {
+			effectiveSrc = uint(srcID)
+		}
 	}
 	if dstVal, ok := filteredUpdates["dest_fg_id"]; ok {
-		effectiveDst = uint(dstVal.(float64))
+		if dstID, isNum := dstVal.(float64); isNum {
+			effectiveDst = uint(dstID)
+		}
 	}
 	if effectiveSrc == effectiveDst {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination cannot be the same device"))
@@ -757,6 +774,13 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		return
 	}
 
+	// Mask secret values
+	for i := range settings {
+		if settings[i].IsSecret {
+			settings[i].Value = "********"
+		}
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(settings))
 }
 
@@ -792,9 +816,37 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 
 	var validSettings []models.SystemSetting
 	for _, s := range settings {
-		if allowedKeys[s.Key] {
-			validSettings = append(validSettings, s)
+		if !allowedKeys[s.Key] {
+			continue
 		}
+		// Validate values by key type
+		switch s.Key {
+		case "cpu_threshold", "memory_threshold", "disk_threshold":
+			v, err := strconv.ParseFloat(s.Value, 64)
+			if err != nil || v < 0 || v > 100 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be 0-100", s.Key)))
+				return
+			}
+		case "session_threshold":
+			v, err := strconv.Atoi(s.Value)
+			if err != nil || v < 1 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for session_threshold: must be a positive integer"))
+				return
+			}
+		case "public_refresh_interval":
+			v, err := strconv.Atoi(s.Value)
+			if err != nil || v < 5 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for public_refresh_interval: must be at least 5"))
+				return
+			}
+		case "email_enabled", "public_show_hostname", "public_show_uptime",
+			"public_show_cpu", "public_show_memory", "public_show_sessions", "public_show_interfaces":
+			if s.Value != "true" && s.Value != "false" {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be true or false", s.Key)))
+				return
+			}
+		}
+		validSettings = append(validSettings, s)
 	}
 
 	var failedKeys []string
@@ -992,6 +1044,12 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// Reject oversized current password
+	if len(req.CurrentPassword) > 1024 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
 	// Enforce password length constraints
 	if len(req.NewPassword) < 8 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("New password must be at least 8 characters"))
@@ -1025,8 +1083,13 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Validate current password
-	if err := h.authManager.ValidateCredentials(usernameStr, req.CurrentPassword); err != nil {
+	// Verify current password directly (bypass rate limiter — user is already authenticated)
+	admin, adminErr := h.db.GetAdminByUsername(usernameStr)
+	if adminErr != nil || admin == nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
+		return
+	}
+	if !h.authManager.CheckPassword(req.CurrentPassword, admin.Password) {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
 		return
 	}

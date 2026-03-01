@@ -108,7 +108,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 
 	for _, alert := range alerts {
 		if err := am.notifier.SendAlert(&alert); err != nil {
-			return fmt.Errorf("failed to send alert: %w", err)
+			log.Printf("Failed to send alert %s: %v", alert.AlertType, err)
 		}
 	}
 
@@ -142,7 +142,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats)
 
 	for _, alert := range alerts {
 		if err := am.notifier.SendAlert(&alert); err != nil {
-			return fmt.Errorf("failed to send alert: %w", err)
+			log.Printf("Failed to send interface alert %s: %v", alert.AlertType, err)
 		}
 	}
 
@@ -151,6 +151,20 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats)
 
 func (am *AlertManager) ProcessTrap(trap *models.TrapEvent) error {
 	if trap.Severity == "critical" || trap.Severity == "warning" {
+		key := fmt.Sprintf("trap_%s_%s", trap.TrapType, trap.SourceIP)
+
+		am.mu.Lock()
+		now := time.Now()
+		canSend := am.canAlert(key, now)
+		if canSend {
+			am.lastAlert[key] = now
+		}
+		am.mu.Unlock()
+
+		if !canSend {
+			return nil
+		}
+
 		alert := models.Alert{
 			Timestamp:  trap.Timestamp,
 			AlertType:  trap.TrapType,

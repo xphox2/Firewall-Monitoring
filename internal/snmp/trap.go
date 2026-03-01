@@ -71,7 +71,13 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 			trap.TrapType = t.getTrapType(oid)
 			trap.Severity = t.getTrapSeverity(oid)
 			trap.Message = t.formatTrapMessage(v, oid)
+			break
 		}
+	}
+
+	// Return nil if no FortiGate trap OID was found
+	if trap.TrapOID == "" {
+		return nil
 	}
 
 	return trap

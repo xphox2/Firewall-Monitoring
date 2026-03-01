@@ -33,6 +33,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
+	router.SetTrustedProxies(nil) // Do not trust proxy headers for client IP
 
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
