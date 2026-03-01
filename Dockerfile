@@ -13,6 +13,7 @@ COPY web ./web
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fortigate-api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fortigate-poller ./cmd/poller
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fortigate-trap ./cmd/trap-receiver
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fortigate-probe ./cmd/probe
 
 # Stage 2: Final Alpine image
 FROM alpine:3.19
@@ -26,6 +27,7 @@ WORKDIR /app
 COPY --from=builder /build/fortigate-api .
 COPY --from=builder /build/fortigate-poller .
 COPY --from=builder /build/fortigate-trap .
+COPY --from=builder /build/fortigate-probe .
 COPY web ./web
 COPY config.env.example ./config.env
 
@@ -34,6 +36,6 @@ RUN chmod +x fortigate-*
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
-EXPOSE 8080 162/udp
+EXPOSE 8080 162/udp 514/udp 6343/udp 8089
 
 ENTRYPOINT ["./entrypoint.sh"]
