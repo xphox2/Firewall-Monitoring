@@ -2181,10 +2181,22 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 	}
 
 	var syslogCount, trapCount, flowCount, pingCount int64
-	h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", idUint).Count(&syslogCount)
-	h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ?", idUint).Count(&trapCount)
-	h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ?", idUint).Count(&flowCount)
-	h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ?", idUint).Count(&pingCount)
+	if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", idUint).Count(&syslogCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count syslog messages"))
+		return
+	}
+	if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ?", idUint).Count(&trapCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count trap events"))
+		return
+	}
+	if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ?", idUint).Count(&flowCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count flow samples"))
+		return
+	}
+	if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ?", idUint).Count(&pingCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count ping results"))
+		return
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"probe_id": idUint,

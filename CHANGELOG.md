@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.8] - 2026-03-01
+
+### Fixed
+- **Site DB race condition**: Added `sync.RWMutex` to protect `siteDBConnections` map — concurrent access would crash with map corruption
+- **Site DB connection leak**: `GetOrCreateSiteDB` now properly closes the connection if `db.DB()` fails after `gorm.Open` succeeds
+- **Site DB deletion leak**: `DeleteSiteDatabase` now closes cached DB connection before removing the file
+- **GetProbeStats error handling**: All four `Count()` queries now check for errors instead of silently returning zeros
+
 ## [0.10.7] - 2026-03-01
 
 ### Fixed

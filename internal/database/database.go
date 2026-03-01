@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/auth"
@@ -655,6 +656,7 @@ func (d *Database) SetSiteDatabaseStatus(siteID uint, status string) error {
 }
 
 func (d *Database) DeleteSiteDatabase(siteID uint) error {
+	d.CloseSiteDB(siteID)
 	siteDB, err := d.GetSiteDatabase(siteID)
 	if err != nil {
 		return err
@@ -730,18 +732,23 @@ func (d *Database) CreateSiteDatabaseFile(siteID uint, basePath string) (*models
 	return d.CreateSiteDatabase(siteID, dbPath, false)
 }
 
-var siteDBConnections = make(map[uint]*gorm.DB)
+var (
+	siteDBConnections = make(map[uint]*gorm.DB)
+	siteDBMu          sync.RWMutex
+)
 
 func (d *Database) GetOrCreateSiteDB(siteID uint) (*gorm.DB, error) {
+	siteDBMu.RLock()
 	if db, ok := siteDBConnections[siteID]; ok {
 		sqlDB, err := db.DB()
 		if err == nil {
 			if err := sqlDB.Ping(); err == nil {
+				siteDBMu.RUnlock()
 				return db, nil
 			}
 		}
-		delete(siteDBConnections, siteID)
 	}
+	siteDBMu.RUnlock()
 
 	siteDB, err := d.GetSiteDatabase(siteID)
 	if err != nil {
@@ -763,18 +770,32 @@ func (d *Database) GetOrCreateSiteDB(siteID uint) (*gorm.DB, error) {
 
 	sqlDB, err := db.DB()
 	if err != nil {
+		// Close the gorm.DB we just opened to avoid leaking the connection
+		if innerDB, innerErr := db.DB(); innerErr == nil {
+			innerDB.Close()
+		}
 		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	sqlDB.SetConnMaxLifetime(0)
 
+	siteDBMu.Lock()
+	// Clean up stale entry if it exists
+	if old, ok := siteDBConnections[siteID]; ok {
+		if oldSQL, err := old.DB(); err == nil {
+			oldSQL.Close()
+		}
+	}
 	siteDBConnections[siteID] = db
+	siteDBMu.Unlock()
 
 	return db, nil
 }
 
 func (d *Database) CloseSiteDB(siteID uint) {
+	siteDBMu.Lock()
+	defer siteDBMu.Unlock()
 	if db, ok := siteDBConnections[siteID]; ok {
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -785,8 +806,14 @@ func (d *Database) CloseSiteDB(siteID uint) {
 }
 
 func (d *Database) CloseAllSiteDBs() {
-	for siteID := range siteDBConnections {
-		d.CloseSiteDB(siteID)
+	siteDBMu.Lock()
+	defer siteDBMu.Unlock()
+	for siteID, db := range siteDBConnections {
+		sqlDB, err := db.DB()
+		if err == nil {
+			sqlDB.Close()
+		}
+		delete(siteDBConnections, siteID)
 	}
 }
 
