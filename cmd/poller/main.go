@@ -102,6 +102,10 @@ func (p *Poller) pollAllDevices() {
 		if !devices[i].Enabled {
 			continue
 		}
+		// Skip devices assigned to a remote probe — they are polled by the probe, not the server
+		if devices[i].ProbeID != nil {
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{} // acquire semaphore
 		go func(device *models.Device) {
@@ -116,12 +120,17 @@ func (p *Poller) pollAllDevices() {
 func (p *Poller) pollDevice(device *models.Device) {
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
-			SNMPHost: device.IPAddress,
-			SNMPPort: device.SNMPPort,
-			Community:     device.SNMPCommunity,
-			Version:       device.SNMPVersion,
-			Timeout:       5 * time.Second,
-			Retries:       2,
+			SNMPHost:   device.IPAddress,
+			SNMPPort:   device.SNMPPort,
+			Community:  device.SNMPCommunity,
+			Version:    device.SNMPVersion,
+			V3Username: device.SNMPV3Username,
+			V3AuthType: device.SNMPV3AuthType,
+			V3AuthPass: device.SNMPV3AuthPass,
+			V3PrivType: device.SNMPV3PrivType,
+			V3PrivPass: device.SNMPV3PrivPass,
+			Timeout:    5 * time.Second,
+			Retries:    2,
 		},
 	}
 
@@ -180,6 +189,24 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 	}
 
+	// Collect VPN tunnel status (silently skip if device has no VPN)
+	vpnStatuses, err := client.GetVPNStatus()
+	if err == nil && len(vpnStatuses) > 0 {
+		now := time.Now()
+		for i := range vpnStatuses {
+			vpnStatuses[i].DeviceID = device.ID
+			vpnStatuses[i].Timestamp = now
+		}
+		if p.db != nil {
+			if err := p.db.SaveVPNStatuses(vpnStatuses); err != nil {
+				log.Printf("Device %s: failed to save VPN statuses - %v", device.Name, err)
+			}
+		}
+		if p.alertManager != nil {
+			p.alertManager.CheckVPNStatus(vpnStatuses)
+		}
+	}
+
 	p.updateDeviceStatus(device, "online")
 }
 
@@ -190,6 +217,9 @@ func (p *Poller) updateDeviceStatus(device *models.Device, status string) {
 		if err := p.db.UpdateDevice(device); err != nil {
 			log.Printf("Device %s: failed to update status - %v", device.Name, err)
 		}
+	}
+	if status == "offline" && p.alertManager != nil {
+		p.alertManager.CheckDeviceOffline(device)
 	}
 }
 
@@ -217,7 +247,7 @@ func main() {
 	defer db.Close()
 
 	notif := notifier.NewNotifier(cfg)
-	alertManager := alerts.NewAlertManager(cfg, notif)
+	alertManager := alerts.NewAlertManager(cfg, notif, db)
 
 	poller := NewPoller(cfg, db, alertManager)
 

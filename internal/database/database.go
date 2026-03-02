@@ -146,6 +146,26 @@ func (d *Database) GetLatestInterfaceStats() ([]models.InterfaceStats, error) {
 	return stats, err
 }
 
+func (d *Database) SaveVPNStatuses(statuses []models.VPNStatus) error {
+	if len(statuses) == 0 {
+		return nil
+	}
+	return d.db.Create(&statuses).Error
+}
+
+func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error) {
+	var latest models.VPNStatus
+	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latest).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var statuses []models.VPNStatus
+	err := d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).Find(&statuses).Error
+	return statuses, err
+}
+
 func (d *Database) SaveAlert(alert *models.Alert) error {
 	return d.db.Create(alert).Error
 }

@@ -527,13 +527,18 @@ func (r *RelayClient) GetProbeID() uint {
 }
 
 type DeviceInfo struct {
-	ID            uint   `json:"id"`
-	Name          string `json:"name"`
-	IPAddress     string `json:"ip_address"`
-	SNMPPort      int    `json:"snmp_port"`
-	SNMPCommunity string `json:"snmp_community"`
-	SNMPVersion   string `json:"snmp_version"`
-	Enabled       bool   `json:"enabled"`
+	ID             uint   `json:"id"`
+	Name           string `json:"name"`
+	IPAddress      string `json:"ip_address"`
+	SNMPPort       int    `json:"snmp_port"`
+	SNMPCommunity  string `json:"snmp_community"`
+	SNMPVersion    string `json:"snmp_version"`
+	SNMPV3Username string `json:"snmpv3_username"`
+	SNMPV3AuthType string `json:"snmpv3_auth_type"`
+	SNMPV3AuthPass string `json:"snmpv3_auth_pass"`
+	SNMPV3PrivType string `json:"snmpv3_priv_type"`
+	SNMPV3PrivPass string `json:"snmpv3_priv_pass"`
+	Enabled        bool   `json:"enabled"`
 }
 
 type DevicesResponse struct {
@@ -609,6 +614,29 @@ func (r *RelayClient) SendInterfaceStats(stats []models.InterfaceStats) error {
 		return nil
 	}
 	return fmt.Errorf("send interface stats returned status %d", resp.StatusCode)
+}
+
+func (r *RelayClient) SendVPNStatuses(statuses []models.VPNStatus) error {
+	if !r.approved.Load() {
+		return fmt.Errorf("probe not approved")
+	}
+
+	jsonData, err := json.Marshal(statuses)
+	if err != nil {
+		return fmt.Errorf("failed to marshal VPN statuses: %w", err)
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/vpn-status"
+	resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send VPN statuses: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("send VPN statuses returned status %d", resp.StatusCode)
 }
 
 func ConvertModelSyslogMessage(m *models.SyslogMessage) *SyslogMessage {

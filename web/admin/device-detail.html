@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Detail - Firewall Monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
+
+        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
+        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
+        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
+        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
+        .nav-section { margin-bottom: 16px; }
+        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
+        .nav-item:hover { background: #21262d; color: #e6edf3; }
+        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
+        .nav-item.danger { color: #f85149; }
+        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
+        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
+
+        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
+
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .card h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+
+        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
+        .btn:hover { background: #2ea043; }
+        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
+        .btn.secondary:hover { background: #30363d; }
+        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
+        tr:hover { background: #1c2128; }
+
+        .loading { text-align: center; padding: 30px; color: #484f58; }
+        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .empty { text-align: center; padding: 40px; color: #8b949e; }
+
+        /* Device Header */
+        .device-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+        .device-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
+        .device-meta { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+        .device-meta span { font-size: 0.82rem; color: #8b949e; }
+        .back-link { color: #58a6ff; text-decoration: none; font-size: 0.88rem; }
+        .back-link:hover { text-decoration: underline; }
+
+        /* Status Badges */
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+        .badge.online, .badge.up { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+        .badge.offline, .badge.down { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+        .badge.warning { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+        .badge.critical { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .badge.vxlan { background: rgba(130, 80, 223, 0.15); color: #bc8cff; }
+        .badge.tunnel { background: rgba(56, 139, 253, 0.15); color: #58a6ff; }
+        .badge.lag { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+
+        /* Stat Cards */
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .stat-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; text-align: center; }
+        .stat-card .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: #484f58; margin-bottom: 8px; }
+        .stat-card .stat-value { font-size: 1.8rem; font-weight: 700; color: #e6edf3; }
+        .stat-card .stat-unit { font-size: 0.75rem; color: #8b949e; }
+
+        /* Gauge */
+        .gauge { position: relative; width: 80px; height: 80px; margin: 0 auto 8px; }
+        .gauge svg { transform: rotate(-90deg); }
+        .gauge-bg { fill: none; stroke: #21262d; stroke-width: 8; }
+        .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.5s; }
+        .gauge-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
+
+        /* Filters */
+        .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+        .filter-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 0.78rem; transition: all 0.15s; }
+        .filter-btn:hover { color: #e6edf3; border-color: #8b949e; }
+        .filter-btn.active { background: rgba(56,139,253,0.15); color: #58a6ff; border-color: #58a6ff; }
+
+        /* Expandable rows */
+        .expand-row td { padding: 0; border-bottom: 1px solid #30363d; }
+        .expand-content { padding: 16px 24px; background: #0d1117; }
+        .expand-content .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        .expand-content .detail-item { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.82rem; }
+        .expand-content .detail-item .label { color: #8b949e; }
+        .expand-content .detail-item .value { color: #e6edf3; font-weight: 500; }
+
+        .clickable { cursor: pointer; }
+        .clickable:hover { background: #1c2128; }
+
+        /* Sparkline container */
+        .sparkline-container { margin-top: 12px; height: 60px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px; }
+        .sparkline-container canvas { width: 100%; height: 100%; }
+
+        /* Section tabs */
+        .section-tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; margin-bottom: 16px; }
+        .section-tab { padding: 10px 20px; cursor: pointer; color: #8b949e; font-size: 0.88rem; border-bottom: 2px solid transparent; transition: all 0.15s; }
+        .section-tab:hover { color: #e6edf3; }
+        .section-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .table-scroll { overflow-x: auto; }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main { margin-left: 0; }
+            .stat-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Firewall Monitor</h2>
+            <div class="subtitle">Admin Panel</div>
+        </div>
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Monitoring</div>
+                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
+                <a class="nav-item active" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
+                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
+                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
+                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Infrastructure</div>
+                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
+                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
+                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
+                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            </div>
+            <div class="nav-section">
+                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
+            </div>
+        </div>
+        <div class="sidebar-footer">
+            <a class="nav-item danger" href="#" onclick="doLogout(); return false;"><span class="nav-icon">&#10140;</span> Logout</a>
+        </div>
+    </div>
+
+    <div class="main">
+        <div id="loading" class="loading">Loading device details...</div>
+        <div id="error" class="error" style="display:none"></div>
+
+        <div id="content" style="display:none">
+            <!-- Header -->
+            <div style="margin-bottom: 8px;">
+                <a href="/admin/devices" class="back-link">&larr; Back to Devices</a>
+            </div>
+            <div class="device-header">
+                <h1 id="deviceName"></h1>
+                <span id="deviceStatus" class="badge"></span>
+                <div class="device-meta">
+                    <span id="deviceIP"></span>
+                    <span id="deviceProbe"></span>
+                    <span id="deviceSite"></span>
+                    <span id="devicePolled"></span>
+                </div>
+            </div>
+
+            <!-- System Status Cards -->
+            <div class="stat-grid" id="systemStats">
+                <div class="stat-card">
+                    <div class="stat-label">CPU Usage</div>
+                    <div class="gauge" id="cpuGauge"></div>
+                    <div class="stat-unit" id="cpuValue">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Memory Usage</div>
+                    <div class="gauge" id="memGauge"></div>
+                    <div class="stat-unit" id="memValue">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Disk Usage</div>
+                    <div class="gauge" id="diskGauge"></div>
+                    <div class="stat-unit" id="diskValue">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Sessions</div>
+                    <div class="stat-value" id="sessionCount">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Uptime</div>
+                    <div class="stat-value" id="uptimeValue" style="font-size:1.2rem">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Firmware</div>
+                    <div class="stat-value" id="firmwareValue" style="font-size:0.9rem">-</div>
+                </div>
+            </div>
+
+            <!-- Section Tabs -->
+            <div class="section-tabs">
+                <div class="section-tab active" onclick="switchTab('interfaces')">Interfaces</div>
+                <div class="section-tab" onclick="switchTab('vpn')">VPN Tunnels</div>
+                <div class="section-tab" onclick="switchTab('sensors')">Hardware</div>
+                <div class="section-tab" onclick="switchTab('alerts')">Alerts</div>
+                <div class="section-tab" onclick="switchTab('ping')">Ping</div>
+            </div>
+
+            <!-- Interfaces Tab -->
+            <div class="tab-content active" id="tab-interfaces">
+                <div class="card">
+                    <h2>
+                        Interfaces
+                        <span id="ifaceSummary" style="font-size:0.78rem; font-weight:400; color:#8b949e"></span>
+                    </h2>
+                    <div class="filters">
+                        <button class="filter-btn active" onclick="filterIfaces('all')">All</button>
+                        <button class="filter-btn" onclick="filterIfaces('up')">Up</button>
+                        <button class="filter-btn" onclick="filterIfaces('down')">Down</button>
+                        <button class="filter-btn" onclick="filterIfaces('ethernet')">Ethernet</button>
+                        <button class="filter-btn" onclick="filterIfaces('tunnel')">Tunnel</button>
+                        <button class="filter-btn" onclick="filterIfaces('vxlan')">VXLAN</button>
+                        <button class="filter-btn" onclick="filterIfaces('lag')">LAG</button>
+                    </div>
+                    <div class="table-scroll">
+                        <table id="ifaceTable">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Alias</th>
+                                    <th>Type</th>
+                                    <th>Speed</th>
+                                    <th>Status</th>
+                                    <th>Admin</th>
+                                    <th>In</th>
+                                    <th>Out</th>
+                                    <th>Errors</th>
+                                    <th>MTU</th>
+                                    <th>MAC</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ifaceBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="ifaceEmpty" class="empty" style="display:none">No interface data available</div>
+                </div>
+            </div>
+
+            <!-- VPN Tab -->
+            <div class="tab-content" id="tab-vpn">
+                <div class="card">
+                    <h2>VPN Tunnels</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tunnel Name</th>
+                                <th>Remote Gateway</th>
+                                <th>Status</th>
+                                <th>Bytes In</th>
+                                <th>Bytes Out</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vpnBody"></tbody>
+                    </table>
+                    <div id="vpnEmpty" class="empty" style="display:none">No VPN tunnel data available</div>
+                </div>
+            </div>
+
+            <!-- Hardware Sensors Tab -->
+            <div class="tab-content" id="tab-sensors">
+                <div class="card">
+                    <h2>Hardware Sensors</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Value</th>
+                                <th>Unit</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sensorBody"></tbody>
+                    </table>
+                    <div id="sensorEmpty" class="empty" style="display:none">No hardware sensor data available</div>
+                </div>
+            </div>
+
+            <!-- Alerts Tab -->
+            <div class="tab-content" id="tab-alerts">
+                <div class="card">
+                    <h2>Recent Alerts</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Severity</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alertBody"></tbody>
+                    </table>
+                    <div id="alertEmpty" class="empty" style="display:none">No recent alerts</div>
+                </div>
+            </div>
+
+            <!-- Ping Tab -->
+            <div class="tab-content" id="tab-ping">
+                <div class="card">
+                    <h2>Ping Statistics</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Target IP</th>
+                                <th>Min Latency</th>
+                                <th>Avg Latency</th>
+                                <th>Max Latency</th>
+                                <th>Packet Loss</th>
+                                <th>Samples</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pingBody"></tbody>
+                    </table>
+                    <div id="pingEmpty" class="empty" style="display:none">No ping data available</div>
+                </div>
+            </div>
+
+            <!-- Interface Detail Expand Panel (injected dynamically) -->
+        </div>
+    </div>
+
+    <script>
+    let deviceData = null;
+    let allInterfaces = [];
+    let currentFilter = 'all';
+    let expandedIfIndex = null;
+
+    const deviceId = window.location.pathname.split('/').pop();
+
+    async function getCSRFToken() {
+        try {
+            const resp = await fetch('/admin/api/csrf-token', { credentials: 'same-origin' });
+            if (resp.ok) { const d = await resp.json(); return d.data?.token || ''; }
+        } catch(e) {}
+        return '';
+    }
+
+    async function loadDevice() {
+        try {
+            const resp = await fetch(`/admin/api/devices/${deviceId}/detail`, { credentials: 'same-origin' });
+            if (resp.status === 401) { window.location.href = '/admin/login'; return; }
+            if (!resp.ok) throw new Error('Failed to load device');
+
+            const result = await resp.json();
+            if (!result.success) throw new Error(result.error || 'Failed to load');
+
+            deviceData = result.data;
+            renderDevice();
+        } catch(e) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').textContent = e.message;
+        }
+    }
+
+    function renderDevice() {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('content').style.display = 'block';
+
+        const dev = deviceData.device;
+        document.getElementById('deviceName').textContent = dev.name || dev.hostname || 'Unknown';
+        document.title = (dev.name || 'Device') + ' - Firewall Monitor';
+
+        const statusBadge = document.getElementById('deviceStatus');
+        statusBadge.textContent = dev.status || 'unknown';
+        statusBadge.className = 'badge ' + (dev.status || 'unknown');
+
+        document.getElementById('deviceIP').textContent = dev.ip_address + ':' + dev.snmp_port;
+        document.getElementById('deviceProbe').textContent = dev.probe ? 'Probe: ' + dev.probe.name : '';
+        document.getElementById('deviceSite').textContent = dev.site ? 'Site: ' + dev.site.name : '';
+        document.getElementById('devicePolled').textContent = dev.last_polled ? 'Last polled: ' + formatTime(dev.last_polled) : '';
+
+        renderSystemStatus();
+        renderInterfaces();
+        renderVPN();
+        renderSensors();
+        renderAlerts();
+        renderPing();
+    }
+
+    function renderSystemStatus() {
+        const ss = deviceData.system_status;
+        if (!ss) return;
+
+        createGauge('cpuGauge', ss.cpu_usage, getGaugeColor(ss.cpu_usage));
+        document.getElementById('cpuValue').textContent = ss.cpu_usage.toFixed(1) + '%';
+
+        createGauge('memGauge', ss.memory_usage, getGaugeColor(ss.memory_usage));
+        document.getElementById('memValue').textContent = ss.memory_usage.toFixed(1) + '%';
+
+        createGauge('diskGauge', ss.disk_usage, getGaugeColor(ss.disk_usage));
+        document.getElementById('diskValue').textContent = ss.disk_usage.toFixed(1) + '%';
+
+        document.getElementById('sessionCount').textContent = ss.session_count ? ss.session_count.toLocaleString() : '0';
+        document.getElementById('uptimeValue').textContent = formatUptime(ss.uptime);
+        document.getElementById('firmwareValue').textContent = ss.version || '-';
+    }
+
+    function createGauge(containerId, value, color) {
+        const container = document.getElementById(containerId);
+        const radius = 32;
+        const circumference = 2 * Math.PI * radius;
+        const offset = circumference - (Math.min(value, 100) / 100) * circumference;
+
+        container.innerHTML = `
+            <svg width="80" height="80" viewBox="0 0 80 80">
+                <circle class="gauge-bg" cx="40" cy="40" r="${radius}" />
+                <circle class="gauge-fill" cx="40" cy="40" r="${radius}"
+                    stroke="${color}"
+                    stroke-dasharray="${circumference}"
+                    stroke-dashoffset="${offset}" />
+            </svg>
+            <div class="gauge-text">${Math.round(value)}%</div>
+        `;
+    }
+
+    function getGaugeColor(value) {
+        if (value >= 90) return '#f85149';
+        if (value >= 70) return '#d29922';
+        return '#3fb950';
+    }
+
+    function renderInterfaces() {
+        allInterfaces = deviceData.interfaces || [];
+        const upCount = allInterfaces.filter(i => i.status === 'up').length;
+        const downCount = allInterfaces.filter(i => i.status === 'down').length;
+        document.getElementById('ifaceSummary').textContent =
+            `${allInterfaces.length} total, ${upCount} up, ${downCount} down`;
+        filterIfaces(currentFilter);
+    }
+
+    function filterIfaces(filter) {
+        currentFilter = filter;
+        document.querySelectorAll('.filters .filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.textContent.toLowerCase() === filter);
+        });
+
+        let filtered = allInterfaces;
+        if (filter === 'up') filtered = allInterfaces.filter(i => i.status === 'up');
+        else if (filter === 'down') filtered = allInterfaces.filter(i => i.status === 'down');
+        else if (filter === 'ethernet') filtered = allInterfaces.filter(i => i.type_name === 'ethernet');
+        else if (filter === 'tunnel') filtered = allInterfaces.filter(i => i.type_name === 'tunnel');
+        else if (filter === 'vxlan') filtered = allInterfaces.filter(i => i.type_name === 'vxlan');
+        else if (filter === 'lag') filtered = allInterfaces.filter(i => i.type_name === 'lag');
+
+        const body = document.getElementById('ifaceBody');
+        const empty = document.getElementById('ifaceEmpty');
+
+        if (filtered.length === 0) {
+            body.innerHTML = '';
+            empty.style.display = 'block';
+            return;
+        }
+        empty.style.display = 'none';
+
+        // Sort: up first, then by name
+        filtered.sort((a, b) => {
+            if (a.status === 'up' && b.status !== 'up') return -1;
+            if (a.status !== 'up' && b.status === 'up') return 1;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+
+        let html = '';
+        for (const iface of filtered) {
+            const typeBadge = getTypeBadge(iface);
+            const isExpanded = expandedIfIndex === iface.index;
+            html += `<tr class="clickable" onclick="toggleExpand(${iface.index})">
+                <td><strong>${esc(iface.name)}</strong></td>
+                <td>${esc(iface.alias || '')}</td>
+                <td>${typeBadge}</td>
+                <td>${formatSpeed(iface)}</td>
+                <td><span class="badge ${iface.status}">${iface.status}</span></td>
+                <td><span class="badge ${iface.admin_status}">${iface.admin_status || '-'}</span></td>
+                <td>${formatBytes(iface.in_bytes)}</td>
+                <td>${formatBytes(iface.out_bytes)}</td>
+                <td>${(iface.in_errors || 0) + (iface.out_errors || 0)}</td>
+                <td>${iface.mtu || '-'}</td>
+                <td style="font-family:monospace;font-size:0.78rem">${esc(iface.mac_address || '-')}</td>
+            </tr>`;
+
+            if (isExpanded) {
+                html += `<tr class="expand-row"><td colspan="11">
+                    <div class="expand-content">
+                        <div class="detail-grid">
+                            <div class="detail-item"><span class="label">Index</span><span class="value">${iface.index}</span></div>
+                            <div class="detail-item"><span class="label">Type ID</span><span class="value">${iface.type} (${iface.type_name || 'unknown'})</span></div>
+                            <div class="detail-item"><span class="label">VLAN ID</span><span class="value">${iface.vlan_id || '-'}</span></div>
+                            <div class="detail-item"><span class="label">High Speed</span><span class="value">${iface.high_speed ? iface.high_speed + ' Mbps' : '-'}</span></div>
+                            <div class="detail-item"><span class="label">Description</span><span class="value">${esc(iface.description || '-')}</span></div>
+                            <div class="detail-item"><span class="label">In Bytes</span><span class="value">${formatBytes(iface.in_bytes)}</span></div>
+                            <div class="detail-item"><span class="label">Out Bytes</span><span class="value">${formatBytes(iface.out_bytes)}</span></div>
+                            <div class="detail-item"><span class="label">In Packets</span><span class="value">${(iface.in_packets || 0).toLocaleString()}</span></div>
+                            <div class="detail-item"><span class="label">Out Packets</span><span class="value">${(iface.out_packets || 0).toLocaleString()}</span></div>
+                            <div class="detail-item"><span class="label">In Errors</span><span class="value">${(iface.in_errors || 0).toLocaleString()}</span></div>
+                            <div class="detail-item"><span class="label">Out Errors</span><span class="value">${(iface.out_errors || 0).toLocaleString()}</span></div>
+                            <div class="detail-item"><span class="label">In Discards</span><span class="value">${(iface.in_discards || 0).toLocaleString()}</span></div>
+                            <div class="detail-item"><span class="label">Out Discards</span><span class="value">${(iface.out_discards || 0).toLocaleString()}</span></div>
+                        </div>
+                        <div class="sparkline-container" id="sparkline-${iface.index}">
+                            <canvas id="canvas-${iface.index}"></canvas>
+                        </div>
+                    </div>
+                </td></tr>`;
+            }
+        }
+        body.innerHTML = html;
+
+        if (expandedIfIndex !== null) {
+            loadSparkline(expandedIfIndex);
+        }
+    }
+
+    function toggleExpand(ifIndex) {
+        expandedIfIndex = expandedIfIndex === ifIndex ? null : ifIndex;
+        filterIfaces(currentFilter);
+    }
+
+    async function loadSparkline(ifIndex) {
+        const canvas = document.getElementById('canvas-' + ifIndex);
+        if (!canvas) return;
+
+        try {
+            const resp = await fetch(`/admin/api/devices/${deviceId}/interfaces/${ifIndex}/history?hours=24`, { credentials: 'same-origin' });
+            if (!resp.ok) return;
+            const result = await resp.json();
+            if (!result.success || !result.data || result.data.length < 2) {
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#484f58';
+                ctx.font = '11px sans-serif';
+                ctx.fillText('Not enough history data', 10, 30);
+                return;
+            }
+            drawSparkline(canvas, result.data);
+        } catch(e) {}
+    }
+
+    function drawSparkline(canvas, data) {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = rect.width - 16;
+        canvas.height = rect.height - 16;
+
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width, h = canvas.height;
+
+        // Plot in_bytes over time
+        const values = data.map(d => d.in_bytes || 0);
+        const max = Math.max(...values, 1);
+        const min = Math.min(...values);
+
+        ctx.strokeStyle = '#58a6ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < values.length; i++) {
+            const x = (i / (values.length - 1)) * w;
+            const y = h - ((values[i] - min) / (max - min || 1)) * (h - 4) - 2;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Fill area
+        ctx.lineTo(w, h);
+        ctx.lineTo(0, h);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(88, 166, 255, 0.08)';
+        ctx.fill();
+    }
+
+    function getTypeBadge(iface) {
+        const tn = iface.type_name || '';
+        if (tn === 'vxlan') return '<span class="badge vxlan">VXLAN</span>';
+        if (tn === 'tunnel') return '<span class="badge tunnel">Tunnel</span>';
+        if (tn === 'lag') return '<span class="badge lag">LAG</span>';
+        if (tn === 'loopback') return '<span class="badge unknown">Loop</span>';
+        if (tn === 'ethernet') return '<span class="badge online">Eth</span>';
+        if (tn) return '<span class="badge unknown">' + esc(tn) + '</span>';
+        return '<span style="color:#484f58">' + iface.type + '</span>';
+    }
+
+    function renderVPN() {
+        const vpn = deviceData.vpn_status || [];
+        const body = document.getElementById('vpnBody');
+        const empty = document.getElementById('vpnEmpty');
+
+        if (vpn.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        body.innerHTML = vpn.map(v => `<tr>
+            <td><strong>${esc(v.tunnel_name)}</strong></td>
+            <td>${esc(v.remote_ip)}</td>
+            <td><span class="badge ${v.status}">${v.status}</span></td>
+            <td>${formatBytes(v.bytes_in)}</td>
+            <td>${formatBytes(v.bytes_out)}</td>
+        </tr>`).join('');
+
+        // Update tab label with count
+        const upCount = vpn.filter(v => v.status === 'up').length;
+        document.querySelector('[onclick="switchTab(\'vpn\')"]').textContent =
+            `VPN Tunnels (${upCount}/${vpn.length})`;
+    }
+
+    function renderSensors() {
+        const sensors = deviceData.hardware_sensors || [];
+        const body = document.getElementById('sensorBody');
+        const empty = document.getElementById('sensorEmpty');
+
+        if (sensors.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        body.innerHTML = sensors.map(s => `<tr>
+            <td>${esc(s.name)}</td>
+            <td><strong>${s.value}</strong></td>
+            <td>${esc(s.unit || '')}</td>
+            <td><span class="badge ${s.status === 'alarm' ? 'critical' : 'online'}">${s.status}</span></td>
+        </tr>`).join('');
+    }
+
+    function renderAlerts() {
+        const alerts = deviceData.recent_alerts || [];
+        const body = document.getElementById('alertBody');
+        const empty = document.getElementById('alertEmpty');
+
+        if (alerts.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        body.innerHTML = alerts.map(a => `<tr>
+            <td style="white-space:nowrap">${formatTime(a.timestamp)}</td>
+            <td>${esc(a.alert_type)}</td>
+            <td><span class="badge ${a.severity}">${a.severity}</span></td>
+            <td>${esc(a.message)}</td>
+        </tr>`).join('');
+    }
+
+    function renderPing() {
+        const pings = deviceData.ping_stats || [];
+        const body = document.getElementById('pingBody');
+        const empty = document.getElementById('pingEmpty');
+
+        if (pings.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        body.innerHTML = pings.map(p => `<tr>
+            <td>${esc(p.target_ip)}</td>
+            <td>${p.min_latency ? p.min_latency.toFixed(2) + ' ms' : '-'}</td>
+            <td>${p.avg_latency ? p.avg_latency.toFixed(2) + ' ms' : '-'}</td>
+            <td>${p.max_latency ? p.max_latency.toFixed(2) + ' ms' : '-'}</td>
+            <td>${p.packet_loss != null ? p.packet_loss.toFixed(1) + '%' : '-'}</td>
+            <td>${p.samples || 0}</td>
+        </tr>`).join('');
+    }
+
+    function switchTab(name) {
+        document.querySelectorAll('.section-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelector(`[onclick="switchTab('${name}')"]`).classList.add('active');
+        document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0;
+        let val = bytes;
+        while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+        return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    }
+
+    function formatSpeed(iface) {
+        if (iface.high_speed && iface.high_speed > 0) {
+            if (iface.high_speed >= 1000) return (iface.high_speed / 1000).toFixed(0) + ' Gbps';
+            return iface.high_speed + ' Mbps';
+        }
+        if (iface.speed) {
+            const mbps = iface.speed / 1000000;
+            if (mbps >= 1000) return (mbps / 1000).toFixed(0) + ' Gbps';
+            if (mbps >= 1) return mbps.toFixed(0) + ' Mbps';
+            return iface.speed + ' bps';
+        }
+        return '-';
+    }
+
+    function formatUptime(seconds) {
+        if (!seconds) return '-';
+        // Uptime comes in hundredths of a second (timeticks)
+        const totalSec = Math.floor(seconds / 100);
+        const days = Math.floor(totalSec / 86400);
+        const hours = Math.floor((totalSec % 86400) / 3600);
+        const mins = Math.floor((totalSec % 3600) / 60);
+        if (days > 0) return days + 'd ' + hours + 'h';
+        if (hours > 0) return hours + 'h ' + mins + 'm';
+        return mins + 'm';
+    }
+
+    function formatTime(ts) {
+        if (!ts) return '-';
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return '-';
+        const now = new Date();
+        const diff = (now - d) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    }
+
+    function esc(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    async function doLogout() {
+        const token = await getCSRFToken();
+        await fetch('/admin/api/logout', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }
+        });
+        window.location.href = '/admin/login';
+    }
+
+    // Auto-refresh every 60 seconds
+    setInterval(loadDevice, 60000);
+
+    loadDevice();
+    </script>
+</body>
+</html>

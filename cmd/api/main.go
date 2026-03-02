@@ -161,6 +161,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.POST("/probes/:id/pings", handler.ReceivePingResults)
 		api.POST("/probes/:id/system-status", handler.ReceiveSystemStatuses)
 		api.POST("/probes/:id/interface-stats", handler.ReceiveInterfaceStats)
+		api.POST("/probes/:id/vpn-status", handler.ReceiveVPNStatuses)
 
 		// Probe fetches its assigned devices
 		api.GET("/probes/:id/devices", handler.GetProbeDevices)
@@ -224,6 +225,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "network.html", nil)
 		})
 
+		admin.GET("/devices/:id", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "device-detail.html", nil)
+		})
+
 		admin.GET("/api/csrf-token", handler.GetCSRFToken)
 		admin.GET("/api/dashboard", handler.GetDashboardAll)
 		admin.GET("/api/dashboard/:id", handler.GetAdminDashboard)
@@ -258,6 +263,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/syslog", handler.GetSyslogMessages)
 		admin.GET("/api/flows", handler.GetFlowSamples)
 		admin.GET("/api/probes/:id/stats", handler.GetProbeStats)
+
+		admin.GET("/api/devices/:id/detail", handler.GetDeviceDetail)
+		admin.GET("/api/devices/:id/interfaces/:ifIndex/history", handler.GetInterfaceHistory)
 
 		admin.GET("/api/connections", handler.GetDeviceConnections)
 		admin.POST("/api/connections", handler.CreateDeviceConnection)

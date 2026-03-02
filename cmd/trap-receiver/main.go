@@ -26,7 +26,7 @@ func main() {
 	}
 
 	notif := notifier.NewNotifier(cfg)
-	alertManager := alerts.NewAlertManager(cfg, notif)
+	alertManager := alerts.NewAlertManager(cfg, notif, nil)
 
 	err = trapReceiver.Start(func(trap *models.TrapEvent) {
 		log.Printf("Received trap: %s - %s (Severity: %s)",

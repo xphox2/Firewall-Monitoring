@@ -26,6 +26,7 @@ var (
 	BaseOIDInterface   = ".1.3.6.1.2.1.2.2.1"
 	OIDIfDescr         = ".1.3.6.1.2.1.2.2.1.2"
 	OIDIfType          = ".1.3.6.1.2.1.2.2.1.3"
+	OIDIfMtu           = ".1.3.6.1.2.1.2.2.1.4"
 	OIDIfSpeed         = ".1.3.6.1.2.1.2.2.1.5"
 	OIDIfPhysAddress   = ".1.3.6.1.2.1.2.2.1.6"
 	OIDIfAdminStatus   = ".1.3.6.1.2.1.2.2.1.7"
@@ -40,6 +41,25 @@ var (
 	OIDIfOutNUcastPkts = ".1.3.6.1.2.1.2.2.1.18"
 	OIDIfOutDiscards   = ".1.3.6.1.2.1.2.2.1.19"
 	OIDIfOutErrors     = ".1.3.6.1.2.1.2.2.1.20"
+
+	// ifXTable (RFC 2863)
+	BaseOIDIfXTable  = ".1.3.6.1.2.1.31.1.1.1"
+	OIDIfName        = ".1.3.6.1.2.1.31.1.1.1.1"
+	OIDIfHCInOctets  = ".1.3.6.1.2.1.31.1.1.1.6"
+	OIDIfHCOutOctets = ".1.3.6.1.2.1.31.1.1.1.10"
+	OIDIfHighSpeed   = ".1.3.6.1.2.1.31.1.1.1.15"
+	OIDIfAlias       = ".1.3.6.1.2.1.31.1.1.1.18"
+
+	// Q-BRIDGE-MIB (native VLAN)
+	OIDdot1qPvid = ".1.3.6.1.2.1.17.7.1.4.5.1.1"
+
+	// FortiGate VPN tunnel MIB
+	BaseOIDVPNTunnel      = ".1.3.6.1.4.1.12356.101.12.2.2.1"
+	OIDVPNTunnelName      = ".1.3.6.1.4.1.12356.101.12.2.2.1.3"
+	OIDVPNTunnelRemoteGW  = ".1.3.6.1.4.1.12356.101.12.2.2.1.4"
+	OIDVPNTunnelInOctets  = ".1.3.6.1.4.1.12356.101.12.2.2.1.18"
+	OIDVPNTunnelOutOctets = ".1.3.6.1.4.1.12356.101.12.2.2.1.19"
+	OIDVPNTunnelStatus    = ".1.3.6.1.4.1.12356.101.12.2.2.1.20"
 
 	OIDHWSensorTable = ".1.3.6.1.4.1.12356.101.4.3.2"
 	OIDHWSensorEntry = ".1.3.6.1.4.1.12356.101.4.3.2.1"
@@ -66,6 +86,20 @@ var (
 	TrapAVVirus       = ".1.3.6.1.4.1.12356.101.2.0.601"
 	TrapAVOversize    = ".1.3.6.1.4.1.12356.101.2.0.602"
 )
+
+// IfTypeNames maps IANA ifType values to human-readable names
+var IfTypeNames = map[int]string{
+	1:   "other",
+	6:   "ethernet",
+	24:  "loopback",
+	53:  "propVirtual",
+	131: "tunnel",
+	135: "l2vlan",
+	136: "l3ipvlan",
+	150: "mplsTunnel",
+	161: "lag",
+	351: "vxlan",
+}
 
 func safeString(v interface{}) string {
 	if s, ok := v.([]byte); ok {
@@ -224,10 +258,20 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.Type = int(gosnmp.ToBigInt(pdu.Value).Int64())
 			interfaces[ifIndex] = iface
+		} else if strings.HasPrefix(name, OIDIfMtu+".") {
+			ifIndex = getIndexFromOID(name, OIDIfMtu)
+			iface := getOrCreateInterface(interfaces, ifIndex)
+			iface.MTU = int(gosnmp.ToBigInt(pdu.Value).Int64())
+			interfaces[ifIndex] = iface
 		} else if strings.HasPrefix(name, OIDIfSpeed+".") {
 			ifIndex = getIndexFromOID(name, OIDIfSpeed)
 			iface := getOrCreateInterface(interfaces, ifIndex)
 			iface.Speed = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+			interfaces[ifIndex] = iface
+		} else if strings.HasPrefix(name, OIDIfPhysAddress+".") {
+			ifIndex = getIndexFromOID(name, OIDIfPhysAddress)
+			iface := getOrCreateInterface(interfaces, ifIndex)
+			iface.MACAddress = formatMAC(pdu.Value)
 			interfaces[ifIndex] = iface
 		} else if strings.HasPrefix(name, OIDIfOperStatus+".") {
 			ifIndex = getIndexFromOID(name, OIDIfOperStatus)
@@ -294,16 +338,152 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 		}
 	}
 
+	// Walk ifXTable for extended counters and metadata
+	if xPdus, err := s.Walk(BaseOIDIfXTable); err == nil {
+		for _, pdu := range xPdus {
+			name := pdu.Name
+			if strings.HasPrefix(name, OIDIfAlias+".") {
+				idx := getIndexFromOID(name, OIDIfAlias)
+				if iface, ok := interfaces[idx]; ok {
+					iface.Alias = safeString(pdu.Value)
+					interfaces[idx] = iface
+				}
+			} else if strings.HasPrefix(name, OIDIfHighSpeed+".") {
+				idx := getIndexFromOID(name, OIDIfHighSpeed)
+				if iface, ok := interfaces[idx]; ok {
+					iface.HighSpeed = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+					interfaces[idx] = iface
+				}
+			} else if strings.HasPrefix(name, OIDIfHCInOctets+".") {
+				idx := getIndexFromOID(name, OIDIfHCInOctets)
+				if iface, ok := interfaces[idx]; ok {
+					iface.InBytes = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+					interfaces[idx] = iface
+				}
+			} else if strings.HasPrefix(name, OIDIfHCOutOctets+".") {
+				idx := getIndexFromOID(name, OIDIfHCOutOctets)
+				if iface, ok := interfaces[idx]; ok {
+					iface.OutBytes = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+					interfaces[idx] = iface
+				}
+			}
+		}
+	}
+
+	// Walk Q-BRIDGE-MIB for VLAN IDs (not all devices support this)
+	if vlanPdus, err := s.Walk(OIDdot1qPvid); err == nil {
+		for _, pdu := range vlanPdus {
+			idx := getIndexFromOID(pdu.Name, OIDdot1qPvid)
+			if iface, ok := interfaces[idx]; ok {
+				iface.VLANID = int(gosnmp.ToBigInt(pdu.Value).Int64())
+				interfaces[idx] = iface
+			}
+		}
+	}
+
+	// Resolve type names
+	now := time.Now()
 	result := make([]models.InterfaceStats, 0, len(interfaces))
 	for idx, iface := range interfaces {
 		if idx < 0 {
 			continue // skip entries with invalid OID index
 		}
-		iface.Timestamp = time.Now()
+		if typeName, ok := IfTypeNames[iface.Type]; ok {
+			iface.TypeName = typeName
+		}
+		iface.Timestamp = now
 		result = append(result, iface)
 	}
 
 	return result, nil
+}
+
+func formatMAC(v interface{}) string {
+	var bytes []byte
+	switch val := v.(type) {
+	case []byte:
+		bytes = val
+	case string:
+		bytes = []byte(val)
+	default:
+		return ""
+	}
+	if len(bytes) != 6 {
+		return ""
+	}
+	return fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+}
+
+func (s *SNMPClient) GetVPNStatus() ([]models.VPNStatus, error) {
+	pdus, err := s.Walk(BaseOIDVPNTunnel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk VPN tunnel table: %w", err)
+	}
+
+	tunnelMap := make(map[int]*models.VPNStatus)
+	for _, pdu := range pdus {
+		name := pdu.Name
+		if strings.HasPrefix(name, OIDVPNTunnelName+".") {
+			idx := getIndexFromOID(name, OIDVPNTunnelName)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.TunnelName = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, OIDVPNTunnelRemoteGW+".") {
+			idx := getIndexFromOID(name, OIDVPNTunnelRemoteGW)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.RemoteIP = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, OIDVPNTunnelInOctets+".") {
+			idx := getIndexFromOID(name, OIDVPNTunnelInOctets)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.BytesIn = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		} else if strings.HasPrefix(name, OIDVPNTunnelOutOctets+".") {
+			idx := getIndexFromOID(name, OIDVPNTunnelOutOctets)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.BytesOut = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		} else if strings.HasPrefix(name, OIDVPNTunnelStatus+".") {
+			idx := getIndexFromOID(name, OIDVPNTunnelStatus)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			statusVal := gosnmp.ToBigInt(pdu.Value).Int64()
+			if statusVal == 2 {
+				t.Status = "up"
+				t.State = "active"
+			} else {
+				t.Status = "down"
+				t.State = "inactive"
+			}
+		}
+	}
+
+	now := time.Now()
+	result := make([]models.VPNStatus, 0, len(tunnelMap))
+	for _, t := range tunnelMap {
+		t.Timestamp = now
+		result = append(result, *t)
+	}
+	return result, nil
+}
+
+func getOrCreateVPN(m map[int]*models.VPNStatus, index int) *models.VPNStatus {
+	if v, exists := m[index]; exists {
+		return v
+	}
+	v := &models.VPNStatus{}
+	m[index] = v
+	return v
 }
 
 func (s *SNMPClient) GetHardwareSensors() ([]models.HardwareSensor, error) {

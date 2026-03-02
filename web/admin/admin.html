@@ -234,7 +234,7 @@
                 </div>
                 <div class="table-wrap">
                     <table id="devices-table">
-                        <thead><tr><th>Name</th><th>IP Address</th><th>Probe</th><th>Site</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Name</th><th>IP Address</th><th>Probe</th><th>Site</th><th>CPU</th><th>Memory</th><th>Sessions</th><th>Status</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -434,8 +434,56 @@
                         <input type="number" id="device-snmp-port" value="161">
                     </div>
                     <div class="form-group">
-                        <label>SNMP Community</label>
-                        <input type="text" id="device-community" value="public">
+                        <label>SNMP Version</label>
+                        <select id="device-snmp-version" onchange="toggleV3Fields()">
+                            <option value="1">v1</option>
+                            <option value="2c" selected>v2c</option>
+                            <option value="3">v3</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group" id="community-group">
+                    <label>SNMP Community</label>
+                    <input type="text" id="device-community" value="public">
+                </div>
+                <div id="snmpv3-fields" style="display:none">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>SNMPv3 Username</label>
+                            <input type="text" id="device-v3-username">
+                        </div>
+                        <div class="form-group">
+                            <label>Auth Protocol</label>
+                            <select id="device-v3-auth-type">
+                                <option value="">None</option>
+                                <option value="MD5">MD5</option>
+                                <option value="SHA">SHA</option>
+                                <option value="SHA224">SHA224</option>
+                                <option value="SHA256">SHA256</option>
+                                <option value="SHA384">SHA384</option>
+                                <option value="SHA512">SHA512</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Auth Password</label>
+                        <input type="password" id="device-v3-auth-pass" autocomplete="new-password">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Privacy Protocol</label>
+                            <select id="device-v3-priv-type">
+                                <option value="">None</option>
+                                <option value="DES">DES</option>
+                                <option value="AES">AES</option>
+                                <option value="AES192">AES192</option>
+                                <option value="AES256">AES256</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Privacy Password</label>
+                            <input type="password" id="device-v3-priv-pass" autocomplete="new-password">
+                        </div>
                     </div>
                 </div>
                 <div class="form-row">
@@ -630,14 +678,28 @@
                     apiFetch(`${API_BASE}/traps?limit=10`)
                 ]);
                 if (!dashResult) return;
-                const data = dashResult.data;
+                const raw = dashResult.data;
+                const data = raw.dashboard || raw;
+                const enrichments = raw.enrichments || {};
                 const probes = probesResult?.data || [];
                 const syslog = syslogResult?.data || [];
                 const traps = trapsResult?.data || [];
 
-                document.getElementById('total-devices').textContent = data.devices?.length || 0;
-                document.getElementById('online-devices').textContent = data.devices?.filter(f => f.status === 'online').length || 0;
-                document.getElementById('offline-devices').textContent = data.devices?.filter(f => f.status === 'offline').length || 0;
+                const deviceList = data.devices || [];
+                document.getElementById('total-devices').textContent = deviceList.length || 0;
+                document.getElementById('online-devices').textContent = deviceList.filter(f => f.status === 'online').length || 0;
+                document.getElementById('offline-devices').textContent = deviceList.filter(f => f.status === 'offline').length || 0;
+
+                // VPN summary across all devices
+                let vpnUp = 0, vpnTotal = 0;
+                for (const [, e] of Object.entries(enrichments)) {
+                    vpnTotal += e.vpn_total || 0;
+                    vpnUp += e.vpn_up || 0;
+                }
+                if (vpnTotal > 0) {
+                    document.getElementById('trap-count').textContent = vpnUp + '/' + vpnTotal;
+                    document.getElementById('trap-count').closest('.stat-card').querySelector('.stat-label').textContent = 'VPN Tunnels';
+                }
 
                 const activeProbes = probes.filter(p => p.approval_status === 'approved' && p.status === 'online');
                 document.getElementById('active-probes').textContent = activeProbes.length;
@@ -721,21 +783,50 @@
                 const tbody = document.querySelector('#devices-table tbody');
                 tbody.innerHTML = currentDevices.map(d => `
                     <tr>
-                        <td><strong>${escapeHtml(d.name)}</strong>${d.description ? '<br><span style="color:#484f58;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : ''}</td>
+                        <td><a href="/admin/devices/${d.id}" style="color:#58a6ff;text-decoration:none;font-weight:600">${escapeHtml(d.name)}</a>${d.description ? '<br><span style="color:#484f58;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : ''}</td>
                         <td class="mono">${escapeHtml(d.ip_address)}</td>
                         <td>${d.probe ? escapeHtml(d.probe.name) : '<span style="color:#484f58">-</span>'}</td>
                         <td>${d.site ? escapeHtml(d.site.name) : '<span style="color:#484f58">-</span>'}</td>
-                        <td>${escapeHtml(d.location) || '<span style="color:#484f58">-</span>'}</td>
+                        <td id="dev-cpu-${d.id}" style="color:#484f58">-</td>
+                        <td id="dev-mem-${d.id}" style="color:#484f58">-</td>
+                        <td id="dev-sess-${d.id}" style="color:#484f58">-</td>
                         <td><span class="pulse-dot ${d.status === 'online' ? 'online' : 'offline'}"></span><span class="badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
                         <td>
                             <button class="btn secondary sm" onclick="editDevice(${d.id})">Edit</button>
                             <button class="btn danger sm" onclick="deleteDevice(${d.id})">Delete</button>
                         </td>
                     </tr>
-                `).join('') || '<tr><td colspan="7" class="empty-state">No devices configured</td></tr>';
+                `).join('') || '<tr><td colspan="9" class="empty-state">No devices configured</td></tr>';
+                // Load enrichments from dashboard data
+                loadDeviceEnrichments();
             } catch (e) {
                 console.error('Failed to load devices:', e);
             }
+        }
+
+        async function loadDeviceEnrichments() {
+            try {
+                const r = await apiFetch(`${API_BASE}/dashboard`);
+                if (!r?.data?.enrichments) return;
+                const enrichments = r.data.enrichments;
+                for (const [id, e] of Object.entries(enrichments)) {
+                    const cpuEl = document.getElementById('dev-cpu-' + id);
+                    const memEl = document.getElementById('dev-mem-' + id);
+                    const sessEl = document.getElementById('dev-sess-' + id);
+                    if (cpuEl && e.cpu_usage > 0) {
+                        cpuEl.textContent = e.cpu_usage.toFixed(1) + '%';
+                        cpuEl.style.color = e.cpu_usage >= 80 ? '#f85149' : (e.cpu_usage >= 60 ? '#d29922' : '#3fb950');
+                    }
+                    if (memEl && e.memory_usage > 0) {
+                        memEl.textContent = e.memory_usage.toFixed(1) + '%';
+                        memEl.style.color = e.memory_usage >= 80 ? '#f85149' : (e.memory_usage >= 60 ? '#d29922' : '#3fb950');
+                    }
+                    if (sessEl && e.session_count > 0) {
+                        sessEl.textContent = e.session_count.toLocaleString();
+                        sessEl.style.color = '#c9d1d9';
+                    }
+                }
+            } catch(e) {}
         }
 
         function populateProbeSelect(selectId) {
@@ -1039,7 +1130,13 @@
                 document.getElementById('device-name').value = d.name;
                 document.getElementById('device-ip').value = d.ip_address;
                 document.getElementById('device-snmp-port').value = d.snmp_port || 161;
+                document.getElementById('device-snmp-version').value = d.snmp_version || '2c';
                 document.getElementById('device-community').value = d.snmp_community || 'public';
+                document.getElementById('device-v3-username').value = d.snmpv3_username || '';
+                document.getElementById('device-v3-auth-type').value = d.snmpv3_auth_type || '';
+                document.getElementById('device-v3-auth-pass').value = '';
+                document.getElementById('device-v3-priv-type').value = d.snmpv3_priv_type || '';
+                document.getElementById('device-v3-priv-pass').value = '';
                 document.getElementById('device-probe').value = d.probe_id || '';
                 document.getElementById('device-site').value = d.site_id || '';
                 document.getElementById('device-location').value = d.location || '';
@@ -1048,16 +1145,25 @@
                 document.getElementById('device-form').reset();
                 document.getElementById('device-id').value = '';
                 document.getElementById('device-snmp-port').value = '161';
+                document.getElementById('device-snmp-version').value = '2c';
                 document.getElementById('device-community').value = 'public';
             }
+            toggleV3Fields();
         }
 
         function closeDeviceModal() { document.getElementById('device-modal').classList.remove('active'); }
+
+        function toggleV3Fields() {
+            const ver = document.getElementById('device-snmp-version').value;
+            document.getElementById('snmpv3-fields').style.display = ver === '3' ? 'block' : 'none';
+            document.getElementById('community-group').style.display = ver === '3' ? 'none' : 'block';
+        }
 
         async function testDeviceConnection() {
             const ip = document.getElementById('device-ip').value;
             const port = document.getElementById('device-snmp-port').value || 161;
             const community = document.getElementById('device-community').value || 'public';
+            const version = document.getElementById('device-snmp-version').value || '2c';
             if (!ip) { alert('Please enter an IP address first'); return; }
 
             const btn = event.target;
@@ -1065,11 +1171,20 @@
             btn.textContent = 'Testing...';
             btn.disabled = true;
 
+            const testData = { ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: version };
+            if (version === '3') {
+                testData.snmpv3_username = document.getElementById('device-v3-username').value;
+                testData.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
+                testData.snmpv3_auth_pass = document.getElementById('device-v3-auth-pass').value;
+                testData.snmpv3_priv_type = document.getElementById('device-v3-priv-type').value;
+                testData.snmpv3_priv_pass = document.getElementById('device-v3-priv-pass').value;
+            }
+
             try {
                 const result = await apiFetch(`${API_BASE}/devices/test`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: '2c' })
+                    body: JSON.stringify(testData)
                 });
                 if (result?.data?.online) {
                     alert(`Connected!\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
@@ -1083,15 +1198,26 @@
         document.getElementById('device-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const id = document.getElementById('device-id').value;
+            const snmpVersion = document.getElementById('device-snmp-version').value || '2c';
             const data = {
                 name: document.getElementById('device-name').value,
                 ip_address: document.getElementById('device-ip').value,
                 snmp_port: parseInt(document.getElementById('device-snmp-port').value),
+                snmp_version: snmpVersion,
                 snmp_community: document.getElementById('device-community').value,
                 location: document.getElementById('device-location').value,
                 description: document.getElementById('device-description').value,
                 enabled: true
             };
+            if (snmpVersion === '3') {
+                data.snmpv3_username = document.getElementById('device-v3-username').value;
+                data.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
+                const authPass = document.getElementById('device-v3-auth-pass').value;
+                if (authPass) data.snmpv3_auth_pass = authPass;
+                data.snmpv3_priv_type = document.getElementById('device-v3-priv-type').value;
+                const privPass = document.getElementById('device-v3-priv-pass').value;
+                if (privPass) data.snmpv3_priv_pass = privPass;
+            }
             const probeVal = document.getElementById('device-probe').value;
             const siteVal = document.getElementById('device-site').value;
             if (probeVal) data.probe_id = parseInt(probeVal);

@@ -427,10 +427,16 @@ func (h *Handler) GetDevices(c *gin.Context) {
 		return
 	}
 
-	// Redact SNMP community strings from response
+	// Redact SNMP secrets from response
 	for i := range devices {
 		if devices[i].SNMPCommunity != "" {
 			devices[i].SNMPCommunity = "********"
+		}
+		if devices[i].SNMPV3AuthPass != "" {
+			devices[i].SNMPV3AuthPass = "********"
+		}
+		if devices[i].SNMPV3PrivPass != "" {
+			devices[i].SNMPV3PrivPass = "********"
 		}
 	}
 
@@ -477,6 +483,8 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 	}
 
 	device.SNMPCommunity = "********"
+	device.SNMPV3AuthPass = ""
+	device.SNMPV3PrivPass = ""
 	c.JSON(http.StatusCreated, models.SuccessResponse(device))
 }
 
@@ -500,17 +508,22 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	}
 
 	allowedFields := map[string]bool{
-		"name":           true,
-		"hostname":       true,
-		"ip_address":     true,
-		"snmp_port":      true,
-		"snmp_community": true,
-		"snmp_version":   true,
-		"location":       true,
-		"description":    true,
-		"enabled":        true,
-		"site_id":        true,
-		"probe_id":       true,
+		"name":             true,
+		"hostname":         true,
+		"ip_address":       true,
+		"snmp_port":        true,
+		"snmp_community":   true,
+		"snmp_version":     true,
+		"snmpv3_username":  true,
+		"snmpv3_auth_type": true,
+		"snmpv3_auth_pass": true,
+		"snmpv3_priv_type": true,
+		"snmpv3_priv_pass": true,
+		"location":         true,
+		"description":      true,
+		"enabled":          true,
+		"site_id":          true,
+		"probe_id":         true,
 	}
 
 	var updates map[string]interface{}
@@ -566,10 +579,14 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	updated, err := h.db.GetDevice(uint(idUint))
 	if err != nil {
 		device.SNMPCommunity = "********"
+		device.SNMPV3AuthPass = ""
+		device.SNMPV3PrivPass = ""
 		c.JSON(http.StatusOK, models.SuccessResponse(device))
 		return
 	}
 	updated.SNMPCommunity = "********"
+	updated.SNMPV3AuthPass = ""
+	updated.SNMPV3PrivPass = ""
 	c.JSON(http.StatusOK, models.SuccessResponse(updated))
 }
 
@@ -1527,7 +1544,7 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 	recentAlerts := []models.Alert{}
 
 	if h.db != nil {
-		if err := h.db.Gorm().Find(&devices).Error; err != nil {
+		if err := h.db.Gorm().Preload("Site").Preload("Probe").Find(&devices).Error; err != nil {
 			log.Printf("Failed to get devices: %v", err)
 		}
 
@@ -1540,10 +1557,59 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		}
 	}
 
-	// Redact SNMP community strings
+	// Redact SNMP secrets
 	for i := range devices {
 		if devices[i].SNMPCommunity != "" {
 			devices[i].SNMPCommunity = "********"
+		}
+		devices[i].SNMPV3AuthPass = ""
+		devices[i].SNMPV3PrivPass = ""
+	}
+
+	// Per-device enrichment: latest system status, interface summary, VPN summary
+	type DeviceEnrichment struct {
+		DeviceID     uint    `json:"device_id"`
+		CPUUsage     float64 `json:"cpu_usage"`
+		MemoryUsage  float64 `json:"memory_usage"`
+		SessionCount int     `json:"session_count"`
+		IfaceTotal   int     `json:"iface_total"`
+		IfaceUp      int     `json:"iface_up"`
+		IfaceDown    int     `json:"iface_down"`
+		VPNTotal     int     `json:"vpn_total"`
+		VPNUp        int     `json:"vpn_up"`
+	}
+
+	enrichments := make(map[uint]*DeviceEnrichment)
+	if h.db != nil {
+		for _, dev := range devices {
+			e := &DeviceEnrichment{DeviceID: dev.ID}
+			// Latest system status
+			var ss models.SystemStatus
+			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
+				e.CPUUsage = ss.CPUUsage
+				e.MemoryUsage = ss.MemoryUsage
+				e.SessionCount = ss.SessionCount
+			}
+			// Interface summary
+			var latestIface models.InterfaceStats
+			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
+				var total, up int64
+				h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Count(&total)
+				h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestIface.Timestamp).Count(&up)
+				e.IfaceTotal = int(total)
+				e.IfaceUp = int(up)
+				e.IfaceDown = int(total - up)
+			}
+			// VPN summary
+			var latestVPN models.VPNStatus
+			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestVPN).Error; err == nil {
+				var vpnTotal, vpnUp int64
+				h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestVPN.Timestamp).Count(&vpnTotal)
+				h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestVPN.Timestamp).Count(&vpnUp)
+				e.VPNTotal = int(vpnTotal)
+				e.VPNUp = int(vpnUp)
+			}
+			enrichments[dev.ID] = e
 		}
 	}
 
@@ -1553,14 +1619,22 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		Connections:  connections,
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(dashboard))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"dashboard":   dashboard,
+		"enrichments": enrichments,
+	}))
 }
 
 type TestDeviceRequest struct {
-	IPAddress     string `json:"ip_address" binding:"required"`
-	SNMPPort      int    `json:"snmp_port"`
-	SNMPCommunity string `json:"snmp_community"`
-	SNMPVersion   string `json:"snmp_version"`
+	IPAddress      string `json:"ip_address" binding:"required"`
+	SNMPPort       int    `json:"snmp_port"`
+	SNMPCommunity  string `json:"snmp_community"`
+	SNMPVersion    string `json:"snmp_version"`
+	SNMPV3Username string `json:"snmpv3_username"`
+	SNMPV3AuthType string `json:"snmpv3_auth_type"`
+	SNMPV3AuthPass string `json:"snmpv3_auth_pass"`
+	SNMPV3PrivType string `json:"snmpv3_priv_type"`
+	SNMPV3PrivPass string `json:"snmpv3_priv_pass"`
 }
 
 func (h *Handler) TestDeviceConnection(c *gin.Context) {
@@ -1592,12 +1666,17 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
-			SNMPHost: req.IPAddress,
-			SNMPPort: req.SNMPPort,
-			Community:     req.SNMPCommunity,
-			Version:       req.SNMPVersion,
-			Timeout:       10 * time.Second,
-			Retries:       1,
+			SNMPHost:   req.IPAddress,
+			SNMPPort:   req.SNMPPort,
+			Community:  req.SNMPCommunity,
+			Version:    req.SNMPVersion,
+			V3Username: req.SNMPV3Username,
+			V3AuthType: req.SNMPV3AuthType,
+			V3AuthPass: req.SNMPV3AuthPass,
+			V3PrivType: req.SNMPV3PrivType,
+			V3PrivPass: req.SNMPV3PrivPass,
+			Timeout:    10 * time.Second,
+			Retries:    1,
 		},
 	}
 
@@ -2053,6 +2132,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		statuses = statuses[:100]
 	}
 	saved := 0
+	deviceIDs := make(map[uint]bool)
 	for i := range statuses {
 		_ = probe // probe validated above
 		if statuses[i].Timestamp.IsZero() {
@@ -2063,7 +2143,20 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 			continue
 		}
 		saved++
+		if statuses[i].DeviceID > 0 {
+			deviceIDs[statuses[i].DeviceID] = true
+		}
 	}
+
+	// Mark devices that sent data as online
+	now := time.Now()
+	for deviceID := range deviceIDs {
+		h.db.Gorm().Model(&models.Device{}).Where("id = ?", deviceID).Updates(map[string]interface{}{
+			"status":      "online",
+			"last_polled": now,
+		})
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
 }
 
@@ -2080,17 +2173,70 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	if len(stats) > 1000 {
 		stats = stats[:1000]
 	}
+	deviceIDs := make(map[uint]bool)
 	for i := range stats {
 		_ = probe
 		if stats[i].Timestamp.IsZero() {
 			stats[i].Timestamp = time.Now()
+		}
+		if stats[i].DeviceID > 0 {
+			deviceIDs[stats[i].DeviceID] = true
 		}
 	}
 	if err := h.db.SaveInterfaceStats(stats); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface stats"))
 		return
 	}
+
+	// Mark devices that sent data as online
+	now := time.Now()
+	for deviceID := range deviceIDs {
+		h.db.Gorm().Model(&models.Device{}).Where("id = ?", deviceID).Updates(map[string]interface{}{
+			"status":      "online",
+			"last_polled": now,
+		})
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+}
+
+func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var statuses []models.VPNStatus
+	if err := c.ShouldBindJSON(&statuses); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(statuses) > 500 {
+		statuses = statuses[:500]
+	}
+	deviceIDs := make(map[uint]bool)
+	for i := range statuses {
+		_ = probe
+		if statuses[i].Timestamp.IsZero() {
+			statuses[i].Timestamp = time.Now()
+		}
+		if statuses[i].DeviceID > 0 {
+			deviceIDs[statuses[i].DeviceID] = true
+		}
+	}
+	if err := h.db.SaveVPNStatuses(statuses); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save VPN statuses"))
+		return
+	}
+
+	now := time.Now()
+	for deviceID := range deviceIDs {
+		h.db.Gorm().Model(&models.Device{}).Where("id = ?", deviceID).Updates(map[string]interface{}{
+			"status":      "online",
+			"last_polled": now,
+		})
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(statuses)}))
 }
 
 // Admin viewing endpoints
@@ -2218,4 +2364,112 @@ func (h *Handler) GetProbeDevices(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(devices))
+}
+
+func (h *Handler) GetDeviceDetail(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	device, err := h.db.GetDevice(uint(idUint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Device not found"))
+		return
+	}
+
+	// Redact secrets
+	device.SNMPCommunity = "********"
+	device.SNMPV3AuthPass = ""
+	device.SNMPV3PrivPass = ""
+
+	// Latest system status
+	var systemStatus *models.SystemStatus
+	var ss models.SystemStatus
+	if err := h.db.Gorm().Where("device_id = ?", idUint).Order("timestamp DESC").First(&ss).Error; err == nil {
+		systemStatus = &ss
+	}
+
+	// Latest interface stats (most recent timestamp)
+	var latestIface models.InterfaceStats
+	var interfaces []models.InterfaceStats
+	if err := h.db.Gorm().Where("device_id = ?", idUint).Order("timestamp DESC").First(&latestIface).Error; err == nil {
+		h.db.Gorm().Where("device_id = ? AND timestamp = ?", idUint, latestIface.Timestamp).Find(&interfaces)
+	}
+
+	// Latest VPN statuses
+	vpnStatuses, _ := h.db.GetLatestVPNStatuses(uint(idUint))
+
+	// Latest hardware sensors
+	var latestSensor models.HardwareSensor
+	var sensors []models.HardwareSensor
+	if err := h.db.Gorm().Where("device_id = ?", idUint).Order("timestamp DESC").First(&latestSensor).Error; err == nil {
+		h.db.Gorm().Where("device_id = ? AND timestamp = ?", idUint, latestSensor.Timestamp).Find(&sensors)
+	}
+
+	// Recent alerts
+	var recentAlerts []models.Alert
+	h.db.Gorm().Where("device_id = ?", idUint).Order("timestamp DESC").Limit(20).Find(&recentAlerts)
+
+	// Ping stats
+	var pingStats []models.PingStats
+	h.db.Gorm().Where("device_id = ?", idUint).Find(&pingStats)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"device":           device,
+		"system_status":    systemStatus,
+		"interfaces":       interfaces,
+		"vpn_status":       vpnStatuses,
+		"hardware_sensors": sensors,
+		"recent_alerts":    recentAlerts,
+		"ping_stats":       pingStats,
+	}))
+}
+
+func (h *Handler) GetInterfaceHistory(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	deviceID := c.Param("id")
+	ifIndex := c.Param("ifIndex")
+
+	deviceIDUint, err := strconv.ParseUint(deviceID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	ifIndexInt, err := strconv.Atoi(ifIndex)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid interface index"))
+		return
+	}
+
+	hours := 24
+	if h := c.Query("hours"); h != "" {
+		if parsed, err := strconv.Atoi(h); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var stats []models.InterfaceStats
+	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceIDUint, ifIndexInt, since).
+		Order("timestamp ASC").Limit(500).Find(&stats).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface history"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(stats))
 }

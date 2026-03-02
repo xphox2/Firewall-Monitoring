@@ -285,12 +285,17 @@ func (p *Probe) startSNMPPolling() {
 func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
-			SNMPHost: dev.IPAddress,
-			SNMPPort: dev.SNMPPort,
-			Community:     dev.SNMPCommunity,
-			Version:       dev.SNMPVersion,
-			Timeout:       10 * time.Second,
-			Retries:       1,
+			SNMPHost:   dev.IPAddress,
+			SNMPPort:   dev.SNMPPort,
+			Community:  dev.SNMPCommunity,
+			Version:    dev.SNMPVersion,
+			V3Username: dev.SNMPV3Username,
+			V3AuthType: dev.SNMPV3AuthType,
+			V3AuthPass: dev.SNMPV3AuthPass,
+			V3PrivType: dev.SNMPV3PrivType,
+			V3PrivPass: dev.SNMPV3PrivPass,
+			Timeout:    10 * time.Second,
+			Retries:    1,
 		},
 	}
 
@@ -326,6 +331,18 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 	}
 	if err := p.RelayClient.SendInterfaceStats(ifaces); err != nil {
 		log.Printf("Failed to send interface stats for %s: %v", dev.Name, err)
+	}
+
+	// Collect VPN tunnel status (silently skip if device has no VPN)
+	vpnStatuses, vpnErr := client.GetVPNStatus()
+	if vpnErr == nil && len(vpnStatuses) > 0 {
+		for i := range vpnStatuses {
+			vpnStatuses[i].DeviceID = dev.ID
+			vpnStatuses[i].Timestamp = now
+		}
+		if err := p.RelayClient.SendVPNStatuses(vpnStatuses); err != nil {
+			log.Printf("Failed to send VPN statuses for %s: %v", dev.Name, err)
+		}
 	}
 }
 

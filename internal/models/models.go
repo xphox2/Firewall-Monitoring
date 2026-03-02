@@ -39,6 +39,12 @@ type InterfaceStats struct {
 	OutDiscards uint64    `json:"out_discards"`
 	AdminStatus string    `json:"admin_status"`
 	Description string    `json:"description"`
+	Alias       string    `json:"alias"`
+	MTU         int       `json:"mtu"`
+	MACAddress  string    `json:"mac_address"`
+	TypeName    string    `json:"type_name"`
+	HighSpeed   uint64    `json:"high_speed"`
+	VLANID      int       `json:"vlan_id"`
 }
 
 type VPNStatus struct {
@@ -127,24 +133,29 @@ type LoginAttempt struct {
 }
 
 type Device struct {
-	ID            uint      `json:"id" gorm:"primaryKey"`
-	Name          string    `json:"name" gorm:"uniqueIndex;not null"`
-	Hostname      string    `json:"hostname"`
-	IPAddress     string    `json:"ip_address" gorm:"not null"`
-	SNMPPort      int       `json:"snmp_port" gorm:"default:161"`
-	SNMPCommunity string    `json:"snmp_community" gorm:"default:public"`
-	SNMPVersion   string    `json:"snmp_version" gorm:"default:2c"`
-	Enabled       bool      `json:"enabled" gorm:"default:true"`
-	SiteID        *uint     `json:"site_id" gorm:"index"`
-	Site          *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
-	ProbeID       *uint     `json:"probe_id" gorm:"index"`
-	Probe         *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
-	Location      string    `json:"location"`
-	Description   string    `json:"description"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	LastPolled    time.Time `json:"last_polled"`
-	Status        string    `json:"status" gorm:"default:unknown"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Name           string    `json:"name" gorm:"uniqueIndex;not null"`
+	Hostname       string    `json:"hostname"`
+	IPAddress      string    `json:"ip_address" gorm:"not null"`
+	SNMPPort       int       `json:"snmp_port" gorm:"default:161"`
+	SNMPCommunity  string    `json:"snmp_community" gorm:"default:public"`
+	SNMPVersion    string    `json:"snmp_version" gorm:"default:2c"`
+	SNMPV3Username string    `json:"snmpv3_username"`
+	SNMPV3AuthType string    `json:"snmpv3_auth_type"`
+	SNMPV3AuthPass string    `json:"snmpv3_auth_pass"`
+	SNMPV3PrivType string    `json:"snmpv3_priv_type"`
+	SNMPV3PrivPass string    `json:"snmpv3_priv_pass"`
+	Enabled        bool      `json:"enabled" gorm:"default:true"`
+	SiteID         *uint     `json:"site_id" gorm:"index"`
+	Site           *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	ProbeID        *uint     `json:"probe_id" gorm:"index"`
+	Probe          *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
+	Location       string    `json:"location"`
+	Description    string    `json:"description"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	LastPolled     time.Time `json:"last_polled"`
+	Status         string    `json:"status" gorm:"default:unknown"`
 }
 
 type DeviceTunnel struct {
@@ -428,6 +439,12 @@ type SiteInterfaceStats struct {
 	OutDiscards    uint64    `json:"out_discards"`
 	AdminStatus    string    `json:"admin_status"`
 	Description    string    `json:"description"`
+	Alias          string    `json:"alias"`
+	MTU            int       `json:"mtu"`
+	MACAddress     string    `json:"mac_address"`
+	TypeName       string    `json:"type_name"`
+	HighSpeed      uint64    `json:"high_speed"`
+	VLANID         int       `json:"vlan_id"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

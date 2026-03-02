@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 
@@ -17,15 +18,17 @@ import (
 type AlertManager struct {
 	config        *config.Config
 	notifier      *notifier.Notifier
+	db            *database.Database
 	lastAlert     map[string]time.Time
 	mu            sync.RWMutex
 	alertCooldown time.Duration
 }
 
-func NewAlertManager(cfg *config.Config, notif *notifier.Notifier) *AlertManager {
+func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.Database) *AlertManager {
 	return &AlertManager{
 		config:        cfg,
 		notifier:      notif,
+		db:            db,
 		lastAlert:     make(map[string]time.Time),
 		alertCooldown: 5 * time.Minute,
 	}
@@ -38,10 +41,11 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	now := time.Now()
 
 	if status.CPUUsage >= am.config.Alerts.CPUThreshold {
-		key := "cpu_high"
+		key := fmt.Sprintf("cpu_high_%d", status.DeviceID)
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
+				DeviceID:     status.DeviceID,
 				AlertType:    "CPU_HIGH",
 				Severity:     "warning",
 				Message:      fmt.Sprintf("CPU usage is %.1f%% (threshold: %.1f%%)", status.CPUUsage, am.config.Alerts.CPUThreshold),
@@ -55,10 +59,11 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 
 	if status.MemoryUsage >= am.config.Alerts.MemoryThreshold {
-		key := "memory_high"
+		key := fmt.Sprintf("memory_high_%d", status.DeviceID)
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
+				DeviceID:     status.DeviceID,
 				AlertType:    "MEMORY_HIGH",
 				Severity:     "warning",
 				Message:      fmt.Sprintf("Memory usage is %.1f%% (threshold: %.1f%%)", status.MemoryUsage, am.config.Alerts.MemoryThreshold),
@@ -72,10 +77,11 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 
 	if status.DiskUsage >= am.config.Alerts.DiskThreshold {
-		key := "disk_high"
+		key := fmt.Sprintf("disk_high_%d", status.DeviceID)
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
+				DeviceID:     status.DeviceID,
 				AlertType:    "DISK_HIGH",
 				Severity:     "critical",
 				Message:      fmt.Sprintf("Disk usage is %.1f%% (threshold: %.1f%%)", status.DiskUsage, am.config.Alerts.DiskThreshold),
@@ -89,10 +95,11 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 
 	if status.SessionCount >= am.config.Alerts.SessionThreshold {
-		key := "sessions_high"
+		key := fmt.Sprintf("sessions_high_%d", status.DeviceID)
 		if am.canAlert(key, now) {
 			alert := models.Alert{
 				Timestamp:    now,
+				DeviceID:     status.DeviceID,
 				AlertType:    "SESSIONS_HIGH",
 				Severity:     "warning",
 				Message:      fmt.Sprintf("Session count is %d (threshold: %d)", status.SessionCount, am.config.Alerts.SessionThreshold),
@@ -106,9 +113,10 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 	}
 	am.mu.Unlock()
 
-	for _, alert := range alerts {
-		if err := am.notifier.SendAlert(&alert); err != nil {
-			log.Printf("Failed to send alert %s: %v", alert.AlertType, err)
+	for i := range alerts {
+		am.saveAlert(&alerts[i])
+		if err := am.notifier.SendAlert(&alerts[i]); err != nil {
+			log.Printf("Failed to send alert %s: %v", alerts[i].AlertType, err)
 		}
 	}
 
@@ -123,10 +131,11 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats)
 
 	for _, iface := range interfaces {
 		if am.config.Alerts.InterfaceDownAlert && iface.Status == "down" && iface.AdminStatus == "up" {
-			key := fmt.Sprintf("iface_down_%s", iface.Name)
+			key := fmt.Sprintf("iface_down_%d_%s", iface.DeviceID, iface.Name)
 			if am.canAlert(key, now) {
 				alert := models.Alert{
 					Timestamp:    now,
+					DeviceID:     iface.DeviceID,
 					AlertType:    "INTERFACE_DOWN",
 					Severity:     "critical",
 					Message:      fmt.Sprintf("Interface %s is down", iface.Name),
@@ -140,9 +149,10 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats)
 	}
 	am.mu.Unlock()
 
-	for _, alert := range alerts {
-		if err := am.notifier.SendAlert(&alert); err != nil {
-			log.Printf("Failed to send interface alert %s: %v", alert.AlertType, err)
+	for i := range alerts {
+		am.saveAlert(&alerts[i])
+		if err := am.notifier.SendAlert(&alerts[i]); err != nil {
+			log.Printf("Failed to send interface alert %s: %v", alerts[i].AlertType, err)
 		}
 	}
 
@@ -167,12 +177,14 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent) error {
 
 		alert := models.Alert{
 			Timestamp:  trap.Timestamp,
+			DeviceID:   trap.DeviceID,
 			AlertType:  trap.TrapType,
 			Severity:   trap.Severity,
 			Message:    trap.Message,
 			MetricName: "snmp_trap",
 		}
 
+		am.saveAlert(&alert)
 		if err := am.notifier.SendAlert(&alert); err != nil {
 			return fmt.Errorf("failed to send trap alert: %w", err)
 		}
@@ -244,4 +256,76 @@ func (am *AlertManager) SetCooldown(duration time.Duration) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
 	am.alertCooldown = duration
+}
+
+func (am *AlertManager) saveAlert(alert *models.Alert) {
+	if am.db == nil {
+		return
+	}
+	if err := am.db.SaveAlert(alert); err != nil {
+		log.Printf("Failed to persist alert %s: %v", alert.AlertType, err)
+	}
+}
+
+func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus) error {
+	var alerts []models.Alert
+
+	am.mu.Lock()
+	now := time.Now()
+	for _, vpn := range vpnStatuses {
+		if vpn.Status == "down" {
+			key := fmt.Sprintf("vpn_down_%d_%s", vpn.DeviceID, vpn.TunnelName)
+			if am.canAlert(key, now) {
+				alert := models.Alert{
+					Timestamp:  now,
+					DeviceID:   vpn.DeviceID,
+					AlertType:  "VPN_TUNNEL_DOWN",
+					Severity:   "critical",
+					Message:    fmt.Sprintf("VPN tunnel %s to %s is down", vpn.TunnelName, vpn.RemoteIP),
+					MetricName: fmt.Sprintf("vpn_%s", vpn.TunnelName),
+				}
+				alerts = append(alerts, alert)
+				am.lastAlert[key] = now
+			}
+		}
+	}
+	am.mu.Unlock()
+
+	for i := range alerts {
+		am.saveAlert(&alerts[i])
+		if err := am.notifier.SendAlert(&alerts[i]); err != nil {
+			log.Printf("Failed to send VPN alert: %v", err)
+		}
+	}
+	return nil
+}
+
+func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
+	am.mu.Lock()
+	now := time.Now()
+	key := fmt.Sprintf("device_offline_%d", device.ID)
+	canSend := am.canAlert(key, now)
+	if canSend {
+		am.lastAlert[key] = now
+	}
+	am.mu.Unlock()
+
+	if !canSend {
+		return nil
+	}
+
+	alert := models.Alert{
+		Timestamp:  now,
+		DeviceID:   device.ID,
+		AlertType:  "DEVICE_OFFLINE",
+		Severity:   "critical",
+		Message:    fmt.Sprintf("Device %s (%s) is offline", device.Name, device.IPAddress),
+		MetricName: "device_status",
+	}
+
+	am.saveAlert(&alert)
+	if err := am.notifier.SendAlert(&alert); err != nil {
+		log.Printf("Failed to send device offline alert: %v", err)
+	}
+	return nil
 }
