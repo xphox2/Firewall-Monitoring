@@ -48,7 +48,13 @@
             <p>Real-time firewall status and performance metrics</p>
         </header>
 
+        <div id="device-selector" style="text-align:center; margin: 15px 0; display:none;">
+            <select id="device-select" onchange="onDeviceChange()" style="padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; font-size: 1rem; cursor: pointer;">
+            </select>
+        </div>
+
         <div id="status-banner" class="status-banner online">
+            <span id="device-name-label" style="font-weight:600"></span>
             <span id="hostname">Loading...</span> | Status: <strong id="connection-status">Online</strong>
         </div>
 
@@ -91,6 +97,7 @@
         const API_BASE = '/api';
         let refreshTimer;
         let displaySettings = {};
+        let currentDeviceId = null;
 
         function escapeHtml(str) {
             if (!str) return '';
@@ -141,9 +148,38 @@
             refreshTimer = setInterval(() => { fetchDashboard(); fetchInterfaces(); }, interval * 1000);
         }
 
+        async function fetchDevices() {
+            try {
+                const response = await fetch(`${API_BASE}/public/devices`);
+                if (!response.ok) return;
+                const data = await response.json();
+                if (!data.success || !data.data || data.data.length <= 1) return;
+
+                const select = document.getElementById('device-select');
+                select.innerHTML = data.data.map(d =>
+                    `<option value="${d.id}">${escapeHtml(d.name)} (${escapeHtml(d.status)})</option>`
+                ).join('');
+
+                // Set current device
+                if (!currentDeviceId && data.data.length > 0) {
+                    currentDeviceId = data.data[0].id;
+                }
+                select.value = currentDeviceId;
+                document.getElementById('device-selector').style.display = 'block';
+            } catch(e) { console.error('Error fetching devices:', e); }
+        }
+
+        function onDeviceChange() {
+            currentDeviceId = document.getElementById('device-select').value;
+            fetchDashboard();
+            fetchInterfaces();
+        }
+
         async function fetchDashboard() {
             try {
-                const response = await fetch(`${API_BASE}/public/dashboard`);
+                let url = `${API_BASE}/public/dashboard`;
+                if (currentDeviceId) url += `?device_id=${currentDeviceId}`;
+                const response = await fetch(url);
                 if (!response.ok) {
                     throw new Error('Failed to fetch data');
                 }
@@ -163,7 +199,9 @@
 
         async function fetchInterfaces() {
             try {
-                const response = await fetch(`${API_BASE}/public/interfaces`);
+                let url = `${API_BASE}/public/interfaces`;
+                if (currentDeviceId) url += `?device_id=${currentDeviceId}`;
+                const response = await fetch(url);
                 if (!response.ok) return;
                 const data = await response.json();
 
@@ -176,6 +214,12 @@
         }
 
         function updateDashboard(d) {
+            const nameLabel = document.getElementById('device-name-label');
+            if (d.device_name) {
+                nameLabel.textContent = d.device_name + ' - ';
+            } else {
+                nameLabel.textContent = '';
+            }
             document.getElementById('hostname').textContent = d.hostname || 'Firewall';
             document.getElementById('connection-status').textContent = 'Online';
             document.getElementById('status-banner').className = 'status-banner online';
@@ -246,8 +290,10 @@
         }
 
         fetchDisplaySettings();
-        fetchDashboard();
-        fetchInterfaces();
+        fetchDevices().then(() => {
+            fetchDashboard();
+            fetchInterfaces();
+        });
         // Default timer; applyDisplaySettings() will replace with configured interval
         if (!refreshTimer) {
             refreshTimer = setInterval(() => { fetchDashboard(); fetchInterfaces(); }, 30000);

@@ -638,6 +638,49 @@ func (d *Database) GetFlowSamples(limit int) ([]models.FlowSample, error) {
 	return samples, err
 }
 
+// InterfaceChartBucket holds a single time-bucket for interface chart data.
+type InterfaceChartBucket struct {
+	Bucket     string  `json:"bucket"`
+	InBytes    float64 `json:"in_bytes"`
+	OutBytes   float64 `json:"out_bytes"`
+	InPackets  float64 `json:"in_packets"`
+	OutPackets float64 `json:"out_packets"`
+	InErrors   float64 `json:"in_errors"`
+	OutErrors  float64 `json:"out_errors"`
+}
+
+// GetInterfaceChartData returns downsampled interface stats for charting.
+func (d *Database) GetInterfaceChartData(deviceID uint, ifIndex int, rangeStr string) ([]InterfaceChartBucket, error) {
+	var hours int
+	var bucketExpr string
+	switch rangeStr {
+	case "7d":
+		hours = 168
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+	case "30d":
+		hours = 720
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+	case "90d":
+		hours = 2160
+		bucketExpr = "strftime('%Y-%m-%d', timestamp)"
+	default: // 24h
+		hours = 24
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+	}
+
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var rows []InterfaceChartBucket
+	err := d.db.Model(&models.InterfaceStats{}).
+		Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
+		Select(fmt.Sprintf("%s as bucket, AVG(in_bytes) as in_bytes, AVG(out_bytes) as out_bytes, AVG(in_packets) as in_packets, AVG(out_packets) as out_packets, AVG(in_errors) as in_errors, AVG(out_errors) as out_errors", bucketExpr)).
+		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // GetSystemStatusHistory returns time-series system status data for a device
 func (d *Database) GetSystemStatusHistory(deviceID uint, hours int) ([]models.SystemStatus, error) {
 	var statuses []models.SystemStatus

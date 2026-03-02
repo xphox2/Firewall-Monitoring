@@ -22,10 +22,10 @@ type SystemStatus struct {
 
 type InterfaceStats struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp"`
-	DeviceID    uint      `json:"device_id" gorm:"index"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_iface_device_ts,priority:2;index:idx_iface_device_idx_ts,priority:3"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_iface_device_ts,priority:1;index:idx_iface_device_idx_ts,priority:1"`
 	Name        string    `json:"name"`
-	Index       int       `json:"index"`
+	Index       int       `json:"index" gorm:"index:idx_iface_device_idx_ts,priority:2"`
 	Type        int       `json:"type"`
 	Speed       uint64    `json:"speed"`
 	Status      string    `json:"status"`

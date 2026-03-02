@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"net/smtp"
 	"strconv"
+	"strings"
+	"time"
 
 	"firewall-mon/internal/models"
 
@@ -51,6 +56,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"disk_threshold":          true,
 		"session_threshold":       true,
 		"email_enabled":           true,
+		"smtp_host":               true,
+		"smtp_port":               true,
+		"smtp_username":           true,
+		"smtp_password":           true,
+		"smtp_from":               true,
+		"smtp_to":                 true,
 		"slack_webhook":           true,
 		"discord_webhook":         true,
 		"webhook_url":             true,
@@ -61,6 +72,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"public_show_sessions":    true,
 		"public_show_interfaces":  true,
 		"public_refresh_interval": true,
+	}
+
+	secretKeys := map[string]bool{
+		"smtp_password": true,
 	}
 
 	var validSettings []models.SystemSetting
@@ -94,6 +109,27 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be true or false", s.Key)))
 				return
 			}
+		case "smtp_port":
+			if s.Value != "" {
+				v, err := strconv.Atoi(s.Value)
+				if err != nil || v < 1 || v > 65535 {
+					c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SMTP port: must be 1-65535"))
+					return
+				}
+			}
+		case "smtp_host", "smtp_username", "smtp_from", "smtp_to":
+			if len(s.Value) > 255 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
+				return
+			}
+		case "smtp_password":
+			// Skip masked passwords
+			if s.Value == "********" {
+				continue
+			}
+		}
+		if secretKeys[s.Key] {
+			s.IsSecret = true
 		}
 		validSettings = append(validSettings, s)
 	}
@@ -123,6 +159,177 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.MessageResponse("Settings updated"))
+}
+
+// getNotificationSetting reads a key from system_settings, falling back to config.
+func (h *Handler) getNotificationSetting(key string) string {
+	if h.db != nil {
+		var s models.SystemSetting
+		if err := h.db.Gorm().Where("`key` = ?", key).First(&s).Error; err == nil && s.Value != "" {
+			return s.Value
+		}
+	}
+	// Fall back to env/config values
+	switch key {
+	case "smtp_host":
+		return h.config.Alerts.SMTPHost
+	case "smtp_port":
+		return strconv.Itoa(h.config.Alerts.SMTPPort)
+	case "smtp_username":
+		return h.config.Alerts.SMTPUsername
+	case "smtp_password":
+		return h.config.Alerts.SMTPPassword
+	case "smtp_from":
+		return h.config.Alerts.SMTPFrom
+	case "smtp_to":
+		return h.config.Alerts.SMTPTo
+	case "slack_webhook":
+		return h.config.Alerts.SlackWebhookURL
+	case "discord_webhook":
+		return h.config.Alerts.DiscordWebhookURL
+	case "webhook_url":
+		return h.config.Alerts.WebHookURL
+	}
+	return ""
+}
+
+func (h *Handler) TestEmail(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	smtpHost := h.getNotificationSetting("smtp_host")
+	smtpPortStr := h.getNotificationSetting("smtp_port")
+	smtpUsername := h.getNotificationSetting("smtp_username")
+	smtpPassword := h.getNotificationSetting("smtp_password")
+	smtpFrom := h.getNotificationSetting("smtp_from")
+	smtpTo := h.getNotificationSetting("smtp_to")
+
+	if smtpHost == "" || smtpTo == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host and recipient address are required"))
+		return
+	}
+
+	smtpPort := 587
+	if smtpPortStr != "" {
+		if v, err := strconv.Atoi(smtpPortStr); err == nil {
+			smtpPort = v
+		}
+	}
+
+	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
+
+	var auth smtp.Auth
+	if smtpUsername != "" {
+		auth = smtp.PlainAuth("", smtpUsername, smtpPassword, smtpHost)
+	}
+
+	subject := "Firewall Monitor - Test Email"
+	body := fmt.Sprintf("This is a test email from Firewall Monitor.\n\nSent at: %s\n\nIf you received this email, your SMTP settings are configured correctly.",
+		time.Now().Format(time.RFC3339))
+
+	// Sanitize header values
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+		return s
+	}
+
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		sanitize(smtpFrom), sanitize(smtpTo), sanitize(subject), body)
+
+	if err := smtp.SendMail(addr, auth, smtpFrom, []string{smtpTo}, []byte(msg)); err != nil {
+		log.Printf("Test email failed: %v", err)
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success": false,
+			"message": fmt.Sprintf("Failed to send test email: %v", err),
+		}))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Test email sent to %s", smtpTo),
+	}))
+}
+
+func (h *Handler) TestWebhook(c *gin.Context) {
+	var req struct {
+		Type string `json:"type" binding:"required"`
+		URL  string `json:"url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request: type is required"))
+		return
+	}
+
+	webhookURL := req.URL
+	if webhookURL == "" {
+		// Fall back to DB/config
+		webhookURL = h.getNotificationSetting(req.Type)
+	}
+
+	if webhookURL == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No webhook URL configured"))
+		return
+	}
+
+	// Build test payload based on type
+	var payload interface{}
+	switch req.Type {
+	case "slack_webhook":
+		payload = map[string]interface{}{
+			"text": "Firewall Monitor - Test notification. Your Slack webhook is working!",
+		}
+	case "discord_webhook":
+		payload = map[string]interface{}{
+			"content": "Firewall Monitor - Test notification. Your Discord webhook is working!",
+		}
+	default:
+		payload = map[string]interface{}{
+			"type":      "test",
+			"message":   "Firewall Monitor - Test notification. Your webhook is working!",
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to build payload"))
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	httpReq, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid URL: %v", err)))
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success": false,
+			"message": fmt.Sprintf("Failed to reach webhook: %v", err),
+		}))
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success": false,
+			"message": fmt.Sprintf("Webhook returned status %d", resp.StatusCode),
+		}))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"success": true,
+		"message": "Test notification sent successfully",
+	}))
 }
 
 func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {

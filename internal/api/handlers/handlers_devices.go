@@ -301,6 +301,116 @@ func (h *Handler) GetInterfaceHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(stats))
 }
 
+func (h *Handler) GetInterfaceChart(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	deviceID := c.Param("id")
+	ifIndex := c.Param("ifIndex")
+
+	deviceIDUint, err := strconv.ParseUint(deviceID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	ifIndexInt, err := strconv.Atoi(ifIndex)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid interface index"))
+		return
+	}
+
+	rangeStr := c.DefaultQuery("range", "24h")
+	validRanges := map[string]bool{"24h": true, "7d": true, "30d": true, "90d": true}
+	if !validRanges[rangeStr] {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid range: must be 24h, 7d, 30d, or 90d"))
+		return
+	}
+
+	buckets, err := h.db.GetInterfaceChartData(uint(deviceIDUint), ifIndexInt, rangeStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get chart data"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(buckets))
+}
+
+func (h *Handler) GetAllInterfaces(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	// Get all enabled devices
+	var devices []models.Device
+	if err := h.db.Gorm().Where("enabled = ?", true).Find(&devices).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		return
+	}
+
+	// Optional filters
+	filterDeviceID := c.Query("device_id")
+	filterStatus := c.Query("status")
+	filterType := c.Query("type")
+
+	type EnrichedInterface struct {
+		models.InterfaceStats
+		DeviceName string `json:"device_name"`
+	}
+
+	var result []EnrichedInterface
+
+	for _, dev := range devices {
+		if filterDeviceID != "" {
+			if fmt.Sprintf("%d", dev.ID) != filterDeviceID {
+				continue
+			}
+		}
+
+		// Get latest interface snapshot for this device
+		var latestIface models.InterfaceStats
+		if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestIface).Error; err != nil {
+			continue
+		}
+
+		var ifaces []models.InterfaceStats
+		h.db.Gorm().Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Find(&ifaces)
+
+		for _, iface := range ifaces {
+			if filterStatus != "" && iface.Status != filterStatus {
+				continue
+			}
+			if filterType != "" && iface.TypeName != filterType {
+				continue
+			}
+			result = append(result, EnrichedInterface{
+				InterfaceStats: iface,
+				DeviceName:     dev.Name,
+			})
+		}
+	}
+
+	page, pageSize := httputil.ParsePagination(c)
+	total := len(result)
+
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"interfaces": result[start:end],
+		"total":      total,
+		"page":       page,
+		"page_size":  pageSize,
+	}))
+}
+
 type TestDeviceRequest struct {
 	IPAddress      string `json:"ip_address" binding:"required"`
 	SNMPPort       int    `json:"snmp_port"`

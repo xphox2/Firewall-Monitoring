@@ -206,6 +206,8 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 	var settings []models.SystemSetting
 	if err := db.Where("`key` IN ?", []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
+		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
+		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",
 	}).Find(&settings).Error; err != nil {
 		log.Printf("RefreshThresholds: failed to read settings: %v", err)
 		return
@@ -215,6 +217,9 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 	defer am.mu.Unlock()
 
 	for _, s := range settings {
+		if s.Value == "" {
+			continue
+		}
 		switch s.Key {
 		case "cpu_threshold":
 			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
@@ -232,6 +237,28 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 			if v, err := strconv.Atoi(s.Value); err == nil && v > 0 {
 				am.config.Alerts.SessionThreshold = v
 			}
+		case "email_enabled":
+			am.config.Alerts.EmailEnabled = s.Value == "true"
+		case "smtp_host":
+			am.config.Alerts.SMTPHost = s.Value
+		case "smtp_port":
+			if v, err := strconv.Atoi(s.Value); err == nil && v > 0 {
+				am.config.Alerts.SMTPPort = v
+			}
+		case "smtp_username":
+			am.config.Alerts.SMTPUsername = s.Value
+		case "smtp_password":
+			am.config.Alerts.SMTPPassword = s.Value
+		case "smtp_from":
+			am.config.Alerts.SMTPFrom = s.Value
+		case "smtp_to":
+			am.config.Alerts.SMTPTo = s.Value
+		case "slack_webhook":
+			am.config.Alerts.SlackWebhookURL = s.Value
+		case "discord_webhook":
+			am.config.Alerts.DiscordWebhookURL = s.Value
+		case "webhook_url":
+			am.config.Alerts.WebHookURL = s.Value
 		}
 	}
 }

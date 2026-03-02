@@ -152,6 +152,7 @@
                 <div class="nav-section-title">Monitoring</div>
                 <a class="nav-item active" data-page="dashboard"><span class="nav-icon">&#9632;</span> Dashboard</a>
                 <a class="nav-item" data-page="devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" data-page="interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
                 <a class="nav-item" data-page="connections"><span class="nav-icon">&#8644;</span> Connections</a>
             </div>
             <div class="nav-section">
@@ -253,6 +254,38 @@
                         <thead><tr><th>Name</th><th>IP Address</th><th>Probe</th><th>Site</th><th>CPU</th><th>Memory</th><th>Sessions</th><th>Status</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Interfaces Page -->
+        <div class="page" id="page-interfaces">
+            <div class="card">
+                <div class="card-header">
+                    <h2>All Interfaces</h2>
+                </div>
+                <div class="filter-bar">
+                    <select id="iface-filter-device"><option value="">All Devices</option></select>
+                    <select id="iface-filter-status">
+                        <option value="">All Statuses</option>
+                        <option value="up">Up</option>
+                        <option value="down">Down</option>
+                    </select>
+                    <select id="iface-filter-type"><option value="">All Types</option></select>
+                    <button class="btn secondary sm" onclick="loadInterfaces()">Apply</button>
+                </div>
+                <div class="table-wrap" style="max-height: 600px;">
+                    <table id="interfaces-table">
+                        <thead><tr><th>Device</th><th>Name</th><th>Alias</th><th>Type</th><th>Speed</th><th>Status</th><th>In</th><th>Out</th><th>Errors</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span id="iface-page-info" style="font-size: 0.82rem; color: #8b949e;"></span>
+                    <div>
+                        <button class="btn secondary sm" id="iface-prev" onclick="ifacePrevPage()">Prev</button>
+                        <button class="btn secondary sm" id="iface-next" onclick="ifaceNextPage()">Next</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -522,6 +555,25 @@
                 <div class="settings-grid" id="settings-notifications"></div>
             </div>
             <div class="card">
+                <div class="card-header"><h2>SMTP Configuration</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
+                <div class="settings-grid" id="settings-smtp"></div>
+                <div style="margin-top: 12px;">
+                    <button class="btn secondary" onclick="testEmail()">Send Test Email</button>
+                    <span id="test-email-result" style="margin-left: 12px; font-size: 0.82rem;"></span>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h2>Webhook Test</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button class="btn secondary" onclick="testWebhook('slack_webhook')">Test Slack</button>
+                    <button class="btn secondary" onclick="testWebhook('discord_webhook')">Test Discord</button>
+                    <button class="btn secondary" onclick="testWebhook('webhook_url')">Test Webhook</button>
+                    <span id="test-webhook-result" style="margin-left: 12px; font-size: 0.82rem; align-self: center;"></span>
+                </div>
+            </div>
+            <div class="card">
                 <button class="btn" onclick="saveSettings()">Save Settings</button>
             </div>
         </div>
@@ -781,6 +833,7 @@
             switch(page) {
                 case 'dashboard': await loadDashboard(); break;
                 case 'devices': await loadDevices(); break;
+                case 'interfaces': await populateIfaceFilters(); await loadInterfaces(); break;
                 case 'connections': await loadConnections(); break;
                 case 'syslog': await loadSyslog(); break;
                 case 'flows': await loadFlows(); break;
@@ -1004,6 +1057,93 @@
                     }
                 }
             } catch(e) {}
+        }
+
+        // --- Interfaces Page ---
+        let ifacePage = 1;
+        const ifacePageSize = 50;
+
+        async function loadInterfaces() {
+            ifacePage = 1;
+            await fetchInterfaces();
+        }
+
+        async function fetchInterfaces() {
+            try {
+                const deviceFilter = document.getElementById('iface-filter-device').value;
+                const statusFilter = document.getElementById('iface-filter-status').value;
+                const typeFilter = document.getElementById('iface-filter-type').value;
+                let url = `${API_BASE}/interfaces?page=${ifacePage}&page_size=${ifacePageSize}`;
+                if (deviceFilter) url += `&device_id=${deviceFilter}`;
+                if (statusFilter) url += `&status=${statusFilter}`;
+                if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
+
+                const result = await apiFetch(url);
+                if (!result?.data) return;
+
+                const ifaces = result.data.interfaces || [];
+                const total = result.data.total || 0;
+
+                const tbody = document.querySelector('#interfaces-table tbody');
+                tbody.innerHTML = ifaces.map(i => `<tr>
+                    <td><a href="/admin/devices/${i.device_id}" style="color:#58a6ff;text-decoration:none;font-weight:500">${escapeHtml(i.device_name)}</a></td>
+                    <td><strong>${escapeHtml(i.name)}</strong></td>
+                    <td>${escapeHtml(i.alias || '')}</td>
+                    <td>${escapeHtml(i.type_name || String(i.type))}</td>
+                    <td>${formatIfaceSpeed(i)}</td>
+                    <td><span class="badge ${i.status}">${escapeHtml(i.status)}</span></td>
+                    <td>${formatBytesShort(i.in_bytes)}</td>
+                    <td>${formatBytesShort(i.out_bytes)}</td>
+                    <td>${(i.in_errors||0) + (i.out_errors||0)}</td>
+                </tr>`).join('') || '<tr><td colspan="9" class="empty-state">No interfaces found</td></tr>';
+
+                const totalPages = Math.ceil(total / ifacePageSize) || 1;
+                document.getElementById('iface-page-info').textContent = `Page ${ifacePage} of ${totalPages} (${total} interfaces)`;
+                document.getElementById('iface-prev').disabled = ifacePage <= 1;
+                document.getElementById('iface-next').disabled = ifacePage >= totalPages;
+            } catch(e) { console.error('Failed to load interfaces:', e); }
+        }
+
+        function ifacePrevPage() { if (ifacePage > 1) { ifacePage--; fetchInterfaces(); } }
+        function ifaceNextPage() { ifacePage++; fetchInterfaces(); }
+
+        async function populateIfaceFilters() {
+            // Populate device filter from existing devices
+            const devResult = await apiFetch(`${API_BASE}/devices`);
+            if (devResult?.data) {
+                const sel = document.getElementById('iface-filter-device');
+                sel.innerHTML = '<option value="">All Devices</option>' + devResult.data.map(d =>
+                    `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+            }
+            // Populate type filter from first page of unfiltered data
+            const result = await apiFetch(`${API_BASE}/interfaces?page=1&page_size=500`);
+            if (result?.data?.interfaces) {
+                const types = [...new Set(result.data.interfaces.map(i => i.type_name).filter(Boolean))].sort();
+                const sel = document.getElementById('iface-filter-type');
+                sel.innerHTML = '<option value="">All Types</option>' + types.map(t =>
+                    `<option value="${encodeURIComponent(t)}">${escapeHtml(t)}</option>`).join('');
+            }
+        }
+
+        function formatIfaceSpeed(iface) {
+            if (iface.high_speed && iface.high_speed > 0) {
+                if (iface.high_speed >= 1000) return (iface.high_speed / 1000).toFixed(0) + ' Gbps';
+                return iface.high_speed + ' Mbps';
+            }
+            if (iface.speed) {
+                const mbps = iface.speed / 1000000;
+                if (mbps >= 1000) return (mbps / 1000).toFixed(0) + ' Gbps';
+                if (mbps >= 1) return mbps.toFixed(0) + ' Mbps';
+            }
+            return '-';
+        }
+
+        function formatBytesShort(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let i = 0, val = bytes;
+            while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+            return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
         }
 
         function populateProbeSelect(selectId) {
@@ -1455,7 +1595,8 @@
                 document.getElementById('settings-notifications').innerHTML = [
                     { key: 'email_enabled', label: 'Enable Email', type: 'checkbox' },
                     { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
-                    { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' }
+                    { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' },
+                    { key: 'webhook_url', label: 'Generic Webhook URL', type: 'text' }
                 ].map(s => {
                     const savedVal = notifSettings.find(x => x.key === s.key)?.value || '';
                     if (s.type === 'checkbox') {
@@ -1463,6 +1604,19 @@
                         return `<div class="setting-item"><label>${s.label}</label><input type="checkbox" name="${s.key}" ${checked}></div>`;
                     }
                     return `<div class="setting-item"><label>${s.label}</label><input type="text" name="${s.key}" value="${escapeHtml(savedVal)}"></div>`;
+                }).join('');
+
+                document.getElementById('settings-smtp').innerHTML = [
+                    { key: 'smtp_host', label: 'SMTP Host', type: 'text', placeholder: 'smtp.example.com' },
+                    { key: 'smtp_port', label: 'SMTP Port', type: 'number', placeholder: '587' },
+                    { key: 'smtp_username', label: 'SMTP Username', type: 'text', placeholder: 'user@example.com' },
+                    { key: 'smtp_password', label: 'SMTP Password', type: 'password', placeholder: '' },
+                    { key: 'smtp_from', label: 'From Address', type: 'text', placeholder: 'alerts@example.com' },
+                    { key: 'smtp_to', label: 'To Address', type: 'text', placeholder: 'admin@example.com' }
+                ].map(s => {
+                    const saved = notifSettings.find(x => x.key === s.key);
+                    const savedVal = saved?.value || '';
+                    return `<div class="setting-item"><label>${s.label}</label><input type="${s.type}" name="${s.key}" value="${escapeHtml(savedVal)}" placeholder="${s.placeholder || ''}"></div>`;
                 }).join('');
 
                 const displayResult = await apiFetch(`${API_BASE}/display-settings`);
@@ -1715,16 +1869,63 @@
         }
 
         async function saveSettings() {
+            const smtpKeys = ['smtp_host','smtp_port','smtp_username','smtp_password','smtp_from','smtp_to'];
+            const notifKeys = ['email_enabled','slack_webhook','discord_webhook','webhook_url'];
             const settings = [];
-            document.querySelectorAll('#settings-alerts input, #settings-notifications input').forEach(input => {
-                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value,
-                    category: ['email_enabled','slack_webhook','discord_webhook'].includes(input.name) ? 'notifications' : 'alerts', type: input.type === 'checkbox' ? 'bool' : 'string' });
+            document.querySelectorAll('#settings-alerts input').forEach(input => {
+                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'alerts', type: input.type === 'checkbox' ? 'bool' : 'string' });
+            });
+            document.querySelectorAll('#settings-notifications input').forEach(input => {
+                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'notifications', type: input.type === 'checkbox' ? 'bool' : 'string' });
+            });
+            document.querySelectorAll('#settings-smtp input').forEach(input => {
+                // Skip masked passwords
+                if (input.type === 'password' && input.value === '********') return;
+                settings.push({ key: input.name, value: input.value, category: 'notifications', type: 'string', is_secret: input.type === 'password' });
             });
             document.querySelectorAll('#display-settings input').forEach(input => {
                 settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
             });
             try { await apiFetch(`${API_BASE}/settings`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }); alert('Settings saved!'); }
             catch (err) { alert('Error: ' + err.message); }
+        }
+
+        async function testEmail() {
+            const resultEl = document.getElementById('test-email-result');
+            resultEl.textContent = 'Sending...';
+            resultEl.style.color = '#8b949e';
+            try {
+                const result = await apiFetch(`${API_BASE}/settings/test-email`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+                if (result?.data?.success) {
+                    resultEl.textContent = result.data.message;
+                    resultEl.style.color = '#3fb950';
+                } else {
+                    resultEl.textContent = result?.data?.message || 'Failed';
+                    resultEl.style.color = '#f85149';
+                }
+            } catch(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; }
+        }
+
+        async function testWebhook(type) {
+            const resultEl = document.getElementById('test-webhook-result');
+            resultEl.textContent = 'Sending...';
+            resultEl.style.color = '#8b949e';
+            // Read URL from the notification settings inputs
+            const urlInput = document.querySelector(`#settings-notifications input[name="${type}"]`);
+            const url = urlInput?.value || '';
+            try {
+                const result = await apiFetch(`${API_BASE}/settings/test-webhook`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ type, url })
+                });
+                if (result?.data?.success) {
+                    resultEl.textContent = result.data.message;
+                    resultEl.style.color = '#3fb950';
+                } else {
+                    resultEl.textContent = result?.data?.message || 'Failed';
+                    resultEl.style.color = '#f85149';
+                }
+            } catch(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; }
         }
 
         document.getElementById('logout-btn').addEventListener('click', async (e) => {
@@ -1737,7 +1938,7 @@
             const path = window.location.pathname.replace(/\/$/, '');
             const segments = path.split('/');
             const lastSegment = segments[segments.length - 1];
-            const pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
+            const pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
                 'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps' };
             const page = pageMap[lastSegment];
             if (page) {

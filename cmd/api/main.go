@@ -145,6 +145,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	api := router.Group("/api")
 	{
 		api.GET("/health", handler.GetHealth)
+		api.GET("/public/devices", handler.GetPublicDevices)
 		api.GET("/public/dashboard", handler.GetPublicDashboard)
 		api.GET("/public/interfaces", handler.GetPublicInterfaces)
 		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
@@ -214,6 +215,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/interfaces", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/alerts", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
@@ -267,7 +272,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		admin.GET("/api/devices/:id/detail", handler.GetDeviceDetail)
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/history", handler.GetInterfaceHistory)
+		admin.GET("/api/devices/:id/interfaces/:ifIndex/chart", handler.GetInterfaceChart)
 		admin.GET("/api/devices/:id/status-history", handler.GetDeviceStatusHistory)
+		admin.GET("/api/interfaces", handler.GetAllInterfaces)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
@@ -286,6 +293,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/settings", handler.GetSettings)
 		admin.POST("/api/settings", handler.UpdateSettings)
 		admin.POST("/api/settings/password", handler.ChangePassword)
+		admin.POST("/api/settings/test-email", handler.TestEmail)
+		admin.POST("/api/settings/test-webhook", handler.TestWebhook)
 		admin.GET("/api/display-settings", handler.GetPublicDisplaySettings)
 	}
 }

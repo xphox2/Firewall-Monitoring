@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"strconv"
 
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -11,12 +12,58 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (h *Handler) GetPublicDevices(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
+		return
+	}
+
+	var devices []models.Device
+	if err := h.db.Gorm().Where("enabled = ?", true).Find(&devices).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		return
+	}
+
+	// Return only safe public fields
+	result := make([]gin.H, 0, len(devices))
+	for _, d := range devices {
+		result = append(result, gin.H{
+			"id":     d.ID,
+			"name":   d.Name,
+			"status": d.Status,
+		})
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
+// resolvePublicDeviceID returns the device ID from ?device_id query param,
+// or falls back to the first enabled device.
+func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
+	if idStr := c.Query("device_id"); idStr != "" {
+		id, err := strconv.ParseUint(idStr, 10, 32)
+		if err != nil {
+			return 0, false
+		}
+		return uint(id), true
+	}
+	// Default to first enabled device
+	if h.db != nil {
+		var dev models.Device
+		if err := h.db.Gorm().Where("enabled = ?", true).Order("id ASC").First(&dev).Error; err == nil {
+			return dev.ID, true
+		}
+	}
+	return 0, false
+}
+
 func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// Try SNMP first
-	if h.snmpClient != nil {
+	deviceID, hasDevice := h.resolvePublicDeviceID(c)
+
+	// Try SNMP first (only for legacy single-device mode without device_id param)
+	if !hasDevice && h.snmpClient != nil {
 		status, err := h.snmpClient.GetSystemStatus()
 		if err == nil {
 			uptimeStats := h.uptimeTrack.GetStats()
@@ -36,7 +83,30 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	}
 
 	// Fall back to database
-	if h.db != nil {
+	if h.db != nil && hasDevice {
+		var status models.SystemStatus
+		if err := h.db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&status).Error; err == nil {
+			// Get device name
+			var dev models.Device
+			h.db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev)
+			uptimeStats := h.uptimeTrack.GetStats()
+			publicData := gin.H{
+				"hostname":     status.Hostname,
+				"device_name":  dev.Name,
+				"version":      status.Version,
+				"uptime":       uptime.FormatUptime(status.Uptime),
+				"uptime_raw":   status.Uptime,
+				"cpu":          status.CPUUsage,
+				"memory":       status.MemoryUsage,
+				"sessions":     status.SessionCount,
+				"uptime_stats": uptimeStats,
+				"cached":       true,
+				"cached_at":    status.Timestamp,
+			}
+			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+			return
+		}
+	} else if h.db != nil {
 		status, err := h.db.GetLatestSystemStatus()
 		if err == nil && status != nil {
 			uptimeStats := h.uptimeTrack.GetStats()
@@ -64,8 +134,10 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	// Try SNMP first
-	if h.snmpClient != nil {
+	deviceID, hasDevice := h.resolvePublicDeviceID(c)
+
+	// Try SNMP first (only for legacy single-device mode)
+	if !hasDevice && h.snmpClient != nil {
 		interfaces, err := h.snmpClient.GetInterfaceStats()
 		if err == nil {
 			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
@@ -74,7 +146,15 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	}
 
 	// Fall back to database
-	if h.db != nil {
+	if h.db != nil && hasDevice {
+		var latestIface models.InterfaceStats
+		if err := h.db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
+			var ifaces []models.InterfaceStats
+			h.db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces)
+			c.JSON(http.StatusOK, models.SuccessResponse(ifaces))
+			return
+		}
+	} else if h.db != nil {
 		interfaces, err := h.db.GetLatestInterfaceStats()
 		if err == nil && len(interfaces) > 0 {
 			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))

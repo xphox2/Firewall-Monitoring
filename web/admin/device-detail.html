@@ -93,9 +93,13 @@
         .clickable { cursor: pointer; }
         .clickable:hover { background: #1c2128; }
 
-        /* Sparkline container */
-        .sparkline-container { margin-top: 12px; height: 60px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px; }
-        .sparkline-container canvas { width: 100%; height: 100%; }
+        /* Interface chart container */
+        .iface-chart-container { margin-top: 12px; height: 200px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; }
+        .iface-chart-container canvas { width: 100%; height: 100%; }
+        .chart-range-btns { display: flex; gap: 4px; margin-top: 8px; }
+        .chart-range-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+        .chart-range-btn:hover { color: #e6edf3; border-color: #8b949e; }
+        .chart-range-btn.active { background: rgba(56,139,253,0.15); color: #58a6ff; border-color: #58a6ff; }
 
         /* Section tabs */
         .section-tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; margin-bottom: 16px; }
@@ -129,6 +133,7 @@
                 <div class="nav-section-title">Monitoring</div>
                 <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
                 <a class="nav-item active" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
                 <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
             </div>
             <div class="nav-section">
@@ -340,6 +345,8 @@
     let allInterfaces = [];
     let currentFilter = 'all';
     let expandedIfIndex = null;
+    let ifaceCharts = {};
+    let currentChartRange = '24h';
 
     const deviceId = window.location.pathname.split('/').pop();
 
@@ -583,7 +590,10 @@
                             <div class="detail-item"><span class="label">In Discards</span><span class="value">${(iface.in_discards || 0).toLocaleString()}</span></div>
                             <div class="detail-item"><span class="label">Out Discards</span><span class="value">${(iface.out_discards || 0).toLocaleString()}</span></div>
                         </div>
-                        <div class="sparkline-container" id="sparkline-${iface.index}">
+                        <div class="chart-range-btns">
+                            ${['24h','7d','30d','90d'].map(r => `<button class="chart-range-btn${currentChartRange===r?' active':''}" onclick="event.stopPropagation(); loadInterfaceChart(${iface.index}, '${r}')">${r}</button>`).join('')}
+                        </div>
+                        <div class="iface-chart-container" id="chart-container-${iface.index}">
                             <canvas id="canvas-${iface.index}"></canvas>
                         </div>
                     </div>
@@ -593,7 +603,7 @@
         body.innerHTML = html;
 
         if (expandedIfIndex !== null) {
-            loadSparkline(expandedIfIndex);
+            loadInterfaceChart(expandedIfIndex, currentChartRange);
         }
     }
 
@@ -602,12 +612,24 @@
         filterIfaces(currentFilter);
     }
 
-    async function loadSparkline(ifIndex) {
+    async function loadInterfaceChart(ifIndex, range) {
+        currentChartRange = range;
+        // Update active button styling
+        document.querySelectorAll('.chart-range-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.textContent === range);
+        });
+
         const canvas = document.getElementById('canvas-' + ifIndex);
         if (!canvas) return;
 
+        // Destroy previous chart instance
+        if (ifaceCharts[ifIndex]) {
+            ifaceCharts[ifIndex].destroy();
+            delete ifaceCharts[ifIndex];
+        }
+
         try {
-            const resp = await fetch(`/admin/api/devices/${deviceId}/interfaces/${ifIndex}/history?hours=24`, { credentials: 'same-origin' });
+            const resp = await fetch(`/admin/api/devices/${deviceId}/interfaces/${ifIndex}/chart?range=${range}`, { credentials: 'same-origin' });
             if (!resp.ok) return;
             const result = await resp.json();
             if (!result.success || !result.data || result.data.length < 2) {
@@ -617,40 +639,34 @@
                 ctx.fillText('Not enough history data', 10, 30);
                 return;
             }
-            drawSparkline(canvas, result.data);
-        } catch(e) {}
-    }
 
-    function drawSparkline(canvas, data) {
-        const rect = canvas.parentElement.getBoundingClientRect();
-        canvas.width = rect.width - 16;
-        canvas.height = rect.height - 16;
+            const data = result.data;
+            const labels = data.map(d => {
+                const b = d.bucket;
+                if (range === '90d') return b.substring(5); // MM-DD
+                if (range === '30d' || range === '7d') return b.substring(5, 13); // MM-DD HH
+                return b.substring(11, 16); // HH:MM
+            });
 
-        const ctx = canvas.getContext('2d');
-        const w = canvas.width, h = canvas.height;
-
-        // Plot in_bytes over time
-        const values = data.map(d => d.in_bytes || 0);
-        const max = Math.max(...values, 1);
-        const min = Math.min(...values);
-
-        ctx.strokeStyle = '#58a6ff';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        for (let i = 0; i < values.length; i++) {
-            const x = (i / (values.length - 1)) * w;
-            const y = h - ((values[i] - min) / (max - min || 1)) * (h - 4) - 2;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-
-        // Fill area
-        ctx.lineTo(w, h);
-        ctx.lineTo(0, h);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(88, 166, 255, 0.08)';
-        ctx.fill();
+            ifaceCharts[ifIndex] = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'In Bytes', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                        { label: 'Out Bytes', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
+                    scales: {
+                        x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                        y: { ticks: { color: '#484f58', font: { size: 9 }, callback: v => formatBytes(v) }, grid: { color: '#21262d' } }
+                    }
+                }
+            });
+        } catch(e) { console.error('Failed to load interface chart:', e); }
     }
 
     function getTypeBadge(iface) {
