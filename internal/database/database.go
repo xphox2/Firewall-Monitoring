@@ -77,6 +77,7 @@ func (d *Database) migrate() error {
 		&models.VPNStatus{},
 		&models.HAStatus{},
 		&models.HardwareSensor{},
+		&models.ProcessorStats{},
 		&models.TrapEvent{},
 		&models.Alert{},
 		&models.UptimeRecord{},
@@ -245,6 +246,12 @@ func (d *Database) CleanupOldData(days int) error {
 	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.InterfaceStats{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup interface_stats: %w", err)
 	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.ProcessorStats{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup processor_stats: %w", err)
+	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.HardwareSensor{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup hardware_sensors: %w", err)
+	}
 	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.TrapEvent{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup trap_event: %w", err)
 	}
@@ -312,6 +319,7 @@ func (d *Database) DeleteDevice(id uint) error {
 			&models.VPNStatus{},
 			&models.HAStatus{},
 			&models.HardwareSensor{},
+			&models.ProcessorStats{},
 			&models.Alert{},
 			&models.UptimeRecord{},
 			&models.TrapEvent{},
@@ -618,6 +626,34 @@ func (d *Database) GetPingStatsByTarget(deviceID uint, probeID uint, targetIP st
 		return nil, nil
 	}
 	return &stats, err
+}
+
+func (d *Database) SaveProcessorStats(stats []models.ProcessorStats) error {
+	if len(stats) == 0 {
+		return nil
+	}
+	return d.db.Create(&stats).Error
+}
+
+func (d *Database) GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error) {
+	var latest models.ProcessorStats
+	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latest).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var stats []models.ProcessorStats
+	err := d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).
+		Order("`index` ASC").Find(&stats).Error
+	return stats, err
+}
+
+func (d *Database) SaveHardwareSensors(sensors []models.HardwareSensor) error {
+	if len(sensors) == 0 {
+		return nil
+	}
+	return d.db.Create(&sensors).Error
 }
 
 func (d *Database) SaveSyslogMessage(msg *models.SyslogMessage) error {

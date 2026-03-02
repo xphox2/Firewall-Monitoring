@@ -221,6 +221,7 @@
                 <div class="section-tab active" onclick="switchTab('interfaces')">Interfaces</div>
                 <div class="section-tab" onclick="switchTab('vpn')">VPN Tunnels</div>
                 <div class="section-tab" onclick="switchTab('sensors')">Hardware</div>
+                <div class="section-tab" onclick="switchTab('processors')">Processors</div>
                 <div class="section-tab" onclick="switchTab('alerts')">Alerts</div>
                 <div class="section-tab" onclick="switchTab('ping')">Ping</div>
             </div>
@@ -293,6 +294,15 @@
                         <tbody id="sensorBody"></tbody>
                     </table>
                     <div id="sensorEmpty" class="empty" style="display:none">Awaiting hardware sensor data from probe…</div>
+                </div>
+            </div>
+
+            <!-- Processors Tab -->
+            <div class="tab-content" id="tab-processors">
+                <div class="card">
+                    <h2>Processor Usage <span id="procSummary" style="font-size:0.78rem; font-weight:400; color:#8b949e"></span></h2>
+                    <div id="procBars" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px;"></div>
+                    <div id="procEmpty" class="empty" style="display:none">Awaiting processor data from poller…</div>
                 </div>
             </div>
 
@@ -397,6 +407,7 @@
         renderInterfaces();
         renderVPN();
         renderSensors();
+        renderProcessors();
         renderAlerts();
         renderPing();
     }
@@ -716,6 +727,35 @@
             <td>${esc(s.unit || '')}</td>
             <td><span class="badge ${s.status === 'alarm' ? 'critical' : 'online'}">${s.status}</span></td>
         </tr>`).join('');
+    }
+
+    function renderProcessors() {
+        const procs = deviceData.processor_stats || [];
+        const container = document.getElementById('procBars');
+        const empty = document.getElementById('procEmpty');
+        const summary = document.getElementById('procSummary');
+
+        if (procs.length === 0) { container.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        const avg = procs.reduce((s, p) => s + p.usage, 0) / procs.length;
+        summary.textContent = procs.length + ' cores, avg ' + avg.toFixed(1) + '%';
+
+        // Update tab label
+        document.querySelector('[onclick="switchTab(\'processors\')"]').textContent =
+            'Processors (' + procs.length + ')';
+
+        container.innerHTML = procs.map(p => {
+            const color = getGaugeColor(p.usage);
+            const width = Math.min(p.usage, 100);
+            return `<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px 14px;display:flex;align-items:center;gap:12px">
+                <span style="color:#8b949e;font-size:0.78rem;min-width:60px">Core ${p.index}</span>
+                <div style="flex:1;background:#21262d;border-radius:3px;height:16px;overflow:hidden">
+                    <div style="width:${width}%;height:100%;background:${color};border-radius:3px;transition:width 0.3s"></div>
+                </div>
+                <span style="color:#e6edf3;font-size:0.82rem;font-weight:600;min-width:45px;text-align:right">${p.usage.toFixed(0)}%</span>
+            </div>`;
+        }).join('');
     }
 
     function renderAlerts() {

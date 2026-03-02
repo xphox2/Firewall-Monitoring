@@ -430,6 +430,29 @@ func getOrCreateSensor(sensors map[int]*models.HardwareSensor, index int) *model
 	return s
 }
 
+func (s *SNMPClient) GetProcessorStats(vendor ...string) ([]models.ProcessorStats, error) {
+	v := ""
+	if len(vendor) > 0 {
+		v = vendor[0]
+	}
+	profile := s.resolveVendor(v)
+	if profile == nil {
+		return nil, fmt.Errorf("no vendor profile available")
+	}
+
+	baseOID := profile.ProcessorBaseOID()
+	if baseOID == "" {
+		return nil, nil // vendor doesn't support processor polling
+	}
+
+	pdus, err := s.Walk(baseOID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk processor table: %w", err)
+	}
+
+	return profile.ParseProcessors(pdus), nil
+}
+
 func getIndexFromOID(oid, base string) int {
 	partial := strings.TrimPrefix(oid, base+".")
 	parts := strings.Split(partial, ".")

@@ -30,6 +30,10 @@ type VendorProfile interface {
 	HWSensorBaseOID() string
 	ParseHardwareSensors(pdus []gosnmp.SnmpPDU) []models.HardwareSensor
 
+	// Processors (CPU cores, NP/SPU ASICs)
+	ProcessorBaseOID() string
+	ParseProcessors(pdus []gosnmp.SnmpPDU) []models.ProcessorStats
+
 	// HA
 	HABaseOID() string
 	ParseHAStatus(pdus []gosnmp.SnmpPDU) []models.HAStatus

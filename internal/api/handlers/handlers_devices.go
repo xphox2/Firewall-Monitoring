@@ -245,6 +245,9 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestSensor.Timestamp).Find(&sensors)
 	}
 
+	// Latest processor stats
+	processorStats, _ := h.db.GetLatestProcessorStats(id)
+
 	// Recent alerts
 	var recentAlerts []models.Alert
 	h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").Limit(20).Find(&recentAlerts)
@@ -259,6 +262,7 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		"interfaces":       interfaces,
 		"vpn_status":       vpnStatuses,
 		"hardware_sensors": sensors,
+		"processor_stats":  processorStats,
 		"recent_alerts":    recentAlerts,
 		"ping_stats":       pingStats,
 	}))

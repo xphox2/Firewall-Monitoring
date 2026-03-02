@@ -194,9 +194,13 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 	}
 
-	// Collect VPN tunnel status (silently skip if device has no VPN)
+	// Collect VPN tunnel status
 	vpnStatuses, err := client.GetVPNStatus(vendor)
-	if err == nil && len(vpnStatuses) > 0 {
+	if err != nil {
+		log.Printf("Device %s: VPN walk error - %v", device.Name, err)
+	} else if len(vpnStatuses) == 0 {
+		log.Printf("Device %s: VPN: 0 tunnels (none configured or no IPsec active)", device.Name)
+	} else {
 		now := time.Now()
 		for i := range vpnStatuses {
 			vpnStatuses[i].DeviceID = device.ID
@@ -209,6 +213,40 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 		if p.alertManager != nil {
 			p.alertManager.CheckVPNStatus(vpnStatuses)
+		}
+	}
+
+	// Collect hardware sensors
+	sensors, err := client.GetHardwareSensors(vendor)
+	if err != nil {
+		log.Printf("Device %s: hardware sensor poll error - %v", device.Name, err)
+	} else if len(sensors) > 0 {
+		now := time.Now()
+		for i := range sensors {
+			sensors[i].DeviceID = device.ID
+			sensors[i].Timestamp = now
+		}
+		if p.db != nil {
+			if err := p.db.SaveHardwareSensors(sensors); err != nil {
+				log.Printf("Device %s: failed to save hardware sensors - %v", device.Name, err)
+			}
+		}
+	}
+
+	// Collect processor stats (CPU cores, NP/SPU ASICs)
+	procStats, err := client.GetProcessorStats(vendor)
+	if err != nil {
+		log.Printf("Device %s: processor stats poll error - %v", device.Name, err)
+	} else if len(procStats) > 0 {
+		now := time.Now()
+		for i := range procStats {
+			procStats[i].DeviceID = device.ID
+			procStats[i].Timestamp = now
+		}
+		if p.db != nil {
+			if err := p.db.SaveProcessorStats(procStats); err != nil {
+				log.Printf("Device %s: failed to save processor stats - %v", device.Name, err)
+			}
 		}
 	}
 

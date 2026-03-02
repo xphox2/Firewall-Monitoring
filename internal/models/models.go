@@ -86,6 +86,16 @@ type HardwareSensor struct {
 	Unit        string    `json:"unit"`
 }
 
+type ProcessorStats struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_proc_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_proc_device_ts,priority:1"`
+	Index     int       `json:"index"`
+	Usage     float64   `json:"usage"`
+}
+
+func (ProcessorStats) TableName() string { return "processor_stats" }
+
 type TrapEvent struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_trap_device_ts,priority:2"`

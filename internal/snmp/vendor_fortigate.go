@@ -11,15 +11,15 @@ import (
 
 // FortiGate-specific SNMP OIDs (Fortinet enterprise MIB 1.3.6.1.4.1.12356)
 var (
-	fgOIDSystemCPU       = ".1.3.6.1.4.1.12356.101.4.1.3"
-	fgOIDSystemMemory    = ".1.3.6.1.4.1.12356.101.4.1.4"
-	fgOIDSystemMemoryCap = ".1.3.6.1.4.1.12356.101.4.1.5"
-	fgOIDSystemDisk      = ".1.3.6.1.4.1.12356.101.4.1.6"
-	fgOIDSystemDiskCap   = ".1.3.6.1.4.1.12356.101.4.1.7"
-	fgOIDSystemSessions  = ".1.3.6.1.4.1.12356.101.4.1.8"
-	fgOIDSystemUptime    = ".1.3.6.1.4.1.12356.101.4.1.20"
-	fgOIDSystemVersion   = ".1.3.6.1.4.1.12356.101.4.1.1"
-	fgOIDSystemHostname  = ".1.3.6.1.4.1.12356.101.4.1.2"
+	fgOIDSystemCPU       = ".1.3.6.1.4.1.12356.101.4.1.3.0"
+	fgOIDSystemMemory    = ".1.3.6.1.4.1.12356.101.4.1.4.0"
+	fgOIDSystemMemoryCap = ".1.3.6.1.4.1.12356.101.4.1.5.0"
+	fgOIDSystemDisk      = ".1.3.6.1.4.1.12356.101.4.1.6.0"
+	fgOIDSystemDiskCap   = ".1.3.6.1.4.1.12356.101.4.1.7.0"
+	fgOIDSystemSessions  = ".1.3.6.1.4.1.12356.101.4.1.8.0"
+	fgOIDSystemUptime    = ".1.3.6.1.4.1.12356.101.4.1.20.0"
+	fgOIDSystemVersion   = ".1.3.6.1.4.1.12356.101.4.1.1.0"
+	fgOIDSystemHostname  = ".1.3.6.1.4.1.12356.101.4.1.2.0"
 
 	fgBaseOIDVPNTunnel      = ".1.3.6.1.4.1.12356.101.12.2.2.1"
 	fgOIDVPNTunnelName      = ".1.3.6.1.4.1.12356.101.12.2.2.1.3"
@@ -32,6 +32,9 @@ var (
 	fgOIDHWSensorName  = ".1.3.6.1.4.1.12356.101.4.3.2.1.2"
 	fgOIDHWSensorValue = ".1.3.6.1.4.1.12356.101.4.3.2.1.3"
 	fgOIDHWSensorAlarm = ".1.3.6.1.4.1.12356.101.4.3.2.1.4"
+
+	fgBaseOIDProcessor  = ".1.3.6.1.4.1.12356.101.4.4.2.1"
+	fgOIDProcessorUsage = ".1.3.6.1.4.1.12356.101.4.4.2.1.2"
 
 	fgOIDHaMode      = ".1.3.6.1.4.1.12356.101.13.1.1"
 	fgOIDHaGroupName = ".1.3.6.1.4.1.12356.101.13.1.2"
@@ -204,6 +207,27 @@ func (f *FortiGateProfile) ParseHardwareSensors(pdus []gosnmp.SnmpPDU) []models.
 		sensors = append(sensors, *sensor)
 	}
 	return sensors
+}
+
+func (f *FortiGateProfile) ProcessorBaseOID() string { return fgBaseOIDProcessor }
+
+func (f *FortiGateProfile) ParseProcessors(pdus []gosnmp.SnmpPDU) []models.ProcessorStats {
+	now := time.Now()
+	var result []models.ProcessorStats
+	for _, pdu := range pdus {
+		if strings.HasPrefix(pdu.Name, fgOIDProcessorUsage+".") {
+			idx := getIndexFromOID(pdu.Name, fgOIDProcessorUsage)
+			if idx < 0 {
+				continue
+			}
+			result = append(result, models.ProcessorStats{
+				Timestamp: now,
+				Index:     idx,
+				Usage:     float64(gosnmp.ToBigInt(pdu.Value).Int64()),
+			})
+		}
+	}
+	return result
 }
 
 func (f *FortiGateProfile) HABaseOID() string { return fgOIDHaTable }
