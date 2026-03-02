@@ -210,7 +210,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 			statuses[i].Timestamp = time.Now()
 		}
 		if err := h.db.SaveSystemStatus(&statuses[i]); err != nil {
-			log.Printf("Failed to save system status: %v", err)
+			log.Printf("Probe %d: failed to save system status for device %d: %v", probe.ID, statuses[i].DeviceID, err)
 			continue
 		}
 		saved++
@@ -228,6 +228,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		})
 	}
 
+	log.Printf("Probe %d: saved %d/%d system status records (devices: %v)", probe.ID, saved, len(statuses), deviceIDs)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
 }
 

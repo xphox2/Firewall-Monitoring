@@ -253,6 +253,7 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		DeviceID       uint       `json:"device_id"`
 		HasStatus      bool       `json:"has_status"`
 		StatusTime     *time.Time `json:"status_time,omitempty"`
+		StatusRows     int64      `json:"status_rows"`
 		CPUUsage       float64    `json:"cpu_usage"`
 		MemoryUsage    float64    `json:"memory_usage"`
 		SessionCount   int        `json:"session_count"`
@@ -267,6 +268,8 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 	if h.db != nil {
 		for _, dev := range devices {
 			e := &DeviceEnrichment{DeviceID: dev.ID}
+			// Count total system_status rows for this device
+			h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&e.StatusRows)
 			// Latest system status
 			var ss models.SystemStatus
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
@@ -309,6 +312,56 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		"dashboard":   dashboard,
 		"enrichments": enrichments,
 	}))
+}
+
+// GetDeviceDataDiag returns per-device system_status record counts and latest values.
+// Used to diagnose why some devices may show "No data" in the UI.
+func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		return
+	}
+
+	var devices []models.Device
+	h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Find(&devices)
+
+	type DeviceDiag struct {
+		DeviceID     uint       `json:"device_id"`
+		Name         string     `json:"name"`
+		IPAddress    string     `json:"ip_address"`
+		Status       string     `json:"status"`
+		LastPolled   time.Time  `json:"last_polled"`
+		ProbeID      *uint      `json:"probe_id"`
+		StatusRows   int64      `json:"status_rows"`
+		LatestCPU    float64    `json:"latest_cpu"`
+		LatestMem    float64    `json:"latest_mem"`
+		LatestTime   *time.Time `json:"latest_time,omitempty"`
+	}
+
+	results := make([]DeviceDiag, 0, len(devices))
+	for _, dev := range devices {
+		diag := DeviceDiag{
+			DeviceID:   dev.ID,
+			Name:       dev.Name,
+			IPAddress:  dev.IPAddress,
+			Status:     dev.Status,
+			LastPolled: dev.LastPolled,
+			ProbeID:    dev.ProbeID,
+		}
+
+		h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&diag.StatusRows)
+
+		var ss models.SystemStatus
+		if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
+			diag.LatestCPU = ss.CPUUsage
+			diag.LatestMem = ss.MemoryUsage
+			diag.LatestTime = &ss.Timestamp
+		}
+
+		results = append(results, diag)
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(results))
 }
 
 func (h *Handler) GetDashboardStats(c *gin.Context) {

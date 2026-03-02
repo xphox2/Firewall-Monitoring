@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.30] - 2026-03-02
+
+### Added
+- Diagnostic endpoint `/admin/api/dashboard/diag` showing per-device system_status row counts and latest values
+- `status_rows` count in device enrichment API response for data availability visibility
+- Enhanced logging in `ReceiveSystemStatuses` showing probe ID, saved count, and device IDs per batch
+- Device table CPU/Memory/Sessions tooltips now show record count and last polled time
+
+### Fixed
+- Improved "No data" tooltip to include device_id for easier cross-referencing with collector logs
+
 ## [0.10.29] - 2026-03-02
 
 ### Fixed

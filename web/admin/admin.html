@@ -1023,24 +1023,28 @@
                     const cpuEl = document.getElementById('dev-cpu-' + id);
                     const memEl = document.getElementById('dev-mem-' + id);
                     const sessEl = document.getElementById('dev-sess-' + id);
+                    const rows = e.status_rows || 0;
                     if (!e.has_status) {
-                        if (cpuEl) { cpuEl.textContent = 'No data'; cpuEl.title = 'No system_status records found for this device. Check poller logs.'; }
-                        if (memEl) { memEl.textContent = 'No data'; memEl.title = 'No system_status records found for this device.'; }
-                        if (sessEl) { sessEl.textContent = 'No data'; sessEl.title = 'No system_status records found for this device.'; }
+                        if (cpuEl) { cpuEl.textContent = 'No data'; cpuEl.title = `0 system_status records (device_id=${id}). Check collector logs.`; }
+                        if (memEl) { memEl.textContent = 'No data'; memEl.title = `0 system_status records (device_id=${id}).`; }
+                        if (sessEl) { sessEl.textContent = 'No data'; sessEl.title = `0 system_status records (device_id=${id}).`; }
                         continue;
                     }
+                    const polledInfo = e.status_time ? `Last: ${new Date(e.status_time).toLocaleString()} | ${rows} records` : `${rows} records`;
                     if (cpuEl) {
                         cpuEl.textContent = e.cpu_usage.toFixed(1) + '%';
                         cpuEl.style.color = e.cpu_usage >= 80 ? '#f85149' : (e.cpu_usage >= 60 ? '#d29922' : '#3fb950');
-                        if (e.status_time) cpuEl.title = 'Last polled: ' + new Date(e.status_time).toLocaleString();
+                        cpuEl.title = polledInfo;
                     }
                     if (memEl) {
                         memEl.textContent = e.memory_usage.toFixed(1) + '%';
                         memEl.style.color = e.memory_usage >= 80 ? '#f85149' : (e.memory_usage >= 60 ? '#d29922' : '#3fb950');
+                        memEl.title = polledInfo;
                     }
                     if (sessEl) {
                         sessEl.textContent = e.session_count.toLocaleString();
                         sessEl.style.color = '#c9d1d9';
+                        sessEl.title = polledInfo;
                     }
                 }
             } catch(e) {}
