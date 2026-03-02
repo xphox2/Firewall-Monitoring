@@ -77,6 +77,7 @@
                 <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
                 <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
                 <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
+                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
             </div>
             <div class="nav-section">
                 <div class="nav-section-title">Data</div>
@@ -137,8 +138,7 @@
 
     <script>
     (function() {
-        console.log('[Pending] Page initializing...');
-        
+
         var API_BASE = '/admin/api';
         var pendingProbes = [];
         var allProbes = [];
@@ -198,17 +198,14 @@
         }
 
         function loadProbes() {
-            console.log('[Pending] Loading probes...');
             Promise.all([
                 apiFetch(API_BASE + '/probes/pending'),
                 apiFetch(API_BASE + '/probes')
             ]).then(function(results) {
-                console.log('[Pending] Data loaded:', results);
                 pendingProbes = (results[0] && results[0].data) || [];
                 allProbes = (results[1] && results[1].data) || [];
                 renderPending();
             })['catch'](function(err) {
-                console.error('[Pending] Error:', err);
                 showError('Failed to load: ' + err.message);
             });
         }
@@ -291,7 +288,6 @@
             });
         };
 
-        console.log('[Pending] Starting load...');
         fetchCsrfToken().then(function() {
             loadProbes();
         });

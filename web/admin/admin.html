@@ -1426,12 +1426,17 @@
             return parts.join('&');
         }
 
+        function getDeviceName(deviceId) {
+            const dev = currentDevices.find(d => d.id === deviceId);
+            return dev ? escapeHtml(dev.name) : 'DEV-' + deviceId;
+        }
+
         function renderAlertsTable(alerts, append) {
             const tbody = document.querySelector('#alerts-full-table tbody');
             const html = alerts.map(a => `
                 <tr>
                     <td>${new Date(a.timestamp).toLocaleString()}</td>
-                    <td>DEV-${a.device_id}</td>
+                    <td>${getDeviceName(a.device_id)}</td>
                     <td>${escapeHtml(a.alert_type)}</td>
                     <td><span class="badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
                     <td>${escapeHtml(a.message)}</td>

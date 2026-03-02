@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.25] - 2026-03-02
+
+### Fixed
+- **Interfaces nav item missing on standalone pages**: Added "Interfaces" link to sidebar navigation on probes, sites, network, and probe-pending pages
+- **Alerts show DEV-{id} instead of device name**: `renderAlertsTable` now resolves device names from `currentDevices` cache via `getDeviceName()` helper
+- **Debug console.log statements**: Removed all `console.log('[Sites]...')` (11 occurrences) and `console.log('[Pending]...')` (5 occurrences) from sites.html and probe-pending.html
+
 ## [0.10.24] - 2026-03-02
 
 ### Improved
