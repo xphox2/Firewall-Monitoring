@@ -134,20 +134,21 @@ func (n *Notifier) sendSlack(alert *models.Alert) error {
 		},
 	}
 
-	return n.sendToSlackWebhook(payload)
+	return n.postJSON(n.config.Alerts.SlackWebhookURL, payload)
 }
 
-func (n *Notifier) sendToSlackWebhook(payload map[string]interface{}) error {
+// postJSON marshals payload to JSON and POSTs it to url, returning an error on
+// non-2xx status codes.
+func (n *Notifier) postJSON(url string, payload interface{}) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", n.config.Alerts.SlackWebhookURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := n.client.Do(req)
@@ -157,9 +158,8 @@ func (n *Notifier) sendToSlackWebhook(payload map[string]interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("slack webhook returned status %d", resp.StatusCode)
+		return fmt.Errorf("webhook %s returned status %d", url, resp.StatusCode)
 	}
-
 	return nil
 }
 
@@ -188,29 +188,7 @@ func (n *Notifier) sendDiscord(alert *models.Alert) error {
 		},
 	}
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("POST", n.config.Alerts.DiscordWebhookURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := n.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("discord webhook returned status %d", resp.StatusCode)
-	}
-
-	return nil
+	return n.postJSON(n.config.Alerts.DiscordWebhookURL, payload)
 }
 
 func (n *Notifier) sendWebhook(alert *models.Alert) error {
@@ -224,27 +202,5 @@ func (n *Notifier) sendWebhook(alert *models.Alert) error {
 		"current_value": alert.CurrentValue,
 	}
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequest("POST", n.config.Alerts.WebHookURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := n.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
-	}
-
-	return nil
+	return n.postJSON(n.config.Alerts.WebHookURL, payload)
 }

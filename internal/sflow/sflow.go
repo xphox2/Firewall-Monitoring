@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -44,7 +46,8 @@ type SFlowReceiver struct {
 	Port       int
 	conn       *net.UDPConn
 	stopChan   chan struct{}
-	running    bool
+	running    atomic.Bool
+	wg         sync.WaitGroup
 }
 
 func NewSFlowReceiver(listenAddr string, port int) *SFlowReceiver {
@@ -62,7 +65,7 @@ func NewSFlowReceiver(listenAddr string, port int) *SFlowReceiver {
 }
 
 func (r *SFlowReceiver) Start() error {
-	if r.running {
+	if r.running.Load() {
 		return errors.New("sFlow receiver already running")
 	}
 
@@ -76,31 +79,34 @@ func (r *SFlowReceiver) Start() error {
 		return err
 	}
 
-	r.running = true
-
+	r.running.Store(true)
+	r.wg.Add(1)
 	go r.readLoop()
 
 	return nil
 }
 
 func (r *SFlowReceiver) Stop() error {
-	if !r.running {
+	if !r.running.Load() {
 		return errors.New("sFlow receiver not running")
 	}
 
+	r.running.Store(false)
 	close(r.stopChan)
-	r.running = false
 
 	if r.conn != nil {
-		return r.conn.Close()
+		r.conn.Close()
 	}
 
+	r.wg.Wait()
 	return nil
 }
 
 func (r *SFlowReceiver) readLoop() {
+	defer r.wg.Done()
+
 	buf := make([]byte, 65536)
-	for {
+	for r.running.Load() {
 		select {
 		case <-r.stopChan:
 			return
@@ -110,6 +116,9 @@ func (r *SFlowReceiver) readLoop() {
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue
+				}
+				if r.running.Load() {
+					return
 				}
 				return
 			}

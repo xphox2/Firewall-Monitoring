@@ -398,7 +398,7 @@ func (u *UDPSyslogReceiver) Stop() error {
 		return nil
 	}
 
-	u.running.Load()
+	u.running.Store(false)
 	close(u.stopCh)
 
 	if u.conn != nil {

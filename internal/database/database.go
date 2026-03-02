@@ -739,43 +739,46 @@ type EventStatsResult struct {
 	OverTime   []TimeBucket `json:"over_time"`
 }
 
+// timeSeriesCount queries hourly time-bucketed counts for model since cutoff.
+func (d *Database) timeSeriesCount(model interface{}, cutoff time.Time) []TimeBucket {
+	var rows []struct {
+		Bucket string
+		Count  int64
+	}
+	d.db.Model(model).Where("timestamp > ?", cutoff).
+		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
+		Group("bucket").Order("bucket ASC").Scan(&rows)
+	buckets := make([]TimeBucket, 0, len(rows))
+	for _, r := range rows {
+		buckets = append(buckets, TimeBucket{Bucket: r.Bucket, Count: r.Count})
+	}
+	return buckets
+}
+
+// groupByString queries COUNT grouped by groupCol on model since cutoff.
+func (d *Database) groupByString(model interface{}, cutoff time.Time, groupCol string) []KeyCount {
+	var rows []struct {
+		Key   string
+		Count int64
+	}
+	d.db.Model(model).Where("timestamp > ?", cutoff).
+		Select(groupCol+" as key, COUNT(*) as count").Group(groupCol).Order("count DESC").Scan(&rows)
+	counts := make([]KeyCount, 0, len(rows))
+	for _, r := range rows {
+		counts = append(counts, KeyCount{Key: r.Key, Count: r.Count})
+	}
+	return counts
+}
+
 // GetAlertStats returns aggregated alert statistics
 func (d *Database) GetAlertStats(hours int) (*EventStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &EventStatsResult{}
 
 	d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff).Count(&result.Total)
-
-	var bySev []struct {
-		Severity string
-		Count    int64
-	}
-	d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff).
-		Select("severity, COUNT(*) as count").Group("severity").Order("count DESC").Scan(&bySev)
-	for _, s := range bySev {
-		result.BySeverity = append(result.BySeverity, KeyCount{Key: s.Severity, Count: s.Count})
-	}
-
-	var byType []struct {
-		AlertType string
-		Count     int64
-	}
-	d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff).
-		Select("alert_type, COUNT(*) as count").Group("alert_type").Order("count DESC").Scan(&byType)
-	for _, t := range byType {
-		result.ByType = append(result.ByType, KeyCount{Key: t.AlertType, Count: t.Count})
-	}
-
-	var overTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&overTime)
-	for _, t := range overTime {
-		result.OverTime = append(result.OverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
-	}
+	result.BySeverity = d.groupByString(&models.Alert{}, cutoff, "severity")
+	result.ByType = d.groupByString(&models.Alert{}, cutoff, "alert_type")
+	result.OverTime = d.timeSeriesCount(&models.Alert{}, cutoff)
 
 	return result, nil
 }
@@ -786,37 +789,9 @@ func (d *Database) GetTrapStats(hours int) (*EventStatsResult, error) {
 	result := &EventStatsResult{}
 
 	d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff).Count(&result.Total)
-
-	var bySev []struct {
-		Severity string
-		Count    int64
-	}
-	d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff).
-		Select("severity, COUNT(*) as count").Group("severity").Order("count DESC").Scan(&bySev)
-	for _, s := range bySev {
-		result.BySeverity = append(result.BySeverity, KeyCount{Key: s.Severity, Count: s.Count})
-	}
-
-	var byType []struct {
-		TrapType string
-		Count    int64
-	}
-	d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff).
-		Select("trap_type, COUNT(*) as count").Group("trap_type").Order("count DESC").Scan(&byType)
-	for _, t := range byType {
-		result.ByType = append(result.ByType, KeyCount{Key: t.TrapType, Count: t.Count})
-	}
-
-	var overTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&overTime)
-	for _, t := range overTime {
-		result.OverTime = append(result.OverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
-	}
+	result.BySeverity = d.groupByString(&models.TrapEvent{}, cutoff, "severity")
+	result.ByType = d.groupByString(&models.TrapEvent{}, cutoff, "trap_type")
+	result.OverTime = d.timeSeriesCount(&models.TrapEvent{}, cutoff)
 
 	return result, nil
 }
@@ -828,6 +803,7 @@ func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 
 	d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).Count(&result.Total)
 
+	// Syslog severity is numeric, map to human-readable names
 	sevNames := map[int]string{0: "Emergency", 1: "Alert", 2: "Critical", 3: "Error", 4: "Warning", 5: "Notice", 6: "Info", 7: "Debug"}
 	var bySev []struct {
 		Severity int
@@ -843,16 +819,7 @@ func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 		result.BySeverity = append(result.BySeverity, KeyCount{Key: name, Count: s.Count})
 	}
 
-	var overTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&overTime)
-	for _, t := range overTime {
-		result.OverTime = append(result.OverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
-	}
+	result.OverTime = d.timeSeriesCount(&models.SyslogMessage{}, cutoff)
 
 	return result, nil
 }
@@ -869,54 +836,11 @@ type DashboardTimeSeries struct {
 // GetDashboardTimeSeries returns dashboard-level time-series data
 func (d *Database) GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
-	result := &DashboardTimeSeries{}
-
-	// Flows over time
-	var flowTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&flowTime)
-	for _, t := range flowTime {
-		result.FlowsOverTime = append(result.FlowsOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
-	}
-
-	// Alerts over time
-	var alertTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&alertTime)
-	for _, t := range alertTime {
-		result.AlertsOverTime = append(result.AlertsOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
-	}
-
-	// Syslog over time
-	var syslogTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&syslogTime)
-	for _, t := range syslogTime {
-		result.SyslogOverTime = append(result.SyslogOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
-	}
-
-	// Traps over time
-	var trapTime []struct {
-		Bucket string
-		Count  int64
-	}
-	d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
-		Group("bucket").Order("bucket ASC").Scan(&trapTime)
-	for _, t := range trapTime {
-		result.TrapsOverTime = append(result.TrapsOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Count})
+	result := &DashboardTimeSeries{
+		FlowsOverTime:  d.timeSeriesCount(&models.FlowSample{}, cutoff),
+		AlertsOverTime: d.timeSeriesCount(&models.Alert{}, cutoff),
+		SyslogOverTime: d.timeSeriesCount(&models.SyslogMessage{}, cutoff),
+		TrapsOverTime:  d.timeSeriesCount(&models.TrapEvent{}, cutoff),
 	}
 
 	// Device status distribution

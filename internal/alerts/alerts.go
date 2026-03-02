@@ -34,81 +34,65 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 	}
 }
 
+// checkThreshold creates an alert if the metric exceeds the threshold and the
+// cooldown for the given key has expired. Must be called with am.mu held.
+func (am *AlertManager) checkThreshold(now time.Time, deviceID uint, metricKey, alertType, severity, message, metricName string, current, threshold float64) *models.Alert {
+	if am.canAlert(metricKey, now) {
+		alert := models.Alert{
+			Timestamp:    now,
+			DeviceID:     deviceID,
+			AlertType:    alertType,
+			Severity:     severity,
+			Message:      message,
+			MetricName:   metricName,
+			Threshold:    threshold,
+			CurrentValue: current,
+		}
+		am.lastAlert[metricKey] = now
+		return &alert
+	}
+	return nil
+}
+
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
-	alerts := []models.Alert{}
+	var alerts []models.Alert
 
 	am.mu.Lock()
 	now := time.Now()
 
 	if status.CPUUsage >= am.config.Alerts.CPUThreshold {
-		key := fmt.Sprintf("cpu_high_%d", status.DeviceID)
-		if am.canAlert(key, now) {
-			alert := models.Alert{
-				Timestamp:    now,
-				DeviceID:     status.DeviceID,
-				AlertType:    "CPU_HIGH",
-				Severity:     "warning",
-				Message:      fmt.Sprintf("CPU usage is %.1f%% (threshold: %.1f%%)", status.CPUUsage, am.config.Alerts.CPUThreshold),
-				MetricName:   "cpu_usage",
-				Threshold:    am.config.Alerts.CPUThreshold,
-				CurrentValue: status.CPUUsage,
-			}
-			alerts = append(alerts, alert)
-			am.lastAlert[key] = now
+		if a := am.checkThreshold(now, status.DeviceID,
+			fmt.Sprintf("cpu_high_%d", status.DeviceID), "CPU_HIGH", "warning",
+			fmt.Sprintf("CPU usage is %.1f%% (threshold: %.1f%%)", status.CPUUsage, am.config.Alerts.CPUThreshold),
+			"cpu_usage", status.CPUUsage, am.config.Alerts.CPUThreshold); a != nil {
+			alerts = append(alerts, *a)
 		}
 	}
 
 	if status.MemoryUsage >= am.config.Alerts.MemoryThreshold {
-		key := fmt.Sprintf("memory_high_%d", status.DeviceID)
-		if am.canAlert(key, now) {
-			alert := models.Alert{
-				Timestamp:    now,
-				DeviceID:     status.DeviceID,
-				AlertType:    "MEMORY_HIGH",
-				Severity:     "warning",
-				Message:      fmt.Sprintf("Memory usage is %.1f%% (threshold: %.1f%%)", status.MemoryUsage, am.config.Alerts.MemoryThreshold),
-				MetricName:   "memory_usage",
-				Threshold:    am.config.Alerts.MemoryThreshold,
-				CurrentValue: status.MemoryUsage,
-			}
-			alerts = append(alerts, alert)
-			am.lastAlert[key] = now
+		if a := am.checkThreshold(now, status.DeviceID,
+			fmt.Sprintf("memory_high_%d", status.DeviceID), "MEMORY_HIGH", "warning",
+			fmt.Sprintf("Memory usage is %.1f%% (threshold: %.1f%%)", status.MemoryUsage, am.config.Alerts.MemoryThreshold),
+			"memory_usage", status.MemoryUsage, am.config.Alerts.MemoryThreshold); a != nil {
+			alerts = append(alerts, *a)
 		}
 	}
 
 	if status.DiskUsage >= am.config.Alerts.DiskThreshold {
-		key := fmt.Sprintf("disk_high_%d", status.DeviceID)
-		if am.canAlert(key, now) {
-			alert := models.Alert{
-				Timestamp:    now,
-				DeviceID:     status.DeviceID,
-				AlertType:    "DISK_HIGH",
-				Severity:     "critical",
-				Message:      fmt.Sprintf("Disk usage is %.1f%% (threshold: %.1f%%)", status.DiskUsage, am.config.Alerts.DiskThreshold),
-				MetricName:   "disk_usage",
-				Threshold:    am.config.Alerts.DiskThreshold,
-				CurrentValue: status.DiskUsage,
-			}
-			alerts = append(alerts, alert)
-			am.lastAlert[key] = now
+		if a := am.checkThreshold(now, status.DeviceID,
+			fmt.Sprintf("disk_high_%d", status.DeviceID), "DISK_HIGH", "critical",
+			fmt.Sprintf("Disk usage is %.1f%% (threshold: %.1f%%)", status.DiskUsage, am.config.Alerts.DiskThreshold),
+			"disk_usage", status.DiskUsage, am.config.Alerts.DiskThreshold); a != nil {
+			alerts = append(alerts, *a)
 		}
 	}
 
 	if status.SessionCount >= am.config.Alerts.SessionThreshold {
-		key := fmt.Sprintf("sessions_high_%d", status.DeviceID)
-		if am.canAlert(key, now) {
-			alert := models.Alert{
-				Timestamp:    now,
-				DeviceID:     status.DeviceID,
-				AlertType:    "SESSIONS_HIGH",
-				Severity:     "warning",
-				Message:      fmt.Sprintf("Session count is %d (threshold: %d)", status.SessionCount, am.config.Alerts.SessionThreshold),
-				MetricName:   "session_count",
-				Threshold:    float64(am.config.Alerts.SessionThreshold),
-				CurrentValue: float64(status.SessionCount),
-			}
-			alerts = append(alerts, alert)
-			am.lastAlert[key] = now
+		if a := am.checkThreshold(now, status.DeviceID,
+			fmt.Sprintf("sessions_high_%d", status.DeviceID), "SESSIONS_HIGH", "warning",
+			fmt.Sprintf("Session count is %d (threshold: %d)", status.SessionCount, am.config.Alerts.SessionThreshold),
+			"session_count", float64(status.SessionCount), float64(am.config.Alerts.SessionThreshold)); a != nil {
+			alerts = append(alerts, *a)
 		}
 	}
 	am.mu.Unlock()
