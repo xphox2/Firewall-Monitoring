@@ -342,6 +342,71 @@ func (d *Database) GetAllConnections() ([]models.DeviceConnection, error) {
 	return conns, err
 }
 
+// GetAllLatestVPNStatuses returns the latest VPN tunnel snapshot for every device.
+func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
+	var statuses []models.VPNStatus
+	// Subquery: max timestamp per device
+	sub := d.db.Model(&models.VPNStatus{}).Select("device_id, MAX(timestamp) as max_ts").Group("device_id")
+	err := d.db.Where("(device_id, timestamp) IN (?)", sub).Find(&statuses).Error
+	if err != nil {
+		// Fallback for SQLite which may not support row-value IN; use a join approach
+		statuses = nil
+		err = d.db.Raw(`
+			SELECT v.* FROM vpn_status v
+			INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM vpn_status GROUP BY device_id) latest
+			ON v.device_id = latest.device_id AND v.timestamp = latest.max_ts
+		`).Scan(&statuses).Error
+	}
+	return statuses, err
+}
+
+// FindConnectionByDevicePair finds a connection between two devices regardless of direction.
+func (d *Database) FindConnectionByDevicePair(deviceA, deviceB uint) (*models.DeviceConnection, error) {
+	var conn models.DeviceConnection
+	err := d.db.Where(
+		"(source_device_id = ? AND dest_device_id = ?) OR (source_device_id = ? AND dest_device_id = ?)",
+		deviceA, deviceB, deviceB, deviceA,
+	).First(&conn).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &conn, err
+}
+
+// UpsertAutoConnection creates or updates an auto-detected VPN connection.
+// Manual connections (AutoDetected=false) are never overwritten.
+func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNames, name string) error {
+	existing, err := d.FindConnectionByDevicePair(sourceID, destID)
+	if err != nil {
+		return err
+	}
+
+	if existing != nil {
+		if !existing.AutoDetected {
+			return nil // don't touch manual connections
+		}
+		// Update existing auto-detected connection
+		return d.db.Model(existing).Updates(map[string]interface{}{
+			"status":       status,
+			"tunnel_names": tunnelNames,
+			"last_check":   time.Now(),
+		}).Error
+	}
+
+	// Create new auto-detected connection with normalized direction
+	conn := &models.DeviceConnection{
+		Name:           name,
+		SourceDeviceID: sourceID,
+		DestDeviceID:   destID,
+		ConnectionType: "ipsec",
+		Status:         status,
+		AutoDetected:   true,
+		TunnelNames:    tunnelNames,
+		LastCheck:      time.Now(),
+	}
+	return d.db.Create(conn).Error
+}
+
 func (d *Database) CreateConnection(conn *models.DeviceConnection) error {
 	return d.db.Create(conn).Error
 }

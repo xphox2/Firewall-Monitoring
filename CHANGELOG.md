@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.28] - 2026-03-02
+
+### Added
+- Auto-detect IPsec VPN connections between devices by matching tunnel remote IPs to known device addresses
+- New `AutoDetected` and `TunnelNames` fields on DeviceConnection model
+- Database methods: `GetAllLatestVPNStatuses`, `FindConnectionByDevicePair`, `UpsertAutoConnection`
+- Poller `detectVPNConnections()` runs after each poll cycle to upsert auto-detected connections
+- Connections table: new "Tunnels" column, AUTO badge for auto-detected entries, "Auto-managed" label instead of delete button
+- Network diagram: dashed lines for auto-detected connections, tunnel name tooltips on hover
+
 ## [0.10.27] - 2026-03-02
 
 ### Fixed

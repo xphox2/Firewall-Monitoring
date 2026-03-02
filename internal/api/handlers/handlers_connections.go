@@ -54,6 +54,7 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 	}
 
 	conn.Status = "unknown"
+	conn.AutoDetected = false
 	if err := h.db.CreateConnection(&conn); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create connection"))
 		return

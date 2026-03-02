@@ -197,6 +197,8 @@ type DeviceConnection struct {
 	Latency        float64    `json:"latency"`
 	LastCheck      time.Time  `json:"last_check"`
 	Notes          string     `json:"notes"`
+	AutoDetected   bool       `json:"auto_detected" gorm:"default:false"`
+	TunnelNames    string     `json:"tunnel_names"`
 }
 
 type SystemSetting struct {

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -115,6 +118,8 @@ func (p *Poller) pollAllDevices() {
 		}(&devices[i])
 	}
 	wg.Wait()
+
+	p.detectVPNConnections(devices)
 }
 
 func (p *Poller) pollDevice(device *models.Device) {
@@ -251,6 +256,112 @@ func (p *Poller) pollDevice(device *models.Device) {
 	}
 
 	p.updateDeviceStatus(device, "online")
+}
+
+// detectVPNConnections matches VPN tunnel remote IPs to known device IPs
+// and auto-creates/updates DeviceConnection records.
+func (p *Poller) detectVPNConnections(devices []models.Device) {
+	if p.db == nil || len(devices) == 0 {
+		return
+	}
+
+	// Build IP → Device map
+	ipToDevice := make(map[string]*models.Device, len(devices))
+	deviceByID := make(map[uint]*models.Device, len(devices))
+	for i := range devices {
+		ipToDevice[devices[i].IPAddress] = &devices[i]
+		deviceByID[devices[i].ID] = &devices[i]
+	}
+
+	vpnStatuses, err := p.db.GetAllLatestVPNStatuses()
+	if err != nil {
+		log.Printf("VPN auto-detect: failed to get VPN statuses - %v", err)
+		return
+	}
+	if len(vpnStatuses) == 0 {
+		return
+	}
+
+	// pairKey returns a normalized key for a device pair (lower ID first)
+	pairKey := func(a, b uint) string {
+		if a > b {
+			a, b = b, a
+		}
+		return fmt.Sprintf("%d:%d", a, b)
+	}
+
+	type pairInfo struct {
+		sourceID    uint // normalized: min ID
+		destID      uint // normalized: max ID
+		tunnelNames map[string]bool
+		anyUp       bool
+	}
+
+	pairs := make(map[string]*pairInfo)
+
+	for _, vpn := range vpnStatuses {
+		remoteDevice, ok := ipToDevice[vpn.RemoteIP]
+		if !ok {
+			continue
+		}
+		if remoteDevice.ID == vpn.DeviceID {
+			continue // skip self-referencing
+		}
+
+		key := pairKey(vpn.DeviceID, remoteDevice.ID)
+		pi, exists := pairs[key]
+		if !exists {
+			srcID, dstID := vpn.DeviceID, remoteDevice.ID
+			if srcID > dstID {
+				srcID, dstID = dstID, srcID
+			}
+			pi = &pairInfo{
+				sourceID:    srcID,
+				destID:      dstID,
+				tunnelNames: make(map[string]bool),
+			}
+			pairs[key] = pi
+		}
+		if vpn.TunnelName != "" {
+			pi.tunnelNames[vpn.TunnelName] = true
+		}
+		if vpn.Status == "up" {
+			pi.anyUp = true
+		}
+	}
+
+	for _, pi := range pairs {
+		status := "down"
+		if pi.anyUp {
+			status = "up"
+		}
+
+		// Collect and sort tunnel names
+		names := make([]string, 0, len(pi.tunnelNames))
+		for n := range pi.tunnelNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		tunnelNames := strings.Join(names, ", ")
+
+		// Build a descriptive connection name
+		srcName, dstName := "?", "?"
+		if d, ok := deviceByID[pi.sourceID]; ok {
+			srcName = d.Name
+		}
+		if d, ok := deviceByID[pi.destID]; ok {
+			dstName = d.Name
+		}
+		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
+
+		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName); err != nil {
+			log.Printf("VPN auto-detect: failed to upsert connection %s - %v", connName, err)
+		}
+	}
+
+	if len(pairs) > 0 {
+		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices", len(pairs), len(devices))
+	}
 }
 
 func (p *Poller) updateDeviceStatus(device *models.Device, status string) {

@@ -289,7 +289,7 @@
                 <p style="color: #484f58; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
                 <div class="table-wrap">
                     <table id="connections-table">
-                        <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Tunnels</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -1159,14 +1159,15 @@
                 const tbody = document.querySelector('#connections-table tbody');
                 tbody.innerHTML = currentConnections.map(c => `
                     <tr>
-                        <td>${escapeHtml(c.name)}</td>
+                        <td>${escapeHtml(c.name)}${c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : ''}</td>
                         <td>${escapeHtml(c.source_device?.name) || c.source_device_id}</td>
                         <td>${escapeHtml(c.dest_device?.name) || c.dest_device_id}</td>
                         <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
                         <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
-                        <td><button class="btn danger sm" onclick="deleteConnection(${c.id})">Delete</button></td>
+                        <td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(c.tunnel_names || '')}">${escapeHtml(c.tunnel_names || '-')}</td>
+                        <td>${c.auto_detected ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>' : '<button class="btn danger sm" onclick="deleteConnection(' + c.id + ')">Delete</button>'}</td>
                     </tr>
-                `).join('') || '<tr><td colspan="6" class="empty-state">No connections configured</td></tr>';
+                `).join('') || '<tr><td colspan="7" class="empty-state">No connections configured</td></tr>';
 
                 drawConnectionDiagram();
                 populateDeviceSelects();
@@ -1810,6 +1811,8 @@
                     const x2 = centerX + radius * Math.cos(dstA), y2 = centerY + radius * Math.sin(dstA);
                     const line = document.createElement('div');
                     line.className = `connection-line ${conn.status}`;
+                    if (conn.auto_detected) line.style.borderTopStyle = 'dashed';
+                    if (conn.tunnel_names) line.title = conn.tunnel_names;
                     const len = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
                     const ang = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
                     line.style.width = len + 'px';
