@@ -6,6 +6,8 @@ WORKDIR /build
 RUN apk add --no-cache gcc musl-dev
 
 COPY go.mod go.sum ./
+RUN go mod download
+
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
@@ -37,5 +39,8 @@ COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
 EXPOSE 8080 162/udp 514/udp 6343/udp 8089
+
+LABEL org.opencontainers.image.title="Firewall Mon" \
+      org.opencontainers.image.version="0.10.14"
 
 ENTRYPOINT ["./entrypoint.sh"]
