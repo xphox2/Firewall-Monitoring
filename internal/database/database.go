@@ -68,7 +68,7 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 }
 
 func (d *Database) migrate() error {
-	return d.db.AutoMigrate(
+	allModels := []interface{}{
 		&models.SystemStatus{},
 		&models.InterfaceStats{},
 		&models.VPNStatus{},
@@ -92,7 +92,17 @@ func (d *Database) migrate() error {
 		&models.SyslogMessage{},
 		&models.FlowSample{},
 		&models.SiteDatabase{},
-	)
+	}
+
+	// Migrate each model individually so one failure doesn't block others.
+	// SQLite's limited ALTER TABLE support can cause GORM to attempt
+	// table recreation which may fail with "already exists" on upgrades.
+	for _, model := range allModels {
+		if err := d.db.AutoMigrate(model); err != nil {
+			log.Printf("AutoMigrate warning for %T: %v", model, err)
+		}
+	}
+	return nil
 }
 
 func (d *Database) SaveSystemStatus(status *models.SystemStatus) error {

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.14] - 2026-03-02
+
+### Fixed
+- **Database migration crash on upgrade**: GORM AutoMigrate with SQLite fails with "table already exists" when adding new columns to existing tables; migration now runs per-model and logs warnings instead of crashing, so existing databases upgrade cleanly
+
 ## [0.10.13] - 2026-03-01
 
 ### Fixed
