@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.33] - 2026-03-02
+
+### Fixed
+- **Disk usage percentage calculation**: FortiGate `fgSysDiskUsage`/`fgSysDiskCapacity` OIDs return values in MB, not percentage — now correctly computes `usage/capacity * 100` instead of storing raw MB as percentage
+- **SNMP PDU type guard**: Added `isValidPDU()` check to skip `NoSuchObject`/`NoSuchInstance`/`EndOfMibView` responses instead of silently treating unsupported OIDs as zero values
+
 ## [0.10.32] - 2026-03-02
 
 ### Fixed
