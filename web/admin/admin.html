@@ -1023,15 +1023,22 @@
                     const cpuEl = document.getElementById('dev-cpu-' + id);
                     const memEl = document.getElementById('dev-mem-' + id);
                     const sessEl = document.getElementById('dev-sess-' + id);
-                    if (cpuEl && e.cpu_usage > 0) {
+                    if (!e.has_status) {
+                        if (cpuEl) { cpuEl.textContent = 'No data'; cpuEl.title = 'No system_status records found for this device. Check poller logs.'; }
+                        if (memEl) { memEl.textContent = 'No data'; memEl.title = 'No system_status records found for this device.'; }
+                        if (sessEl) { sessEl.textContent = 'No data'; sessEl.title = 'No system_status records found for this device.'; }
+                        continue;
+                    }
+                    if (cpuEl) {
                         cpuEl.textContent = e.cpu_usage.toFixed(1) + '%';
                         cpuEl.style.color = e.cpu_usage >= 80 ? '#f85149' : (e.cpu_usage >= 60 ? '#d29922' : '#3fb950');
+                        if (e.status_time) cpuEl.title = 'Last polled: ' + new Date(e.status_time).toLocaleString();
                     }
-                    if (memEl && e.memory_usage > 0) {
+                    if (memEl) {
                         memEl.textContent = e.memory_usage.toFixed(1) + '%';
                         memEl.style.color = e.memory_usage >= 80 ? '#f85149' : (e.memory_usage >= 60 ? '#d29922' : '#3fb950');
                     }
-                    if (sessEl && e.session_count > 0) {
+                    if (sessEl) {
                         sessEl.textContent = e.session_count.toLocaleString();
                         sessEl.style.color = '#c9d1d9';
                     }

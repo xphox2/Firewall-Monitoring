@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -249,15 +250,17 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 
 	// Per-device enrichment: latest system status, interface summary, VPN summary
 	type DeviceEnrichment struct {
-		DeviceID     uint    `json:"device_id"`
-		CPUUsage     float64 `json:"cpu_usage"`
-		MemoryUsage  float64 `json:"memory_usage"`
-		SessionCount int     `json:"session_count"`
-		IfaceTotal   int     `json:"iface_total"`
-		IfaceUp      int     `json:"iface_up"`
-		IfaceDown    int     `json:"iface_down"`
-		VPNTotal     int     `json:"vpn_total"`
-		VPNUp        int     `json:"vpn_up"`
+		DeviceID       uint       `json:"device_id"`
+		HasStatus      bool       `json:"has_status"`
+		StatusTime     *time.Time `json:"status_time,omitempty"`
+		CPUUsage       float64    `json:"cpu_usage"`
+		MemoryUsage    float64    `json:"memory_usage"`
+		SessionCount   int        `json:"session_count"`
+		IfaceTotal     int        `json:"iface_total"`
+		IfaceUp        int        `json:"iface_up"`
+		IfaceDown      int        `json:"iface_down"`
+		VPNTotal       int        `json:"vpn_total"`
+		VPNUp          int        `json:"vpn_up"`
 	}
 
 	enrichments := make(map[uint]*DeviceEnrichment)
@@ -267,6 +270,8 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 			// Latest system status
 			var ss models.SystemStatus
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
+				e.HasStatus = true
+				e.StatusTime = &ss.Timestamp
 				e.CPUUsage = ss.CPUUsage
 				e.MemoryUsage = ss.MemoryUsage
 				e.SessionCount = ss.SessionCount

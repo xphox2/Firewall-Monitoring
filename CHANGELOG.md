@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.29] - 2026-03-02
+
+### Fixed
+- CPU/memory/session data showing "-" for devices with valid polling data due to `> 0` check filtering out 0% values
+- Added `has_status` flag to device enrichment so frontend can distinguish "no data" from "0% CPU"
+- Devices without polling data now show "No data" with diagnostic tooltip instead of ambiguous "-"
+- Added `status_time` to enrichment for last-polled timestamp visibility on hover
+
 ## [0.10.28] - 2026-03-02
 
 ### Added
