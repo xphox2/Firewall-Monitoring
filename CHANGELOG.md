@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.18] - 2026-03-01
+
+### Fixed
+- **Chart.js blocked by CSP**: Added `https://cdn.jsdelivr.net` to Content-Security-Policy `script-src` directive so Chart.js CDN scripts load correctly on admin and device-detail pages
+
 ## [0.10.17] - 2026-03-01
 
 ### Fixed
