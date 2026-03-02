@@ -162,6 +162,33 @@ func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, laten
 	}
 }
 
+func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var stats []models.ProcessorStats
+	if err := c.ShouldBindJSON(&stats); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(stats) > 500 {
+		stats = stats[:500]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range stats {
+		if stats[i].Timestamp.IsZero() {
+			stats[i].Timestamp = now
+		}
+	}
+	if err := h.db.SaveProcessorStats(stats); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save processor stats"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+}
+
 func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {

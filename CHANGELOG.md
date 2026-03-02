@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.31] - 2026-03-02
+
+### Added
+- `POST /api/probes/:id/processor-stats` endpoint for receiving per-core processor stats from probes
+- Probe-polled devices now display processor usage data (previously only worked for server-polled devices)
+
 ## [0.10.30] - 2026-03-02
 
 ### Added

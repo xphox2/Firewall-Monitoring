@@ -164,6 +164,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.POST("/probes/:id/interface-stats", handler.ReceiveInterfaceStats)
 		api.POST("/probes/:id/vpn-status", handler.ReceiveVPNStatuses)
 		api.POST("/probes/:id/hardware-sensors", handler.ReceiveHardwareSensors)
+		api.POST("/probes/:id/processor-stats", handler.ReceiveProcessorStats)
 
 		// Probe fetches its assigned devices
 		api.GET("/probes/:id/devices", handler.GetProbeDevices)
