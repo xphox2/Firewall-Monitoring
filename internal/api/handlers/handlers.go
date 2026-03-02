@@ -1635,6 +1635,7 @@ type TestDeviceRequest struct {
 	SNMPV3AuthPass string `json:"snmpv3_auth_pass"`
 	SNMPV3PrivType string `json:"snmpv3_priv_type"`
 	SNMPV3PrivPass string `json:"snmpv3_priv_pass"`
+	ProbeID        *uint  `json:"probe_id"`
 }
 
 func (h *Handler) TestDeviceConnection(c *gin.Context) {
@@ -1664,6 +1665,16 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		return
 	}
 
+	// Probe-managed devices cannot be tested from the API server
+	if req.ProbeID != nil && *req.ProbeID > 0 {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"success":       false,
+			"probe_managed": true,
+			"message":       "Device is managed by a remote probe. Direct test not available — the probe polls this device automatically.",
+		}))
+		return
+	}
+
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
 			SNMPHost:   req.IPAddress,
@@ -1685,7 +1696,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		log.Printf("TestDevice connect error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"success": false,
-			"message": "Failed to connect to device",
+			"message": fmt.Sprintf("Failed to connect to device: %v", err),
 			"online":  false,
 		}))
 		return
@@ -1697,7 +1708,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		log.Printf("TestDevice poll error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"success": false,
-			"message": "Failed to poll device",
+			"message": fmt.Sprintf("Failed to poll device: %v", err),
 			"online":  false,
 		}))
 		return

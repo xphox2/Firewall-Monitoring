@@ -1172,6 +1172,8 @@
             btn.disabled = true;
 
             const testData = { ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: version };
+            const probeVal = document.getElementById('device-probe').value;
+            if (probeVal) testData.probe_id = parseInt(probeVal);
             if (version === '3') {
                 testData.snmpv3_username = document.getElementById('device-v3-username').value;
                 testData.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
@@ -1186,7 +1188,9 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(testData)
                 });
-                if (result?.data?.online) {
+                if (result?.data?.probe_managed) {
+                    alert(`ℹ️ ${result.data.message}`);
+                } else if (result?.data?.online) {
                     alert(`Connected!\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
                 } else {
                     alert(`Failed: ${result?.data?.message || 'Unknown error'}`);

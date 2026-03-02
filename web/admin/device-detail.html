@@ -246,7 +246,7 @@
                             <tbody id="ifaceBody"></tbody>
                         </table>
                     </div>
-                    <div id="ifaceEmpty" class="empty" style="display:none">No interface data available</div>
+                    <div id="ifaceEmpty" class="empty" style="display:none">Awaiting interface data from probe…</div>
                 </div>
             </div>
 
@@ -266,7 +266,7 @@
                         </thead>
                         <tbody id="vpnBody"></tbody>
                     </table>
-                    <div id="vpnEmpty" class="empty" style="display:none">No VPN tunnel data available</div>
+                    <div id="vpnEmpty" class="empty" style="display:none">Awaiting VPN tunnel data from probe…</div>
                 </div>
             </div>
 
@@ -285,7 +285,7 @@
                         </thead>
                         <tbody id="sensorBody"></tbody>
                     </table>
-                    <div id="sensorEmpty" class="empty" style="display:none">No hardware sensor data available</div>
+                    <div id="sensorEmpty" class="empty" style="display:none">Awaiting hardware sensor data from probe…</div>
                 </div>
             </div>
 
@@ -304,7 +304,7 @@
                         </thead>
                         <tbody id="alertBody"></tbody>
                     </table>
-                    <div id="alertEmpty" class="empty" style="display:none">No recent alerts</div>
+                    <div id="alertEmpty" class="empty" style="display:none">No recent alerts — device is healthy</div>
                 </div>
             </div>
 
@@ -325,7 +325,7 @@
                         </thead>
                         <tbody id="pingBody"></tbody>
                     </table>
-                    <div id="pingEmpty" class="empty" style="display:none">No ping data available</div>
+                    <div id="pingEmpty" class="empty" style="display:none">Awaiting ping data from probe…</div>
                 </div>
             </div>
 
@@ -394,7 +394,11 @@
 
     function renderSystemStatus() {
         const ss = deviceData.system_status;
-        if (!ss) return;
+        if (!ss) {
+            document.getElementById('systemStats').insertAdjacentHTML('beforeend',
+                '<div class="empty" style="grid-column:1/-1;text-align:center;padding:1.5rem 0">Awaiting data from probe\u2026</div>');
+            return;
+        }
 
         createGauge('cpuGauge', ss.cpu_usage, getGaugeColor(ss.cpu_usage));
         document.getElementById('cpuValue').textContent = ss.cpu_usage.toFixed(1) + '%';

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.15] - 2026-03-01
+
+### Fixed
+- **Test Device for probe-managed devices**: Test connection no longer fails with "Failed to poll device" for devices managed by a remote probe; instead returns an informational message explaining the probe polls the device automatically
+- **Test Device error detail**: Connect and poll errors now include the actual error message instead of generic "Failed to connect/poll" text
+
+### Improved
+- **Device detail empty states**: System status, interfaces, VPN, sensors, and ping tabs now show "Awaiting data from probe…" when no data has arrived yet, instead of silent dashes
+- **Alerts empty state**: Shows "No recent alerts — device is healthy" when alert list is empty
+
 ## [0.10.14] - 2026-03-02
 
 ### Fixed
