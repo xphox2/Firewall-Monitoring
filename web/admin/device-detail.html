@@ -227,16 +227,7 @@
                         Interfaces
                         <span id="ifaceSummary" style="font-size:0.78rem; font-weight:400; color:#8b949e"></span>
                     </h2>
-                    <div class="filters">
-                        <button class="filter-btn active" onclick="filterIfaces('all')">All</button>
-                        <button class="filter-btn" onclick="filterIfaces('up')">Up</button>
-                        <button class="filter-btn" onclick="filterIfaces('down')">Down</button>
-                        <button class="filter-btn" onclick="filterIfaces('ethernet')">Ethernet</button>
-                        <button class="filter-btn" onclick="filterIfaces('tunnel')">Tunnel</button>
-                        <button class="filter-btn" onclick="filterIfaces('vxlan')">VXLAN</button>
-                        <button class="filter-btn" onclick="filterIfaces('lag')">LAG</button>
-                        <button class="filter-btn" onclick="filterIfaces('vlan')">VLAN</button>
-                    </div>
+                    <div class="filters" id="ifaceFilters"></div>
                     <div class="table-scroll">
                         <table id="ifaceTable">
                             <thead>
@@ -505,23 +496,39 @@
         const downCount = allInterfaces.filter(i => i.status === 'down').length;
         document.getElementById('ifaceSummary').textContent =
             `${allInterfaces.length} total, ${upCount} up, ${downCount} down`;
+
+        // Build dynamic filter buttons
+        const filtersDiv = document.getElementById('ifaceFilters');
+        const typeCounts = {};
+        allInterfaces.forEach(i => {
+            const tn = i.type_name || 'other';
+            typeCounts[tn] = (typeCounts[tn] || 0) + 1;
+        });
+
+        let btns = `<button class="filter-btn${currentFilter === 'all' ? ' active' : ''}" data-filter="all" onclick="filterIfaces('all')">All (${allInterfaces.length})</button>`;
+        btns += `<button class="filter-btn${currentFilter === 'up' ? ' active' : ''}" data-filter="up" onclick="filterIfaces('up')">Up (${upCount})</button>`;
+        btns += `<button class="filter-btn${currentFilter === 'down' ? ' active' : ''}" data-filter="down" onclick="filterIfaces('down')">Down (${downCount})</button>`;
+
+        const sortedTypes = Object.keys(typeCounts).sort();
+        for (const tn of sortedTypes) {
+            const label = tn.charAt(0).toUpperCase() + tn.slice(1);
+            btns += `<button class="filter-btn${currentFilter === tn ? ' active' : ''}" data-filter="${esc(tn)}" onclick="filterIfaces('${esc(tn)}')">${esc(label)} (${typeCounts[tn]})</button>`;
+        }
+        filtersDiv.innerHTML = btns;
+
         filterIfaces(currentFilter);
     }
 
     function filterIfaces(filter) {
         currentFilter = filter;
-        document.querySelectorAll('.filters .filter-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.textContent.toLowerCase() === filter);
+        document.querySelectorAll('#ifaceFilters .filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-filter') === filter);
         });
 
         let filtered = allInterfaces;
         if (filter === 'up') filtered = allInterfaces.filter(i => i.status === 'up');
         else if (filter === 'down') filtered = allInterfaces.filter(i => i.status === 'down');
-        else if (filter === 'ethernet') filtered = allInterfaces.filter(i => i.type_name === 'ethernet');
-        else if (filter === 'tunnel') filtered = allInterfaces.filter(i => i.type_name === 'tunnel');
-        else if (filter === 'vxlan') filtered = allInterfaces.filter(i => i.type_name === 'vxlan');
-        else if (filter === 'lag') filtered = allInterfaces.filter(i => i.type_name === 'lag');
-        else if (filter === 'vlan') filtered = allInterfaces.filter(i => i.vlan_id > 0);
+        else if (filter !== 'all') filtered = allInterfaces.filter(i => (i.type_name || 'other') === filter);
 
         const body = document.getElementById('ifaceBody');
         const empty = document.getElementById('ifaceEmpty');

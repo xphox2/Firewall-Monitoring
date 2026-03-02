@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -116,8 +117,76 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 			continue
 		}
 		saved++
+
+		// Aggregate into PingStats
+		h.updatePingStats(results[i].DeviceID, probe.ID, results[i].TargetIP, results[i].Latency, results[i].PacketLoss)
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+}
+
+func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, latency, packetLoss float64) {
+	existing, err := h.db.GetPingStatsByTarget(deviceID, probeID, targetIP)
+	if err != nil {
+		log.Printf("Failed to get existing ping stats: %v", err)
+		return
+	}
+
+	if existing == nil {
+		stats := &models.PingStats{
+			DeviceID:   deviceID,
+			ProbeID:    probeID,
+			TargetIP:   targetIP,
+			MinLatency: latency,
+			MaxLatency: latency,
+			AvgLatency: latency,
+			PacketLoss: packetLoss,
+			Samples:    1,
+			UpdatedAt:  time.Now(),
+		}
+		if err := h.db.SavePingStats(stats); err != nil {
+			log.Printf("Failed to save new ping stats: %v", err)
+		}
+		return
+	}
+
+	newSamples := existing.Samples + 1
+	existing.MinLatency = math.Min(existing.MinLatency, latency)
+	existing.MaxLatency = math.Max(existing.MaxLatency, latency)
+	existing.AvgLatency = ((existing.AvgLatency * float64(existing.Samples)) + latency) / float64(newSamples)
+	existing.PacketLoss = packetLoss
+	existing.Samples = newSamples
+	existing.UpdatedAt = time.Now()
+
+	if err := h.db.SavePingStats(existing); err != nil {
+		log.Printf("Failed to update ping stats: %v", err)
+	}
+}
+
+func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var sensors []models.HardwareSensor
+	if err := c.ShouldBindJSON(&sensors); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(sensors) > 500 {
+		sensors = sensors[:500]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range sensors {
+		if sensors[i].Timestamp.IsZero() {
+			sensors[i].Timestamp = now
+		}
+	}
+	if err := h.db.Gorm().Create(&sensors).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save hardware sensors"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(sensors)}))
 }
 
 func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
