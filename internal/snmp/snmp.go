@@ -342,7 +342,16 @@ func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
 	if xPdus, err := s.Walk(BaseOIDIfXTable); err == nil {
 		for _, pdu := range xPdus {
 			name := pdu.Name
-			if strings.HasPrefix(name, OIDIfAlias+".") {
+			if strings.HasPrefix(name, OIDIfName+".") {
+				idx := getIndexFromOID(name, OIDIfName)
+				if iface, ok := interfaces[idx]; ok {
+					ifName := safeString(pdu.Value)
+					if ifName != "" {
+						iface.Name = ifName
+					}
+					interfaces[idx] = iface
+				}
+			} else if strings.HasPrefix(name, OIDIfAlias+".") {
 				idx := getIndexFromOID(name, OIDIfAlias)
 				if iface, ok := interfaces[idx]; ok {
 					iface.Alias = safeString(pdu.Value)
