@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.19] - 2026-03-01
+
+### Fixed
+- **Password change error not shown**: Changed HTTP status from 401 to 403 when the current password is wrong during password change, preventing the frontend's session-expiry interceptor from silently redirecting to login instead of displaying the error message
+
 ## [0.10.18] - 2026-03-01
 
 ### Fixed

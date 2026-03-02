@@ -242,11 +242,11 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	// Verify current password directly (bypass rate limiter — user is already authenticated)
 	admin, adminErr := h.db.GetAdminByUsername(usernameStr)
 	if adminErr != nil || admin == nil {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
+		c.JSON(http.StatusForbidden, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
 	if !h.authManager.CheckPassword(req.CurrentPassword, admin.Password) {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Current password is incorrect"))
+		c.JSON(http.StatusForbidden, models.ErrorResponse("Current password is incorrect"))
 		return
 	}
 
