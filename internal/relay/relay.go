@@ -539,6 +539,7 @@ type DeviceInfo struct {
 	SNMPV3PrivType string `json:"snmpv3_priv_type"`
 	SNMPV3PrivPass string `json:"snmpv3_priv_pass"`
 	Enabled        bool   `json:"enabled"`
+	Vendor         string `json:"vendor"`
 }
 
 type DevicesResponse struct {

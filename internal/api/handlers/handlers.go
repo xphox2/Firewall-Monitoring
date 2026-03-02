@@ -83,3 +83,14 @@ func isValidExternalIP(ipStr string) bool {
 	}
 	return len(addrs) > 0
 }
+
+var validVendors = map[string]bool{
+	"fortigate": true,
+	"paloalto":  true,
+	"cisco_asa": true,
+	"generic":   true,
+}
+
+func isValidVendor(vendor string) bool {
+	return validVendors[vendor]
+}

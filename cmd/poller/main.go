@@ -142,7 +142,12 @@ func (p *Poller) pollDevice(device *models.Device) {
 	}
 	defer client.Close()
 
-	status, err := client.GetSystemStatus()
+	vendor := device.Vendor
+	if vendor == "" {
+		vendor = "fortigate"
+	}
+
+	status, err := client.GetSystemStatus(vendor)
 	if err != nil {
 		log.Printf("Device %s (%s): poll error - %v", device.Name, device.IPAddress, err)
 		p.updateDeviceStatus(device, "offline")
@@ -190,7 +195,7 @@ func (p *Poller) pollDevice(device *models.Device) {
 	}
 
 	// Collect VPN tunnel status (silently skip if device has no VPN)
-	vpnStatuses, err := client.GetVPNStatus()
+	vpnStatuses, err := client.GetVPNStatus(vendor)
 	if err == nil && len(vpnStatuses) > 0 {
 		now := time.Now()
 		for i := range vpnStatuses {

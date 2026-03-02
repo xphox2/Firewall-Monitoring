@@ -50,6 +50,15 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
+	// Default and validate vendor
+	if device.Vendor == "" {
+		device.Vendor = "fortigate"
+	}
+	if !isValidVendor(device.Vendor) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, or generic"))
+		return
+	}
+
 	// Validate IP to prevent SSRF
 	if !isValidExternalIP(device.IPAddress) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
@@ -108,6 +117,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		"enabled":          true,
 		"site_id":          true,
 		"probe_id":         true,
+		"vendor":           true,
 	}
 
 	var updates map[string]interface{}
@@ -145,6 +155,15 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if enabledVal, ok := filteredUpdates["enabled"]; ok {
 		if _, isBool := enabledVal.(bool); !isBool {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for enabled"))
+			return
+		}
+	}
+
+	// Validate vendor if present
+	if vendorVal, ok := filteredUpdates["vendor"]; ok {
+		vendorStr, isStr := vendorVal.(string)
+		if !isStr || !isValidVendor(vendorStr) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, or generic"))
 			return
 		}
 	}

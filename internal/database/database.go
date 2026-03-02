@@ -64,6 +64,9 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// Backfill vendor for existing devices
+	db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
+
 	return d, nil
 }
 
@@ -746,7 +749,7 @@ func (d *Database) GetFlowStats(hours int) (*FlowStatsResult, error) {
 	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
 		Select("protocol, COUNT(*) as count").Group("protocol").
 		Order("count DESC").Limit(10).Scan(&protocols)
-	protoNames := map[uint8]string{6: "TCP", 17: "UDP", 1: "ICMP", 47: "GRE", 50: "ESP"}
+	protoNames := map[uint8]string{0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP", 17: "UDP", 41: "IPv6", 43: "IPv6-Route", 44: "IPv6-Frag", 47: "GRE", 50: "ESP", 51: "AH", 58: "ICMPv6", 59: "IPv6-NoNxt", 60: "IPv6-Opts", 88: "EIGRP", 89: "OSPF", 103: "PIM", 112: "VRRP", 132: "SCTP", 137: "MPLS-in-IP"}
 	for _, p := range protocols {
 		name := protoNames[p.Protocol]
 		if name == "" {

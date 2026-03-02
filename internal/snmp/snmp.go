@@ -11,18 +11,8 @@ import (
 	"github.com/gosnmp/gosnmp"
 )
 
-// FortiGate-specific SNMP OIDs (Fortinet enterprise MIB 1.3.6.1.4.1.12356)
+// Standard MIB OIDs (vendor-neutral)
 var (
-	OIDSystemCPU       = ".1.3.6.1.4.1.12356.101.4.1.3"
-	OIDSystemMemory    = ".1.3.6.1.4.1.12356.101.4.1.4"
-	OIDSystemMemoryCap = ".1.3.6.1.4.1.12356.101.4.1.5"
-	OIDSystemDisk      = ".1.3.6.1.4.1.12356.101.4.1.6"
-	OIDSystemDiskCap   = ".1.3.6.1.4.1.12356.101.4.1.7"
-	OIDSystemSessions  = ".1.3.6.1.4.1.12356.101.4.1.8"
-	OIDSystemUptime    = ".1.3.6.1.4.1.12356.101.4.1.20"
-	OIDSystemVersion   = ".1.3.6.1.4.1.12356.101.4.1.1"
-	OIDSystemHostname  = ".1.3.6.1.4.1.12356.101.4.1.2"
-
 	BaseOIDInterface   = ".1.3.6.1.2.1.2.2.1"
 	OIDIfDescr         = ".1.3.6.1.2.1.2.2.1.2"
 	OIDIfType          = ".1.3.6.1.2.1.2.2.1.3"
@@ -52,39 +42,6 @@ var (
 
 	// Q-BRIDGE-MIB (native VLAN)
 	OIDdot1qPvid = ".1.3.6.1.2.1.17.7.1.4.5.1.1"
-
-	// FortiGate VPN tunnel MIB
-	BaseOIDVPNTunnel      = ".1.3.6.1.4.1.12356.101.12.2.2.1"
-	OIDVPNTunnelName      = ".1.3.6.1.4.1.12356.101.12.2.2.1.3"
-	OIDVPNTunnelRemoteGW  = ".1.3.6.1.4.1.12356.101.12.2.2.1.4"
-	OIDVPNTunnelInOctets  = ".1.3.6.1.4.1.12356.101.12.2.2.1.18"
-	OIDVPNTunnelOutOctets = ".1.3.6.1.4.1.12356.101.12.2.2.1.19"
-	OIDVPNTunnelStatus    = ".1.3.6.1.4.1.12356.101.12.2.2.1.20"
-
-	OIDHWSensorTable = ".1.3.6.1.4.1.12356.101.4.3.2"
-	OIDHWSensorEntry = ".1.3.6.1.4.1.12356.101.4.3.2.1"
-	OIDHWSensorName  = ".1.3.6.1.4.1.12356.101.4.3.2.1.2"
-	OIDHWSensorValue = ".1.3.6.1.4.1.12356.101.4.3.2.1.3"
-	OIDHWSensorAlarm = ".1.3.6.1.4.1.12356.101.4.3.2.1.4"
-	OIDHWSensorCount = ".1.3.6.1.4.1.12356.101.4.3.1"
-
-	OIDHaTable     = ".1.3.6.1.4.1.12356.101.13.2.1"
-	OIDHaMode      = ".1.3.6.1.4.1.12356.101.13.1.1"
-	OIDHaGroupName = ".1.3.6.1.4.1.12356.101.13.1.2"
-	OIDHaMasterIP  = ".1.3.6.1.4.1.12356.101.13.1.3"
-	OIDHaSlaveIP   = ".1.3.6.1.4.1.12356.101.13.1.4"
-
-	TrapVPNTunnelUp   = ".1.3.6.1.4.1.12356.101.2.0.301"
-	TrapVPNTunnelDown = ".1.3.6.1.4.1.12356.101.2.0.302"
-	TrapHASwitch      = ".1.3.6.1.4.1.12356.101.2.0.401"
-	TrapHAStateChange = ".1.3.6.1.4.1.12356.101.2.0.402"
-	TrapHAHBFail      = ".1.3.6.1.4.1.12356.101.2.0.403"
-	TrapHAMemberDown  = ".1.3.6.1.4.1.12356.101.2.0.404"
-	TrapHAMemberUp    = ".1.3.6.1.4.1.12356.101.2.0.405"
-	TrapIPSSignature  = ".1.3.6.1.4.1.12356.101.2.0.503"
-	TrapIPSanomaly    = ".1.3.6.1.4.1.12356.101.2.0.504"
-	TrapAVVirus       = ".1.3.6.1.4.1.12356.101.2.0.601"
-	TrapAVOversize    = ".1.3.6.1.4.1.12356.101.2.0.602"
 )
 
 // IfTypeNames maps IANA ifType values to human-readable names
@@ -187,21 +144,30 @@ func (s *SNMPClient) Walk(oid string) ([]gosnmp.SnmpPDU, error) {
 	return result, nil
 }
 
-func (s *SNMPClient) GetSystemStatus() (*models.SystemStatus, error) {
-	status := &models.SystemStatus{
-		Timestamp: time.Now(),
+func (s *SNMPClient) resolveVendor(vendor string) VendorProfile {
+	if vendor == "" {
+		vendor = "fortigate"
+	}
+	profile := GetVendorProfile(vendor)
+	if profile == nil {
+		profile = DefaultVendor()
+	}
+	return profile
+}
+
+func (s *SNMPClient) GetSystemStatus(vendor ...string) (*models.SystemStatus, error) {
+	v := ""
+	if len(vendor) > 0 {
+		v = vendor[0]
+	}
+	profile := s.resolveVendor(v)
+	if profile == nil {
+		return nil, fmt.Errorf("no vendor profile available")
 	}
 
-	oids := []string{
-		OIDSystemHostname,
-		OIDSystemVersion,
-		OIDSystemCPU,
-		OIDSystemMemory,
-		OIDSystemMemoryCap,
-		OIDSystemDisk,
-		OIDSystemDiskCap,
-		OIDSystemSessions,
-		OIDSystemUptime,
+	oids := profile.SystemOIDs()
+	if len(oids) == 0 {
+		return nil, fmt.Errorf("vendor %s does not support system status polling", v)
 	}
 
 	result, err := s.client.Get(oids)
@@ -209,30 +175,7 @@ func (s *SNMPClient) GetSystemStatus() (*models.SystemStatus, error) {
 		return nil, fmt.Errorf("failed to get system status: %w", err)
 	}
 
-	for _, pdu := range result.Variables {
-		switch pdu.Name {
-		case OIDSystemHostname:
-			status.Hostname = safeString(pdu.Value)
-		case OIDSystemVersion:
-			status.Version = safeString(pdu.Value)
-		case OIDSystemCPU:
-			status.CPUUsage = float64(gosnmp.ToBigInt(pdu.Value).Int64())
-		case OIDSystemMemory:
-			status.MemoryUsage = float64(gosnmp.ToBigInt(pdu.Value).Int64())
-		case OIDSystemMemoryCap:
-			status.MemoryTotal = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
-		case OIDSystemDisk:
-			status.DiskUsage = float64(gosnmp.ToBigInt(pdu.Value).Int64())
-		case OIDSystemDiskCap:
-			status.DiskTotal = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
-		case OIDSystemSessions:
-			status.SessionCount = int(gosnmp.ToBigInt(pdu.Value).Int64())
-		case OIDSystemUptime:
-			status.Uptime = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
-		}
-	}
-
-	return status, nil
+	return profile.ParseSystemStatus(result.Variables), nil
 }
 
 func (s *SNMPClient) GetInterfaceStats() ([]models.InterfaceStats, error) {
@@ -423,67 +366,27 @@ func formatMAC(v interface{}) string {
 	return fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
 }
 
-func (s *SNMPClient) GetVPNStatus() ([]models.VPNStatus, error) {
-	pdus, err := s.Walk(BaseOIDVPNTunnel)
+func (s *SNMPClient) GetVPNStatus(vendor ...string) ([]models.VPNStatus, error) {
+	v := ""
+	if len(vendor) > 0 {
+		v = vendor[0]
+	}
+	profile := s.resolveVendor(v)
+	if profile == nil {
+		return nil, fmt.Errorf("no vendor profile available")
+	}
+
+	baseOID := profile.VPNBaseOID()
+	if baseOID == "" {
+		return nil, nil // vendor doesn't support VPN polling
+	}
+
+	pdus, err := s.Walk(baseOID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk VPN tunnel table: %w", err)
 	}
 
-	tunnelMap := make(map[int]*models.VPNStatus)
-	for _, pdu := range pdus {
-		name := pdu.Name
-		if strings.HasPrefix(name, OIDVPNTunnelName+".") {
-			idx := getIndexFromOID(name, OIDVPNTunnelName)
-			if idx < 0 {
-				continue
-			}
-			t := getOrCreateVPN(tunnelMap, idx)
-			t.TunnelName = safeString(pdu.Value)
-		} else if strings.HasPrefix(name, OIDVPNTunnelRemoteGW+".") {
-			idx := getIndexFromOID(name, OIDVPNTunnelRemoteGW)
-			if idx < 0 {
-				continue
-			}
-			t := getOrCreateVPN(tunnelMap, idx)
-			t.RemoteIP = safeString(pdu.Value)
-		} else if strings.HasPrefix(name, OIDVPNTunnelInOctets+".") {
-			idx := getIndexFromOID(name, OIDVPNTunnelInOctets)
-			if idx < 0 {
-				continue
-			}
-			t := getOrCreateVPN(tunnelMap, idx)
-			t.BytesIn = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
-		} else if strings.HasPrefix(name, OIDVPNTunnelOutOctets+".") {
-			idx := getIndexFromOID(name, OIDVPNTunnelOutOctets)
-			if idx < 0 {
-				continue
-			}
-			t := getOrCreateVPN(tunnelMap, idx)
-			t.BytesOut = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
-		} else if strings.HasPrefix(name, OIDVPNTunnelStatus+".") {
-			idx := getIndexFromOID(name, OIDVPNTunnelStatus)
-			if idx < 0 {
-				continue
-			}
-			t := getOrCreateVPN(tunnelMap, idx)
-			statusVal := gosnmp.ToBigInt(pdu.Value).Int64()
-			if statusVal == 2 {
-				t.Status = "up"
-				t.State = "active"
-			} else {
-				t.Status = "down"
-				t.State = "inactive"
-			}
-		}
-	}
-
-	now := time.Now()
-	result := make([]models.VPNStatus, 0, len(tunnelMap))
-	for _, t := range tunnelMap {
-		t.Timestamp = now
-		result = append(result, *t)
-	}
-	return result, nil
+	return profile.ParseVPNStatus(pdus), nil
 }
 
 func getOrCreateVPN(m map[int]*models.VPNStatus, index int) *models.VPNStatus {
@@ -495,52 +398,27 @@ func getOrCreateVPN(m map[int]*models.VPNStatus, index int) *models.VPNStatus {
 	return v
 }
 
-func (s *SNMPClient) GetHardwareSensors() ([]models.HardwareSensor, error) {
-	pdus, err := s.Walk(OIDHWSensorEntry)
+func (s *SNMPClient) GetHardwareSensors(vendor ...string) ([]models.HardwareSensor, error) {
+	v := ""
+	if len(vendor) > 0 {
+		v = vendor[0]
+	}
+	profile := s.resolveVendor(v)
+	if profile == nil {
+		return nil, fmt.Errorf("no vendor profile available")
+	}
+
+	baseOID := profile.HWSensorBaseOID()
+	if baseOID == "" {
+		return nil, nil // vendor doesn't support hardware sensor polling
+	}
+
+	pdus, err := s.Walk(baseOID)
 	if err != nil {
 		return nil, err
 	}
 
-	sensorMap := make(map[int]*models.HardwareSensor)
-
-	for _, pdu := range pdus {
-		name := pdu.Name
-		if strings.HasPrefix(name, OIDHWSensorName+".") {
-			idx := getIndexFromOID(name, OIDHWSensorName)
-			if idx < 0 {
-				continue
-			}
-			sensor := getOrCreateSensor(sensorMap, idx)
-			sensor.Name = safeString(pdu.Value)
-		} else if strings.HasPrefix(name, OIDHWSensorValue+".") {
-			idx := getIndexFromOID(name, OIDHWSensorValue)
-			if idx < 0 {
-				continue
-			}
-			sensor := getOrCreateSensor(sensorMap, idx)
-			sensor.Value = float64(gosnmp.ToBigInt(pdu.Value).Int64())
-		} else if strings.HasPrefix(name, OIDHWSensorAlarm+".") {
-			idx := getIndexFromOID(name, OIDHWSensorAlarm)
-			if idx < 0 {
-				continue
-			}
-			sensor := getOrCreateSensor(sensorMap, idx)
-			alarm := gosnmp.ToBigInt(pdu.Value).Int64()
-			if alarm == 0 {
-				sensor.Status = "normal"
-			} else {
-				sensor.Status = "alarm"
-			}
-		}
-	}
-
-	now := time.Now()
-	sensors := make([]models.HardwareSensor, 0, len(sensorMap))
-	for _, sensor := range sensorMap {
-		sensor.Timestamp = now
-		sensors = append(sensors, *sensor)
-	}
-	return sensors, nil
+	return profile.ParseHardwareSensors(pdus), nil
 }
 
 func getOrCreateSensor(sensors map[int]*models.HardwareSensor, index int) *models.HardwareSensor {

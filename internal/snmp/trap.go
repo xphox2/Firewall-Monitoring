@@ -66,11 +66,12 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 	for _, v := range packet.Variables {
 		oid := v.Name
 
-		// FortiGate enterprise trap OID prefix (Fortinet MIB)
-		if strings.HasPrefix(oid, ".1.3.6.1.4.1.12356.101.2.0") {
+		// Look up trap OID across all registered vendor profiles
+		trapType, severity := lookupTrapOID(oid)
+		if trapType != "" {
 			trap.TrapOID = oid
-			trap.TrapType = t.getTrapType(oid)
-			trap.Severity = t.getTrapSeverity(oid)
+			trap.TrapType = trapType
+			trap.Severity = severity
 			trap.Message = t.formatTrapMessage(v, oid)
 			break
 		}
@@ -84,50 +85,25 @@ func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *
 	return trap
 }
 
-func (t *TrapReceiver) getTrapType(oid string) string {
-	switch oid {
-	case TrapVPNTunnelUp:
-		return "VPN_TUNNEL_UP"
-	case TrapVPNTunnelDown:
-		return "VPN_TUNNEL_DOWN"
-	case TrapHASwitch:
-		return "HA_SWITCH"
-	case TrapHAStateChange:
-		return "HA_STATE_CHANGE"
-	case TrapHAHBFail:
-		return "HA_HEARTBEAT_FAIL"
-	case TrapHAMemberDown:
-		return "HA_MEMBER_DOWN"
-	case TrapHAMemberUp:
-		return "HA_MEMBER_UP"
-	case TrapIPSSignature:
-		return "IPS_SIGNATURE"
-	case TrapIPSanomaly:
-		return "IPS_ANOMALY"
-	case TrapAVVirus:
-		return "AV_VIRUS"
-	case TrapAVOversize:
-		return "AV_OVERSIZE"
-	default:
-		return "UNKNOWN"
+// lookupTrapOID searches all registered vendor profiles for the given trap OID.
+func lookupTrapOID(oid string) (trapType string, severity string) {
+	vendorMu.RLock()
+	defer vendorMu.RUnlock()
+	for _, profile := range vendorRegistry {
+		if def, ok := profile.TrapOIDs()[oid]; ok {
+			return def.Type, def.Severity
+		}
 	}
-}
-
-func (t *TrapReceiver) getTrapSeverity(oid string) string {
-	switch oid {
-	case TrapVPNTunnelDown, TrapHAHBFail, TrapHAMemberDown, TrapIPSSignature,
-		TrapIPSanomaly, TrapAVVirus:
-		return "critical"
-	case TrapHASwitch, TrapHAStateChange:
-		return "warning"
-	default:
-		return "info"
-	}
+	return "", ""
 }
 
 func (t *TrapReceiver) formatTrapMessage(v gosnmp.SnmpPDU, oid string) string {
 	var sb strings.Builder
-	sb.WriteString(t.getTrapType(oid))
+	trapType, _ := lookupTrapOID(oid)
+	if trapType == "" {
+		trapType = "UNKNOWN"
+	}
+	sb.WriteString(trapType)
 
 	switch v.Type {
 	case gosnmp.OctetString:

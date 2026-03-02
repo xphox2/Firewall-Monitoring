@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.26] - 2026-03-02
+
+### Added
+- **Multi-vendor SNMP architecture**: New `VendorProfile` interface and registry (`internal/snmp/vendor.go`) enabling vendor-specific SNMP OID handling; FortiGate profile (`vendor_fortigate.go`) is the first implementation
+- **Vendor field on devices**: `Device` model now has a `vendor` field (default: `fortigate`); existing devices are backfilled on startup; API validates vendor on create/update (fortigate, paloalto, cisco_asa, generic)
+- **Vendor dropdown in admin UI**: Device add/edit modal now includes a vendor selector
+- **Flow time range selector**: Flows page now has Today/1 Week/1 Month/1 Year buttons for stats and charts
+- **Expanded protocol names**: Frontend and backend now recognize 22 protocols (added HOPOPT, IGMP, IPv4, EGP, IPv6, IPv6-Route, IPv6-Frag, ICMPv6, IPv6-NoNxt, IPv6-Opts, EIGRP, PIM, VRRP, SCTP, MPLS-in-IP)
+- **More flow filter options**: Protocol dropdown now includes ICMPv6, GRE, ESP, OSPF
+
+### Fixed
+- **Dashboard syslog/trap counts**: Now uses `/api/syslog/stats` and `/api/traps/stats` for real totals instead of capped `?limit=10` array length
+- **Top talkers chart unreadable**: Y-axis and tooltips now format bytes as human-readable (KB/MB/GB)
+- **Disk gauge 0/0 confusion**: Device detail page shows "N/A" with dimmed gauge when device reports 0 usage and 0 total
+
+### Removed
+- **Recent Activity section**: Redundant dashboard section removed (syslog/traps pages provide better detail)
+
+### Changed
+- **SNMP refactoring**: FortiGate-specific OIDs moved from `snmp.go` to `vendor_fortigate.go`; `GetSystemStatus()`, `GetVPNStatus()`, `GetHardwareSensors()` now accept optional vendor parameter
+- **Trap receiver**: Uses vendor profile registry to look up trap OIDs instead of hardcoded switch statements
+
 ## [0.10.25] - 2026-03-02
 
 ### Fixed

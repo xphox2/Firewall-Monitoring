@@ -146,6 +146,7 @@ type Device struct {
 	SNMPV3PrivType string    `json:"snmpv3_priv_type"`
 	SNMPV3PrivPass string    `json:"snmpv3_priv_pass"`
 	Enabled        bool      `json:"enabled" gorm:"default:true"`
+	Vendor         string    `json:"vendor" gorm:"default:fortigate"`
 	SiteID         *uint     `json:"site_id" gorm:"index"`
 	Site           *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
 	ProbeID        *uint     `json:"probe_id" gorm:"index"`

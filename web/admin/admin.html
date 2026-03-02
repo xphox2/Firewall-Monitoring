@@ -229,17 +229,6 @@
                     <div class="loading">Loading probes...</div>
                 </div>
             </div>
-            <div class="card">
-                <div class="card-header">
-                    <h2>Recent Activity</h2>
-                </div>
-                <div class="table-wrap">
-                    <table id="recent-activity-table">
-                        <thead><tr><th>Time</th><th>Source</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
         </div>
 
         <!-- Devices Page -->
@@ -370,6 +359,13 @@
 
         <!-- Flows Page -->
         <div class="page" id="page-flows">
+            <div class="filter-bar" style="margin-bottom:12px">
+                <span style="color:#8b949e;font-size:0.85rem;margin-right:8px">Time Range:</span>
+                <button class="btn secondary sm flow-range-btn active" data-hours="24" onclick="setFlowRange(24,this)">Today</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="168" onclick="setFlowRange(168,this)">1 Week</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="720" onclick="setFlowRange(720,this)">1 Month</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="8760" onclick="setFlowRange(8760,this)">1 Year</button>
+            </div>
             <div class="stat-grid" id="flows-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Total Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
@@ -403,6 +399,10 @@
                         <option value="6">TCP</option>
                         <option value="17">UDP</option>
                         <option value="1">ICMP</option>
+                        <option value="58">ICMPv6</option>
+                        <option value="47">GRE</option>
+                        <option value="50">ESP</option>
+                        <option value="89">OSPF</option>
                     </select>
                     <input type="text" id="flows-filter-src" placeholder="Src IP...">
                     <input type="text" id="flows-filter-dst" placeholder="Dst IP...">
@@ -612,6 +612,15 @@
                         </select>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label>Vendor</label>
+                    <select id="device-vendor">
+                        <option value="fortigate" selected>FortiGate</option>
+                        <option value="paloalto">Palo Alto</option>
+                        <option value="cisco_asa">Cisco ASA</option>
+                        <option value="generic">Generic</option>
+                    </select>
+                </div>
                 <div class="form-group" id="community-group">
                     <label>SNMP Community</label>
                     <input type="text" id="device-community" value="public">
@@ -747,7 +756,7 @@
         const chartInstances = {};
 
         const SEVERITY_NAMES = ['Emergency','Alert','Critical','Error','Warning','Notice','Info','Debug'];
-        const PROTOCOL_NAMES = {1:'ICMP',6:'TCP',17:'UDP',47:'GRE',50:'ESP',51:'AH',89:'OSPF'};
+        const PROTOCOL_NAMES = {0:'HOPOPT',1:'ICMP',2:'IGMP',4:'IPv4',6:'TCP',8:'EGP',17:'UDP',41:'IPv6',43:'IPv6-Route',44:'IPv6-Frag',47:'GRE',50:'ESP',51:'AH',58:'ICMPv6',59:'IPv6-NoNxt',60:'IPv6-Opts',88:'EIGRP',89:'OSPF',103:'PIM',112:'VRRP',132:'SCTP',137:'MPLS-in-IP'};
 
         function severityBadgeClass(sev) {
             if (sev <= 1) return 'emergency';
@@ -845,19 +854,17 @@
 
         async function loadDashboard() {
             try {
-                const [dashResult, probesResult, syslogResult, trapsResult] = await Promise.all([
+                const [dashResult, probesResult, syslogStatsResult, trapStatsResult] = await Promise.all([
                     apiFetch(`${API_BASE}/dashboard`),
                     apiFetch(`${API_BASE}/probes`),
-                    apiFetch(`${API_BASE}/syslog?limit=10`),
-                    apiFetch(`${API_BASE}/traps?limit=10`)
+                    apiFetch(`${API_BASE}/syslog/stats`),
+                    apiFetch(`${API_BASE}/traps/stats`)
                 ]);
                 if (!dashResult) return;
                 const raw = dashResult.data;
                 const data = raw.dashboard || raw;
                 const enrichments = raw.enrichments || {};
                 const probes = probesResult?.data || [];
-                const syslog = syslogResult?.data || [];
-                const traps = trapsResult?.data || [];
 
                 const deviceList = data.devices || [];
                 document.getElementById('total-devices').textContent = deviceList.length || 0;
@@ -866,8 +873,8 @@
 
                 const activeProbes = probes.filter(p => p.approval_status === 'approved' && p.status === 'online');
                 document.getElementById('active-probes').textContent = activeProbes.length;
-                document.getElementById('syslog-count').textContent = syslog.length;
-                document.getElementById('trap-count').textContent = traps.length;
+                document.getElementById('syslog-count').textContent = (syslogStatsResult?.data?.total || 0).toLocaleString();
+                document.getElementById('trap-count').textContent = (trapStatsResult?.data?.total || 0).toLocaleString();
 
                 // Probe health cards
                 const probeContainer = document.getElementById('probe-health-cards');
@@ -906,22 +913,6 @@
                     }
                 }
 
-                // Recent activity: combine syslog + traps, sort by timestamp
-                const activity = [];
-                syslog.forEach(m => activity.push({ time: m.timestamp, source: m.source_ip || m.hostname, type: 'syslog', severity: SEVERITY_NAMES[m.severity] || 'Unknown', message: m.message }));
-                traps.forEach(t => activity.push({ time: t.timestamp, source: t.source_ip, type: 'trap', severity: t.severity, message: t.message }));
-                activity.sort((a,b) => new Date(b.time) - new Date(a.time));
-
-                const tbody = document.querySelector('#recent-activity-table tbody');
-                tbody.innerHTML = activity.slice(0, 15).map(a => `
-                    <tr>
-                        <td>${new Date(a.time).toLocaleString()}</td>
-                        <td class="mono">${escapeHtml(a.source)}</td>
-                        <td><span class="badge ${a.type === 'syslog' ? 'info' : 'warning'}">${a.type}</span></td>
-                        <td><span class="badge ${severityBadgeClass(SEVERITY_NAMES.indexOf(a.severity))}">${escapeHtml(a.severity)}</span></td>
-                        <td>${escapeHtml(a.message?.substring(0, 120))}</td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5" class="empty-state">No recent activity</td></tr>';
                 // Load dashboard charts
                 loadDashboardCharts();
             } catch (e) {
@@ -1307,9 +1298,20 @@
             }
         }
 
+        let flowStatsHours = 24;
+        function setFlowRange(hours, btn) {
+            flowStatsHours = hours;
+            document.querySelectorAll('.flow-range-btn').forEach(b => b.classList.remove('active'));
+            if (btn) btn.classList.add('active');
+            loadFlowCharts();
+        }
+
+        const bytesTickCallback = function(value) { return formatBytes(value); };
+        const bytesTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y || ctx.parsed.x || 0); };
+
         async function loadFlowCharts() {
             try {
-                const result = await apiFetch(`${API_BASE}/flows/stats`);
+                const result = await apiFetch(`${API_BASE}/flows/stats?hours=${flowStatsHours}`);
                 if (!result?.data) return;
                 const d = result.data;
                 document.getElementById('flows-total').textContent = (d.total_flows||0).toLocaleString();
@@ -1323,15 +1325,28 @@
                 const protoColors = ['#58a6ff','#3fb950','#d2992a','#f85149','#bc8cff','#8b949e','#388bfd','#da3633'];
                 createChart('flows-protocol-chart','doughnut',protoLabels,[{data:protoCounts,backgroundColor:protoColors.slice(0,protoLabels.length),borderWidth:0}]);
 
-                // Top talkers bar
+                // Top talkers bar (horizontal) with formatted bytes
                 const srcLabels = (d.top_sources||[]).map(s => s.key);
                 const srcCounts = (d.top_sources||[]).map(s => s.count);
-                createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}],{indexAxis:'y'});
+                createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}],{
+                    indexAxis:'y',
+                    scales: {
+                        x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
+                        y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
+                    },
+                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
+                });
 
-                // Bytes over time
+                // Bytes over time with formatted bytes
                 const timeLabels = (d.bytes_over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
                 const timeCounts = (d.bytes_over_time||[]).map(b => b.count);
-                createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Bytes',data:timeCounts,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}]);
+                createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Bytes',data:timeCounts,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}],{
+                    scales: {
+                        x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
+                        y: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' }, beginAtZero: true }
+                    },
+                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
+                });
             } catch(e) { console.error('Failed to load flow charts:', e); }
         }
 
@@ -1647,6 +1662,7 @@
                 document.getElementById('device-v3-auth-pass').value = '';
                 document.getElementById('device-v3-priv-type').value = d.snmpv3_priv_type || '';
                 document.getElementById('device-v3-priv-pass').value = '';
+                document.getElementById('device-vendor').value = d.vendor || 'fortigate';
                 document.getElementById('device-probe').value = d.probe_id || '';
                 document.getElementById('device-site').value = d.site_id || '';
                 document.getElementById('device-location').value = d.location || '';
@@ -1719,6 +1735,7 @@
                 snmp_port: parseInt(document.getElementById('device-snmp-port').value),
                 snmp_version: snmpVersion,
                 snmp_community: document.getElementById('device-community').value,
+                vendor: document.getElementById('device-vendor').value || 'fortigate',
                 location: document.getElementById('device-location').value,
                 description: document.getElementById('device-description').value,
                 enabled: true
