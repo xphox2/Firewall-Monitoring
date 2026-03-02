@@ -266,6 +266,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		admin.GET("/api/devices/:id/detail", handler.GetDeviceDetail)
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/history", handler.GetInterfaceHistory)
+		admin.GET("/api/devices/:id/status-history", handler.GetDeviceStatusHistory)
+
+		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
+		admin.GET("/api/flows/stats", handler.GetFlowStats)
+		admin.GET("/api/alerts/stats", handler.GetAlertStats)
+		admin.GET("/api/traps/stats", handler.GetTrapStats)
+		admin.GET("/api/syslog/stats", handler.GetSyslogStats)
+		admin.GET("/api/dashboard/stats", handler.GetDashboardStats)
 
 		admin.GET("/api/connections", handler.GetDeviceConnections)
 		admin.POST("/api/connections", handler.CreateDeviceConnection)

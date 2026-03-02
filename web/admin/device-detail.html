@@ -112,7 +112,11 @@
             .main { margin-left: 0; }
             .stat-grid { grid-template-columns: repeat(2, 1fr); }
         }
+        .status-history-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        .status-history-card h3 { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; font-weight: 500; }
+        .status-history-card canvas { max-height: 200px; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="sidebar">
@@ -201,6 +205,12 @@
                 </div>
             </div>
 
+            <!-- Status History Chart -->
+            <div class="status-history-card" id="status-history-section">
+                <h3>System Status History (24h)</h3>
+                <canvas id="status-history-chart" height="180"></canvas>
+            </div>
+
             <!-- Section Tabs -->
             <div class="section-tabs">
                 <div class="section-tab active" onclick="switchTab('interfaces')">Interfaces</div>
@@ -225,6 +235,7 @@
                         <button class="filter-btn" onclick="filterIfaces('tunnel')">Tunnel</button>
                         <button class="filter-btn" onclick="filterIfaces('vxlan')">VXLAN</button>
                         <button class="filter-btn" onclick="filterIfaces('lag')">LAG</button>
+                        <button class="filter-btn" onclick="filterIfaces('vlan')">VLAN</button>
                     </div>
                     <div class="table-scroll">
                         <table id="ifaceTable">
@@ -412,6 +423,56 @@
         document.getElementById('sessionCount').textContent = ss.session_count ? ss.session_count.toLocaleString() : '0';
         document.getElementById('uptimeValue').textContent = formatUptime(ss.uptime);
         document.getElementById('firmwareValue').textContent = ss.version || '-';
+
+        loadStatusHistoryChart();
+    }
+
+    let statusHistoryChart = null;
+    async function loadStatusHistoryChart() {
+        try {
+            const csrfResp = await fetch('/admin/api/csrf-token', {credentials:'include'});
+            const csrfData = await csrfResp.json();
+            const token = csrfData.csrf_token || '';
+
+            const resp = await fetch(`/admin/api/devices/${deviceId}/status-history?hours=24`, {
+                credentials: 'include',
+                headers: {'X-CSRF-Token': token}
+            });
+            const result = await resp.json();
+            if (!result.success || !result.data?.length) return;
+
+            const data = result.data;
+            const labels = data.map(s => {
+                const d = new Date(s.timestamp);
+                return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+            });
+            const cpuData = data.map(s => s.cpu_usage);
+            const memData = data.map(s => s.memory_usage);
+            const diskData = data.map(s => s.disk_usage);
+
+            const ctx = document.getElementById('status-history-chart');
+            if (!ctx) return;
+            if (statusHistoryChart) statusHistoryChart.destroy();
+            statusHistoryChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {label:'CPU %',data:cpuData,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.05)',fill:true,tension:0.3,pointRadius:0},
+                        {label:'Memory %',data:memData,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.05)',fill:true,tension:0.3,pointRadius:0},
+                        {label:'Disk %',data:diskData,borderColor:'#3fb950',backgroundColor:'rgba(63,185,80,0.05)',fill:true,tension:0.3,pointRadius:0}
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font:{size:11} } } },
+                    scales: {
+                        x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                        y: { min: 0, max: 100, ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
+                    }
+                }
+            });
+        } catch(e) { console.error('Failed to load status history chart:', e); }
     }
 
     function createGauge(containerId, value, color) {
@@ -460,6 +521,7 @@
         else if (filter === 'tunnel') filtered = allInterfaces.filter(i => i.type_name === 'tunnel');
         else if (filter === 'vxlan') filtered = allInterfaces.filter(i => i.type_name === 'vxlan');
         else if (filter === 'lag') filtered = allInterfaces.filter(i => i.type_name === 'lag');
+        else if (filter === 'vlan') filtered = allInterfaces.filter(i => i.vlan_id > 0);
 
         const body = document.getElementById('ifaceBody');
         const empty = document.getElementById('ifaceEmpty');

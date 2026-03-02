@@ -133,7 +133,13 @@
 
         .expandable-msg { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
         .expandable-msg.expanded { white-space: normal; overflow: visible; }
+        .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .chart-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .chart-card h3 { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; font-weight: 500; }
+        .chart-card canvas { max-height: 250px; }
+        @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <div class="sidebar">
@@ -204,6 +210,16 @@
                     <div class="stat-value" id="trap-count">--</div>
                 </div>
             </div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Activity Trend (24h)</h3>
+                    <canvas id="dashboard-activity-chart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Device Status</h3>
+                    <canvas id="dashboard-device-chart"></canvas>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header">
                     <h2>Probe Health</h2>
@@ -266,6 +282,22 @@
 
         <!-- Syslog Page -->
         <div class="page" id="page-syslog">
+            <div class="stat-grid" id="syslog-stats-grid">
+                <div class="stat-card"><div class="stat-label">Total Messages</div><div class="stat-value accent" id="syslog-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Emergency/Critical</div><div class="stat-value bad" id="syslog-critical">--</div></div>
+                <div class="stat-card"><div class="stat-label">Warning/Error</div><div class="stat-value" style="color:#d2992a" id="syslog-warning">--</div></div>
+                <div class="stat-card"><div class="stat-label">Info/Notice</div><div class="stat-value" id="syslog-info">--</div></div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Message Trend (24h)</h3>
+                    <canvas id="syslog-trend-chart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Severity Distribution</h3>
+                    <canvas id="syslog-severity-chart"></canvas>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header">
                     <h2>Syslog Messages</h2>
@@ -305,6 +337,28 @@
 
         <!-- Flows Page -->
         <div class="page" id="page-flows">
+            <div class="stat-grid" id="flows-stats-grid">
+                <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Total Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
+                <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="flows-sources">--</div></div>
+                <div class="stat-card"><div class="stat-label">Unique Destinations</div><div class="stat-value" id="flows-dests">--</div></div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Protocol Distribution</h3>
+                    <canvas id="flows-protocol-chart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Top Talkers (by bytes)</h3>
+                    <canvas id="flows-top-talkers-chart"></canvas>
+                </div>
+            </div>
+            <div class="chart-row" style="grid-template-columns: 1fr;">
+                <div class="chart-card">
+                    <h3>Bytes Over Time</h3>
+                    <canvas id="flows-bytes-time-chart"></canvas>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header">
                     <h2>Flow Samples</h2>
@@ -335,26 +389,90 @@
 
         <!-- Alerts Page -->
         <div class="page" id="page-alerts">
+            <div class="stat-grid" id="alerts-stats-grid">
+                <div class="stat-card"><div class="stat-label">Total Alerts</div><div class="stat-value accent" id="alerts-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value bad" id="alerts-critical">--</div></div>
+                <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:#d2992a" id="alerts-warning">--</div></div>
+                <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="alerts-info">--</div></div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Alert Trend (24h)</h3>
+                    <canvas id="alerts-trend-chart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Alert Type Distribution</h3>
+                    <canvas id="alerts-type-chart"></canvas>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header"><h2>Alert History</h2></div>
+                <div class="filter-bar">
+                    <select id="alerts-filter-severity">
+                        <option value="">All Severities</option>
+                        <option value="critical">Critical</option>
+                        <option value="warning">Warning</option>
+                        <option value="info">Info</option>
+                    </select>
+                    <select id="alerts-filter-ack">
+                        <option value="">All</option>
+                        <option value="false">Unacknowledged</option>
+                        <option value="true">Acknowledged</option>
+                    </select>
+                    <button class="btn secondary sm" onclick="loadAlerts()">Apply</button>
+                </div>
                 <div class="table-wrap">
                     <table id="alerts-full-table">
-                        <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
+                </div>
+                <div style="margin-top: 12px; text-align: center;">
+                    <button class="btn secondary" onclick="loadMoreAlerts()">Load More</button>
                 </div>
             </div>
         </div>
 
         <!-- Traps Page -->
         <div class="page" id="page-traps">
+            <div class="stat-grid" id="traps-stats-grid">
+                <div class="stat-card"><div class="stat-label">Total Traps</div><div class="stat-value accent" id="traps-total">--</div></div>
+                <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value bad" id="traps-critical">--</div></div>
+                <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:#d2992a" id="traps-warning">--</div></div>
+                <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="traps-info">--</div></div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Trap Frequency (24h)</h3>
+                    <canvas id="traps-freq-chart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Severity Distribution</h3>
+                    <canvas id="traps-severity-chart"></canvas>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header"><h2>SNMP Trap Events</h2></div>
+                <div class="filter-bar">
+                    <select id="traps-filter-severity">
+                        <option value="">All Severities</option>
+                        <option value="critical">Critical</option>
+                        <option value="warning">Warning</option>
+                        <option value="info">Info</option>
+                    </select>
+                    <select id="traps-filter-type">
+                        <option value="">All Types</option>
+                    </select>
+                    <button class="btn secondary sm" onclick="loadTraps()">Apply</button>
+                </div>
                 <div class="table-wrap">
                     <table id="traps-table">
                         <thead><tr><th>Time</th><th>Source IP</th><th>Type</th><th>Severity</th><th>Message</th></tr></thead>
                         <tbody></tbody>
                     </table>
+                </div>
+                <div style="margin-top: 12px; text-align: center;">
+                    <button class="btn secondary" onclick="loadMoreTraps()">Load More</button>
                 </div>
             </div>
         </div>
@@ -572,6 +690,9 @@
         let csrfTokenCache = '';
         let syslogOffset = 0;
         let flowsOffset = 0;
+        let alertsOffset = 0;
+        let trapsOffset = 0;
+        const chartInstances = {};
 
         const SEVERITY_NAMES = ['Emergency','Alert','Critical','Error','Warning','Notice','Info','Debug'];
         const PROTOCOL_NAMES = {1:'ICMP',6:'TCP',17:'UDP',47:'GRE',50:'ESP',51:'AH',89:'OSPF'};
@@ -759,9 +880,65 @@
                         <td>${escapeHtml(a.message?.substring(0, 120))}</td>
                     </tr>
                 `).join('') || '<tr><td colspan="5" class="empty-state">No recent activity</td></tr>';
+                // Load dashboard charts
+                loadDashboardCharts();
             } catch (e) {
                 console.error('Failed to load dashboard:', e);
             }
+        }
+
+        async function loadDashboardCharts() {
+            try {
+                const result = await apiFetch(`${API_BASE}/dashboard/stats`);
+                if (!result?.data) return;
+                const d = result.data;
+
+                // Activity trend chart
+                const actLabels = [];
+                const actSyslog = [];
+                const actTraps = [];
+                const actAlerts = [];
+                const allBuckets = new Set();
+                (d.syslog_over_time||[]).forEach(b => allBuckets.add(b.bucket));
+                (d.traps_over_time||[]).forEach(b => allBuckets.add(b.bucket));
+                (d.alerts_over_time||[]).forEach(b => allBuckets.add(b.bucket));
+                const sortedBuckets = [...allBuckets].sort();
+                const sysMap = Object.fromEntries((d.syslog_over_time||[]).map(b=>[b.bucket,b.count]));
+                const trapMap = Object.fromEntries((d.traps_over_time||[]).map(b=>[b.bucket,b.count]));
+                const alertMap = Object.fromEntries((d.alerts_over_time||[]).map(b=>[b.bucket,b.count]));
+                sortedBuckets.forEach(b => {
+                    actLabels.push(b.substring(11,16)||b);
+                    actSyslog.push(sysMap[b]||0);
+                    actTraps.push(trapMap[b]||0);
+                    actAlerts.push(alertMap[b]||0);
+                });
+                createChart('dashboard-activity-chart', 'line', actLabels, [
+                    {label:'Syslog',data:actSyslog,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3},
+                    {label:'Traps',data:actTraps,borderColor:'#d2992a',backgroundColor:'rgba(210,153,42,0.1)',fill:true,tension:0.3},
+                    {label:'Alerts',data:actAlerts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}
+                ]);
+
+                // Device status doughnut
+                const devLabels = (d.device_status||[]).map(s => s.key || 'unknown');
+                const devCounts = (d.device_status||[]).map(s => s.count);
+                const devColors = devLabels.map(l => l==='online'?'#3fb950':l==='offline'?'#f85149':'#8b949e');
+                createChart('dashboard-device-chart', 'doughnut', devLabels, [{data:devCounts,backgroundColor:devColors,borderWidth:0}]);
+            } catch(e) { console.error('Failed to load dashboard charts:', e); }
+        }
+
+        function createChart(canvasId, type, labels, datasets, opts) {
+            if (chartInstances[canvasId]) { chartInstances[canvasId].destroy(); }
+            const ctx = document.getElementById(canvasId);
+            if (!ctx) return;
+            const defaults = {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } } },
+                scales: type === 'doughnut' ? {} : {
+                    x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
+                    y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' }, beginAtZero: true }
+                }
+            };
+            chartInstances[canvasId] = new Chart(ctx, { type, data: { labels, datasets }, options: { ...defaults, ...opts } });
         }
 
         async function loadDevices() {
@@ -900,9 +1077,45 @@
 
                 renderSyslogTable(messages, false);
                 syslogOffset = messages.length;
+                loadSyslogCharts();
             } catch (e) {
                 console.error('Failed to load syslog:', e);
             }
+        }
+
+        async function loadSyslogCharts() {
+            try {
+                const result = await apiFetch(`${API_BASE}/syslog/stats`);
+                if (!result?.data) return;
+                const d = result.data;
+                document.getElementById('syslog-total').textContent = (d.total||0).toLocaleString();
+                let crit=0, warn=0, info=0;
+                (d.by_severity||[]).forEach(s => {
+                    if (['Emergency','Alert','Critical'].includes(s.key)) crit += s.count;
+                    else if (['Error','Warning'].includes(s.key)) warn += s.count;
+                    else info += s.count;
+                });
+                document.getElementById('syslog-critical').textContent = crit.toLocaleString();
+                document.getElementById('syslog-warning').textContent = warn.toLocaleString();
+                document.getElementById('syslog-info').textContent = info.toLocaleString();
+
+                const labels = (d.over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
+                const counts = (d.over_time||[]).map(b => b.count);
+                createChart('syslog-trend-chart','bar',labels,[{label:'Messages',data:counts,backgroundColor:'#58a6ff',borderRadius:3}]);
+
+                const sevLabels = (d.by_severity||[]).map(s => s.key);
+                const sevCounts = (d.by_severity||[]).map(s => s.count);
+                const sevColors = sevLabels.map(l => {
+                    if (['Emergency','Alert'].includes(l)) return '#ff7b72';
+                    if (l==='Critical') return '#f85149';
+                    if (l==='Error') return '#da3633';
+                    if (l==='Warning') return '#d2992a';
+                    if (l==='Notice') return '#58a6ff';
+                    if (l==='Info') return '#388bfd';
+                    return '#8b949e';
+                });
+                createChart('syslog-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors,borderWidth:0}]);
+            } catch(e) { console.error('Failed to load syslog charts:', e); }
         }
 
         function buildSyslogParams(limit) {
@@ -959,9 +1172,38 @@
 
                 renderFlowsTable(samples, false);
                 flowsOffset = samples.length;
+                loadFlowCharts();
             } catch (e) {
                 console.error('Failed to load flows:', e);
             }
+        }
+
+        async function loadFlowCharts() {
+            try {
+                const result = await apiFetch(`${API_BASE}/flows/stats`);
+                if (!result?.data) return;
+                const d = result.data;
+                document.getElementById('flows-total').textContent = (d.total_flows||0).toLocaleString();
+                document.getElementById('flows-bytes').textContent = formatBytes(d.total_bytes||0);
+                document.getElementById('flows-sources').textContent = (d.unique_sources||0).toLocaleString();
+                document.getElementById('flows-dests').textContent = (d.unique_dests||0).toLocaleString();
+
+                // Protocol doughnut
+                const protoLabels = (d.by_protocol||[]).map(p => p.key);
+                const protoCounts = (d.by_protocol||[]).map(p => p.count);
+                const protoColors = ['#58a6ff','#3fb950','#d2992a','#f85149','#bc8cff','#8b949e','#388bfd','#da3633'];
+                createChart('flows-protocol-chart','doughnut',protoLabels,[{data:protoCounts,backgroundColor:protoColors.slice(0,protoLabels.length),borderWidth:0}]);
+
+                // Top talkers bar
+                const srcLabels = (d.top_sources||[]).map(s => s.key);
+                const srcCounts = (d.top_sources||[]).map(s => s.count);
+                createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}],{indexAxis:'y'});
+
+                // Bytes over time
+                const timeLabels = (d.bytes_over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
+                const timeCounts = (d.bytes_over_time||[]).map(b => b.count);
+                createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Bytes',data:timeCounts,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}]);
+            } catch(e) { console.error('Failed to load flow charts:', e); }
         }
 
         function buildFlowParams(limit) {
@@ -1032,41 +1274,161 @@
         });
 
         async function loadAlerts() {
+            alertsOffset = 0;
             try {
-                const result = await apiFetch(`${API_BASE}/alerts`);
+                const params = buildAlertParams(100);
+                const result = await apiFetch(`${API_BASE}/alerts?${params}`);
                 if (!result) return;
                 const alerts = result.data || [];
-                document.querySelector('#alerts-full-table tbody').innerHTML = alerts.map(a => `
-                    <tr>
-                        <td>${new Date(a.timestamp).toLocaleString()}</td>
-                        <td>DEV-${a.device_id}</td>
-                        <td>${escapeHtml(a.alert_type)}</td>
-                        <td><span class="badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
-                        <td>${escapeHtml(a.message)}</td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5" class="empty-state">No alerts</td></tr>';
+                renderAlertsTable(alerts, false);
+                alertsOffset = alerts.length;
+                loadAlertCharts();
             } catch (e) {
                 console.error('Failed to load alerts:', e);
             }
         }
 
-        async function loadTraps() {
+        function buildAlertParams(limit) {
+            const parts = [`limit=${limit}`];
+            const sev = document.getElementById('alerts-filter-severity')?.value;
+            const ack = document.getElementById('alerts-filter-ack')?.value;
+            if (sev) parts.push('severity=' + sev);
+            if (ack) parts.push('acknowledged=' + ack);
+            return parts.join('&');
+        }
+
+        function renderAlertsTable(alerts, append) {
+            const tbody = document.querySelector('#alerts-full-table tbody');
+            const html = alerts.map(a => `
+                <tr>
+                    <td>${new Date(a.timestamp).toLocaleString()}</td>
+                    <td>DEV-${a.device_id}</td>
+                    <td>${escapeHtml(a.alert_type)}</td>
+                    <td><span class="badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
+                    <td>${escapeHtml(a.message)}</td>
+                    <td>${a.acknowledged ? '<span class="badge info">ACK</span>' : '<button class="btn sm" onclick="acknowledgeAlert('+a.id+')">Ack</button>'}</td>
+                </tr>
+            `).join('');
+            if (append) tbody.innerHTML += html;
+            else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No alerts</td></tr>';
+        }
+
+        async function acknowledgeAlert(id) {
             try {
-                const result = await apiFetch(`${API_BASE}/traps`);
+                await apiFetch(`${API_BASE}/alerts/${id}/acknowledge`, {method:'POST'});
+                loadAlerts();
+            } catch(e) { console.error('Failed to acknowledge alert:', e); }
+        }
+
+        async function loadMoreAlerts() {
+            const params = buildAlertParams(100);
+            const result = await apiFetch(`${API_BASE}/alerts?${params}&offset=${alertsOffset}`);
+            if (result?.data?.length) {
+                renderAlertsTable(result.data, true);
+                alertsOffset += result.data.length;
+            }
+        }
+
+        async function loadAlertCharts() {
+            try {
+                const result = await apiFetch(`${API_BASE}/alerts/stats`);
+                if (!result?.data) return;
+                const d = result.data;
+                document.getElementById('alerts-total').textContent = (d.total||0).toLocaleString();
+                let crit=0, warn=0, inf=0;
+                (d.by_severity||[]).forEach(s => {
+                    if (s.key==='critical') crit += s.count;
+                    else if (s.key==='warning') warn += s.count;
+                    else inf += s.count;
+                });
+                document.getElementById('alerts-critical').textContent = crit.toLocaleString();
+                document.getElementById('alerts-warning').textContent = warn.toLocaleString();
+                document.getElementById('alerts-info').textContent = inf.toLocaleString();
+
+                const labels = (d.over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
+                const counts = (d.over_time||[]).map(b => b.count);
+                createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}]);
+
+                const typeLabels = (d.by_type||[]).map(t => t.key || 'unknown');
+                const typeCounts = (d.by_type||[]).map(t => t.count);
+                const typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
+                createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
+            } catch(e) { console.error('Failed to load alert charts:', e); }
+        }
+
+        async function loadTraps() {
+            trapsOffset = 0;
+            try {
+                const params = buildTrapParams(100);
+                const result = await apiFetch(`${API_BASE}/traps?${params}`);
                 if (!result) return;
                 const traps = result.data || [];
-                document.querySelector('#traps-table tbody').innerHTML = traps.map(t => `
-                    <tr>
-                        <td>${new Date(t.timestamp).toLocaleString()}</td>
-                        <td class="mono">${escapeHtml(t.source_ip)}</td>
-                        <td>${escapeHtml(t.trap_type)}</td>
-                        <td><span class="badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
-                        <td>${escapeHtml(t.message)}</td>
-                    </tr>
-                `).join('') || '<tr><td colspan="5" class="empty-state">No traps</td></tr>';
+                renderTrapsTable(traps, false);
+                trapsOffset = traps.length;
+                loadTrapCharts();
             } catch (e) {
                 console.error('Failed to load traps:', e);
             }
+        }
+
+        function buildTrapParams(limit) {
+            const parts = [`limit=${limit}`];
+            const sev = document.getElementById('traps-filter-severity')?.value;
+            const type = document.getElementById('traps-filter-type')?.value;
+            if (sev) parts.push('severity=' + sev);
+            if (type) parts.push('trap_type=' + encodeURIComponent(type));
+            return parts.join('&');
+        }
+
+        function renderTrapsTable(traps, append) {
+            const tbody = document.querySelector('#traps-table tbody');
+            const html = traps.map(t => `
+                <tr>
+                    <td>${new Date(t.timestamp).toLocaleString()}</td>
+                    <td class="mono">${escapeHtml(t.source_ip)}</td>
+                    <td>${escapeHtml(t.trap_type)}</td>
+                    <td><span class="badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
+                    <td>${escapeHtml(t.message)}</td>
+                </tr>
+            `).join('');
+            if (append) tbody.innerHTML += html;
+            else tbody.innerHTML = html || '<tr><td colspan="5" class="empty-state">No traps</td></tr>';
+        }
+
+        async function loadMoreTraps() {
+            const params = buildTrapParams(100);
+            const result = await apiFetch(`${API_BASE}/traps?${params}&offset=${trapsOffset}`);
+            if (result?.data?.length) {
+                renderTrapsTable(result.data, true);
+                trapsOffset += result.data.length;
+            }
+        }
+
+        async function loadTrapCharts() {
+            try {
+                const result = await apiFetch(`${API_BASE}/traps/stats`);
+                if (!result?.data) return;
+                const d = result.data;
+                document.getElementById('traps-total').textContent = (d.total||0).toLocaleString();
+                let crit=0, warn=0, inf=0;
+                (d.by_severity||[]).forEach(s => {
+                    if (s.key==='critical') crit += s.count;
+                    else if (s.key==='warning') warn += s.count;
+                    else inf += s.count;
+                });
+                document.getElementById('traps-critical').textContent = crit.toLocaleString();
+                document.getElementById('traps-warning').textContent = warn.toLocaleString();
+                document.getElementById('traps-info').textContent = inf.toLocaleString();
+
+                const labels = (d.over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
+                const counts = (d.over_time||[]).map(b => b.count);
+                createChart('traps-freq-chart','bar',labels,[{label:'Traps',data:counts,backgroundColor:'#d2992a',borderRadius:3}]);
+
+                const sevLabels = (d.by_severity||[]).map(s => s.key || 'unknown');
+                const sevCounts = (d.by_severity||[]).map(s => s.count);
+                const sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
+                createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
+            } catch(e) { console.error('Failed to load trap charts:', e); }
         }
 
         async function loadSettings() {

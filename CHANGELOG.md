@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.16] - 2026-03-01
+
+### Added
+- **Chart.js integration**: All major pages now include interactive charts and graphs via Chart.js 4.4.7 CDN
+- **Dashboard charts**: Activity trend line chart (syslog + traps + alerts per hour) and device status doughnut chart
+- **Flows analytics**: Summary stat cards (total flows, bytes, unique sources/destinations), protocol distribution doughnut, top talkers bar chart, bytes-over-time line chart
+- **Alerts overhaul**: Stat cards, alert trend line chart, alert type distribution doughnut, severity/acknowledged filters, per-alert acknowledge button, pagination
+- **Traps overhaul**: Stat cards, trap frequency bar chart, severity distribution doughnut, severity/type filters, pagination
+- **Syslog charts**: Stat cards, message trend bar chart, severity distribution doughnut
+- **Device status history**: 24-hour CPU/memory/disk line chart on device detail page below gauge cards
+- **VLAN interface filter**: New VLAN filter button on device detail interfaces tab (filters by vlan_id > 0)
+- **6 new API stats endpoints**: `/api/flows/stats`, `/api/alerts/stats`, `/api/traps/stats`, `/api/syslog/stats`, `/api/dashboard/stats`, `/api/devices/:id/status-history`
+- **Alert acknowledge endpoint**: `POST /api/alerts/:id/acknowledge`
+- **Offset/pagination support**: Added offset query parameter to alerts, traps, syslog, and flows endpoints
+- **Filtering**: Device ID and severity filters on alerts; severity and trap type filters on traps; device ID filter on flows
+
+### Improved
+- **Database layer**: 6 new aggregation methods for time-series stats (GetSystemStatusHistory, GetFlowStats, GetAlertStats, GetTrapStats, GetSyslogStats, GetDashboardTimeSeries)
+
 ## [0.10.15] - 2026-03-01
 
 ### Fixed

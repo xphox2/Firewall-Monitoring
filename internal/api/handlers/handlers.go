@@ -354,8 +354,36 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 		return
 	}
 
-	alerts, err := h.db.GetAlerts(100, nil)
-	if err != nil {
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
+
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if severity := c.Query("severity"); severity != "" {
+		query = query.Where("severity = ?", severity)
+	}
+	if alertType := c.Query("alert_type"); alertType != "" {
+		query = query.Where("alert_type = ?", alertType)
+	}
+	if ack := c.Query("acknowledged"); ack != "" {
+		query = query.Where("acknowledged = ?", ack == "true")
+	}
+
+	var alerts []models.Alert
+	if err := query.Find(&alerts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get alerts"))
 		return
 	}
@@ -369,8 +397,33 @@ func (h *Handler) GetTraps(c *gin.Context) {
 		return
 	}
 
-	traps, err := h.db.GetTrapEvents(100)
-	if err != nil {
+	limit := 100
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 500 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
+
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
+	}
+	if severity := c.Query("severity"); severity != "" {
+		query = query.Where("severity = ?", severity)
+	}
+	if trapType := c.Query("trap_type"); trapType != "" {
+		query = query.Where("trap_type = ?", trapType)
+	}
+
+	var traps []models.TrapEvent
+	if err := query.Find(&traps).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get traps"))
 		return
 	}
@@ -2264,7 +2317,14 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 		}
 	}
 
-	query := h.db.Gorm().Order("timestamp DESC").Limit(limit)
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 
 	if probeID := c.Query("probe_id"); probeID != "" {
 		query = query.Where("probe_id = ?", probeID)
@@ -2302,10 +2362,20 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 		}
 	}
 
-	query := h.db.Gorm().Order("timestamp DESC").Limit(limit)
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 
 	if probeID := c.Query("probe_id"); probeID != "" {
 		query = query.Where("probe_id = ?", probeID)
+	}
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		query = query.Where("device_id = ?", deviceID)
 	}
 	if src := c.Query("src_addr"); src != "" {
 		query = query.Where("src_addr = ?", src)
@@ -2479,6 +2549,166 @@ func (h *Handler) GetInterfaceHistory(c *gin.Context) {
 		Order("timestamp ASC").Limit(500).Find(&stats).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface history"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+}
+
+func (h *Handler) AcknowledgeAlert(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	if err := h.db.AcknowledgeAlert(uint(idUint)); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alert"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Alert acknowledged"))
+}
+
+func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	id := c.Param("id")
+	idUint, err := strconv.ParseUint(id, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		return
+	}
+
+	hours := 24
+	if h := c.Query("hours"); h != "" {
+		if parsed, err := strconv.Atoi(h); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	statuses, err := h.db.GetSystemStatusHistory(uint(idUint), hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get status history"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(statuses))
+}
+
+func (h *Handler) GetFlowStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		return
+	}
+
+	hours := 24
+	if hq := c.Query("hours"); hq != "" {
+		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	stats, err := h.db.GetFlowStats(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow stats"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+}
+
+func (h *Handler) GetAlertStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		return
+	}
+
+	hours := 24
+	if hq := c.Query("hours"); hq != "" {
+		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	stats, err := h.db.GetAlertStats(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get alert stats"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+}
+
+func (h *Handler) GetTrapStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		return
+	}
+
+	hours := 24
+	if hq := c.Query("hours"); hq != "" {
+		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	stats, err := h.db.GetTrapStats(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get trap stats"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+}
+
+func (h *Handler) GetSyslogStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		return
+	}
+
+	hours := 24
+	if hq := c.Query("hours"); hq != "" {
+		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	stats, err := h.db.GetSyslogStats(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get syslog stats"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+}
+
+func (h *Handler) GetDashboardStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		return
+	}
+
+	hours := 24
+	if hq := c.Query("hours"); hq != "" {
+		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	stats, err := h.db.GetDashboardTimeSeries(hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get dashboard stats"))
 		return
 	}
 
