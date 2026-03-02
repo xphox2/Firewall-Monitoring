@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.32] - 2026-03-02
+
+### Fixed
+- **Probe-assigned devices stay "online" forever**: Server poller now checks for stale probe-assigned devices each poll cycle and marks them "offline" if no data received for 3× the poll interval (minimum 5 minutes)
+
 ## [0.10.31] - 2026-03-02
 
 ### Added

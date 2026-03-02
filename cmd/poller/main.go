@@ -119,6 +119,19 @@ func (p *Poller) pollAllDevices() {
 	}
 	wg.Wait()
 
+	// Mark probe-assigned devices offline if their last_polled is stale.
+	// Uses 3× poll interval as the threshold (minimum 5 minutes).
+	staleAfter := 3 * p.cfg.SNMP.PollInterval
+	if staleAfter < 5*time.Minute {
+		staleAfter = 5 * time.Minute
+	}
+	threshold := time.Now().Add(-staleAfter)
+	if count, err := p.db.MarkStaleProbeDevicesOffline(threshold); err != nil {
+		log.Printf("Stale device check error: %v", err)
+	} else if count > 0 {
+		log.Printf("Marked %d probe-assigned device(s) offline (no data for >%v)", count, staleAfter)
+	}
+
 	p.detectVPNConnections(devices)
 }
 

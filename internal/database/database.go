@@ -310,6 +310,15 @@ func (d *Database) UpdateDeviceStatus(id uint, status string, lastPolled time.Ti
 	}).Error
 }
 
+// MarkStaleProbeDevicesOffline marks probe-assigned devices as "offline" if their
+// last_polled timestamp is older than the given threshold. Returns the count of affected rows.
+func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) (int64, error) {
+	result := d.db.Model(&models.Device{}).
+		Where("probe_id IS NOT NULL AND enabled = ? AND status = ? AND last_polled < ?", true, "online", staleThreshold).
+		Update("status", "offline")
+	return result.RowsAffected, result.Error
+}
+
 func (d *Database) DeleteDevice(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		// Delete all related monitoring data
