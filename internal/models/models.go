@@ -7,8 +7,8 @@ import (
 
 type SystemStatus struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
-	Timestamp    time.Time `json:"timestamp"`
-	DeviceID     uint      `json:"device_id" gorm:"index"`
+	Timestamp    time.Time `json:"timestamp" gorm:"index:idx_sysstatus_device_ts,priority:2"`
+	DeviceID     uint      `json:"device_id" gorm:"index;index:idx_sysstatus_device_ts,priority:1"`
 	Hostname     string    `json:"hostname"`
 	Version      string    `json:"version"`
 	CPUUsage     float64   `json:"cpu_usage"`
@@ -49,8 +49,8 @@ type InterfaceStats struct {
 
 type VPNStatus struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp"`
-	DeviceID    uint      `json:"device_id" gorm:"index"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
 	TunnelName  string    `json:"tunnel_name"`
 	RemoteIP    string    `json:"remote_ip"`
 	Status      string    `json:"status"`
@@ -77,8 +77,8 @@ type HAStatus struct {
 
 type HardwareSensor struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp"`
-	DeviceID    uint      `json:"device_id" gorm:"index"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_hwsensor_device_ts,priority:2"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_hwsensor_device_ts,priority:1"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
 	Value       float64   `json:"value"`
@@ -88,8 +88,8 @@ type HardwareSensor struct {
 
 type TrapEvent struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp"`
-	DeviceID    uint      `json:"device_id" gorm:"index"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_trap_device_ts,priority:2"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_trap_device_ts,priority:1"`
 	ProbeID     uint      `json:"probe_id" gorm:"index"`
 	SourceIP    string    `json:"source_ip"`
 	TrapOID     string    `json:"trap_oid"`
@@ -101,8 +101,8 @@ type TrapEvent struct {
 
 type Alert struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
-	Timestamp    time.Time `json:"timestamp"`
-	DeviceID     uint      `json:"device_id" gorm:"index"`
+	Timestamp    time.Time `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2"`
+	DeviceID     uint      `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
 	AlertType    string    `json:"alert_type"`
 	Severity     string    `json:"severity"`
 	Message      string    `json:"message"`

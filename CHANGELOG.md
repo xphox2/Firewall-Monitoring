@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.24] - 2026-03-02
+
+### Improved
+- **Composite database indexes**: Added `(device_id, timestamp)` composite indexes to `system_status`, `vpn_status`, `hardware_sensors`, `trap_events`, and `alerts` tables for faster time-range queries; GORM AutoMigrate creates indexes on startup
+
 ## [0.10.23] - 2026-03-02
 
 ### Fixed
