@@ -340,6 +340,12 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 		return
 	}
 
+	// Validate address to prevent SSRF / internal port scanning
+	if !isValidExternalIP(req.ListenAddress) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed listen address"))
+		return
+	}
+
 	address := fmt.Sprintf("%s:%d", req.ListenAddress, req.ListenPort)
 
 	conn, err := net.DialTimeout("tcp", address, 5*time.Second)

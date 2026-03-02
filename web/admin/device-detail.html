@@ -428,13 +428,8 @@
     let statusHistoryChart = null;
     async function loadStatusHistoryChart() {
         try {
-            const csrfResp = await fetch('/admin/api/csrf-token', {credentials:'include'});
-            const csrfData = await csrfResp.json();
-            const token = csrfData.csrf_token || '';
-
             const resp = await fetch(`/admin/api/devices/${deviceId}/status-history?hours=24`, {
-                credentials: 'include',
-                headers: {'X-CSRF-Token': token}
+                credentials: 'include'
             });
             const result = await resp.json();
             if (!result.success || !result.data?.length) return;

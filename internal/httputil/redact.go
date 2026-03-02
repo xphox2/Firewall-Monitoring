@@ -7,8 +7,12 @@ func RedactDevice(d *models.Device) {
 	if d.SNMPCommunity != "" {
 		d.SNMPCommunity = "********"
 	}
-	d.SNMPV3AuthPass = ""
-	d.SNMPV3PrivPass = ""
+	if d.SNMPV3AuthPass != "" {
+		d.SNMPV3AuthPass = "********"
+	}
+	if d.SNMPV3PrivPass != "" {
+		d.SNMPV3PrivPass = "********"
+	}
 }
 
 // RedactDevices masks SNMP secrets on a slice of devices.
@@ -23,6 +27,9 @@ func RedactProbe(p *models.Probe) {
 	p.TLSCertPath = "********"
 	p.TLSKeyPath = "********"
 	p.ServerTLSCert = "********"
+	if p.RegistrationKey != "" {
+		p.RegistrationKey = "********"
+	}
 }
 
 // RedactProbes masks sensitive paths on a slice of probes.

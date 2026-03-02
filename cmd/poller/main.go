@@ -211,10 +211,11 @@ func (p *Poller) pollDevice(device *models.Device) {
 }
 
 func (p *Poller) updateDeviceStatus(device *models.Device, status string) {
+	now := time.Now()
 	device.Status = status
-	device.LastPolled = time.Now()
+	device.LastPolled = now
 	if p.db != nil {
-		if err := p.db.UpdateDevice(device); err != nil {
+		if err := p.db.UpdateDeviceStatus(device.ID, status, now); err != nil {
 			log.Printf("Device %s: failed to update status - %v", device.Name, err)
 		}
 	}

@@ -677,7 +677,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="testDeviceConnection()">Test Connection</button>
+                    <button type="button" class="btn secondary" onclick="testDeviceConnection(event)">Test Connection</button>
                     <button type="button" class="btn secondary" onclick="closeDeviceModal()">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
@@ -863,17 +863,6 @@
                 document.getElementById('total-devices').textContent = deviceList.length || 0;
                 document.getElementById('online-devices').textContent = deviceList.filter(f => f.status === 'online').length || 0;
                 document.getElementById('offline-devices').textContent = deviceList.filter(f => f.status === 'offline').length || 0;
-
-                // VPN summary across all devices
-                let vpnUp = 0, vpnTotal = 0;
-                for (const [, e] of Object.entries(enrichments)) {
-                    vpnTotal += e.vpn_total || 0;
-                    vpnUp += e.vpn_up || 0;
-                }
-                if (vpnTotal > 0) {
-                    document.getElementById('trap-count').textContent = vpnUp + '/' + vpnTotal;
-                    document.getElementById('trap-count').closest('.stat-card').querySelector('.stat-label').textContent = 'VPN Tunnels';
-                }
 
                 const activeProbes = probes.filter(p => p.approval_status === 'approved' && p.status === 'online');
                 document.getElementById('active-probes').textContent = activeProbes.length;
@@ -1675,7 +1664,7 @@
             document.getElementById('community-group').style.display = ver === '3' ? 'none' : 'block';
         }
 
-        async function testDeviceConnection() {
+        async function testDeviceConnection(event) {
             const ip = document.getElementById('device-ip').value;
             const port = document.getElementById('device-snmp-port').value || 161;
             const community = document.getElementById('device-community').value || 'public';

@@ -292,6 +292,14 @@ func (d *Database) UpdateDevice(device *models.Device) error {
 	return d.db.Save(device).Error
 }
 
+// UpdateDeviceStatus performs a targeted update of only status and last_polled fields.
+func (d *Database) UpdateDeviceStatus(id uint, status string, lastPolled time.Time) error {
+	return d.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"status":      status,
+		"last_polled": lastPolled,
+	}).Error
+}
+
 func (d *Database) DeleteDevice(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		// Delete all related monitoring data
@@ -686,7 +694,7 @@ func (d *Database) GetSystemStatusHistory(deviceID uint, hours int) ([]models.Sy
 	var statuses []models.SystemStatus
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	err := d.db.Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
-		Order("timestamp ASC").Find(&statuses).Error
+		Order("timestamp ASC").Limit(2000).Find(&statuses).Error
 	return statuses, err
 }
 

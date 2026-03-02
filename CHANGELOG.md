@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.23] - 2026-03-02
+
+### Fixed
+- **GetAllInterfaces pagination bug**: `ParsePagination` returns `(limit, offset)` but code treated them as `(page, pageSize)`; response now returns `limit`/`offset`/`total` instead of `page`/`page_size`
+- **SSRF on TestWebhook**: User-supplied webhook URL now validated (scheme + hostname) via `isValidExternalIP` before making outbound HTTP request
+- **SSRF on TestProbeConnection**: `ListenAddress` now validated via `isValidExternalIP` before `net.DialTimeout` to prevent internal port scanning
+- **RegistrationKey leaked in probe responses**: `RedactProbe` now masks `RegistrationKey` with `********`
+- **RedactDevice inconsistency**: SNMPv3 auth/priv passwords now masked with `********` instead of empty string
+- **CSRF token values logged**: Middleware no longer logs full token values on mismatch, only lengths
+- **Debug log statements in main.go**: Removed `DEBUG: Serving sites.html` and `DEBUG: Serving probe-pending.html` log lines
+- **Poller full-row overwrite**: `updateDeviceStatus` now uses targeted `UpdateDeviceStatus(id, status, lastPolled)` instead of `db.Save(device)` which overwrote all columns
+- **Dead VPN dashboard code**: Removed VPN summary block that wrote to `#trap-count` only to be immediately overwritten by trap count
+- **CSRF token path mismatch in device-detail.html**: `loadStatusHistoryChart` no longer fetches/parses CSRF token redundantly for a GET request
+- **Implicit `event` variable**: `testDeviceConnection` now receives `event` parameter explicitly; onclick passes `event`
+- **TestEmail missing smtpFrom validation**: Now requires sender address in addition to host and recipient
+- **Unbounded queries**: Added `Limit(2000)` to `GetSystemStatusHistory` and `Limit(100)` to device detail ping stats query
+
 ## [0.10.22] - 2026-03-02
 
 ### Added

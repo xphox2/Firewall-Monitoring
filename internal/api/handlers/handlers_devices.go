@@ -232,7 +232,7 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 
 	// Ping stats
 	var pingStats []models.PingStats
-	h.db.Gorm().Where("device_id = ?", id).Find(&pingStats)
+	h.db.Gorm().Where("device_id = ?", id).Order("updated_at DESC").Limit(100).Find(&pingStats)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"device":           device,
@@ -391,14 +391,14 @@ func (h *Handler) GetAllInterfaces(c *gin.Context) {
 		}
 	}
 
-	page, pageSize := httputil.ParsePagination(c)
+	limit, offset := httputil.ParsePagination(c)
 	total := len(result)
 
-	start := (page - 1) * pageSize
+	start := offset
 	if start > total {
 		start = total
 	}
-	end := start + pageSize
+	end := start + limit
 	if end > total {
 		end = total
 	}
@@ -406,8 +406,8 @@ func (h *Handler) GetAllInterfaces(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"interfaces": result[start:end],
 		"total":      total,
-		"page":       page,
-		"page_size":  pageSize,
+		"limit":      limit,
+		"offset":     offset,
 	}))
 }
 

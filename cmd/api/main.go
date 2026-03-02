@@ -198,12 +198,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		})
 
 		admin.GET("/sites", func(c *gin.Context) {
-			log.Println("DEBUG: Serving sites.html")
 			c.HTML(http.StatusOK, "sites.html", nil)
 		})
 
 		admin.GET("/probe-pending", func(c *gin.Context) {
-			log.Println("DEBUG: Serving probe-pending.html")
 			c.HTML(http.StatusOK, "probe-pending.html", nil)
 		})
 

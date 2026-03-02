@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -206,8 +207,8 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	smtpFrom := h.getNotificationSetting("smtp_from")
 	smtpTo := h.getNotificationSetting("smtp_to")
 
-	if smtpHost == "" || smtpTo == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host and recipient address are required"))
+	if smtpHost == "" || smtpFrom == "" || smtpTo == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host, sender, and recipient address are required"))
 		return
 	}
 
@@ -272,6 +273,18 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 
 	if webhookURL == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("No webhook URL configured"))
+		return
+	}
+
+	// Validate URL scheme and host to prevent SSRF
+	parsed, err := url.Parse(webhookURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid webhook URL: must be http or https"))
+		return
+	}
+	hostname := parsed.Hostname()
+	if !isValidExternalIP(hostname) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Webhook URL resolves to a blocked address"))
 		return
 	}
 
