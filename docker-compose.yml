@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   firewall-mon:
+    build: .
     image: firewall-mon:latest
     container_name: firewall-mon
     restart: unless-stopped

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.13] - 2026-03-01
+
+### Fixed
+- **Docker compose**: Added `build: .` directive so `docker-compose up -d --build` rebuilds the image and detects changes without needing a separate `docker build` step
+
 ## [0.10.12] - 2026-03-01
 
 ### Added
