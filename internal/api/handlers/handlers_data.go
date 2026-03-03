@@ -52,8 +52,12 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 	if len(traps) > 1000 {
 		traps = traps[:1000]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	saved := 0
 	for i := range traps {
+		if traps[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[traps[i].DeviceID] {
+			continue
+		}
 		traps[i].ProbeID = probe.ID
 		if traps[i].Timestamp.IsZero() {
 			traps[i].Timestamp = time.Now()
@@ -80,6 +84,8 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	if len(samples) > 1000 {
 		samples = samples[:1000]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	filtered := samples[:0]
 	for i := range samples {
 		samples[i].ProbeID = probe.ID
 		if samples[i].Timestamp.IsZero() {
@@ -91,12 +97,16 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 				samples[i].DeviceID = devID
 			}
 		}
+		if samples[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[samples[i].DeviceID] {
+			continue
+		}
+		filtered = append(filtered, samples[i])
 	}
-	if err := h.db.SaveFlowSamples(samples); err != nil {
+	if err := h.db.SaveFlowSamples(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save flow samples"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(samples)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceivePingResults(c *gin.Context) {
@@ -112,8 +122,12 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	if len(results) > 1000 {
 		results = results[:1000]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	saved := 0
 	for i := range results {
+		if results[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[results[i].DeviceID] {
+			continue
+		}
 		results[i].ProbeID = probe.ID
 		if results[i].Timestamp.IsZero() {
 			results[i].Timestamp = time.Now()
@@ -181,18 +195,23 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 	if len(addrs) > 1000 {
 		addrs = addrs[:1000]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := addrs[:0]
 	for i := range addrs {
+		if addrs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[addrs[i].DeviceID] {
+			continue
+		}
 		if addrs[i].Timestamp.IsZero() {
 			addrs[i].Timestamp = now
 		}
+		filtered = append(filtered, addrs[i])
 	}
-	if err := h.db.SaveInterfaceAddresses(addrs); err != nil {
+	if err := h.db.SaveInterfaceAddresses(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface addresses"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(addrs)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
@@ -208,18 +227,23 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	if len(stats) > 500 {
 		stats = stats[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := stats[:0]
 	for i := range stats {
+		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
+			continue
+		}
 		if stats[i].Timestamp.IsZero() {
 			stats[i].Timestamp = now
 		}
+		filtered = append(filtered, stats[i])
 	}
-	if err := h.db.SaveProcessorStats(stats); err != nil {
+	if err := h.db.SaveProcessorStats(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save processor stats"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
@@ -235,18 +259,27 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	if len(sensors) > 500 {
 		sensors = sensors[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := sensors[:0]
 	for i := range sensors {
+		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
+			continue
+		}
 		if sensors[i].Timestamp.IsZero() {
 			sensors[i].Timestamp = now
 		}
+		filtered = append(filtered, sensors[i])
 	}
-	if err := h.db.Gorm().Create(&sensors).Error; err != nil {
+	if len(filtered) == 0 {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": 0}))
+		return
+	}
+	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save hardware sensors"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(sensors)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
@@ -262,10 +295,14 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 	if len(statuses) > 100 {
 		statuses = statuses[:100]
 	}
+
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	saved := 0
 	deviceIDs := make(map[uint]bool)
 	for i := range statuses {
-		_ = probe // probe validated above
+		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
+			continue // skip data for devices not assigned to this probe
+		}
 		if statuses[i].Timestamp.IsZero() {
 			statuses[i].Timestamp = time.Now()
 		}
@@ -305,17 +342,22 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	if len(stats) > 1000 {
 		stats = stats[:1000]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	deviceIDs := make(map[uint]bool)
+	filtered := stats[:0]
 	for i := range stats {
-		_ = probe
+		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
+			continue
+		}
 		if stats[i].Timestamp.IsZero() {
 			stats[i].Timestamp = time.Now()
 		}
 		if stats[i].DeviceID > 0 {
 			deviceIDs[stats[i].DeviceID] = true
 		}
+		filtered = append(filtered, stats[i])
 	}
-	if err := h.db.SaveInterfaceStats(stats); err != nil {
+	if err := h.db.SaveInterfaceStats(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface stats"))
 		return
 	}
@@ -329,7 +371,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
@@ -345,17 +387,22 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 	if len(statuses) > 500 {
 		statuses = statuses[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	deviceIDs := make(map[uint]bool)
+	filtered := statuses[:0]
 	for i := range statuses {
-		_ = probe
+		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
+			continue
+		}
 		if statuses[i].Timestamp.IsZero() {
 			statuses[i].Timestamp = time.Now()
 		}
 		if statuses[i].DeviceID > 0 {
 			deviceIDs[statuses[i].DeviceID] = true
 		}
+		filtered = append(filtered, statuses[i])
 	}
-	if err := h.db.SaveVPNStatuses(statuses); err != nil {
+	if err := h.db.SaveVPNStatuses(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save VPN statuses"))
 		return
 	}
@@ -368,7 +415,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(statuses)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
@@ -384,18 +431,23 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 	if len(statuses) > 500 {
 		statuses = statuses[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := statuses[:0]
 	for i := range statuses {
+		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
+			continue
+		}
 		if statuses[i].Timestamp.IsZero() {
 			statuses[i].Timestamp = now
 		}
+		filtered = append(filtered, statuses[i])
 	}
-	if err := h.db.SaveHAStatuses(statuses); err != nil {
+	if err := h.db.SaveHAStatuses(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save HA statuses"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(statuses)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
@@ -411,18 +463,23 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 	if len(stats) > 500 {
 		stats = stats[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := stats[:0]
 	for i := range stats {
+		if stats[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[stats[i].DeviceID] {
+			continue
+		}
 		if stats[i].Timestamp.IsZero() {
 			stats[i].Timestamp = now
 		}
+		filtered = append(filtered, stats[i])
 	}
-	if err := h.db.SaveSecurityStats(stats); err != nil {
+	if err := h.db.SaveSecurityStats(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save security stats"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
@@ -438,18 +495,23 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 	if len(health) > 500 {
 		health = health[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := health[:0]
 	for i := range health {
+		if health[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[health[i].DeviceID] {
+			continue
+		}
 		if health[i].Timestamp.IsZero() {
 			health[i].Timestamp = now
 		}
+		filtered = append(filtered, health[i])
 	}
-	if err := h.db.SaveSDWANHealth(health); err != nil {
+	if err := h.db.SaveSDWANHealth(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save SD-WAN health"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(health)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
@@ -465,16 +527,21 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	if len(licenses) > 500 {
 		licenses = licenses[:500]
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
-	_ = probe
+	filtered := licenses[:0]
 	for i := range licenses {
+		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
+			continue
+		}
 		if licenses[i].Timestamp.IsZero() {
 			licenses[i].Timestamp = now
 		}
+		filtered = append(filtered, licenses[i])
 	}
-	if err := h.db.SaveLicenseInfo(licenses); err != nil {
+	if err := h.db.SaveLicenseInfo(filtered); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save license info"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(licenses)}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }

@@ -52,9 +52,9 @@ func (h *Handler) GetHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(health))
 }
 
-// isBlockedIP checks if an IP address is loopback, unspecified, or link-local.
+// isBlockedIP checks if an IP address is loopback, unspecified, link-local, or private (RFC 1918/4193).
 func isBlockedIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
 		return true
 	}
 	return false

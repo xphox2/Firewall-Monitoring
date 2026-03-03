@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/api/middleware"
@@ -11,6 +12,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// parseSameSite converts a config string to an http.SameSite constant.
+func parseSameSite(s string) http.SameSite {
+	switch strings.ToLower(s) {
+	case "strict":
+		return http.SameSiteStrictMode
+	case "none":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
 
 func (h *Handler) Login(c *gin.Context) {
 	if h.authManager == nil {
@@ -98,6 +111,10 @@ func (h *Handler) Login(c *gin.Context) {
 	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
 
 	cookieSecure := h.config != nil && h.config.Server.CookieSecure
+	cookieSameSite := http.SameSiteStrictMode
+	if h.config != nil && h.config.Server.CookieSameSite != "" {
+		cookieSameSite = parseSameSite(h.config.Server.CookieSameSite)
+	}
 	cookieMaxAge := 86400
 	if h.config != nil && h.config.Auth.TokenExpiry > 0 {
 		cookieMaxAge = int(h.config.Auth.TokenExpiry.Seconds())
@@ -110,7 +127,7 @@ func (h *Handler) Login(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: cookieSameSite,
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "csrf_token",
@@ -119,7 +136,7 @@ func (h *Handler) Login(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: false,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: cookieSameSite,
 	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -136,6 +153,10 @@ func (h *Handler) Logout(c *gin.Context) {
 	}
 
 	cookieSecure := h.config != nil && h.config.Server.CookieSecure
+	cookieSameSite := http.SameSiteStrictMode
+	if h.config != nil && h.config.Server.CookieSameSite != "" {
+		cookieSameSite = parseSameSite(h.config.Server.CookieSameSite)
+	}
 
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
@@ -144,7 +165,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: cookieSameSite,
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "csrf_token",
@@ -153,7 +174,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		Path:     "/",
 		Secure:   cookieSecure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: cookieSameSite,
 	})
 
 	c.JSON(http.StatusOK, models.MessageResponse("Logged out successfully"))

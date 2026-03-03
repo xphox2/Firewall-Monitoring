@@ -133,14 +133,31 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 		if parentIDVal == nil {
 			updates["parent_site_id"] = nil
 		} else if pid, isNum := parentIDVal.(float64); isNum && pid > 0 {
-			parent, err := h.db.GetSite(uint(pid))
+			parentID := uint(pid)
+			parent, err := h.db.GetSite(parentID)
 			if err != nil || parent == nil {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
 				return
 			}
-			if uint(pid) == id {
+			if parentID == id {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Site cannot be its own parent"))
 				return
+			}
+			// Walk up the parent chain to detect circular references (max depth 50)
+			cur := parent
+			for depth := 0; depth < 50; depth++ {
+				if cur.ParentSiteID == nil || *cur.ParentSiteID == 0 {
+					break
+				}
+				if *cur.ParentSiteID == id {
+					c.JSON(http.StatusBadRequest, models.ErrorResponse("Circular parent reference detected"))
+					return
+				}
+				ancestor, err := h.db.GetSite(*cur.ParentSiteID)
+				if err != nil || ancestor == nil {
+					break
+				}
+				cur = ancestor
 			}
 		}
 	}

@@ -36,6 +36,7 @@ type SyslogReceiver struct {
 	listener net.Listener
 	running  atomic.Bool
 	stopCh   chan struct{}
+	connWg   sync.WaitGroup
 }
 
 func NewSyslogReceiver(cfg *Config, db *database.Database) *SyslogReceiver {
@@ -87,10 +88,12 @@ func (s *SyslogReceiver) Stop() error {
 	s.running.Store(false)
 	close(s.stopCh)
 
+	var err error
 	if s.listener != nil {
-		return s.listener.Close()
+		err = s.listener.Close()
 	}
-	return nil
+	s.connWg.Wait()
+	return err
 }
 
 func (s *SyslogReceiver) acceptLoop() {
@@ -102,7 +105,11 @@ func (s *SyslogReceiver) acceptLoop() {
 			}
 			continue
 		}
-		go s.handleConnection(conn)
+		s.connWg.Add(1)
+		go func() {
+			defer s.connWg.Done()
+			s.handleConnection(conn)
+		}()
 	}
 }
 

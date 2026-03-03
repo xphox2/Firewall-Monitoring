@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.62] - 2026-03-03
+
+### Security (P2 — Medium)
+- **SameSite cookie from config**: Login/logout cookies now use the `COOKIE_SAMESITE` env var (default `Strict`) instead of hardcoded `Lax`, strengthening CSRF protection.
+- **SMTP SSRF prevention**: `TestEmail` now validates the SMTP host against loopback, private, and link-local addresses before connecting, preventing server-side request forgery to internal services.
+- **Private IP SSRF block**: `isValidExternalIP` now rejects RFC 1918 / RFC 4193 private IP ranges (10.x, 172.16-31.x, 192.168.x, fc00::/7) in addition to loopback and link-local, closing the DNS rebinding SSRF bypass.
+- **Device ownership validation**: All 14 probe data-ingestion handlers now verify submitted `device_id` values against the probe's assigned device list, preventing a compromised probe from injecting data into unrelated devices. Unauthorized records are silently filtered before database writes.
+- **Site circular reference detection**: `UpdateSite` now walks up the parent chain (max depth 50) to detect circular parent references, preventing infinite loops in site hierarchy.
+- **TCP syslog WaitGroup**: `SyslogReceiver.Stop()` now waits for all active TCP connections to finish via `sync.WaitGroup`, ensuring clean shutdown without orphaned goroutines.
+
+### Fixed (Collector)
+- **Relay batch re-queue**: Failed data batches (traps, pings, syslog, flows) are now re-queued for the next sync cycle instead of being silently dropped after 3 retries, improving data delivery reliability.
+
 ## [0.10.61] - 2026-03-03
 
 ### Security (P0 — Critical)

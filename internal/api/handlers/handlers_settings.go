@@ -212,6 +212,12 @@ func (h *Handler) TestEmail(c *gin.Context) {
 		return
 	}
 
+	// Validate SMTP host to prevent SSRF / internal port scanning
+	if !isValidExternalIP(smtpHost) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host resolves to a blocked address"))
+		return
+	}
+
 	smtpPort := 587
 	if smtpPortStr != "" {
 		if v, err := strconv.Atoi(smtpPortStr); err == nil {

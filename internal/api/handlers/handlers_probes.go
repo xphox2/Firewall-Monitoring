@@ -594,6 +594,20 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	return probe, true
 }
 
+// probeDeviceIDs returns the set of device IDs assigned to the given probe.
+// Used by data ingestion handlers to reject data for unassigned devices.
+func (h *Handler) probeDeviceIDs(probeID uint) map[uint]bool {
+	devices, err := h.db.GetDevicesByProbe(probeID)
+	if err != nil {
+		return nil
+	}
+	ids := make(map[uint]bool, len(devices))
+	for _, d := range devices {
+		ids[d.ID] = true
+	}
+	return ids
+}
+
 func (h *Handler) GetProbeStats(c *gin.Context) {
 	if !httputil.RequireDB(c, h.db) {
 		return
