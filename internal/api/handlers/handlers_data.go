@@ -162,6 +162,33 @@ func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, laten
 	}
 }
 
+func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var addrs []models.InterfaceAddress
+	if err := c.ShouldBindJSON(&addrs); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(addrs) > 1000 {
+		addrs = addrs[:1000]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range addrs {
+		if addrs[i].Timestamp.IsZero() {
+			addrs[i].Timestamp = now
+		}
+	}
+	if err := h.db.SaveInterfaceAddresses(addrs); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface addresses"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(addrs)}))
+}
+
 func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {

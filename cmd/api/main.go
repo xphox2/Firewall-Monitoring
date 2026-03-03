@@ -169,6 +169,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.POST("/probes/:id/security-stats", handler.ReceiveSecurityStats)
 		api.POST("/probes/:id/sdwan-health", handler.ReceiveSDWANHealth)
 		api.POST("/probes/:id/license-info", handler.ReceiveLicenseInfo)
+		api.POST("/probes/:id/interface-addresses", handler.ReceiveInterfaceAddresses)
 
 		// Probe fetches its assigned devices
 		api.GET("/probes/:id/devices", handler.GetProbeDevices)

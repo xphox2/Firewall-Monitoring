@@ -13,6 +13,11 @@ import (
 
 // Standard MIB OIDs (vendor-neutral)
 var (
+	// IP-MIB ipAddrTable (standard, works on all vendors)
+	OIDIpAddrTable   = ".1.3.6.1.2.1.4.20.1"
+	OIDIpAdEntIfIndex = ".1.3.6.1.2.1.4.20.1.2"
+	OIDIpAdEntNetMask = ".1.3.6.1.2.1.4.20.1.3"
+
 	BaseOIDInterface   = ".1.3.6.1.2.1.2.2.1"
 	OIDIfDescr         = ".1.3.6.1.2.1.2.2.1.2"
 	OIDIfType          = ".1.3.6.1.2.1.2.2.1.3"
@@ -451,6 +456,66 @@ func (s *SNMPClient) GetProcessorStats(vendor ...string) ([]models.ProcessorStat
 	}
 
 	return profile.ParseProcessors(pdus), nil
+}
+
+// GetInterfaceAddresses walks the standard IP-MIB ipAddrTable to collect
+// every IP address assigned to every interface on the device.
+// This is vendor-neutral and works on FortiGate, Palo Alto, Cisco, etc.
+func (s *SNMPClient) GetInterfaceAddresses() ([]models.InterfaceAddress, error) {
+	pdus, err := s.Walk(OIDIpAddrTable)
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk ipAddrTable: %w", err)
+	}
+
+	// Map IP → InterfaceAddress (keyed by the IP string extracted from OID suffix)
+	addrs := make(map[string]*models.InterfaceAddress)
+	now := time.Now()
+
+	for _, pdu := range pdus {
+		name := pdu.Name
+
+		if strings.HasPrefix(name, OIDIpAdEntIfIndex+".") {
+			ip := strings.TrimPrefix(name, OIDIpAdEntIfIndex+".")
+			if ip == "" || strings.HasPrefix(ip, "127.") || ip == "0.0.0.0" {
+				continue
+			}
+			addr, ok := addrs[ip]
+			if !ok {
+				addr = &models.InterfaceAddress{IPAddress: ip, Timestamp: now}
+				addrs[ip] = addr
+			}
+			if pdu.Type == gosnmp.Integer || pdu.Type == gosnmp.Gauge32 || pdu.Type == gosnmp.Counter32 {
+				addr.IfIndex = int(gosnmp.ToBigInt(pdu.Value).Int64())
+			}
+		} else if strings.HasPrefix(name, OIDIpAdEntNetMask+".") {
+			ip := strings.TrimPrefix(name, OIDIpAdEntNetMask+".")
+			if ip == "" || strings.HasPrefix(ip, "127.") || ip == "0.0.0.0" {
+				continue
+			}
+			addr, ok := addrs[ip]
+			if !ok {
+				addr = &models.InterfaceAddress{IPAddress: ip, Timestamp: now}
+				addrs[ip] = addr
+			}
+			// The netmask is returned as an IpAddress (OctetString or string representation)
+			switch v := pdu.Value.(type) {
+			case string:
+				addr.NetMask = v
+			case []byte:
+				if len(v) == 4 {
+					addr.NetMask = fmt.Sprintf("%d.%d.%d.%d", v[0], v[1], v[2], v[3])
+				} else {
+					addr.NetMask = string(v)
+				}
+			}
+		}
+	}
+
+	result := make([]models.InterfaceAddress, 0, len(addrs))
+	for _, addr := range addrs {
+		result = append(result, *addr)
+	}
+	return result, nil
 }
 
 func getIndexFromOID(oid, base string) int {

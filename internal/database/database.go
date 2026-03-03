@@ -99,6 +99,7 @@ func (d *Database) migrate() error {
 		&models.SecurityStats{},
 		&models.SDWANHealth{},
 		&models.LicenseInfo{},
+		&models.InterfaceAddress{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -133,6 +134,35 @@ func (d *Database) GetInterfaceStats(limit int) ([]models.InterfaceStats, error)
 	var stats []models.InterfaceStats
 	err := d.db.Order("timestamp DESC").Limit(limit).Find(&stats).Error
 	return stats, err
+}
+
+func (d *Database) SaveInterfaceAddresses(addrs []models.InterfaceAddress) error {
+	if len(addrs) == 0 {
+		return nil
+	}
+	return d.db.Create(&addrs).Error
+}
+
+// GetLatestInterfaceAddresses returns the latest interface address snapshot per device.
+func (d *Database) GetLatestInterfaceAddresses() ([]models.InterfaceAddress, error) {
+	var addrs []models.InterfaceAddress
+	err := d.db.Raw(`
+		SELECT a.* FROM interface_addresses a
+		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM interface_addresses GROUP BY device_id) latest
+		ON a.device_id = latest.device_id AND a.timestamp = latest.max_ts
+	`).Scan(&addrs).Error
+	return addrs, err
+}
+
+// GetAllLatestInterfaces returns the latest interface stats snapshot across all devices.
+func (d *Database) GetAllLatestInterfaces() ([]models.InterfaceStats, error) {
+	var ifaces []models.InterfaceStats
+	err := d.db.Raw(`
+		SELECT i.* FROM interface_stats i
+		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM interface_stats GROUP BY device_id) latest
+		ON i.device_id = latest.device_id AND i.timestamp = latest.max_ts
+	`).Scan(&ifaces).Error
+	return ifaces, err
 }
 
 func (d *Database) GetLatestSystemStatus() (*models.SystemStatus, error) {
@@ -270,6 +300,9 @@ func (d *Database) CleanupOldData(days int) error {
 	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.FlowSample{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup flow_sample: %w", err)
 	}
+	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.InterfaceAddress{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup interface_addresses: %w", err)
+	}
 
 	return nil
 }
@@ -336,6 +369,7 @@ func (d *Database) DeleteDevice(id uint) error {
 			&models.UptimeRecord{},
 			&models.TrapEvent{},
 			&models.DeviceTunnel{},
+			&models.InterfaceAddress{},
 		} {
 			if err := tx.Where("device_id = ?", id).Delete(model).Error; err != nil {
 				return err
@@ -385,9 +419,16 @@ func (d *Database) FindConnectionByDevicePair(deviceA, deviceB uint) (*models.De
 	return &conn, err
 }
 
-// UpsertAutoConnection creates or updates an auto-detected VPN connection.
+// UpsertAutoConnection creates or updates an auto-detected connection.
 // Manual connections (AutoDetected=false) are never overwritten.
-func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNames, name string) error {
+func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNames, name, connType, matchMethod string) error {
+	if connType == "" {
+		connType = "ipsec"
+	}
+	if matchMethod == "" {
+		matchMethod = "ip_match"
+	}
+
 	existing, err := d.FindConnectionByDevicePair(sourceID, destID)
 	if err != nil {
 		return err
@@ -399,9 +440,11 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 		}
 		// Update existing auto-detected connection
 		return d.db.Model(existing).Updates(map[string]interface{}{
-			"status":       status,
-			"tunnel_names": tunnelNames,
-			"last_check":   time.Now(),
+			"status":          status,
+			"tunnel_names":    tunnelNames,
+			"connection_type": connType,
+			"match_method":    matchMethod,
+			"last_check":      time.Now(),
 		}).Error
 	}
 
@@ -410,10 +453,11 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 		Name:           name,
 		SourceDeviceID: sourceID,
 		DestDeviceID:   destID,
-		ConnectionType: "ipsec",
+		ConnectionType: connType,
 		Status:         status,
 		AutoDetected:   true,
 		TunnelNames:    tunnelNames,
+		MatchMethod:    matchMethod,
 		LastCheck:      time.Now(),
 	}
 	return d.db.Create(conn).Error

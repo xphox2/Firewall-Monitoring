@@ -289,7 +289,7 @@
                 <p style="color: #484f58; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
                 <div class="table-wrap">
                     <table id="connections-table">
-                        <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Tunnels</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Discovery</th><th>Tunnels</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -787,6 +787,18 @@
             return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
         }
 
+        function matchMethodBadge(method, autoDetected) {
+            if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
+            const badges = {
+                'ip_match': '<span class="badge" style="background:#484f58;font-size:0.65rem;padding:1px 5px;">IP Match</span>',
+                'interface_ip': '<span class="badge" style="background:#1f6feb;font-size:0.65rem;padding:1px 5px;">WAN IP</span>',
+                'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Bidirectional</span>',
+                'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
+                'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
+            };
+            return badges[method] || badges['ip_match'];
+        }
+
         function formatBytes(bytes) {
             if (!bytes || bytes === 0) return '0 B';
             const units = ['B','KB','MB','GB','TB'];
@@ -1175,10 +1187,11 @@
                         <td>${escapeHtml(c.dest_device?.name) || c.dest_device_id}</td>
                         <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
                         <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
+                        <td>${matchMethodBadge(c.match_method, c.auto_detected)}</td>
                         <td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(c.tunnel_names || '')}">${escapeHtml(c.tunnel_names || '-')}</td>
                         <td>${c.auto_detected ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>' : '<button class="btn danger sm" onclick="deleteConnection(' + c.id + ')">Delete</button>'}</td>
                     </tr>
-                `).join('') || '<tr><td colspan="7" class="empty-state">No connections configured</td></tr>';
+                `).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
 
                 drawConnectionDiagram();
                 populateDeviceSelects();
@@ -1823,7 +1836,16 @@
                     const line = document.createElement('div');
                     line.className = `connection-line ${conn.status}`;
                     if (conn.auto_detected) line.style.borderTopStyle = 'dashed';
-                    if (conn.tunnel_names) line.title = conn.tunnel_names;
+                    // VXLAN connections get purple color
+                    if (conn.connection_type === 'vxlan') {
+                        line.style.background = '#8957e5';
+                    }
+                    // Build tooltip with match method
+                    const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',manual:'Manual'};
+                    const methodLabel = methodLabels[conn.match_method] || '';
+                    let tip = conn.tunnel_names || '';
+                    if (methodLabel) tip = (tip ? tip + ' | ' : '') + 'Discovery: ' + methodLabel;
+                    if (tip) line.title = tip;
                     const len = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
                     const ang = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
                     line.style.width = len + 'px';

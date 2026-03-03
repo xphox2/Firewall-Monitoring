@@ -261,6 +261,16 @@ type DeviceConnection struct {
 	Notes          string     `json:"notes"`
 	AutoDetected   bool       `json:"auto_detected" gorm:"default:false"`
 	TunnelNames    string     `json:"tunnel_names"`
+	MatchMethod    string     `json:"match_method" gorm:"default:ip_match"`
+}
+
+type InterfaceAddress struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_ifaddr_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_ifaddr_device_ts,priority:1;index:idx_ifaddr_ip,priority:2"`
+	IfIndex   int       `json:"if_index"`
+	IPAddress string    `json:"ip_address" gorm:"index:idx_ifaddr_ip,priority:1"`
+	NetMask   string    `json:"net_mask"`
 }
 
 type SystemSetting struct {
@@ -393,6 +403,7 @@ func (LoginAttempt) TableName() string        { return "login_attempts" }
 func (Device) TableName() string              { return "devices" }
 func (DeviceTunnel) TableName() string        { return "device_tunnels" }
 func (DeviceConnection) TableName() string    { return "device_connections" }
+func (InterfaceAddress) TableName() string    { return "interface_addresses" }
 func (SystemSetting) TableName() string       { return "system_settings" }
 func (Admin) TableName() string               { return "admins" }
 func (Site) TableName() string                { return "sites" }

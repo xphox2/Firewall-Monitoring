@@ -217,6 +217,7 @@
                         <th>Destination</th>
                         <th>Type</th>
                         <th>Status</th>
+                        <th>Discovery</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -448,7 +449,13 @@
                     line.setAttribute('y1', srcPos.y);
                     line.setAttribute('x2', dstPos.x);
                     line.setAttribute('y2', dstPos.y);
-                    line.setAttribute('stroke', conn.status === 'up' ? '#3fb150' : conn.status === 'down' ? '#f85149' : '#8b949e');
+                    // VXLAN connections get purple color and dashed pattern
+                    if (conn.connection_type === 'vxlan') {
+                        line.setAttribute('stroke', '#8957e5');
+                        line.setAttribute('stroke-dasharray', '6,3');
+                    } else {
+                        line.setAttribute('stroke', conn.status === 'up' ? '#3fb150' : conn.status === 'down' ? '#f85149' : '#8b949e');
+                    }
                     line.setAttribute('stroke-width', '2');
                     line.setAttribute('marker-end', `url(#arrow-${conn.status})`);
                     line.style.cursor = 'pointer';
@@ -513,13 +520,25 @@
             });
         }
 
+        function matchMethodBadge(method, autoDetected) {
+            if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
+            const badges = {
+                'ip_match': '<span class="badge" style="background:#484f58;font-size:0.65rem;padding:1px 5px;">IP Match</span>',
+                'interface_ip': '<span class="badge" style="background:#1f6feb;font-size:0.65rem;padding:1px 5px;">WAN IP</span>',
+                'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Bidirectional</span>',
+                'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
+                'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
+            };
+            return badges[method] || badges['ip_match'];
+        }
+
         function renderConnectionsTable() {
             const tbody = document.querySelector('#connections-table tbody');
             if (currentConnections.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="loading">No connections configured</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="loading">No connections configured</td></tr>';
                 return;
             }
-            
+
             tbody.innerHTML = currentConnections.map(c => `
                 <tr>
                     <td>${escapeHtml(c.name)}</td>
@@ -527,6 +546,7 @@
                     <td>${escapeHtml(c.dest_device?.name) || 'DEV-' + c.dest_device_id}</td>
                     <td><span class="type-badge ${c.connection_type}">${escapeHtml(c.connection_type || 'ipsec').toUpperCase()}</span></td>
                     <td><span class="badge ${c.status}">${escapeHtml(c.status || 'unknown').toUpperCase()}</span></td>
+                    <td>${matchMethodBadge(c.match_method, c.auto_detected)}</td>
                     <td>
                         <button class="btn sm secondary" onclick="editConnection(${c.id})">Edit</button>
                         <button class="btn sm danger" onclick="deleteConnection(${c.id})">Delete</button>
@@ -561,6 +581,8 @@
                     <p><strong>Status:</strong> <span class="badge ${conn.status}">${escapeHtml(conn.status || 'unknown').toUpperCase()}</span></p>
                     <p><strong>Source:</strong> ${escapeHtml(conn.source_device?.name) || 'DEV-' + conn.source_device_id}</p>
                     <p><strong>Destination:</strong> ${escapeHtml(conn.dest_device?.name) || 'DEV-' + conn.dest_device_id}</p>
+                    <p><strong>Discovery:</strong> ${matchMethodBadge(conn.match_method, conn.auto_detected)}</p>
+                    ${conn.tunnel_names ? `<p><strong>Tunnels:</strong> ${escapeHtml(conn.tunnel_names)}</p>` : ''}
                     <p><strong>Latency:</strong> ${conn.latency ? conn.latency + 'ms' : '-'}</p>
                     <p><strong>Last Check:</strong> ${conn.last_check ? new Date(conn.last_check).toLocaleString() : 'Never'}</p>
                     ${conn.notes ? `<p><strong>Notes:</strong> ${escapeHtml(conn.notes)}</p>` : ''}

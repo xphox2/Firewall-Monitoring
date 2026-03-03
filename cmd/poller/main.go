@@ -133,6 +133,7 @@ func (p *Poller) pollAllDevices() {
 	}
 
 	p.detectVPNConnections(devices)
+	p.detectVXLANConnections(devices)
 }
 
 func (p *Poller) pollDevice(device *models.Device) {
@@ -212,6 +213,24 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 	}
 
+	// Collect interface IP addresses (standard IP-MIB, vendor-neutral)
+	ifAddrs, err := client.GetInterfaceAddresses()
+	if err != nil {
+		log.Printf("Device %s: interface address walk error - %v", device.Name, err)
+	} else if len(ifAddrs) > 0 {
+		now := time.Now()
+		for i := range ifAddrs {
+			ifAddrs[i].DeviceID = device.ID
+			ifAddrs[i].Timestamp = now
+		}
+		if p.db != nil {
+			if err := p.db.SaveInterfaceAddresses(ifAddrs); err != nil {
+				log.Printf("Device %s: failed to save interface addresses - %v", device.Name, err)
+			}
+		}
+		log.Printf("Device %s: %d interface addresses collected", device.Name, len(ifAddrs))
+	}
+
 	// Collect VPN tunnel status
 	vpnStatuses, err := client.GetVPNStatus(vendor)
 	if err != nil {
@@ -272,18 +291,36 @@ func (p *Poller) pollDevice(device *models.Device) {
 }
 
 // detectVPNConnections matches VPN tunnel remote IPs to known device IPs
-// and auto-creates/updates DeviceConnection records.
+// (management IP + all interface addresses) and auto-creates/updates DeviceConnection records.
 func (p *Poller) detectVPNConnections(devices []models.Device) {
 	if p.db == nil || len(devices) == 0 {
 		return
 	}
 
-	// Build IP → Device map
-	ipToDevice := make(map[string]*models.Device, len(devices))
+	// Build IP → Device map from management IPs
+	ipToDevice := make(map[string]*models.Device, len(devices)*2)
+	ipSource := make(map[string]string) // IP → "mgmt" or "interface"
 	deviceByID := make(map[uint]*models.Device, len(devices))
 	for i := range devices {
 		ipToDevice[devices[i].IPAddress] = &devices[i]
+		ipSource[devices[i].IPAddress] = "mgmt"
 		deviceByID[devices[i].ID] = &devices[i]
+	}
+
+	// Extend IP map with all interface addresses from IP-MIB
+	ifAddrs, err := p.db.GetLatestInterfaceAddresses()
+	if err != nil {
+		log.Printf("VPN auto-detect: failed to get interface addresses - %v", err)
+	} else {
+		for _, addr := range ifAddrs {
+			if _, exists := ipToDevice[addr.IPAddress]; exists {
+				continue // management IP already mapped, keep it
+			}
+			if dev, ok := deviceByID[addr.DeviceID]; ok {
+				ipToDevice[addr.IPAddress] = dev
+				ipSource[addr.IPAddress] = "interface"
+			}
+		}
 	}
 
 	vpnStatuses, err := p.db.GetAllLatestVPNStatuses()
@@ -295,6 +332,12 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		return
 	}
 
+	// Index VPN tunnels by device ID for bidirectional checking
+	vpnByDevice := make(map[uint][]models.VPNStatus)
+	for _, vpn := range vpnStatuses {
+		vpnByDevice[vpn.DeviceID] = append(vpnByDevice[vpn.DeviceID], vpn)
+	}
+
 	// pairKey returns a normalized key for a device pair (lower ID first)
 	pairKey := func(a, b uint) string {
 		if a > b {
@@ -304,10 +347,13 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 	}
 
 	type pairInfo struct {
-		sourceID    uint // normalized: min ID
-		destID      uint // normalized: max ID
+		sourceID    uint
+		destID      uint
 		tunnelNames map[string]bool
 		anyUp       bool
+		matchMethod string
+		connType    string
+		sides       int // how many sides have a matching tunnel (1=unidirectional, 2=bidirectional)
 	}
 
 	pairs := make(map[string]*pairInfo)
@@ -328,10 +374,23 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 			if srcID > dstID {
 				srcID, dstID = dstID, srcID
 			}
+			// Determine match method based on how the IP was found
+			method := "ip_match"
+			if ipSource[vpn.RemoteIP] == "interface" {
+				method = "interface_ip"
+			}
+			// Determine connection type from tunnel type
+			ct := "ipsec"
+			if vpn.TunnelType == "sslvpn" {
+				ct = "ssl"
+			}
 			pi = &pairInfo{
 				sourceID:    srcID,
 				destID:      dstID,
 				tunnelNames: make(map[string]bool),
+				matchMethod: method,
+				connType:    ct,
+				sides:       0,
 			}
 			pairs[key] = pi
 		}
@@ -340,6 +399,39 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		}
 		if vpn.Status == "up" {
 			pi.anyUp = true
+		}
+		// Upgrade connection type if we see SSL
+		if vpn.TunnelType == "sslvpn" {
+			pi.connType = "ssl"
+		}
+		// Upgrade match method if this side is via interface IP
+		if ipSource[vpn.RemoteIP] == "interface" && pi.matchMethod == "ip_match" {
+			pi.matchMethod = "interface_ip"
+		}
+	}
+
+	// Bidirectional check: for each pair, see if both sides have tunnels pointing at each other
+	for _, pi := range pairs {
+		srcTunnels := vpnByDevice[pi.sourceID]
+		dstTunnels := vpnByDevice[pi.destID]
+		srcPointsToDst := false
+		dstPointsToSrc := false
+
+		for _, t := range srcTunnels {
+			if rd, ok := ipToDevice[t.RemoteIP]; ok && rd.ID == pi.destID {
+				srcPointsToDst = true
+				break
+			}
+		}
+		for _, t := range dstTunnels {
+			if rd, ok := ipToDevice[t.RemoteIP]; ok && rd.ID == pi.sourceID {
+				dstPointsToSrc = true
+				break
+			}
+		}
+
+		if srcPointsToDst && dstPointsToSrc {
+			pi.matchMethod = "bidirectional"
 		}
 	}
 
@@ -367,13 +459,109 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		}
 		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
 
-		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName); err != nil {
+		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, pi.matchMethod); err != nil {
 			log.Printf("VPN auto-detect: failed to upsert connection %s - %v", connName, err)
 		}
 	}
 
 	if len(pairs) > 0 {
 		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices", len(pairs), len(devices))
+	}
+}
+
+// detectVXLANConnections finds VXLAN/tunnel interfaces with matching names across devices
+// and creates auto-detected connections for them.
+func (p *Poller) detectVXLANConnections(devices []models.Device) {
+	if p.db == nil || len(devices) == 0 {
+		return
+	}
+
+	ifaces, err := p.db.GetAllLatestInterfaces()
+	if err != nil {
+		log.Printf("VXLAN auto-detect: failed to get interfaces - %v", err)
+		return
+	}
+
+	deviceByID := make(map[uint]*models.Device, len(devices))
+	for i := range devices {
+		deviceByID[devices[i].ID] = &devices[i]
+	}
+
+	// Common names to skip (too generic to match on)
+	skipNames := map[string]bool{
+		"loopback0": true, "lo": true, "lo0": true,
+		"mgmt": true, "mgmt0": true, "management": true,
+		"null0": true, "":  true,
+	}
+
+	// Group VXLAN/tunnel interfaces by normalized name
+	type ifEntry struct {
+		deviceID uint
+		name     string
+		typeName string
+		status   string
+	}
+	nameGroups := make(map[string][]ifEntry)
+
+	for _, iface := range ifaces {
+		if iface.TypeName != "vxlan" && iface.TypeName != "tunnel" {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(iface.Name))
+		if skipNames[normalized] {
+			continue
+		}
+		nameGroups[normalized] = append(nameGroups[normalized], ifEntry{
+			deviceID: iface.DeviceID,
+			name:     iface.Name,
+			typeName: iface.TypeName,
+			status:   iface.Status,
+		})
+	}
+
+	created := 0
+	for _, entries := range nameGroups {
+		// Only match if exactly 2 different devices share this interface name
+		if len(entries) != 2 {
+			continue
+		}
+		if entries[0].deviceID == entries[1].deviceID {
+			continue
+		}
+		// Both must be the same type
+		if entries[0].typeName != entries[1].typeName {
+			continue
+		}
+
+		srcID, dstID := entries[0].deviceID, entries[1].deviceID
+		if srcID > dstID {
+			srcID, dstID = dstID, srcID
+		}
+
+		status := "down"
+		if entries[0].status == "up" && entries[1].status == "up" {
+			status = "up"
+		}
+
+		srcName, dstName := "?", "?"
+		if d, ok := deviceByID[srcID]; ok {
+			srcName = d.Name
+		}
+		if d, ok := deviceByID[dstID]; ok {
+			dstName = d.Name
+		}
+		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
+		tunnelNames := entries[0].name
+
+		if err := p.db.UpsertAutoConnection(srcID, dstID, status, tunnelNames, connName, "vxlan", "vxlan_name"); err != nil {
+			log.Printf("VXLAN auto-detect: failed to upsert connection %s - %v", connName, err)
+		} else {
+			created++
+		}
+	}
+
+	if created > 0 {
+		log.Printf("VXLAN auto-detect: processed %d connection(s)", created)
 	}
 }
 

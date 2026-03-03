@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.37] - 2026-03-02
+
+### Added
+- **Enhanced VPN auto-discovery via interface IP collection**: Walks standard IP-MIB `ipAddrTable` on every device to collect all interface IP addresses, enabling VPN connection matching even when a device's WAN IP differs from its configured management/SNMP IP
+- **New `InterfaceAddress` model**: Stores per-device interface IPs with ifIndex, IP address, and netmask; auto-migrated, cleaned up with other time-series data
+- **Bidirectional VPN detection**: When both sides of a VPN pair have tunnels pointing at each other, the connection is upgraded to "bidirectional" match method for higher confidence
+- **VXLAN connection auto-discovery**: New `detectVXLANConnections()` finds VXLAN/tunnel interfaces with matching names across exactly 2 devices and creates auto-detected connections with type "vxlan"
+- **`MatchMethod` field on `DeviceConnection`**: Tracks how each connection was discovered — `ip_match` (management IP), `interface_ip` (WAN/interface IP), `bidirectional` (both sides confirmed), `vxlan_name` (matching interface names), or `manual`
+- **Connection type inference from VPN tunnel type**: IPSec tunnels set `connection_type = "ipsec"`, SSL-VPN tunnels set `connection_type = "ssl"`
+- **Discovery column in connections UI**: Both admin.html and network.html connections tables show color-coded badges for match method (gray=IP Match, blue=WAN IP, green=Bidirectional, purple=VXLAN)
+- **VXLAN visual differentiation**: VXLAN connections render purple in admin.html diagram and with dashed purple lines in network.html SVG map
+- **Connection detail tooltips**: Admin diagram tooltips and network.html detail panel now show discovery method and tunnel names
+- **Probe endpoint**: `POST /api/probes/:id/interface-addresses` for remote probe interface address ingestion
+- **Database methods**: `SaveInterfaceAddresses`, `GetLatestInterfaceAddresses`, `GetAllLatestInterfaces`
+
+### Changed
+- `UpsertAutoConnection()` now accepts `connType` and `matchMethod` parameters instead of hardcoding `"ipsec"`, enabling proper type/method tracking for all auto-detected connections
+
 ## [0.10.36] - 2026-03-02
 
 ### Added
