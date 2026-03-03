@@ -210,6 +210,30 @@
                 </div>
             </div>
 
+            <!-- Extended System Status Cards (shown when data exists) -->
+            <div class="stat-grid" id="extendedStats" style="display:none">
+                <div class="stat-card" id="cardSessionRate" style="display:none">
+                    <div class="stat-label">Session Rate</div>
+                    <div class="stat-value" id="sessionRateValue" style="font-size:0.85rem">-</div>
+                </div>
+                <div class="stat-card" id="cardIPv6" style="display:none">
+                    <div class="stat-label">IPv6 Sessions</div>
+                    <div class="stat-value" id="ipv6SessionValue">-</div>
+                </div>
+                <div class="stat-card" id="cardSSLVPN" style="display:none">
+                    <div class="stat-label">SSL-VPN</div>
+                    <div class="stat-value" id="sslvpnValue" style="font-size:0.95rem">-</div>
+                </div>
+                <div class="stat-card" id="cardAVSig" style="display:none">
+                    <div class="stat-label">AV Signature</div>
+                    <div class="stat-value" id="avSigValue" style="font-size:0.85rem">-</div>
+                </div>
+                <div class="stat-card" id="cardIPSSig" style="display:none">
+                    <div class="stat-label">IPS Signature</div>
+                    <div class="stat-value" id="ipsSigValue" style="font-size:0.85rem">-</div>
+                </div>
+            </div>
+
             <!-- Status History Chart -->
             <div class="status-history-card" id="status-history-section">
                 <h3>System Status History (24h)</h3>
@@ -224,6 +248,10 @@
                 <div class="section-tab" onclick="switchTab('processors')">Processors</div>
                 <div class="section-tab" onclick="switchTab('alerts')">Alerts</div>
                 <div class="section-tab" onclick="switchTab('ping')">Ping</div>
+                <div class="section-tab" onclick="switchTab('ha')">HA Cluster</div>
+                <div class="section-tab" onclick="switchTab('security')">Security</div>
+                <div class="section-tab" onclick="switchTab('sdwan')">SD-WAN</div>
+                <div class="section-tab" onclick="switchTab('licenses')">Licenses</div>
             </div>
 
             <!-- Interfaces Tab -->
@@ -266,6 +294,7 @@
                         <thead>
                             <tr>
                                 <th>Tunnel Name</th>
+                                <th>Type</th>
                                 <th>Remote Gateway</th>
                                 <th>Status</th>
                                 <th>Bytes In</th>
@@ -346,6 +375,77 @@
                 </div>
             </div>
 
+            <!-- HA Cluster Tab -->
+            <div class="tab-content" id="tab-ha">
+                <div class="card">
+                    <h2>HA Cluster <span id="haHeader" style="font-size:0.78rem; font-weight:400; color:#8b949e"></span></h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Serial</th>
+                                <th>Hostname</th>
+                                <th>CPU %</th>
+                                <th>Memory %</th>
+                                <th>Network (kbps)</th>
+                                <th>Sessions</th>
+                                <th>Sync Status</th>
+                                <th>Master</th>
+                            </tr>
+                        </thead>
+                        <tbody id="haBody"></tbody>
+                    </table>
+                    <div id="haEmpty" class="empty" style="display:none">Standalone mode or awaiting HA data</div>
+                </div>
+            </div>
+
+            <!-- Security Tab -->
+            <div class="tab-content" id="tab-security">
+                <div class="card">
+                    <h2>Security Statistics</h2>
+                    <div id="securityContent"></div>
+                    <div id="securityEmpty" class="empty" style="display:none">Awaiting security statistics from probe…</div>
+                </div>
+            </div>
+
+            <!-- SD-WAN Tab -->
+            <div class="tab-content" id="tab-sdwan">
+                <div class="card">
+                    <h2>SD-WAN Health</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Interface</th>
+                                <th>State</th>
+                                <th>Latency (ms)</th>
+                                <th>Packet Loss (%)</th>
+                                <th>Sent</th>
+                                <th>Received</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sdwanBody"></tbody>
+                    </table>
+                    <div id="sdwanEmpty" class="empty" style="display:none">Awaiting SD-WAN health data from probe…</div>
+                </div>
+            </div>
+
+            <!-- Licenses Tab -->
+            <div class="tab-content" id="tab-licenses">
+                <div class="card">
+                    <h2>License Information</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Description</th>
+                                <th>Expiry Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="licenseBody"></tbody>
+                    </table>
+                    <div id="licenseEmpty" class="empty" style="display:none">Awaiting license data from probe…</div>
+                </div>
+            </div>
+
             <!-- Interface Detail Expand Panel (injected dynamically) -->
         </div>
     </div>
@@ -410,6 +510,10 @@
         renderProcessors();
         renderAlerts();
         renderPing();
+        renderHA();
+        renderSecurity();
+        renderSDWAN();
+        renderLicenses();
     }
 
     function renderSystemStatus() {
@@ -437,6 +541,38 @@
         document.getElementById('sessionCount').textContent = ss.session_count ? ss.session_count.toLocaleString() : '0';
         document.getElementById('uptimeValue').textContent = formatUptime(ss.uptime);
         document.getElementById('firmwareValue').textContent = ss.version || '-';
+
+        // Extended status cards
+        const extGrid = document.getElementById('extendedStats');
+        let showExt = false;
+
+        if (ss.session_rate_1 || ss.session_rate_10 || ss.session_rate_30 || ss.session_rate_60) {
+            document.getElementById('cardSessionRate').style.display = '';
+            document.getElementById('sessionRateValue').textContent =
+                `1m: ${ss.session_rate_1}  10m: ${ss.session_rate_10}  30m: ${ss.session_rate_30}  60m: ${ss.session_rate_60}`;
+            showExt = true;
+        }
+        if (ss.session_count_6) {
+            document.getElementById('cardIPv6').style.display = '';
+            document.getElementById('ipv6SessionValue').textContent = ss.session_count_6.toLocaleString();
+            showExt = true;
+        }
+        if (ss.sslvpn_users || ss.sslvpn_tunnels) {
+            document.getElementById('cardSSLVPN').style.display = '';
+            document.getElementById('sslvpnValue').textContent = `${ss.sslvpn_users || 0} users / ${ss.sslvpn_tunnels || 0} tunnels`;
+            showExt = true;
+        }
+        if (ss.av_version) {
+            document.getElementById('cardAVSig').style.display = '';
+            document.getElementById('avSigValue').textContent = ss.av_version;
+            showExt = true;
+        }
+        if (ss.ips_version) {
+            document.getElementById('cardIPSSig').style.display = '';
+            document.getElementById('ipsSigValue').textContent = ss.ips_version;
+            showExt = true;
+        }
+        if (showExt) extGrid.style.display = '';
 
         loadStatusHistoryChart();
     }
@@ -747,6 +883,7 @@
 
         body.innerHTML = vpn.map(v => `<tr>
             <td><strong>${esc(v.tunnel_name)}</strong></td>
+            <td>${getTunnelTypeBadge(v.tunnel_type)}</td>
             <td>${esc(v.remote_ip)}</td>
             <td><span class="badge ${v.status}">${v.status}</span></td>
             <td>${formatBytes(v.bytes_in)}</td>
@@ -836,6 +973,136 @@
             <td>${p.packet_loss != null ? p.packet_loss.toFixed(1) + '%' : '-'}</td>
             <td>${p.samples || 0}</td>
         </tr>`).join('');
+    }
+
+    function getTunnelTypeBadge(type) {
+        if (!type) return '<span style="color:#484f58">-</span>';
+        const colors = { 'ipsec': '#58a6ff', 'ipsec-dialup': '#d29922', 'sslvpn': '#3fb950' };
+        const color = colors[type] || '#8b949e';
+        return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:${color}22;color:${color};border:1px solid ${color}44">${esc(type)}</span>`;
+    }
+
+    function renderHA() {
+        const ha = deviceData.ha_status || [];
+        const body = document.getElementById('haBody');
+        const empty = document.getElementById('haEmpty');
+        const header = document.getElementById('haHeader');
+
+        if (!ha.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        const mode = ha[0].system_mode || 'unknown';
+        const group = ha[0].group_name || '';
+        header.textContent = `Mode: ${mode}${group ? ' — ' + group : ''}`;
+
+        body.innerHTML = ha.map(m => {
+            const cpuColor = getGaugeColor(m.cpu_usage);
+            const memColor = getGaugeColor(m.memory_usage);
+            const isMaster = m.member_serial === m.master_serial;
+            const syncColor = m.sync_status === 'synchronized' ? '#3fb950' : m.sync_status === 'unsynchronized' ? '#f85149' : '#d29922';
+            return `<tr>
+                <td style="font-family:monospace;font-size:0.8rem">${esc(m.member_serial)}</td>
+                <td><strong>${esc(m.member_hostname || '-')}</strong></td>
+                <td style="color:${cpuColor};font-weight:600">${m.cpu_usage.toFixed(1)}%</td>
+                <td style="color:${memColor};font-weight:600">${m.memory_usage.toFixed(1)}%</td>
+                <td>${m.network_usage ? (m.network_usage / 1000).toFixed(1) : '0'}</td>
+                <td>${(m.session_count || 0).toLocaleString()}</td>
+                <td><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:${syncColor}22;color:${syncColor};border:1px solid ${syncColor}44">${esc(m.sync_status || 'unknown')}</span></td>
+                <td>${isMaster ? '<span class="badge online">Primary</span>' : '<span class="badge unknown">Secondary</span>'}</td>
+            </tr>`;
+        }).join('');
+
+        document.querySelector('[onclick="switchTab(\'ha\')"]').textContent = `HA Cluster (${ha.length})`;
+    }
+
+    function renderSecurity() {
+        const sec = deviceData.security_stats;
+        const content = document.getElementById('securityContent');
+        const empty = document.getElementById('securityEmpty');
+
+        if (!sec) { content.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        content.innerHTML = `
+            <h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Antivirus</h3>
+            <div class="stat-grid">
+                <div class="stat-card"><div class="stat-label">Detected</div><div class="stat-value">${(sec.av_detected || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Blocked</div><div class="stat-value">${(sec.av_blocked || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">HTTP Detected</div><div class="stat-value">${(sec.av_http_detected || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">SMTP Detected</div><div class="stat-value">${(sec.av_smtp_detected || 0).toLocaleString()}</div></div>
+            </div>
+            <h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Intrusion Prevention</h3>
+            <div class="stat-grid">
+                <div class="stat-card"><div class="stat-label">Detected</div><div class="stat-value">${(sec.ips_detected || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Blocked</div><div class="stat-value">${(sec.ips_blocked || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value" style="color:#f85149">${(sec.ips_critical || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">High</div><div class="stat-value" style="color:#d29922">${(sec.ips_high || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Medium</div><div class="stat-value" style="color:#e3b341">${(sec.ips_medium || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Low</div><div class="stat-value" style="color:#58a6ff">${(sec.ips_low || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" style="color:#8b949e">${(sec.ips_info || 0).toLocaleString()}</div></div>
+            </div>
+            <h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Web Filter</h3>
+            <div class="stat-grid">
+                <div class="stat-card"><div class="stat-label">HTTP Blocked</div><div class="stat-value">${(sec.wf_http_blocked || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">HTTPS Blocked</div><div class="stat-value">${(sec.wf_https_blocked || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">URL Blocked</div><div class="stat-value">${(sec.wf_url_blocked || 0).toLocaleString()}</div></div>
+            </div>
+        `;
+    }
+
+    function renderSDWAN() {
+        const sdwan = deviceData.sdwan_health || [];
+        const body = document.getElementById('sdwanBody');
+        const empty = document.getElementById('sdwanEmpty');
+
+        if (!sdwan.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        body.innerHTML = sdwan.map(d => {
+            const stateColor = d.state === 'alive' ? '#3fb950' : d.state === 'dead' ? '#f85149' : '#d29922';
+            const latColor = d.latency > 200 ? '#f85149' : d.latency > 100 ? '#d29922' : '#c9d1d9';
+            const lossColor = d.packet_loss > 5 ? '#f85149' : d.packet_loss > 1 ? '#d29922' : '#c9d1d9';
+            return `<tr>
+                <td><strong>${esc(d.name)}</strong></td>
+                <td>${esc(d.interface)}</td>
+                <td><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:${stateColor}22;color:${stateColor};border:1px solid ${stateColor}44">${esc(d.state || 'unknown')}</span></td>
+                <td style="color:${latColor}">${d.latency != null ? d.latency.toFixed(1) : '-'}</td>
+                <td style="color:${lossColor}">${d.packet_loss != null ? d.packet_loss.toFixed(2) : '-'}</td>
+                <td>${(d.packet_send || 0).toLocaleString()}</td>
+                <td>${(d.packet_recv || 0).toLocaleString()}</td>
+            </tr>`;
+        }).join('');
+
+        document.querySelector('[onclick="switchTab(\'sdwan\')"]').textContent = `SD-WAN (${sdwan.length})`;
+    }
+
+    function renderLicenses() {
+        const lics = deviceData.license_info || [];
+        const body = document.getElementById('licenseBody');
+        const empty = document.getElementById('licenseEmpty');
+
+        if (!lics.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        body.innerHTML = lics.map(l => {
+            let expiryStyle = '';
+            if (l.expiry_date && l.expiry_date !== 'N/A' && l.expiry_date !== '') {
+                const exp = new Date(l.expiry_date);
+                if (!isNaN(exp.getTime())) {
+                    const now = new Date();
+                    const daysLeft = (exp - now) / 86400000;
+                    if (daysLeft < 0) expiryStyle = 'color:#f85149;font-weight:600';
+                    else if (daysLeft < 30) expiryStyle = 'color:#d29922;font-weight:600';
+                    else expiryStyle = 'color:#3fb950';
+                }
+            }
+            return `<tr>
+                <td>${esc(l.description)}</td>
+                <td style="${expiryStyle}">${esc(l.expiry_date || 'N/A')}</td>
+            </tr>`;
+        }).join('');
+
+        document.querySelector('[onclick="switchTab(\'licenses\')"]').textContent = `Licenses (${lics.length})`;
     }
 
     function switchTab(name) {

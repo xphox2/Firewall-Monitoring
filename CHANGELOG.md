@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.36] - 2026-03-02
+
+### Added
+- **Device detail UI**: 4 new data tabs — HA Cluster, Security, SD-WAN, Licenses
+  - **HA Cluster tab**: Shows cluster mode, member table with serial, hostname, CPU/memory %, network usage, sessions, sync status, and primary/secondary role
+  - **Security tab**: Stat-grid layout for AV (detected/blocked, HTTP/SMTP), IPS (detected/blocked + severity breakdown), and WebFilter (HTTP/HTTPS/URL blocked)
+  - **SD-WAN tab**: Per-link table with name, interface, state badges (alive/dead), latency, packet loss, sent/received counters
+  - **Licenses tab**: Description and expiry date with color-coded expiry (expired=red, <30d=yellow, ok=green)
+- **VPN tab**: Added "Type" column with color-coded badges for `ipsec` (blue), `ipsec-dialup` (yellow), `sslvpn` (green)
+- **Extended system status cards**: Conditionally shows Session Rate (1m/10m/30m/60m), IPv6 Sessions, SSL-VPN (users/tunnels), AV Signature version, IPS Signature version when data is present
+- **API**: `GetDeviceDetail()` now returns `ha_status`, `security_stats`, `sdwan_health`, `license_info` alongside existing data
+
 ## [0.10.35] - 2026-03-02
 
 ### Added

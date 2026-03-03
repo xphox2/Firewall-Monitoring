@@ -256,6 +256,34 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 	var pingStats []models.PingStats
 	h.db.Gorm().Where("device_id = ?", id).Order("updated_at DESC").Limit(100).Find(&pingStats)
 
+	// Latest HA status
+	var latestHA models.HAStatus
+	var haStatus []models.HAStatus
+	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestHA).Error; err == nil {
+		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestHA.Timestamp).Find(&haStatus)
+	}
+
+	// Latest security stats
+	var securityStats *models.SecurityStats
+	var secStats models.SecurityStats
+	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&secStats).Error; err == nil {
+		securityStats = &secStats
+	}
+
+	// Latest SD-WAN health
+	var latestSDWAN models.SDWANHealth
+	var sdwanHealth []models.SDWANHealth
+	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestSDWAN).Error; err == nil {
+		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestSDWAN.Timestamp).Find(&sdwanHealth)
+	}
+
+	// Latest license info
+	var latestLicense models.LicenseInfo
+	var licenseInfo []models.LicenseInfo
+	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestLicense).Error; err == nil {
+		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestLicense.Timestamp).Find(&licenseInfo)
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"device":           device,
 		"system_status":    systemStatus,
@@ -265,6 +293,10 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		"processor_stats":  processorStats,
 		"recent_alerts":    recentAlerts,
 		"ping_stats":       pingStats,
+		"ha_status":        haStatus,
+		"security_stats":   securityStats,
+		"sdwan_health":     sdwanHealth,
+		"license_info":     licenseInfo,
 	}))
 }
 
