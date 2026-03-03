@@ -144,7 +144,7 @@ func (p *Poller) pollAllDevices() {
 	// so the stale cleanup doesn't delete connections from the first detector.
 	connCycleStart := time.Now()
 	p.detectVPNConnections(devices)
-	p.detectTunnelConnections(devices)
+	p.detectOverlayConnections(devices)
 
 	// Clean up auto-detected connections not refreshed by either detector
 	if p.db != nil {
@@ -557,18 +557,18 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 	}
 }
 
-// detectTunnelConnections finds matching tunnel/overlay interfaces across devices and
-// creates auto-detected connections. Supports VXLAN, GRE, IPsec interfaces, and any
-// tunnel-type interface. For hub-spoke topologies, creates pairwise connections between
-// all devices sharing the same interface name.
-func (p *Poller) detectTunnelConnections(devices []models.Device) {
+// detectOverlayConnections finds matching overlay/local interfaces across devices and
+// creates auto-detected connections. Only handles L2VLAN, L3IPVLAN, and VXLAN types.
+// Tunnel/IPSec/GRE connections are handled exclusively by detectVPNConnections which
+// uses actual VPN tunnel data (IPs, status) rather than name matching.
+func (p *Poller) detectOverlayConnections(devices []models.Device) {
 	if p.db == nil || len(devices) == 0 {
 		return
 	}
 
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
-		log.Printf("Tunnel auto-detect: failed to get interfaces - %v", err)
+		log.Printf("Overlay auto-detect: failed to get interfaces - %v", err)
 		return
 	}
 
@@ -637,19 +637,16 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		return strings.HasSuffix(normalized, "root") || strings.HasSuffix(normalized, "vdom")
 	}
 
-	// Tunnel-like interface types and name prefixes
-	tunnelTypes := map[string]bool{
-		"vxlan": true, "tunnel": true, "gre": true, "ipsec": true,
-		"l2tp": true, "pptp": true, "ipip": true,
-		"l2vlan": true, "l3ipvlan": true,
+	// Only overlay and local interface types — tunnel carriers (ipsec, gre, etc.)
+	// are handled exclusively by detectVPNConnections using actual VPN data.
+	overlayTypes := map[string]bool{
+		"l2vlan": true, "l3ipvlan": true, "vxlan": true,
 	}
 
 	// Validation categories:
-	// - localTypes: require same site (l2vlan = local segment)
-	// - overlayTypes: require a direct VPN tunnel between endpoints (they ride ON tunnels)
-	// - everything else (ipsec, gre, tunnel): name-match only — they ARE the tunnels
+	// - l2vlan (local segment): requires same site
+	// - l3ipvlan/vxlan (overlays): requires a direct VPN tunnel between endpoints
 	localTypes := map[string]bool{"l2vlan": true}
-	overlayTypes := map[string]bool{"l3ipvlan": true, "vxlan": true}
 	sameSite := func(devA, devB uint) bool {
 		da, oa := deviceByID[devA]
 		db, ob := deviceByID[devB]
@@ -658,16 +655,6 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		}
 		return *da.SiteID == *db.SiteID
 	}
-	isTunnelName := func(name string) bool {
-		n := strings.ToLower(name)
-		for _, prefix := range []string{"vpn", "ipsec", "tun", "vxlan", "gre", "wg", "hub", "spoke", "dialup"} {
-			if strings.HasPrefix(n, prefix) {
-				return true
-			}
-		}
-		return false
-	}
-
 	// normalizeIfName strips formatting differences so vlan500, vlan 500,
 	// vlan.500, vlan-500, vlan_500, VLAN500 all match as "vlan500".
 	normalizeIfName := func(name string) string {
@@ -676,7 +663,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	}
 
 	// Type priority for per-pair type determination
-	typePriority := map[string]int{"tunnel": 0, "ipsec": 1, "gre": 2, "l2vlan": 3, "vxlan": 4, "l3ipvlan": 5}
+	typePriority := map[string]int{"l2vlan": 0, "vxlan": 1, "l3ipvlan": 2}
 	pairConnType := func(typeA, typeB string) string {
 		a, b := strings.ToLower(typeA), strings.ToLower(typeB)
 		priA, _ := typePriority[a]
@@ -696,8 +683,8 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	nameGroups := make(map[string][]ifEntry)
 
 	for _, iface := range ifaces {
-		// Accept known tunnel types OR tunnel-like naming patterns
-		if !tunnelTypes[strings.ToLower(iface.TypeName)] && !isTunnelName(iface.Name) {
+		// Accept overlay/local interface types, or vxlan-prefixed names
+		if !overlayTypes[strings.ToLower(iface.TypeName)] && !strings.HasPrefix(strings.ToLower(iface.Name), "vxlan") {
 			continue
 		}
 		normalized := normalizeIfName(iface.Name)
@@ -755,12 +742,11 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 				// Validation by category:
 				// - l2vlan (local segment): requires same site
 				// - l3ipvlan/vxlan (overlays): requires a direct VPN tunnel between endpoints
-				// - ipsec/gre/tunnel: name-match only — they ARE the tunnels
 				if localTypes[connType] {
 					if !sameSite(a.deviceID, b.deviceID) {
 						continue
 					}
-				} else if overlayTypes[connType] {
+				} else {
 					if !hasDirectLink(a.deviceID, b.deviceID) {
 						continue
 					}
@@ -787,16 +773,10 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 				}
 				connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
 
-				// Cross-check VPN data: if a VPN tunnel on either device points
-				// to the other's IP, it's a direct link. Otherwise it's indirect
-				// (traffic flows through an intermediate device/hub).
-				matchMethod := "tunnel_indirect"
-				if hasDirectLink(srcID, dstID) {
-					matchMethod = "tunnel_name"
-				}
+				matchMethod := "overlay_name"
 
 				if err := p.db.UpsertAutoConnection(srcID, dstID, status, a.name, connName, connType, matchMethod); err != nil {
-					log.Printf("Tunnel auto-detect: failed to upsert connection %s - %v", connName, err)
+					log.Printf("Overlay auto-detect: failed to upsert connection %s - %v", connName, err)
 				} else {
 					created++
 				}
@@ -805,7 +785,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	}
 
 	if created > 0 {
-		log.Printf("Tunnel auto-detect: upserted %d connection(s)", created)
+		log.Printf("Overlay auto-detect: upserted %d connection(s)", created)
 	}
 }
 

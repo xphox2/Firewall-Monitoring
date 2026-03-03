@@ -1923,7 +1923,7 @@
                 const path = document.createElementNS(NS, 'path');
                 path.setAttribute('d', pathD);
                 path.setAttribute('fill', 'none');
-                path.setAttribute('stroke', color);
+                path.setAttribute('stroke', isDown ? '#484f58' : color);
                 path.setAttribute('stroke-width', String(cs.width));
                 path.setAttribute('class', 'conn-path');
                 path.setAttribute('id', `conn-path-${ci}`);

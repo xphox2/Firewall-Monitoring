@@ -480,10 +480,12 @@
                     line.setAttribute('y1', srcPos.y);
                     line.setAttribute('x2', dstPos.x);
                     line.setAttribute('y2', dstPos.y);
-                    // Color and style by connection type
+                    // Color and style by connection type + status
                     const connStyle = getConnStyle(conn.connection_type);
-                    const statusColor = conn.status === 'up' ? '#3fb150' : conn.status === 'down' ? '#f85149' : '#8b949e';
-                    line.setAttribute('stroke', connStyle.color || statusColor);
+                    const isDown = conn.status === 'down';
+                    const baseColor = connStyle.color || '#8b949e';
+                    line.setAttribute('stroke', isDown ? '#484f58' : baseColor);
+                    line.setAttribute('opacity', isDown ? '0.5' : '1');
                     if (connStyle.dash) line.setAttribute('stroke-dasharray', connStyle.dash);
                     line.setAttribute('stroke-width', connStyle.width || '2');
                     line.setAttribute('marker-end', `url(#arrow-${conn.status})`);

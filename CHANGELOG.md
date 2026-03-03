@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.54] - 2026-03-03
+
+### Fixed
+- **False tunnel connections from name-matching**: Renamed `detectTunnelConnections` → `detectOverlayConnections` and restricted it to only L2VLAN, L3IPVLAN, and VXLAN types. Tunnel/IPSec/GRE connections are now handled exclusively by `detectVPNConnections` which uses actual VPN tunnel data (IPs, status) rather than error-prone interface name matching. This eliminates false connections from generic names like "Remote Access" appearing on unrelated devices.
+- **Down tunnels indistinguishable from up tunnels on network map**: DOWN connections in `network.html` now render with dimmed gray (#484f58) stroke at 50% opacity instead of full type color. In `admin.html`, DOWN connection paths also use dimmed gray instead of the type color (opacity pulse animation was already correct).
+
 ## [0.10.53] - 2026-03-03
 
 ### Added
