@@ -42,6 +42,14 @@ func (p *Poller) Start() error {
 
 	log.Printf("Starting SNMP poller with interval: %v", p.cfg.SNMP.PollInterval)
 
+	// Clean up stale auto-detected connections from generic interface names
+	if p.db != nil {
+		removed := p.db.CleanupStaleAutoConnections([]string{"ssl.root", "ssl.vdom"})
+		if removed > 0 {
+			log.Printf("Cleaned up %d stale auto-detected connection(s) from generic tunnel names", removed)
+		}
+	}
+
 	// Poll immediately on startup
 	p.pollAllDevices()
 

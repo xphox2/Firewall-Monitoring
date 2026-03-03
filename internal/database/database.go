@@ -491,6 +491,17 @@ func (d *Database) DeleteConnection(id uint) error {
 	return d.db.Delete(&models.DeviceConnection{}, id).Error
 }
 
+// CleanupStaleAutoConnections removes auto-detected connections with tunnel names
+// that should never have been matched (e.g., ssl.root present on every FortiGate).
+func (d *Database) CleanupStaleAutoConnections(skipNames []string) int64 {
+	if len(skipNames) == 0 {
+		return 0
+	}
+	result := d.db.Where("auto_detected = ? AND tunnel_names IN ?", true, skipNames).
+		Delete(&models.DeviceConnection{})
+	return result.RowsAffected
+}
+
 func (d *Database) GetAllSettings() ([]models.SystemSetting, error) {
 	var settings []models.SystemSetting
 	err := d.db.Find(&settings).Error

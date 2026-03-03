@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.44] - 2026-03-02
+
+### Fixed
+- **Auto-cleanup stale `ssl.root` connections**: Poller now deletes auto-detected connections with generic tunnel names (`ssl.root`, `ssl.vdom`) on startup via `CleanupStaleAutoConnections()`
+
 ## [0.10.43] - 2026-03-02
 
 ### Fixed
