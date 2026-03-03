@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.42] - 2026-03-02
+
+### Fixed
+- **False tunnel connections from `ssl.root`**: Added FortiGate default SSL VPN interfaces (`ssl.root`, `ssl.vdom`) to the tunnel auto-detection skip list — these exist on every FortiGate and were causing spurious pairwise connections between all devices
+
 ## [0.10.41] - 2026-03-02
 
 ### Added

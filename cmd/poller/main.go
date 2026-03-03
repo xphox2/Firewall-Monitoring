@@ -527,11 +527,13 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		return false
 	}
 
-	// Common names to skip (too generic to match on)
+	// Common names to skip (too generic — present on every device)
 	skipNames := map[string]bool{
 		"loopback0": true, "lo": true, "lo0": true,
 		"mgmt": true, "mgmt0": true, "management": true,
 		"null0": true, "": true,
+		// FortiGate default SSL VPN interfaces (present on every unit)
+		"ssl.root": true, "ssl.vdom": true,
 	}
 
 	// Tunnel-like interface types and name prefixes
