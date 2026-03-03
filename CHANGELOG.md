@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.59] - 2026-03-03
+
+### Fixed
+- **CSP source map block**: Added `connect-src 'self' https://cdn.jsdelivr.net` to Content-Security-Policy header so Chart.js can fetch its `.js.map` source map without being blocked by the `default-src 'self'` fallback
+
 ## [0.10.58] - 2026-03-03
 
 ### Fixed
