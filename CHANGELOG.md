@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.46] - 2026-03-02
+
+### Fixed
+- **Remove L2VLAN from tunnel auto-detection**: L2VLAN is a local segment, not a tunnel — auto-detecting it by interface name created false connections between devices that share a VLAN name but aren't on the same physical segment. L3IPVLAN (overlay extending L2 through IPSec/GRE) remains auto-detected.
+
 ## [0.10.45] - 2026-03-02
 
 ### Added

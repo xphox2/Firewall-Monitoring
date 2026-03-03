@@ -548,7 +548,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	tunnelTypes := map[string]bool{
 		"vxlan": true, "tunnel": true, "gre": true, "ipsec": true,
 		"l2tp": true, "pptp": true, "ipip": true,
-		"l2vlan": true, "l3ipvlan": true,
+		"l3ipvlan": true,
 	}
 	isTunnelName := func(name string) bool {
 		n := strings.ToLower(name)
