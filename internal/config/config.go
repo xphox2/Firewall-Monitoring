@@ -110,11 +110,13 @@ type ProbeConfig struct {
 	EnableMTLS        bool
 	ICMPEnabled       bool
 	ICMPInterval      time.Duration
-	SyslogEnabled     bool
-	SyslogPort        int
-	SyslogUseTLS      bool
-	SFlowEnabled      bool
-	SFlowPort         int
+	SyslogEnabled        bool
+	SyslogPort           int
+	SyslogUseTLS         bool
+	SyslogAllowedSources string // Comma-separated list of allowed source IPs
+	SFlowEnabled         bool
+	SFlowPort            int
+	SFlowAllowedSources  string // Comma-separated list of allowed source IPs
 }
 
 func Load() *Config {
@@ -203,11 +205,13 @@ func Load() *Config {
 			EnableMTLS:        getBoolEnv("PROBE_MTLS_ENABLED", false),
 			ICMPEnabled:       getBoolEnv("PROBE_ICMP_ENABLED", true),
 			ICMPInterval:      getDurationEnv("PROBE_ICMP_INTERVAL", 30*time.Second),
-			SyslogEnabled:     getBoolEnv("PROBE_SYSLOG_ENABLED", true),
-			SyslogPort:        getIntEnv("PROBE_SYSLOG_PORT", 514),
-			SyslogUseTLS:      getBoolEnv("PROBE_SYSLOG_TLS", false),
-			SFlowEnabled:      getBoolEnv("PROBE_SFLOW_ENABLED", true),
-			SFlowPort:         getIntEnv("PROBE_SFLOW_PORT", 6343),
+			SyslogEnabled:        getBoolEnv("PROBE_SYSLOG_ENABLED", true),
+			SyslogPort:           getIntEnv("PROBE_SYSLOG_PORT", 514),
+			SyslogUseTLS:         getBoolEnv("PROBE_SYSLOG_TLS", false),
+			SyslogAllowedSources: getEnv("SYSLOG_ALLOWED_SOURCES", ""),
+			SFlowEnabled:         getBoolEnv("PROBE_SFLOW_ENABLED", true),
+			SFlowPort:            getIntEnv("PROBE_SFLOW_PORT", 6343),
+			SFlowAllowedSources:  getEnv("SFLOW_ALLOWED_SOURCES", ""),
 		},
 	}
 }

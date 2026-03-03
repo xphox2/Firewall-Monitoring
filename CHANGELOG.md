@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.64] - 2026-03-03
+
+### Security (P2 — Medium)
+- **M2+M3: JWT token revocation**: Added `token_version` field to Admin model and JWT claims. Tokens are now server-side invalidated on password change and logout by incrementing the version counter. `ValidateToken` checks the current version against the database, rejecting stale tokens immediately rather than waiting for expiry.
+- **M4: Docker non-root user**: Dockerfile now creates a dedicated `fwmon` user/group and runs the container as non-root via `USER fwmon`, reducing the blast radius of container escapes.
+- **M5: Remove Docker host networking**: Replaced `network_mode: "host"` in docker-compose.yml with explicit port mappings (8080, 162/udp, 514/tcp+udp, 6343/udp, 8089), providing network isolation between the container and host.
+- **M6: Go version bump**: Updated Go directive from 1.21 to 1.22 in both `go.mod` and Dockerfile builder stage. Operators should run `go get -u ./... && go mod tidy` to refresh dependencies.
+- **M7: Syslog source IP allowlist**: Both TCP and UDP syslog receivers now support an `AllowedSourceIPs` config field (`SYSLOG_ALLOWED_SOURCES` env var, comma-separated). When set, packets/connections from non-listed IPs are silently dropped.
+- **M8: sFlow source IP allowlist**: sFlow receiver now supports an allowed source IP list (`SFLOW_ALLOWED_SOURCES` env var, comma-separated). When set, datagrams from non-listed IPs are silently dropped.
+
 ## [0.10.63] - 2026-03-03
 
 ### Security (P3 — Low)

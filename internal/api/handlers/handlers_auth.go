@@ -92,16 +92,18 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 	}
 
-	// Get admin record to use real ID in token
+	// Get admin record to use real ID and token version in JWT
 	var adminID uint = 1
+	var tokenVersion uint
 	if h.db != nil {
 		adminRecord, adminErr := h.db.GetAdminByUsername(creds.Username)
 		if adminErr == nil && adminRecord != nil {
 			adminID = adminRecord.ID
+			tokenVersion = adminRecord.TokenVersion
 		}
 	}
 
-	token, err := h.authManager.GenerateToken(creds.Username, adminID)
+	token, err := h.authManager.GenerateToken(creds.Username, adminID, tokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate token"))
 		return
@@ -150,6 +152,17 @@ func (h *Handler) Logout(c *gin.Context) {
 	if _, err := c.Cookie("auth_token"); err != nil {
 		c.JSON(http.StatusOK, models.MessageResponse("Already logged out"))
 		return
+	}
+
+	// Invalidate all tokens for this user by incrementing token version
+	if h.db != nil {
+		if userID, exists := c.Get("user_id"); exists {
+			if uid, ok := userID.(uint); ok {
+				if err := h.db.IncrementAdminTokenVersion(uid); err != nil {
+					log.Printf("Failed to increment token version on logout: %v", err)
+				}
+			}
+		}
 	}
 
 	cookieSecure := h.config != nil && h.config.Server.CookieSecure
@@ -283,5 +296,10 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully"))
+	// Invalidate all existing tokens by incrementing token version
+	if err := h.db.IncrementAdminTokenVersion(userIDUint); err != nil {
+		log.Printf("Failed to increment token version after password change: %v", err)
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully. Please log in again."))
 }

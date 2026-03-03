@@ -582,14 +582,29 @@ func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) 
 		return nil, err
 	}
 	return &auth.AdminAuth{
-		ID:       admin.ID,
-		Username: admin.Username,
-		Password: admin.Password,
+		ID:           admin.ID,
+		Username:     admin.Username,
+		Password:     admin.Password,
+		TokenVersion: admin.TokenVersion,
 	}, nil
 }
 
 func (d *Database) UpdateAdminPassword(id uint, password string) error {
 	return d.db.Model(&models.Admin{}).Where("id = ?", id).Update("password", password).Error
+}
+
+func (d *Database) GetAdminTokenVersion(id uint) (uint, error) {
+	var admin models.Admin
+	err := d.db.Select("token_version").First(&admin, id).Error
+	if err != nil {
+		return 0, err
+	}
+	return admin.TokenVersion, nil
+}
+
+func (d *Database) IncrementAdminTokenVersion(id uint) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).
+		UpdateColumn("token_version", gorm.Expr("token_version + 1")).Error
 }
 
 func (d *Database) GetAllSites() ([]models.Site, error) {

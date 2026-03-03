@@ -6,7 +6,13 @@ services:
     image: firewall-mon:latest
     container_name: firewall-mon
     restart: unless-stopped
-    network_mode: "host"
+    ports:
+      - "8080:8080"       # Web UI / API
+      - "162:162/udp"     # SNMP traps
+      - "514:514/udp"     # Syslog (UDP)
+      - "514:514/tcp"     # Syslog (TCP)
+      - "6343:6343/udp"   # sFlow
+      - "8089:8089"       # Probe server
     volumes:
       - ./data:/data
       - ./config:/config

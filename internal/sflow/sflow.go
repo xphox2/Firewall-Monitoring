@@ -48,19 +48,29 @@ type SFlowReceiver struct {
 	stopChan   chan struct{}
 	running    atomic.Bool
 	wg         sync.WaitGroup
+	allowedIPs map[string]bool
 }
 
-func NewSFlowReceiver(listenAddr string, port int) *SFlowReceiver {
+func NewSFlowReceiver(listenAddr string, port int, allowedSources ...[]string) *SFlowReceiver {
 	if listenAddr == "" {
 		listenAddr = "0.0.0.0"
 	}
 	if port == 0 {
 		port = 6343
 	}
+	allowed := make(map[string]bool)
+	if len(allowedSources) > 0 {
+		for _, ip := range allowedSources[0] {
+			if ip != "" {
+				allowed[ip] = true
+			}
+		}
+	}
 	return &SFlowReceiver{
 		ListenAddr: listenAddr,
 		Port:       port,
 		stopChan:   make(chan struct{}),
+		allowedIPs: allowed,
 	}
 }
 
@@ -124,8 +134,11 @@ func (r *SFlowReceiver) readLoop() {
 			}
 
 			if n > 0 {
+				// Drop packets from non-allowed source IPs when allowlist is configured
+				if len(r.allowedIPs) > 0 && !r.allowedIPs[addr.IP.String()] {
+					continue
+				}
 				_ = r.ParseSFlowDatagram(buf[:n])
-				_ = addr
 			}
 		}
 	}

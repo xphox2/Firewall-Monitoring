@@ -23,27 +23,36 @@ const (
 )
 
 type Config struct {
-	ListenAddr string
-	Port       int
-	UseTLS     bool
-	CertFile   string
-	KeyFile    string
+	ListenAddr       string
+	Port             int
+	UseTLS           bool
+	CertFile         string
+	KeyFile          string
+	AllowedSourceIPs []string // If non-empty, only accept messages from these IPs
 }
 
 type SyslogReceiver struct {
-	Config   *Config
-	DB       *database.Database
-	listener net.Listener
-	running  atomic.Bool
-	stopCh   chan struct{}
-	connWg   sync.WaitGroup
+	Config     *Config
+	DB         *database.Database
+	listener   net.Listener
+	running    atomic.Bool
+	stopCh     chan struct{}
+	connWg     sync.WaitGroup
+	allowedIPs map[string]bool
 }
 
 func NewSyslogReceiver(cfg *Config, db *database.Database) *SyslogReceiver {
+	allowed := make(map[string]bool, len(cfg.AllowedSourceIPs))
+	for _, ip := range cfg.AllowedSourceIPs {
+		if ip != "" {
+			allowed[ip] = true
+		}
+	}
 	return &SyslogReceiver{
-		Config: cfg,
-		DB:     db,
-		stopCh: make(chan struct{}),
+		Config:     cfg,
+		DB:         db,
+		stopCh:     make(chan struct{}),
+		allowedIPs: allowed,
 	}
 }
 
@@ -104,6 +113,15 @@ func (s *SyslogReceiver) acceptLoop() {
 				log.Printf("Error accepting syslog connection: %v", err)
 			}
 			continue
+		}
+		// Reject connections from non-allowed source IPs when allowlist is configured
+		if len(s.allowedIPs) > 0 {
+			if host, _, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
+				if !s.allowedIPs[host] {
+					conn.Close()
+					continue
+				}
+			}
 		}
 		s.connWg.Add(1)
 		go func() {
@@ -361,19 +379,27 @@ func bytesToInt(b []byte) int {
 }
 
 type UDPSyslogReceiver struct {
-	Config  *Config
-	DB      *database.Database
-	conn    *net.UDPConn
-	running atomic.Bool
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
+	Config     *Config
+	DB         *database.Database
+	conn       *net.UDPConn
+	running    atomic.Bool
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
+	allowedIPs map[string]bool
 }
 
 func NewUDPSyslogReceiver(cfg *Config, db *database.Database) *UDPSyslogReceiver {
+	allowed := make(map[string]bool, len(cfg.AllowedSourceIPs))
+	for _, ip := range cfg.AllowedSourceIPs {
+		if ip != "" {
+			allowed[ip] = true
+		}
+	}
 	return &UDPSyslogReceiver{
-		Config: cfg,
-		DB:     db,
-		stopCh: make(chan struct{}),
+		Config:     cfg,
+		DB:         db,
+		stopCh:     make(chan struct{}),
+		allowedIPs: allowed,
 	}
 }
 
@@ -436,6 +462,11 @@ func (u *UDPSyslogReceiver) readLoop() {
 
 		data := buf[:n]
 		if len(data) == 0 {
+			continue
+		}
+
+		// Drop packets from non-allowed source IPs when allowlist is configured
+		if len(u.allowedIPs) > 0 && !u.allowedIPs[clientAddr.IP.String()] {
 			continue
 		}
 

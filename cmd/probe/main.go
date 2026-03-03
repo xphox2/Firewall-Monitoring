@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,18 +20,20 @@ import (
 )
 
 type ProbeConfig struct {
-	Name            string
-	SiteID          uint
-	RegistrationKey string
-	ServerURL       string
-	ListenTrap      string
-	ListenSyslog    string
-	ListenSFlow     string
-	TLSEnabled      bool
-	TLSCert         string
-	TLSKey          string
-	CACert          string
-	SyncInterval    time.Duration
+	Name                 string
+	SiteID               uint
+	RegistrationKey      string
+	ServerURL            string
+	ListenTrap           string
+	ListenSyslog         string
+	ListenSFlow          string
+	TLSEnabled           bool
+	TLSCert              string
+	TLSKey               string
+	CACert               string
+	SyncInterval         time.Duration
+	SyslogAllowedSources string
+	SFlowAllowedSources  string
 }
 
 func LoadProbeConfig() *ProbeConfig {
@@ -49,6 +52,8 @@ func LoadProbeConfig() *ProbeConfig {
 	cfg.TLSKey = os.Getenv("PROBE_TLS_KEY")
 	cfg.CACert = os.Getenv("PROBE_CA_CERT")
 	cfg.SyncInterval = parseDurationEnv("PROBE_SYNC_INTERVAL", 30*time.Second)
+	cfg.SyslogAllowedSources = getEnv("SYSLOG_ALLOWED_SOURCES", "")
+	cfg.SFlowAllowedSources = getEnv("SFLOW_ALLOWED_SOURCES", "")
 
 	if cfg.Name == "" {
 		log.Fatal("PROBE_NAME is required")
@@ -93,6 +98,22 @@ func parseDurationEnv(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+// parseCSVList splits a comma-separated string into a slice, trimming whitespace.
+func parseCSVList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 type Probe struct {
@@ -171,11 +192,12 @@ func (p *Probe) Start() error {
 
 	fmt.Println("[3/4] Starting Syslog listener...")
 	syslogCfg := &syslog.Config{
-		ListenAddr: "0.0.0.0",
-		Port:       514,
-		UseTLS:     p.Config.TLSEnabled,
-		CertFile:   p.Config.TLSCert,
-		KeyFile:    p.Config.TLSKey,
+		ListenAddr:       "0.0.0.0",
+		Port:             514,
+		UseTLS:           p.Config.TLSEnabled,
+		CertFile:         p.Config.TLSCert,
+		KeyFile:          p.Config.TLSKey,
+		AllowedSourceIPs: parseCSVList(p.Config.SyslogAllowedSources),
 	}
 
 	p.SyslogTCPServer = syslog.NewSyslogReceiver(syslogCfg, nil)
@@ -202,7 +224,7 @@ func (p *Probe) Start() error {
 			port = parsedPort
 		}
 	}
-	sflowReceiver := sflow.NewSFlowReceiver(parts[0], port)
+	sflowReceiver := sflow.NewSFlowReceiver(parts[0], port, parseCSVList(p.Config.SFlowAllowedSources))
 	p.SFlowReceiver = sflowReceiver
 
 	if err := sflowReceiver.Start(); err != nil {

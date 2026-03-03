@@ -23,20 +23,24 @@ var (
 )
 
 type Claims struct {
-	Username string `json:"username"`
-	UserID   uint   `json:"user_id"`
+	Username     string `json:"username"`
+	UserID       uint   `json:"user_id"`
+	TokenVersion uint   `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
 type AdminAuth struct {
-	ID       uint
-	Username string
-	Password string
+	ID           uint
+	Username     string
+	Password     string
+	TokenVersion uint
 }
 
 type Database interface {
 	GetAdminByUsername(username string) (*AdminAuth, error)
 	UpdateAdminPassword(id uint, password string) error
+	GetAdminTokenVersion(id uint) (uint, error)
+	IncrementAdminTokenVersion(id uint) error
 }
 
 type AuthManager struct {
@@ -139,7 +143,7 @@ func (am *AuthManager) CheckPassword(password, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-func (am *AuthManager) GenerateToken(username string, userID uint) (string, error) {
+func (am *AuthManager) GenerateToken(username string, userID uint, tokenVersion uint) (string, error) {
 	if am.config == nil || am.config.Server.JWTSecretKey == "" {
 		return "", ErrNoJWTSecret
 	}
@@ -152,8 +156,9 @@ func (am *AuthManager) GenerateToken(username string, userID uint) (string, erro
 	}
 
 	claims := Claims{
-		Username: username,
-		UserID:   userID,
+		Username:     username,
+		UserID:       userID,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -183,6 +188,13 @@ func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		// Check token version against DB to reject revoked tokens
+		if am.db != nil {
+			currentVersion, err := am.db.GetAdminTokenVersion(claims.UserID)
+			if err == nil && claims.TokenVersion != currentVersion {
+				return nil, ErrInvalidToken
+			}
+		}
 		return claims, nil
 	}
 
