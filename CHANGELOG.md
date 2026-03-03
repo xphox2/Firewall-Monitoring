@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.43] - 2026-03-02
+
+### Fixed
+- **Browser autofill ignoring `autocomplete="off"`**: Replaced all `autocomplete="off"` with `autocomplete="one-time-code"` across all HTML pages — Chrome/Edge ignore `off` but respect `one-time-code`, preventing email/credential autofill into IP address, search, and name fields
+
 ## [0.10.42] - 2026-03-02
 
 ### Fixed
