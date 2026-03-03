@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -131,7 +132,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.RateLimiter(cfg))
 	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
 
-	router.Static("/static", "./static")
+	subFS, _ := fs.Sub(staticFiles, "static")
+	router.StaticFS("/static", http.FS(subFS))
 	router.LoadHTMLGlob("./web/**/*.html")
 
 	router.GET("/", func(c *gin.Context) {

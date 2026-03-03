@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.58] - 2026-03-03
+
+### Fixed
+- **Static JS 404 fix**: Embedded `static/js/` diagram modules into the Go binary via `go:embed`, eliminating 404 errors when running from Docker or from a different working directory. Moved JS files from `static/js/` to `cmd/api/static/js/` so they are included by the existing `COPY cmd ./cmd` in the Dockerfile.
+
 ## [0.10.57] - 2026-03-03
 
 ### Added
