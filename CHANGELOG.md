@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.34] - 2026-03-02
+
+### Added
+- **Ping latency in Status History chart**: Device detail status history chart now includes ICMP latency (ms) as a 4th dataset on a secondary Y-axis, combining CPU/Memory/Disk percentages with ping response times in one view
+- `GetPingResultHistory()` database method for time-series ping result queries
+
+### Changed
+- `GET /api/devices/:id/status-history` now returns `{ system_status: [...], ping_history: [...] }` instead of a flat array (breaking change for API consumers)
+
 ## [0.10.33] - 2026-03-02
 
 ### Fixed

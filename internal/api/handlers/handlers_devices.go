@@ -286,7 +286,16 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(statuses))
+	pingHistory, err := h.db.GetPingResultHistory(id, hours)
+	if err != nil {
+		// Non-fatal: return system status without ping data
+		pingHistory = nil
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"system_status": statuses,
+		"ping_history":  pingHistory,
+	}))
 }
 
 func (h *Handler) GetInterfaceHistory(c *gin.Context) {

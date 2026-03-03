@@ -811,6 +811,15 @@ func (d *Database) GetSystemStatusHistory(deviceID uint, hours int) ([]models.Sy
 	return statuses, err
 }
 
+// GetPingResultHistory returns time-series ping results for a device
+func (d *Database) GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error) {
+	var results []models.PingResult
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	err := d.db.Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
+		Order("timestamp ASC").Limit(2000).Find(&results).Error
+	return results, err
+}
+
 // TimeBucket is a generic time-series count bucket
 type TimeBucket struct {
 	Bucket string `json:"bucket"`
