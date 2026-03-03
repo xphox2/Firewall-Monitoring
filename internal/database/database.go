@@ -1513,16 +1513,29 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 	return rows, nil
 }
 
+// Phase2Match represents a matched pair of Phase 2 selectors between two devices.
+type Phase2Match struct {
+	SourceTunnel  string `json:"source_tunnel"`
+	DestTunnel    string `json:"dest_tunnel"`
+	SourcePhase1  string `json:"source_phase1"`
+	DestPhase1    string `json:"dest_phase1"`
+	LocalSubnet   string `json:"local_subnet"`
+	RemoteSubnet  string `json:"remote_subnet"`
+	SourceStatus  string `json:"source_status"`
+	DestStatus    string `json:"dest_status"`
+}
+
 // ConnectionDetailResult holds full detail for a connection including matching tunnels.
 type ConnectionDetailResult struct {
-	Connection   models.DeviceConnection `json:"connection"`
-	SourceTunnels []models.VPNStatus     `json:"source_tunnels"`
-	DestTunnels   []models.VPNStatus     `json:"dest_tunnels"`
-	TotalBytesIn  uint64                 `json:"total_bytes_in"`
-	TotalBytesOut uint64                 `json:"total_bytes_out"`
-	TotalPacketsIn  uint64              `json:"total_packets_in"`
-	TotalPacketsOut uint64              `json:"total_packets_out"`
-	HasFlowData   bool                   `json:"has_flow_data"`
+	Connection      models.DeviceConnection `json:"connection"`
+	SourceTunnels   []models.VPNStatus      `json:"source_tunnels"`
+	DestTunnels     []models.VPNStatus      `json:"dest_tunnels"`
+	TotalBytesIn    uint64                  `json:"total_bytes_in"`
+	TotalBytesOut   uint64                  `json:"total_bytes_out"`
+	TotalPacketsIn  uint64                  `json:"total_packets_in"`
+	TotalPacketsOut uint64                  `json:"total_packets_out"`
+	HasFlowData     bool                    `json:"has_flow_data"`
+	Phase2Matches   []Phase2Match           `json:"phase2_matches"`
 }
 
 // collectDeviceIPs returns all known IPs for a device (management + interface addresses).
@@ -1591,6 +1604,30 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 			result.TotalBytesOut += t.BytesOut
 			result.TotalPacketsIn += t.PacketsIn
 			result.TotalPacketsOut += t.PacketsOut
+		}
+	}
+
+	// Phase 2 inverse matching: source's local_subnet == dest's remote_subnet (and vice versa)
+	for _, src := range result.SourceTunnels {
+		if src.LocalSubnet == "" || src.RemoteSubnet == "" {
+			continue
+		}
+		for _, dst := range result.DestTunnels {
+			if dst.LocalSubnet == "" || dst.RemoteSubnet == "" {
+				continue
+			}
+			if src.LocalSubnet == dst.RemoteSubnet && src.RemoteSubnet == dst.LocalSubnet {
+				result.Phase2Matches = append(result.Phase2Matches, Phase2Match{
+					SourceTunnel: src.TunnelName,
+					DestTunnel:   dst.TunnelName,
+					SourcePhase1: src.Phase1Name,
+					DestPhase1:   dst.Phase1Name,
+					LocalSubnet:  src.LocalSubnet,
+					RemoteSubnet: src.RemoteSubnet,
+					SourceStatus: src.Status,
+					DestStatus:   dst.Status,
+				})
+			}
 		}
 	}
 

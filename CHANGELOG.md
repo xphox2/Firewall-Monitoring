@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.41] - 2026-03-02
+
+### Added
+- **Indirect tunnel connection detection**: `detectTunnelConnections` now cross-checks name-matched device pairs against VPN tunnel remote IPs; pairs with no direct IP evidence are marked as "tunnel_indirect" instead of "tunnel_name"
+- **Indirect connection rendering**: Indirect connections show as amber/orange dotted lines (#f0883e) with slower, smaller amber particles — visually distinct from direct connections (green) and VXLAN (purple)
+- **"Indirect" match method badge**: Orange badge displayed across admin, network, and connection detail pages for tunnel-name-only connections without direct IP verification
+- **Phase 2 selector inverse matching**: `GetConnectionDetail` now matches Phase 2 selectors between connected devices — if source's `local_subnet` equals destination's `remote_subnet` (and vice versa), a `Phase2Match` is created confirming end-to-end IPSec SA alignment
+- **Phase 2 Selectors tab**: New tab on the connection detail page showing matched Phase 2 pairs with animated SVG diagrams — green particles flow between matching subnets when both tunnels are up, with bidirectional TX/RX animation
+- **`Phase2Match` struct**: Backend data structure for matched Phase 2 selector pairs (source/dest tunnel names, Phase 1 names, local/remote subnets, status)
+
+### Fixed
+- **False VXLAN connections**: Previously, two devices with the same VXLAN interface name (e.g., "vxlan1") were auto-connected even if they communicated through an intermediate hub device; now correctly detected as indirect
+
 ## [0.10.40] - 2026-03-02
 
 ### Added

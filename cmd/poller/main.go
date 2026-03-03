@@ -489,6 +489,44 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		deviceByID[devices[i].ID] = &devices[i]
 	}
 
+	// Build IP → device ID map for direct-link verification
+	ipToDeviceID := make(map[string]uint, len(devices)*4)
+	for i := range devices {
+		if devices[i].IPAddress != "" {
+			ipToDeviceID[devices[i].IPAddress] = devices[i].ID
+		}
+	}
+	ifAddrs, _ := p.db.GetLatestInterfaceAddresses()
+	for _, addr := range ifAddrs {
+		if _, exists := ipToDeviceID[addr.IPAddress]; !exists {
+			ipToDeviceID[addr.IPAddress] = addr.DeviceID
+		}
+	}
+
+	// Load VPN tunnel data to verify direct links
+	vpnStatuses, _ := p.db.GetAllLatestVPNStatuses()
+	// Build set of device pairs with verified direct VPN links (remote IP points to other device)
+	vpnByDevice := make(map[uint][]models.VPNStatus)
+	for _, vpn := range vpnStatuses {
+		vpnByDevice[vpn.DeviceID] = append(vpnByDevice[vpn.DeviceID], vpn)
+	}
+
+	hasDirectLink := func(devA, devB uint) bool {
+		// Check if device A has a VPN tunnel pointing to device B's IP
+		for _, t := range vpnByDevice[devA] {
+			if did, ok := ipToDeviceID[t.RemoteIP]; ok && did == devB {
+				return true
+			}
+		}
+		// Check if device B has a VPN tunnel pointing to device A's IP
+		for _, t := range vpnByDevice[devB] {
+			if did, ok := ipToDeviceID[t.RemoteIP]; ok && did == devA {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Common names to skip (too generic to match on)
 	skipNames := map[string]bool{
 		"loopback0": true, "lo": true, "lo0": true,
@@ -536,7 +574,6 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		})
 	}
 
-	// Deduplicate entries per group (same device may have multiple timestamps)
 	pairKey := func(a, b uint) string {
 		if a > b {
 			a, b = b, a
@@ -572,7 +609,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 			}
 		}
 
-		// Create pairwise connections for hub-spoke (all pairs, not just exactly 2)
+		// Create pairwise connections for hub-spoke
 		deviceList := make([]*ifEntry, 0, len(seen))
 		for _, e := range seen {
 			deviceList = append(deviceList, e)
@@ -606,7 +643,15 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 				}
 				connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
 
-				if err := p.db.UpsertAutoConnection(srcID, dstID, status, a.name, connName, connType, "tunnel_name"); err != nil {
+				// Cross-check VPN data: if a VPN tunnel on either device points
+				// to the other's IP, it's a direct link. Otherwise it's indirect
+				// (traffic flows through an intermediate device/hub).
+				matchMethod := "tunnel_indirect"
+				if hasDirectLink(srcID, dstID) {
+					matchMethod = "tunnel_name"
+				}
+
+				if err := p.db.UpsertAutoConnection(srcID, dstID, status, a.name, connName, connType, matchMethod); err != nil {
 					log.Printf("Tunnel auto-detect: failed to upsert connection %s - %v", connName, err)
 				} else {
 					created++

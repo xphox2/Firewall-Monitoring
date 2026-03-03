@@ -805,6 +805,7 @@
                 'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Bidirectional</span>',
                 'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
                 'tunnel_name': '<span class="badge" style="background:#d29922;font-size:0.65rem;padding:1px 5px;">Tunnel Name</span>',
+                'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
                 'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
             };
             return badges[method] || badges['ip_match'];
@@ -1879,9 +1880,10 @@
                 const pathD = `M${s.x},${s.y} Q${cpx},${cpy} ${t.x},${t.y}`;
 
                 const isVxlan = conn.connection_type === 'vxlan';
+                const isIndirect = conn.match_method === 'tunnel_indirect';
                 const isUp = conn.status === 'up';
                 const isDown = conn.status === 'down';
-                const color = isVxlan ? '#8957e5' : (isUp ? '#3fb950' : (isDown ? '#f85149' : '#30363d'));
+                const color = isIndirect ? '#f0883e' : (isVxlan ? '#8957e5' : (isUp ? '#3fb950' : (isDown ? '#f85149' : '#30363d')));
 
                 // Invisible hit area
                 const hitPath = document.createElementNS(NS, 'path');
@@ -1899,7 +1901,8 @@
                 path.setAttribute('class', 'conn-path');
                 path.setAttribute('id', `conn-path-${ci}`);
                 if (isVxlan) path.setAttribute('stroke-dasharray', '8,4');
-                if (isUp) path.setAttribute('filter', 'url(#conn-glow)');
+                if (isIndirect) { path.setAttribute('stroke-dasharray', '4,6'); path.setAttribute('stroke-width', '2'); }
+                if (isUp && !isIndirect) path.setAttribute('filter', 'url(#conn-glow)');
                 path.addEventListener('click', () => showConnDetailPanel(conn));
 
                 // Pulsing red for down connections
@@ -1915,42 +1918,69 @@
 
                 // Animated particles for "up" connections — bidirectional TX/RX
                 if (isUp) {
-                    // TX particles: source → dest (connection color)
-                    for (let p = 0; p < 2; p++) {
-                        const circle = document.createElementNS(NS, 'circle');
-                        circle.setAttribute('r', '3');
-                        circle.setAttribute('fill', color);
-                        circle.setAttribute('opacity', '0.85');
-                        const motion = document.createElementNS(NS, 'animateMotion');
-                        motion.setAttribute('dur', '4s');
-                        motion.setAttribute('begin', `${p * 2}s`);
-                        motion.setAttribute('repeatCount', 'indefinite');
-                        motion.setAttribute('fill', 'freeze');
-                        const mpath = document.createElementNS(NS, 'mpath');
-                        mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
-                        motion.appendChild(mpath);
-                        circle.appendChild(motion);
-                        svg.appendChild(circle);
-                    }
-                    // RX particles: dest → source (blue, reverse along same path)
-                    for (let p = 0; p < 2; p++) {
-                        const circle = document.createElementNS(NS, 'circle');
-                        circle.setAttribute('r', '2.5');
-                        circle.setAttribute('fill', '#58a6ff');
-                        circle.setAttribute('opacity', '0.7');
-                        const motion = document.createElementNS(NS, 'animateMotion');
-                        motion.setAttribute('dur', '4.5s');
-                        motion.setAttribute('begin', `${p * 2.2 + 0.5}s`);
-                        motion.setAttribute('repeatCount', 'indefinite');
-                        motion.setAttribute('fill', 'freeze');
-                        motion.setAttribute('keyPoints', '1;0');
-                        motion.setAttribute('keyTimes', '0;1');
-                        motion.setAttribute('calcMode', 'linear');
-                        const mpath = document.createElementNS(NS, 'mpath');
-                        mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
-                        motion.appendChild(mpath);
-                        circle.appendChild(motion);
-                        svg.appendChild(circle);
+                    if (isIndirect) {
+                        // Indirect: slower, smaller amber particles (1 each way)
+                        const mkIndirect = (reverse) => {
+                            const circle = document.createElementNS(NS, 'circle');
+                            circle.setAttribute('r', '2');
+                            circle.setAttribute('fill', '#f0883e');
+                            circle.setAttribute('opacity', '0.6');
+                            const motion = document.createElementNS(NS, 'animateMotion');
+                            motion.setAttribute('dur', '7s');
+                            motion.setAttribute('begin', reverse ? '3s' : '0s');
+                            motion.setAttribute('repeatCount', 'indefinite');
+                            motion.setAttribute('fill', 'freeze');
+                            if (reverse) {
+                                motion.setAttribute('keyPoints', '1;0');
+                                motion.setAttribute('keyTimes', '0;1');
+                                motion.setAttribute('calcMode', 'linear');
+                            }
+                            const mpath = document.createElementNS(NS, 'mpath');
+                            mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
+                            motion.appendChild(mpath);
+                            circle.appendChild(motion);
+                            svg.appendChild(circle);
+                        };
+                        mkIndirect(false);
+                        mkIndirect(true);
+                    } else {
+                        // Direct: TX particles source → dest (connection color)
+                        for (let p = 0; p < 2; p++) {
+                            const circle = document.createElementNS(NS, 'circle');
+                            circle.setAttribute('r', '3');
+                            circle.setAttribute('fill', color);
+                            circle.setAttribute('opacity', '0.85');
+                            const motion = document.createElementNS(NS, 'animateMotion');
+                            motion.setAttribute('dur', '4s');
+                            motion.setAttribute('begin', `${p * 2}s`);
+                            motion.setAttribute('repeatCount', 'indefinite');
+                            motion.setAttribute('fill', 'freeze');
+                            const mpath = document.createElementNS(NS, 'mpath');
+                            mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
+                            motion.appendChild(mpath);
+                            circle.appendChild(motion);
+                            svg.appendChild(circle);
+                        }
+                        // RX particles: dest → source (blue, reverse along same path)
+                        for (let p = 0; p < 2; p++) {
+                            const circle = document.createElementNS(NS, 'circle');
+                            circle.setAttribute('r', '2.5');
+                            circle.setAttribute('fill', '#58a6ff');
+                            circle.setAttribute('opacity', '0.7');
+                            const motion = document.createElementNS(NS, 'animateMotion');
+                            motion.setAttribute('dur', '4.5s');
+                            motion.setAttribute('begin', `${p * 2.2 + 0.5}s`);
+                            motion.setAttribute('repeatCount', 'indefinite');
+                            motion.setAttribute('fill', 'freeze');
+                            motion.setAttribute('keyPoints', '1;0');
+                            motion.setAttribute('keyTimes', '0;1');
+                            motion.setAttribute('calcMode', 'linear');
+                            const mpath = document.createElementNS(NS, 'mpath');
+                            mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
+                            motion.appendChild(mpath);
+                            circle.appendChild(motion);
+                            svg.appendChild(circle);
+                        }
                     }
                 }
             });
@@ -2005,7 +2035,7 @@
 
         function showConnDetailPanel(conn) {
             const panel = document.getElementById('conn-detail-panel-container');
-            const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',tunnel_name:'Tunnel Name',manual:'Manual'};
+            const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',tunnel_name:'Tunnel Name',tunnel_indirect:'Indirect',manual:'Manual'};
             const srcName = conn.source_device?.name || 'Device ' + conn.source_device_id;
             const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
             const typeBadge = conn.connection_type === 'vxlan'

@@ -178,6 +178,7 @@
             <div class="section-tab active" onclick="switchTab('overview')">Overview</div>
             <div class="section-tab" onclick="switchTab('src-tunnels')">Source Tunnels</div>
             <div class="section-tab" onclick="switchTab('dst-tunnels')">Dest Tunnels</div>
+            <div class="section-tab" id="tab-phase2" style="display:none;" onclick="switchTab('phase2')">Phase 2 Selectors</div>
             <div class="section-tab" id="tab-flows" style="display:none;" onclick="switchTab('flows')">Traffic Analysis</div>
         </div>
 
@@ -233,6 +234,15 @@
                         <tbody></tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+
+        <!-- Phase 2 Selectors Tab -->
+        <div class="tab-content" id="tab-content-phase2">
+            <div class="card">
+                <h2>IPSec Phase 2 Selector Matches</h2>
+                <p style="color:#8b949e;font-size:0.85rem;margin-bottom:16px;">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
+                <div id="phase2-matches-container"></div>
             </div>
         </div>
 
@@ -431,6 +441,11 @@
         // Show/hide flows tab
         document.getElementById('tab-flows').style.display = data.has_flow_data ? '' : 'none';
 
+        // Show/hide and render Phase 2 matches tab
+        const p2matches = data.phase2_matches || [];
+        document.getElementById('tab-phase2').style.display = p2matches.length > 0 ? '' : 'none';
+        renderPhase2Matches(p2matches, srcName, dstName);
+
         // Render tunnel tables
         renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id);
         renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
@@ -490,6 +505,50 @@
             `;
         });
         tbody.innerHTML = html;
+    }
+
+    function renderPhase2Matches(matches, srcName, dstName) {
+        const container = document.getElementById('phase2-matches-container');
+        if (!matches.length) {
+            container.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No Phase 2 selector matches found between these devices.</div>';
+            return;
+        }
+        let html = '';
+        matches.forEach((m, i) => {
+            const srcUp = m.source_status === 'up';
+            const dstUp = m.dest_status === 'up';
+            const bothUp = srcUp && dstUp;
+            const pathColor = bothUp ? '#3fb950' : '#f85149';
+            const statusLabel = bothUp ? 'ACTIVE' : 'DOWN';
+            const statusClass = bothUp ? 'up' : 'down';
+            html += `
+            <div class="phase2-match-card" style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <span style="font-size:0.85rem;font-weight:600;color:#e6edf3;">${escapeHtml(m.source_phase1 || m.source_tunnel)} &harr; ${escapeHtml(m.dest_phase1 || m.dest_tunnel)}</span>
+                    <span class="badge ${statusClass}" style="font-size:0.7rem;">${statusLabel}</span>
+                </div>
+                <svg width="100%" height="70" viewBox="0 0 600 70" style="display:block;">
+                    <defs><filter id="p2glow-${i}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+                    <rect x="0" y="15" width="160" height="40" rx="6" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+                    <text x="80" y="30" text-anchor="middle" fill="#8b949e" font-size="10">${escapeHtml(srcName)}</text>
+                    <text x="80" y="46" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="monospace">${escapeHtml(m.local_subnet)}</text>
+                    <rect x="440" y="15" width="160" height="40" rx="6" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+                    <text x="520" y="30" text-anchor="middle" fill="#8b949e" font-size="10">${escapeHtml(dstName)}</text>
+                    <text x="520" y="46" text-anchor="middle" fill="#3fb950" font-size="11" font-family="monospace">${escapeHtml(m.remote_subnet)}</text>
+                    <path id="p2path-${i}" d="M160,35 Q300,10 440,35" fill="none" stroke="${pathColor}" stroke-width="2" ${bothUp ? `filter="url(#p2glow-${i})"` : ''}/>
+                    <path d="M160,35 Q300,60 440,35" fill="none" stroke="${pathColor}" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.5"/>
+                    ${bothUp ? `
+                    <circle r="3" fill="${pathColor}" opacity="0.85">
+                        <animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#p2path-${i}"/></animateMotion>
+                    </circle>
+                    <circle r="2.5" fill="#58a6ff" opacity="0.7">
+                        <animateMotion dur="3.5s" begin="1s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#p2path-${i}"/></animateMotion>
+                    </circle>` : ''}
+                    <text x="300" y="8" text-anchor="middle" fill="#484f58" font-size="9">Phase 2: ${escapeHtml(m.source_tunnel)} &harr; ${escapeHtml(m.dest_tunnel)}</text>
+                </svg>
+            </div>`;
+        });
+        container.innerHTML = html;
     }
 
     function toggleTunnel(rowId, deviceId, tunnelName) {
