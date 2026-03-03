@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.48] - 2026-03-03
+
+### Improved
+- **Robust connection auto-detection overhaul**:
+  - **Name normalization**: Interface names are stripped of separators (spaces, dots, dashes, underscores) before matching — `vlan500`, `vlan 500`, `vlan.500`, `vlan-500`, `VLAN_500` all match correctly
+  - **Per-pair type determination**: Connection type is now determined from each pair's own interface types instead of the whole group, so FW2↔FW3 (both l2vlan) get "l2vlan" while FW1↔FW2 (l3ipvlan + l2vlan) get "l3ipvlan"
+  - **Multi-type per pair**: Database upsert key changed from device-pair to device-pair+type, allowing the same pair to have both an ipsec AND l2vlan connection
+  - **Stale cleanup**: Auto-detected connections not refreshed in the current poll cycle are automatically deleted — connections disappear when interfaces are removed
+  - **Same-site scoping**: L2VLAN connections only created between devices assigned to the same site
+
 ## [0.10.47] - 2026-03-03
 
 ### Fixed

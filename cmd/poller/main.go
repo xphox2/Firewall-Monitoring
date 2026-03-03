@@ -535,13 +535,14 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		return false
 	}
 
-	// Common names to skip (too generic — present on every device)
+	// Common names to skip (too generic — present on every device).
+	// Values are normalized (lowercase, no separators) to match normalizeIfName output.
 	skipNames := map[string]bool{
 		"loopback0": true, "lo": true, "lo0": true,
 		"mgmt": true, "mgmt0": true, "management": true,
 		"null0": true, "": true,
 		// FortiGate default SSL VPN interfaces (present on every unit)
-		"ssl.root": true, "ssl.vdom": true,
+		"sslroot": true, "sslvdom": true,
 	}
 
 	// Tunnel-like interface types and name prefixes
@@ -571,6 +572,25 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		return false
 	}
 
+	// normalizeIfName strips formatting differences so vlan500, vlan 500,
+	// vlan.500, vlan-500, vlan_500, VLAN500 all match as "vlan500".
+	normalizeIfName := func(name string) string {
+		n := strings.ToLower(strings.TrimSpace(name))
+		return strings.NewReplacer(" ", "", ".", "", "-", "", "_", "").Replace(n)
+	}
+
+	// Type priority for per-pair type determination
+	typePriority := map[string]int{"tunnel": 0, "ipsec": 1, "gre": 2, "l2vlan": 3, "vxlan": 4, "l3ipvlan": 5}
+	pairConnType := func(typeA, typeB string) string {
+		a, b := strings.ToLower(typeA), strings.ToLower(typeB)
+		priA, _ := typePriority[a]
+		priB, _ := typePriority[b]
+		if priA >= priB {
+			return a
+		}
+		return b
+	}
+
 	type ifEntry struct {
 		deviceID uint
 		name     string
@@ -584,7 +604,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		if !tunnelTypes[strings.ToLower(iface.TypeName)] && !isTunnelName(iface.Name) {
 			continue
 		}
-		normalized := strings.ToLower(strings.TrimSpace(iface.Name))
+		normalized := normalizeIfName(iface.Name)
 		if skipNames[normalized] {
 			continue
 		}
@@ -602,7 +622,9 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		}
 		return fmt.Sprintf("%d:%d", a, b)
 	}
+	// Dedup by pair + connection type — allows ipsec AND l2vlan between same pair
 	processed := make(map[string]bool)
+	cycleStart := time.Now()
 	created := 0
 
 	for _, entries := range nameGroups {
@@ -617,18 +639,6 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 			continue
 		}
 
-		// Determine connection type from interface type (priority: l3ipvlan > vxlan > l2vlan > gre > ipsec > tunnel)
-		typePriority := map[string]int{"tunnel": 0, "ipsec": 1, "gre": 2, "l2vlan": 3, "vxlan": 4, "l3ipvlan": 5}
-		connType := "tunnel"
-		bestPri := 0
-		for _, e := range seen {
-			t := strings.ToLower(e.typeName)
-			if pri, ok := typePriority[t]; ok && pri > bestPri {
-				connType = t
-				bestPri = pri
-			}
-		}
-
 		// Create pairwise connections for hub-spoke
 		deviceList := make([]*ifEntry, 0, len(seen))
 		for _, e := range seen {
@@ -638,7 +648,11 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		for i := 0; i < len(deviceList); i++ {
 			for j := i + 1; j < len(deviceList); j++ {
 				a, b := deviceList[i], deviceList[j]
-				key := pairKey(a.deviceID, b.deviceID)
+
+				// Determine type from this specific pair's interface types
+				connType := pairConnType(a.typeName, b.typeName)
+
+				key := pairKey(a.deviceID, b.deviceID) + ":" + connType
 				if processed[key] {
 					continue
 				}
@@ -686,8 +700,12 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		}
 	}
 
-	if created > 0 {
-		log.Printf("Tunnel auto-detect: processed %d connection(s)", created)
+	// Clean up auto-detected connections not refreshed in this cycle
+	// (interfaces deleted, type changed, or devices removed)
+	removed := p.db.CleanupStaleAutoConnectionsBefore(cycleStart)
+
+	if created > 0 || removed > 0 {
+		log.Printf("Tunnel auto-detect: upserted %d, cleaned up %d stale connection(s)", created, removed)
 	}
 }
 

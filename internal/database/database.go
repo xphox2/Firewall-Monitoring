@@ -435,7 +435,22 @@ func (d *Database) FindConnectionByDevicePair(deviceA, deviceB uint) (*models.De
 	return &conn, err
 }
 
+// FindConnectionByDevicePairAndType finds a connection between two devices of a specific type.
+func (d *Database) FindConnectionByDevicePairAndType(deviceA, deviceB uint, connType string) (*models.DeviceConnection, error) {
+	var conn models.DeviceConnection
+	err := d.db.Where(
+		"((source_device_id = ? AND dest_device_id = ?) OR (source_device_id = ? AND dest_device_id = ?)) AND connection_type = ?",
+		deviceA, deviceB, deviceB, deviceA, connType,
+	).First(&conn).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &conn, err
+}
+
 // UpsertAutoConnection creates or updates an auto-detected connection.
+// Uses device pair + connection_type as the unique key, allowing multiple
+// connection types between the same pair (e.g. ipsec + l2vlan).
 // Manual connections (AutoDetected=false) are never overwritten.
 func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNames, name, connType, matchMethod string) error {
 	if connType == "" {
@@ -445,7 +460,7 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 		matchMethod = "ip_match"
 	}
 
-	existing, err := d.FindConnectionByDevicePair(sourceID, destID)
+	existing, err := d.FindConnectionByDevicePairAndType(sourceID, destID, connType)
 	if err != nil {
 		return err
 	}
@@ -498,6 +513,15 @@ func (d *Database) CleanupStaleAutoConnections(skipNames []string) int64 {
 		return 0
 	}
 	result := d.db.Where("auto_detected = ? AND tunnel_names IN ?", true, skipNames).
+		Delete(&models.DeviceConnection{})
+	return result.RowsAffected
+}
+
+// CleanupStaleAutoConnectionsBefore deletes auto-detected connections whose
+// last_check is older than the given timestamp. Called after each detection
+// cycle to remove connections whose interfaces no longer exist.
+func (d *Database) CleanupStaleAutoConnectionsBefore(before time.Time) int64 {
+	result := d.db.Where("auto_detected = ? AND last_check < ?", true, before).
 		Delete(&models.DeviceConnection{})
 	return result.RowsAffected
 }
