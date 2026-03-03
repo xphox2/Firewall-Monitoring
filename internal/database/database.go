@@ -96,6 +96,9 @@ func (d *Database) migrate() error {
 		&models.SyslogMessage{},
 		&models.FlowSample{},
 		&models.SiteDatabase{},
+		&models.SecurityStats{},
+		&models.SDWANHealth{},
+		&models.LicenseInfo{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -728,6 +731,34 @@ func (d *Database) SaveHardwareSensors(sensors []models.HardwareSensor) error {
 		return nil
 	}
 	return d.db.Create(&sensors).Error
+}
+
+func (d *Database) SaveHAStatuses(statuses []models.HAStatus) error {
+	if len(statuses) == 0 {
+		return nil
+	}
+	return d.db.Create(&statuses).Error
+}
+
+func (d *Database) SaveSecurityStats(stats []models.SecurityStats) error {
+	if len(stats) == 0 {
+		return nil
+	}
+	return d.db.Create(&stats).Error
+}
+
+func (d *Database) SaveSDWANHealth(health []models.SDWANHealth) error {
+	if len(health) == 0 {
+		return nil
+	}
+	return d.db.Create(&health).Error
+}
+
+func (d *Database) SaveLicenseInfo(licenses []models.LicenseInfo) error {
+	if len(licenses) == 0 {
+		return nil
+	}
+	return d.db.Create(&licenses).Error
 }
 
 func (d *Database) SaveSyslogMessage(msg *models.SyslogMessage) error {

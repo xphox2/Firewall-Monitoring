@@ -18,6 +18,18 @@ type SystemStatus struct {
 	DiskTotal    uint64    `json:"disk_total"`
 	SessionCount int       `json:"session_count"`
 	Uptime       uint64    `json:"uptime"`
+	// Extended session/memory/signature telemetry
+	SessionRate1  int    `json:"session_rate_1"`
+	SessionRate10 int    `json:"session_rate_10"`
+	SessionRate30 int    `json:"session_rate_30"`
+	SessionRate60 int    `json:"session_rate_60"`
+	SessionCount6 int    `json:"session_count_6"`
+	LowMemUsage   int    `json:"low_mem_usage"`
+	LowMemCap     int    `json:"low_mem_cap"`
+	AVVersion     string `json:"av_version"`
+	IPSVersion    string `json:"ips_version"`
+	SSLVPNUsers   int    `json:"sslvpn_users"`
+	SSLVPNTunnels int    `json:"sslvpn_tunnels"`
 }
 
 type InterfaceStats struct {
@@ -52,6 +64,7 @@ type VPNStatus struct {
 	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
 	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
 	TunnelName  string    `json:"tunnel_name"`
+	TunnelType  string    `json:"tunnel_type"`
 	RemoteIP    string    `json:"remote_ip"`
 	Status      string    `json:"status"`
 	BytesIn     uint64    `json:"bytes_in"`
@@ -62,17 +75,66 @@ type VPNStatus struct {
 }
 
 type HAStatus struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	Timestamp       time.Time `json:"timestamp"`
-	DeviceID        uint      `json:"device_id" gorm:"index"`
-	ClusterName     string    `json:"cluster_name"`
-	Mode            string    `json:"mode"`
-	MasterIP        string    `json:"master_ip"`
-	SlaveIP         string    `json:"slave_ip"`
-	MasterPriority  int       `json:"master_priority"`
-	SlavePriority   int       `json:"slave_priority"`
-	HeartbeatStatus string    `json:"heartbeat_status"`
-	SyncStatus      string    `json:"sync_status"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index:idx_ha_device_ts,priority:2"`
+	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_ha_device_ts,priority:1"`
+	SystemMode     string    `json:"system_mode"`
+	GroupID        int       `json:"group_id"`
+	GroupName      string    `json:"group_name"`
+	MemberIndex    int       `json:"member_index"`
+	MemberSerial   string    `json:"member_serial"`
+	MemberHostname string    `json:"member_hostname"`
+	CPUUsage       float64   `json:"cpu_usage"`
+	MemoryUsage    float64   `json:"memory_usage"`
+	NetworkUsage   int       `json:"network_usage"`
+	SessionCount   int       `json:"session_count"`
+	PacketCount    uint64    `json:"packet_count"`
+	ByteCount      uint64    `json:"byte_count"`
+	SyncStatus     string    `json:"sync_status"`
+	MasterSerial   string    `json:"master_serial"`
+}
+
+type SecurityStats struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index:idx_secstats_device_ts,priority:2"`
+	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_secstats_device_ts,priority:1"`
+	AVDetected     uint64    `json:"av_detected"`
+	AVBlocked      uint64    `json:"av_blocked"`
+	AVHTTPDetected uint64    `json:"av_http_detected"`
+	AVHTTPBlocked  uint64    `json:"av_http_blocked"`
+	AVSMTPDetected uint64    `json:"av_smtp_detected"`
+	AVSMTPBlocked  uint64    `json:"av_smtp_blocked"`
+	IPSDetected    uint64    `json:"ips_detected"`
+	IPSBlocked     uint64    `json:"ips_blocked"`
+	IPSCritical    uint64    `json:"ips_critical"`
+	IPSHigh        uint64    `json:"ips_high"`
+	IPSMedium      uint64    `json:"ips_medium"`
+	IPSLow         uint64    `json:"ips_low"`
+	IPSInfo        uint64    `json:"ips_info"`
+	WFHTTPBlocked  uint64    `json:"wf_http_blocked"`
+	WFHTTPSBlocked uint64    `json:"wf_https_blocked"`
+	WFURLBlocked   uint64    `json:"wf_url_blocked"`
+}
+
+type SDWANHealth struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	Timestamp  time.Time `json:"timestamp" gorm:"index:idx_sdwan_device_ts,priority:2"`
+	DeviceID   uint      `json:"device_id" gorm:"index;index:idx_sdwan_device_ts,priority:1"`
+	Name       string    `json:"name"`
+	Interface  string    `json:"interface"`
+	State      string    `json:"state"`
+	Latency    float64   `json:"latency"`
+	PacketLoss float64   `json:"packet_loss"`
+	PacketSend uint64    `json:"packet_send"`
+	PacketRecv uint64    `json:"packet_recv"`
+}
+
+type LicenseInfo struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_license_device_ts,priority:2"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_license_device_ts,priority:1"`
+	Description string    `json:"description"`
+	ExpiryDate  string    `json:"expiry_date"`
 }
 
 type HardwareSensor struct {
@@ -320,6 +382,9 @@ func (SystemStatus) TableName() string        { return "system_status" }
 func (InterfaceStats) TableName() string      { return "interface_stats" }
 func (VPNStatus) TableName() string           { return "vpn_status" }
 func (HAStatus) TableName() string            { return "ha_status" }
+func (SecurityStats) TableName() string       { return "security_stats" }
+func (SDWANHealth) TableName() string         { return "sdwan_health" }
+func (LicenseInfo) TableName() string         { return "license_info" }
 func (HardwareSensor) TableName() string      { return "hardware_sensors" }
 func (TrapEvent) TableName() string           { return "trap_events" }
 func (Alert) TableName() string               { return "alerts" }

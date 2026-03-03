@@ -337,3 +337,111 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(statuses)}))
 }
+
+func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var statuses []models.HAStatus
+	if err := c.ShouldBindJSON(&statuses); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(statuses) > 500 {
+		statuses = statuses[:500]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range statuses {
+		if statuses[i].Timestamp.IsZero() {
+			statuses[i].Timestamp = now
+		}
+	}
+	if err := h.db.SaveHAStatuses(statuses); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save HA statuses"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(statuses)}))
+}
+
+func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var stats []models.SecurityStats
+	if err := c.ShouldBindJSON(&stats); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(stats) > 500 {
+		stats = stats[:500]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range stats {
+		if stats[i].Timestamp.IsZero() {
+			stats[i].Timestamp = now
+		}
+	}
+	if err := h.db.SaveSecurityStats(stats); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save security stats"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(stats)}))
+}
+
+func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var health []models.SDWANHealth
+	if err := c.ShouldBindJSON(&health); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(health) > 500 {
+		health = health[:500]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range health {
+		if health[i].Timestamp.IsZero() {
+			health[i].Timestamp = now
+		}
+	}
+	if err := h.db.SaveSDWANHealth(health); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save SD-WAN health"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(health)}))
+}
+
+func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var licenses []models.LicenseInfo
+	if err := c.ShouldBindJSON(&licenses); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(licenses) > 500 {
+		licenses = licenses[:500]
+	}
+	now := time.Now()
+	_ = probe
+	for i := range licenses {
+		if licenses[i].Timestamp.IsZero() {
+			licenses[i].Timestamp = now
+		}
+	}
+	if err := h.db.SaveLicenseInfo(licenses); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save license info"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(licenses)}))
+}

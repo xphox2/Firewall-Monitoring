@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.35] - 2026-03-02
+
+### Added
+- **Comprehensive FortiGate SNMP monitoring expansion** across 6 areas:
+  - **Extended SystemStatus**: Session setup rates (1/10/30/60 min averages), IPv6 session count, low memory utilization, AV/IPS signature versions, SSL-VPN aggregate user/tunnel counts
+  - **SSL-VPN tunnels**: SSL-VPN client sessions now appear in VPN status with `tunnel_type: "sslvpn"` alongside IPSec tunnels (`ipsec`, `ipsec-dialup`)
+  - **HA cluster monitoring**: Redesigned `HAStatus` model with per-member rows — CPU, memory, network, sessions, packets, bytes, sync status, master serial per HA member
+  - **Security stats**: New `SecurityStats` model tracking AV detected/blocked (total, HTTP, SMTP), IPS detected/blocked by severity, and WebFilter HTTP/HTTPS/URL blocked counts
+  - **SD-WAN health checks**: New `SDWANHealth` model with per-link name, interface, state (alive/dead), latency, packet loss, send/recv counters
+  - **License/contract tracking**: New `LicenseInfo` model with contract description and expiry date
+- `TunnelType` field on `VPNStatus` model to distinguish IPSec site-to-site, IPSec dialup, and SSL-VPN tunnels
+- 4 new probe data ingestion endpoints: `POST /api/probes/:id/ha-status`, `/security-stats`, `/sdwan-health`, `/license-info`
+- Database save methods: `SaveHAStatuses`, `SaveSecurityStats`, `SaveSDWANHealth`, `SaveLicenseInfo`
+- Auto-migration for new tables: `security_stats`, `sdwan_health`, `license_info`
+
 ## [0.10.34] - 2026-03-02
 
 ### Added
