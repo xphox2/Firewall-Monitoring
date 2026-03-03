@@ -11,7 +11,8 @@
         if (!conn) return;
 
         // Fetch detail data for tunnels
-        window.apiFetch(`${window.API_BASE}/connections/${connId}/detail`).then(data => {
+        window.apiFetch(`${window.API_BASE}/connections/${connId}/detail`).then(resp => {
+            const data = resp && resp.data ? resp.data : resp;
             if (!data) return;
             renderOverlay(conn, data);
         }).catch(e => console.error('Tunnel zoom failed:', e));

@@ -171,7 +171,8 @@
 
     async function loadPanelDetail(connId, conn) {
         try {
-            const data = await window.apiFetch(`${window.API_BASE}/connections/${connId}/detail`);
+            const resp = await window.apiFetch(`${window.API_BASE}/connections/${connId}/detail`);
+            const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             const c = data.connection || conn;
             const srcName = c.source_device?.name || conn.source_device?.name || 'Device ' + c.source_device_id;
@@ -201,7 +202,8 @@
 
     async function loadPanelTrafficChart(connId, range) {
         try {
-            const data = await window.apiFetch(`${window.API_BASE}/connections/${connId}/traffic?range=${range}`);
+            const resp = await window.apiFetch(`${window.API_BASE}/connections/${connId}/traffic?range=${range}`);
+            const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             const canvas = document.getElementById('panel-traffic-chart');
             if (!canvas) return;
@@ -228,7 +230,8 @@
 
     async function loadPanelFlowStats(connId, hours) {
         try {
-            const data = await window.apiFetch(`${window.API_BASE}/connections/${connId}/flows?hours=${hours}`);
+            const resp = await window.apiFetch(`${window.API_BASE}/connections/${connId}/flows?hours=${hours}`);
+            const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
             const hasData = data.total_flows > 0;
             const content = document.getElementById('panel-flow-content');
@@ -343,7 +346,8 @@
             evt.target.classList.add('active');
         }
         try {
-            const data = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn/${encodeURIComponent(tunnelName)}/chart?range=${range}`);
+            const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn/${encodeURIComponent(tunnelName)}/chart?range=${range}`);
+            const data = resp && resp.data ? resp.data : resp;
             if (!data) return;
             const canvas = document.getElementById('pchart-' + rowId);
             if (!canvas) return;

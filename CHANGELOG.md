@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.60] - 2026-03-03
+
+### Fixed
+- **CSP data: URI images**: Added `img-src 'self' data:` to Content-Security-Policy so Chart.js inline data-URI images are not blocked
+- **Panel traffic chart crash**: All `window.apiFetch()` calls in `diagram-panels.js` and `diagram-tunnel-zoom.js` now unwrap the `{success, data}` response envelope — fixes `data.map is not a function` errors on traffic, detail, flows, and tunnel chart panels
+
 ## [0.10.59] - 2026-03-03
 
 ### Fixed
