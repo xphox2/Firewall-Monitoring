@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.40] - 2026-03-02
+
+### Added
+- **IPSec Phase 2 selector support**: VPNStatus model now includes `phase1_name`, `local_subnet`, `remote_subnet`, and `tunnel_uptime` fields collected via FortiGate SNMP OIDs (.2, .5-.8, .21)
+- **Phase 2 subnet display**: Connection detail and device detail VPN tables now show Phase 1 name, Phase 2 name, local/remote subnets in CIDR notation, and tunnel uptime
+- **Bidirectional traffic animation**: SVG connection diagram and connection detail bridge now show particles flowing both directions — TX (connection color, source→dest) and RX (blue, dest→source)
+- **Expanded tunnel auto-detection**: Renamed `detectVXLANConnections` → `detectTunnelConnections` to support IPSec, GRE, L2TP, WireGuard, and hub/spoke topologies — creates pairwise connections for multi-device tunnel groups
+- **Tunnel Name match method badge**: Auto-detected tunnel connections display "Tunnel Name" discovery badge in orange across admin, network, and connection detail pages
+- **`buildCIDR()` helper**: Combines IP address and subnet mask from SNMP into CIDR notation (e.g., "10.0.0.0/24")
+
+### Fixed
+- **sFlow tunnel interface matching**: Broadened matching strategy with three fallback layers — name/description/alias match, VPN-type interface match, and tunnel remote IP fallback — so "no traffic samples match" message is far less likely when sFlow is enabled
+- **Broken build**: Fixed dangling call to removed `detectVXLANConnections` function (renamed to `detectTunnelConnections`)
+
 ## [0.10.39] - 2026-03-02
 
 ### Fixed

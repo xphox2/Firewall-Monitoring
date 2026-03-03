@@ -1747,43 +1747,69 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		allIPs[ip] = true
 	}
 
-	// Try to find tunnel interface indices by matching tunnel names to interface names
+	// Collect tunnel remote IPs for IP-based flow matching
 	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
 	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
-	var tunnelIfIndices []int
 	var tunnelNames []string
+	tunnelRemoteIPs := make(map[string]bool)
 	for _, t := range srcTunnels {
 		tunnelNames = append(tunnelNames, t.TunnelName)
+		if t.RemoteIP != "" {
+			tunnelRemoteIPs[t.RemoteIP] = true
+		}
 	}
 	for _, t := range dstTunnels {
 		tunnelNames = append(tunnelNames, t.TunnelName)
+		if t.RemoteIP != "" {
+			tunnelRemoteIPs[t.RemoteIP] = true
+		}
 	}
 
+	// Try to find tunnel interface indices via multiple matching strategies
+	var tunnelIfIndices []int
+	ifIndexSet := make(map[int]bool)
 	if len(tunnelNames) > 0 {
+		// Strategy 1: Match tunnel name to interface name
 		var ifaces []models.InterfaceStats
-		d.db.Where("device_id IN ? AND name IN ?", deviceIDs, tunnelNames).Group("device_id, `index`").Find(&ifaces)
+		d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)",
+			deviceIDs, tunnelNames, tunnelNames, tunnelNames).Scan(&ifaces)
 		for _, iface := range ifaces {
-			tunnelIfIndices = append(tunnelIfIndices, iface.Index)
+			ifIndexSet[iface.Index] = true
 		}
+
+		// Strategy 2: Match VPN-type interfaces (tunnel, ipsec types)
+		if len(ifIndexSet) == 0 {
+			var vpnIfaces []models.InterfaceStats
+			d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (type_name IN ('tunnel','ipsec','vxlan','gre') OR name LIKE 'vpn%' OR name LIKE 'ipsec%' OR name LIKE 'tun%' OR name LIKE 'vxlan%')",
+				deviceIDs).Scan(&vpnIfaces)
+			for _, iface := range vpnIfaces {
+				ifIndexSet[iface.Index] = true
+			}
+		}
+	}
+	for idx := range ifIndexSet {
+		tunnelIfIndices = append(tunnelIfIndices, idx)
 	}
 
 	result := &ConnectionFlowResult{}
 	protoNames := map[uint8]string{0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP", 17: "UDP", 41: "IPv6", 47: "GRE", 50: "ESP", 51: "AH", 58: "ICMPv6", 88: "EIGRP", 89: "OSPF", 132: "SCTP"}
 
-	// Helper to build a fresh base query each time (avoids GORM session accumulation)
-	var ipList []string
-	useIfIndex := len(tunnelIfIndices) > 0
-	if !useIfIndex {
-		ipList = make([]string, 0, len(allIPs))
-		for ip := range allIPs {
-			ipList = append(ipList, ip)
-		}
+	// Build IP list for fallback: include device IPs + tunnel remote IPs
+	ipList := make([]string, 0, len(allIPs)+len(tunnelRemoteIPs))
+	for ip := range allIPs {
+		ipList = append(ipList, ip)
 	}
+	for ip := range tunnelRemoteIPs {
+		ipList = append(ipList, ip)
+	}
+
 	newBase := func() *gorm.DB {
 		q := d.db.Model(&models.FlowSample{}).Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff)
-		if useIfIndex {
+		if len(tunnelIfIndices) > 0 {
+			// Match flows traversing tunnel interfaces
 			q = q.Where("input_if_index IN ? OR output_if_index IN ?", tunnelIfIndices, tunnelIfIndices)
-		} else {
+		} else if len(ipList) > 0 {
+			// Fallback: flows with src/dst matching device or tunnel IPs
 			q = q.Where("src_addr IN ? OR dst_addr IN ?", ipList, ipList)
 		}
 		return q

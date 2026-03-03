@@ -804,6 +804,7 @@
                 'interface_ip': '<span class="badge" style="background:#1f6feb;font-size:0.65rem;padding:1px 5px;">WAN IP</span>',
                 'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Bidirectional</span>',
                 'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
+                'tunnel_name': '<span class="badge" style="background:#d29922;font-size:0.65rem;padding:1px 5px;">Tunnel Name</span>',
                 'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
             };
             return badges[method] || badges['ip_match'];
@@ -1912,18 +1913,39 @@
                 }
                 svg.appendChild(path);
 
-                // Animated particles for "up" connections
+                // Animated particles for "up" connections — bidirectional TX/RX
                 if (isUp) {
-                    for (let p = 0; p < 3; p++) {
+                    // TX particles: source → dest (connection color)
+                    for (let p = 0; p < 2; p++) {
                         const circle = document.createElementNS(NS, 'circle');
                         circle.setAttribute('r', '3');
                         circle.setAttribute('fill', color);
                         circle.setAttribute('opacity', '0.85');
                         const motion = document.createElementNS(NS, 'animateMotion');
                         motion.setAttribute('dur', '4s');
-                        motion.setAttribute('begin', `${p * 1.3}s`);
+                        motion.setAttribute('begin', `${p * 2}s`);
                         motion.setAttribute('repeatCount', 'indefinite');
                         motion.setAttribute('fill', 'freeze');
+                        const mpath = document.createElementNS(NS, 'mpath');
+                        mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
+                        motion.appendChild(mpath);
+                        circle.appendChild(motion);
+                        svg.appendChild(circle);
+                    }
+                    // RX particles: dest → source (blue, reverse along same path)
+                    for (let p = 0; p < 2; p++) {
+                        const circle = document.createElementNS(NS, 'circle');
+                        circle.setAttribute('r', '2.5');
+                        circle.setAttribute('fill', '#58a6ff');
+                        circle.setAttribute('opacity', '0.7');
+                        const motion = document.createElementNS(NS, 'animateMotion');
+                        motion.setAttribute('dur', '4.5s');
+                        motion.setAttribute('begin', `${p * 2.2 + 0.5}s`);
+                        motion.setAttribute('repeatCount', 'indefinite');
+                        motion.setAttribute('fill', 'freeze');
+                        motion.setAttribute('keyPoints', '1;0');
+                        motion.setAttribute('keyTimes', '0;1');
+                        motion.setAttribute('calcMode', 'linear');
                         const mpath = document.createElementNS(NS, 'mpath');
                         mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
                         motion.appendChild(mpath);
@@ -1983,7 +2005,7 @@
 
         function showConnDetailPanel(conn) {
             const panel = document.getElementById('conn-detail-panel-container');
-            const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',manual:'Manual'};
+            const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',tunnel_name:'Tunnel Name',manual:'Manual'};
             const srcName = conn.source_device?.name || 'Device ' + conn.source_device_id;
             const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
             const typeBadge = conn.connection_type === 'vxlan'

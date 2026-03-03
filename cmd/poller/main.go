@@ -133,7 +133,7 @@ func (p *Poller) pollAllDevices() {
 	}
 
 	p.detectVPNConnections(devices)
-	p.detectVXLANConnections(devices)
+	p.detectTunnelConnections(devices)
 }
 
 func (p *Poller) pollDevice(device *models.Device) {
@@ -469,16 +469,18 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 	}
 }
 
-// detectVXLANConnections finds VXLAN/tunnel interfaces with matching names across devices
-// and creates auto-detected connections for them.
-func (p *Poller) detectVXLANConnections(devices []models.Device) {
+// detectTunnelConnections finds matching tunnel/overlay interfaces across devices and
+// creates auto-detected connections. Supports VXLAN, GRE, IPsec interfaces, and any
+// tunnel-type interface. For hub-spoke topologies, creates pairwise connections between
+// all devices sharing the same interface name.
+func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	if p.db == nil || len(devices) == 0 {
 		return
 	}
 
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
-		log.Printf("VXLAN auto-detect: failed to get interfaces - %v", err)
+		log.Printf("Tunnel auto-detect: failed to get interfaces - %v", err)
 		return
 	}
 
@@ -491,10 +493,24 @@ func (p *Poller) detectVXLANConnections(devices []models.Device) {
 	skipNames := map[string]bool{
 		"loopback0": true, "lo": true, "lo0": true,
 		"mgmt": true, "mgmt0": true, "management": true,
-		"null0": true, "":  true,
+		"null0": true, "": true,
 	}
 
-	// Group VXLAN/tunnel interfaces by normalized name
+	// Tunnel-like interface types and name prefixes
+	tunnelTypes := map[string]bool{
+		"vxlan": true, "tunnel": true, "gre": true, "ipsec": true,
+		"l2tp": true, "pptp": true, "ipip": true,
+	}
+	isTunnelName := func(name string) bool {
+		n := strings.ToLower(name)
+		for _, prefix := range []string{"vpn", "ipsec", "tun", "vxlan", "gre", "wg", "hub", "spoke", "dialup"} {
+			if strings.HasPrefix(n, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
 	type ifEntry struct {
 		deviceID uint
 		name     string
@@ -504,7 +520,8 @@ func (p *Poller) detectVXLANConnections(devices []models.Device) {
 	nameGroups := make(map[string][]ifEntry)
 
 	for _, iface := range ifaces {
-		if iface.TypeName != "vxlan" && iface.TypeName != "tunnel" {
+		// Accept known tunnel types OR tunnel-like naming patterns
+		if !tunnelTypes[strings.ToLower(iface.TypeName)] && !isTunnelName(iface.Name) {
 			continue
 		}
 		normalized := strings.ToLower(strings.TrimSpace(iface.Name))
@@ -519,49 +536,87 @@ func (p *Poller) detectVXLANConnections(devices []models.Device) {
 		})
 	}
 
+	// Deduplicate entries per group (same device may have multiple timestamps)
+	pairKey := func(a, b uint) string {
+		if a > b {
+			a, b = b, a
+		}
+		return fmt.Sprintf("%d:%d", a, b)
+	}
+	processed := make(map[string]bool)
 	created := 0
+
 	for _, entries := range nameGroups {
-		// Only match if exactly 2 different devices share this interface name
-		if len(entries) != 2 {
+		// Deduplicate by device
+		seen := make(map[uint]*ifEntry)
+		for i := range entries {
+			if _, ok := seen[entries[i].deviceID]; !ok {
+				seen[entries[i].deviceID] = &entries[i]
+			}
+		}
+		if len(seen) < 2 {
 			continue
 		}
-		if entries[0].deviceID == entries[1].deviceID {
-			continue
-		}
-		// Both must be the same type
-		if entries[0].typeName != entries[1].typeName {
-			continue
+
+		// Determine connection type from interface type
+		connType := "tunnel"
+		for _, e := range seen {
+			t := strings.ToLower(e.typeName)
+			if t == "vxlan" {
+				connType = "vxlan"
+				break
+			} else if t == "gre" {
+				connType = "gre"
+			} else if t == "ipsec" && connType != "gre" {
+				connType = "ipsec"
+			}
 		}
 
-		srcID, dstID := entries[0].deviceID, entries[1].deviceID
-		if srcID > dstID {
-			srcID, dstID = dstID, srcID
+		// Create pairwise connections for hub-spoke (all pairs, not just exactly 2)
+		deviceList := make([]*ifEntry, 0, len(seen))
+		for _, e := range seen {
+			deviceList = append(deviceList, e)
 		}
 
-		status := "down"
-		if entries[0].status == "up" && entries[1].status == "up" {
-			status = "up"
-		}
+		for i := 0; i < len(deviceList); i++ {
+			for j := i + 1; j < len(deviceList); j++ {
+				a, b := deviceList[i], deviceList[j]
+				key := pairKey(a.deviceID, b.deviceID)
+				if processed[key] {
+					continue
+				}
+				processed[key] = true
 
-		srcName, dstName := "?", "?"
-		if d, ok := deviceByID[srcID]; ok {
-			srcName = d.Name
-		}
-		if d, ok := deviceByID[dstID]; ok {
-			dstName = d.Name
-		}
-		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
-		tunnelNames := entries[0].name
+				srcID, dstID := a.deviceID, b.deviceID
+				if srcID > dstID {
+					srcID, dstID = dstID, srcID
+				}
 
-		if err := p.db.UpsertAutoConnection(srcID, dstID, status, tunnelNames, connName, "vxlan", "vxlan_name"); err != nil {
-			log.Printf("VXLAN auto-detect: failed to upsert connection %s - %v", connName, err)
-		} else {
-			created++
+				status := "down"
+				if a.status == "up" && b.status == "up" {
+					status = "up"
+				}
+
+				srcName, dstName := "?", "?"
+				if d, ok := deviceByID[srcID]; ok {
+					srcName = d.Name
+				}
+				if d, ok := deviceByID[dstID]; ok {
+					dstName = d.Name
+				}
+				connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
+
+				if err := p.db.UpsertAutoConnection(srcID, dstID, status, a.name, connName, connType, "tunnel_name"); err != nil {
+					log.Printf("Tunnel auto-detect: failed to upsert connection %s - %v", connName, err)
+				} else {
+					created++
+				}
+			}
 		}
 	}
 
 	if created > 0 {
-		log.Printf("VXLAN auto-detect: processed %d connection(s)", created)
+		log.Printf("Tunnel auto-detect: processed %d connection(s)", created)
 	}
 }
 

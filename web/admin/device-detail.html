@@ -293,12 +293,16 @@
                     <table>
                         <thead>
                             <tr>
-                                <th>Tunnel Name</th>
+                                <th>Phase 1</th>
+                                <th>Phase 2</th>
                                 <th>Type</th>
-                                <th>Remote Gateway</th>
+                                <th>Remote GW</th>
                                 <th>Status</th>
+                                <th>Local Subnet</th>
+                                <th>Remote Subnet</th>
                                 <th>Bytes In</th>
                                 <th>Bytes Out</th>
+                                <th>Uptime</th>
                             </tr>
                         </thead>
                         <tbody id="vpnBody"></tbody>
@@ -882,12 +886,16 @@
         empty.style.display = 'none';
 
         body.innerHTML = vpn.map(v => `<tr>
+            <td>${esc(v.phase1_name || v.tunnel_name)}</td>
             <td><strong>${esc(v.tunnel_name)}</strong></td>
             <td>${getTunnelTypeBadge(v.tunnel_type)}</td>
             <td>${esc(v.remote_ip)}</td>
             <td><span class="badge ${v.status}">${v.status}</span></td>
+            <td><code style="color:#58a6ff;font-size:0.8rem;">${esc(v.local_subnet || '-')}</code></td>
+            <td><code style="color:#3fb950;font-size:0.8rem;">${esc(v.remote_subnet || '-')}</code></td>
             <td>${formatBytes(v.bytes_in)}</td>
             <td>${formatBytes(v.bytes_out)}</td>
+            <td>${formatVpnUptime(v.tunnel_uptime)}</td>
         </tr>`).join('');
 
         // Update tab label with count
@@ -1119,6 +1127,17 @@
         let val = bytes;
         while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
         return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    }
+
+    function formatVpnUptime(hundredths) {
+        if (!hundredths) return '-';
+        const secs = Math.floor(hundredths / 100);
+        const d = Math.floor(secs / 86400);
+        const h = Math.floor((secs % 86400) / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        if (d > 0) return d + 'd ' + h + 'h';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
     }
 
     function formatSpeed(iface) {

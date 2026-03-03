@@ -216,7 +216,7 @@
                 <h2 id="src-tunnels-title">Source Tunnels</h2>
                 <div class="table-scroll">
                     <table id="src-tunnels-table">
-                        <thead><tr><th></th><th>Name</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Bytes In</th><th>Bytes Out</th><th>Packets In</th><th>Packets Out</th></tr></thead>
+                        <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -229,7 +229,7 @@
                 <h2 id="dst-tunnels-title">Destination Tunnels</h2>
                 <div class="table-scroll">
                     <table id="dst-tunnels-table">
-                        <thead><tr><th></th><th>Name</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Bytes In</th><th>Bytes Out</th><th>Packets In</th><th>Packets Out</th></tr></thead>
+                        <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -371,10 +371,13 @@
                 <animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
             </circle>
             <circle r="4" fill="${pathColor}" opacity="0.85">
-                <animateMotion dur="3s" begin="1s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
+                <animateMotion dur="3s" begin="1.5s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
             </circle>
-            <circle r="4" fill="${pathColor}" opacity="0.85">
-                <animateMotion dur="3s" begin="2s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
+            <circle r="3" fill="#58a6ff" opacity="0.7">
+                <animateMotion dur="3.5s" begin="0.5s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#bridge-path"/></animateMotion>
+            </circle>
+            <circle r="3" fill="#58a6ff" opacity="0.7">
+                <animateMotion dur="3.5s" begin="2s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#bridge-path"/></animateMotion>
             </circle>
         ` : '';
         const pulseAnim = status === 'down' ? '<animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>' : '';
@@ -435,10 +438,21 @@
         document.getElementById('dst-tunnels-title').textContent = `Destination Tunnels (${dstName})`;
     }
 
+    function formatUptime(hundredths) {
+        if (!hundredths) return '-';
+        const secs = Math.floor(hundredths / 100);
+        const d = Math.floor(secs / 86400);
+        const h = Math.floor((secs % 86400) / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        if (d > 0) return `${d}d ${h}h`;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+    }
+
     function renderTunnelTable(tableId, tunnels, deviceId) {
         const tbody = document.querySelector(`#${tableId} tbody`);
         if (!tunnels.length) {
-            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#484f58;padding:30px;">No matching tunnels found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#484f58;padding:30px;">No matching tunnels found</td></tr>';
             return;
         }
         let html = '';
@@ -449,17 +463,19 @@
             html += `
                 <tr class="tunnel-row" onclick="toggleTunnel('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}')">
                     <td><span class="chevron" id="chev-${rowId}">&#9654;</span></td>
+                    <td>${escapeHtml(t.phase1_name || t.tunnel_name)}</td>
                     <td>${escapeHtml(t.tunnel_name)}</td>
                     <td>${typeBadge}</td>
                     <td>${statusBadge}</td>
-                    <td>${escapeHtml(t.remote_ip)}</td>
+                    <td>${escapeHtml(t.remote_ip || '-')}</td>
+                    <td><code style="color:#58a6ff;font-size:0.8rem;">${escapeHtml(t.local_subnet || '-')}</code></td>
+                    <td><code style="color:#3fb950;font-size:0.8rem;">${escapeHtml(t.remote_subnet || '-')}</code></td>
                     <td>${formatBytes(t.bytes_in)}</td>
                     <td>${formatBytes(t.bytes_out)}</td>
-                    <td>${formatNum(t.packets_in)}</td>
-                    <td>${formatNum(t.packets_out)}</td>
+                    <td>${formatUptime(t.tunnel_uptime)}</td>
                 </tr>
                 <tr class="tunnel-expand" id="${rowId}">
-                    <td colspan="9">
+                    <td colspan="11">
                         <div class="tunnel-chart-wrap">
                             <div class="range-pills" style="margin-bottom:8px;">
                                 <div class="range-pill active" onclick="loadTunnelChart('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}', '1h', event)">1h</div>
