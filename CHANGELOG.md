@@ -9,6 +9,8 @@
 - **Server-side sFlow device resolution**: Flow samples arriving with `device_id=0` are now resolved server-side by matching `sampler_address` against device management IPs and interface addresses
 
 ### Added
+- **sFlow per-device filtering**: Device dropdown filter on the Flows page filters both the flow samples table and all stats charts (protocol distribution, top talkers, bytes over time) by selected device
+- **`GetFlowStats` device filter**: Flow stats aggregation query now accepts optional `device_id` parameter (`?device_id=X`)
 - **`ResolveDeviceByIP()` database function**: Resolves IP address to device ID by checking management IP and interface addresses table
 - **`collectDeviceIPs()` helper**: Centralized function for collecting all known IPs for a device (management + interface addresses)
 

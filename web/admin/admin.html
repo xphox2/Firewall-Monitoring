@@ -402,6 +402,7 @@
                     <h2>Flow Samples</h2>
                 </div>
                 <div class="filter-bar">
+                    <select id="flows-filter-device"><option value="">All Devices</option></select>
                     <select id="flows-filter-probe"><option value="">All Probes</option></select>
                     <select id="flows-filter-protocol">
                         <option value="">All Protocols</option>
@@ -1317,7 +1318,12 @@
                     const pr = await apiFetch(`${API_BASE}/probes`);
                     currentProbes = pr?.data || [];
                 }
+                if (currentDevices.length === 0) {
+                    const dr = await apiFetch(`${API_BASE}/devices`);
+                    currentDevices = dr?.data || [];
+                }
                 populateFilterProbes('flows-filter-probe');
+                populateFilterDevices('flows-filter-device');
 
                 const params = buildFlowParams(100);
                 const result = await apiFetch(`${API_BASE}/flows?${params}`);
@@ -1345,7 +1351,10 @@
 
         async function loadFlowCharts() {
             try {
-                const result = await apiFetch(`${API_BASE}/flows/stats?hours=${flowStatsHours}`);
+                let statsUrl = `${API_BASE}/flows/stats?hours=${flowStatsHours}`;
+                const deviceFilter = document.getElementById('flows-filter-device')?.value;
+                if (deviceFilter) statsUrl += '&device_id=' + deviceFilter;
+                const result = await apiFetch(statsUrl);
                 if (!result?.data) return;
                 const d = result.data;
                 document.getElementById('flows-total').textContent = (d.total_flows||0).toLocaleString();
@@ -1386,10 +1395,12 @@
 
         function buildFlowParams(limit) {
             const parts = [`limit=${limit}`];
+            const device = document.getElementById('flows-filter-device')?.value;
             const probe = document.getElementById('flows-filter-probe')?.value;
             const proto = document.getElementById('flows-filter-protocol')?.value;
             const src = document.getElementById('flows-filter-src')?.value;
             const dst = document.getElementById('flows-filter-dst')?.value;
+            if (device) parts.push('device_id=' + device);
             if (probe) parts.push('probe_id=' + probe);
             if (proto) parts.push('protocol=' + proto);
             if (src) parts.push('src_addr=' + encodeURIComponent(src));

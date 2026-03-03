@@ -146,8 +146,14 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	}
 
 	hours := httputil.ParseHours(c)
+	var deviceID uint
+	if did := c.Query("device_id"); did != "" {
+		if v, err := strconv.ParseUint(did, 10, 32); err == nil {
+			deviceID = uint(v)
+		}
+	}
 
-	stats, err := h.db.GetFlowStats(hours)
+	stats, err := h.db.GetFlowStats(hours, deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow stats"))
 		return

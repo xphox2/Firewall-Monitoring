@@ -934,30 +934,34 @@ type FlowStatsResult struct {
 	BytesOverTime []TimeBucket `json:"bytes_over_time"`
 }
 
-// GetFlowStats returns aggregated flow statistics
-func (d *Database) GetFlowStats(hours int) (*FlowStatsResult, error) {
+// GetFlowStats returns aggregated flow statistics, optionally filtered by device.
+func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &FlowStatsResult{}
 
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).Count(&result.TotalFlows)
+	newBase := func() *gorm.DB {
+		q := d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff)
+		if deviceID > 0 {
+			q = q.Where("device_id = ?", deviceID)
+		}
+		return q
+	}
+
+	newBase().Count(&result.TotalFlows)
 
 	var totalBytes struct{ Sum uint64 }
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Select("COALESCE(SUM(bytes),0) as sum").Scan(&totalBytes)
+	newBase().Select("COALESCE(SUM(bytes),0) as sum").Scan(&totalBytes)
 	result.TotalBytes = totalBytes.Sum
 
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Distinct("src_addr").Count(&result.UniqueSources)
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Distinct("dst_addr").Count(&result.UniqueDests)
+	newBase().Distinct("src_addr").Count(&result.UniqueSources)
+	newBase().Distinct("dst_addr").Count(&result.UniqueDests)
 
 	// Protocol distribution
 	var protocols []struct {
 		Protocol uint8 `json:"protocol"`
 		Count    int64 `json:"count"`
 	}
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Select("protocol, COUNT(*) as count").Group("protocol").
+	newBase().Select("protocol, COUNT(*) as count").Group("protocol").
 		Order("count DESC").Limit(10).Scan(&protocols)
 	protoNames := map[uint8]string{0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP", 17: "UDP", 41: "IPv6", 43: "IPv6-Route", 44: "IPv6-Frag", 47: "GRE", 50: "ESP", 51: "AH", 58: "ICMPv6", 59: "IPv6-NoNxt", 60: "IPv6-Opts", 88: "EIGRP", 89: "OSPF", 103: "PIM", 112: "VRRP", 132: "SCTP", 137: "MPLS-in-IP"}
 	for _, p := range protocols {
@@ -973,8 +977,7 @@ func (d *Database) GetFlowStats(hours int) (*FlowStatsResult, error) {
 		SrcAddr string `json:"src_addr"`
 		Total   int64  `json:"total"`
 	}
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Select("src_addr, SUM(bytes) as total").Group("src_addr").
+	newBase().Select("src_addr, SUM(bytes) as total").Group("src_addr").
 		Order("total DESC").Limit(10).Scan(&topSrc)
 	for _, s := range topSrc {
 		result.TopSources = append(result.TopSources, KeyCount{Key: s.SrcAddr, Count: s.Total})
@@ -985,8 +988,7 @@ func (d *Database) GetFlowStats(hours int) (*FlowStatsResult, error) {
 		Bucket string `json:"bucket"`
 		Total  int64  `json:"total"`
 	}
-	d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, SUM(bytes) as total").
+	newBase().Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, SUM(bytes) as total").
 		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
 	for _, t := range timeSeries {
 		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
