@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.56] - 2026-03-03
+
+### Added
+- **Cross-site VPN routing**: Connections between devices in different sites now route through the Internet cloud node with two-segment bezier paths (Source→Cloud + Cloud→Dest), each with unique offsets to avoid overlap. Same-site connections remain direct curves.
+- **Rich connection detail panel**: Clicking any connection line opens a full diagnostic panel inline with bridge SVG animation, KPI cards (bytes in/out, tunnel count, status), and four tabs: Overview (traffic chart with 1h/24h/7d/30d range pills), Tunnels (two-column expandable table with per-tunnel bandwidth charts), Phase 2 (IPSec selector match SVG diagrams), and Flows (protocol doughnut, traffic timeline, top sources/destinations bar charts, conversations table)
+- **Rich VPN badge panel**: Clicking a device VPN badge shows tunnels grouped into Matched (linked to known devices) and Off-Net sections, each with expandable rows containing inline Chart.js bandwidth charts with range pills
+- **Chart lifecycle management**: All panel charts tracked in `panelChartInstances` with proper cleanup on panel open/close/switch to prevent memory leaks
+- **Cloud node scaling**: Cloud node width now scales based on the number of cross-site connections and off-net tunnels
+
+### Changed
+- Off-net tunnel dashed lines now use `2,4,8,4` dot-dash pattern to visually distinguish from cross-site connection paths
+- Old `showConnDetailPanel` and `showVPNDetailPanel` replaced entirely by rich panel versions
+- Diagram re-render preserves open panel when `currentPanelConnId` is set
+
 ## [0.10.55] - 2026-03-03
 
 ### Added
