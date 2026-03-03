@@ -94,7 +94,15 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		return
 	}
 
+	probe.ID = 0
 	probe.Status = "offline"
+	probe.ApprovalStatus = "pending"
+	probe.ApprovedAt = nil
+	probe.ApprovedBy = nil
+	probe.RejectedAt = nil
+	probe.RejectedReason = ""
+	probe.LastSeen = time.Time{}
+	probe.RegistrationKey = ""
 
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
@@ -482,6 +490,12 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		return
 	}
 
+	// Authenticate probe by Bearer token
+	probe, ok := h.authenticateProbeByBearer(c)
+	if !ok {
+		return
+	}
+
 	var req struct {
 		ProbeID uint   `json:"probe_id"`
 		Status  string `json:"status"`
@@ -491,26 +505,57 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		return
 	}
 
-	if req.ProbeID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Probe ID required"})
+	// Validate that the probe_id in the body matches the authenticated probe
+	if req.ProbeID != 0 && req.ProbeID != probe.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Probe ID mismatch"})
 		return
 	}
 
-	var probe models.Probe
-	if err := h.db.Gorm().First(&probe, req.ProbeID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Probe not found"})
+	// Validate status against allowed values
+	validStatuses := map[string]bool{"online": true, "offline": true, "degraded": true}
+	if req.Status != "" && !validStatuses[req.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status value"})
 		return
 	}
 
-	h.db.Gorm().Model(&probe).Updates(map[string]interface{}{
+	status := req.Status
+	if status == "" {
+		status = "online"
+	}
+
+	h.db.Gorm().Model(probe).Updates(map[string]interface{}{
 		"last_seen": time.Now(),
-		"status":    req.Status,
+		"status":    status,
 	})
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// validateProbe parses probe ID from URL param and checks it exists and is approved.
+// authenticateProbeByBearer extracts the Bearer token from the Authorization header
+// and looks up the probe by its registration key. Returns the probe if authenticated.
+func (h *Handler) authenticateProbeByBearer(c *gin.Context) (*models.Probe, bool) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		return nil, false
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		return nil, false
+	}
+
+	// Look up probe by registration key
+	var probe models.Probe
+	if err := h.db.Gorm().Where("registration_key = ?", token).First(&probe).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
+		return nil, false
+	}
+	return &probe, true
+}
+
+// validateProbe parses probe ID from URL param and checks it exists, is approved,
+// and the caller provides a valid Bearer token matching the probe's registration key.
 func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
@@ -531,6 +576,19 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("Probe not approved"))
 		return nil, false
 	}
+
+	// Verify Bearer token matches this probe's registration key
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		return nil, false
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" || token != probe.RegistrationKey {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
+		return nil, false
+	}
+
 	// Update last_seen on any data submission
 	h.db.Gorm().Model(probe).Update("last_seen", time.Now())
 	return probe, true

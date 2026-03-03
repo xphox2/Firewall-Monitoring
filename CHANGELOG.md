@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.61] - 2026-03-03
+
+### Security (P0 — Critical)
+- **Probe endpoint authentication**: All 14 probe data-ingestion endpoints (`/api/probes/:id/syslog`, `/traps`, `/flows`, etc.), the heartbeat endpoint, and the device-list endpoint now require `Authorization: Bearer <registration_key>` — previously these were completely unauthenticated, allowing anyone who guessed a probe ID to inject fake monitoring data or read SNMP credentials. The collector already sends this header, so no collector changes are needed.
+- **Probe heartbeat validation**: `ProbeHeartbeat` now authenticates the caller by Bearer token, validates probe_id matches the authenticated probe, and restricts status to `online`/`offline`/`degraded`.
+- **Mass assignment prevention in CreateProbe**: Forces `ApprovalStatus = "pending"`, `ID = 0`, and clears all server-controlled fields before database insert — previously an attacker could POST `{"approval_status":"approved"}` to bypass the admin approval workflow.
+
+### Security (P1 — High)
+- **Hardcoded credentials removed**: Removed `changeme123!` default password from `entrypoint.sh`; cleared `JWT_SECRET_KEY`, `ADMIN_SECRET_KEY`, and `ADMIN_PASSWORD` values from `config.env.example`. Dockerfile now copies the example file as `config.env.example` (not `config.env`), so auto-generated secrets are used by default.
+- **TLS minimum version enforced**: Added `MinVersion: tls.VersionTLS12` to TLS configs in syslog receiver and relay client — previously TLS 1.0 (vulnerable to BEAST/POODLE) was accepted.
+- **Data race fix (AlertManager/Notifier)**: `Notifier.SendAlert()` now receives a `NotifyConfig` value snapshot taken under the AlertManager's lock, instead of reading shared `config.Alerts.*` fields without synchronization. Eliminates a race between `RefreshThresholds()` writes and notification reads.
+- **LIKE wildcard injection fix**: Syslog search now escapes `%` and `_` metacharacters before constructing LIKE patterns, preventing query manipulation and DoS via expensive full-table scans.
+
 ## [0.10.60] - 2026-03-03
 
 ### Fixed

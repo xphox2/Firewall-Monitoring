@@ -95,11 +95,14 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus) error {
 			alerts = append(alerts, *a)
 		}
 	}
+
+	// Snapshot notification config under lock to avoid data race with Notifier
+	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
 
 	for i := range alerts {
 		am.saveAlert(&alerts[i])
-		if err := am.notifier.SendAlert(&alerts[i]); err != nil {
+		if err := am.notifier.SendAlert(&alerts[i], nc); err != nil {
 			log.Printf("Failed to send alert %s: %v", alerts[i].AlertType, err)
 		}
 	}
@@ -131,11 +134,12 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats)
 			}
 		}
 	}
+	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
 
 	for i := range alerts {
 		am.saveAlert(&alerts[i])
-		if err := am.notifier.SendAlert(&alerts[i]); err != nil {
+		if err := am.notifier.SendAlert(&alerts[i], nc); err != nil {
 			log.Printf("Failed to send interface alert %s: %v", alerts[i].AlertType, err)
 		}
 	}
@@ -153,6 +157,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent) error {
 		if canSend {
 			am.lastAlert[key] = now
 		}
+		nc := notifier.SnapshotConfig(&am.config.Alerts)
 		am.mu.Unlock()
 
 		if !canSend {
@@ -169,7 +174,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent) error {
 		}
 
 		am.saveAlert(&alert)
-		if err := am.notifier.SendAlert(&alert); err != nil {
+		if err := am.notifier.SendAlert(&alert, nc); err != nil {
 			return fmt.Errorf("failed to send trap alert: %w", err)
 		}
 	}
@@ -300,11 +305,12 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus) error {
 			}
 		}
 	}
+	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
 
 	for i := range alerts {
 		am.saveAlert(&alerts[i])
-		if err := am.notifier.SendAlert(&alerts[i]); err != nil {
+		if err := am.notifier.SendAlert(&alerts[i], nc); err != nil {
 			log.Printf("Failed to send VPN alert: %v", err)
 		}
 	}
@@ -319,6 +325,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	if canSend {
 		am.lastAlert[key] = now
 	}
+	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
 
 	if !canSend {
@@ -335,7 +342,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	}
 
 	am.saveAlert(&alert)
-	if err := am.notifier.SendAlert(&alert); err != nil {
+	if err := am.notifier.SendAlert(&alert, nc); err != nil {
 		log.Printf("Failed to send device offline alert: %v", err)
 	}
 	return nil

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -93,8 +94,9 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 		}
 	}
 	if search := c.Query("search"); search != "" {
-		like := "%" + search + "%"
-		query = query.Where("message LIKE ? OR hostname LIKE ? OR app_name LIKE ?", like, like, like)
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(search)
+		like := "%" + escaped + "%"
+		query = query.Where("message LIKE ? ESCAPE '\\' OR hostname LIKE ? ESCAPE '\\' OR app_name LIKE ? ESCAPE '\\'", like, like, like)
 	}
 
 	var messages []models.SyslogMessage

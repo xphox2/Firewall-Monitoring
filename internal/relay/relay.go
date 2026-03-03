@@ -148,6 +148,7 @@ func NewRelayClient(config RelayConfig) *RelayClient {
 func (r *RelayClient) buildHTTPClient() *http.Client {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: false,
+		MinVersion:         tls.VersionTLS12,
 	}
 
 	if r.Config.TLSCertFile != "" && r.Config.TLSKeyFile != "" {

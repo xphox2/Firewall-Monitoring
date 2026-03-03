@@ -61,6 +61,7 @@ func (s *SyslogReceiver) Start() error {
 		}
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
 		}
 		s.listener, err = tls.Listen("tcp", addr, tlsConfig)
 	} else {

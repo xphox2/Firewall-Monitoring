@@ -31,7 +31,7 @@ COPY --from=builder /build/fwmon-poller .
 COPY --from=builder /build/fwmon-trap .
 COPY --from=builder /build/fwmon-probe .
 COPY web ./web
-COPY config.env.example ./config.env
+COPY config.env.example ./config.env.example
 
 RUN chmod +x fwmon-*
 

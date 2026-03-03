@@ -13,43 +13,74 @@ import (
 	"firewall-mon/internal/models"
 )
 
+// NotifyConfig is a snapshot of notification-related configuration fields.
+// It is passed by value to avoid data races with concurrent config updates.
+type NotifyConfig struct {
+	EmailEnabled      bool
+	SMTPHost          string
+	SMTPPort          int
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFrom          string
+	SMTPTo            string
+	SlackWebhookURL   string
+	DiscordWebhookURL string
+	WebHookURL        string
+}
+
 type Notifier struct {
-	config *config.Config
 	client *http.Client
 }
 
 func NewNotifier(cfg *config.Config) *Notifier {
+	_ = cfg // retained for API compat; config is now passed per-call via NotifyConfig
 	return &Notifier{
-		config: cfg,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
 }
 
-func (n *Notifier) SendAlert(alert *models.Alert) error {
+// SnapshotConfig creates a NotifyConfig snapshot from the given alerts config.
+// The caller must hold any necessary locks when reading cfg.
+func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
+	return NotifyConfig{
+		EmailEnabled:      cfg.EmailEnabled,
+		SMTPHost:          cfg.SMTPHost,
+		SMTPPort:          cfg.SMTPPort,
+		SMTPUsername:      cfg.SMTPUsername,
+		SMTPPassword:      cfg.SMTPPassword,
+		SMTPFrom:          cfg.SMTPFrom,
+		SMTPTo:            cfg.SMTPTo,
+		SlackWebhookURL:   cfg.SlackWebhookURL,
+		DiscordWebhookURL: cfg.DiscordWebhookURL,
+		WebHookURL:        cfg.WebHookURL,
+	}
+}
+
+func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	var errs []error
 
-	if n.config.Alerts.EmailEnabled {
-		if err := n.sendEmail(alert); err != nil {
+	if nc.EmailEnabled {
+		if err := n.sendEmail(alert, nc); err != nil {
 			errs = append(errs, fmt.Errorf("email failed: %w", err))
 		}
 	}
 
-	if n.config.Alerts.SlackWebhookURL != "" {
-		if err := n.sendSlack(alert); err != nil {
+	if nc.SlackWebhookURL != "" {
+		if err := n.sendSlack(alert, nc); err != nil {
 			errs = append(errs, fmt.Errorf("slack failed: %w", err))
 		}
 	}
 
-	if n.config.Alerts.DiscordWebhookURL != "" {
-		if err := n.sendDiscord(alert); err != nil {
+	if nc.DiscordWebhookURL != "" {
+		if err := n.sendDiscord(alert, nc); err != nil {
 			errs = append(errs, fmt.Errorf("discord failed: %w", err))
 		}
 	}
 
-	if n.config.Alerts.WebHookURL != "" {
-		if err := n.sendWebhook(alert); err != nil {
+	if nc.WebHookURL != "" {
+		if err := n.sendWebhook(alert, nc); err != nil {
 			errs = append(errs, fmt.Errorf("webhook failed: %w", err))
 		}
 	}
@@ -61,8 +92,8 @@ func (n *Notifier) SendAlert(alert *models.Alert) error {
 	return nil
 }
 
-func (n *Notifier) sendEmail(alert *models.Alert) error {
-	if n.config.Alerts.SMTPHost == "" {
+func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
+	if nc.SMTPHost == "" {
 		return nil
 	}
 
@@ -90,18 +121,18 @@ This is an automated alert from your Firewall monitoring system.
 `, alert.AlertType, alert.Severity, alert.Timestamp.Format(time.RFC3339),
 		alert.Message, alert.MetricName, alert.CurrentValue, alert.Threshold)
 
-	addr := fmt.Sprintf("%s:%d", n.config.Alerts.SMTPHost, n.config.Alerts.SMTPPort)
+	addr := fmt.Sprintf("%s:%d", nc.SMTPHost, nc.SMTPPort)
 
 	var auth smtp.Auth
-	if n.config.Alerts.SMTPUsername != "" {
-		auth = smtp.PlainAuth("", n.config.Alerts.SMTPUsername, n.config.Alerts.SMTPPassword, n.config.Alerts.SMTPHost)
+	if nc.SMTPUsername != "" {
+		auth = smtp.PlainAuth("", nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
 	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		n.config.Alerts.SMTPFrom, n.config.Alerts.SMTPTo, subject, body)
+		nc.SMTPFrom, nc.SMTPTo, subject, body)
 
-	err := smtp.SendMail(addr, auth, n.config.Alerts.SMTPFrom,
-		[]string{n.config.Alerts.SMTPTo}, []byte(msg))
+	err := smtp.SendMail(addr, auth, nc.SMTPFrom,
+		[]string{nc.SMTPTo}, []byte(msg))
 
 	if err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
@@ -110,7 +141,7 @@ This is an automated alert from your Firewall monitoring system.
 	return nil
 }
 
-func (n *Notifier) sendSlack(alert *models.Alert) error {
+func (n *Notifier) sendSlack(alert *models.Alert, nc NotifyConfig) error {
 	color := "#36a64f"
 	if alert.Severity == "warning" {
 		color = "#ff9800"
@@ -134,7 +165,7 @@ func (n *Notifier) sendSlack(alert *models.Alert) error {
 		},
 	}
 
-	return n.postJSON(n.config.Alerts.SlackWebhookURL, payload)
+	return n.postJSON(nc.SlackWebhookURL, payload)
 }
 
 // postJSON marshals payload to JSON and POSTs it to url, returning an error on
@@ -163,7 +194,7 @@ func (n *Notifier) postJSON(url string, payload interface{}) error {
 	return nil
 }
 
-func (n *Notifier) sendDiscord(alert *models.Alert) error {
+func (n *Notifier) sendDiscord(alert *models.Alert, nc NotifyConfig) error {
 	color := 3066993
 	if alert.Severity == "warning" {
 		color = 15105570
@@ -188,10 +219,10 @@ func (n *Notifier) sendDiscord(alert *models.Alert) error {
 		},
 	}
 
-	return n.postJSON(n.config.Alerts.DiscordWebhookURL, payload)
+	return n.postJSON(nc.DiscordWebhookURL, payload)
 }
 
-func (n *Notifier) sendWebhook(alert *models.Alert) error {
+func (n *Notifier) sendWebhook(alert *models.Alert, nc NotifyConfig) error {
 	payload := map[string]interface{}{
 		"alert_type":    alert.AlertType,
 		"severity":      alert.Severity,
@@ -202,5 +233,5 @@ func (n *Notifier) sendWebhook(alert *models.Alert) error {
 		"current_value": alert.CurrentValue,
 	}
 
-	return n.postJSON(n.config.Alerts.WebHookURL, payload)
+	return n.postJSON(nc.WebHookURL, payload)
 }
