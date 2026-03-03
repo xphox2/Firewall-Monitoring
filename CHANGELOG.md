@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.52] - 2026-03-03
+
+### Fixed
+- **Tunnel connections (HUB↔SPOKES) not detected**: v0.10.51 was too aggressive — requiring `hasDirectLink()` for ALL non-l2vlan types blocked legitimate tunnel detection since tunnel/ipsec/gre interfaces ARE the tunnels themselves. Restored three-category validation: l2vlan requires sameSite, overlays (l3ipvlan/vxlan) require hasDirectLink, tunnels (ipsec/gre/tunnel) use name-match only. The `isSystemIface` filter (*.root/*.vdom) already prevents false matches from system interfaces.
+
 ## [0.10.51] - 2026-03-03
 
 ### Fixed
