@@ -429,6 +429,75 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		}
 	}
 
+	// Phase 2: Indirect matching for NAT'd tunnels.
+	// When a VPN tunnel's remote_ip doesn't resolve to any known device IP (common with
+	// NAT'd IPSec), try matching the tunnel name against device names.
+	// e.g., tunnel "NUDAY_LAN" on DC2-FW1 contains "nuday" → matches device "NUDAY-FW".
+	deviceNameParts := make(map[uint][]string, len(devices))
+	for i := range devices {
+		name := strings.ToLower(devices[i].Name)
+		parts := strings.FieldsFunc(name, func(r rune) bool {
+			return r == '-' || r == '_' || r == '.' || r == ' '
+		})
+		for _, p := range parts {
+			if len(p) >= 4 { // only meaningful parts (skip fw, gw, dc, etc.)
+				deviceNameParts[devices[i].ID] = append(deviceNameParts[devices[i].ID], p)
+			}
+		}
+	}
+
+	for _, vpn := range vpnStatuses {
+		if _, resolved := ipToDevice[vpn.RemoteIP]; resolved {
+			continue // already matched in first pass
+		}
+		if vpn.DeviceID == 0 || vpn.TunnelName == "" {
+			continue
+		}
+		tunnelNorm := strings.ToLower(strings.NewReplacer(" ", "", ".", "", "-", "", "_", "").Replace(vpn.TunnelName))
+
+		for _, dev := range devices {
+			if dev.ID == vpn.DeviceID {
+				continue
+			}
+			matched := false
+			for _, namePart := range deviceNameParts[dev.ID] {
+				if strings.Contains(tunnelNorm, namePart) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+
+			key := pairKey(vpn.DeviceID, dev.ID)
+			pi, exists := pairs[key]
+			if !exists {
+				srcID, dstID := vpn.DeviceID, dev.ID
+				if srcID > dstID {
+					srcID, dstID = dstID, srcID
+				}
+				ct := "ipsec"
+				if vpn.TunnelType == "sslvpn" {
+					ct = "ssl"
+				}
+				pi = &pairInfo{
+					sourceID:    srcID,
+					destID:      dstID,
+					tunnelNames: make(map[string]bool),
+					matchMethod: "tunnel_indirect",
+					connType:    ct,
+				}
+				pairs[key] = pi
+			}
+			pi.tunnelNames[vpn.TunnelName] = true
+			if vpn.Status == "up" {
+				pi.anyUp = true
+			}
+			break // found match for this tunnel, move on
+		}
+	}
+
 	// Bidirectional check: for each pair, see if both sides have tunnels pointing at each other
 	for _, pi := range pairs {
 		srcTunnels := vpnByDevice[pi.sourceID]
@@ -541,6 +610,16 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		for _, t := range vpnByDevice[devB] {
 			if did, ok := ipToDeviceID[t.RemoteIP]; ok && did == devA {
 				return true
+			}
+		}
+		// Fallback: check if detectVPNConnections already created a tunnel/ipsec connection
+		// (handles NAT'd tunnels matched via tunnel_indirect method)
+		if p.db != nil {
+			for _, ct := range []string{"ipsec", "gre", "tunnel", "ssl"} {
+				conn, _ := p.db.FindConnectionByDevicePairAndType(devA, devB, ct)
+				if conn != nil {
+					return true
+				}
 			}
 		}
 		return false
