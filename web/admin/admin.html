@@ -106,15 +106,23 @@
         .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
         .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; }
 
-        .connection-diagram { min-height: 400px; position: relative; background: #0d1117; border-radius: 8px; padding: 20px; }
-        .node { position: absolute; background: #21262d; border: 2px solid #30363d; border-radius: 8px; padding: 15px; min-width: 150px; text-align: center; cursor: pointer; }
-        .node.selected { border-color: #58a6ff; }
-        .node .name { font-weight: 600; margin-bottom: 5px; }
-        .node .ip { font-size: 0.8rem; color: #8b949e; }
-        .node .status { margin-top: 8px; }
-        .connection-line { position: absolute; height: 3px; background: #30363d; transform-origin: left center; }
-        .connection-line.up { background: #3fb950; }
-        .connection-line.down { background: #f85149; }
+        .connection-diagram { min-height: 500px; position: relative; background: #0d1117; border-radius: 8px; padding: 0; overflow: hidden; }
+        .connection-diagram svg { width: 100%; height: 100%; min-height: 500px; }
+        .conn-path { cursor: pointer; transition: stroke-width 0.2s; }
+        .conn-path:hover { stroke-width: 5 !important; }
+        .conn-hit-area { cursor: pointer; fill: none; stroke: transparent; stroke-width: 20; }
+        .device-node { cursor: pointer; }
+        .device-node:hover rect { stroke: #58a6ff !important; stroke-width: 2.5; }
+        .device-node text.dev-name { fill: #e6edf3; font-weight: 600; font-size: 13px; }
+        .device-node text.dev-ip { fill: #8b949e; font-size: 11px; }
+        .conn-detail-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 12px; animation: slideUp 0.3s ease; }
+        .conn-detail-panel h4 { margin: 0 0 12px 0; color: #e6edf3; font-size: 1rem; }
+        .conn-detail-panel p { margin: 4px 0; font-size: 0.85rem; color: #8b949e; }
+        .conn-detail-panel p strong { color: #c9d1d9; }
+        .conn-detail-panel .conn-actions { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+        .conn-detail-panel .conn-actions a { color: #58a6ff; font-size: 0.85rem; text-decoration: none; font-weight: 500; }
+        .conn-detail-panel .conn-actions a:hover { text-decoration: underline; }
+        @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
         .loading { text-align: center; padding: 30px; color: #484f58; }
@@ -299,6 +307,7 @@
                 <div class="connection-diagram" id="connection-diagram">
                     <div class="loading">Add devices and connections to see the network diagram</div>
                 </div>
+                <div id="conn-detail-panel-container"></div>
             </div>
         </div>
 
@@ -1189,7 +1198,7 @@
                         <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
                         <td>${matchMethodBadge(c.match_method, c.auto_detected)}</td>
                         <td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(c.tunnel_names || '')}">${escapeHtml(c.tunnel_names || '-')}</td>
-                        <td>${c.auto_detected ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>' : '<button class="btn danger sm" onclick="deleteConnection(' + c.id + ')">Delete</button>'}</td>
+                        <td><a href="/admin/connections/${c.id}" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>${c.auto_detected ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>' : '<button class="btn danger sm" onclick="deleteConnection(' + c.id + ')">Delete</button>'}</td>
                     </tr>
                 `).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
 
@@ -1800,61 +1809,190 @@
             } catch (err) { alert('Error: ' + err.message); }
         }
 
-        // Connection diagram
+        // Connection diagram — SVG with animated traffic particles
         function drawConnectionDiagram() {
             const container = document.getElementById('connection-diagram');
+            const panelContainer = document.getElementById('conn-detail-panel-container');
+            if (panelContainer) panelContainer.innerHTML = '';
+
             if (currentDevices.length === 0) {
-                container.innerHTML = '<div class="loading">Add devices to see the network diagram</div>';
+                container.innerHTML = '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
                 return;
             }
-            const containerRect = container.getBoundingClientRect();
-            const centerX = containerRect.width / 2;
-            const centerY = containerRect.height / 2;
-            const radius = Math.min(centerX, centerY) - 80;
-            container.innerHTML = '';
 
-            currentDevices.forEach((device, i) => {
-                const angle = (2 * Math.PI * i) / currentDevices.length - Math.PI / 2;
-                const x = centerX + radius * Math.cos(angle) - 75;
-                const y = centerY + radius * Math.sin(angle) - 30;
-                const node = document.createElement('div');
-                node.className = 'node';
-                node.style.left = x + 'px';
-                node.style.top = y + 'px';
-                node.innerHTML = `<div class="name">${escapeHtml(device.name)}</div><div class="ip">${escapeHtml(device.ip_address)}</div><div class="status"><span class="badge ${escapeHtml(device.status)}">${escapeHtml(device.status)}</span></div>`;
-                container.appendChild(node);
+            const rect = container.getBoundingClientRect();
+            const W = rect.width || 800;
+            const H = Math.max(rect.height, 500);
+            const cx = W / 2, cy = H / 2;
+            const R = Math.min(cx, cy) - 90;
+            const NS = 'http://www.w3.org/2000/svg';
+
+            container.innerHTML = '';
+            const svg = document.createElementNS(NS, 'svg');
+            svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+            svg.setAttribute('width', '100%');
+            svg.setAttribute('height', H);
+            svg.style.minHeight = '500px';
+
+            // Defs: glow filter
+            const defs = document.createElementNS(NS, 'defs');
+            defs.innerHTML = `
+                <filter id="conn-glow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="4" result="blur"/>
+                    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                </filter>
+            `;
+            svg.appendChild(defs);
+
+            // Compute positions
+            const positions = currentDevices.map((d, i) => {
+                const a = (2 * Math.PI * i) / currentDevices.length - Math.PI / 2;
+                return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), device: d };
             });
 
-            currentConnections.forEach(conn => {
-                const srcIdx = currentDevices.findIndex(d => d.id === conn.source_device_id);
-                const dstIdx = currentDevices.findIndex(d => d.id === conn.dest_device_id);
-                if (srcIdx >= 0 && dstIdx >= 0) {
-                    const srcA = (2 * Math.PI * srcIdx) / currentDevices.length - Math.PI / 2;
-                    const dstA = (2 * Math.PI * dstIdx) / currentDevices.length - Math.PI / 2;
-                    const x1 = centerX + radius * Math.cos(srcA), y1 = centerY + radius * Math.sin(srcA);
-                    const x2 = centerX + radius * Math.cos(dstA), y2 = centerY + radius * Math.sin(dstA);
-                    const line = document.createElement('div');
-                    line.className = `connection-line ${conn.status}`;
-                    if (conn.auto_detected) line.style.borderTopStyle = 'dashed';
-                    // VXLAN connections get purple color
-                    if (conn.connection_type === 'vxlan') {
-                        line.style.background = '#8957e5';
+            // Draw connections
+            currentConnections.forEach((conn, ci) => {
+                const si = currentDevices.findIndex(d => d.id === conn.source_device_id);
+                const di = currentDevices.findIndex(d => d.id === conn.dest_device_id);
+                if (si < 0 || di < 0) return;
+
+                const s = positions[si], t = positions[di];
+                const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
+                // Offset control point perpendicular to line for curve
+                const dx = t.x - s.x, dy = t.y - s.y;
+                const len = Math.sqrt(dx*dx + dy*dy) || 1;
+                const off = Math.min(40, len * 0.15);
+                const cpx = mx + (-dy / len) * off;
+                const cpy = my + (dx / len) * off;
+                const pathD = `M${s.x},${s.y} Q${cpx},${cpy} ${t.x},${t.y}`;
+
+                const isVxlan = conn.connection_type === 'vxlan';
+                const isUp = conn.status === 'up';
+                const isDown = conn.status === 'down';
+                const color = isVxlan ? '#8957e5' : (isUp ? '#3fb950' : (isDown ? '#f85149' : '#30363d'));
+
+                // Invisible hit area
+                const hitPath = document.createElementNS(NS, 'path');
+                hitPath.setAttribute('d', pathD);
+                hitPath.setAttribute('class', 'conn-hit-area');
+                hitPath.addEventListener('click', () => showConnDetailPanel(conn));
+                svg.appendChild(hitPath);
+
+                // Visible path
+                const path = document.createElementNS(NS, 'path');
+                path.setAttribute('d', pathD);
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke', color);
+                path.setAttribute('stroke-width', '3');
+                path.setAttribute('class', 'conn-path');
+                path.setAttribute('id', `conn-path-${ci}`);
+                if (isVxlan) path.setAttribute('stroke-dasharray', '8,4');
+                if (isUp) path.setAttribute('filter', 'url(#conn-glow)');
+                path.addEventListener('click', () => showConnDetailPanel(conn));
+
+                // Pulsing red for down connections
+                if (isDown) {
+                    const anim = document.createElementNS(NS, 'animate');
+                    anim.setAttribute('attributeName', 'opacity');
+                    anim.setAttribute('values', '1;0.3;1');
+                    anim.setAttribute('dur', '2s');
+                    anim.setAttribute('repeatCount', 'indefinite');
+                    path.appendChild(anim);
+                }
+                svg.appendChild(path);
+
+                // Animated particles for "up" connections
+                if (isUp) {
+                    for (let p = 0; p < 3; p++) {
+                        const circle = document.createElementNS(NS, 'circle');
+                        circle.setAttribute('r', '3');
+                        circle.setAttribute('fill', color);
+                        circle.setAttribute('opacity', '0.85');
+                        const motion = document.createElementNS(NS, 'animateMotion');
+                        motion.setAttribute('dur', '4s');
+                        motion.setAttribute('begin', `${p * 1.3}s`);
+                        motion.setAttribute('repeatCount', 'indefinite');
+                        motion.setAttribute('fill', 'freeze');
+                        const mpath = document.createElementNS(NS, 'mpath');
+                        mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#conn-path-${ci}`);
+                        motion.appendChild(mpath);
+                        circle.appendChild(motion);
+                        svg.appendChild(circle);
                     }
-                    // Build tooltip with match method
-                    const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',manual:'Manual'};
-                    const methodLabel = methodLabels[conn.match_method] || '';
-                    let tip = conn.tunnel_names || '';
-                    if (methodLabel) tip = (tip ? tip + ' | ' : '') + 'Discovery: ' + methodLabel;
-                    if (tip) line.title = tip;
-                    const len = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
-                    const ang = Math.atan2(y2-y1, x2-x1) * 180 / Math.PI;
-                    line.style.width = len + 'px';
-                    line.style.left = x1 + 'px';
-                    line.style.top = y1 + 'px';
-                    line.style.transform = `rotate(${ang}deg)`;
-                    container.appendChild(line);
                 }
             });
+
+            // Draw device nodes
+            const nodeW = 150, nodeH = 60;
+            positions.forEach(p => {
+                const g = document.createElementNS(NS, 'g');
+                g.setAttribute('class', 'device-node');
+                g.setAttribute('transform', `translate(${p.x - nodeW/2}, ${p.y - nodeH/2})`);
+                g.style.cursor = 'pointer';
+                g.addEventListener('click', () => { window.location.href = `/admin/devices/${p.device.id}`; });
+
+                const r = document.createElementNS(NS, 'rect');
+                r.setAttribute('width', nodeW);
+                r.setAttribute('height', nodeH);
+                r.setAttribute('rx', '8');
+                r.setAttribute('fill', '#161b22');
+                r.setAttribute('stroke', p.device.status === 'online' ? '#3fb950' : (p.device.status === 'offline' ? '#f85149' : '#30363d'));
+                r.setAttribute('stroke-width', '2');
+                g.appendChild(r);
+
+                const name = document.createElementNS(NS, 'text');
+                name.setAttribute('x', nodeW/2);
+                name.setAttribute('y', 24);
+                name.setAttribute('text-anchor', 'middle');
+                name.setAttribute('class', 'dev-name');
+                name.textContent = p.device.name.length > 16 ? p.device.name.slice(0,15) + '…' : p.device.name;
+                g.appendChild(name);
+
+                const ip = document.createElementNS(NS, 'text');
+                ip.setAttribute('x', nodeW/2);
+                ip.setAttribute('y', 42);
+                ip.setAttribute('text-anchor', 'middle');
+                ip.setAttribute('class', 'dev-ip');
+                ip.textContent = p.device.ip_address;
+                g.appendChild(ip);
+
+                // Status indicator dot
+                const dot = document.createElementNS(NS, 'circle');
+                dot.setAttribute('cx', nodeW - 12);
+                dot.setAttribute('cy', 12);
+                dot.setAttribute('r', '5');
+                dot.setAttribute('fill', p.device.status === 'online' ? '#3fb950' : (p.device.status === 'offline' ? '#f85149' : '#484f58'));
+                g.appendChild(dot);
+
+                svg.appendChild(g);
+            });
+
+            container.appendChild(svg);
+        }
+
+        function showConnDetailPanel(conn) {
+            const panel = document.getElementById('conn-detail-panel-container');
+            const methodLabels = {ip_match:'IP Match',interface_ip:'WAN IP',bidirectional:'Bidirectional',vxlan_name:'VXLAN',manual:'Manual'};
+            const srcName = conn.source_device?.name || 'Device ' + conn.source_device_id;
+            const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
+            const typeBadge = conn.connection_type === 'vxlan'
+                ? '<span class="badge" style="background:#8957e5;">VXLAN</span>'
+                : `<span class="badge" style="background:#388bfd;">${escapeHtml((conn.connection_type || 'ipsec').toUpperCase())}</span>`;
+            const statusBadge = `<span class="badge ${conn.status}">${escapeHtml((conn.status || 'unknown').toUpperCase())}</span>`;
+
+            panel.innerHTML = `
+                <div class="conn-detail-panel">
+                    <h4>${escapeHtml(conn.name)} ${typeBadge} ${statusBadge}</h4>
+                    <p><strong>Source:</strong> ${escapeHtml(srcName)}</p>
+                    <p><strong>Destination:</strong> ${escapeHtml(dstName)}</p>
+                    <p><strong>Discovery:</strong> ${methodLabels[conn.match_method] || conn.match_method || '-'}</p>
+                    ${conn.tunnel_names ? `<p><strong>Tunnels:</strong> ${escapeHtml(conn.tunnel_names)}</p>` : ''}
+                    <div class="conn-actions">
+                        <a href="/admin/connections/${conn.id}">View Full Details &rarr;</a>
+                        <button class="btn secondary sm" onclick="document.getElementById('conn-detail-panel-container').innerHTML=''">Close</button>
+                    </div>
+                </div>
+            `;
         }
 
         function populateDeviceSelects() {

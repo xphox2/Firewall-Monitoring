@@ -1454,6 +1454,399 @@ func (d *Database) GetSitePingStats(siteID uint, deviceID uint, probeID uint) ([
 	return stats, err
 }
 
+// VPNChartBucket holds a single time-bucket for VPN tunnel chart data.
+type VPNChartBucket struct {
+	Bucket     string  `json:"bucket"`
+	InBytes    float64 `json:"in_bytes"`
+	OutBytes   float64 `json:"out_bytes"`
+	InPackets  float64 `json:"in_packets"`
+	OutPackets float64 `json:"out_packets"`
+}
+
+// GetVPNChartData returns downsampled VPN tunnel stats for charting.
+func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr string) ([]VPNChartBucket, error) {
+	var hours int
+	var bucketExpr string
+	switch rangeStr {
+	case "1h":
+		hours = 1
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+	case "7d":
+		hours = 168
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+	case "30d":
+		hours = 720
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+	default: // 24h
+		hours = 24
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+	}
+
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var rows []VPNChartBucket
+	err := d.db.Model(&models.VPNStatus{}).
+		Where("device_id = ? AND tunnel_name = ? AND timestamp > ?", deviceID, tunnelName, cutoff).
+		Select(fmt.Sprintf("%s as bucket, AVG(bytes_in) as in_bytes, AVG(bytes_out) as out_bytes, AVG(packets_in) as in_packets, AVG(packets_out) as out_packets", bucketExpr)).
+		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ConnectionDetailResult holds full detail for a connection including matching tunnels.
+type ConnectionDetailResult struct {
+	Connection   models.DeviceConnection `json:"connection"`
+	SourceTunnels []models.VPNStatus     `json:"source_tunnels"`
+	DestTunnels   []models.VPNStatus     `json:"dest_tunnels"`
+	TotalBytesIn  uint64                 `json:"total_bytes_in"`
+	TotalBytesOut uint64                 `json:"total_bytes_out"`
+	TotalPacketsIn  uint64              `json:"total_packets_in"`
+	TotalPacketsOut uint64              `json:"total_packets_out"`
+	HasFlowData   bool                   `json:"has_flow_data"`
+}
+
+// GetConnectionDetail returns full detail for a connection with matching tunnels from both sides.
+func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, error) {
+	var conn models.DeviceConnection
+	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+		return nil, err
+	}
+
+	result := &ConnectionDetailResult{Connection: conn}
+
+	// Get latest VPN statuses for both devices
+	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
+	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
+
+	// Collect IPs for the dest device (management + interface addresses)
+	destIPs := make(map[string]bool)
+	if conn.DestDevice != nil {
+		destIPs[conn.DestDevice.IPAddress] = true
+	}
+	var destAddrs []models.InterfaceAddress
+	d.db.Where("device_id = ?", conn.DestDeviceID).Group("ip_address").Find(&destAddrs)
+	for _, a := range destAddrs {
+		destIPs[a.IPAddress] = true
+	}
+
+	// Collect IPs for the source device
+	srcIPs := make(map[string]bool)
+	if conn.SourceDevice != nil {
+		srcIPs[conn.SourceDevice.IPAddress] = true
+	}
+	var srcAddrs []models.InterfaceAddress
+	d.db.Where("device_id = ?", conn.SourceDeviceID).Group("ip_address").Find(&srcAddrs)
+	for _, a := range srcAddrs {
+		srcIPs[a.IPAddress] = true
+	}
+
+	// Filter source tunnels: remote IP matches dest device
+	for _, t := range srcTunnels {
+		if destIPs[t.RemoteIP] {
+			result.SourceTunnels = append(result.SourceTunnels, t)
+			result.TotalBytesIn += t.BytesIn
+			result.TotalBytesOut += t.BytesOut
+			result.TotalPacketsIn += t.PacketsIn
+			result.TotalPacketsOut += t.PacketsOut
+		}
+	}
+
+	// Filter dest tunnels: remote IP matches source device
+	for _, t := range dstTunnels {
+		if srcIPs[t.RemoteIP] {
+			result.DestTunnels = append(result.DestTunnels, t)
+			result.TotalBytesIn += t.BytesIn
+			result.TotalBytesOut += t.BytesOut
+			result.TotalPacketsIn += t.PacketsIn
+			result.TotalPacketsOut += t.PacketsOut
+		}
+	}
+
+	// Check if sFlow data exists for either device
+	var flowCount int64
+	d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Limit(1).Count(&flowCount)
+	result.HasFlowData = flowCount > 0
+
+	return result, nil
+}
+
+// getConnectionTunnelNames returns matching tunnel names for a connection's source and dest devices.
+func (d *Database) getConnectionTunnelNames(connID uint) (srcDeviceID, dstDeviceID uint, srcTunnelNames, dstTunnelNames []string, err error) {
+	var conn models.DeviceConnection
+	if err = d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+		return
+	}
+	srcDeviceID = conn.SourceDeviceID
+	dstDeviceID = conn.DestDeviceID
+
+	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
+	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
+
+	// Collect dest IPs
+	destIPs := make(map[string]bool)
+	if conn.DestDevice != nil {
+		destIPs[conn.DestDevice.IPAddress] = true
+	}
+	var destAddrs []models.InterfaceAddress
+	d.db.Where("device_id = ?", conn.DestDeviceID).Group("ip_address").Find(&destAddrs)
+	for _, a := range destAddrs {
+		destIPs[a.IPAddress] = true
+	}
+
+	// Collect src IPs
+	srcIPs := make(map[string]bool)
+	if conn.SourceDevice != nil {
+		srcIPs[conn.SourceDevice.IPAddress] = true
+	}
+	var srcAddrs []models.InterfaceAddress
+	d.db.Where("device_id = ?", conn.SourceDeviceID).Group("ip_address").Find(&srcAddrs)
+	for _, a := range srcAddrs {
+		srcIPs[a.IPAddress] = true
+	}
+
+	for _, t := range srcTunnels {
+		if destIPs[t.RemoteIP] {
+			srcTunnelNames = append(srcTunnelNames, t.TunnelName)
+		}
+	}
+	for _, t := range dstTunnels {
+		if srcIPs[t.RemoteIP] {
+			dstTunnelNames = append(dstTunnelNames, t.TunnelName)
+		}
+	}
+	return
+}
+
+// GetConnectionTraffic returns aggregated VPN chart data for all matching tunnels in a connection.
+func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChartBucket, error) {
+	srcDeviceID, dstDeviceID, srcTunnelNames, dstTunnelNames, err := d.getConnectionTunnelNames(connID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine time params
+	var hours int
+	var bucketExpr string
+	switch rangeStr {
+	case "1h":
+		hours = 1
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+	case "7d":
+		hours = 168
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+	case "30d":
+		hours = 720
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+	default:
+		hours = 24
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	// Collect all tunnel conditions
+	var allNames []string
+	var deviceIDs []uint
+	for _, n := range srcTunnelNames {
+		allNames = append(allNames, n)
+	}
+	for _, n := range dstTunnelNames {
+		allNames = append(allNames, n)
+	}
+	if len(srcTunnelNames) > 0 {
+		deviceIDs = append(deviceIDs, srcDeviceID)
+	}
+	if len(dstTunnelNames) > 0 {
+		deviceIDs = append(deviceIDs, dstDeviceID)
+	}
+
+	if len(allNames) == 0 {
+		return []VPNChartBucket{}, nil
+	}
+
+	// Query aggregated across all matching tunnels
+	var rows []VPNChartBucket
+	err = d.db.Model(&models.VPNStatus{}).
+		Where("device_id IN ? AND tunnel_name IN ? AND timestamp > ?", deviceIDs, allNames, cutoff).
+		Select(fmt.Sprintf("%s as bucket, SUM(bytes_in) as in_bytes, SUM(bytes_out) as out_bytes, SUM(packets_in) as in_packets, SUM(packets_out) as out_packets", bucketExpr)).
+		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// FlowConversation represents a top conversation from flow data.
+type FlowConversation struct {
+	SrcAddr  string `json:"src_addr"`
+	DstAddr  string `json:"dst_addr"`
+	SrcPort  uint16 `json:"src_port"`
+	DstPort  uint16 `json:"dst_port"`
+	Protocol string `json:"protocol"`
+	Bytes    uint64 `json:"bytes"`
+	Packets  uint64 `json:"packets"`
+}
+
+// ConnectionFlowResult holds sFlow traffic analysis for a connection.
+type ConnectionFlowResult struct {
+	TotalBytes       uint64             `json:"total_bytes"`
+	TotalPackets     uint64             `json:"total_packets"`
+	TotalFlows       int64              `json:"total_flows"`
+	ByProtocol       []KeyCount         `json:"by_protocol"`
+	TopSources       []KeyCount         `json:"top_sources"`
+	TopDests         []KeyCount         `json:"top_destinations"`
+	TopConversations []FlowConversation `json:"top_conversations"`
+	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
+}
+
+// GetConnectionFlowStats returns sFlow traffic analysis for a connection.
+func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFlowResult, error) {
+	var conn models.DeviceConnection
+	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+		return nil, err
+	}
+
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	deviceIDs := []uint{conn.SourceDeviceID, conn.DestDeviceID}
+
+	// Collect IPs for both sides to filter flows
+	allIPs := make(map[string]bool)
+	if conn.SourceDevice != nil {
+		allIPs[conn.SourceDevice.IPAddress] = true
+	}
+	if conn.DestDevice != nil {
+		allIPs[conn.DestDevice.IPAddress] = true
+	}
+	var addrs []models.InterfaceAddress
+	d.db.Where("device_id IN ?", deviceIDs).Group("ip_address").Find(&addrs)
+	for _, a := range addrs {
+		allIPs[a.IPAddress] = true
+	}
+
+	// Try to find tunnel interface indices by matching tunnel names to interface names
+	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
+	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
+	var tunnelIfIndices []int
+	var tunnelNames []string
+	for _, t := range srcTunnels {
+		tunnelNames = append(tunnelNames, t.TunnelName)
+	}
+	for _, t := range dstTunnels {
+		tunnelNames = append(tunnelNames, t.TunnelName)
+	}
+
+	if len(tunnelNames) > 0 {
+		var ifaces []models.InterfaceStats
+		d.db.Where("device_id IN ? AND name IN ?", deviceIDs, tunnelNames).Group("device_id, `index`").Find(&ifaces)
+		for _, iface := range ifaces {
+			tunnelIfIndices = append(tunnelIfIndices, iface.Index)
+		}
+	}
+
+	result := &ConnectionFlowResult{}
+	protoNames := map[uint8]string{0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP", 17: "UDP", 41: "IPv6", 47: "GRE", 50: "ESP", 51: "AH", 58: "ICMPv6", 88: "EIGRP", 89: "OSPF", 132: "SCTP"}
+
+	// Helper to build a fresh base query each time (avoids GORM session accumulation)
+	var ipList []string
+	useIfIndex := len(tunnelIfIndices) > 0
+	if !useIfIndex {
+		ipList = make([]string, 0, len(allIPs))
+		for ip := range allIPs {
+			ipList = append(ipList, ip)
+		}
+	}
+	newBase := func() *gorm.DB {
+		q := d.db.Model(&models.FlowSample{}).Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff)
+		if useIfIndex {
+			q = q.Where("input_if_index IN ? OR output_if_index IN ?", tunnelIfIndices, tunnelIfIndices)
+		} else {
+			q = q.Where("src_addr IN ? OR dst_addr IN ?", ipList, ipList)
+		}
+		return q
+	}
+
+	// Total counts
+	newBase().Count(&result.TotalFlows)
+	var totalBytes struct{ Sum uint64 }
+	newBase().Select("COALESCE(SUM(bytes),0) as sum").Scan(&totalBytes)
+	result.TotalBytes = totalBytes.Sum
+	var totalPackets struct{ Sum uint64 }
+	newBase().Select("COALESCE(SUM(packets),0) as sum").Scan(&totalPackets)
+	result.TotalPackets = totalPackets.Sum
+
+	// Protocol distribution
+	var protocols []struct {
+		Protocol uint8 `json:"protocol"`
+		Count    int64 `json:"count"`
+	}
+	newBase().Select("protocol, COUNT(*) as count").Group("protocol").Order("count DESC").Limit(10).Scan(&protocols)
+	for _, p := range protocols {
+		name := protoNames[p.Protocol]
+		if name == "" {
+			name = fmt.Sprintf("Proto %d", p.Protocol)
+		}
+		result.ByProtocol = append(result.ByProtocol, KeyCount{Key: name, Count: p.Count})
+	}
+
+	// Top sources by bytes
+	var topSrc []struct {
+		SrcAddr string `json:"src_addr"`
+		Total   int64  `json:"total"`
+	}
+	newBase().Select("src_addr, SUM(bytes) as total").Group("src_addr").Order("total DESC").Limit(10).Scan(&topSrc)
+	for _, s := range topSrc {
+		result.TopSources = append(result.TopSources, KeyCount{Key: s.SrcAddr, Count: s.Total})
+	}
+
+	// Top destinations by bytes
+	var topDst []struct {
+		DstAddr string `json:"dst_addr"`
+		Total   int64  `json:"total"`
+	}
+	newBase().Select("dst_addr, SUM(bytes) as total").Group("dst_addr").Order("total DESC").Limit(10).Scan(&topDst)
+	for _, s := range topDst {
+		result.TopDests = append(result.TopDests, KeyCount{Key: s.DstAddr, Count: s.Total})
+	}
+
+	// Top conversations
+	var convos []struct {
+		SrcAddr  string `json:"src_addr"`
+		DstAddr  string `json:"dst_addr"`
+		SrcPort  uint16 `json:"src_port"`
+		DstPort  uint16 `json:"dst_port"`
+		Protocol uint8  `json:"protocol"`
+		Bytes    uint64 `json:"bytes"`
+		Packets  uint64 `json:"packets"`
+	}
+	newBase().Select("src_addr, dst_addr, src_port, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
+		Group("src_addr, dst_addr, src_port, dst_port, protocol").Order("bytes DESC").Limit(10).Scan(&convos)
+	for _, c := range convos {
+		name := protoNames[c.Protocol]
+		if name == "" {
+			name = fmt.Sprintf("Proto %d", c.Protocol)
+		}
+		result.TopConversations = append(result.TopConversations, FlowConversation{
+			SrcAddr: c.SrcAddr, DstAddr: c.DstAddr,
+			SrcPort: c.SrcPort, DstPort: c.DstPort,
+			Protocol: name, Bytes: c.Bytes, Packets: c.Packets,
+		})
+	}
+
+	// Bytes over time
+	var timeSeries []struct {
+		Bucket string `json:"bucket"`
+		Total  int64  `json:"total"`
+	}
+	newBase().Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, SUM(bytes) as total").
+		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
+	for _, t := range timeSeries {
+		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
+	}
+
+	return result, nil
+}
+
 func (d *Database) SaveSiteSyslogMessage(siteID uint, msg *models.SiteSyslogMessage) error {
 	db, err := d.GetOrCreateSiteDB(siteID)
 	if err != nil {

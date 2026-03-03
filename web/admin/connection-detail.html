@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connection Detail - Firewall Monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
+
+        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
+        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
+        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
+        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
+        .nav-section { margin-bottom: 16px; }
+        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
+        .nav-item:hover { background: #21262d; color: #e6edf3; }
+        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
+        .nav-item.danger { color: #f85149; }
+        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
+        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
+
+        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
+
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .card h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 16px; }
+
+        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
+        .btn:hover { background: #2ea043; }
+        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
+        .btn.secondary:hover { background: #30363d; }
+        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
+        tr:hover { background: #1c2128; }
+
+        .loading { text-align: center; padding: 30px; color: #484f58; }
+        .error { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+
+        /* Header */
+        .conn-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+        .conn-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
+        .back-link { color: #58a6ff; text-decoration: none; font-size: 0.88rem; }
+        .back-link:hover { text-decoration: underline; }
+
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+        .badge.online, .badge.up { background: rgba(63,185,80,0.15); color: #3fb950; }
+        .badge.offline, .badge.down { background: rgba(248,81,73,0.15); color: #f85149; }
+        .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
+        .badge.ipsec { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .badge.vxlan { background: rgba(130,80,223,0.15); color: #bc8cff; }
+        .badge.ssl { background: rgba(210,153,34,0.15); color: #d29922; }
+        .badge.wan { background: rgba(139,148,158,0.15); color: #8b949e; }
+
+        /* Stat cards */
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .stat-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; text-align: center; }
+        .stat-card .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: #484f58; margin-bottom: 8px; }
+        .stat-card .stat-value { font-size: 1.8rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .stat-card .stat-unit { font-size: 0.75rem; color: #8b949e; }
+
+        /* Gauge */
+        .gauge { position: relative; width: 80px; height: 80px; margin: 0 auto 8px; }
+        .gauge svg { transform: rotate(-90deg); }
+        .gauge-bg { fill: none; stroke: #21262d; stroke-width: 8; }
+        .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.5s; }
+        .gauge-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
+
+        /* Tabs */
+        .section-tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; margin-bottom: 16px; }
+        .section-tab { padding: 10px 20px; cursor: pointer; color: #8b949e; font-size: 0.88rem; border-bottom: 2px solid transparent; transition: all 0.15s; }
+        .section-tab:hover { color: #e6edf3; }
+        .section-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Range pills */
+        .range-pills { display: flex; gap: 4px; margin-bottom: 12px; }
+        .range-pill { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 5px 14px; border-radius: 20px; cursor: pointer; font-size: 0.78rem; transition: all 0.15s; }
+        .range-pill:hover { color: #e6edf3; border-color: #8b949e; }
+        .range-pill.active { background: #58a6ff; color: #fff; border-color: #58a6ff; }
+
+        /* Chart container */
+        .chart-container { height: 300px; margin-bottom: 16px; }
+        .chart-container canvas { width: 100% !important; height: 100% !important; }
+
+        /* Bridge animation */
+        .bridge-svg { display: block; margin: 0 auto 16px; }
+
+        /* Expandable tunnel rows */
+        .tunnel-row { cursor: pointer; }
+        .tunnel-row:hover { background: #1c2128; }
+        .tunnel-expand { display: none; }
+        .tunnel-expand.open { display: table-row; }
+        .tunnel-expand td { padding: 0; border-bottom: 1px solid #30363d; }
+        .tunnel-chart-wrap { padding: 16px 24px; background: #0d1117; }
+        .tunnel-chart-wrap .chart-container { height: 200px; }
+        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; margin-right: 6px; color: #484f58; }
+        .chevron.open { transform: rotate(90deg); }
+
+        /* Flow charts grid */
+        .flow-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .flow-grid .chart-container { height: 250px; }
+        .flow-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .flow-card h3 { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; font-weight: 500; }
+
+        .table-scroll { overflow-x: auto; }
+
+        .info-msg { background: rgba(56,139,253,0.08); border: 1px solid rgba(56,139,253,0.2); color: #58a6ff; padding: 14px; border-radius: 8px; font-size: 0.85rem; }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main { margin-left: 0; }
+            .stat-grid { grid-template-columns: repeat(2, 1fr); }
+            .flow-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Firewall Monitor</h2>
+            <div class="subtitle">Admin Panel</div>
+        </div>
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Monitoring</div>
+                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
+                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
+                <a class="nav-item active" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
+                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
+                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
+                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Infrastructure</div>
+                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
+                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
+                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
+                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            </div>
+            <div class="nav-section">
+                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
+            </div>
+        </div>
+        <div class="sidebar-footer">
+            <a class="nav-item danger" href="#" onclick="doLogout(); return false;"><span class="nav-icon">&#10140;</span> Logout</a>
+        </div>
+    </div>
+
+    <div class="main">
+        <a class="back-link" href="/admin/connections">&larr; Back to Connections</a>
+
+        <!-- Bridge header -->
+        <div id="bridge-header" style="margin-top: 12px;"></div>
+
+        <!-- Stat cards -->
+        <div class="stat-grid" id="stat-cards">
+            <div class="stat-card"><div class="stat-label">Total Bytes In</div><div class="stat-value" id="stat-bytes-in">-</div></div>
+            <div class="stat-card"><div class="stat-label">Total Bytes Out</div><div class="stat-value" id="stat-bytes-out">-</div></div>
+            <div class="stat-card"><div class="stat-label">Tunnels</div><div class="stat-value" id="stat-tunnel-count">-</div></div>
+            <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value" id="stat-status">-</div></div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="section-tabs" id="section-tabs">
+            <div class="section-tab active" onclick="switchTab('overview')">Overview</div>
+            <div class="section-tab" onclick="switchTab('src-tunnels')">Source Tunnels</div>
+            <div class="section-tab" onclick="switchTab('dst-tunnels')">Dest Tunnels</div>
+            <div class="section-tab" id="tab-flows" style="display:none;" onclick="switchTab('flows')">Traffic Analysis</div>
+        </div>
+
+        <!-- Overview Tab -->
+        <div class="tab-content active" id="tab-content-overview">
+            <div class="card">
+                <h2>Aggregate Bandwidth</h2>
+                <div class="range-pills" id="traffic-range">
+                    <div class="range-pill" data-range="1h" onclick="setTrafficRange('1h')">1h</div>
+                    <div class="range-pill active" data-range="24h" onclick="setTrafficRange('24h')">24h</div>
+                    <div class="range-pill" data-range="7d" onclick="setTrafficRange('7d')">7d</div>
+                    <div class="range-pill" data-range="30d" onclick="setTrafficRange('30d')">30d</div>
+                </div>
+                <div class="chart-container"><canvas id="traffic-chart"></canvas></div>
+            </div>
+            <div class="card">
+                <h2>Live Throughput</h2>
+                <div style="display:flex;gap:24px;justify-content:center;">
+                    <div style="text-align:center;">
+                        <div class="gauge" id="gauge-in"></div>
+                        <div style="font-size:0.8rem;color:#8b949e;">Inbound</div>
+                        <div style="font-size:0.85rem;font-weight:600;color:#e6edf3;" id="gauge-in-val">-</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div class="gauge" id="gauge-out"></div>
+                        <div style="font-size:0.8rem;color:#8b949e;">Outbound</div>
+                        <div style="font-size:0.85rem;font-weight:600;color:#e6edf3;" id="gauge-out-val">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Source Tunnels Tab -->
+        <div class="tab-content" id="tab-content-src-tunnels">
+            <div class="card">
+                <h2 id="src-tunnels-title">Source Tunnels</h2>
+                <div class="table-scroll">
+                    <table id="src-tunnels-table">
+                        <thead><tr><th></th><th>Name</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Bytes In</th><th>Bytes Out</th><th>Packets In</th><th>Packets Out</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dest Tunnels Tab -->
+        <div class="tab-content" id="tab-content-dst-tunnels">
+            <div class="card">
+                <h2 id="dst-tunnels-title">Destination Tunnels</h2>
+                <div class="table-scroll">
+                    <table id="dst-tunnels-table">
+                        <thead><tr><th></th><th>Name</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Bytes In</th><th>Bytes Out</th><th>Packets In</th><th>Packets Out</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Traffic Analysis Tab (sFlow) -->
+        <div class="tab-content" id="tab-content-flows">
+            <div class="card">
+                <h2>sFlow Traffic Analysis</h2>
+                <div class="range-pills" id="flow-range">
+                    <div class="range-pill" data-range="1" onclick="setFlowRange(1)">1h</div>
+                    <div class="range-pill active" data-range="24" onclick="setFlowRange(24)">24h</div>
+                    <div class="range-pill" data-range="168" onclick="setFlowRange(168)">7d</div>
+                    <div class="range-pill" data-range="720" onclick="setFlowRange(720)">30d</div>
+                </div>
+                <div id="flow-empty" class="info-msg" style="display:none;">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
+                <div id="flow-content">
+                    <div class="stat-grid" style="margin-bottom:16px;">
+                        <div class="stat-card"><div class="stat-label">Total Bytes</div><div class="stat-value" id="flow-total-bytes">-</div></div>
+                        <div class="stat-card"><div class="stat-label">Total Packets</div><div class="stat-value" id="flow-total-packets">-</div></div>
+                        <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value" id="flow-total-flows">-</div></div>
+                    </div>
+                    <div class="flow-grid">
+                        <div class="flow-card">
+                            <h3>Protocol Distribution</h3>
+                            <div class="chart-container" style="height:250px;"><canvas id="proto-chart"></canvas></div>
+                        </div>
+                        <div class="flow-card">
+                            <h3>Bytes Over Time</h3>
+                            <div class="chart-container" style="height:250px;"><canvas id="flow-time-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="flow-grid">
+                        <div class="flow-card">
+                            <h3>Top Sources</h3>
+                            <div class="chart-container" style="height:250px;"><canvas id="top-src-chart"></canvas></div>
+                        </div>
+                        <div class="flow-card">
+                            <h3>Top Destinations</h3>
+                            <div class="chart-container" style="height:250px;"><canvas id="top-dst-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-top:0;">
+                        <h2>Top Conversations</h2>
+                        <div class="table-scroll">
+                            <table id="convos-table">
+                                <thead><tr><th>Source</th><th>Destination</th><th>Protocol</th><th>Bytes</th><th>Packets</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const connId = window.location.pathname.split('/').filter(Boolean).pop();
+    const API_BASE = '/admin/api';
+    let trafficChart = null;
+    let protoChart = null;
+    let flowTimeChart = null;
+    let topSrcChart = null;
+    let topDstChart = null;
+    let tunnelCharts = {};
+    let currentTrafficRange = '24h';
+    let currentFlowHours = 24;
+    let connDetail = null;
+    let prevTrafficData = null;
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0, val = bytes;
+        while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+        return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+    }
+
+    function formatNum(n) {
+        if (n === undefined || n === null) return '-';
+        if (n >= 1e9) return (n/1e9).toFixed(1) + 'B';
+        if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+        if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+        return String(n);
+    }
+
+    async function apiFetch(url) {
+        const resp = await fetch(url, { credentials: 'include' });
+        if (resp.status === 401) { window.location.href = '/admin'; return null; }
+        const data = await resp.json();
+        return data.success ? data.data : null;
+    }
+
+    function switchTab(name) {
+        document.querySelectorAll('.section-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        event.target.classList.add('active');
+        const el = document.getElementById('tab-content-' + name);
+        if (el) el.classList.add('active');
+    }
+
+    function createGauge(containerId, value, maxVal) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const pct = maxVal > 0 ? Math.min((value / maxVal) * 100, 100) : 0;
+        const radius = 32;
+        const circumference = 2 * Math.PI * radius;
+        const offset = circumference - (pct / 100) * circumference;
+        let color = '#3fb950';
+        if (pct >= 90) color = '#f85149';
+        else if (pct >= 70) color = '#d29922';
+
+        container.innerHTML = `
+            <svg width="80" height="80" viewBox="0 0 80 80">
+                <circle class="gauge-bg" cx="40" cy="40" r="${radius}" />
+                <circle class="gauge-fill" cx="40" cy="40" r="${radius}"
+                    stroke="${color}"
+                    stroke-dasharray="${circumference}"
+                    stroke-dashoffset="${offset}" />
+            </svg>
+            <div class="gauge-text">${Math.round(pct)}%</div>
+        `;
+    }
+
+    // Bridge header SVG
+    function renderBridge(srcName, dstName, status, connType) {
+        const color = status === 'up' ? '#3fb950' : (status === 'down' ? '#f85149' : '#484f58');
+        const isVxlan = connType === 'vxlan';
+        const dash = isVxlan ? 'stroke-dasharray="8,4"' : '';
+        const pathColor = isVxlan ? '#8957e5' : color;
+        const particles = status === 'up' ? `
+            <circle r="4" fill="${pathColor}" opacity="0.85">
+                <animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
+            </circle>
+            <circle r="4" fill="${pathColor}" opacity="0.85">
+                <animateMotion dur="3s" begin="1s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
+            </circle>
+            <circle r="4" fill="${pathColor}" opacity="0.85">
+                <animateMotion dur="3s" begin="2s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
+            </circle>
+        ` : '';
+        const pulseAnim = status === 'down' ? '<animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>' : '';
+
+        document.getElementById('bridge-header').innerHTML = `
+            <svg class="bridge-svg" width="100%" height="100" viewBox="0 0 700 100">
+                <defs>
+                    <filter id="bridge-glow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="3" result="blur"/>
+                        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                    </filter>
+                </defs>
+                <!-- Source device -->
+                <rect x="20" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="${color}" stroke-width="2"/>
+                <text x="90" y="48" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">${escapeHtml(srcName || '').substring(0,16)}</text>
+                <text x="90" y="64" text-anchor="middle" fill="#8b949e" font-size="10">Source</text>
+                <!-- Dest device -->
+                <rect x="540" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="${color}" stroke-width="2"/>
+                <text x="610" y="48" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">${escapeHtml(dstName || '').substring(0,16)}</text>
+                <text x="610" y="64" text-anchor="middle" fill="#8b949e" font-size="10">Destination</text>
+                <!-- Connection path -->
+                <path id="bridge-path" d="M160,50 Q350,10 540,50" fill="none" stroke="${pathColor}" stroke-width="3" ${dash} ${status === 'up' ? 'filter="url(#bridge-glow)"' : ''}>
+                    ${pulseAnim}
+                </path>
+                ${particles}
+            </svg>
+        `;
+    }
+
+    // Load connection detail
+    async function loadConnectionDetail() {
+        const data = await apiFetch(`${API_BASE}/connections/${connId}/detail`);
+        if (!data) return;
+        connDetail = data;
+
+        const conn = data.connection;
+        const srcName = conn.source_device?.name || 'Device ' + conn.source_device_id;
+        const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
+
+        document.title = `${srcName} - ${dstName} | Connection Detail`;
+        renderBridge(srcName, dstName, conn.status, conn.connection_type);
+
+        // Stat cards
+        document.getElementById('stat-bytes-in').textContent = formatBytes(data.total_bytes_in);
+        document.getElementById('stat-bytes-out').textContent = formatBytes(data.total_bytes_out);
+        const tunnelCount = (data.source_tunnels?.length || 0) + (data.dest_tunnels?.length || 0);
+        document.getElementById('stat-tunnel-count').textContent = tunnelCount;
+        const statusEl = document.getElementById('stat-status');
+        statusEl.innerHTML = `<span class="badge ${conn.status}">${(conn.status || 'unknown').toUpperCase()}</span>`;
+
+        // Show/hide flows tab
+        document.getElementById('tab-flows').style.display = data.has_flow_data ? '' : 'none';
+
+        // Render tunnel tables
+        renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id);
+        renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
+        document.getElementById('src-tunnels-title').textContent = `Source Tunnels (${srcName})`;
+        document.getElementById('dst-tunnels-title').textContent = `Destination Tunnels (${dstName})`;
+    }
+
+    function renderTunnelTable(tableId, tunnels, deviceId) {
+        const tbody = document.querySelector(`#${tableId} tbody`);
+        if (!tunnels.length) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#484f58;padding:30px;">No matching tunnels found</td></tr>';
+            return;
+        }
+        let html = '';
+        tunnels.forEach((t, i) => {
+            const rowId = `${tableId}-row-${i}`;
+            const statusBadge = t.status === 'up' || t.state === 'up' ? '<span class="badge up">UP</span>' : '<span class="badge down">DOWN</span>';
+            const typeBadge = t.tunnel_type ? `<span class="badge ipsec">${escapeHtml(t.tunnel_type)}</span>` : '-';
+            html += `
+                <tr class="tunnel-row" onclick="toggleTunnel('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}')">
+                    <td><span class="chevron" id="chev-${rowId}">&#9654;</span></td>
+                    <td>${escapeHtml(t.tunnel_name)}</td>
+                    <td>${typeBadge}</td>
+                    <td>${statusBadge}</td>
+                    <td>${escapeHtml(t.remote_ip)}</td>
+                    <td>${formatBytes(t.bytes_in)}</td>
+                    <td>${formatBytes(t.bytes_out)}</td>
+                    <td>${formatNum(t.packets_in)}</td>
+                    <td>${formatNum(t.packets_out)}</td>
+                </tr>
+                <tr class="tunnel-expand" id="${rowId}">
+                    <td colspan="9">
+                        <div class="tunnel-chart-wrap">
+                            <div class="range-pills" style="margin-bottom:8px;">
+                                <div class="range-pill active" onclick="loadTunnelChart('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}', '1h', event)">1h</div>
+                                <div class="range-pill" onclick="loadTunnelChart('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}', '24h', event)">24h</div>
+                                <div class="range-pill" onclick="loadTunnelChart('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}', '7d', event)">7d</div>
+                                <div class="range-pill" onclick="loadTunnelChart('${rowId}', ${deviceId}, '${escapeHtml(t.tunnel_name)}', '30d', event)">30d</div>
+                            </div>
+                            <div class="chart-container"><canvas id="chart-${rowId}"></canvas></div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = html;
+    }
+
+    function toggleTunnel(rowId, deviceId, tunnelName) {
+        const expandRow = document.getElementById(rowId);
+        const chev = document.getElementById('chev-' + rowId);
+        if (expandRow.classList.contains('open')) {
+            expandRow.classList.remove('open');
+            chev.classList.remove('open');
+        } else {
+            expandRow.classList.add('open');
+            chev.classList.add('open');
+            if (!tunnelCharts[rowId]) {
+                loadTunnelChart(rowId, deviceId, tunnelName, '24h');
+            }
+        }
+    }
+
+    async function loadTunnelChart(rowId, deviceId, tunnelName, range, evt) {
+        if (evt) {
+            evt.stopPropagation();
+            const pills = evt.target.parentElement.querySelectorAll('.range-pill');
+            pills.forEach(p => p.classList.remove('active'));
+            evt.target.classList.add('active');
+        }
+        const data = await apiFetch(`${API_BASE}/devices/${deviceId}/vpn/${encodeURIComponent(tunnelName)}/chart?range=${range}`);
+        if (!data) return;
+
+        const canvas = document.getElementById('chart-' + rowId);
+        if (!canvas) return;
+        if (tunnelCharts[rowId]) tunnelCharts[rowId].destroy();
+
+        const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
+        tunnelCharts[rowId] = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'In Bytes', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'Out Bytes', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                ]
+            },
+            options: chartOptions()
+        });
+    }
+
+    function chartOptions(yCallback) {
+        return {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
+            scales: {
+                x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                y: { ticks: { color: '#484f58', font: { size: 9 }, callback: yCallback || (v => formatBytes(v)) }, grid: { color: '#21262d' } }
+            }
+        };
+    }
+
+    // Traffic chart
+    async function loadTrafficChart() {
+        const data = await apiFetch(`${API_BASE}/connections/${connId}/traffic?range=${currentTrafficRange}`);
+        if (!data) return;
+
+        const canvas = document.getElementById('traffic-chart');
+        if (trafficChart) trafficChart.destroy();
+
+        const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
+
+        // Compute throughput for gauges
+        if (data.length >= 2) {
+            const last = data[data.length - 1], prev = data[data.length - 2];
+            const inRate = Math.abs(last.in_bytes - prev.in_bytes);
+            const outRate = Math.abs(last.out_bytes - prev.out_bytes);
+            const maxObs = Math.max(...data.map(d => Math.max(d.in_bytes, d.out_bytes)), 1);
+            createGauge('gauge-in', inRate, maxObs);
+            createGauge('gauge-out', outRate, maxObs);
+            document.getElementById('gauge-in-val').textContent = formatBytes(inRate) + '/interval';
+            document.getElementById('gauge-out-val').textContent = formatBytes(outRate) + '/interval';
+        }
+
+        trafficChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Inbound', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'Outbound', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                ]
+            },
+            options: chartOptions()
+        });
+    }
+
+    function setTrafficRange(range) {
+        currentTrafficRange = range;
+        document.querySelectorAll('#traffic-range .range-pill').forEach(p => {
+            p.classList.toggle('active', p.dataset.range === range);
+        });
+        loadTrafficChart();
+    }
+
+    // sFlow traffic analysis
+    async function loadFlowStats() {
+        const data = await apiFetch(`${API_BASE}/connections/${connId}/flows?hours=${currentFlowHours}`);
+        if (!data) return;
+
+        const hasData = data.total_flows > 0;
+        document.getElementById('flow-empty').style.display = hasData ? 'none' : '';
+        document.getElementById('flow-content').style.display = hasData ? '' : 'none';
+        if (!hasData) return;
+
+        document.getElementById('flow-total-bytes').textContent = formatBytes(data.total_bytes);
+        document.getElementById('flow-total-packets').textContent = formatNum(data.total_packets);
+        document.getElementById('flow-total-flows').textContent = formatNum(data.total_flows);
+
+        // Protocol doughnut
+        const protoColors = { TCP: '#58a6ff', UDP: '#3fb950', ICMP: '#d29922', ESP: '#8957e5', GRE: '#f0883e', AH: '#f85149' };
+        if (protoChart) protoChart.destroy();
+        const protoData = data.by_protocol || [];
+        protoChart = new Chart(document.getElementById('proto-chart'), {
+            type: 'doughnut',
+            data: {
+                labels: protoData.map(p => p.key),
+                datasets: [{
+                    data: protoData.map(p => p.count),
+                    backgroundColor: protoData.map(p => protoColors[p.key] || '#484f58'),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'right', labels: { color: '#8b949e', padding: 8, font: { size: 10 } } } }
+            }
+        });
+
+        // Bytes over time
+        if (flowTimeChart) flowTimeChart.destroy();
+        const timeData = data.bytes_over_time || [];
+        flowTimeChart = new Chart(document.getElementById('flow-time-chart'), {
+            type: 'line',
+            data: {
+                labels: timeData.map(t => t.bucket.split(' ').pop() || t.bucket),
+                datasets: [{ label: 'Total Bytes', data: timeData.map(t => t.count), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }]
+            },
+            options: chartOptions()
+        });
+
+        // Top sources bar
+        if (topSrcChart) topSrcChart.destroy();
+        const srcData = data.top_sources || [];
+        topSrcChart = new Chart(document.getElementById('top-src-chart'), {
+            type: 'bar',
+            data: {
+                labels: srcData.map(s => s.key),
+                datasets: [{ label: 'Bytes', data: srcData.map(s => s.count), backgroundColor: 'rgba(88,166,255,0.6)', borderRadius: 4 }]
+            },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#484f58', font: { size: 9 }, callback: v => formatBytes(v) }, grid: { color: '#21262d' } },
+                    y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { display: false } }
+                }
+            }
+        });
+
+        // Top destinations bar
+        if (topDstChart) topDstChart.destroy();
+        const dstData = data.top_destinations || [];
+        topDstChart = new Chart(document.getElementById('top-dst-chart'), {
+            type: 'bar',
+            data: {
+                labels: dstData.map(s => s.key),
+                datasets: [{ label: 'Bytes', data: dstData.map(s => s.count), backgroundColor: 'rgba(63,185,80,0.6)', borderRadius: 4 }]
+            },
+            options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#484f58', font: { size: 9 }, callback: v => formatBytes(v) }, grid: { color: '#21262d' } },
+                    y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { display: false } }
+                }
+            }
+        });
+
+        // Top conversations table
+        const convos = data.top_conversations || [];
+        const ctbody = document.querySelector('#convos-table tbody');
+        ctbody.innerHTML = convos.map(c => `
+            <tr>
+                <td>${escapeHtml(c.src_addr)}:${c.src_port}</td>
+                <td>${escapeHtml(c.dst_addr)}:${c.dst_port}</td>
+                <td>${escapeHtml(c.protocol)}</td>
+                <td>${formatBytes(c.bytes)}</td>
+                <td>${formatNum(c.packets)}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="5" style="text-align:center;color:#484f58;padding:20px;">No conversations found</td></tr>';
+    }
+
+    function setFlowRange(hours) {
+        currentFlowHours = hours;
+        document.querySelectorAll('#flow-range .range-pill').forEach(p => {
+            p.classList.toggle('active', parseInt(p.dataset.range) === hours);
+        });
+        loadFlowStats();
+    }
+
+    // Logout
+    async function doLogout() {
+        try {
+            await fetch('/admin/api/logout', { method: 'POST', credentials: 'include' });
+        } catch(e) {}
+        window.location.href = '/admin';
+    }
+
+    // Init
+    async function init() {
+        await loadConnectionDetail();
+        await loadTrafficChart();
+        if (connDetail?.has_flow_data) {
+            loadFlowStats();
+        }
+    }
+    init();
+
+    // Auto-refresh every 30s
+    setInterval(async () => {
+        await loadConnectionDetail();
+        await loadTrafficChart();
+        if (connDetail?.has_flow_data && document.getElementById('tab-content-flows').classList.contains('active')) {
+            loadFlowStats();
+        }
+    }, 30000);
+</script>
+</body>
+</html>

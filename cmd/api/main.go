@@ -239,6 +239,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "device-detail.html", nil)
 		})
 
+		admin.GET("/connections/:id", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "connection-detail.html", nil)
+		})
+
 		admin.GET("/api/csrf-token", handler.GetCSRFToken)
 		admin.GET("/api/dashboard", handler.GetDashboardAll)
 		admin.GET("/api/dashboard/:id", handler.GetAdminDashboard)
@@ -292,6 +296,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/connections", handler.CreateDeviceConnection)
 		admin.PUT("/api/connections/:id", handler.UpdateDeviceConnection)
 		admin.DELETE("/api/connections/:id", handler.DeleteDeviceConnection)
+		admin.GET("/api/connections/:id/detail", handler.GetConnectionDetail)
+		admin.GET("/api/connections/:id/traffic", handler.GetConnectionTraffic)
+		admin.GET("/api/connections/:id/flows", handler.GetConnectionFlows)
+		admin.GET("/api/devices/:id/vpn/:tunnel/chart", handler.GetVPNTunnelChart)
 
 		admin.POST("/api/logout", handler.Logout)
 

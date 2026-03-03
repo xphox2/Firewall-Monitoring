@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -188,4 +189,91 @@ func (h *Handler) DeleteDeviceConnection(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.MessageResponse("Connection deleted"))
+}
+
+func (h *Handler) GetConnectionDetail(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	detail, err := h.db.GetConnectionDetail(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(detail))
+}
+
+func (h *Handler) GetConnectionTraffic(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	rangeStr := c.DefaultQuery("range", "24h")
+	validRanges := map[string]bool{"1h": true, "24h": true, "7d": true, "30d": true}
+	if !validRanges[rangeStr] {
+		rangeStr = "24h"
+	}
+	data, err := h.db.GetConnectionTraffic(id, rangeStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get traffic data"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(data))
+}
+
+func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	tunnel := c.Param("tunnel")
+	if tunnel == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Tunnel name required"))
+		return
+	}
+	rangeStr := c.DefaultQuery("range", "24h")
+	validRanges := map[string]bool{"1h": true, "24h": true, "7d": true, "30d": true}
+	if !validRanges[rangeStr] {
+		rangeStr = "24h"
+	}
+	data, err := h.db.GetVPNChartData(id, tunnel, rangeStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get VPN chart data"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(data))
+}
+
+func (h *Handler) GetConnectionFlows(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	hoursStr := c.DefaultQuery("hours", "24")
+	hours, err := strconv.Atoi(hoursStr)
+	if err != nil || hours < 1 {
+		hours = 24
+	}
+	if hours > 720 {
+		hours = 720
+	}
+	data, err := h.db.GetConnectionFlowStats(id, hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow stats"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(data))
 }

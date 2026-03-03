@@ -587,6 +587,7 @@
                     <p><strong>Last Check:</strong> ${conn.last_check ? new Date(conn.last_check).toLocaleString() : 'Never'}</p>
                     ${conn.notes ? `<p><strong>Notes:</strong> ${escapeHtml(conn.notes)}</p>` : ''}
                 </div>
+                <a href="/admin/connections/${conn.id}" class="btn sm" style="margin-bottom:8px;display:inline-block;text-decoration:none;">View Full Details &rarr;</a>
                 <button class="btn sm danger" onclick="deleteConnection(${conn.id})">Delete Connection</button>
             `;
             document.getElementById('details-panel').classList.add('open');

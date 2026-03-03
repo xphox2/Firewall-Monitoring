@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.38] - 2026-03-02
+
+### Added
+- **NOC-style animated SVG connection diagram**: Replaced CSS DIV-based connection map with full SVG canvas featuring bezier curves, glow filters, device status indicators, and click-to-detail panels
+- **Animated traffic particles**: "Up" connections show flowing particle animations along paths using SVG `animateMotion`; down connections pulse red
+- **VXLAN visual distinction**: VXLAN connections render in purple with dashed stroke pattern
+- **Connection detail page** (`/admin/connections/:id`): Full standalone page with animated bridge header, aggregate bandwidth charts, live throughput gauges, tunnel tabs, and sFlow traffic analysis
+- **Per-tunnel bandwidth charts**: Expandable tunnel rows with lazy-loaded Chart.js charts and time range selectors (1h/24h/7d/30d)
+- **sFlow traffic analysis tab**: Protocol distribution doughnut, top sources/destinations horizontal bars, top conversations table, bytes-over-time chart — conditionally shown when sFlow data exists
+- **VPN chart data API** (`GET /admin/api/devices/:id/vpn/:tunnel/chart`): Time-bucketed VPN tunnel bandwidth data
+- **Connection detail API** (`GET /admin/api/connections/:id/detail`): Full connection info with matching source/dest tunnels, aggregate stats, and sFlow availability flag
+- **Connection traffic API** (`GET /admin/api/connections/:id/traffic`): Aggregate bandwidth chart data across all matching tunnels
+- **Connection flows API** (`GET /admin/api/connections/:id/flows`): sFlow traffic analysis filtered to connection tunnel interfaces with protocol breakdown, top talkers, conversations, and time series
+- **View Details links**: Added connection detail navigation from connections table, SVG diagram click panel, and network page detail sidebar
+
 ## [0.10.37] - 2026-03-02
 
 ### Added
