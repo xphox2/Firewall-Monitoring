@@ -44,7 +44,7 @@ func (p *Poller) Start() error {
 
 	// Clean up stale auto-detected connections from generic interface names
 	if p.db != nil {
-		removed := p.db.CleanupStaleAutoConnections([]string{"ssl.root", "ssl.vdom"})
+		removed := p.db.CleanupStaleAutoConnections([]string{"ssl.root", "ssl.vdom", "naf.root", "l2t.root"})
 		if removed > 0 {
 			log.Printf("Cleaned up %d stale auto-detected connection(s) from generic tunnel names", removed)
 		}
@@ -552,8 +552,10 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		"loopback0": true, "lo": true, "lo0": true,
 		"mgmt": true, "mgmt0": true, "management": true,
 		"null0": true, "": true,
-		// FortiGate default SSL VPN interfaces (present on every unit)
-		"sslroot": true, "sslvdom": true,
+	}
+	// FortiGate system interfaces follow *.root / *.vdom pattern — skip all of them
+	isSystemIface := func(normalized string) bool {
+		return strings.HasSuffix(normalized, "root") || strings.HasSuffix(normalized, "vdom")
 	}
 
 	// Tunnel-like interface types and name prefixes
@@ -563,10 +565,8 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		"l2vlan": true, "l3ipvlan": true,
 	}
 
-	// Local-segment types only connect devices at the same site
+	// Local-segment types require same site; everything else requires a direct VPN link
 	localTypes := map[string]bool{"l2vlan": true}
-	// Overlay types ride on a tunnel — only valid between devices with a direct VPN link
-	overlayTypes := map[string]bool{"l3ipvlan": true, "vxlan": true}
 	sameSite := func(devA, devB uint) bool {
 		da, oa := deviceByID[devA]
 		db, ob := deviceByID[devB]
@@ -618,7 +618,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 			continue
 		}
 		normalized := normalizeIfName(iface.Name)
-		if skipNames[normalized] {
+		if skipNames[normalized] || isSystemIface(normalized) {
 			continue
 		}
 		nameGroups[normalized] = append(nameGroups[normalized], ifEntry{
@@ -669,13 +669,14 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 					continue
 				}
 
-				// Local-segment types (l2vlan) require devices at the same site
-				if localTypes[connType] && !sameSite(a.deviceID, b.deviceID) {
-					continue
-				}
-				// Overlay types (l3ipvlan, vxlan) ride on a tunnel — require
-				// a direct VPN link between the pair, otherwise it's a false match
-				if overlayTypes[connType] && !hasDirectLink(a.deviceID, b.deviceID) {
+				// l2vlan = local segment, requires same site.
+				// Everything else (tunnel, ipsec, gre, l3ipvlan, vxlan, …)
+				// requires a verified direct VPN link between endpoints.
+				if localTypes[connType] {
+					if !sameSite(a.deviceID, b.deviceID) {
+						continue
+					}
+				} else if !hasDirectLink(a.deviceID, b.deviceID) {
 					continue
 				}
 

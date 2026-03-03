@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.51] - 2026-03-03
+
+### Fixed
+- **False triangle from FortiGate system interfaces (naf.root, l2t.root, ssl.root)**: Added pattern-based `isSystemIface` filter that skips all `*.root` and `*.vdom` suffixed interfaces — these are generic system interfaces present on every FortiGate and created false connections between all devices
+- **Unified validation for all non-local types**: All connection types except l2vlan now require `hasDirectLink()` (a verified VPN tunnel between endpoints). Previously only overlay types (l3ipvlan/vxlan) required this check, allowing generic "tunnel" type interfaces like `naf.root` to bypass validation
+- **Expanded startup cleanup**: Added `naf.root` and `l2t.root` to the list of stale connection names cleaned up on poller startup
+
 ## [0.10.50] - 2026-03-03
 
 ### Fixed
