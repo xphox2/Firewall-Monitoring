@@ -548,7 +548,18 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	tunnelTypes := map[string]bool{
 		"vxlan": true, "tunnel": true, "gre": true, "ipsec": true,
 		"l2tp": true, "pptp": true, "ipip": true,
-		"l3ipvlan": true,
+		"l2vlan": true, "l3ipvlan": true,
+	}
+
+	// Local-segment types only connect devices at the same site
+	localTypes := map[string]bool{"l2vlan": true}
+	sameSite := func(devA, devB uint) bool {
+		da, oa := deviceByID[devA]
+		db, ob := deviceByID[devB]
+		if !oa || !ob || da.SiteID == nil || db.SiteID == nil {
+			return false
+		}
+		return *da.SiteID == *db.SiteID
 	}
 	isTunnelName := func(name string) bool {
 		n := strings.ToLower(name)
@@ -631,6 +642,12 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 				if processed[key] {
 					continue
 				}
+
+				// Local-segment types (l2vlan) require devices at the same site
+				if localTypes[connType] && !sameSite(a.deviceID, b.deviceID) {
+					continue
+				}
+
 				processed[key] = true
 
 				srcID, dstID := a.deviceID, b.deviceID

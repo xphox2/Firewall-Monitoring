@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.47] - 2026-03-03
+
+### Fixed
+- **L2VLAN auto-detection scoped to same-site devices**: L2VLAN connections are now only auto-detected between devices assigned to the same site. Devices at different sites sharing a VLAN name are skipped, preventing false cross-site L2 connections. L3IPVLAN and other tunnel types remain unrestricted.
+
 ## [0.10.46] - 2026-03-02
 
 ### Fixed
