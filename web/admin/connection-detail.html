@@ -52,10 +52,15 @@
         .badge.online, .badge.up { background: rgba(63,185,80,0.15); color: #3fb950; }
         .badge.offline, .badge.down { background: rgba(248,81,73,0.15); color: #f85149; }
         .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
-        .badge.ipsec { background: rgba(56,139,253,0.15); color: #58a6ff; }
-        .badge.vxlan { background: rgba(130,80,223,0.15); color: #bc8cff; }
+        .badge.ipsec { background: rgba(88,166,255,0.15); color: #58a6ff; }
+        .badge.vxlan { background: rgba(137,87,229,0.15); color: #8957e5; }
         .badge.ssl { background: rgba(210,153,34,0.15); color: #d29922; }
-        .badge.wan { background: rgba(139,148,158,0.15); color: #8b949e; }
+        .badge.wan { background: rgba(240,136,62,0.15); color: #f0883e; }
+        .badge.l2vlan { background: rgba(57,212,224,0.15); color: #39d4e0; }
+        .badge.l3ipvlan { background: rgba(218,125,232,0.15); color: #da7de8; }
+        .badge.gre { background: rgba(179,146,240,0.15); color: #b392f0; }
+        .badge.lag { background: rgba(210,153,34,0.15); color: #d29922; }
+        .badge.tunnel { background: rgba(139,148,158,0.15); color: #8b949e; }
 
         /* Stat cards */
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -371,11 +376,26 @@
     }
 
     // Bridge header SVG
+    // Connection type → visual style mapping
+    function connStyleLookup(type) {
+        const styles = {
+            ipsec:    { color: '#58a6ff', dash: '', width: 3 },
+            ssl:      { color: '#d29922', dash: '', width: 3 },
+            vxlan:    { color: '#8957e5', dash: 'stroke-dasharray="8,4"', width: 3 },
+            l2vlan:   { color: '#39d4e0', dash: '', width: 3 },
+            l3ipvlan: { color: '#da7de8', dash: 'stroke-dasharray="12,4"', width: 3 },
+            gre:      { color: '#b392f0', dash: '', width: 3 },
+            wan:      { color: '#f0883e', dash: '', width: 3 },
+            lag:      { color: '#d29922', dash: '', width: 4 },
+            tunnel:   { color: '#8b949e', dash: '', width: 3 },
+        };
+        return styles[type] || styles.tunnel;
+    }
+
     function renderBridge(srcName, dstName, status, connType) {
-        const color = status === 'up' ? '#3fb950' : (status === 'down' ? '#f85149' : '#484f58');
-        const isVxlan = connType === 'vxlan';
-        const dash = isVxlan ? 'stroke-dasharray="8,4"' : '';
-        const pathColor = isVxlan ? '#8957e5' : color;
+        const statusColor = status === 'up' ? '#3fb950' : (status === 'down' ? '#f85149' : '#484f58');
+        const cs = connStyleLookup(connType);
+        const pathColor = cs.color;
         const particles = status === 'up' ? `
             <circle r="4" fill="${pathColor}" opacity="0.85">
                 <animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
@@ -383,10 +403,10 @@
             <circle r="4" fill="${pathColor}" opacity="0.85">
                 <animateMotion dur="3s" begin="1.5s" repeatCount="indefinite" fill="freeze"><mpath href="#bridge-path"/></animateMotion>
             </circle>
-            <circle r="3" fill="#58a6ff" opacity="0.7">
+            <circle r="3" fill="${pathColor}" opacity="0.7">
                 <animateMotion dur="3.5s" begin="0.5s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#bridge-path"/></animateMotion>
             </circle>
-            <circle r="3" fill="#58a6ff" opacity="0.7">
+            <circle r="3" fill="${pathColor}" opacity="0.7">
                 <animateMotion dur="3.5s" begin="2s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#bridge-path"/></animateMotion>
             </circle>
         ` : '';
@@ -401,15 +421,15 @@
                     </filter>
                 </defs>
                 <!-- Source device -->
-                <rect x="20" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="${color}" stroke-width="2"/>
+                <rect x="20" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="${statusColor}" stroke-width="2"/>
                 <text x="90" y="48" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">${escapeHtml(srcName || '').substring(0,16)}</text>
                 <text x="90" y="64" text-anchor="middle" fill="#8b949e" font-size="10">Source</text>
                 <!-- Dest device -->
-                <rect x="540" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="${color}" stroke-width="2"/>
+                <rect x="540" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="${statusColor}" stroke-width="2"/>
                 <text x="610" y="48" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">${escapeHtml(dstName || '').substring(0,16)}</text>
                 <text x="610" y="64" text-anchor="middle" fill="#8b949e" font-size="10">Destination</text>
                 <!-- Connection path -->
-                <path id="bridge-path" d="M160,50 Q350,10 540,50" fill="none" stroke="${pathColor}" stroke-width="3" ${dash} ${status === 'up' ? 'filter="url(#bridge-glow)"' : ''}>
+                <path id="bridge-path" d="M160,50 Q350,10 540,50" fill="none" stroke="${pathColor}" stroke-width="${cs.width}" ${cs.dash} ${status === 'up' ? 'filter="url(#bridge-glow)"' : ''}>
                     ${pulseAnim}
                 </path>
                 ${particles}

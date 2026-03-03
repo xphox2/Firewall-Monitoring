@@ -548,6 +548,7 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	tunnelTypes := map[string]bool{
 		"vxlan": true, "tunnel": true, "gre": true, "ipsec": true,
 		"l2tp": true, "pptp": true, "ipip": true,
+		"l2vlan": true, "l3ipvlan": true,
 	}
 	isTunnelName := func(name string) bool {
 		n := strings.ToLower(name)
@@ -605,17 +606,15 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 			continue
 		}
 
-		// Determine connection type from interface type
+		// Determine connection type from interface type (priority: l3ipvlan > vxlan > l2vlan > gre > ipsec > tunnel)
+		typePriority := map[string]int{"tunnel": 0, "ipsec": 1, "gre": 2, "l2vlan": 3, "vxlan": 4, "l3ipvlan": 5}
 		connType := "tunnel"
+		bestPri := 0
 		for _, e := range seen {
 			t := strings.ToLower(e.typeName)
-			if t == "vxlan" {
-				connType = "vxlan"
-				break
-			} else if t == "gre" {
-				connType = "gre"
-			} else if t == "ipsec" && connType != "gre" {
-				connType = "ipsec"
+			if pri, ok := typePriority[t]; ok && pri > bestPri {
+				connType = t
+				bestPri = pri
 			}
 		}
 

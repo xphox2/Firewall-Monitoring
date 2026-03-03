@@ -130,10 +130,15 @@
 
         .type-legend { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
         .type-badge { padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; background: #30363d; }
-        .type-badge.ipsec { background: rgba(56,139,253,0.15); color: #58a6ff; }
-        .type-badge.vxlan { background: rgba(163, 113, 247, 0.15); color: #a371f7; }
-        .type-badge.ssl { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
-        .type-badge.wan { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
+        .type-badge.ipsec { background: rgba(88,166,255,0.15); color: #58a6ff; }
+        .type-badge.vxlan { background: rgba(137,87,229,0.15); color: #8957e5; }
+        .type-badge.ssl { background: rgba(210,153,34,0.15); color: #d29922; }
+        .type-badge.wan { background: rgba(240,136,62,0.15); color: #f0883e; }
+        .type-badge.l2vlan { background: rgba(57,212,224,0.15); color: #39d4e0; }
+        .type-badge.l3ipvlan { background: rgba(218,125,232,0.15); color: #da7de8; }
+        .type-badge.gre { background: rgba(179,146,240,0.15); color: #b392f0; }
+        .type-badge.lag { background: rgba(210,153,34,0.15); color: #d29922; }
+        .type-badge.tunnel { background: rgba(139,148,158,0.15); color: #8b949e; }
 
         .connection-info { background: #0d1117; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
         .connection-info h4 { font-size: 0.9rem; margin-bottom: 8px; }
@@ -197,6 +202,11 @@
                 <span class="type-badge vxlan">VXLAN</span>
                 <span class="type-badge ssl">SSL VPN</span>
                 <span class="type-badge wan">WAN</span>
+                <span class="type-badge l2vlan">L2VLAN</span>
+                <span class="type-badge l3ipvlan">L3IPVLAN</span>
+                <span class="type-badge gre">GRE</span>
+                <span class="type-badge lag">LAG</span>
+                <span class="type-badge tunnel">Tunnel</span>
             </div>
         </div>
 
@@ -254,6 +264,11 @@
                         <option value="vxlan">VXLAN</option>
                         <option value="ssl">SSL VPN</option>
                         <option value="wan">WAN Link</option>
+                        <option value="l2vlan">L2VLAN</option>
+                        <option value="l3ipvlan">L3IPVLAN</option>
+                        <option value="gre">GRE</option>
+                        <option value="lag">LAG</option>
+                        <option value="tunnel">Tunnel</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -284,6 +299,22 @@
         let currentSites = [];
         let selectedNode = null;
         let csrfTokenCache = '';
+
+        // Connection type → visual style mapping
+        function getConnStyle(type) {
+            const styles = {
+                ipsec:    { color: '#58a6ff', dash: null, width: '2' },
+                ssl:      { color: '#d29922', dash: null, width: '2' },
+                vxlan:    { color: '#8957e5', dash: '8,4', width: '2' },
+                l2vlan:   { color: '#39d4e0', dash: null, width: '2' },
+                l3ipvlan: { color: '#da7de8', dash: '12,4', width: '2' },
+                gre:      { color: '#b392f0', dash: null, width: '2' },
+                wan:      { color: '#f0883e', dash: null, width: '2' },
+                lag:      { color: '#d29922', dash: null, width: '4' },
+                tunnel:   { color: '#8b949e', dash: null, width: '2' },
+            };
+            return styles[type] || styles.tunnel;
+        }
 
         async function fetchCsrfToken() {
             try {
@@ -449,14 +480,12 @@
                     line.setAttribute('y1', srcPos.y);
                     line.setAttribute('x2', dstPos.x);
                     line.setAttribute('y2', dstPos.y);
-                    // VXLAN connections get purple color and dashed pattern
-                    if (conn.connection_type === 'vxlan') {
-                        line.setAttribute('stroke', '#8957e5');
-                        line.setAttribute('stroke-dasharray', '6,3');
-                    } else {
-                        line.setAttribute('stroke', conn.status === 'up' ? '#3fb150' : conn.status === 'down' ? '#f85149' : '#8b949e');
-                    }
-                    line.setAttribute('stroke-width', '2');
+                    // Color and style by connection type
+                    const connStyle = getConnStyle(conn.connection_type);
+                    const statusColor = conn.status === 'up' ? '#3fb150' : conn.status === 'down' ? '#f85149' : '#8b949e';
+                    line.setAttribute('stroke', connStyle.color || statusColor);
+                    if (connStyle.dash) line.setAttribute('stroke-dasharray', connStyle.dash);
+                    line.setAttribute('stroke-width', connStyle.width || '2');
                     line.setAttribute('marker-end', `url(#arrow-${conn.status})`);
                     line.style.cursor = 'pointer';
                     line.addEventListener('click', () => showConnectionDetails(conn));

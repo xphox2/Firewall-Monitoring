@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.45] - 2026-03-02
+
+### Added
+- **Network type-aware connection visualization**: Connection map now renders distinct colors, dash patterns, and line widths for each network layer type (IPSec, SSL VPN, VXLAN, L2VLAN, L3IPVLAN, GRE, LAG, Tunnel, WAN)
+- **Poller auto-detection for L2VLAN/L3IPVLAN**: `detectTunnelConnections` now recognizes `l2vlan` and `l3ipvlan` interface types with priority-based type determination (l3ipvlan > vxlan > l2vlan > gre > ipsec > tunnel)
+- **Connection type legend/filter expansion**: All connection type dropdowns and legends across network.html, admin.html, and connection-detail.html include the new types
+- **Type-specific bridge rendering**: Connection detail page bridge SVG uses per-type colors, dash patterns, and particle colors instead of hardcoded vxlan/default logic
+
 ## [0.10.44] - 2026-03-02
 
 ### Fixed
