@@ -214,7 +214,7 @@ type Device struct {
 	Hostname       string    `json:"hostname"`
 	IPAddress      string    `json:"ip_address" gorm:"not null"`
 	SNMPPort       int       `json:"snmp_port" gorm:"default:161"`
-	SNMPCommunity  string    `json:"snmp_community" gorm:"default:public"`
+	SNMPCommunity  string    `json:"snmp_community"`
 	SNMPVersion    string    `json:"snmp_version" gorm:"default:2c"`
 	SNMPV3Username string    `json:"snmpv3_username"`
 	SNMPV3AuthType string    `json:"snmpv3_auth_type"`
@@ -483,7 +483,7 @@ type SiteDevice struct {
 	Hostname       string    `json:"hostname"`
 	IPAddress      string    `json:"ip_address" gorm:"not null"`
 	SNMPPort       int       `json:"snmp_port" gorm:"default:161"`
-	SNMPCommunity  string    `json:"snmp_community" gorm:"default:public"`
+	SNMPCommunity  string    `json:"snmp_community"`
 	SNMPVersion    string    `json:"snmp_version" gorm:"default:2c"`
 	Enabled        bool      `json:"enabled" gorm:"default:true"`
 	Location       string    `json:"location"`

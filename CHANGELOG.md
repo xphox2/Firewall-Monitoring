@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.65] - 2026-03-03
+
+### Security (P1 — High)
+- **H3: SNMP credentials encrypted at rest**: Added AES-256-GCM encryption for `SNMPCommunity`, `SNMPV3AuthPass`, and `SNMPV3PrivPass` in the database. Encryption key is derived from `JWT_SECRET_KEY` via SHA-256. Existing plaintext values are automatically migrated on startup. Encrypted values use a `{enc}` prefix for backward-compatible detection.
+- **H4: Remove insecure SNMP defaults**: Removed `default:public` from SNMP community GORM tags. `TestDeviceConnection` now requires an explicit community string for SNMPv1/v2c instead of defaulting to "public". SNMP trap community default changed from "public" to empty string.
+- **H7: Cookie Secure flag auto-detection**: `COOKIE_SECURE` now defaults to match `SERVER_ENABLE_TLS` instead of always defaulting to `false`. When TLS is enabled, cookies are automatically marked Secure without explicit configuration.
+- **H10: SNMP error detail redaction**: `TestDeviceConnection` now returns generic error messages ("unable to reach device", "device did not respond to SNMP query") instead of leaking internal SNMP error details. Detailed errors are still logged server-side.
+
 ## [0.10.64] - 2026-03-03
 
 ### Security (P2 — Medium)

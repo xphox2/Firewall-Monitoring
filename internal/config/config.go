@@ -135,7 +135,7 @@ func Load() *Config {
 			TLSKeyFile:     getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
 			AdminSecretKey: getEnv("ADMIN_SECRET_KEY", ""),
 			JWTSecretKey:   getEnv("JWT_SECRET_KEY", ""),
-			CookieSecure:   getBoolEnv("COOKIE_SECURE", false),
+			CookieSecure:   getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSameSite: getEnv("COOKIE_SAMESITE", "Strict"),
 		},
 		SNMP: SNMPConfig{
@@ -147,7 +147,7 @@ func Load() *Config {
 			Retries:        getIntEnv("SNMP_RETRIES", 2),
 			PollInterval:   getDurationEnv("SNMP_POLL_INTERVAL", 60*time.Second),
 			TrapListenAddr: getEnv("SNMP_TRAP_LISTEN", "0.0.0.0:162"),
-			TrapCommunity:  getEnv("SNMP_TRAP_COMMUNITY", "public"),
+			TrapCommunity:  getEnv("SNMP_TRAP_COMMUNITY", ""),
 			V3Username:     getEnv("SNMP_V3_USERNAME", ""),
 			V3AuthType:     getEnv("SNMP_V3_AUTH_TYPE", ""),
 			V3AuthPass:     getEnv("SNMP_V3_AUTH_PASS", ""),

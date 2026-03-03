@@ -197,6 +197,15 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
+	// Encrypt SNMP secrets before database write
+	for _, field := range []string{"snmp_community", "snmpv3_auth_pass", "snmpv3_priv_pass"} {
+		if val, ok := filteredUpdates[field]; ok {
+			if str, isStr := val.(string); isStr && str != "" {
+				filteredUpdates[field] = h.db.EncryptField(str)
+			}
+		}
+	}
+
 	if err := h.db.Gorm().Model(device).Updates(filteredUpdates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update device"))
 		return
@@ -531,11 +540,13 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
 		return
 	}
-	if req.SNMPCommunity == "" {
-		req.SNMPCommunity = "public"
-	}
 	if req.SNMPVersion == "" {
 		req.SNMPVersion = "2c"
+	}
+	// Require community string for v1/v2c (do not default to insecure "public")
+	if req.SNMPCommunity == "" && (req.SNMPVersion == "1" || req.SNMPVersion == "2c") {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("SNMP community string is required for v1/v2c"))
+		return
 	}
 
 	// Validate IP to prevent SSRF against internal services
@@ -575,7 +586,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		log.Printf("TestDevice connect error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"success": false,
-			"message": fmt.Sprintf("Failed to connect to device: %v", err),
+			"message": "Connection test failed: unable to reach device",
 			"online":  false,
 		}))
 		return
@@ -587,7 +598,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		log.Printf("TestDevice poll error for %s: %v", req.IPAddress, err)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"success": false,
-			"message": fmt.Sprintf("Failed to poll device: %v", err),
+			"message": "Connection test failed: device did not respond to SNMP query",
 			"online":  false,
 		}))
 		return

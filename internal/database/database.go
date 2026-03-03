@@ -19,7 +19,8 @@ import (
 )
 
 type Database struct {
-	db *gorm.DB
+	db     *gorm.DB
+	encKey []byte
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -60,13 +61,21 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	sqlDB.SetMaxIdleConns(1)
 	sqlDB.SetConnMaxLifetime(0)
 
-	d := &Database{db: db}
+	var encKey []byte
+	if cfg.Server.JWTSecretKey != "" {
+		encKey = deriveKey(cfg.Server.JWTSecretKey)
+	}
+
+	d := &Database{db: db, encKey: encKey}
 	if err := d.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	// Backfill vendor for existing devices
 	db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
+
+	// Encrypt any existing plaintext SNMP credentials
+	d.migrateEncryptSecrets()
 
 	return d, nil
 }
@@ -319,6 +328,9 @@ func (d *Database) Close() error {
 func (d *Database) GetAllDevices() ([]models.Device, error) {
 	var devices []models.Device
 	err := d.db.Preload("Site").Preload("Probe").Find(&devices).Error
+	for i := range devices {
+		d.DecryptDeviceSecrets(&devices[i])
+	}
 	return devices, err
 }
 
@@ -328,6 +340,7 @@ func (d *Database) GetDevice(id uint) (*models.Device, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.DecryptDeviceSecrets(&device)
 	return &device, nil
 }
 
@@ -347,7 +360,11 @@ func (d *Database) ResolveDeviceByIP(ip string) uint {
 }
 
 func (d *Database) CreateDevice(device *models.Device) error {
-	return d.db.Create(device).Error
+	d.EncryptDeviceSecrets(device)
+	err := d.db.Create(device).Error
+	// Decrypt back so the caller sees plaintext
+	d.DecryptDeviceSecrets(device)
+	return err
 }
 
 func (d *Database) UpdateDevice(device *models.Device) error {
@@ -1176,6 +1193,9 @@ func (d *Database) GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, erro
 func (d *Database) GetDevicesByProbe(probeID uint) ([]models.Device, error) {
 	var devices []models.Device
 	err := d.db.Where("probe_id = ?", probeID).Preload("Site").Find(&devices).Error
+	for i := range devices {
+		d.DecryptDeviceSecrets(&devices[i])
+	}
 	return devices, err
 }
 
