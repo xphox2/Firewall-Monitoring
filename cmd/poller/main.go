@@ -565,6 +565,8 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 
 	// Local-segment types only connect devices at the same site
 	localTypes := map[string]bool{"l2vlan": true}
+	// Overlay types ride on a tunnel — only valid between devices with a direct VPN link
+	overlayTypes := map[string]bool{"l3ipvlan": true, "vxlan": true}
 	sameSite := func(devA, devB uint) bool {
 		da, oa := deviceByID[devA]
 		db, ob := deviceByID[devB]
@@ -669,6 +671,11 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 
 				// Local-segment types (l2vlan) require devices at the same site
 				if localTypes[connType] && !sameSite(a.deviceID, b.deviceID) {
+					continue
+				}
+				// Overlay types (l3ipvlan, vxlan) ride on a tunnel — require
+				// a direct VPN link between the pair, otherwise it's a false match
+				if overlayTypes[connType] && !hasDirectLink(a.deviceID, b.deviceID) {
 					continue
 				}
 

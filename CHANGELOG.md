@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.50] - 2026-03-03
+
+### Fixed
+- **False triangle connections between all firewalls**: Overlay types (l3ipvlan, vxlan) now require a direct VPN tunnel link (`hasDirectLink`) between the device pair. Previously, devices sharing a VLAN name got l3ipvlan connections even without a tunnel between them (e.g., FW1↔FW3 got a false l3ipvlan when only FW1↔FW2 had an IPSec tunnel). Now: l2vlan requires same-site, l3ipvlan/vxlan requires a direct tunnel, preventing false cross-site overlay connections.
+
 ## [0.10.49] - 2026-03-03
 
 ### Fixed
