@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.57] - 2026-03-03
+
+### Added
+- **Modular diagram library**: Extracted ~900 lines of connection diagram JavaScript from admin.html into 6 library files under `static/js/`: `diagram-core.js` (SVG setup, zoom/pan), `diagram-layout.js` (circular layout, drag-and-drop), `diagram-connections.js` (path rendering, UP-only filter), `diagram-particles.js` (traffic-proportional rAF animation), `diagram-panels.js` (rich detail panels), `diagram-tunnel-zoom.js` (per-tunnel SVG overlay)
+- **Scroll-wheel zoom**: Zoom into diagram around cursor point (0.3x–3x range), +/- buttons and 1:1 reset in top-right overlay
+- **Ctrl+drag pan**: Pan the diagram viewport with Ctrl+click-drag
+- **Drag-and-drop device nodes**: Drag devices to rearrange the diagram; positions persist in localStorage. "Reset Layout" button restores circular default
+- **UP-only connection lines**: Only connections with `status === 'up'` are drawn as paths, decluttering the diagram for NOC operators. DOWN tunnels remain visible via VPN badge counts and detail panels
+- **Outward same-site arcs**: Direct connections between same-site devices bulge away from center, clearly bypassing the cloud node
+- **Cross-site angular fan spread**: Cross-site paths fan across a 60-degree arc through unique cloud transit points, providing 15–30px minimum separation between paths
+- **Traffic-proportional particles**: Particle count (1–6) and speed scale with `log10(bytesIn + bytesOut)` using `requestAnimationFrame` + `getPointAtLength()` instead of `<animateMotion>` elements
+- **Tunnel zoom overlay**: "Zoom In" button in connection detail panel opens an SVG overlay with source/dest nodes and each tunnel drawn as a separate labeled horizontal path with UP animation and DOWN dashed gray. Click any tunnel for details tooltip
+- **VPN map bytes**: `bytes_in`/`bytes_out` fields added to `/api/connections/vpn-map` tunnelInfo response
+
+### Changed
+- admin.html reduced from 2,980 to ~2,115 lines (net -865 lines) via modular library extraction
+- Panel onclick handlers now route through `FWDiagram.Panels` namespace with global bridge functions for inline HTML compatibility
+
 ## [0.10.56] - 2026-03-03
 
 ### Added

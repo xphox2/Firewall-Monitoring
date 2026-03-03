@@ -334,6 +334,8 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		LocalSubnet    string `json:"local_subnet"`
 		RemoteSubnet   string `json:"remote_subnet"`
 		TunnelUptime   uint64 `json:"tunnel_uptime"`
+		BytesIn        uint64 `json:"bytes_in"`
+		BytesOut       uint64 `json:"bytes_out"`
 	}
 	type deviceVPN struct {
 		Total   int          `json:"total"`
@@ -376,6 +378,8 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 			LocalSubnet:  vpn.LocalSubnet,
 			RemoteSubnet: vpn.RemoteSubnet,
 			TunnelUptime: vpn.TunnelUptime,
+			BytesIn:      vpn.BytesIn,
+			BytesOut:     vpn.BytesOut,
 		})
 	}
 
