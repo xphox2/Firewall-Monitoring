@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.49] - 2026-03-03
+
+### Fixed
+- **Stale cleanup deleting VPN connections**: The `CleanupStaleAutoConnectionsBefore` call was inside `detectTunnelConnections` with a `cycleStart` timestamp set AFTER `detectVPNConnections` had already run — causing it to delete the VPN-detected connections every cycle. Moved the cycle timestamp and cleanup to the parent `pollAllDevices` function so both detectors' connections survive.
+
 ## [0.10.48] - 2026-03-03
 
 ### Improved

@@ -140,8 +140,19 @@ func (p *Poller) pollAllDevices() {
 		log.Printf("Marked %d probe-assigned device(s) offline (no data for >%v)", count, staleAfter)
 	}
 
+	// Auto-detect connections — record cycle start BEFORE both detectors
+	// so the stale cleanup doesn't delete connections from the first detector.
+	connCycleStart := time.Now()
 	p.detectVPNConnections(devices)
 	p.detectTunnelConnections(devices)
+
+	// Clean up auto-detected connections not refreshed by either detector
+	if p.db != nil {
+		removed := p.db.CleanupStaleAutoConnectionsBefore(connCycleStart)
+		if removed > 0 {
+			log.Printf("Connection cleanup: removed %d stale auto-detected connection(s)", removed)
+		}
+	}
 }
 
 func (p *Poller) pollDevice(device *models.Device) {
@@ -624,7 +635,6 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 	}
 	// Dedup by pair + connection type — allows ipsec AND l2vlan between same pair
 	processed := make(map[string]bool)
-	cycleStart := time.Now()
 	created := 0
 
 	for _, entries := range nameGroups {
@@ -700,12 +710,8 @@ func (p *Poller) detectTunnelConnections(devices []models.Device) {
 		}
 	}
 
-	// Clean up auto-detected connections not refreshed in this cycle
-	// (interfaces deleted, type changed, or devices removed)
-	removed := p.db.CleanupStaleAutoConnectionsBefore(cycleStart)
-
-	if created > 0 || removed > 0 {
-		log.Printf("Tunnel auto-detect: upserted %d, cleaned up %d stale connection(s)", created, removed)
+	if created > 0 {
+		log.Printf("Tunnel auto-detect: upserted %d connection(s)", created)
 	}
 }
 
