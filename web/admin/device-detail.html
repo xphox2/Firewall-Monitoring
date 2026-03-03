@@ -467,7 +467,7 @@
     async function getCSRFToken() {
         try {
             const resp = await fetch('/admin/api/csrf-token', { credentials: 'same-origin' });
-            if (resp.ok) { const d = await resp.json(); return d.data?.token || ''; }
+            if (resp.ok) { const d = await resp.json(); return d.csrf_token || ''; }
         } catch(e) {}
         return '';
     }

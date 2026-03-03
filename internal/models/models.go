@@ -368,8 +368,8 @@ type ProbeHeartbeat struct {
 
 type PingResult struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
-	Timestamp    time.Time `json:"timestamp" gorm:"index"`
-	DeviceID     uint      `json:"device_id" gorm:"index"`
+	Timestamp    time.Time `json:"timestamp" gorm:"index;index:idx_ping_device_ts,priority:2"`
+	DeviceID     uint      `json:"device_id" gorm:"index;index:idx_ping_device_ts,priority:1"`
 	ProbeID      uint      `json:"probe_id" gorm:"index"`
 	TargetIP     string    `json:"target_ip"`
 	Success      bool      `json:"success"`
@@ -381,9 +381,9 @@ type PingResult struct {
 
 type PingStats struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
-	DeviceID    uint      `json:"device_id" gorm:"index"`
-	ProbeID     uint      `json:"probe_id" gorm:"index"`
-	TargetIP    string    `json:"target_ip"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:1"`
+	ProbeID     uint      `json:"probe_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:2"`
+	TargetIP    string    `json:"target_ip" gorm:"index:idx_pingstats_device_probe_target,priority:3"`
 	MinLatency  float64   `json:"min_latency"`
 	MaxLatency  float64   `json:"max_latency"`
 	AvgLatency  float64   `json:"avg_latency"`
@@ -419,8 +419,8 @@ func (PingStats) TableName() string           { return "ping_stats" }
 
 type SyslogMessage struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
-	Timestamp      time.Time `json:"timestamp" gorm:"index"`
-	DeviceID       uint      `json:"device_id" gorm:"index"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_syslog_device_ts,priority:2"`
+	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_syslog_device_ts,priority:1"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	Hostname       string    `json:"hostname"`
 	AppName        string    `json:"app_name"`
@@ -439,8 +439,8 @@ func (SyslogMessage) TableName() string { return "syslog_messages" }
 
 type FlowSample struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
-	Timestamp       time.Time `json:"timestamp" gorm:"index"`
-	DeviceID        uint      `json:"device_id" gorm:"index"`
+	Timestamp       time.Time `json:"timestamp" gorm:"index;index:idx_flow_device_ts,priority:2"`
+	DeviceID        uint      `json:"device_id" gorm:"index;index:idx_flow_device_ts,priority:1"`
 	ProbeID         uint      `json:"probe_id" gorm:"index"`
 	SamplerAddress  string    `json:"sampler_address"`
 	SequenceNumber  uint32    `json:"sequence_number"`

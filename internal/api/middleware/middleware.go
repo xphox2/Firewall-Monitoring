@@ -22,7 +22,6 @@ type ipRateLimiter struct {
 	mu       sync.RWMutex
 	rate     rate.Limit
 	burst    int
-	stop     chan struct{}
 }
 
 type rateLimiterEntry struct {
@@ -35,7 +34,6 @@ func newIPRateLimiter(r rate.Limit, burst int) *ipRateLimiter {
 		limiters: make(map[string]*rateLimiterEntry),
 		rate:     r,
 		burst:    burst,
-		stop:     make(chan struct{}),
 	}
 	go rl.cleanup()
 	return rl
@@ -58,19 +56,14 @@ func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
 func (rl *ipRateLimiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			rl.mu.Lock()
-			for ip, entry := range rl.limiters {
-				if time.Since(entry.lastSeen) > 10*time.Minute {
-					delete(rl.limiters, ip)
-				}
+	for range ticker.C {
+		rl.mu.Lock()
+		for ip, entry := range rl.limiters {
+			if time.Since(entry.lastSeen) > 10*time.Minute {
+				delete(rl.limiters, ip)
 			}
-			rl.mu.Unlock()
-		case <-rl.stop:
-			return
 		}
+		rl.mu.Unlock()
 	}
 }
 
@@ -204,7 +197,7 @@ func SecureHeaders() gin.HandlerFunc {
 		if c.Request.TLS != nil {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 		c.Next()
 	}
 }

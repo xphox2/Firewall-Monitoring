@@ -60,7 +60,7 @@ func (h *Handler) Login(c *gin.Context) {
 		userAgent = userAgent[:512]
 	}
 
-	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password); err != nil {
+	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password, ip); err != nil {
 		if h.db != nil {
 			if dbErr := h.db.SaveLoginAttempt(&models.LoginAttempt{
 				Timestamp: time.Now(),

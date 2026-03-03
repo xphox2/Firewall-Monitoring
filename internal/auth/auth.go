@@ -54,7 +54,10 @@ func NewAuthManager(cfg *config.Config, db Database) *AuthManager {
 	}
 }
 
-func (am *AuthManager) ValidateCredentials(username, password string) error {
+// ValidateCredentials checks username/password with per-IP lockout tracking.
+// The ip parameter is the client's IP address; lockout is tracked per username+IP
+// pair so that an attacker cannot DoS a legitimate user from a different IP.
+func (am *AuthManager) ValidateCredentials(username, password string, ips ...string) error {
 	if am == nil {
 		return ErrInvalidCredentials
 	}
@@ -69,9 +72,15 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		lockoutDuration = am.config.Auth.LockoutDuration
 	}
 
+	// Build lockout key: username+IP for per-source tracking
+	lockoutKey := username
+	if len(ips) > 0 && ips[0] != "" {
+		lockoutKey = username + ":" + ips[0]
+	}
+
 	// Filter out attempts older than lockout duration
 	cutoff := time.Now().Add(-lockoutDuration)
-	attempts := am.loginAttempts[username]
+	attempts := am.loginAttempts[lockoutKey]
 	recentAttempts := make([]time.Time, 0, len(attempts))
 	for _, t := range attempts {
 		if t.After(cutoff) {
@@ -79,9 +88,9 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 		}
 	}
 	if len(recentAttempts) == 0 {
-		delete(am.loginAttempts, username)
+		delete(am.loginAttempts, lockoutKey)
 	} else {
-		am.loginAttempts[username] = recentAttempts
+		am.loginAttempts[lockoutKey] = recentAttempts
 	}
 
 	if len(recentAttempts) >= maxAttempts {
@@ -89,28 +98,28 @@ func (am *AuthManager) ValidateCredentials(username, password string) error {
 	}
 
 	if am.db == nil {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
+		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	admin, err := am.db.GetAdminByUsername(username)
 	if err != nil || admin == nil {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
+		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if admin.Password == "" {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
+		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(password)) != nil {
-		am.loginAttempts[username] = append(recentAttempts, time.Now())
+		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
 		return ErrInvalidCredentials
 	}
 
-	// Successful login clears attempts
-	delete(am.loginAttempts, username)
+	// Successful login clears attempts for this IP
+	delete(am.loginAttempts, lockoutKey)
 	return nil
 }
 

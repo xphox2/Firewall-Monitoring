@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.63] - 2026-03-03
+
+### Security (P3 — Low)
+- **L1: CSRF fix in connection-detail.html**: Added CSRF token fetching and `X-CSRF-Token` header to all API requests including logout. Upgraded `apiFetch` to match the pattern used in other admin pages.
+- **L2: CSRF token parsing fix in device-detail.html**: Changed `d.data?.token` to `d.csrf_token` to match the actual API response format from `/admin/api/csrf-token`.
+- **L3: Tightened CSP directives**: Added `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, and `frame-ancestors 'none'` to Content-Security-Policy header. `unsafe-inline` for scripts/styles remains necessary due to inline usage across all admin pages.
+- **L4: Per-IP account lockout**: Login lockout is now tracked per `username:IP` composite key instead of per-username only, preventing remote attackers from locking out the admin account from a different IP.
+- **L5: config.env in .gitignore**: Added `config.env` to `.gitignore` to prevent accidental commit of production secrets.
+- **L6: Text field length validation**: Added maximum length checks on all string fields in CreateDevice, UpdateDevice, CreateSite, and UpdateSite handlers (name: 255, description: 1000, address: 500, etc.).
+- **L7: Mass assignment prevention**: `CreateDevice` now zeroes `ID`, `CreatedAt`, `UpdatedAt`, `LastPolled` before insert. `CreateSite` now zeroes `ID` before insert.
+- **L8: Rate limiter dead code cleanup**: Removed unused `stop` channel from `ipRateLimiter` struct; simplified cleanup goroutine to use `for range ticker.C`.
+- **L9: Composite DB indexes**: Added `(device_id, timestamp)` composite indexes to `PingResult`, `SyslogMessage`, and `FlowSample` models. Added `(device_id, probe_id, target_ip)` composite index to `PingStats` for efficient lookups.
+
 ## [0.10.62] - 2026-03-03
 
 ### Security (P2 — Medium)

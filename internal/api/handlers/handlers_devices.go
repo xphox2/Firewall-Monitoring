@@ -50,6 +50,16 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
+	// Length validation
+	if len(device.Name) > 255 || len(device.Hostname) > 255 || len(device.IPAddress) > 255 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name, hostname, and IP address must be 255 characters or less"))
+		return
+	}
+	if len(device.Location) > 500 || len(device.Description) > 1000 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Location (max 500) or description (max 1000) too long"))
+		return
+	}
+
 	// Default and validate vendor
 	if device.Vendor == "" {
 		device.Vendor = "fortigate"
@@ -74,7 +84,11 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
+	device.ID = 0
 	device.Status = "unknown"
+	device.CreatedAt = time.Time{}
+	device.UpdatedAt = time.Time{}
+	device.LastPolled = time.Time{}
 	if err := h.db.CreateDevice(&device); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create device"))
 		return
@@ -131,6 +145,21 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if len(filteredUpdates) == 0 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
 		return
+	}
+
+	// Validate string field lengths
+	stringLimits := map[string]int{
+		"name": 255, "hostname": 255, "ip_address": 255,
+		"location": 500, "description": 1000,
+		"snmp_community": 255, "snmpv3_username": 255,
+	}
+	for field, maxLen := range stringLimits {
+		if val, ok := filteredUpdates[field]; ok {
+			if str, isStr := val.(string); isStr && len(str) > maxLen {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Field %s exceeds max length of %d", field, maxLen)))
+				return
+			}
+		}
 	}
 
 	// Validate snmp_port is a valid number if present

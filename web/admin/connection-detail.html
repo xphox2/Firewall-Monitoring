@@ -337,8 +337,23 @@
         return String(n);
     }
 
-    async function apiFetch(url) {
-        const resp = await fetch(url, { credentials: 'include' });
+    let csrfTokenCache = '';
+    async function fetchCsrfToken() {
+        try {
+            const res = await fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' });
+            const data = await res.json();
+            csrfTokenCache = data.csrf_token || '';
+        } catch (e) {}
+        return csrfTokenCache;
+    }
+    function getCsrfToken() { return csrfTokenCache; }
+
+    async function apiFetch(url, options = {}) {
+        const resp = await fetch(url, {
+            ...options,
+            credentials: 'same-origin',
+            headers: { 'X-CSRF-Token': getCsrfToken(), ...options.headers }
+        });
         if (resp.status === 401) { window.location.href = '/admin'; return null; }
         const data = await resp.json();
         return data.success ? data.data : null;
@@ -776,14 +791,13 @@
 
     // Logout
     async function doLogout() {
-        try {
-            await fetch('/admin/api/logout', { method: 'POST', credentials: 'include' });
-        } catch(e) {}
+        await apiFetch('/admin/api/logout', { method: 'POST' });
         window.location.href = '/admin';
     }
 
     // Init
     async function init() {
+        await fetchCsrfToken();
         await loadConnectionDetail();
         await loadTrafficChart();
         if (connDetail?.has_flow_data) {

@@ -67,6 +67,12 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		return
 	}
 
+	if len(site.Name) > 255 || len(site.Region) > 255 || len(site.Country) > 255 ||
+		len(site.Address) > 500 || len(site.Timezone) > 100 || len(site.Description) > 1000 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("One or more fields exceed maximum length"))
+		return
+	}
+
 	existing, err := h.db.GetSiteByName(site.Name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check existing site"))
@@ -89,6 +95,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		}
 	}
 
+	site.ID = 0
 	if err := h.db.CreateSite(&site); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create site"))
 		return
@@ -167,6 +174,20 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 	if len(filteredUpdates) == 0 {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
 		return
+	}
+
+	// Validate string field lengths
+	stringLimits := map[string]int{
+		"name": 255, "region": 255, "country": 255,
+		"address": 500, "timezone": 100, "description": 1000,
+	}
+	for field, maxLen := range stringLimits {
+		if val, ok := filteredUpdates[field]; ok {
+			if str, isStr := val.(string); isStr && len(str) > maxLen {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Field "+field+" exceeds maximum length"))
+				return
+			}
+		}
 	}
 
 	if nameVal, ok := filteredUpdates["name"]; ok {
