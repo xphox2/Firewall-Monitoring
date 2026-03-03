@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -328,6 +329,21 @@ func (d *Database) GetDevice(id uint) (*models.Device, error) {
 		return nil, err
 	}
 	return &device, nil
+}
+
+// ResolveDeviceByIP finds a device ID by management IP or interface address.
+func (d *Database) ResolveDeviceByIP(ip string) uint {
+	// Check management IP first
+	var device models.Device
+	if err := d.db.Where("ip_address = ?", ip).Select("id").First(&device).Error; err == nil {
+		return device.ID
+	}
+	// Check interface addresses
+	var addr models.InterfaceAddress
+	if err := d.db.Where("ip_address = ?", ip).Select("device_id").First(&addr).Error; err == nil {
+		return addr.DeviceID
+	}
+	return 0
 }
 
 func (d *Database) CreateDevice(device *models.Device) error {
@@ -1507,6 +1523,23 @@ type ConnectionDetailResult struct {
 	HasFlowData   bool                   `json:"has_flow_data"`
 }
 
+// collectDeviceIPs returns all known IPs for a device (management + interface addresses).
+func (d *Database) collectDeviceIPs(deviceID uint, device *models.Device) map[string]bool {
+	ips := make(map[string]bool)
+	if device != nil && device.IPAddress != "" {
+		ips[device.IPAddress] = true
+	}
+	var distinctIPs []string
+	d.db.Model(&models.InterfaceAddress{}).
+		Where("device_id = ?", deviceID).
+		Distinct("ip_address").
+		Pluck("ip_address", &distinctIPs)
+	for _, ip := range distinctIPs {
+		ips[ip] = true
+	}
+	return ips
+}
+
 // GetConnectionDetail returns full detail for a connection with matching tunnels from both sides.
 func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, error) {
 	var conn models.DeviceConnection
@@ -1521,30 +1554,25 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
 
 	// Collect IPs for the dest device (management + interface addresses)
-	destIPs := make(map[string]bool)
-	if conn.DestDevice != nil {
-		destIPs[conn.DestDevice.IPAddress] = true
-	}
-	var destAddrs []models.InterfaceAddress
-	d.db.Where("device_id = ?", conn.DestDeviceID).Group("ip_address").Find(&destAddrs)
-	for _, a := range destAddrs {
-		destIPs[a.IPAddress] = true
-	}
+	destIPs := d.collectDeviceIPs(conn.DestDeviceID, conn.DestDevice)
 
 	// Collect IPs for the source device
-	srcIPs := make(map[string]bool)
-	if conn.SourceDevice != nil {
-		srcIPs[conn.SourceDevice.IPAddress] = true
-	}
-	var srcAddrs []models.InterfaceAddress
-	d.db.Where("device_id = ?", conn.SourceDeviceID).Group("ip_address").Find(&srcAddrs)
-	for _, a := range srcAddrs {
-		srcIPs[a.IPAddress] = true
+	srcIPs := d.collectDeviceIPs(conn.SourceDeviceID, conn.SourceDevice)
+
+	// Build a set of known tunnel names from the connection record (auto-discovery)
+	knownTunnels := make(map[string]bool)
+	if conn.TunnelNames != "" {
+		for _, name := range strings.Split(conn.TunnelNames, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				knownTunnels[name] = true
+			}
+		}
 	}
 
-	// Filter source tunnels: remote IP matches dest device
+	// Filter source tunnels: remote IP matches dest device OR tunnel name in known list
 	for _, t := range srcTunnels {
-		if destIPs[t.RemoteIP] {
+		if destIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
 			result.SourceTunnels = append(result.SourceTunnels, t)
 			result.TotalBytesIn += t.BytesIn
 			result.TotalBytesOut += t.BytesOut
@@ -1553,9 +1581,9 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
-	// Filter dest tunnels: remote IP matches source device
+	// Filter dest tunnels: remote IP matches source device OR tunnel name in known list
 	for _, t := range dstTunnels {
-		if srcIPs[t.RemoteIP] {
+		if srcIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
 			result.DestTunnels = append(result.DestTunnels, t)
 			result.TotalBytesIn += t.BytesIn
 			result.TotalBytesOut += t.BytesOut
@@ -1584,35 +1612,28 @@ func (d *Database) getConnectionTunnelNames(connID uint) (srcDeviceID, dstDevice
 	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
 	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
 
-	// Collect dest IPs
-	destIPs := make(map[string]bool)
-	if conn.DestDevice != nil {
-		destIPs[conn.DestDevice.IPAddress] = true
-	}
-	var destAddrs []models.InterfaceAddress
-	d.db.Where("device_id = ?", conn.DestDeviceID).Group("ip_address").Find(&destAddrs)
-	for _, a := range destAddrs {
-		destIPs[a.IPAddress] = true
-	}
+	// Collect IPs for both devices
+	destIPs := d.collectDeviceIPs(conn.DestDeviceID, conn.DestDevice)
+	srcIPs := d.collectDeviceIPs(conn.SourceDeviceID, conn.SourceDevice)
 
-	// Collect src IPs
-	srcIPs := make(map[string]bool)
-	if conn.SourceDevice != nil {
-		srcIPs[conn.SourceDevice.IPAddress] = true
-	}
-	var srcAddrs []models.InterfaceAddress
-	d.db.Where("device_id = ?", conn.SourceDeviceID).Group("ip_address").Find(&srcAddrs)
-	for _, a := range srcAddrs {
-		srcIPs[a.IPAddress] = true
+	// Known tunnel names from auto-discovery
+	knownTunnels := make(map[string]bool)
+	if conn.TunnelNames != "" {
+		for _, name := range strings.Split(conn.TunnelNames, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				knownTunnels[name] = true
+			}
+		}
 	}
 
 	for _, t := range srcTunnels {
-		if destIPs[t.RemoteIP] {
+		if destIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
 			srcTunnelNames = append(srcTunnelNames, t.TunnelName)
 		}
 	}
 	for _, t := range dstTunnels {
-		if srcIPs[t.RemoteIP] {
+		if srcIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
 			dstTunnelNames = append(dstTunnelNames, t.TunnelName)
 		}
 	}
@@ -1718,10 +1739,10 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	if conn.DestDevice != nil {
 		allIPs[conn.DestDevice.IPAddress] = true
 	}
-	var addrs []models.InterfaceAddress
-	d.db.Where("device_id IN ?", deviceIDs).Group("ip_address").Find(&addrs)
-	for _, a := range addrs {
-		allIPs[a.IPAddress] = true
+	var addrIPs []string
+	d.db.Model(&models.InterfaceAddress{}).Where("device_id IN ?", deviceIDs).Distinct("ip_address").Pluck("ip_address", &addrIPs)
+	for _, ip := range addrIPs {
+		allIPs[ip] = true
 	}
 
 	// Try to find tunnel interface indices by matching tunnel names to interface names

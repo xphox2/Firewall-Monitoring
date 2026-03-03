@@ -85,6 +85,12 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		if samples[i].Timestamp.IsZero() {
 			samples[i].Timestamp = time.Now()
 		}
+		// Server-side device resolution fallback for unresolved samples
+		if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" && h.db != nil {
+			if devID := h.db.ResolveDeviceByIP(samples[i].SamplerAddress); devID > 0 {
+				samples[i].DeviceID = devID
+			}
+		}
 	}
 	if err := h.db.SaveFlowSamples(samples); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save flow samples"))

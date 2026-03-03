@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.39] - 2026-03-02
+
+### Fixed
+- **Connection detail page showing zero data**: Fixed broken GORM `Group("ip_address")` query on InterfaceAddress table that returned empty results; replaced with `Distinct().Pluck()` for correct IP collection
+- **Tunnel matching fallback**: Connection detail and traffic queries now also match tunnels by name from the auto-discovered `TunnelNames` field, not just by IP address
+- **Browser autofill populating search fields**: Added `autocomplete="off"` to all text inputs across admin.html, network.html, probes.html, sites.html, and dynamic settings forms to prevent browser from filling search/form fields with saved login credentials
+- **Server-side sFlow device resolution**: Flow samples arriving with `device_id=0` are now resolved server-side by matching `sampler_address` against device management IPs and interface addresses
+
+### Added
+- **`ResolveDeviceByIP()` database function**: Resolves IP address to device ID by checking management IP and interface addresses table
+- **`collectDeviceIPs()` helper**: Centralized function for collecting all known IPs for a device (management + interface addresses)
+
 ## [0.10.38] - 2026-03-02
 
 ### Added
