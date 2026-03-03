@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.55] - 2026-03-03
+
+### Added
+- New API endpoint `GET /api/connections/vpn-map` returning per-device VPN tunnel summaries with remote IP matching
+- VPN badge on each device node in connection map showing up/total tunnel counts (green/amber/red)
+- Internet cloud node at center of connection map when any device has off-net (unmatched) VPN tunnels
+- Dashed green/gray lines from devices to cloud node for off-net tunnel visualization with particle animation
+- VPN detail panel (table) opened by clicking device VPN badge — shows tunnel name, type, status, remote IP, destination, and uptime
+- Off-net filter mode when clicking cloud connection lines to show only unmatched tunnels
+
 ## [0.10.54] - 2026-03-03
 
 ### Fixed

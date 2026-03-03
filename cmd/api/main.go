@@ -293,6 +293,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/dashboard/diag", handler.GetDeviceDataDiag)
 
 		admin.GET("/api/connections", handler.GetDeviceConnections)
+		admin.GET("/api/connections/vpn-map", handler.GetVPNMapData)
 		admin.POST("/api/connections", handler.CreateDeviceConnection)
 		admin.PUT("/api/connections/:id", handler.UpdateDeviceConnection)
 		admin.DELETE("/api/connections/:id", handler.DeleteDeviceConnection)

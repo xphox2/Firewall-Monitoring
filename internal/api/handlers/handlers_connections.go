@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -276,4 +277,107 @@ func (h *Handler) GetConnectionFlows(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(data))
+}
+
+// GetVPNMapData returns per-device VPN tunnel summaries with remote IP matching.
+func (h *Handler) GetVPNMapData(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{}))
+		return
+	}
+
+	devices, err := h.db.GetAllDevices()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		return
+	}
+
+	// Build IP → device map (same pattern as detectVPNConnections)
+	type deviceRef struct {
+		ID   uint
+		Name string
+	}
+	ipToDevice := make(map[string]deviceRef, len(devices)*2)
+	for _, d := range devices {
+		ipToDevice[d.IPAddress] = deviceRef{ID: d.ID, Name: d.Name}
+	}
+	ifAddrs, err := h.db.GetLatestInterfaceAddresses()
+	if err == nil {
+		deviceByID := make(map[uint]*models.Device, len(devices))
+		for i := range devices {
+			deviceByID[devices[i].ID] = &devices[i]
+		}
+		for _, addr := range ifAddrs {
+			if _, exists := ipToDevice[addr.IPAddress]; exists {
+				continue
+			}
+			if dev, ok := deviceByID[addr.DeviceID]; ok {
+				ipToDevice[addr.IPAddress] = deviceRef{ID: dev.ID, Name: dev.Name}
+			}
+		}
+	}
+
+	vpnStatuses, err := h.db.GetAllLatestVPNStatuses()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get VPN statuses"))
+		return
+	}
+
+	type tunnelInfo struct {
+		TunnelName     string `json:"tunnel_name"`
+		TunnelType     string `json:"tunnel_type"`
+		Status         string `json:"status"`
+		RemoteIP       string `json:"remote_ip"`
+		MatchedDevID   uint   `json:"matched_device_id"`
+		MatchedName    string `json:"matched_name"`
+		Phase1Name     string `json:"phase1_name"`
+		LocalSubnet    string `json:"local_subnet"`
+		RemoteSubnet   string `json:"remote_subnet"`
+		TunnelUptime   uint64 `json:"tunnel_uptime"`
+	}
+	type deviceVPN struct {
+		Total   int          `json:"total"`
+		Up      int          `json:"up"`
+		Down    int          `json:"down"`
+		Tunnels []tunnelInfo `json:"tunnels"`
+	}
+
+	result := make(map[string]*deviceVPN)
+
+	for _, vpn := range vpnStatuses {
+		key := fmt.Sprintf("%d", vpn.DeviceID)
+		dv, ok := result[key]
+		if !ok {
+			dv = &deviceVPN{}
+			result[key] = dv
+		}
+
+		var matchID uint
+		var matchName string
+		if ref, found := ipToDevice[vpn.RemoteIP]; found && ref.ID != vpn.DeviceID {
+			matchID = ref.ID
+			matchName = ref.Name
+		}
+
+		dv.Total++
+		if vpn.Status == "up" {
+			dv.Up++
+		} else {
+			dv.Down++
+		}
+		dv.Tunnels = append(dv.Tunnels, tunnelInfo{
+			TunnelName:   vpn.TunnelName,
+			TunnelType:   vpn.TunnelType,
+			Status:       vpn.Status,
+			RemoteIP:     vpn.RemoteIP,
+			MatchedDevID: matchID,
+			MatchedName:  matchName,
+			Phase1Name:   vpn.Phase1Name,
+			LocalSubnet:  vpn.LocalSubnet,
+			RemoteSubnet: vpn.RemoteSubnet,
+			TunnelUptime: vpn.TunnelUptime,
+		})
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
 }

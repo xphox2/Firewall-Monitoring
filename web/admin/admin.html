@@ -123,6 +123,10 @@
         .conn-detail-panel .conn-actions a { color: #58a6ff; font-size: 0.85rem; text-decoration: none; font-weight: 500; }
         .conn-detail-panel .conn-actions a:hover { text-decoration: underline; }
         @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+        .vpn-detail-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 8px; }
+        .vpn-detail-table th { text-align: left; color: #8b949e; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid #30363d; font-size: 0.75rem; text-transform: uppercase; }
+        .vpn-detail-table td { padding: 5px 8px; color: #c9d1d9; border-bottom: 1px solid #21262d; }
+        .vpn-detail-table tr:hover td { background: #161b2280; }
 
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
         .loading { text-align: center; padding: 30px; color: #484f58; }
@@ -759,6 +763,7 @@
         const API_BASE = '/admin/api';
         let currentDevices = [];
         let currentConnections = [];
+        let currentVpnMap = {};
         let currentProbes = [];
         let currentSites = [];
         let adminRefreshTimer;
@@ -1210,13 +1215,15 @@
 
         async function loadConnections() {
             try {
-                const [devicesResult, connsResult] = await Promise.all([
+                const [devicesResult, connsResult, vpnMapResult] = await Promise.all([
                     apiFetch(`${API_BASE}/devices`),
-                    apiFetch(`${API_BASE}/connections`)
+                    apiFetch(`${API_BASE}/connections`),
+                    apiFetch(`${API_BASE}/connections/vpn-map`)
                 ]);
                 if (!devicesResult || !connsResult) return;
                 currentDevices = devicesResult.data || [];
                 currentConnections = connsResult.data || [];
+                currentVpnMap = vpnMapResult?.data || {};
 
                 const tbody = document.querySelector('#connections-table tbody');
                 tbody.innerHTML = currentConnections.map(c => `
@@ -1890,7 +1897,67 @@
                 return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), device: d };
             });
 
-            // Draw connections
+            // --- Compute off-net data for cloud node ---
+            const devicesWithOffnet = [];
+            currentDevices.forEach(d => {
+                const vpnInfo = currentVpnMap[String(d.id)];
+                if (!vpnInfo) return;
+                const offnetTunnels = vpnInfo.tunnels.filter(t => t.matched_device_id === 0);
+                if (offnetTunnels.length > 0) {
+                    const anyUp = offnetTunnels.some(t => t.status === 'up');
+                    devicesWithOffnet.push({ deviceId: d.id, tunnels: offnetTunnels, anyUp });
+                }
+            });
+            const hasCloudNode = devicesWithOffnet.length > 0;
+            let cloudPathIdx = 0;
+
+            // --- Draw cloud-to-device dashed paths (behind everything) ---
+            if (hasCloudNode) {
+                devicesWithOffnet.forEach(info => {
+                    const pi = currentDevices.findIndex(d => d.id === info.deviceId);
+                    if (pi < 0) return;
+                    const p = positions[pi];
+                    const pathD = `M${cx},${cy} L${p.x},${p.y}`;
+                    const pathId = `cloud-path-${cloudPathIdx}`;
+
+                    const hitPath = document.createElementNS(NS, 'path');
+                    hitPath.setAttribute('d', pathD);
+                    hitPath.setAttribute('class', 'conn-hit-area');
+                    hitPath.addEventListener('click', () => showVPNDetailPanel(info.deviceId, true));
+                    svg.appendChild(hitPath);
+
+                    const path = document.createElementNS(NS, 'path');
+                    path.setAttribute('d', pathD);
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('stroke', info.anyUp ? '#3fb950' : '#484f58');
+                    path.setAttribute('stroke-width', '2');
+                    path.setAttribute('stroke-dasharray', '6,4');
+                    path.setAttribute('id', pathId);
+                    if (!info.anyUp) path.setAttribute('opacity', '0.5');
+                    path.style.cursor = 'pointer';
+                    path.addEventListener('click', () => showVPNDetailPanel(info.deviceId, true));
+                    svg.appendChild(path);
+
+                    if (info.anyUp) {
+                        const circle = document.createElementNS(NS, 'circle');
+                        circle.setAttribute('r', '2');
+                        circle.setAttribute('fill', '#3fb950');
+                        circle.setAttribute('opacity', '0.7');
+                        const motion = document.createElementNS(NS, 'animateMotion');
+                        motion.setAttribute('dur', '5s');
+                        motion.setAttribute('repeatCount', 'indefinite');
+                        motion.setAttribute('fill', 'freeze');
+                        const mpath = document.createElementNS(NS, 'mpath');
+                        mpath.setAttributeNS('http://www.w3.org/1999/xlink', 'href', `#${pathId}`);
+                        motion.appendChild(mpath);
+                        circle.appendChild(motion);
+                        svg.appendChild(circle);
+                    }
+                    cloudPathIdx++;
+                });
+            }
+
+            // --- Draw regular connections (unchanged) ---
             currentConnections.forEach((conn, ci) => {
                 const si = currentDevices.findIndex(d => d.id === conn.source_device_id);
                 const di = currentDevices.findIndex(d => d.id === conn.dest_device_id);
@@ -1898,7 +1965,6 @@
 
                 const s = positions[si], t = positions[di];
                 const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
-                // Offset control point perpendicular to line for curve
                 const dx = t.x - s.x, dy = t.y - s.y;
                 const len = Math.sqrt(dx*dx + dy*dy) || 1;
                 const off = Math.min(40, len * 0.15);
@@ -1912,14 +1978,12 @@
                 const isDown = conn.status === 'down';
                 const color = isIndirect ? '#f0883e' : cs.color;
 
-                // Invisible hit area
                 const hitPath = document.createElementNS(NS, 'path');
                 hitPath.setAttribute('d', pathD);
                 hitPath.setAttribute('class', 'conn-hit-area');
                 hitPath.addEventListener('click', () => showConnDetailPanel(conn));
                 svg.appendChild(hitPath);
 
-                // Visible path
                 const path = document.createElementNS(NS, 'path');
                 path.setAttribute('d', pathD);
                 path.setAttribute('fill', 'none');
@@ -1932,7 +1996,6 @@
                 if (isUp && !isIndirect) path.setAttribute('filter', 'url(#conn-glow)');
                 path.addEventListener('click', () => showConnDetailPanel(conn));
 
-                // Pulsing red for down connections
                 if (isDown) {
                     const anim = document.createElementNS(NS, 'animate');
                     anim.setAttribute('attributeName', 'opacity');
@@ -1943,10 +2006,8 @@
                 }
                 svg.appendChild(path);
 
-                // Animated particles for "up" connections — bidirectional TX/RX
                 if (isUp) {
                     if (isIndirect) {
-                        // Indirect: slower, smaller amber particles (1 each way)
                         const mkIndirect = (reverse) => {
                             const circle = document.createElementNS(NS, 'circle');
                             circle.setAttribute('r', '2');
@@ -1971,7 +2032,6 @@
                         mkIndirect(false);
                         mkIndirect(true);
                     } else {
-                        // Direct: TX particles source → dest (connection color)
                         for (let p = 0; p < 2; p++) {
                             const circle = document.createElementNS(NS, 'circle');
                             circle.setAttribute('r', '3');
@@ -1988,7 +2048,6 @@
                             circle.appendChild(motion);
                             svg.appendChild(circle);
                         }
-                        // RX particles: dest → source (blue, reverse along same path)
                         for (let p = 0; p < 2; p++) {
                             const circle = document.createElementNS(NS, 'circle');
                             circle.setAttribute('r', '2.5');
@@ -2012,8 +2071,50 @@
                 }
             });
 
-            // Draw device nodes
-            const nodeW = 150, nodeH = 60;
+            // --- Draw cloud node (on top of cloud paths) ---
+            if (hasCloudNode) {
+                const cloudW = 110, cloudH = 40;
+                const g = document.createElementNS(NS, 'g');
+                g.setAttribute('transform', `translate(${cx - cloudW/2}, ${cy - cloudH/2})`);
+                g.style.cursor = 'pointer';
+                g.addEventListener('click', () => {
+                    if (devicesWithOffnet.length === 1) showVPNDetailPanel(devicesWithOffnet[0].deviceId, true);
+                });
+
+                const r = document.createElementNS(NS, 'rect');
+                r.setAttribute('width', cloudW);
+                r.setAttribute('height', cloudH);
+                r.setAttribute('rx', '20');
+                r.setAttribute('fill', '#0d1117');
+                r.setAttribute('stroke', '#30363d');
+                r.setAttribute('stroke-width', '1.5');
+                r.setAttribute('stroke-dasharray', '4,3');
+                g.appendChild(r);
+
+                const icon = document.createElementNS(NS, 'text');
+                icon.setAttribute('x', cloudW/2);
+                icon.setAttribute('y', 18);
+                icon.setAttribute('text-anchor', 'middle');
+                icon.setAttribute('fill', '#8b949e');
+                icon.setAttribute('font-size', '14');
+                icon.textContent = '\u2601';
+                g.appendChild(icon);
+
+                const label = document.createElementNS(NS, 'text');
+                label.setAttribute('x', cloudW/2);
+                label.setAttribute('y', 33);
+                label.setAttribute('text-anchor', 'middle');
+                label.setAttribute('fill', '#8b949e');
+                label.setAttribute('font-size', '10');
+                label.setAttribute('font-weight', '500');
+                label.textContent = 'Internet';
+                g.appendChild(label);
+
+                svg.appendChild(g);
+            }
+
+            // --- Draw device nodes with VPN badges ---
+            const nodeW = 150, nodeH = 64;
             positions.forEach(p => {
                 const g = document.createElementNS(NS, 'g');
                 g.setAttribute('class', 'device-node');
@@ -2032,15 +2133,15 @@
 
                 const name = document.createElementNS(NS, 'text');
                 name.setAttribute('x', nodeW/2);
-                name.setAttribute('y', 24);
+                name.setAttribute('y', 22);
                 name.setAttribute('text-anchor', 'middle');
                 name.setAttribute('class', 'dev-name');
-                name.textContent = p.device.name.length > 16 ? p.device.name.slice(0,15) + '…' : p.device.name;
+                name.textContent = p.device.name.length > 16 ? p.device.name.slice(0,15) + '\u2026' : p.device.name;
                 g.appendChild(name);
 
                 const ip = document.createElementNS(NS, 'text');
                 ip.setAttribute('x', nodeW/2);
-                ip.setAttribute('y', 42);
+                ip.setAttribute('y', 38);
                 ip.setAttribute('text-anchor', 'middle');
                 ip.setAttribute('class', 'dev-ip');
                 ip.textContent = p.device.ip_address;
@@ -2053,6 +2154,49 @@
                 dot.setAttribute('r', '5');
                 dot.setAttribute('fill', p.device.status === 'online' ? '#3fb950' : (p.device.status === 'offline' ? '#f85149' : '#484f58'));
                 g.appendChild(dot);
+
+                // VPN badge
+                const vpnInfo = currentVpnMap[String(p.device.id)];
+                if (vpnInfo && vpnInfo.total > 0) {
+                    const badgeColor = vpnInfo.down === 0 ? '#3fb950' : (vpnInfo.up === 0 ? '#f85149' : '#d29922');
+                    const badgeText = `VPN ${vpnInfo.up}/${vpnInfo.total}`;
+                    const badgeW = 62, badgeH = 14;
+                    const bx = 6, by = nodeH - badgeH - 4;
+
+                    const bg = document.createElementNS(NS, 'rect');
+                    bg.setAttribute('x', bx);
+                    bg.setAttribute('y', by);
+                    bg.setAttribute('width', badgeW);
+                    bg.setAttribute('height', badgeH);
+                    bg.setAttribute('rx', '7');
+                    bg.setAttribute('fill', badgeColor + '22');
+                    bg.setAttribute('stroke', badgeColor);
+                    bg.setAttribute('stroke-width', '0.8');
+                    bg.style.cursor = 'pointer';
+                    g.appendChild(bg);
+
+                    const txt = document.createElementNS(NS, 'text');
+                    txt.setAttribute('x', bx + badgeW/2);
+                    txt.setAttribute('y', by + badgeH/2 + 3.5);
+                    txt.setAttribute('text-anchor', 'middle');
+                    txt.setAttribute('fill', badgeColor);
+                    txt.setAttribute('font-size', '9');
+                    txt.setAttribute('font-weight', '600');
+                    txt.textContent = badgeText;
+                    txt.style.cursor = 'pointer';
+                    g.appendChild(txt);
+
+                    // Click handler on badge area — stopPropagation to avoid device nav
+                    const hitRect = document.createElementNS(NS, 'rect');
+                    hitRect.setAttribute('x', bx);
+                    hitRect.setAttribute('y', by);
+                    hitRect.setAttribute('width', badgeW);
+                    hitRect.setAttribute('height', badgeH);
+                    hitRect.setAttribute('fill', 'transparent');
+                    hitRect.style.cursor = 'pointer';
+                    hitRect.addEventListener('click', (e) => { e.stopPropagation(); showVPNDetailPanel(p.device.id); });
+                    g.appendChild(hitRect);
+                }
 
                 svg.appendChild(g);
             });
@@ -2077,6 +2221,53 @@
                     ${conn.tunnel_names ? `<p><strong>Tunnels:</strong> ${escapeHtml(conn.tunnel_names)}</p>` : ''}
                     <div class="conn-actions">
                         <a href="/admin/connections/${conn.id}">View Full Details &rarr;</a>
+                        <button class="btn secondary sm" onclick="document.getElementById('conn-detail-panel-container').innerHTML=''">Close</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function showVPNDetailPanel(deviceId, offnetOnly) {
+            const panel = document.getElementById('conn-detail-panel-container');
+            const vpnInfo = currentVpnMap[String(deviceId)];
+            if (!vpnInfo) return;
+            const device = currentDevices.find(d => d.id === deviceId);
+            const devName = device ? escapeHtml(device.name) : 'Device ' + deviceId;
+
+            let tunnels = vpnInfo.tunnels;
+            let heading = `${devName} - VPN Tunnels`;
+            if (offnetOnly) {
+                tunnels = tunnels.filter(t => t.matched_device_id === 0);
+                heading = `${devName} - Off-Net Tunnels`;
+            }
+
+            const formatUptime = (s) => {
+                if (!s) return '-';
+                const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+                return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h` : `${Math.floor(s / 60)}m`;
+            };
+
+            const rows = tunnels.map(t => {
+                const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:#58a6ff;text-decoration:none;">${escapeHtml(t.matched_name)}</a>` : '<span style="color:#d29922;">Off-Net</span>';
+                const statusBadge = `<span class="badge ${t.status}">${t.status.toUpperCase()}</span>`;
+                return `<tr>
+                    <td>${escapeHtml(t.tunnel_name)}</td>
+                    <td>${escapeHtml((t.tunnel_type || 'ipsec').toUpperCase())}</td>
+                    <td>${statusBadge}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;">${escapeHtml(t.remote_ip || '-')}</td>
+                    <td>${dest}</td>
+                    <td>${t.status === 'up' ? formatUptime(t.tunnel_uptime) : '-'}</td>
+                </tr>`;
+            }).join('');
+
+            panel.innerHTML = `
+                <div class="conn-detail-panel">
+                    <h4>${heading} <span style="font-size:0.8rem;font-weight:400;color:#8b949e;margin-left:8px;">${vpnInfo.up} up / ${vpnInfo.down} down</span></h4>
+                    <table class="vpn-detail-table">
+                        <thead><tr><th>Tunnel</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
+                        <tbody>${rows || '<tr><td colspan="6" style="color:#484f58;text-align:center;">No tunnels</td></tr>'}</tbody>
+                    </table>
+                    <div class="conn-actions" style="margin-top:10px;">
                         <button class="btn secondary sm" onclick="document.getElementById('conn-detail-panel-container').innerHTML=''">Close</button>
                     </div>
                 </div>
