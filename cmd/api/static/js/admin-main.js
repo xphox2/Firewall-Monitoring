@@ -962,9 +962,84 @@
                 });
                 var refreshInput = document.querySelector('#display-settings input[name="public_refresh_interval"]');
                 if (refreshInput && ds['public_refresh_interval']) refreshInput.value = ds['public_refresh_interval'];
+                
+                updateDisplayConfigVisibility();
             }
         })['catch'](function(e) {
             console.error('Failed to load settings:', e);
+        });
+        
+        loadPublicDashboardOptions();
+    }
+    
+    function updateDisplayConfigVisibility() {
+        var showBandwidth = document.querySelector('input[name="public_show_bandwidth"]');
+        var showVpn = document.querySelector('input[name="public_show_vpn"]');
+        var bandwidthConfig = document.getElementById('bandwidth-config');
+        var vpnConfig = document.getElementById('vpn-config');
+        if (bandwidthConfig && showBandwidth) {
+            bandwidthConfig.style.display = showBandwidth.checked ? 'block' : 'none';
+        }
+        if (vpnConfig && showVpn) {
+            vpnConfig.style.display = showVpn.checked ? 'block' : 'none';
+        }
+    }
+    
+    function loadPublicDashboardOptions() {
+        apiFetch(API_BASE + '/devices').then(function(result) {
+            if (!result || !result.data || result.data.length === 0) return;
+            var deviceId = result.data[0].id;
+            
+            apiFetch(API_BASE + '/devices/' + deviceId + '/interfaces').then(function(ifResult) {
+                if (!ifResult || !ifResult.data) return;
+                var ifSelect = document.querySelector('select[name="public_bandwidth_interfaces"]');
+                if (ifSelect) {
+                    var typeGroups = {};
+                    ifResult.data.forEach(function(iface) {
+                        var type = iface.type_name || 'Other';
+                        if (!typeGroups[type]) typeGroups[type] = [];
+                        typeGroups[type].push(iface);
+                    });
+                    
+                    Object.keys(typeGroups).sort().forEach(function(type) {
+                        var groupLabel = document.createElement('optgroup');
+                        groupLabel.label = type.charAt(0).toUpperCase() + type.slice(1);
+                        typeGroups[type].forEach(function(iface) {
+                            var opt = document.createElement('option');
+                            opt.value = iface.name || 'Interface ' + iface.index;
+                            opt.textContent = (iface.name || 'Interface ' + iface.index) + (iface.alias ? ' (' + iface.alias + ')' : '');
+                            opt.dataset.type = type;
+                            groupLabel.appendChild(opt);
+                        });
+                        ifSelect.appendChild(groupLabel);
+                    });
+                    
+                    var savedIfaces = document.querySelector('#display-settings input[name="public_bandwidth_interfaces"]');
+                    if (savedIfaces && savedIfaces.value) {
+                        var selectedIfaces = savedIfaces.value.split(',');
+                        Array.from(ifSelect.options).forEach(function(opt) {
+                            opt.selected = selectedIfaces.includes(opt.value);
+                        });
+                    }
+                }
+            })['catch'](function() {});
+            
+            apiFetch(API_BASE + '/devices/' + deviceId + '/detail').then(function(detailResult) {
+                if (!detailResult || !detailResult.data || !detailResult.data.vpn) return;
+                var vpnSelect = document.querySelector('select[name="public_vpn_tunnels"]');
+                if (vpnSelect) {
+                    detailResult.data.vpn.forEach(function(tunnel) {
+                        var opt = document.createElement('option');
+                        opt.value = tunnel.tunnel_name;
+                        opt.textContent = tunnel.tunnel_name || tunnel.tunnel_type || 'Tunnel';
+                        vpnSelect.appendChild(opt);
+                    });
+                }
+            })['catch'](function() {});
+        })['catch'](function() {});
+        
+        document.querySelectorAll('#display-settings input[name="public_show_bandwidth"], #display-settings input[name="public_show_vpn"]').forEach(function(cb) {
+            cb.addEventListener('change', updateDisplayConfigVisibility);
         });
     }
 
@@ -1223,6 +1298,19 @@
         document.querySelectorAll('#display-settings input').forEach(function(input) {
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
+        
+        var bandwidthSelect = document.querySelector('select[name="public_bandwidth_interfaces"]');
+        if (bandwidthSelect) {
+            var selectedIfaces = Array.from(bandwidthSelect.selectedOptions).map(function(o) { return o.value; }).join(',');
+            settings.push({ key: 'public_bandwidth_interfaces', value: selectedIfaces, category: 'display', type: 'string' });
+        }
+        
+        var vpnSelect = document.querySelector('select[name="public_vpn_tunnels"]');
+        if (vpnSelect) {
+            var selectedVpns = Array.from(vpnSelect.selectedOptions).map(function(o) { return o.value; }).join(',');
+            settings.push({ key: 'public_vpn_tunnels', value: selectedVpns, category: 'display', type: 'string' });
+        }
+        
         apiFetch(API_BASE + '/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }).then(function() {
             alert('Settings saved!');
         })['catch'](function(err) { alert('Error: ' + err.message); });

@@ -600,10 +600,31 @@
                     <div class="toggle-row"><label>Show Memory Usage</label><input type="checkbox" name="public_show_memory" checked></div>
                     <div class="toggle-row"><label>Show Active Sessions</label><input type="checkbox" name="public_show_sessions" checked></div>
                     <div class="toggle-row"><label>Show Network Interfaces</label><input type="checkbox" name="public_show_interfaces" checked></div>
+                    <div class="toggle-row"><label>Show Bandwidth Graphs</label><input type="checkbox" name="public_show_bandwidth"></div>
+                    <div class="toggle-row"><label>Show VPN Tunnels</label><input type="checkbox" name="public_show_vpn"></div>
+                    <div class="toggle-row"><label>Show Connection Map</label><input type="checkbox" name="public_show_connections"></div>
                     <div class="setting-item" style="margin-top: 12px;">
                         <label>Public Dashboard Refresh Interval (seconds)</label>
                         <input type="number" name="public_refresh_interval" value="30" min="10" max="300">
                     </div>
+                </div>
+            </div>
+            <div class="card" id="bandwidth-config" style="display:none;">
+                <div class="card-header"><h2>Bandwidth Graph Configuration</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Select interfaces to show bandwidth graphs on the public dashboard. Leave empty to show all.</p>
+                <div class="form-group">
+                    <label>Select Interfaces (hold Ctrl/Cmd to select multiple)</label>
+                    <select name="public_bandwidth_interfaces" multiple size="8" style="height: auto;">
+                    </select>
+                </div>
+            </div>
+            <div class="card" id="vpn-config" style="display:none;">
+                <div class="card-header"><h2>VPN Tunnel Configuration</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Select VPN tunnels to show on the public dashboard. Leave empty to show all.</p>
+                <div class="form-group">
+                    <label>Select VPN Tunnels (hold Ctrl/Cmd to select multiple)</label>
+                    <select name="public_vpn_tunnels" multiple size="8" style="height: auto;">
+                    </select>
                 </div>
             </div>
             <div class="card">

@@ -39,6 +39,47 @@
         .error { text-align: center; padding: 50px; color: #ff6b6b; }
         .hidden { display: none !important; }
         footer { text-align: center; padding: 30px; color: rgba(255,255,255,0.4); font-size: 0.85rem; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 50px; }
+        
+        .bandwidth-section { margin-top: 30px; }
+        .bandwidth-section h2 { margin-bottom: 20px; color: #00d4ff; }
+        .bandwidth-chart { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .bandwidth-chart .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .bandwidth-chart .interface-name { font-weight: 600; font-size: 1.1rem; }
+        .bandwidth-chart .bandwidth-values { display: flex; gap: 20px; font-size: 0.9rem; color: rgba(255,255,255,0.7); }
+        .bandwidth-bar-container { display: flex; gap: 10px; margin-top: 10px; }
+        .bandwidth-bar-wrapper { flex: 1; }
+        .bandwidth-bar-wrapper label { font-size: 0.75rem; color: rgba(255,255,255,0.5); display: block; margin-bottom: 4px; }
+        .bandwidth-bar { height: 20px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; position: relative; }
+        .bandwidth-bar .bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+        .bandwidth-bar .bar-fill.rx { background: linear-gradient(90deg, #00ff88, #00d4ff); }
+        .bandwidth-bar .bar-fill.tx { background: linear-gradient(90deg, #ff9500, #ff6b6b); }
+        .bandwidth-bar .bar-value { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 0.75rem; font-weight: 600; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+        
+        .vpn-section { margin-top: 30px; }
+        .vpn-section h2 { margin-bottom: 20px; color: #00d4ff; }
+        .vpn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+        .vpn-card { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .vpn-card .tunnel-name { font-weight: 600; font-size: 1.1rem; margin-bottom: 10px; }
+        .vpn-card .tunnel-info { font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-bottom: 8px; }
+        .vpn-card .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .vpn-card .status.up { background: rgba(0, 255, 136, 0.2); color: #00ff88; }
+        .vpn-card .status.down { background: rgba(255, 59, 48, 0.2); color: #ff3b3b; }
+        
+        .connections-section { margin-top: 30px; }
+        .connections-section h2 { margin-bottom: 20px; color: #00d4ff; }
+        .connections-map { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); min-height: 300px; position: relative; }
+        .connection-node { position: absolute; background: #161b22; border: 2px solid #30363d; border-radius: 10px; padding: 12px 20px; min-width: 140px; text-align: center; }
+        .connection-node .node-name { font-weight: 600; font-size: 0.9rem; }
+        .connection-line { position: absolute; height: 3px; transform-origin: left center; pointer-events: none; z-index: 1; }
+        .connection-line.up { background: #00ff88; }
+        .connection-line.down { background: #ff3b3b; }
+        .connection-line.unknown { background: #8b949e; }
+        .connections-legend { display: flex; gap: 20px; margin-bottom: 20px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+        .legend-line { width: 30px; height: 3px; border-radius: 2px; }
+        .legend-line.up { background: #00ff88; }
+        .legend-line.down { background: #ff3b3b; }
+        .legend-line.unknown { background: #8b949e; }
     </style>
 </head>
 <body>
@@ -85,6 +126,32 @@
             <h2>Network Interfaces</h2>
             <div class="interface-grid" id="interfaces">
                 <div class="loading">Loading interfaces...</div>
+            </div>
+        </div>
+
+        <div class="bandwidth-section hidden" id="card-bandwidth">
+            <h2>Bandwidth</h2>
+            <div id="bandwidth-charts">
+                <div class="loading">Loading bandwidth data...</div>
+            </div>
+        </div>
+
+        <div class="vpn-section hidden" id="card-vpn">
+            <h2>VPN Tunnels</h2>
+            <div class="vpn-grid" id="vpn-tunnels">
+                <div class="loading">Loading VPN tunnels...</div>
+            </div>
+        </div>
+
+        <div class="connections-section hidden" id="card-connections">
+            <h2>Connection Map</h2>
+            <div class="connections-legend">
+                <div class="legend-item"><div class="legend-line up"></div> Up</div>
+                <div class="legend-item"><div class="legend-line down"></div> Down</div>
+                <div class="legend-item"><div class="legend-line unknown"></div> Unknown</div>
+            </div>
+            <div class="connections-map" id="connections-map">
+                <div class="loading">Loading connections...</div>
             </div>
         </div>
 

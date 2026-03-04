@@ -164,6 +164,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.GET("/public/devices", handler.GetPublicDevices)
 		api.GET("/public/dashboard", handler.GetPublicDashboard)
 		api.GET("/public/interfaces", handler.GetPublicInterfaces)
+		api.GET("/public/vpn", handler.GetPublicVPN)
+		api.GET("/public/connections", handler.GetPublicConnections)
 		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
 
 		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)

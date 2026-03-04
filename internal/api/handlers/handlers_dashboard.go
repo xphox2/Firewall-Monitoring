@@ -166,6 +166,72 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No interface data available"))
 }
 
+func (h *Handler) GetPublicVPN(c *gin.Context) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	deviceID, hasDevice := h.resolvePublicDeviceID(c)
+
+	if h.db != nil && hasDevice {
+		vpnStatuses, err := h.db.GetLatestVPNStatuses(deviceID)
+		if err == nil && vpnStatuses != nil {
+			result := make([]gin.H, 0, len(vpnStatuses))
+			for _, vpn := range vpnStatuses {
+				result = append(result, gin.H{
+					"tunnel_name":   vpn.TunnelName,
+					"tunnel_type":   vpn.TunnelType,
+					"remote_ip":     vpn.RemoteIP,
+					"status":        vpn.Status,
+					"state":         vpn.State,
+					"phase1_name":   vpn.Phase1Name,
+					"bytes_in":      vpn.BytesIn,
+					"bytes_out":     vpn.BytesOut,
+					"tunnel_uptime": vpn.TunnelUptime,
+				})
+			}
+			c.JSON(http.StatusOK, models.SuccessResponse(result))
+			return
+		}
+	}
+
+	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No VPN data available"))
+}
+
+func (h *Handler) GetPublicConnections(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No connections available"))
+		return
+	}
+
+	var connections []models.DeviceConnection
+	if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Find(&connections).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get connections"))
+		return
+	}
+
+	result := make([]gin.H, 0, len(connections))
+	for _, conn := range connections {
+		sourceName := ""
+		destName := ""
+		if conn.SourceDevice != nil {
+			sourceName = conn.SourceDevice.Name
+		}
+		if conn.DestDevice != nil {
+			destName = conn.DestDevice.Name
+		}
+		result = append(result, gin.H{
+			"id":     conn.ID,
+			"name":   conn.Name,
+			"source": sourceName,
+			"dest":   destName,
+			"type":   conn.ConnectionType,
+			"status": conn.Status,
+			"notes":  "",
+		})
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
 func (h *Handler) GetAdminDashboard(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -250,22 +316,22 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 
 	// Per-device enrichment: latest system status, interface summary, VPN summary
 	type DeviceEnrichment struct {
-		DeviceID       uint       `json:"device_id"`
-		HasStatus      bool       `json:"has_status"`
-		StatusTime     *time.Time `json:"status_time,omitempty"`
-		StatusRows     int64      `json:"status_rows"`
-		CPUUsage       float64    `json:"cpu_usage"`
-		MemoryUsage    float64    `json:"memory_usage"`
-		SessionCount   int        `json:"session_count"`
-		IfaceTotal     int        `json:"iface_total"`
-		IfaceUp        int        `json:"iface_up"`
-		IfaceDown      int        `json:"iface_down"`
-		VPNTotal       int        `json:"vpn_total"`
-		VPNUp          int        `json:"vpn_up"`
-		HAMode         string     `json:"ha_mode,omitempty"`
-		HAMembers      int        `json:"ha_members,omitempty"`
-		SDWANTotal     int        `json:"sdwan_total,omitempty"`
-		SDWANAlive     int        `json:"sdwan_alive,omitempty"`
+		DeviceID     uint       `json:"device_id"`
+		HasStatus    bool       `json:"has_status"`
+		StatusTime   *time.Time `json:"status_time,omitempty"`
+		StatusRows   int64      `json:"status_rows"`
+		CPUUsage     float64    `json:"cpu_usage"`
+		MemoryUsage  float64    `json:"memory_usage"`
+		SessionCount int        `json:"session_count"`
+		IfaceTotal   int        `json:"iface_total"`
+		IfaceUp      int        `json:"iface_up"`
+		IfaceDown    int        `json:"iface_down"`
+		VPNTotal     int        `json:"vpn_total"`
+		VPNUp        int        `json:"vpn_up"`
+		HAMode       string     `json:"ha_mode,omitempty"`
+		HAMembers    int        `json:"ha_members,omitempty"`
+		SDWANTotal   int        `json:"sdwan_total,omitempty"`
+		SDWANAlive   int        `json:"sdwan_alive,omitempty"`
 	}
 
 	enrichments := make(map[uint]*DeviceEnrichment)
@@ -347,16 +413,16 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 	h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Find(&devices)
 
 	type DeviceDiag struct {
-		DeviceID     uint       `json:"device_id"`
-		Name         string     `json:"name"`
-		IPAddress    string     `json:"ip_address"`
-		Status       string     `json:"status"`
-		LastPolled   time.Time  `json:"last_polled"`
-		ProbeID      *uint      `json:"probe_id"`
-		StatusRows   int64      `json:"status_rows"`
-		LatestCPU    float64    `json:"latest_cpu"`
-		LatestMem    float64    `json:"latest_mem"`
-		LatestTime   *time.Time `json:"latest_time,omitempty"`
+		DeviceID   uint       `json:"device_id"`
+		Name       string     `json:"name"`
+		IPAddress  string     `json:"ip_address"`
+		Status     string     `json:"status"`
+		LastPolled time.Time  `json:"last_polled"`
+		ProbeID    *uint      `json:"probe_id"`
+		StatusRows int64      `json:"status_rows"`
+		LatestCPU  float64    `json:"latest_cpu"`
+		LatestMem  float64    `json:"latest_mem"`
+		LatestTime *time.Time `json:"latest_time,omitempty"`
 	}
 
 	results := make([]DeviceDiag, 0, len(devices))

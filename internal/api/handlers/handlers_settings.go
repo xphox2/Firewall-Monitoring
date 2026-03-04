@@ -52,27 +52,32 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	allowedKeys := map[string]bool{
-		"cpu_threshold":           true,
-		"memory_threshold":        true,
-		"disk_threshold":          true,
-		"session_threshold":       true,
-		"email_enabled":           true,
-		"smtp_host":               true,
-		"smtp_port":               true,
-		"smtp_username":           true,
-		"smtp_password":           true,
-		"smtp_from":               true,
-		"smtp_to":                 true,
-		"slack_webhook":           true,
-		"discord_webhook":         true,
-		"webhook_url":             true,
-		"public_show_hostname":    true,
-		"public_show_uptime":      true,
-		"public_show_cpu":         true,
-		"public_show_memory":      true,
-		"public_show_sessions":    true,
-		"public_show_interfaces":  true,
-		"public_refresh_interval": true,
+		"cpu_threshold":               true,
+		"memory_threshold":            true,
+		"disk_threshold":              true,
+		"session_threshold":           true,
+		"email_enabled":               true,
+		"smtp_host":                   true,
+		"smtp_port":                   true,
+		"smtp_username":               true,
+		"smtp_password":               true,
+		"smtp_from":                   true,
+		"smtp_to":                     true,
+		"slack_webhook":               true,
+		"discord_webhook":             true,
+		"webhook_url":                 true,
+		"public_show_hostname":        true,
+		"public_show_uptime":          true,
+		"public_show_cpu":             true,
+		"public_show_memory":          true,
+		"public_show_sessions":        true,
+		"public_show_interfaces":      true,
+		"public_refresh_interval":     true,
+		"public_show_bandwidth":       true,
+		"public_bandwidth_interfaces": true,
+		"public_show_vpn":             true,
+		"public_vpn_tunnels":          true,
+		"public_show_connections":     true,
 	}
 
 	secretKeys := map[string]bool{
@@ -105,7 +110,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				return
 			}
 		case "email_enabled", "public_show_hostname", "public_show_uptime",
-			"public_show_cpu", "public_show_memory", "public_show_sessions", "public_show_interfaces":
+			"public_show_cpu", "public_show_memory", "public_show_sessions", "public_show_interfaces",
+			"public_show_bandwidth", "public_show_vpn", "public_show_connections":
 			if s.Value != "true" && s.Value != "false" {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be true or false", s.Key)))
 				return
@@ -353,13 +359,18 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 
 func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	defaults := map[string]string{
-		"public_show_hostname":    "true",
-		"public_show_uptime":      "true",
-		"public_show_cpu":         "true",
-		"public_show_memory":      "true",
-		"public_show_sessions":    "true",
-		"public_show_interfaces":  "true",
-		"public_refresh_interval": "30",
+		"public_show_hostname":        "true",
+		"public_show_uptime":          "true",
+		"public_show_cpu":             "true",
+		"public_show_memory":          "true",
+		"public_show_sessions":        "true",
+		"public_show_interfaces":      "true",
+		"public_show_bandwidth":       "false",
+		"public_bandwidth_interfaces": "",
+		"public_show_vpn":             "false",
+		"public_vpn_tunnels":          "",
+		"public_show_connections":     "false",
+		"public_refresh_interval":     "30",
 	}
 
 	if h.db == nil {

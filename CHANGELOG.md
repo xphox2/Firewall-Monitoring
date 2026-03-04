@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.80] - 2026-03-04
+
+### Added
+- Configurable public dashboard modules - pick and choose what to show on stats.technicallabs.org
+- New public APIs: `/api/public/vpn` (IPSec tunnel status), `/api/public/connections` (connection map)
+- New display settings: bandwidth graphs, VPN tunnels, connection map
+- Interface selection now grouped by type (Physical, VLAN, IPSec, VXLAN, Tunnel, etc.)
+- Connection map shows animated links between devices (read-only, no private details)
+
+### Admin
+- Settings page now allows enabling/disabling individual public dashboard modules
+- Multi-select dropdowns to pick specific interfaces and VPN tunnels per module
+- Bandwidth graphs show RX/TX as percentage of interface speed
+
 ## [0.10.79] - 2026-03-04
 
 ### Fixed
