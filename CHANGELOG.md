@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.70] - 2026-03-04
+
+### Fixed
+- Fix SQLite "readonly database" error caused by non-root container user unable to write to bind-mounted data volume
+- Entrypoint now starts as root, fixes `/data` and `/config` ownership, then drops to `fwmon` user via `su-exec`
+- Removed `USER fwmon` from Dockerfile — privilege drop happens at runtime in entrypoint instead
+
 ## [0.10.69] - 2026-03-04
 
 ### Fixed

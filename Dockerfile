@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fwmon-probe ./cmd/probe
 # Stage 2: Final Alpine image
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates bash wget
+RUN apk add --no-cache ca-certificates bash wget su-exec
 
 RUN addgroup -S fwmon && adduser -S fwmon -G fwmon
 
@@ -41,8 +41,6 @@ COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
 RUN chown -R fwmon:fwmon /app
-
-USER fwmon
 
 EXPOSE 8080 162/udp 514/udp 6343/udp 8089
 

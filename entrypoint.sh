@@ -33,26 +33,26 @@ EOF
     echo "Config created at /config/config.env"
 fi
 
-# Create data directories
+# Create data directories and fix ownership (runs as root)
 mkdir -p /data /config
+chown -R fwmon:fwmon /data /config
 
 # Export config file path
 export CONFIG_FILE=/config/config.env
 
 echo "Starting Firewall Monitor services..."
 
-# Start all services in background
+# Start all services as fwmon user
 echo "Starting API server..."
-export CONFIG_FILE=/config/config.env
-./fwmon-api &
+su-exec fwmon ./fwmon-api &
 API_PID=$!
 
 echo "Starting SNMP poller..."
-./fwmon-poller &
+su-exec fwmon ./fwmon-poller &
 POLLER_PID=$!
 
 echo "Starting trap receiver..."
-./fwmon-trap &
+su-exec fwmon ./fwmon-trap &
 TRAP_PID=$!
 
 echo "All services started!"
