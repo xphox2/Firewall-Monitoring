@@ -35,6 +35,12 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			continue
 		}
 		saved++
+		// Fire alerts for critical syslog messages (severity 0-2)
+		if h.alertManager != nil && messages[i].Severity <= 2 {
+			if err := h.alertManager.ProcessSyslog(&messages[i]); err != nil {
+				log.Printf("Failed to process syslog alert: %v", err)
+			}
+		}
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
 }

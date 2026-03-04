@@ -21,18 +21,20 @@ import (
 )
 
 type Poller struct {
-	cfg          *config.Config
-	db           *database.Database
-	alertManager *alerts.AlertManager
-	stopChan     chan struct{}
+	cfg            *config.Config
+	db             *database.Database
+	alertManager   *alerts.AlertManager
+	prevIfaceStats map[string]*models.InterfaceStats // "deviceID_ifName" -> previous stats
+	stopChan       chan struct{}
 }
 
 func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager) *Poller {
 	return &Poller{
-		cfg:          cfg,
-		db:           db,
-		alertManager: am,
-		stopChan:     make(chan struct{}),
+		cfg:            cfg,
+		db:             db,
+		alertManager:   am,
+		prevIfaceStats: make(map[string]*models.InterfaceStats),
+		stopChan:       make(chan struct{}),
 	}
 }
 
@@ -231,6 +233,16 @@ func (p *Poller) pollDevice(device *models.Device) {
 			if err := p.alertManager.CheckInterfaceStatus(interfaces); err != nil {
 				log.Printf("Device %s: interface alert check error - %v", device.Name, err)
 			}
+			// Check interface error/discard rates
+			if err := p.alertManager.CheckInterfaceErrors(interfaces, p.prevIfaceStats); err != nil {
+				log.Printf("Device %s: interface error check error - %v", device.Name, err)
+			}
+		}
+		// Store current stats as previous for next poll cycle
+		for i := range interfaces {
+			key := fmt.Sprintf("%d_%s", interfaces[i].DeviceID, interfaces[i].Name)
+			iface := interfaces[i]
+			p.prevIfaceStats[key] = &iface
 		}
 	}
 
@@ -1143,8 +1155,12 @@ func (p *Poller) updateDeviceStatus(device *models.Device, status string) {
 			log.Printf("Device %s: failed to update status - %v", device.Name, err)
 		}
 	}
-	if status == "offline" && p.alertManager != nil {
-		p.alertManager.CheckDeviceOffline(device)
+	if p.alertManager != nil {
+		if status == "offline" {
+			p.alertManager.CheckDeviceOffline(device)
+		} else if status == "online" {
+			p.alertManager.CheckDeviceOnline(device)
+		}
 	}
 }
 

@@ -881,6 +881,61 @@ func (d *Database) SaveSDWANHealth(health []models.SDWANHealth) error {
 	return d.db.Create(&health).Error
 }
 
+// GetLatestSecurityStats returns the most recent security stats for a device.
+func (d *Database) GetLatestSecurityStats(deviceID uint) (*models.SecurityStats, error) {
+	var stats models.SecurityStats
+	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+// GetSecurityStatsHistory returns security stats time series for a device.
+func (d *Database) GetSecurityStatsHistory(deviceID uint, hours int) ([]models.SecurityStats, error) {
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	var stats []models.SecurityStats
+	err := d.db.Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
+		Order("timestamp ASC").Find(&stats).Error
+	return stats, err
+}
+
+// GetLatestSDWANHealth returns the most recent SD-WAN health records for a device.
+func (d *Database) GetLatestSDWANHealth(deviceID uint) ([]models.SDWANHealth, error) {
+	// Get distinct health monitor names, then fetch latest for each
+	var names []string
+	d.db.Model(&models.SDWANHealth{}).Where("device_id = ?", deviceID).
+		Distinct("name").Pluck("name", &names)
+
+	var results []models.SDWANHealth
+	for _, name := range names {
+		var h models.SDWANHealth
+		if err := d.db.Where("device_id = ? AND name = ?", deviceID, name).
+			Order("timestamp DESC").First(&h).Error; err == nil {
+			results = append(results, h)
+		}
+	}
+	return results, nil
+}
+
+// GetLatestHAStatus returns the most recent HA status records for a device.
+func (d *Database) GetLatestHAStatus(deviceID uint) ([]models.HAStatus, error) {
+	// Get distinct member serials, then fetch latest for each
+	var serials []string
+	d.db.Model(&models.HAStatus{}).Where("device_id = ?", deviceID).
+		Distinct("member_serial").Pluck("member_serial", &serials)
+
+	var results []models.HAStatus
+	for _, serial := range serials {
+		var h models.HAStatus
+		if err := d.db.Where("device_id = ? AND member_serial = ?", deviceID, serial).
+			Order("timestamp DESC").First(&h).Error; err == nil {
+			results = append(results, h)
+		}
+	}
+	return results, nil
+}
+
 func (d *Database) SaveLicenseInfo(licenses []models.LicenseInfo) error {
 	if len(licenses) == 0 {
 		return nil
@@ -1751,6 +1806,30 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
+	// Cross-fill tunnel uptime: if one side reports 0 uptime, use the paired tunnel's value.
+	if len(result.SourceTunnels) > 0 && len(result.DestTunnels) > 0 {
+		for i := range result.SourceTunnels {
+			if result.SourceTunnels[i].TunnelUptime == 0 {
+				for _, dst := range result.DestTunnels {
+					if dst.TunnelUptime > 0 {
+						result.SourceTunnels[i].TunnelUptime = dst.TunnelUptime
+						break
+					}
+				}
+			}
+		}
+		for i := range result.DestTunnels {
+			if result.DestTunnels[i].TunnelUptime == 0 {
+				for _, src := range result.SourceTunnels {
+					if src.TunnelUptime > 0 {
+						result.DestTunnels[i].TunnelUptime = src.TunnelUptime
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// Phase 2 inverse matching: source's local_subnet == dest's remote_subnet (and vice versa)
 	for _, src := range result.SourceTunnels {
 		if src.LocalSubnet == "" || src.RemoteSubnet == "" {
@@ -1908,7 +1987,7 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 				CASE WHEN packets_out >= LAG(packets_out) OVER w
 					THEN packets_out - LAG(packets_out) OVER w ELSE packets_out END as delta_pout
 			FROM vpn_statuses
-			WHERE device_id IN (?) AND tunnel_name IN (?) AND timestamp > ?
+			WHERE device_id IN ? AND tunnel_name IN ? AND timestamp > ?
 			WINDOW w AS (PARTITION BY device_id, tunnel_name ORDER BY timestamp)
 		) WHERE delta_in IS NOT NULL
 		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr)

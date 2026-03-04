@@ -11,11 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/handlers"
 	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
@@ -78,6 +80,12 @@ func main() {
 	cfg.Auth.AdminPassword = ""
 
 	handler := handlers.NewHandler(cfg, authManager, db)
+
+	// Create alert manager for data ingestion handlers (syslog alerts, etc.)
+	notif := notifier.NewNotifier(cfg)
+	alertMgr := alerts.NewAlertManager(cfg, notif, db)
+	alertMgr.RefreshThresholds(db.Gorm())
+	handler.SetAlertManager(alertMgr)
 
 	snmpClient, err := snmp.NewSNMPClient(cfg)
 	if err != nil {
@@ -303,6 +311,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/connections/:id/traffic", handler.GetConnectionTraffic)
 		admin.GET("/api/connections/:id/flows", handler.GetConnectionFlows)
 		admin.GET("/api/devices/:id/vpn/:tunnel/chart", handler.GetVPNTunnelChart)
+		admin.GET("/api/devices/:id/security-stats", handler.GetDeviceSecurityStats)
+		admin.GET("/api/devices/:id/sdwan-health", handler.GetDeviceSDWANHealth)
+		admin.GET("/api/devices/:id/ha-status", handler.GetDeviceHAStatus)
 
 		admin.POST("/api/logout", handler.Logout)
 

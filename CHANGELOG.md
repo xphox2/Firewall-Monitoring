@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.75] - 2026-03-04
+
+### Added
+- Syslog-driven alerts: critical syslog messages (severity 0-2) now auto-generate alerts with notifications
+- Recovery/resolved notifications for all alert types: CPU, memory, disk, sessions, VPN tunnels, interfaces, and device offline
+- Interface error/discard alerting: detects new errors between poll cycles and fires warning alerts
+- API endpoints for security stats, SD-WAN health, and HA status per device (`GET /api/devices/:id/security-stats`, `/sdwan-health`, `/ha-status`)
+- Dashboard enrichment includes HA mode/member count and SD-WAN alive/total per device
+- Database query functions: `GetLatestSecurityStats`, `GetSecurityStatsHistory`, `GetLatestSDWANHealth`, `GetLatestHAStatus`
+- Cross-fill VPN tunnel uptime from paired tunnels in connection detail (same pattern as subnet backfill)
+
+### Fixed
+- Fix 500 error on connection traffic chart — GORM `IN ?` placeholder was double-parenthesized in raw SQL
+- Fix CSP `script-src` to allow Chart.js internal eval (`'unsafe-eval'`)
+
 ## [0.10.74] - 2026-03-04
 
 ### Fixed

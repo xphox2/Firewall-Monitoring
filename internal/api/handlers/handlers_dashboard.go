@@ -262,6 +262,10 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		IfaceDown      int        `json:"iface_down"`
 		VPNTotal       int        `json:"vpn_total"`
 		VPNUp          int        `json:"vpn_up"`
+		HAMode         string     `json:"ha_mode,omitempty"`
+		HAMembers      int        `json:"ha_members,omitempty"`
+		SDWANTotal     int        `json:"sdwan_total,omitempty"`
+		SDWANAlive     int        `json:"sdwan_alive,omitempty"`
 	}
 
 	enrichments := make(map[uint]*DeviceEnrichment)
@@ -297,6 +301,23 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 				h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestVPN.Timestamp).Count(&vpnUp)
 				e.VPNTotal = int(vpnTotal)
 				e.VPNUp = int(vpnUp)
+			}
+			// HA status summary
+			var latestHA models.HAStatus
+			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestHA).Error; err == nil {
+				e.HAMode = latestHA.SystemMode
+				var memberCount int64
+				h.db.Gorm().Model(&models.HAStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestHA.Timestamp).Count(&memberCount)
+				e.HAMembers = int(memberCount)
+			}
+			// SD-WAN health summary
+			var latestSDWAN models.SDWANHealth
+			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestSDWAN).Error; err == nil {
+				var sdTotal, sdAlive int64
+				h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestSDWAN.Timestamp).Count(&sdTotal)
+				h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ? AND state = 'alive'", dev.ID, latestSDWAN.Timestamp).Count(&sdAlive)
+				e.SDWANTotal = int(sdTotal)
+				e.SDWANAlive = int(sdAlive)
 			}
 			enrichments[dev.ID] = e
 		}

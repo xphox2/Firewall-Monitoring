@@ -616,3 +616,57 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		"uptime":   status.Uptime,
 	}))
 }
+
+func (h *Handler) GetDeviceSecurityStats(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "24"))
+	if hours <= 0 || hours > 720 {
+		hours = 24
+	}
+
+	latest, _ := h.db.GetLatestSecurityStats(uint(id))
+	history, _ := h.db.GetSecurityStatsHistory(uint(id), hours)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"latest":  latest,
+		"history": history,
+	}))
+}
+
+func (h *Handler) GetDeviceSDWANHealth(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	health, _ := h.db.GetLatestSDWANHealth(uint(id))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"health": health}))
+}
+
+func (h *Handler) GetDeviceHAStatus(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	ha, _ := h.db.GetLatestHAStatus(uint(id))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"ha_status": ha}))
+}

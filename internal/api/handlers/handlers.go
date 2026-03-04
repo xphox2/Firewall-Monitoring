@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 
+	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -16,12 +17,13 @@ import (
 )
 
 type Handler struct {
-	config      *config.Config
-	authManager *auth.AuthManager
-	snmpClient  *snmp.SNMPClient
-	uptimeTrack *uptime.UptimeTracker
-	db          *database.Database
-	mu          sync.RWMutex
+	config       *config.Config
+	authManager  *auth.AuthManager
+	snmpClient   *snmp.SNMPClient
+	uptimeTrack  *uptime.UptimeTracker
+	alertManager *alerts.AlertManager
+	db           *database.Database
+	mu           sync.RWMutex
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
@@ -31,6 +33,12 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 		uptimeTrack: uptime.NewUptimeTracker(cfg),
 		db:          db,
 	}
+}
+
+func (h *Handler) SetAlertManager(am *alerts.AlertManager) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.alertManager = am
 }
 
 func (h *Handler) SetSNMPClient(client *snmp.SNMPClient) {
