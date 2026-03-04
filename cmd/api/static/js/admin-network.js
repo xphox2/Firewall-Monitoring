@@ -20,6 +20,7 @@
             gre:      { color: '#b392f0', dash: null, width: '2' },
             wan:      { color: '#f0883e', dash: null, width: '2' },
             lag:      { color: '#d29922', dash: null, width: '4' },
+            ethernet: { color: '#6e7681', dash: null, width: '2' },
             tunnel:   { color: '#8b949e', dash: null, width: '2' }
         };
         return styles[type] || styles.tunnel;
@@ -221,6 +222,7 @@
             'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
             'wan_inferred': '<span class="badge" style="background:#da3633;font-size:0.65rem;padding:1px 5px;">WAN Inferred</span>',
             'overlay_name': '<span class="badge" style="background:#39d4e0;font-size:0.65rem;padding:1px 5px;">Overlay</span>',
+            'subnet_match': '<span class="badge" style="background:#6e7681;font-size:0.65rem;padding:1px 5px;">Subnet</span>',
             'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
         };
         return badges[method] || badges['ip_match'];

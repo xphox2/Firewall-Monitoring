@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"sort"
@@ -145,6 +146,7 @@ func (p *Poller) pollAllDevices() {
 	connCycleStart := time.Now()
 	p.detectVPNConnections(devices)
 	p.detectOverlayConnections(devices)
+	p.detectPhysicalConnections(devices)
 
 	// Clean up auto-detected connections not refreshed by either detector
 	if p.db != nil {
@@ -904,6 +906,222 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 
 	if created > 0 {
 		log.Printf("Overlay auto-detect: upserted %d connection(s)", created)
+	}
+}
+
+// detectPhysicalConnections finds Ethernet/LAG interfaces on same-site devices
+// that share an IP subnet and creates auto-detected connections.
+func (p *Poller) detectPhysicalConnections(devices []models.Device) {
+	if p.db == nil || len(devices) == 0 {
+		return
+	}
+
+	ifaces, err := p.db.GetAllLatestInterfaces()
+	if err != nil {
+		log.Printf("Physical auto-detect: failed to get interfaces - %v", err)
+		return
+	}
+
+	ifAddrs, err := p.db.GetLatestInterfaceAddresses()
+	if err != nil {
+		log.Printf("Physical auto-detect: failed to get interface addresses - %v", err)
+		return
+	}
+
+	deviceByID := make(map[uint]*models.Device, len(devices))
+	for i := range devices {
+		deviceByID[devices[i].ID] = &devices[i]
+	}
+
+	sameSite := func(devA, devB uint) bool {
+		da, oa := deviceByID[devA]
+		db, ob := deviceByID[devB]
+		if !oa || !ob || da.SiteID == nil || db.SiteID == nil {
+			return false
+		}
+		return *da.SiteID == *db.SiteID
+	}
+
+	// Build lookup: (DeviceID, IfIndex) → interface entry (Ethernet/LAG only)
+	type physIface struct {
+		deviceID uint
+		ifIndex  int
+		name     string
+		typeName string
+		status   string
+	}
+	physicalTypes := map[string]bool{"ethernet": true, "lag": true}
+	ifLookup := make(map[string]*physIface) // "deviceID:ifIndex" → entry
+	for _, iface := range ifaces {
+		tn := strings.ToLower(iface.TypeName)
+		if !physicalTypes[tn] {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index)
+		ifLookup[key] = &physIface{
+			deviceID: iface.DeviceID,
+			ifIndex:  iface.Index,
+			name:     iface.Name,
+			typeName: tn,
+			status:   iface.Status,
+		}
+	}
+
+	// Group physical interfaces by subnet key
+	type subnetEntry struct {
+		iface   *physIface
+		address string
+	}
+	subnetGroups := make(map[string][]subnetEntry)
+
+	for _, addr := range ifAddrs {
+		key := fmt.Sprintf("%d:%d", addr.DeviceID, addr.IfIndex)
+		pif, ok := ifLookup[key]
+		if !ok {
+			continue // not a physical interface
+		}
+		ip := net.ParseIP(addr.IPAddress)
+		mask := net.ParseIP(addr.NetMask)
+		if ip == nil || mask == nil {
+			continue
+		}
+		ip4 := ip.To4()
+		mask4 := mask.To4()
+		if ip4 == nil || mask4 == nil {
+			continue
+		}
+
+		// Skip /30, /31, /32 (point-to-point WAN links, not LAN segments)
+		ones, bits := net.IPMask(mask4).Size()
+		if bits == 32 && ones >= 30 {
+			continue
+		}
+
+		network := ip4.Mask(net.IPMask(mask4))
+		subnetKey := fmt.Sprintf("%s/%d", network.String(), ones)
+
+		subnetGroups[subnetKey] = append(subnetGroups[subnetKey], subnetEntry{
+			iface:   pif,
+			address: addr.IPAddress,
+		})
+	}
+
+	pairKey := func(a, b uint) string {
+		if a > b {
+			a, b = b, a
+		}
+		return fmt.Sprintf("%d:%d", a, b)
+	}
+
+	type physPairInfo struct {
+		sourceID uint
+		destID   uint
+		connType string
+		ifNames  map[string]bool
+		anyUp    bool
+	}
+	pairAccum := make(map[string]*physPairInfo)
+
+	for _, entries := range subnetGroups {
+		// Deduplicate by device — collect all entries per device
+		byDevice := make(map[uint][]subnetEntry)
+		for _, e := range entries {
+			byDevice[e.iface.deviceID] = append(byDevice[e.iface.deviceID], e)
+		}
+		if len(byDevice) < 2 {
+			continue
+		}
+
+		deviceIDs := make([]uint, 0, len(byDevice))
+		for did := range byDevice {
+			deviceIDs = append(deviceIDs, did)
+		}
+
+		for i := 0; i < len(deviceIDs); i++ {
+			for j := i + 1; j < len(deviceIDs); j++ {
+				devA, devB := deviceIDs[i], deviceIDs[j]
+				if !sameSite(devA, devB) {
+					continue
+				}
+
+				// Determine connType: if either side has LAG → "lag", else "ethernet"
+				connType := "ethernet"
+				entriesA := byDevice[devA]
+				entriesB := byDevice[devB]
+				for _, e := range entriesA {
+					if e.iface.typeName == "lag" {
+						connType = "lag"
+					}
+				}
+				for _, e := range entriesB {
+					if e.iface.typeName == "lag" {
+						connType = "lag"
+					}
+				}
+
+				key := pairKey(devA, devB) + ":" + connType
+				pi, exists := pairAccum[key]
+				if !exists {
+					srcID, dstID := devA, devB
+					if srcID > dstID {
+						srcID, dstID = dstID, srcID
+					}
+					pi = &physPairInfo{
+						sourceID: srcID,
+						destID:   dstID,
+						connType: connType,
+						ifNames:  make(map[string]bool),
+					}
+					pairAccum[key] = pi
+				}
+				for _, e := range entriesA {
+					pi.ifNames[e.iface.name] = true
+					if e.iface.status == "up" {
+						pi.anyUp = true
+					}
+				}
+				for _, e := range entriesB {
+					pi.ifNames[e.iface.name] = true
+					if e.iface.status == "up" {
+						pi.anyUp = true
+					}
+				}
+			}
+		}
+	}
+
+	created := 0
+	for _, pi := range pairAccum {
+		status := "down"
+		if pi.anyUp {
+			status = "up"
+		}
+
+		names := make([]string, 0, len(pi.ifNames))
+		for n := range pi.ifNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		tunnelNames := strings.Join(names, ", ")
+
+		srcName, dstName := "?", "?"
+		if d, ok := deviceByID[pi.sourceID]; ok {
+			srcName = d.Name
+		}
+		if d, ok := deviceByID[pi.destID]; ok {
+			dstName = d.Name
+		}
+		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
+
+		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, "subnet_match"); err != nil {
+			log.Printf("Physical auto-detect: failed to upsert connection %s - %v", connName, err)
+		} else {
+			created++
+		}
+	}
+
+	if created > 0 {
+		log.Printf("Physical auto-detect: upserted %d connection(s)", created)
 	}
 }
 

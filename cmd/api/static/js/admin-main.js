@@ -55,6 +55,7 @@
             gre:      { color: '#b392f0', dash: null, width: 3 },
             wan:      { color: '#f0883e', dash: null, width: 3 },
             lag:      { color: '#d29922', dash: null, width: 4 },
+            ethernet: { color: '#6e7681', dash: null, width: 2 },
             tunnel:   { color: '#8b949e', dash: null, width: 3 }
         };
         return styles[type] || styles.tunnel;
@@ -62,7 +63,7 @@
     window.connStyle = connStyle;
 
     function typeBadgeHtml(type) {
-        var labels = {ipsec:'IPSec',vxlan:'VXLAN',ssl:'SSL VPN',wan:'WAN',l2vlan:'L2VLAN',l3ipvlan:'L3IPVLAN',gre:'GRE',lag:'LAG',tunnel:'Tunnel'};
+        var labels = {ipsec:'IPSec',vxlan:'VXLAN',ssl:'SSL VPN',wan:'WAN',l2vlan:'L2VLAN',l3ipvlan:'L3IPVLAN',gre:'GRE',lag:'LAG',ethernet:'Ethernet',tunnel:'Tunnel'};
         var cs = connStyle(type);
         return '<span class="badge" style="background:' + cs.color + '22;color:' + cs.color + ';">' + escapeHtml(labels[type] || (type || 'tunnel').toUpperCase()) + '</span>';
     }
@@ -77,6 +78,7 @@
             'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
             'tunnel_name': '<span class="badge" style="background:#d29922;font-size:0.65rem;padding:1px 5px;">Tunnel Name</span>',
             'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
+            'subnet_match': '<span class="badge" style="background:#6e7681;font-size:0.65rem;padding:1px 5px;">Subnet</span>',
             'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
         };
         return badges[method] || badges['ip_match'];

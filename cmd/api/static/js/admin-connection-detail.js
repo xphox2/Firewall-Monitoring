@@ -76,6 +76,7 @@
             gre:      { color: '#b392f0', dash: '', width: 3 },
             wan:      { color: '#f0883e', dash: '', width: 3 },
             lag:      { color: '#d29922', dash: '', width: 4 },
+            ethernet: { color: '#6e7681', dash: '', width: 2 },
             tunnel:   { color: '#8b949e', dash: '', width: 3 }
         };
         return styles[type] || styles.tunnel;

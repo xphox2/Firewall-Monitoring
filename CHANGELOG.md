@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.68] - 2026-03-03
+
+### Added
+- Physical (Ethernet/LAG) connection auto-detection via shared IP subnet matching
+  - Detects same-site devices with Ethernet (ifType 6) or LAG (ifType 161) interfaces on the same subnet
+  - Skips /30, /31, /32 point-to-point WAN links — only matches LAN segments
+  - Accumulates interface names per device pair (e.g., "port1, port2")
+  - Uses `subnet_match` discovery method badge
+- `ethernet` connection type styling in all frontend style maps (gray #6e7681, solid, width 2)
+- `subnet_match` discovery badge in connection tables and network diagram
+
 ## [0.10.67] - 2026-03-03
 
 ### Fixed
