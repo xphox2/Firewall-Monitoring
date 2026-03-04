@@ -1647,7 +1647,7 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
 					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
 					ELSE packets_out END as delta_pout
-			FROM vpn_statuses
+			FROM vpn_status
 			WHERE device_id = ? AND tunnel_name = ? AND timestamp > ?
 			WINDOW w AS (ORDER BY timestamp)
 		) WHERE delta_in IS NOT NULL
@@ -2009,7 +2009,7 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
 					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
 					ELSE packets_out END as delta_pout
-			FROM vpn_statuses
+			FROM vpn_status
 			WHERE device_id IN (%s) AND tunnel_name IN (%s) AND timestamp > ?
 			WINDOW w AS (PARTITION BY device_id, tunnel_name ORDER BY timestamp)
 		) WHERE delta_in IS NOT NULL

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.78] - 2026-03-04
+
+### Fixed
+- Fix 500 on VPN chart queries — raw SQL used `vpn_statuses` but actual table name is `vpn_status`
+
 ## [0.10.77] - 2026-03-04
 
 ### Fixed
