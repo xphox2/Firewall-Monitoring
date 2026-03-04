@@ -68,7 +68,7 @@ func (rl *ipRateLimiter) cleanup() {
 }
 
 func RateLimiter(cfg *config.Config) gin.HandlerFunc {
-	limiter := newIPRateLimiter(rate.Limit(10), 20)
+	limiter := newIPRateLimiter(rate.Limit(30), 60)
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
@@ -84,7 +84,7 @@ func RateLimiter(cfg *config.Config) gin.HandlerFunc {
 }
 
 func PublicRateLimiter() gin.HandlerFunc {
-	limiter := newIPRateLimiter(rate.Limit(30), 60)
+	limiter := newIPRateLimiter(rate.Limit(60), 120)
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
