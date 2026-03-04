@@ -43,6 +43,15 @@
         return m + 'm';
     }
 
+    function formatSpeed(bytesPerSec) {
+        if (!bytesPerSec || bytesPerSec <= 0) return '0 bps';
+        var bps = bytesPerSec * 8;
+        if (bps >= 1e9) return (bps / 1e9).toFixed(1) + ' Gbps';
+        if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
+        if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' Kbps';
+        return bps.toFixed(0) + ' bps';
+    }
+
     function createGauge(containerId, value, maxVal) {
         var container = document.getElementById(containerId);
         if (!container) return;
@@ -328,22 +337,14 @@
 
             var labels = data.map(function(d) { return d.bucket.split(' ').pop() || d.bucket; });
 
-            // Compute throughput for gauges
-            if (data.length >= 2) {
-                var last = data[data.length - 1];
-                var prev = data[data.length - 2];
-                var inRate = Math.abs(last.in_bytes - prev.in_bytes);
-                var outRate = Math.abs(last.out_bytes - prev.out_bytes);
-                var maxObs = 1;
-                for (var k = 0; k < data.length; k++) {
-                    var mx = Math.max(data[k].in_bytes, data[k].out_bytes);
-                    if (mx > maxObs) maxObs = mx;
-                }
-                createGauge('gauge-in', inRate, maxObs);
-                createGauge('gauge-out', outRate, maxObs);
-                document.getElementById('gauge-in-val').textContent = formatBytes(inRate) + '/interval';
-                document.getElementById('gauge-out-val').textContent = formatBytes(outRate) + '/interval';
-            }
+            // Throughput gauges — use server-computed bytes/sec, gauge max = 1 Gbps (125 MB/s)
+            var oneGbps = 125000000; // 1 Gbps in bytes/sec
+            var tIn = connDetail ? (connDetail.throughput_in || 0) : 0;
+            var tOut = connDetail ? (connDetail.throughput_out || 0) : 0;
+            createGauge('gauge-in', tIn, oneGbps);
+            createGauge('gauge-out', tOut, oneGbps);
+            document.getElementById('gauge-in-val').textContent = formatSpeed(tIn);
+            document.getElementById('gauge-out-val').textContent = formatSpeed(tOut);
 
             trafficChart = new Chart(canvas, {
                 type: 'line',

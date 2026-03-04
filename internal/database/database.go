@@ -1572,11 +1572,29 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
+	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
+	// Counter resets (new value < old value) use the raw value as the delta (bytes since reset).
+	query := fmt.Sprintf(`
+		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
+		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
+		FROM (
+			SELECT %s as bucket,
+				CASE WHEN bytes_in >= LAG(bytes_in) OVER w
+					THEN bytes_in - LAG(bytes_in) OVER w ELSE bytes_in END as delta_in,
+				CASE WHEN bytes_out >= LAG(bytes_out) OVER w
+					THEN bytes_out - LAG(bytes_out) OVER w ELSE bytes_out END as delta_out,
+				CASE WHEN packets_in >= LAG(packets_in) OVER w
+					THEN packets_in - LAG(packets_in) OVER w ELSE packets_in END as delta_pin,
+				CASE WHEN packets_out >= LAG(packets_out) OVER w
+					THEN packets_out - LAG(packets_out) OVER w ELSE packets_out END as delta_pout
+			FROM vpn_statuses
+			WHERE device_id = ? AND tunnel_name = ? AND timestamp > ?
+			WINDOW w AS (ORDER BY timestamp)
+		) WHERE delta_in IS NOT NULL
+		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr)
+
 	var rows []VPNChartBucket
-	err := d.db.Model(&models.VPNStatus{}).
-		Where("device_id = ? AND tunnel_name = ? AND timestamp > ?", deviceID, tunnelName, cutoff).
-		Select(fmt.Sprintf("%s as bucket, AVG(bytes_in) as in_bytes, AVG(bytes_out) as out_bytes, AVG(packets_in) as in_packets, AVG(packets_out) as out_packets", bucketExpr)).
-		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	err := d.db.Raw(query, deviceID, tunnelName, cutoff).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1604,6 +1622,8 @@ type ConnectionDetailResult struct {
 	TotalBytesOut   uint64                  `json:"total_bytes_out"`
 	TotalPacketsIn  uint64                  `json:"total_packets_in"`
 	TotalPacketsOut uint64                  `json:"total_packets_out"`
+	ThroughputIn    float64                 `json:"throughput_in"`
+	ThroughputOut   float64                 `json:"throughput_out"`
 	HasFlowData     bool                    `json:"has_flow_data"`
 	Phase2Matches   []Phase2Match           `json:"phase2_matches"`
 }
@@ -1755,6 +1775,29 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
+	// Compute live throughput (bytes/sec) from the two most recent VPNStatus samples per source tunnel
+	for _, t := range result.SourceTunnels {
+		var samples []models.VPNStatus
+		d.db.Where("device_id = ? AND tunnel_name = ?", t.DeviceID, t.TunnelName).
+			Order("timestamp DESC").Limit(2).Find(&samples)
+		if len(samples) == 2 {
+			dt := samples[0].Timestamp.Sub(samples[1].Timestamp).Seconds()
+			if dt > 0 {
+				dIn := float64(samples[0].BytesIn) - float64(samples[1].BytesIn)
+				dOut := float64(samples[0].BytesOut) - float64(samples[1].BytesOut)
+				// Handle counter resets
+				if dIn < 0 {
+					dIn = float64(samples[0].BytesIn)
+				}
+				if dOut < 0 {
+					dOut = float64(samples[0].BytesOut)
+				}
+				result.ThroughputIn += dIn / dt
+				result.ThroughputOut += dOut / dt
+			}
+		}
+	}
+
 	// Check if sFlow data exists for either device
 	var flowCount int64
 	d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Limit(1).Count(&flowCount)
@@ -1849,12 +1892,29 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 		return []VPNChartBucket{}, nil
 	}
 
-	// Query aggregated across all matching tunnels
+	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
+	// Each device+tunnel partition is diffed independently, then deltas are summed per bucket.
+	query := fmt.Sprintf(`
+		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
+		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
+		FROM (
+			SELECT %s as bucket,
+				CASE WHEN bytes_in >= LAG(bytes_in) OVER w
+					THEN bytes_in - LAG(bytes_in) OVER w ELSE bytes_in END as delta_in,
+				CASE WHEN bytes_out >= LAG(bytes_out) OVER w
+					THEN bytes_out - LAG(bytes_out) OVER w ELSE bytes_out END as delta_out,
+				CASE WHEN packets_in >= LAG(packets_in) OVER w
+					THEN packets_in - LAG(packets_in) OVER w ELSE packets_in END as delta_pin,
+				CASE WHEN packets_out >= LAG(packets_out) OVER w
+					THEN packets_out - LAG(packets_out) OVER w ELSE packets_out END as delta_pout
+			FROM vpn_statuses
+			WHERE device_id IN (?) AND tunnel_name IN (?) AND timestamp > ?
+			WINDOW w AS (PARTITION BY device_id, tunnel_name ORDER BY timestamp)
+		) WHERE delta_in IS NOT NULL
+		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr)
+
 	var rows []VPNChartBucket
-	err = d.db.Model(&models.VPNStatus{}).
-		Where("device_id IN ? AND tunnel_name IN ? AND timestamp > ?", deviceIDs, allNames, cutoff).
-		Select(fmt.Sprintf("%s as bucket, SUM(bytes_in) as in_bytes, SUM(bytes_out) as out_bytes, SUM(packets_in) as in_packets, SUM(packets_out) as out_packets", bucketExpr)).
-		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	err = d.db.Raw(query, deviceIDs, allNames, cutoff).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1886,94 +1946,59 @@ type ConnectionFlowResult struct {
 
 // GetConnectionFlowStats returns sFlow traffic analysis for a connection.
 func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFlowResult, error) {
-	var conn models.DeviceConnection
-	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+	// Use connection-specific tunnel names only (not ALL tunnels from both devices)
+	srcDeviceID, dstDeviceID, srcTunnelNames, dstTunnelNames, err := d.getConnectionTunnelNames(connID)
+	if err != nil {
 		return nil, err
 	}
 
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
-	deviceIDs := []uint{conn.SourceDeviceID, conn.DestDeviceID}
-
-	// Collect IPs for both sides to filter flows
-	allIPs := make(map[string]bool)
-	if conn.SourceDevice != nil {
-		allIPs[conn.SourceDevice.IPAddress] = true
-	}
-	if conn.DestDevice != nil {
-		allIPs[conn.DestDevice.IPAddress] = true
-	}
-	var addrIPs []string
-	d.db.Model(&models.InterfaceAddress{}).Where("device_id IN ?", deviceIDs).Distinct("ip_address").Pluck("ip_address", &addrIPs)
-	for _, ip := range addrIPs {
-		allIPs[ip] = true
-	}
-
-	// Collect tunnel remote IPs for IP-based flow matching
-	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
-	dstTunnels, _ := d.GetLatestVPNStatuses(conn.DestDeviceID)
 	var tunnelNames []string
-	tunnelRemoteIPs := make(map[string]bool)
-	for _, t := range srcTunnels {
-		tunnelNames = append(tunnelNames, t.TunnelName)
-		if t.RemoteIP != "" {
-			tunnelRemoteIPs[t.RemoteIP] = true
-		}
-	}
-	for _, t := range dstTunnels {
-		tunnelNames = append(tunnelNames, t.TunnelName)
-		if t.RemoteIP != "" {
-			tunnelRemoteIPs[t.RemoteIP] = true
-		}
+	tunnelNames = append(tunnelNames, srcTunnelNames...)
+	tunnelNames = append(tunnelNames, dstTunnelNames...)
+	if len(tunnelNames) == 0 {
+		return &ConnectionFlowResult{}, nil
 	}
 
-	// Try to find tunnel interface indices via multiple matching strategies
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	deviceIDs := []uint{srcDeviceID, dstDeviceID}
+
+	// Find interface indices matching this connection's specific tunnels
 	var tunnelIfIndices []int
 	ifIndexSet := make(map[int]bool)
-	if len(tunnelNames) > 0 {
-		// Strategy 1: Match tunnel name to interface name
-		var ifaces []models.InterfaceStats
-		d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)",
-			deviceIDs, tunnelNames, tunnelNames, tunnelNames).Scan(&ifaces)
-		for _, iface := range ifaces {
+
+	// Strategy 1: Match tunnel name to interface name
+	var ifaces []models.InterfaceStats
+	d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)",
+		deviceIDs, tunnelNames, tunnelNames, tunnelNames).Scan(&ifaces)
+	for _, iface := range ifaces {
+		ifIndexSet[iface.Index] = true
+	}
+
+	// Strategy 2: Match VPN-type interfaces (tunnel, ipsec types) — only if strategy 1 found nothing
+	if len(ifIndexSet) == 0 {
+		var vpnIfaces []models.InterfaceStats
+		d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (type_name IN ('tunnel','ipsec','vxlan','gre') OR name LIKE 'vpn%' OR name LIKE 'ipsec%' OR name LIKE 'tun%' OR name LIKE 'vxlan%')",
+			deviceIDs).Scan(&vpnIfaces)
+		for _, iface := range vpnIfaces {
 			ifIndexSet[iface.Index] = true
 		}
-
-		// Strategy 2: Match VPN-type interfaces (tunnel, ipsec types)
-		if len(ifIndexSet) == 0 {
-			var vpnIfaces []models.InterfaceStats
-			d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (type_name IN ('tunnel','ipsec','vxlan','gre') OR name LIKE 'vpn%' OR name LIKE 'ipsec%' OR name LIKE 'tun%' OR name LIKE 'vxlan%')",
-				deviceIDs).Scan(&vpnIfaces)
-			for _, iface := range vpnIfaces {
-				ifIndexSet[iface.Index] = true
-			}
-		}
 	}
+
 	for idx := range ifIndexSet {
 		tunnelIfIndices = append(tunnelIfIndices, idx)
+	}
+
+	if len(tunnelIfIndices) == 0 {
+		return &ConnectionFlowResult{}, nil
 	}
 
 	result := &ConnectionFlowResult{}
 	protoNames := map[uint8]string{0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP", 17: "UDP", 41: "IPv6", 47: "GRE", 50: "ESP", 51: "AH", 58: "ICMPv6", 88: "EIGRP", 89: "OSPF", 132: "SCTP"}
 
-	// Build IP list for fallback: include device IPs + tunnel remote IPs
-	ipList := make([]string, 0, len(allIPs)+len(tunnelRemoteIPs))
-	for ip := range allIPs {
-		ipList = append(ipList, ip)
-	}
-	for ip := range tunnelRemoteIPs {
-		ipList = append(ipList, ip)
-	}
-
 	newBase := func() *gorm.DB {
-		q := d.db.Model(&models.FlowSample{}).Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff)
-		if len(tunnelIfIndices) > 0 {
-			// Match flows traversing tunnel interfaces
-			q = q.Where("input_if_index IN ? OR output_if_index IN ?", tunnelIfIndices, tunnelIfIndices)
-		} else if len(ipList) > 0 {
-			// Fallback: flows with src/dst matching device or tunnel IPs
-			q = q.Where("src_addr IN ? OR dst_addr IN ?", ipList, ipList)
-		}
-		return q
+		return d.db.Model(&models.FlowSample{}).
+			Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff).
+			Where("input_if_index IN ? OR output_if_index IN ?", tunnelIfIndices, tunnelIfIndices)
 	}
 
 	// Total counts

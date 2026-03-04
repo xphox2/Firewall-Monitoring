@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.74] - 2026-03-04
+
+### Fixed
+- Fix VPN traffic charts showing meaningless cumulative counter sums — now uses LAG() window function to compute actual per-interval byte/packet deltas from SNMP counters
+- Fix per-tunnel chart data (GetVPNChartData) using AVG of cumulative counters — same LAG() delta fix
+- Fix throughput gauges showing wrong values with no real units — now displays server-computed Mbps with % of 1 Gbps capacity
+- Tighten sFlow filtering in connection detail to only show flows matching this connection's specific tunnels, not all tunnels from both devices
+
+### Added
+- Server-side throughput computation (bytes/sec) in connection detail API from latest VPN status samples
+
 ## [0.10.73] - 2026-03-04
 
 ### Fixed
