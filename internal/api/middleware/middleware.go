@@ -83,6 +83,22 @@ func RateLimiter(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+func PublicRateLimiter() gin.HandlerFunc {
+	limiter := newIPRateLimiter(rate.Limit(30), 60)
+
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if !limiter.getLimiter(ip).Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Rate limit exceeded",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func LoginRateLimiter() gin.HandlerFunc {
 	limiter := newIPRateLimiter(rate.Limit(1), 5) // 1 req/s, burst of 5
 	return func(c *gin.Context) {

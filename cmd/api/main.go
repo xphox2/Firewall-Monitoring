@@ -161,12 +161,17 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	api := router.Group("/api")
 	{
 		api.GET("/health", handler.GetHealth)
-		api.GET("/public/devices", handler.GetPublicDevices)
-		api.GET("/public/dashboard", handler.GetPublicDashboard)
-		api.GET("/public/interfaces", handler.GetPublicInterfaces)
-		api.GET("/public/vpn", handler.GetPublicVPN)
-		api.GET("/public/connections", handler.GetPublicConnections)
-		api.GET("/public/display-settings", handler.GetPublicDisplaySettings)
+
+		public := api.Group("/public")
+		public.Use(middleware.PublicRateLimiter())
+		{
+			public.GET("/devices", handler.GetPublicDevices)
+			public.GET("/dashboard", handler.GetPublicDashboard)
+			public.GET("/interfaces", handler.GetPublicInterfaces)
+			public.GET("/vpn", handler.GetPublicVPN)
+			public.GET("/connections", handler.GetPublicConnections)
+			public.GET("/display-settings", handler.GetPublicDisplaySettings)
+		}
 
 		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)
 
