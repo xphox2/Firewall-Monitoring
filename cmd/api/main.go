@@ -148,6 +148,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		c.HTML(http.StatusOK, "index.html", nil)
 	})
 
+	// Minimal SVG favicon to prevent 404
+	router.GET("/favicon.ico", func(c *gin.Context) {
+		svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#161b22"/><path d="M8 10h16M8 16h16M8 22h12" stroke="#58a6ff" stroke-width="2.5" stroke-linecap="round"/><circle cx="25" cy="22" r="3" fill="#3fb950"/></svg>`
+		c.Data(http.StatusOK, "image/svg+xml", []byte(svg))
+	})
+
 	router.GET("/admin/login", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "login.html", nil)
 	})

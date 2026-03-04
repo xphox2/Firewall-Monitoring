@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.76] - 2026-03-04
+
+### Fixed
+- Fix CSP violation blocking Chart.js — add `'unsafe-inline'` to script-src directive
+- Add inline SVG favicon to prevent 404 on `/favicon.ico`
+
 ## [0.10.75] - 2026-03-04
 
 ### Added
