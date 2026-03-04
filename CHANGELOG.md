@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.69] - 2026-03-04
+
+### Fixed
+- Add server-side error logging for all probe data ingestion handlers (security stats, flow samples, interface stats, VPN statuses, etc.) — previously DB errors returned 500 without logging the cause
+
 ## [0.10.68] - 2026-03-03
 
 ### Added
