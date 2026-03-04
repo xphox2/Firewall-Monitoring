@@ -42,12 +42,23 @@
         const controls = document.createElement('div');
         controls.style.cssText = 'position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:4px;z-index:10;';
         controls.innerHTML = `
-            <button class="btn secondary sm" onclick="FWDiagram.zoomIn()" title="Zoom In" style="width:28px;height:28px;padding:0;font-size:1rem;line-height:1;">+</button>
-            <button class="btn secondary sm" onclick="FWDiagram.zoomOut()" title="Zoom Out" style="width:28px;height:28px;padding:0;font-size:1rem;line-height:1;">&minus;</button>
-            <button class="btn secondary sm" onclick="FWDiagram.resetZoom()" title="Reset Zoom" style="width:28px;height:28px;padding:0;font-size:0.65rem;line-height:1;">1:1</button>
-            <button class="btn secondary sm" onclick="FWDiagram.Layout.resetLayout()" title="Reset Layout" style="width:28px;height:28px;padding:0;font-size:0.65rem;line-height:1;">&#8634;</button>
+            <button class="btn secondary sm" data-action="dg-zoom-in" title="Zoom In" style="width:28px;height:28px;padding:0;font-size:1rem;line-height:1;">+</button>
+            <button class="btn secondary sm" data-action="dg-zoom-out" title="Zoom Out" style="width:28px;height:28px;padding:0;font-size:1rem;line-height:1;">&minus;</button>
+            <button class="btn secondary sm" data-action="dg-reset-zoom" title="Reset Zoom" style="width:28px;height:28px;padding:0;font-size:0.65rem;line-height:1;">1:1</button>
+            <button class="btn secondary sm" data-action="dg-reset-layout" title="Reset Layout" style="width:28px;height:28px;padding:0;font-size:0.65rem;line-height:1;">&#8634;</button>
         `;
         container.appendChild(controls);
+
+        // Delegate zoom/layout button clicks
+        controls.addEventListener('click', function(e) {
+            var el = e.target.closest('[data-action]');
+            if (!el) return;
+            var action = el.dataset.action;
+            if (action === 'dg-zoom-in') zoomIn();
+            else if (action === 'dg-zoom-out') zoomOut();
+            else if (action === 'dg-reset-zoom') resetZoom();
+            else if (action === 'dg-reset-layout' && FWDiagram.Layout) FWDiagram.Layout.resetLayout();
+        });
 
         // Wire events
         svg.addEventListener('wheel', handleWheel, { passive: false });

@@ -251,7 +251,7 @@
                 ${tunnel.remote_subnet ? `<div>Remote: ${window.escapeHtml(tunnel.remote_subnet)}</div>` : ''}
             </div>
             <div style="margin-top:8px;text-align:right;">
-                <button class="btn secondary sm" onclick="this.closest('#tz-tooltip').remove()">Close</button>
+                <button class="btn secondary sm" data-action="tz-close-tooltip">Close</button>
             </div>
         `;
         document.body.appendChild(div);
@@ -271,6 +271,16 @@
         const tooltip = document.getElementById('tz-tooltip');
         if (tooltip) tooltip.remove();
     }
+
+    // Event delegation for tooltip close
+    document.addEventListener('click', function(e) {
+        var el = e.target.closest('[data-action]');
+        if (!el) return;
+        if (el.dataset.action === 'tz-close-tooltip') {
+            var tooltip = el.closest('#tz-tooltip');
+            if (tooltip) tooltip.remove();
+        }
+    });
 
     FWDiagram.TunnelZoom = {
         show,

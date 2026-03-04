@@ -90,9 +90,9 @@
                 <div class="panel-header">
                     <h4>${window.escapeHtml(conn.name)} ${typeBadge} ${statusBadge} ${methodBadge}</h4>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <button class="btn secondary sm" onclick="FWDiagram.TunnelZoom.show(${conn.id})" title="Inspect individual tunnels">Zoom In</button>
+                        <button class="btn secondary sm" data-action="dp-tunnel-zoom" data-conn-id="${conn.id}" title="Inspect individual tunnels">Zoom In</button>
                         <a href="/admin/connections/${conn.id}" style="color:#58a6ff;font-size:0.8rem;text-decoration:none;font-weight:500;">Full Page &rarr;</a>
-                        <button class="btn secondary sm" onclick="FWDiagram.Panels.closeRichPanel()">Close</button>
+                        <button class="btn secondary sm" data-action="dp-close-panel">Close</button>
                     </div>
                 </div>
                 <div id="panel-bridge-container"></div>
@@ -103,18 +103,18 @@
                     <div class="panel-kpi-card"><div class="kpi-label">Status</div><div class="kpi-value" id="pkpi-status">--</div></div>
                 </div>
                 <div class="panel-tabs" id="rich-panel-tabs">
-                    <div class="panel-tab active" data-tab="overview" onclick="FWDiagram.Panels.switchPanelTab('overview')">Overview</div>
-                    <div class="panel-tab" data-tab="tunnels" onclick="FWDiagram.Panels.switchPanelTab('tunnels')">Tunnels</div>
-                    <div class="panel-tab" data-tab="phase2" onclick="FWDiagram.Panels.switchPanelTab('phase2')" id="ptab-phase2-tab" style="display:none;">Phase 2</div>
-                    <div class="panel-tab" data-tab="flows" onclick="FWDiagram.Panels.switchPanelTab('flows')" id="ptab-flows-tab" style="display:none;">Flows</div>
+                    <div class="panel-tab active" data-tab="overview" data-action="dp-switch-tab">Overview</div>
+                    <div class="panel-tab" data-tab="tunnels" data-action="dp-switch-tab">Tunnels</div>
+                    <div class="panel-tab" data-tab="phase2" data-action="dp-switch-tab" id="ptab-phase2-tab" style="display:none;">Phase 2</div>
+                    <div class="panel-tab" data-tab="flows" data-action="dp-switch-tab" id="ptab-flows-tab" style="display:none;">Flows</div>
                 </div>
                 <div id="rich-panel-content">
                     <div class="panel-tab-content active" id="ptab-overview">
                         <div class="panel-range-pills" id="panel-traffic-range">
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.setPanelTrafficRange('1h')">1h</div>
-                            <div class="panel-range-pill active" onclick="FWDiagram.Panels.setPanelTrafficRange('24h')">24h</div>
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.setPanelTrafficRange('7d')">7d</div>
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.setPanelTrafficRange('30d')">30d</div>
+                            <div class="panel-range-pill" data-action="dp-traffic-range" data-range="1h">1h</div>
+                            <div class="panel-range-pill active" data-action="dp-traffic-range" data-range="24h">24h</div>
+                            <div class="panel-range-pill" data-action="dp-traffic-range" data-range="7d">7d</div>
+                            <div class="panel-range-pill" data-action="dp-traffic-range" data-range="30d">30d</div>
                         </div>
                         <div class="panel-chart-container"><canvas id="panel-traffic-chart"></canvas></div>
                     </div>
@@ -133,10 +133,10 @@
                     </div>
                     <div class="panel-tab-content" id="ptab-flows">
                         <div class="panel-range-pills" id="panel-flow-range">
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.setPanelFlowRange(1)">1h</div>
-                            <div class="panel-range-pill active" onclick="FWDiagram.Panels.setPanelFlowRange(24)">24h</div>
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.setPanelFlowRange(168)">7d</div>
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.setPanelFlowRange(720)">30d</div>
+                            <div class="panel-range-pill" data-action="dp-flow-range" data-hours="1">1h</div>
+                            <div class="panel-range-pill active" data-action="dp-flow-range" data-hours="24">24h</div>
+                            <div class="panel-range-pill" data-action="dp-flow-range" data-hours="168">7d</div>
+                            <div class="panel-range-pill" data-action="dp-flow-range" data-hours="720">30d</div>
                         </div>
                         <div id="panel-flow-content">
                             <div style="display:flex;gap:12px;margin-bottom:8px;">
@@ -299,7 +299,7 @@
             const rowId = `${tableId}-row-${i}`;
             const statusBadge = t.status === 'up' || t.state === 'up' ? '<span class="badge up">UP</span>' : '<span class="badge down">DOWN</span>';
             html += `
-                <tr class="panel-tunnel-row" onclick="FWDiagram.Panels.togglePanelTunnel('${rowId}', ${deviceId}, '${window.escapeHtml(t.tunnel_name)}')">
+                <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}">
                     <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
                     <td>${window.escapeHtml(t.tunnel_name)}</td>
                     <td>${statusBadge}</td>
@@ -310,10 +310,10 @@
                 <tr class="panel-tunnel-expand" id="${rowId}">
                     <td colspan="6">
                         <div class="panel-range-pills" style="margin-bottom:6px;">
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${deviceId}, '${window.escapeHtml(t.tunnel_name)}', '1h', event)">1h</div>
-                            <div class="panel-range-pill active" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${deviceId}, '${window.escapeHtml(t.tunnel_name)}', '24h', event)">24h</div>
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${deviceId}, '${window.escapeHtml(t.tunnel_name)}', '7d', event)">7d</div>
-                            <div class="panel-range-pill" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${deviceId}, '${window.escapeHtml(t.tunnel_name)}', '30d', event)">30d</div>
+                            <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="1h">1h</div>
+                            <div class="panel-range-pill active" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="24h">24h</div>
+                            <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="7d">7d</div>
+                            <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="30d">30d</div>
                         </div>
                         <div class="panel-chart-container" style="height:150px;"><canvas id="pchart-${rowId}"></canvas></div>
                     </td>
@@ -338,13 +338,7 @@
         }
     }
 
-    async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range, evt) {
-        if (evt) {
-            evt.stopPropagation();
-            const pills = evt.target.parentElement.querySelectorAll('.panel-range-pill');
-            pills.forEach(p => p.classList.remove('active'));
-            evt.target.classList.add('active');
-        }
+    async function loadPanelTunnelChart(rowId, deviceId, tunnelName, range) {
         try {
             const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/vpn/${encodeURIComponent(tunnelName)}/chart?range=${range}`);
             const data = resp && resp.data ? resp.data : resp;
@@ -428,7 +422,7 @@
                 const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:#58a6ff;text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:#d29922;font-size:0.78rem;">Off-Net</span>';
                 const statusBadge = `<span class="badge ${t.status}">${t.status.toUpperCase()}</span>`;
                 return `
-                    <tr class="panel-tunnel-row" onclick="FWDiagram.Panels.togglePanelTunnel('${rowId}', ${devId}, '${window.escapeHtml(t.tunnel_name)}')">
+                    <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}">
                         <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
                         <td>${window.escapeHtml(t.tunnel_name)}</td>
                         <td>${window.escapeHtml((t.tunnel_type || 'ipsec').toUpperCase())}</td>
@@ -440,10 +434,10 @@
                     <tr class="panel-tunnel-expand" id="${rowId}">
                         <td colspan="7">
                             <div class="panel-range-pills" style="margin-bottom:6px;">
-                                <div class="panel-range-pill" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${devId}, '${window.escapeHtml(t.tunnel_name)}', '1h', event)">1h</div>
-                                <div class="panel-range-pill active" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${devId}, '${window.escapeHtml(t.tunnel_name)}', '24h', event)">24h</div>
-                                <div class="panel-range-pill" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${devId}, '${window.escapeHtml(t.tunnel_name)}', '7d', event)">7d</div>
-                                <div class="panel-range-pill" onclick="FWDiagram.Panels.loadPanelTunnelChart('${rowId}', ${devId}, '${window.escapeHtml(t.tunnel_name)}', '30d', event)">30d</div>
+                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="1h">1h</div>
+                                <div class="panel-range-pill active" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="24h">24h</div>
+                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="7d">7d</div>
+                                <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="30d">30d</div>
                             </div>
                             <div class="panel-chart-container" style="height:150px;"><canvas id="pchart-${rowId}"></canvas></div>
                         </td>
@@ -472,12 +466,38 @@
             <div class="rich-detail-panel">
                 <div class="panel-header">
                     <h4>${heading} <span style="font-size:0.8rem;font-weight:400;color:#8b949e;margin-left:8px;">${vpnInfo.up} up / ${vpnInfo.down} down</span></h4>
-                    <button class="btn secondary sm" onclick="FWDiagram.Panels.closeRichPanel()">Close</button>
+                    <button class="btn secondary sm" data-action="dp-close-panel">Close</button>
                 </div>
                 ${sectionsHtml}
             </div>
         `;
     }
+
+    // Event delegation for all dynamic panel content
+    document.addEventListener('click', function(e) {
+        var el = e.target.closest('[data-action]');
+        if (!el) return;
+        var action = el.dataset.action;
+        if (action === 'dp-close-panel') {
+            closeRichPanel();
+        } else if (action === 'dp-switch-tab') {
+            switchPanelTab(el.dataset.tab);
+        } else if (action === 'dp-traffic-range') {
+            setPanelTrafficRange(el.dataset.range);
+        } else if (action === 'dp-flow-range') {
+            setPanelFlowRange(parseInt(el.dataset.hours));
+        } else if (action === 'dp-toggle-tunnel') {
+            togglePanelTunnel(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel);
+        } else if (action === 'dp-tunnel-chart') {
+            e.stopPropagation();
+            var pills = el.parentElement.querySelectorAll('.panel-range-pill');
+            pills.forEach(function(p) { p.classList.remove('active'); });
+            el.classList.add('active');
+            loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range);
+        } else if (action === 'dp-tunnel-zoom') {
+            if (FWDiagram.TunnelZoom) FWDiagram.TunnelZoom.show(parseInt(el.dataset.connId));
+        }
+    });
 
     FWDiagram.Panels = {
         showRichConnDetailPanel,

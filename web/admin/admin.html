@@ -189,13 +189,15 @@
         .panel-bridge-svg { width: 100%; margin-bottom: 8px; }
         @media (max-width: 900px) { .panel-kpi-grid { grid-template-columns: repeat(2, 1fr); } .tunnel-columns, .panel-flow-grid { grid-template-columns: 1fr; } }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <script src="/static/js/diagram-core.js"></script>
-    <script src="/static/js/diagram-layout.js"></script>
-    <script src="/static/js/diagram-connections.js"></script>
-    <script src="/static/js/diagram-particles.js"></script>
-    <script src="/static/js/diagram-panels.js"></script>
-    <script src="/static/js/diagram-tunnel-zoom.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script defer src="/static/js/diagram-core.js"></script>
+    <script defer src="/static/js/diagram-layout.js"></script>
+    <script defer src="/static/js/diagram-connections.js"></script>
+    <script defer src="/static/js/diagram-particles.js"></script>
+    <script defer src="/static/js/diagram-panels.js"></script>
+    <script defer src="/static/js/diagram-tunnel-zoom.js"></script>
+    <script defer src="/static/js/admin-common.js"></script>
+    <script defer src="/static/js/admin-main.js"></script>
 </head>
 <body>
     <div class="sidebar">
@@ -292,7 +294,7 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Devices</h2>
-                    <button class="btn" onclick="showDeviceModal()">+ Add Device</button>
+                    <button class="btn" data-action="show-device-modal">+ Add Device</button>
                 </div>
                 <div class="table-wrap">
                     <table id="devices-table">
@@ -317,7 +319,7 @@
                         <option value="down">Down</option>
                     </select>
                     <select id="iface-filter-type"><option value="">All Types</option></select>
-                    <button class="btn secondary sm" onclick="loadInterfaces()">Apply</button>
+                    <button class="btn secondary sm" data-action="load-interfaces">Apply</button>
                 </div>
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="interfaces-table">
@@ -328,8 +330,8 @@
                 <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
                     <span id="iface-page-info" style="font-size: 0.82rem; color: #8b949e;"></span>
                     <div>
-                        <button class="btn secondary sm" id="iface-prev" onclick="ifacePrevPage()">Prev</button>
-                        <button class="btn secondary sm" id="iface-next" onclick="ifaceNextPage()">Next</button>
+                        <button class="btn secondary sm" id="iface-prev" data-action="iface-prev-page">Prev</button>
+                        <button class="btn secondary sm" id="iface-next" data-action="iface-next-page">Next</button>
                     </div>
                 </div>
             </div>
@@ -340,7 +342,7 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Network Connections</h2>
-                    <button class="btn" onclick="showConnectionModal()">+ Add Connection</button>
+                    <button class="btn" data-action="show-connection-modal">+ Add Connection</button>
                 </div>
                 <p style="color: #484f58; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
                 <div class="table-wrap">
@@ -396,7 +398,7 @@
                         <option value="7">Debug</option>
                     </select>
                     <input type="text" class="search-input" id="syslog-filter-search" placeholder="Search messages..." autocomplete="one-time-code">
-                    <button class="btn secondary sm" onclick="loadSyslog()">Apply</button>
+                    <button class="btn secondary sm" data-action="load-syslog">Apply</button>
                     <div class="auto-refresh-toggle">
                         <input type="checkbox" id="syslog-auto-refresh">
                         <label for="syslog-auto-refresh">Auto-refresh</label>
@@ -409,7 +411,7 @@
                     </table>
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn secondary" id="syslog-load-more" onclick="loadMoreSyslog()">Load More</button>
+                    <button class="btn secondary" id="syslog-load-more" data-action="load-more-syslog">Load More</button>
                 </div>
             </div>
         </div>
@@ -418,10 +420,10 @@
         <div class="page" id="page-flows">
             <div class="filter-bar" style="margin-bottom:12px">
                 <span style="color:#8b949e;font-size:0.85rem;margin-right:8px">Time Range:</span>
-                <button class="btn secondary sm flow-range-btn active" data-hours="24" onclick="setFlowRange(24,this)">Today</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="168" onclick="setFlowRange(168,this)">1 Week</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="720" onclick="setFlowRange(720,this)">1 Month</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="8760" onclick="setFlowRange(8760,this)">1 Year</button>
+                <button class="btn secondary sm flow-range-btn active" data-hours="24" data-action="set-flow-range">Today</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="168" data-action="set-flow-range">1 Week</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="720" data-action="set-flow-range">1 Month</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="8760" data-action="set-flow-range">1 Year</button>
             </div>
             <div class="stat-grid" id="flows-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
@@ -464,7 +466,7 @@
                     </select>
                     <input type="text" id="flows-filter-src" placeholder="Src IP..." autocomplete="one-time-code">
                     <input type="text" id="flows-filter-dst" placeholder="Dst IP..." autocomplete="one-time-code">
-                    <button class="btn secondary sm" onclick="loadFlows()">Apply</button>
+                    <button class="btn secondary sm" data-action="load-flows">Apply</button>
                 </div>
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="flows-table">
@@ -473,7 +475,7 @@
                     </table>
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn secondary" onclick="loadMoreFlows()">Load More</button>
+                    <button class="btn secondary" data-action="load-more-flows">Load More</button>
                 </div>
             </div>
         </div>
@@ -510,7 +512,7 @@
                         <option value="false">Unacknowledged</option>
                         <option value="true">Acknowledged</option>
                     </select>
-                    <button class="btn secondary sm" onclick="loadAlerts()">Apply</button>
+                    <button class="btn secondary sm" data-action="load-alerts">Apply</button>
                 </div>
                 <div class="table-wrap">
                     <table id="alerts-full-table">
@@ -519,7 +521,7 @@
                     </table>
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn secondary" onclick="loadMoreAlerts()">Load More</button>
+                    <button class="btn secondary" data-action="load-more-alerts">Load More</button>
                 </div>
             </div>
         </div>
@@ -554,7 +556,7 @@
                     <select id="traps-filter-type">
                         <option value="">All Types</option>
                     </select>
-                    <button class="btn secondary sm" onclick="loadTraps()">Apply</button>
+                    <button class="btn secondary sm" data-action="load-traps">Apply</button>
                 </div>
                 <div class="table-wrap">
                     <table id="traps-table">
@@ -563,7 +565,7 @@
                     </table>
                 </div>
                 <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn secondary" onclick="loadMoreTraps()">Load More</button>
+                    <button class="btn secondary" data-action="load-more-traps">Load More</button>
                 </div>
             </div>
         </div>
@@ -586,7 +588,7 @@
                         <input type="password" id="confirm-password" autocomplete="new-password">
                     </div>
                 </div>
-                <button class="btn" onclick="changePassword()">Change Password</button>
+                <button class="btn" data-action="change-password">Change Password</button>
             </div>
             <div class="card">
                 <div class="card-header"><h2>Public Dashboard Display</h2></div>
@@ -617,7 +619,7 @@
                 <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
                 <div class="settings-grid" id="settings-smtp"></div>
                 <div style="margin-top: 12px;">
-                    <button class="btn secondary" onclick="testEmail()">Send Test Email</button>
+                    <button class="btn secondary" data-action="test-email">Send Test Email</button>
                     <span id="test-email-result" style="margin-left: 12px; font-size: 0.82rem;"></span>
                 </div>
             </div>
@@ -625,14 +627,14 @@
                 <div class="card-header"><h2>Webhook Test</h2></div>
                 <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                    <button class="btn secondary" onclick="testWebhook('slack_webhook')">Test Slack</button>
-                    <button class="btn secondary" onclick="testWebhook('discord_webhook')">Test Discord</button>
-                    <button class="btn secondary" onclick="testWebhook('webhook_url')">Test Webhook</button>
+                    <button class="btn secondary" data-action="test-webhook" data-type="slack_webhook">Test Slack</button>
+                    <button class="btn secondary" data-action="test-webhook" data-type="discord_webhook">Test Discord</button>
+                    <button class="btn secondary" data-action="test-webhook" data-type="webhook_url">Test Webhook</button>
                     <span id="test-webhook-result" style="margin-left: 12px; font-size: 0.82rem; align-self: center;"></span>
                 </div>
             </div>
             <div class="card">
-                <button class="btn" onclick="saveSettings()">Save Settings</button>
+                <button class="btn" data-action="save-settings">Save Settings</button>
             </div>
         </div>
     </div>
@@ -642,7 +644,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="device-modal-title">Add Device</h2>
-                <button class="modal-close" onclick="closeDeviceModal()">&times;</button>
+                <button class="modal-close" data-action="close-device-modal">&times;</button>
             </div>
             <form id="device-form">
                 <input type="hidden" id="device-id">
@@ -663,7 +665,7 @@
                     </div>
                     <div class="form-group">
                         <label>SNMP Version</label>
-                        <select id="device-snmp-version" onchange="toggleV3Fields()">
+                        <select id="device-snmp-version">
                             <option value="1">v1</option>
                             <option value="2c" selected>v2c</option>
                             <option value="3">v3</option>
@@ -744,8 +746,8 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="testDeviceConnection(event)">Test Connection</button>
-                    <button type="button" class="btn secondary" onclick="closeDeviceModal()">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="test-device-connection">Test Connection</button>
+                    <button type="button" class="btn secondary" data-action="close-device-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
             </form>
@@ -757,7 +759,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Add Connection</h2>
-                <button class="modal-close" onclick="closeConnectionModal()">&times;</button>
+                <button class="modal-close" data-action="close-connection-modal">&times;</button>
             </div>
             <form id="connection-form">
                 <input type="hidden" id="connection-id">
@@ -796,1319 +798,13 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="closeConnectionModal()">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="close-connection-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <script>
-        const API_BASE = '/admin/api';
-        window.API_BASE = API_BASE;
-        let currentDevices = [];
-        let currentConnections = [];
-        let currentVpnMap = {};
-        let currentProbes = [];
-        let currentSites = [];
-        let adminRefreshTimer;
-        let syslogRefreshTimer;
-        let csrfTokenCache = '';
-        let syslogOffset = 0;
-        let flowsOffset = 0;
-        let alertsOffset = 0;
-        let trapsOffset = 0;
-        const chartInstances = {};
-        let deviceSiteMap = {};
-        // window.currentConnections is set in loadConnections() when data arrives.
 
-        const SEVERITY_NAMES = ['Emergency','Alert','Critical','Error','Warning','Notice','Info','Debug'];
-        const PROTOCOL_NAMES = {0:'HOPOPT',1:'ICMP',2:'IGMP',4:'IPv4',6:'TCP',8:'EGP',17:'UDP',41:'IPv6',43:'IPv6-Route',44:'IPv6-Frag',47:'GRE',50:'ESP',51:'AH',58:'ICMPv6',59:'IPv6-NoNxt',60:'IPv6-Opts',88:'EIGRP',89:'OSPF',103:'PIM',112:'VRRP',132:'SCTP',137:'MPLS-in-IP'};
-
-        function severityBadgeClass(sev) {
-            if (sev <= 1) return 'emergency';
-            if (sev === 2) return 'critical';
-            if (sev === 3) return 'error';
-            if (sev === 4) return 'warning';
-            if (sev === 5) return 'notice';
-            if (sev === 6) return 'info';
-            return 'debug';
-        }
-
-        async function fetchCsrfToken() {
-            try {
-                const res = await fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' });
-                const data = await res.json();
-                csrfTokenCache = data.csrf_token || '';
-            } catch (e) {
-                console.error('Failed to fetch CSRF token:', e);
-            }
-            return csrfTokenCache;
-        }
-
-        function getCsrfToken() { return csrfTokenCache; }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            const s = String(str);
-            return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
-        }
-
-        // Connection type → visual style mapping
-        function connStyle(type) {
-            const styles = {
-                ipsec:    { color: '#58a6ff', dash: null, width: 3 },
-                ssl:      { color: '#d29922', dash: null, width: 3 },
-                vxlan:    { color: '#8957e5', dash: '8,4', width: 3 },
-                l2vlan:   { color: '#39d4e0', dash: null, width: 3 },
-                l3ipvlan: { color: '#da7de8', dash: '12,4', width: 3 },
-                gre:      { color: '#b392f0', dash: null, width: 3 },
-                wan:      { color: '#f0883e', dash: null, width: 3 },
-                lag:      { color: '#d29922', dash: null, width: 4 },
-                tunnel:   { color: '#8b949e', dash: null, width: 3 },
-            };
-            return styles[type] || styles.tunnel;
-        }
-
-        function typeBadgeHtml(type) {
-            const labels = {ipsec:'IPSec',vxlan:'VXLAN',ssl:'SSL VPN',wan:'WAN',l2vlan:'L2VLAN',l3ipvlan:'L3IPVLAN',gre:'GRE',lag:'LAG',tunnel:'Tunnel'};
-            const cs = connStyle(type);
-            return `<span class="badge" style="background:${cs.color}22;color:${cs.color};">${escapeHtml(labels[type] || (type || 'tunnel').toUpperCase())}</span>`;
-        }
-
-        function matchMethodBadge(method, autoDetected) {
-            if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
-            const badges = {
-                'ip_match': '<span class="badge" style="background:#484f58;font-size:0.65rem;padding:1px 5px;">IP Match</span>',
-                'interface_ip': '<span class="badge" style="background:#1f6feb;font-size:0.65rem;padding:1px 5px;">WAN IP</span>',
-                'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Bidirectional</span>',
-                'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
-                'tunnel_name': '<span class="badge" style="background:#d29922;font-size:0.65rem;padding:1px 5px;">Tunnel Name</span>',
-                'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-                'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
-            };
-            return badges[method] || badges['ip_match'];
-        }
-
-        function formatBytes(bytes) {
-            if (!bytes || bytes === 0) return '0 B';
-            const units = ['B','KB','MB','GB','TB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(1024));
-            return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-        }
-
-        function formatNum(n) { return n != null ? Number(n).toLocaleString() : '0'; }
-
-        function timeAgo(dateStr) {
-            const d = new Date(dateStr);
-            const s = Math.floor((Date.now() - d) / 1000);
-            if (s < 60) return s + 's ago';
-            if (s < 3600) return Math.floor(s/60) + 'm ago';
-            if (s < 86400) return Math.floor(s/3600) + 'h ago';
-            return Math.floor(s/86400) + 'd ago';
-        }
-
-        async function apiFetch(url, options = {}) {
-            try {
-                const res = await fetch(url, {
-                    ...options,
-                    headers: { 'X-CSRF-Token': getCsrfToken(), ...options.headers }
-                });
-                if (res.status === 401 || res.status === 302) {
-                    window.location.href = '/admin/login';
-                    return null;
-                }
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-                    throw new Error(err.error || 'Request failed');
-                }
-                return await res.json();
-            } catch (e) {
-                if (e.message === 'Failed to fetch') console.error('Network error');
-                throw e;
-            }
-        }
-
-        // Navigation
-        document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-            item.addEventListener('click', () => {
-                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                const page = item.dataset.page;
-                document.getElementById('page-' + page).classList.add('active');
-                document.getElementById('page-title').textContent = item.textContent.trim();
-                history.pushState(null, '', '/admin/' + (page === 'dashboard' ? '' : page));
-                loadPageData(page);
-            });
-        });
-
-        async function loadPageData(page) {
-            switch(page) {
-                case 'dashboard': await loadDashboard(); break;
-                case 'devices': await loadDevices(); break;
-                case 'interfaces': await populateIfaceFilters(); await loadInterfaces(); break;
-                case 'connections': await loadConnections(); break;
-                case 'syslog': await loadSyslog(); break;
-                case 'flows': await loadFlows(); break;
-                case 'settings': await loadSettings(); break;
-                case 'alerts': await loadAlerts(); break;
-                case 'traps': await loadTraps(); break;
-            }
-        }
-
-        async function loadDashboard() {
-            try {
-                const [dashResult, probesResult, syslogStatsResult, trapStatsResult] = await Promise.all([
-                    apiFetch(`${API_BASE}/dashboard`),
-                    apiFetch(`${API_BASE}/probes`),
-                    apiFetch(`${API_BASE}/syslog/stats`),
-                    apiFetch(`${API_BASE}/traps/stats`)
-                ]);
-                if (!dashResult) return;
-                const raw = dashResult.data;
-                const data = raw.dashboard || raw;
-                const enrichments = raw.enrichments || {};
-                const probes = probesResult?.data || [];
-
-                const deviceList = data.devices || [];
-                document.getElementById('total-devices').textContent = deviceList.length || 0;
-                document.getElementById('online-devices').textContent = deviceList.filter(f => f.status === 'online').length || 0;
-                document.getElementById('offline-devices').textContent = deviceList.filter(f => f.status === 'offline').length || 0;
-
-                const activeProbes = probes.filter(p => p.approval_status === 'approved' && p.status === 'online');
-                document.getElementById('active-probes').textContent = activeProbes.length;
-                document.getElementById('syslog-count').textContent = (syslogStatsResult?.data?.total || 0).toLocaleString();
-                document.getElementById('trap-count').textContent = (trapStatsResult?.data?.total || 0).toLocaleString();
-
-                // Probe health cards
-                const probeContainer = document.getElementById('probe-health-cards');
-                if (probes.length === 0) {
-                    probeContainer.innerHTML = '<div class="empty-state">No probes configured</div>';
-                } else {
-                    probeContainer.innerHTML = probes.map(p => {
-                        const statusClass = p.status === 'online' ? 'online' : (p.status === 'offline' ? 'offline' : 'pending');
-                        const lastSeen = p.last_seen ? timeAgo(p.last_seen) : 'Never';
-                        return `<div class="probe-card">
-                            <div class="probe-name"><span class="pulse-dot ${statusClass}"></span>${escapeHtml(p.name)}</div>
-                            <div class="probe-meta">${escapeHtml(p.site?.name || 'No Site')} &middot; ${escapeHtml(p.approval_status)} &middot; Last seen: ${lastSeen}</div>
-                            <div class="probe-stats" id="probe-stats-${p.id}">
-                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Syslog</div></div>
-                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Traps</div></div>
-                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Flows</div></div>
-                                <div class="probe-stat"><div class="val">-</div><div class="lbl">Pings</div></div>
-                            </div>
-                        </div>`;
-                    }).join('');
-
-                    // Load stats for each probe
-                    for (const p of probes) {
-                        apiFetch(`${API_BASE}/probes/${p.id}/stats`).then(r => {
-                            if (!r?.data) return;
-                            const el = document.getElementById('probe-stats-' + p.id);
-                            if (el) {
-                                const d = r.data;
-                                el.innerHTML = `
-                                    <div class="probe-stat"><div class="val">${d.syslog || 0}</div><div class="lbl">Syslog</div></div>
-                                    <div class="probe-stat"><div class="val">${d.traps || 0}</div><div class="lbl">Traps</div></div>
-                                    <div class="probe-stat"><div class="val">${d.flows || 0}</div><div class="lbl">Flows</div></div>
-                                    <div class="probe-stat"><div class="val">${d.pings || 0}</div><div class="lbl">Pings</div></div>`;
-                            }
-                        }).catch(() => {});
-                    }
-                }
-
-                // Load dashboard charts
-                loadDashboardCharts();
-            } catch (e) {
-                console.error('Failed to load dashboard:', e);
-            }
-        }
-
-        async function loadDashboardCharts() {
-            try {
-                const result = await apiFetch(`${API_BASE}/dashboard/stats`);
-                if (!result?.data) return;
-                const d = result.data;
-
-                // Activity trend chart
-                const actLabels = [];
-                const actSyslog = [];
-                const actTraps = [];
-                const actAlerts = [];
-                const allBuckets = new Set();
-                (d.syslog_over_time||[]).forEach(b => allBuckets.add(b.bucket));
-                (d.traps_over_time||[]).forEach(b => allBuckets.add(b.bucket));
-                (d.alerts_over_time||[]).forEach(b => allBuckets.add(b.bucket));
-                const sortedBuckets = [...allBuckets].sort();
-                const sysMap = Object.fromEntries((d.syslog_over_time||[]).map(b=>[b.bucket,b.count]));
-                const trapMap = Object.fromEntries((d.traps_over_time||[]).map(b=>[b.bucket,b.count]));
-                const alertMap = Object.fromEntries((d.alerts_over_time||[]).map(b=>[b.bucket,b.count]));
-                sortedBuckets.forEach(b => {
-                    actLabels.push(b.substring(11,16)||b);
-                    actSyslog.push(sysMap[b]||0);
-                    actTraps.push(trapMap[b]||0);
-                    actAlerts.push(alertMap[b]||0);
-                });
-                createChart('dashboard-activity-chart', 'line', actLabels, [
-                    {label:'Syslog',data:actSyslog,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3},
-                    {label:'Traps',data:actTraps,borderColor:'#d2992a',backgroundColor:'rgba(210,153,42,0.1)',fill:true,tension:0.3},
-                    {label:'Alerts',data:actAlerts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}
-                ]);
-
-                // Device status doughnut
-                const devLabels = (d.device_status||[]).map(s => s.key || 'unknown');
-                const devCounts = (d.device_status||[]).map(s => s.count);
-                const devColors = devLabels.map(l => l==='online'?'#3fb950':l==='offline'?'#f85149':'#8b949e');
-                createChart('dashboard-device-chart', 'doughnut', devLabels, [{data:devCounts,backgroundColor:devColors,borderWidth:0}]);
-            } catch(e) { console.error('Failed to load dashboard charts:', e); }
-        }
-
-        function createChart(canvasId, type, labels, datasets, opts) {
-            if (chartInstances[canvasId]) { chartInstances[canvasId].destroy(); }
-            const ctx = document.getElementById(canvasId);
-            if (!ctx) return;
-            const defaults = {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } } },
-                scales: type === 'doughnut' ? {} : {
-                    x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' }, beginAtZero: true }
-                }
-            };
-            chartInstances[canvasId] = new Chart(ctx, { type, data: { labels, datasets }, options: { ...defaults, ...opts } });
-        }
-
-        async function loadDevices() {
-            try {
-                const [devResult, probeResult, siteResult] = await Promise.all([
-                    apiFetch(`${API_BASE}/devices`),
-                    apiFetch(`${API_BASE}/probes`),
-                    apiFetch(`${API_BASE}/sites`)
-                ]);
-                if (!devResult) return;
-                currentDevices = devResult.data || [];
-                currentProbes = probeResult?.data || [];
-                currentSites = siteResult?.data || [];
-
-                // Populate device modal dropdowns
-                populateProbeSelect('device-probe');
-                populateSiteSelect('device-site');
-
-                const tbody = document.querySelector('#devices-table tbody');
-                tbody.innerHTML = currentDevices.map(d => `
-                    <tr>
-                        <td><a href="/admin/devices/${d.id}" style="color:#58a6ff;text-decoration:none;font-weight:600">${escapeHtml(d.name)}</a>${d.description ? '<br><span style="color:#484f58;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : ''}</td>
-                        <td class="mono">${escapeHtml(d.ip_address)}</td>
-                        <td>${d.probe ? escapeHtml(d.probe.name) : '<span style="color:#484f58">-</span>'}</td>
-                        <td>${d.site ? escapeHtml(d.site.name) : '<span style="color:#484f58">-</span>'}</td>
-                        <td id="dev-cpu-${d.id}" style="color:#484f58">-</td>
-                        <td id="dev-mem-${d.id}" style="color:#484f58">-</td>
-                        <td id="dev-sess-${d.id}" style="color:#484f58">-</td>
-                        <td><span class="pulse-dot ${d.status === 'online' ? 'online' : 'offline'}"></span><span class="badge ${escapeHtml(d.status)}">${escapeHtml(d.status).toUpperCase()}</span></td>
-                        <td>
-                            <button class="btn secondary sm" onclick="editDevice(${d.id})">Edit</button>
-                            <button class="btn danger sm" onclick="deleteDevice(${d.id})">Delete</button>
-                        </td>
-                    </tr>
-                `).join('') || '<tr><td colspan="9" class="empty-state">No devices configured</td></tr>';
-                // Load enrichments from dashboard data
-                loadDeviceEnrichments();
-            } catch (e) {
-                console.error('Failed to load devices:', e);
-            }
-        }
-
-        async function loadDeviceEnrichments() {
-            try {
-                const r = await apiFetch(`${API_BASE}/dashboard`);
-                if (!r?.data?.enrichments) return;
-                const enrichments = r.data.enrichments;
-                for (const [id, e] of Object.entries(enrichments)) {
-                    const cpuEl = document.getElementById('dev-cpu-' + id);
-                    const memEl = document.getElementById('dev-mem-' + id);
-                    const sessEl = document.getElementById('dev-sess-' + id);
-                    const rows = e.status_rows || 0;
-                    if (!e.has_status) {
-                        if (cpuEl) { cpuEl.textContent = 'No data'; cpuEl.title = `0 system_status records (device_id=${id}). Check collector logs.`; }
-                        if (memEl) { memEl.textContent = 'No data'; memEl.title = `0 system_status records (device_id=${id}).`; }
-                        if (sessEl) { sessEl.textContent = 'No data'; sessEl.title = `0 system_status records (device_id=${id}).`; }
-                        continue;
-                    }
-                    const polledInfo = e.status_time ? `Last: ${new Date(e.status_time).toLocaleString()} | ${rows} records` : `${rows} records`;
-                    if (cpuEl) {
-                        cpuEl.textContent = e.cpu_usage.toFixed(1) + '%';
-                        cpuEl.style.color = e.cpu_usage >= 80 ? '#f85149' : (e.cpu_usage >= 60 ? '#d29922' : '#3fb950');
-                        cpuEl.title = polledInfo;
-                    }
-                    if (memEl) {
-                        memEl.textContent = e.memory_usage.toFixed(1) + '%';
-                        memEl.style.color = e.memory_usage >= 80 ? '#f85149' : (e.memory_usage >= 60 ? '#d29922' : '#3fb950');
-                        memEl.title = polledInfo;
-                    }
-                    if (sessEl) {
-                        sessEl.textContent = e.session_count.toLocaleString();
-                        sessEl.style.color = '#c9d1d9';
-                        sessEl.title = polledInfo;
-                    }
-                }
-            } catch(e) {}
-        }
-
-        // --- Interfaces Page ---
-        let ifacePage = 1;
-        const ifacePageSize = 50;
-
-        async function loadInterfaces() {
-            ifacePage = 1;
-            await fetchInterfaces();
-        }
-
-        async function fetchInterfaces() {
-            try {
-                const deviceFilter = document.getElementById('iface-filter-device').value;
-                const statusFilter = document.getElementById('iface-filter-status').value;
-                const typeFilter = document.getElementById('iface-filter-type').value;
-                let url = `${API_BASE}/interfaces?page=${ifacePage}&page_size=${ifacePageSize}`;
-                if (deviceFilter) url += `&device_id=${deviceFilter}`;
-                if (statusFilter) url += `&status=${statusFilter}`;
-                if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
-
-                const result = await apiFetch(url);
-                if (!result?.data) return;
-
-                const ifaces = result.data.interfaces || [];
-                const total = result.data.total || 0;
-
-                const tbody = document.querySelector('#interfaces-table tbody');
-                tbody.innerHTML = ifaces.map(i => `<tr>
-                    <td><a href="/admin/devices/${i.device_id}" style="color:#58a6ff;text-decoration:none;font-weight:500">${escapeHtml(i.device_name)}</a></td>
-                    <td><strong>${escapeHtml(i.name)}</strong></td>
-                    <td>${escapeHtml(i.alias || '')}</td>
-                    <td>${escapeHtml(i.type_name || String(i.type))}</td>
-                    <td>${formatIfaceSpeed(i)}</td>
-                    <td><span class="badge ${i.status}">${escapeHtml(i.status)}</span></td>
-                    <td>${formatBytesShort(i.in_bytes)}</td>
-                    <td>${formatBytesShort(i.out_bytes)}</td>
-                    <td>${(i.in_errors||0) + (i.out_errors||0)}</td>
-                </tr>`).join('') || '<tr><td colspan="9" class="empty-state">No interfaces found</td></tr>';
-
-                const totalPages = Math.ceil(total / ifacePageSize) || 1;
-                document.getElementById('iface-page-info').textContent = `Page ${ifacePage} of ${totalPages} (${total} interfaces)`;
-                document.getElementById('iface-prev').disabled = ifacePage <= 1;
-                document.getElementById('iface-next').disabled = ifacePage >= totalPages;
-            } catch(e) { console.error('Failed to load interfaces:', e); }
-        }
-
-        function ifacePrevPage() { if (ifacePage > 1) { ifacePage--; fetchInterfaces(); } }
-        function ifaceNextPage() { ifacePage++; fetchInterfaces(); }
-
-        async function populateIfaceFilters() {
-            // Populate device filter from existing devices
-            const devResult = await apiFetch(`${API_BASE}/devices`);
-            if (devResult?.data) {
-                const sel = document.getElementById('iface-filter-device');
-                sel.innerHTML = '<option value="">All Devices</option>' + devResult.data.map(d =>
-                    `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
-            }
-            // Populate type filter from first page of unfiltered data
-            const result = await apiFetch(`${API_BASE}/interfaces?page=1&page_size=500`);
-            if (result?.data?.interfaces) {
-                const types = [...new Set(result.data.interfaces.map(i => i.type_name).filter(Boolean))].sort();
-                const sel = document.getElementById('iface-filter-type');
-                sel.innerHTML = '<option value="">All Types</option>' + types.map(t =>
-                    `<option value="${encodeURIComponent(t)}">${escapeHtml(t)}</option>`).join('');
-            }
-        }
-
-        function formatIfaceSpeed(iface) {
-            if (iface.high_speed && iface.high_speed > 0) {
-                if (iface.high_speed >= 1000) return (iface.high_speed / 1000).toFixed(0) + ' Gbps';
-                return iface.high_speed + ' Mbps';
-            }
-            if (iface.speed) {
-                const mbps = iface.speed / 1000000;
-                if (mbps >= 1000) return (mbps / 1000).toFixed(0) + ' Gbps';
-                if (mbps >= 1) return mbps.toFixed(0) + ' Mbps';
-            }
-            return '-';
-        }
-
-        function formatBytesShort(bytes) {
-            if (!bytes || bytes === 0) return '0 B';
-            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-            let i = 0, val = bytes;
-            while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
-            return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
-        }
-
-        function populateProbeSelect(selectId) {
-            const sel = document.getElementById(selectId);
-            if (!sel) return;
-            const current = sel.value;
-            sel.innerHTML = '<option value="">None</option>' + currentProbes.map(p =>
-                `<option value="${p.id}">${escapeHtml(p.name)}${p.site ? ' (' + escapeHtml(p.site.name) + ')' : ''}</option>`
-            ).join('');
-            sel.value = current;
-        }
-
-        function populateSiteSelect(selectId) {
-            const sel = document.getElementById(selectId);
-            if (!sel) return;
-            const current = sel.value;
-            sel.innerHTML = '<option value="">None</option>' + currentSites.map(s =>
-                `<option value="${s.id}">${escapeHtml(s.name)}${s.region ? ' - ' + escapeHtml(s.region) : ''}</option>`
-            ).join('');
-            sel.value = current;
-        }
-
-        async function loadConnections() {
-            try {
-                const [devicesResult, connsResult, vpnMapResult] = await Promise.all([
-                    apiFetch(`${API_BASE}/devices`),
-                    apiFetch(`${API_BASE}/connections`),
-                    apiFetch(`${API_BASE}/connections/vpn-map`)
-                ]);
-                if (!devicesResult || !connsResult) return;
-                currentDevices = devicesResult.data || [];
-                currentConnections = connsResult.data || [];
-                currentVpnMap = vpnMapResult?.data || {};
-                window.currentConnections = currentConnections;
-                deviceSiteMap = {};
-                currentDevices.forEach(d => { deviceSiteMap[d.id] = d.site_id || null; });
-
-                const tbody = document.querySelector('#connections-table tbody');
-                tbody.innerHTML = currentConnections.map(c => `
-                    <tr>
-                        <td>${escapeHtml(c.name)}${c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : ''}</td>
-                        <td>${escapeHtml(c.source_device?.name) || c.source_device_id}</td>
-                        <td>${escapeHtml(c.dest_device?.name) || c.dest_device_id}</td>
-                        <td>${escapeHtml(c.connection_type?.toUpperCase()) || 'IPSEC'}</td>
-                        <td><span class="badge ${escapeHtml(c.status)}">${escapeHtml(c.status).toUpperCase()}</span></td>
-                        <td>${matchMethodBadge(c.match_method, c.auto_detected)}</td>
-                        <td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(c.tunnel_names || '')}">${escapeHtml(c.tunnel_names || '-')}</td>
-                        <td><a href="/admin/connections/${c.id}" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>${c.auto_detected ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>' : '<button class="btn danger sm" onclick="deleteConnection(' + c.id + ')">Delete</button>'}</td>
-                    </tr>
-                `).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
-
-                drawConnectionDiagram();
-                populateDeviceSelects();
-            } catch (e) {
-                console.error('Failed to load connections:', e);
-            }
-        }
-
-        async function loadSyslog() {
-            syslogOffset = 0;
-            try {
-                // Populate filter dropdowns
-                if (currentProbes.length === 0) {
-                    const pr = await apiFetch(`${API_BASE}/probes`);
-                    currentProbes = pr?.data || [];
-                }
-                if (currentDevices.length === 0) {
-                    const dr = await apiFetch(`${API_BASE}/devices`);
-                    currentDevices = dr?.data || [];
-                }
-                populateFilterProbes('syslog-filter-probe');
-                populateFilterDevices('syslog-filter-device');
-
-                const params = buildSyslogParams(100);
-                const result = await apiFetch(`${API_BASE}/syslog?${params}`);
-                if (!result) return;
-                const messages = result.data || [];
-
-                renderSyslogTable(messages, false);
-                syslogOffset = messages.length;
-                loadSyslogCharts();
-            } catch (e) {
-                console.error('Failed to load syslog:', e);
-            }
-        }
-
-        async function loadSyslogCharts() {
-            try {
-                const result = await apiFetch(`${API_BASE}/syslog/stats`);
-                if (!result?.data) return;
-                const d = result.data;
-                document.getElementById('syslog-total').textContent = (d.total||0).toLocaleString();
-                let crit=0, warn=0, info=0;
-                (d.by_severity||[]).forEach(s => {
-                    if (['Emergency','Alert','Critical'].includes(s.key)) crit += s.count;
-                    else if (['Error','Warning'].includes(s.key)) warn += s.count;
-                    else info += s.count;
-                });
-                document.getElementById('syslog-critical').textContent = crit.toLocaleString();
-                document.getElementById('syslog-warning').textContent = warn.toLocaleString();
-                document.getElementById('syslog-info').textContent = info.toLocaleString();
-
-                const labels = (d.over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
-                const counts = (d.over_time||[]).map(b => b.count);
-                createChart('syslog-trend-chart','bar',labels,[{label:'Messages',data:counts,backgroundColor:'#58a6ff',borderRadius:3}]);
-
-                const sevLabels = (d.by_severity||[]).map(s => s.key);
-                const sevCounts = (d.by_severity||[]).map(s => s.count);
-                const sevColors = sevLabels.map(l => {
-                    if (['Emergency','Alert'].includes(l)) return '#ff7b72';
-                    if (l==='Critical') return '#f85149';
-                    if (l==='Error') return '#da3633';
-                    if (l==='Warning') return '#d2992a';
-                    if (l==='Notice') return '#58a6ff';
-                    if (l==='Info') return '#388bfd';
-                    return '#8b949e';
-                });
-                createChart('syslog-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors,borderWidth:0}]);
-            } catch(e) { console.error('Failed to load syslog charts:', e); }
-        }
-
-        function buildSyslogParams(limit) {
-            const parts = [`limit=${limit}`];
-            const probe = document.getElementById('syslog-filter-probe')?.value;
-            const device = document.getElementById('syslog-filter-device')?.value;
-            const severity = document.getElementById('syslog-filter-severity')?.value;
-            const search = document.getElementById('syslog-filter-search')?.value;
-            if (probe) parts.push('probe_id=' + probe);
-            if (device) parts.push('device_id=' + device);
-            if (severity !== '') parts.push('severity=' + severity);
-            if (search) parts.push('search=' + encodeURIComponent(search));
-            return parts.join('&');
-        }
-
-        function renderSyslogTable(messages, append) {
-            const tbody = document.querySelector('#syslog-table tbody');
-            const html = messages.map(m => `
-                <tr>
-                    <td style="white-space:nowrap;">${new Date(m.timestamp).toLocaleString()}</td>
-                    <td class="mono">${escapeHtml(m.source_ip)}</td>
-                    <td>${escapeHtml(m.hostname)}</td>
-                    <td><span class="badge ${severityBadgeClass(m.severity)}">${SEVERITY_NAMES[m.severity] || m.severity}</span></td>
-                    <td>${escapeHtml(m.app_name)}</td>
-                    <td class="expandable-msg" onclick="this.classList.toggle('expanded')">${escapeHtml(m.message)}</td>
-                </tr>
-            `).join('');
-            if (append) tbody.innerHTML += html;
-            else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No syslog messages</td></tr>';
-        }
-
-        async function loadMoreSyslog() {
-            const params = buildSyslogParams(100);
-            const result = await apiFetch(`${API_BASE}/syslog?${params}&offset=${syslogOffset}`);
-            if (result?.data?.length) {
-                renderSyslogTable(result.data, true);
-                syslogOffset += result.data.length;
-            }
-        }
-
-        async function loadFlows() {
-            flowsOffset = 0;
-            try {
-                if (currentProbes.length === 0) {
-                    const pr = await apiFetch(`${API_BASE}/probes`);
-                    currentProbes = pr?.data || [];
-                }
-                if (currentDevices.length === 0) {
-                    const dr = await apiFetch(`${API_BASE}/devices`);
-                    currentDevices = dr?.data || [];
-                }
-                populateFilterProbes('flows-filter-probe');
-                populateFilterDevices('flows-filter-device');
-
-                const params = buildFlowParams(100);
-                const result = await apiFetch(`${API_BASE}/flows?${params}`);
-                if (!result) return;
-                const samples = result.data || [];
-
-                renderFlowsTable(samples, false);
-                flowsOffset = samples.length;
-                loadFlowCharts();
-            } catch (e) {
-                console.error('Failed to load flows:', e);
-            }
-        }
-
-        let flowStatsHours = 24;
-        function setFlowRange(hours, btn) {
-            flowStatsHours = hours;
-            document.querySelectorAll('.flow-range-btn').forEach(b => b.classList.remove('active'));
-            if (btn) btn.classList.add('active');
-            loadFlowCharts();
-        }
-
-        const bytesTickCallback = function(value) { return formatBytes(value); };
-        const bytesTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y || ctx.parsed.x || 0); };
-
-        async function loadFlowCharts() {
-            try {
-                let statsUrl = `${API_BASE}/flows/stats?hours=${flowStatsHours}`;
-                const deviceFilter = document.getElementById('flows-filter-device')?.value;
-                if (deviceFilter) statsUrl += '&device_id=' + deviceFilter;
-                const result = await apiFetch(statsUrl);
-                if (!result?.data) return;
-                const d = result.data;
-                document.getElementById('flows-total').textContent = (d.total_flows||0).toLocaleString();
-                document.getElementById('flows-bytes').textContent = formatBytes(d.total_bytes||0);
-                document.getElementById('flows-sources').textContent = (d.unique_sources||0).toLocaleString();
-                document.getElementById('flows-dests').textContent = (d.unique_dests||0).toLocaleString();
-
-                // Protocol doughnut
-                const protoLabels = (d.by_protocol||[]).map(p => p.key);
-                const protoCounts = (d.by_protocol||[]).map(p => p.count);
-                const protoColors = ['#58a6ff','#3fb950','#d2992a','#f85149','#bc8cff','#8b949e','#388bfd','#da3633'];
-                createChart('flows-protocol-chart','doughnut',protoLabels,[{data:protoCounts,backgroundColor:protoColors.slice(0,protoLabels.length),borderWidth:0}]);
-
-                // Top talkers bar (horizontal) with formatted bytes
-                const srcLabels = (d.top_sources||[]).map(s => s.key);
-                const srcCounts = (d.top_sources||[]).map(s => s.count);
-                createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}],{
-                    indexAxis:'y',
-                    scales: {
-                        x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
-                        y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
-                    },
-                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
-                });
-
-                // Bytes over time with formatted bytes
-                const timeLabels = (d.bytes_over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
-                const timeCounts = (d.bytes_over_time||[]).map(b => b.count);
-                createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Bytes',data:timeCounts,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}],{
-                    scales: {
-                        x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
-                        y: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' }, beginAtZero: true }
-                    },
-                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
-                });
-            } catch(e) { console.error('Failed to load flow charts:', e); }
-        }
-
-        function buildFlowParams(limit) {
-            const parts = [`limit=${limit}`];
-            const device = document.getElementById('flows-filter-device')?.value;
-            const probe = document.getElementById('flows-filter-probe')?.value;
-            const proto = document.getElementById('flows-filter-protocol')?.value;
-            const src = document.getElementById('flows-filter-src')?.value;
-            const dst = document.getElementById('flows-filter-dst')?.value;
-            if (device) parts.push('device_id=' + device);
-            if (probe) parts.push('probe_id=' + probe);
-            if (proto) parts.push('protocol=' + proto);
-            if (src) parts.push('src_addr=' + encodeURIComponent(src));
-            if (dst) parts.push('dst_addr=' + encodeURIComponent(dst));
-            return parts.join('&');
-        }
-
-        function renderFlowsTable(samples, append) {
-            const tbody = document.querySelector('#flows-table tbody');
-            const html = samples.map(f => `
-                <tr>
-                    <td style="white-space:nowrap;">${new Date(f.timestamp).toLocaleString()}</td>
-                    <td class="mono">${escapeHtml(f.src_addr)}:${f.src_port}</td>
-                    <td>&#8594;</td>
-                    <td class="mono">${escapeHtml(f.dst_addr)}:${f.dst_port}</td>
-                    <td>${PROTOCOL_NAMES[f.protocol] || f.protocol}</td>
-                    <td>${formatBytes(f.bytes)}</td>
-                    <td>${f.packets}</td>
-                    <td>${f.sampling_rate ? '1:' + f.sampling_rate : '-'}</td>
-                </tr>
-            `).join('');
-            if (append) tbody.innerHTML += html;
-            else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples</td></tr>';
-        }
-
-        async function loadMoreFlows() {
-            const params = buildFlowParams(100);
-            const result = await apiFetch(`${API_BASE}/flows?${params}&offset=${flowsOffset}`);
-            if (result?.data?.length) {
-                renderFlowsTable(result.data, true);
-                flowsOffset += result.data.length;
-            }
-        }
-
-        function populateFilterProbes(selectId) {
-            const sel = document.getElementById(selectId);
-            if (!sel) return;
-            sel.innerHTML = '<option value="">All Probes</option>' + currentProbes.map(p =>
-                `<option value="${p.id}">${escapeHtml(p.name)}</option>`
-            ).join('');
-        }
-
-        function populateFilterDevices(selectId) {
-            const sel = document.getElementById(selectId);
-            if (!sel) return;
-            sel.innerHTML = '<option value="">All Devices</option>' + currentDevices.map(d =>
-                `<option value="${d.id}">${escapeHtml(d.name)}</option>`
-            ).join('');
-        }
-
-        // Syslog auto-refresh
-        document.getElementById('syslog-auto-refresh')?.addEventListener('change', function() {
-            if (this.checked) {
-                syslogRefreshTimer = setInterval(() => {
-                    if (document.querySelector('#page-syslog.active')) loadSyslog();
-                }, 10000);
-            } else {
-                clearInterval(syslogRefreshTimer);
-            }
-        });
-
-        async function loadAlerts() {
-            alertsOffset = 0;
-            try {
-                const params = buildAlertParams(100);
-                const result = await apiFetch(`${API_BASE}/alerts?${params}`);
-                if (!result) return;
-                const alerts = result.data || [];
-                renderAlertsTable(alerts, false);
-                alertsOffset = alerts.length;
-                loadAlertCharts();
-            } catch (e) {
-                console.error('Failed to load alerts:', e);
-            }
-        }
-
-        function buildAlertParams(limit) {
-            const parts = [`limit=${limit}`];
-            const sev = document.getElementById('alerts-filter-severity')?.value;
-            const ack = document.getElementById('alerts-filter-ack')?.value;
-            if (sev) parts.push('severity=' + sev);
-            if (ack) parts.push('acknowledged=' + ack);
-            return parts.join('&');
-        }
-
-        function getDeviceName(deviceId) {
-            const dev = currentDevices.find(d => d.id === deviceId);
-            return dev ? escapeHtml(dev.name) : 'DEV-' + deviceId;
-        }
-
-        function renderAlertsTable(alerts, append) {
-            const tbody = document.querySelector('#alerts-full-table tbody');
-            const html = alerts.map(a => `
-                <tr>
-                    <td>${new Date(a.timestamp).toLocaleString()}</td>
-                    <td>${getDeviceName(a.device_id)}</td>
-                    <td>${escapeHtml(a.alert_type)}</td>
-                    <td><span class="badge ${escapeHtml(a.severity)}">${escapeHtml(a.severity).toUpperCase()}</span></td>
-                    <td>${escapeHtml(a.message)}</td>
-                    <td>${a.acknowledged ? '<span class="badge info">ACK</span>' : '<button class="btn sm" onclick="acknowledgeAlert('+a.id+')">Ack</button>'}</td>
-                </tr>
-            `).join('');
-            if (append) tbody.innerHTML += html;
-            else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No alerts</td></tr>';
-        }
-
-        async function acknowledgeAlert(id) {
-            try {
-                await apiFetch(`${API_BASE}/alerts/${id}/acknowledge`, {method:'POST'});
-                loadAlerts();
-            } catch(e) { console.error('Failed to acknowledge alert:', e); }
-        }
-
-        async function loadMoreAlerts() {
-            const params = buildAlertParams(100);
-            const result = await apiFetch(`${API_BASE}/alerts?${params}&offset=${alertsOffset}`);
-            if (result?.data?.length) {
-                renderAlertsTable(result.data, true);
-                alertsOffset += result.data.length;
-            }
-        }
-
-        async function loadAlertCharts() {
-            try {
-                const result = await apiFetch(`${API_BASE}/alerts/stats`);
-                if (!result?.data) return;
-                const d = result.data;
-                document.getElementById('alerts-total').textContent = (d.total||0).toLocaleString();
-                let crit=0, warn=0, inf=0;
-                (d.by_severity||[]).forEach(s => {
-                    if (s.key==='critical') crit += s.count;
-                    else if (s.key==='warning') warn += s.count;
-                    else inf += s.count;
-                });
-                document.getElementById('alerts-critical').textContent = crit.toLocaleString();
-                document.getElementById('alerts-warning').textContent = warn.toLocaleString();
-                document.getElementById('alerts-info').textContent = inf.toLocaleString();
-
-                const labels = (d.over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
-                const counts = (d.over_time||[]).map(b => b.count);
-                createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}]);
-
-                const typeLabels = (d.by_type||[]).map(t => t.key || 'unknown');
-                const typeCounts = (d.by_type||[]).map(t => t.count);
-                const typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
-                createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
-            } catch(e) { console.error('Failed to load alert charts:', e); }
-        }
-
-        async function loadTraps() {
-            trapsOffset = 0;
-            try {
-                const params = buildTrapParams(100);
-                const result = await apiFetch(`${API_BASE}/traps?${params}`);
-                if (!result) return;
-                const traps = result.data || [];
-                renderTrapsTable(traps, false);
-                trapsOffset = traps.length;
-                loadTrapCharts();
-            } catch (e) {
-                console.error('Failed to load traps:', e);
-            }
-        }
-
-        function buildTrapParams(limit) {
-            const parts = [`limit=${limit}`];
-            const sev = document.getElementById('traps-filter-severity')?.value;
-            const type = document.getElementById('traps-filter-type')?.value;
-            if (sev) parts.push('severity=' + sev);
-            if (type) parts.push('trap_type=' + encodeURIComponent(type));
-            return parts.join('&');
-        }
-
-        function renderTrapsTable(traps, append) {
-            const tbody = document.querySelector('#traps-table tbody');
-            const html = traps.map(t => `
-                <tr>
-                    <td>${new Date(t.timestamp).toLocaleString()}</td>
-                    <td class="mono">${escapeHtml(t.source_ip)}</td>
-                    <td>${escapeHtml(t.trap_type)}</td>
-                    <td><span class="badge ${escapeHtml(t.severity)}">${escapeHtml(t.severity).toUpperCase()}</span></td>
-                    <td>${escapeHtml(t.message)}</td>
-                </tr>
-            `).join('');
-            if (append) tbody.innerHTML += html;
-            else tbody.innerHTML = html || '<tr><td colspan="5" class="empty-state">No traps</td></tr>';
-        }
-
-        async function loadMoreTraps() {
-            const params = buildTrapParams(100);
-            const result = await apiFetch(`${API_BASE}/traps?${params}&offset=${trapsOffset}`);
-            if (result?.data?.length) {
-                renderTrapsTable(result.data, true);
-                trapsOffset += result.data.length;
-            }
-        }
-
-        async function loadTrapCharts() {
-            try {
-                const result = await apiFetch(`${API_BASE}/traps/stats`);
-                if (!result?.data) return;
-                const d = result.data;
-                document.getElementById('traps-total').textContent = (d.total||0).toLocaleString();
-                let crit=0, warn=0, inf=0;
-                (d.by_severity||[]).forEach(s => {
-                    if (s.key==='critical') crit += s.count;
-                    else if (s.key==='warning') warn += s.count;
-                    else inf += s.count;
-                });
-                document.getElementById('traps-critical').textContent = crit.toLocaleString();
-                document.getElementById('traps-warning').textContent = warn.toLocaleString();
-                document.getElementById('traps-info').textContent = inf.toLocaleString();
-
-                const labels = (d.over_time||[]).map(b => b.bucket.substring(11,16)||b.bucket);
-                const counts = (d.over_time||[]).map(b => b.count);
-                createChart('traps-freq-chart','bar',labels,[{label:'Traps',data:counts,backgroundColor:'#d2992a',borderRadius:3}]);
-
-                const sevLabels = (d.by_severity||[]).map(s => s.key || 'unknown');
-                const sevCounts = (d.by_severity||[]).map(s => s.count);
-                const sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
-                createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
-            } catch(e) { console.error('Failed to load trap charts:', e); }
-        }
-
-        async function loadSettings() {
-            try {
-                const result = await apiFetch(`${API_BASE}/settings`);
-                if (!result) return;
-                const settings = result.data || [];
-
-                const alertSettings = settings.filter(s => s.category === 'alerts');
-                const notifSettings = settings.filter(s => s.category === 'notifications');
-
-                document.getElementById('settings-alerts').innerHTML = [
-                    { key: 'cpu_threshold', label: 'CPU Threshold (%)', value: 80, type: 'number' },
-                    { key: 'memory_threshold', label: 'Memory Threshold (%)', value: 80, type: 'number' },
-                    { key: 'disk_threshold', label: 'Disk Threshold (%)', value: 90, type: 'number' },
-                    { key: 'session_threshold', label: 'Session Threshold', value: 100000, type: 'number' }
-                ].map(s => `
-                    <div class="setting-item">
-                        <label>${s.label}</label>
-                        <input type="${s.type}" name="${s.key}" value="${escapeHtml(alertSettings.find(x => x.key === s.key)?.value || String(s.value))}">
-                    </div>
-                `).join('');
-
-                document.getElementById('settings-notifications').innerHTML = [
-                    { key: 'email_enabled', label: 'Enable Email', type: 'checkbox' },
-                    { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
-                    { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' },
-                    { key: 'webhook_url', label: 'Generic Webhook URL', type: 'text' }
-                ].map(s => {
-                    const savedVal = notifSettings.find(x => x.key === s.key)?.value || '';
-                    if (s.type === 'checkbox') {
-                        const checked = savedVal === 'true' ? 'checked' : '';
-                        return `<div class="setting-item"><label>${s.label}</label><input type="checkbox" name="${s.key}" ${checked}></div>`;
-                    }
-                    return `<div class="setting-item"><label>${s.label}</label><input type="text" name="${s.key}" value="${escapeHtml(savedVal)}" autocomplete="one-time-code"></div>`;
-                }).join('');
-
-                document.getElementById('settings-smtp').innerHTML = [
-                    { key: 'smtp_host', label: 'SMTP Host', type: 'text', placeholder: 'smtp.example.com' },
-                    { key: 'smtp_port', label: 'SMTP Port', type: 'number', placeholder: '587' },
-                    { key: 'smtp_username', label: 'SMTP Username', type: 'text', placeholder: 'user@example.com' },
-                    { key: 'smtp_password', label: 'SMTP Password', type: 'password', placeholder: '' },
-                    { key: 'smtp_from', label: 'From Address', type: 'text', placeholder: 'alerts@example.com' },
-                    { key: 'smtp_to', label: 'To Address', type: 'text', placeholder: 'admin@example.com' }
-                ].map(s => {
-                    const saved = notifSettings.find(x => x.key === s.key);
-                    const savedVal = saved?.value || '';
-                    return `<div class="setting-item"><label>${s.label}</label><input type="${s.type}" name="${s.key}" value="${escapeHtml(savedVal)}" placeholder="${s.placeholder || ''}"></div>`;
-                }).join('');
-
-                const displayResult = await apiFetch(`${API_BASE}/display-settings`);
-                if (displayResult?.data) {
-                    const ds = displayResult.data;
-                    document.querySelectorAll('#display-settings input[type="checkbox"]').forEach(cb => {
-                        cb.checked = ds[cb.name] !== 'false';
-                    });
-                    const refreshInput = document.querySelector('#display-settings input[name="public_refresh_interval"]');
-                    if (refreshInput && ds['public_refresh_interval']) refreshInput.value = ds['public_refresh_interval'];
-                }
-            } catch (e) {
-                console.error('Failed to load settings:', e);
-            }
-        }
-
-        // Device modal
-        function showDeviceModal(id = null) {
-            document.getElementById('device-modal').classList.add('active');
-            document.getElementById('device-modal-title').textContent = id ? 'Edit Device' : 'Add Device';
-            populateProbeSelect('device-probe');
-            populateSiteSelect('device-site');
-
-            if (id) {
-                const d = currentDevices.find(d => d.id === id);
-                document.getElementById('device-id').value = d.id;
-                document.getElementById('device-name').value = d.name;
-                document.getElementById('device-ip').value = d.ip_address;
-                document.getElementById('device-snmp-port').value = d.snmp_port || 161;
-                document.getElementById('device-snmp-version').value = d.snmp_version || '2c';
-                document.getElementById('device-community').value = d.snmp_community || 'public';
-                document.getElementById('device-v3-username').value = d.snmpv3_username || '';
-                document.getElementById('device-v3-auth-type').value = d.snmpv3_auth_type || '';
-                document.getElementById('device-v3-auth-pass').value = '';
-                document.getElementById('device-v3-priv-type').value = d.snmpv3_priv_type || '';
-                document.getElementById('device-v3-priv-pass').value = '';
-                document.getElementById('device-vendor').value = d.vendor || 'fortigate';
-                document.getElementById('device-probe').value = d.probe_id || '';
-                document.getElementById('device-site').value = d.site_id || '';
-                document.getElementById('device-location').value = d.location || '';
-                document.getElementById('device-description').value = d.description || '';
-            } else {
-                document.getElementById('device-form').reset();
-                document.getElementById('device-id').value = '';
-                document.getElementById('device-snmp-port').value = '161';
-                document.getElementById('device-snmp-version').value = '2c';
-                document.getElementById('device-community').value = 'public';
-            }
-            toggleV3Fields();
-        }
-
-        function closeDeviceModal() { document.getElementById('device-modal').classList.remove('active'); }
-
-        function toggleV3Fields() {
-            const ver = document.getElementById('device-snmp-version').value;
-            document.getElementById('snmpv3-fields').style.display = ver === '3' ? 'block' : 'none';
-            document.getElementById('community-group').style.display = ver === '3' ? 'none' : 'block';
-        }
-
-        async function testDeviceConnection(event) {
-            const ip = document.getElementById('device-ip').value;
-            const port = document.getElementById('device-snmp-port').value || 161;
-            const community = document.getElementById('device-community').value || 'public';
-            const version = document.getElementById('device-snmp-version').value || '2c';
-            if (!ip) { alert('Please enter an IP address first'); return; }
-
-            const btn = event.target;
-            const orig = btn.textContent;
-            btn.textContent = 'Testing...';
-            btn.disabled = true;
-
-            const testData = { ip_address: ip, snmp_port: parseInt(port), snmp_community: community, snmp_version: version };
-            const probeVal = document.getElementById('device-probe').value;
-            if (probeVal) testData.probe_id = parseInt(probeVal);
-            if (version === '3') {
-                testData.snmpv3_username = document.getElementById('device-v3-username').value;
-                testData.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
-                testData.snmpv3_auth_pass = document.getElementById('device-v3-auth-pass').value;
-                testData.snmpv3_priv_type = document.getElementById('device-v3-priv-type').value;
-                testData.snmpv3_priv_pass = document.getElementById('device-v3-priv-pass').value;
-            }
-
-            try {
-                const result = await apiFetch(`${API_BASE}/devices/test`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(testData)
-                });
-                if (result?.data?.probe_managed) {
-                    alert(`ℹ️ ${result.data.message}`);
-                } else if (result?.data?.online) {
-                    alert(`Connected!\nHostname: ${result.data.hostname}\nVersion: ${result.data.version}\nCPU: ${result.data.cpu}%\nMemory: ${result.data.memory}%`);
-                } else {
-                    alert(`Failed: ${result?.data?.message || 'Unknown error'}`);
-                }
-            } catch (err) { alert('Error: ' + err.message); }
-            finally { btn.textContent = orig; btn.disabled = false; }
-        }
-
-        document.getElementById('device-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const id = document.getElementById('device-id').value;
-            const snmpVersion = document.getElementById('device-snmp-version').value || '2c';
-            const data = {
-                name: document.getElementById('device-name').value,
-                ip_address: document.getElementById('device-ip').value,
-                snmp_port: parseInt(document.getElementById('device-snmp-port').value),
-                snmp_version: snmpVersion,
-                snmp_community: document.getElementById('device-community').value,
-                vendor: document.getElementById('device-vendor').value || 'fortigate',
-                location: document.getElementById('device-location').value,
-                description: document.getElementById('device-description').value,
-                enabled: true
-            };
-            if (snmpVersion === '3') {
-                data.snmpv3_username = document.getElementById('device-v3-username').value;
-                data.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
-                const authPass = document.getElementById('device-v3-auth-pass').value;
-                if (authPass) data.snmpv3_auth_pass = authPass;
-                data.snmpv3_priv_type = document.getElementById('device-v3-priv-type').value;
-                const privPass = document.getElementById('device-v3-priv-pass').value;
-                if (privPass) data.snmpv3_priv_pass = privPass;
-            }
-            const probeVal = document.getElementById('device-probe').value;
-            const siteVal = document.getElementById('device-site').value;
-            if (probeVal) data.probe_id = parseInt(probeVal);
-            else data.probe_id = null;
-            if (siteVal) data.site_id = parseInt(siteVal);
-            else data.site_id = null;
-
-            try {
-                const method = id ? 'PUT' : 'POST';
-                const url = id ? `${API_BASE}/devices/${id}` : `${API_BASE}/devices`;
-                await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
-                closeDeviceModal();
-                loadDevices();
-            } catch (err) { alert('Error saving device: ' + err.message); }
-        });
-
-        function editDevice(id) { showDeviceModal(id); }
-
-        async function deleteDevice(id) {
-            if (!confirm('Delete this device and all its data?')) return;
-            try {
-                await apiFetch(`${API_BASE}/devices/${id}`, { method: 'DELETE' });
-                loadDevices();
-            } catch (err) { alert('Error: ' + err.message); }
-        }
-
-        // Connection diagram — thin wrapper calling FWDiagram modular libraries
-        function drawConnectionDiagram() {
-            const container = document.getElementById('connection-diagram');
-            // Preserve panel if currently viewing a connection
-            if (!FWDiagram.Panels.getCurrentPanelConnId()) {
-                const panelContainer = document.getElementById('conn-detail-panel-container');
-                if (panelContainer) panelContainer.innerHTML = '';
-            }
-
-            if (currentDevices.length === 0) {
-                container.innerHTML = '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
-                return;
-            }
-
-            // Stop previous particle animation
-            FWDiagram.Particles.stop();
-
-            // Init SVG with zoom/pan
-            FWDiagram.init('connection-diagram');
-
-            // Compute positions (with localStorage persistence)
-            FWDiagram.Layout.computePositions(currentDevices);
-
-            // Draw connections (UP-only), cloud node, off-net paths
-            FWDiagram.Connections.drawAll(
-                currentDevices, currentConnections, deviceSiteMap, currentVpnMap,
-                (conn) => FWDiagram.Panels.showRichConnDetailPanel(conn),
-                (deviceId, offnetOnly) => FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap)
-            );
-
-            // Draw device nodes with VPN badges
-            FWDiagram.Layout.getPositions().forEach(p => {
-                const vpnInfo = currentVpnMap[String(p.device.id)];
-                FWDiagram.Layout.drawDeviceNode(p, vpnInfo, (devId) => {
-                    FWDiagram.Panels.showRichVPNDetailPanel(devId, false, currentDevices, currentVpnMap);
-                });
-            });
-
-            // Start rAF particle animation
-            FWDiagram.Particles.start();
-        }
-
-        // Global bridge functions for inline onclick in panel HTML
-        window.closeRichPanel = () => FWDiagram.Panels.closeRichPanel();
-        window.switchPanelTab = (t) => FWDiagram.Panels.switchPanelTab(t);
-        window.setPanelTrafficRange = (r) => FWDiagram.Panels.setPanelTrafficRange(r);
-        window.setPanelFlowRange = (h) => FWDiagram.Panels.setPanelFlowRange(h);
-        window.togglePanelTunnel = (r, d, t) => FWDiagram.Panels.togglePanelTunnel(r, d, t);
-        window.loadPanelTunnelChart = (r, d, t, rng, e) => FWDiagram.Panels.loadPanelTunnelChart(r, d, t, rng, e);
-
-        function populateDeviceSelects() {
-            ['connection-source', 'connection-dest'].forEach(sid => {
-                const sel = document.getElementById(sid);
-                sel.innerHTML = currentDevices.map(d => `<option value="${d.id}">${escapeHtml(d.name)} (${escapeHtml(d.ip_address)})</option>`).join('');
-            });
-        }
-
-        function showConnectionModal() {
-            if (currentDevices.length < 2) { alert('You need at least 2 devices'); return; }
-            document.getElementById('connection-modal').classList.add('active');
-            document.getElementById('connection-form').reset();
-            populateDeviceSelects();
-        }
-        function closeConnectionModal() { document.getElementById('connection-modal').classList.remove('active'); }
-
-        document.getElementById('connection-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const data = {
-                name: document.getElementById('connection-name').value,
-                source_device_id: parseInt(document.getElementById('connection-source').value),
-                dest_device_id: parseInt(document.getElementById('connection-dest').value),
-                connection_type: document.getElementById('connection-type').value,
-                notes: document.getElementById('connection-notes').value
-            };
-            try {
-                await apiFetch(`${API_BASE}/connections`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
-                closeConnectionModal();
-                loadConnections();
-            } catch (err) { alert('Error: ' + err.message); }
-        });
-
-        async function deleteConnection(id) {
-            if (!confirm('Delete this connection?')) return;
-            try { await apiFetch(`${API_BASE}/connections/${id}`, { method: 'DELETE' }); loadConnections(); }
-            catch (err) { alert('Error: ' + err.message); }
-        }
-
-        async function changePassword() {
-            const current = document.getElementById('current-password').value;
-            const newPass = document.getElementById('new-password').value;
-            const confirmPass = document.getElementById('confirm-password').value;
-            if (!current || !newPass || !confirmPass) { alert('Please fill in all password fields'); return; }
-            if (newPass !== confirmPass) { alert('New passwords do not match'); return; }
-            if (newPass.length < 8) { alert('Password must be at least 8 characters'); return; }
-            try {
-                const result = await apiFetch(`${API_BASE}/settings/password`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ current_password: current, new_password: newPass })
-                });
-                if (result?.success) {
-                    alert(result.message);
-                    document.getElementById('current-password').value = '';
-                    document.getElementById('new-password').value = '';
-                    document.getElementById('confirm-password').value = '';
-                } else { alert('Error: ' + (result?.error || 'Unknown error')); }
-            } catch (err) { alert('Error: ' + err.message); }
-        }
-
-        async function saveSettings() {
-            const smtpKeys = ['smtp_host','smtp_port','smtp_username','smtp_password','smtp_from','smtp_to'];
-            const notifKeys = ['email_enabled','slack_webhook','discord_webhook','webhook_url'];
-            const settings = [];
-            document.querySelectorAll('#settings-alerts input').forEach(input => {
-                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'alerts', type: input.type === 'checkbox' ? 'bool' : 'string' });
-            });
-            document.querySelectorAll('#settings-notifications input').forEach(input => {
-                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'notifications', type: input.type === 'checkbox' ? 'bool' : 'string' });
-            });
-            document.querySelectorAll('#settings-smtp input').forEach(input => {
-                // Skip masked passwords
-                if (input.type === 'password' && input.value === '********') return;
-                settings.push({ key: input.name, value: input.value, category: 'notifications', type: 'string', is_secret: input.type === 'password' });
-            });
-            document.querySelectorAll('#display-settings input').forEach(input => {
-                settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
-            });
-            try { await apiFetch(`${API_BASE}/settings`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }); alert('Settings saved!'); }
-            catch (err) { alert('Error: ' + err.message); }
-        }
-
-        async function testEmail() {
-            const resultEl = document.getElementById('test-email-result');
-            resultEl.textContent = 'Sending...';
-            resultEl.style.color = '#8b949e';
-            try {
-                const result = await apiFetch(`${API_BASE}/settings/test-email`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
-                if (result?.data?.success) {
-                    resultEl.textContent = result.data.message;
-                    resultEl.style.color = '#3fb950';
-                } else {
-                    resultEl.textContent = result?.data?.message || 'Failed';
-                    resultEl.style.color = '#f85149';
-                }
-            } catch(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; }
-        }
-
-        async function testWebhook(type) {
-            const resultEl = document.getElementById('test-webhook-result');
-            resultEl.textContent = 'Sending...';
-            resultEl.style.color = '#8b949e';
-            // Read URL from the notification settings inputs
-            const urlInput = document.querySelector(`#settings-notifications input[name="${type}"]`);
-            const url = urlInput?.value || '';
-            try {
-                const result = await apiFetch(`${API_BASE}/settings/test-webhook`, {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ type, url })
-                });
-                if (result?.data?.success) {
-                    resultEl.textContent = result.data.message;
-                    resultEl.style.color = '#3fb950';
-                } else {
-                    resultEl.textContent = result?.data?.message || 'Failed';
-                    resultEl.style.color = '#f85149';
-                }
-            } catch(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; }
-        }
-
-        document.getElementById('logout-btn').addEventListener('click', async (e) => {
-            e.preventDefault();
-            await apiFetch('/admin/api/logout', { method: 'POST' });
-            window.location.href = '/';
-        });
-
-        function activateTabFromUrl() {
-            const path = window.location.pathname.replace(/\/$/, '');
-            const segments = path.split('/');
-            const lastSegment = segments[segments.length - 1];
-            const pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
-                'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps' };
-            const page = pageMap[lastSegment];
-            if (page) {
-                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-                const navItem = document.querySelector(`.nav-item[data-page="${page}"]`);
-                if (navItem) navItem.classList.add('active');
-                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                const pageEl = document.getElementById('page-' + page);
-                if (pageEl) pageEl.classList.add('active');
-                document.getElementById('page-title').textContent = navItem ? navItem.textContent.trim() : page;
-                return page;
-            }
-            return 'dashboard';
-        }
-
-        const initialPage = activateTabFromUrl();
-        fetchCsrfToken().then(() => loadPageData(initialPage));
-
-        adminRefreshTimer = setInterval(() => {
-            const activePage = document.querySelector('.page.active');
-            if (activePage?.id === 'page-dashboard') loadDashboard();
-        }, 30000);
-    </script>
 </body>
 </html>

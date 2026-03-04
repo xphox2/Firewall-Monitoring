@@ -98,7 +98,7 @@
             </div>
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" onclick="doLogout(); return false;"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
         </div>
     </div>
 
@@ -120,178 +120,23 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Reject Probe</h2>
-                <span style="cursor:pointer" onclick="closeRejectModal()">✕</span>
+                <span style="cursor:pointer" data-action="close-reject-modal">✕</span>
             </div>
-            <form onsubmit="submitReject(event)">
+            <form id="reject-form">
                 <input type="hidden" id="reject-probe-id">
                 <div class="form-group">
                     <label>Reason for rejection *</label>
                     <textarea id="reject-reason" rows="4" required placeholder="Enter reason..."></textarea>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="closeRejectModal()">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="close-reject-modal">Cancel</button>
                     <button type="submit" class="btn danger">Reject</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <script>
-    (function() {
-
-        var API_BASE = '/admin/api';
-        var pendingProbes = [];
-        var allProbes = [];
-        var csrfTokenCache = '';
-
-        function fetchCsrfToken() {
-            return fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' })
-                .then(function(res) { return res.json(); })
-                .then(function(data) {
-                    csrfTokenCache = data.csrf_token || '';
-                    return csrfTokenCache;
-                })['catch'](function() { return ''; });
-        }
-
-        function getCsrfToken() {
-            return csrfTokenCache;
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        }
-
-        function showError(msg) {
-            var el = document.getElementById('error-msg');
-            el.textContent = msg;
-            el.style.display = 'block';
-            setTimeout(function() { el.style.display = 'none'; }, 5000);
-        }
-
-        function showSuccess(msg) {
-            var el = document.getElementById('success-msg');
-            el.textContent = msg;
-            el.style.display = 'block';
-            setTimeout(function() { el.style.display = 'none'; }, 5000);
-        }
-
-        function apiFetch(url, options) {
-            options = options || {};
-            return fetch(url, {
-                method: options.method || 'GET',
-                headers: Object.assign({
-                    'X-CSRF-Token': getCsrfToken(),
-                    'Content-Type': 'application/json'
-                }, options.headers || {}),
-                body: options.body ? JSON.stringify(options.body) : undefined
-            }).then(function(res) {
-                if (res.status === 401 || res.status === 302) {
-                    window.location.href = '/admin/login';
-                    return Promise.reject(new Error('Not authenticated'));
-                }
-                if (!res.ok) {
-                    return res.json().then(function(err) { throw new Error(err.error || 'Request failed'); });
-                }
-                return res.json();
-            });
-        }
-
-        function loadProbes() {
-            Promise.all([
-                apiFetch(API_BASE + '/probes/pending'),
-                apiFetch(API_BASE + '/probes')
-            ]).then(function(results) {
-                pendingProbes = (results[0] && results[0].data) || [];
-                allProbes = (results[1] && results[1].data) || [];
-                renderPending();
-            })['catch'](function(err) {
-                showError('Failed to load: ' + err.message);
-            });
-        }
-
-        function renderPending() {
-            var container = document.getElementById('pending-container');
-            
-            if (pendingProbes.length === 0) {
-                container.innerHTML = '<div class="card"><div class="empty">No pending probe requests. All probes have been processed.</div></div>';
-                return;
-            }
-            
-            var html = '';
-            for (var i = 0; i < pendingProbes.length; i++) {
-                var p = pendingProbes[i];
-                html += '<div class="probe-card">' +
-                    '<div class="probe-header">' +
-                    '<span class="probe-name">' + escapeHtml(p.name) + '</span>' +
-                    '<span class="badge pending">Pending</span>' +
-                    '</div>' +
-                    '<div class="probe-details">' +
-                    '<div><span>Listen:</span> ' + escapeHtml(p.listen_address || '') + ':' + (p.listen_port || '') + '</div>' +
-                    '<div><span>Created:</span> ' + (p.created_at ? new Date(p.created_at).toLocaleString() : 'N/A') + '</div>' +
-                    '</div>' +
-                    '<div class="probe-actions">' +
-                    '<button class="btn sm" onclick="approveProbe(' + p.id + ')">Approve</button>' +
-                    '<button class="btn sm danger" onclick="showRejectModal(' + p.id + ')">Reject</button>' +
-                    '</div>' +
-                    '</div>';
-            }
-            container.innerHTML = '<div class="card"><h2>Pending Requests (' + pendingProbes.length + ')</h2></div>' + html;
-        }
-
-        window.approveProbe = function(id) {
-            if (!confirm('Approve this probe?')) return;
-            
-            apiFetch(API_BASE + '/probes/' + id + '/approve', { 
-                method: 'POST',
-                body: { notes: 'Approved via admin panel' }
-            }).then(function() {
-                showSuccess('Probe approved');
-                loadProbes();
-            })['catch'](function(err) {
-                showError('Error: ' + err.message);
-            });
-        };
-
-        window.showRejectModal = function(id) {
-            document.getElementById('reject-probe-id').value = id;
-            document.getElementById('reject-reason').value = '';
-            document.getElementById('reject-modal').classList.add('active');
-        };
-
-        window.closeRejectModal = function() {
-            document.getElementById('reject-modal').classList.remove('active');
-        };
-
-        window.submitReject = function(e) {
-            e.preventDefault();
-            var id = parseInt(document.getElementById('reject-probe-id').value);
-            var reason = document.getElementById('reject-reason').value;
-            
-            apiFetch(API_BASE + '/probes/' + id + '/reject', { 
-                method: 'POST',
-                body: { reason: reason }
-            }).then(function() {
-                closeRejectModal();
-                showSuccess('Probe rejected');
-                loadProbes();
-            })['catch'](function(err) {
-                showError('Error: ' + err.message);
-            });
-        };
-
-        window.doLogout = function() {
-            apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
-                window.location.href = '/admin/login';
-            })['catch'](function() {
-                window.location.href = '/admin/login';
-            });
-        };
-
-        fetchCsrfToken().then(function() {
-            loadProbes();
-        });
-    })();
-    </script>
+    <script defer src="/static/js/admin-common.js"></script>
+    <script defer src="/static/js/admin-probe-pending.js"></script>
 </body>
 </html>

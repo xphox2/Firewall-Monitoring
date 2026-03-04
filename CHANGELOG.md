@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.66] - 2026-03-03
+
+### Security
+- **Remove CSP `unsafe-inline` for scripts**: Removed `'unsafe-inline'` from CSP `script-src` directive, hardening XSS protection. All scripts are now external with `defer`.
+
+### Refactor
+- **Extract all inline JS to external files**: Created 10 new external JS files, eliminating every inline `<script>` block across 9 HTML pages:
+  - `admin-common.js` — shared utilities (escapeHtml, apiFetch, CSRF, delegateEvent)
+  - `admin-login.js`, `public-dashboard.js` (standalone pages)
+  - `admin-sites.js`, `admin-probe-pending.js`, `admin-probes.js`, `admin-network.js` (admin pages)
+  - `admin-connection-detail.js`, `admin-device-detail.js`, `admin-main.js` (detail/dashboard pages)
+- **Convert ~114 inline event handlers to data-action delegation**: Replaced every `onclick`, `onchange`, `onsubmit` across all HTML files and dynamically-generated JS strings with `data-action` + `data-*` attributes.
+- **Update diagram JS files**: Converted ~30 inline handlers in `diagram-panels.js`, 4 in `diagram-core.js`, and 1 in `diagram-tunnel-zoom.js` to data-action delegation.
+
 ## [0.10.65] - 2026-03-03
 
 ### Security (P1 — High)

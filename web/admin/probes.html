@@ -129,14 +129,14 @@
             </div>
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" id="logout-btn"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
         </div>
     </div>
 
     <div class="main">
         <div class="page-header">
             <h1>Probe Management</h1>
-            <button class="btn" onclick="showAddModal()">+ Add Probe</button>
+            <button class="btn" data-action="show-add-modal">+ Add Probe</button>
         </div>
 
         <div class="error" id="error-msg" style="display: none;"></div>
@@ -146,10 +146,10 @@
             <div class="section-header">
                 <h3>All Probes</h3>
                 <div class="filter-tabs">
-                    <button class="filter-tab active" data-filter="all">All</button>
-                    <button class="filter-tab" data-filter="pending">Pending</button>
-                    <button class="filter-tab" data-filter="approved">Approved</button>
-                    <button class="filter-tab" data-filter="rejected">Rejected</button>
+                    <button class="filter-tab active" data-action="filter-probes" data-filter="all">All</button>
+                    <button class="filter-tab" data-action="filter-probes" data-filter="pending">Pending</button>
+                    <button class="filter-tab" data-action="filter-probes" data-filter="approved">Approved</button>
+                    <button class="filter-tab" data-action="filter-probes" data-filter="rejected">Rejected</button>
                 </div>
             </div>
             <table id="probes-table">
@@ -173,7 +173,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="probe-modal-title">Add Probe</h2>
-                <span onclick="closeProbeModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+                <span data-action="close-probe-modal" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
             </div>
             <form id="probe-form">
                 <input type="hidden" id="probe-id">
@@ -192,7 +192,7 @@
                     <textarea id="probe-description" rows="3" placeholder="Optional description of this probe's purpose"></textarea>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="closeProbeModal()">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="close-probe-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
             </form>
@@ -204,22 +204,22 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Deploy Probe</h2>
-                <span onclick="closeDeployModal()" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
+                <span data-action="close-deploy-modal" style="cursor: pointer; font-size: 1.5rem;">&times;</span>
             </div>
             <div class="deploy-instructions">
                 <div class="step">
                     <div class="step-label">1. Registration Key</div>
                     <div class="key-display" id="deploy-key"></div>
                     <div style="margin-top: 8px; display: flex; gap: 8px;">
-                        <button class="btn sm secondary" onclick="copyDeployKey()">Copy Key</button>
-                        <button class="btn sm warning" onclick="regenerateKey()">Regenerate Key</button>
+                        <button class="btn sm secondary" data-action="copy-deploy-key">Copy Key</button>
+                        <button class="btn sm warning" data-action="regenerate-key">Regenerate Key</button>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-label">2. Environment Variables</div>
                     <p>Set these on the remote machine where the probe binary will run:</p>
                     <div class="env-block" id="deploy-env">
-                        <button class="copy-btn" onclick="copyEnvBlock()">Copy</button>
+                        <button class="copy-btn" data-action="copy-env">Copy</button>
                     </div>
                 </div>
                 <div class="step">
@@ -229,343 +229,12 @@
             </div>
             <input type="hidden" id="deploy-probe-id">
             <div class="modal-footer">
-                <button type="button" class="btn secondary" onclick="closeDeployModal()">Close</button>
+                <button type="button" class="btn secondary" data-action="close-deploy-modal">Close</button>
             </div>
         </div>
     </div>
 
-    <script>
-        const API_BASE = '/admin/api';
-        let currentProbes = [];
-        let currentSites = [];
-        let csrfTokenCache = '';
-        let currentDeployProbe = null;
-
-        async function fetchCsrfToken() {
-            try {
-                const res = await fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' });
-                const data = await res.json();
-                csrfTokenCache = data.csrf_token || '';
-            } catch (e) {
-                console.error('Failed to fetch CSRF token:', e);
-            }
-            return csrfTokenCache;
-        }
-
-        function getCsrfToken() {
-            return csrfTokenCache;
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            const s = String(str);
-            return s.replace(/[&<>"']/g, c => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            })[c]);
-        }
-
-        async function apiFetch(url, options = {}) {
-            try {
-                const res = await fetch(url, {
-                    ...options,
-                    headers: {
-                        'X-CSRF-Token': getCsrfToken(),
-                        ...options.headers
-                    }
-                });
-                if (res.status === 401 || res.status === 302) {
-                    window.location.href = '/admin/login';
-                    return null;
-                }
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-                    throw new Error(err.error || 'Request failed');
-                }
-                return await res.json();
-            } catch (e) {
-                throw e;
-            }
-        }
-
-        function showError(msg) {
-            const el = document.getElementById('error-msg');
-            el.textContent = msg;
-            el.style.display = 'block';
-            setTimeout(() => el.style.display = 'none', 5000);
-        }
-
-        function showSuccess(msg) {
-            const el = document.getElementById('success-msg');
-            el.textContent = msg;
-            el.style.display = 'block';
-            setTimeout(() => el.style.display = 'none', 5000);
-        }
-
-        async function loadProbes() {
-            try {
-                const result = await apiFetch(`${API_BASE}/probes`);
-                if (!result) return;
-                currentProbes = result.data || [];
-                renderProbes(currentProbes);
-            } catch (e) {
-                showError('Failed to load probes: ' + e.message);
-            }
-        }
-
-        async function loadSites() {
-            try {
-                const result = await apiFetch(`${API_BASE}/sites`);
-                if (!result) return;
-                currentSites = result.data || [];
-                populateSiteSelect();
-            } catch (e) {
-                console.error('Failed to load sites:', e);
-            }
-        }
-
-        function populateSiteSelect() {
-            const select = document.getElementById('probe-site');
-            select.innerHTML = '<option value="">Select a site</option>' +
-                currentSites.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
-        }
-
-        function getServerUrl() {
-            return window.location.origin;
-        }
-
-        function renderProbes(probes) {
-            const tbody = document.querySelector('#probes-table tbody');
-            if (probes.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="loading">No probes configured</td></tr>';
-                return;
-            }
-            tbody.innerHTML = probes.map(p => {
-                const approvalStatus = p.approval_status || 'pending';
-                const lastSeen = p.last_seen && p.last_seen !== '0001-01-01T00:00:00Z'
-                    ? new Date(p.last_seen).toLocaleString() : 'Never';
-                return `
-                <tr>
-                    <td><strong>${escapeHtml(p.name)}</strong>${p.description ? '<br><span class="info-text">' + escapeHtml(p.description) + '</span>' : ''}</td>
-                    <td>${escapeHtml(p.site?.name || '-')}</td>
-                    <td><span class="badge ${escapeHtml(p.status)}">${escapeHtml(p.status || 'offline').toUpperCase()}</span></td>
-                    <td><span class="badge ${escapeHtml(approvalStatus)}">${escapeHtml(approvalStatus).toUpperCase()}</span></td>
-                    <td>${lastSeen}</td>
-                    <td class="actions">
-                        <button class="btn sm info" onclick="showDeployInfo(${p.id})">Deploy Info</button>
-                        ${approvalStatus === 'pending' ? `<button class="btn sm" onclick="approveProbe(${p.id})">Approve</button>` : ''}
-                        ${approvalStatus === 'pending' ? `<button class="btn sm danger" onclick="rejectProbe(${p.id})">Reject</button>` : ''}
-                        <button class="btn sm secondary" onclick="editProbe(${p.id})">Edit</button>
-                        <button class="btn sm danger" onclick="deleteProbe(${p.id})">Delete</button>
-                    </td>
-                </tr>`;
-            }).join('');
-        }
-
-        function showAddModal() {
-            document.getElementById('probe-modal').classList.add('active');
-            document.getElementById('probe-modal-title').textContent = 'Add Probe';
-            document.getElementById('probe-form').reset();
-            document.getElementById('probe-id').value = '';
-            loadSites();
-        }
-
-        function closeProbeModal() {
-            document.getElementById('probe-modal').classList.remove('active');
-        }
-
-        function editProbe(id) {
-            const probe = currentProbes.find(p => p.id === id);
-            if (!probe) return;
-
-            loadSites().then(() => {
-                document.getElementById('probe-modal').classList.add('active');
-                document.getElementById('probe-modal-title').textContent = 'Edit Probe';
-                document.getElementById('probe-id').value = probe.id;
-                document.getElementById('probe-name').value = probe.name;
-                document.getElementById('probe-site').value = probe.site_id || '';
-                document.getElementById('probe-description').value = probe.description || '';
-            });
-        }
-
-        document.getElementById('probe-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const id = document.getElementById('probe-id').value;
-            const data = {
-                name: document.getElementById('probe-name').value,
-                site_id: parseInt(document.getElementById('probe-site').value),
-                description: document.getElementById('probe-description').value,
-                enabled: true
-            };
-
-            try {
-                const method = id ? 'PUT' : 'POST';
-                const url = id ? `${API_BASE}/probes/${id}` : `${API_BASE}/probes`;
-                const result = await apiFetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
-
-                closeProbeModal();
-                loadProbes();
-
-                if (!id && result && result.data) {
-                    // New probe created — show deploy instructions immediately
-                    showDeployInfoForProbe(result.data);
-                    showSuccess('Probe created — copy the deploy instructions below');
-                } else {
-                    showSuccess(id ? 'Probe updated' : 'Probe created');
-                }
-            } catch (err) {
-                showError('Error saving probe: ' + err.message);
-            }
-        });
-
-        function showDeployInfoForProbe(probe) {
-            currentDeployProbe = probe;
-            document.getElementById('deploy-probe-id').value = probe.id;
-
-            const key = probe.registration_key || '(no key — click Regenerate Key)';
-            document.getElementById('deploy-key').textContent = key;
-
-            const serverUrl = getServerUrl();
-            const envContent = `PROBE_NAME=${probe.name}\nPROBE_SITE_ID=${probe.site_id || 0}\nPROBE_REGISTRATION_KEY=${probe.registration_key || 'MISSING'}\nPROBE_SERVER_URL=${serverUrl}`;
-
-            const envBlock = document.getElementById('deploy-env');
-            // Keep the copy button, set env text
-            envBlock.innerHTML = '<button class="copy-btn" onclick="copyEnvBlock()">Copy</button>' +
-                escapeHtml(envContent);
-
-            document.getElementById('deploy-modal').classList.add('active');
-        }
-
-        async function showDeployInfo(id) {
-            const probe = currentProbes.find(p => p.id === id);
-            if (!probe) return;
-
-            // Fetch full probe data to get the registration key
-            try {
-                const result = await apiFetch(`${API_BASE}/probes/${id}`);
-                if (result && result.data) {
-                    showDeployInfoForProbe(result.data);
-                }
-            } catch (err) {
-                showError('Failed to load probe details: ' + err.message);
-            }
-        }
-
-        function closeDeployModal() {
-            document.getElementById('deploy-modal').classList.remove('active');
-            currentDeployProbe = null;
-        }
-
-        function copyDeployKey() {
-            const key = document.getElementById('deploy-key').textContent;
-            if (key && !key.startsWith('(')) {
-                navigator.clipboard.writeText(key);
-                showSuccess('Key copied to clipboard');
-            }
-        }
-
-        function copyEnvBlock() {
-            const envBlock = document.getElementById('deploy-env');
-            // Get text content excluding the copy button text
-            const text = envBlock.textContent.replace('Copy', '').trim();
-            navigator.clipboard.writeText(text);
-            showSuccess('Environment variables copied to clipboard');
-        }
-
-        async function regenerateKey() {
-            const probeId = document.getElementById('deploy-probe-id').value;
-            if (!probeId) return;
-
-            if (!confirm('Regenerate the registration key? The old key will stop working immediately.')) return;
-
-            try {
-                const result = await apiFetch(`${API_BASE}/probes/${probeId}/regenerate-key`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'}
-                });
-
-                if (result && result.data) {
-                    const newKey = result.data.registration_key;
-                    document.getElementById('deploy-key').textContent = newKey;
-
-                    // Update env block
-                    if (currentDeployProbe) {
-                        currentDeployProbe.registration_key = newKey;
-                        const serverUrl = getServerUrl();
-                        const envContent = `PROBE_NAME=${currentDeployProbe.name}\nPROBE_SITE_ID=${currentDeployProbe.site_id || 0}\nPROBE_REGISTRATION_KEY=${newKey}\nPROBE_SERVER_URL=${serverUrl}`;
-                        const envBlock = document.getElementById('deploy-env');
-                        envBlock.innerHTML = '<button class="copy-btn" onclick="copyEnvBlock()">Copy</button>' +
-                            escapeHtml(envContent);
-                    }
-
-                    showSuccess('Registration key regenerated');
-                    loadProbes();
-                }
-            } catch (err) {
-                showError('Error regenerating key: ' + err.message);
-            }
-        }
-
-        async function deleteProbe(id) {
-            if (!confirm('Delete this probe?')) return;
-            try {
-                await apiFetch(`${API_BASE}/probes/${id}`, { method: 'DELETE' });
-                loadProbes();
-                showSuccess('Probe deleted');
-            } catch (err) {
-                showError('Error deleting probe: ' + err.message);
-            }
-        }
-
-        async function approveProbe(id) {
-            try {
-                await apiFetch(`${API_BASE}/probes/${id}/approve`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ notes: '' })
-                });
-                loadProbes();
-                showSuccess('Probe approved');
-            } catch (err) {
-                showError('Error approving probe: ' + err.message);
-            }
-        }
-
-        async function rejectProbe(id) {
-            const reason = prompt('Enter rejection reason:');
-            if (!reason) return;
-            try {
-                await apiFetch(`${API_BASE}/probes/${id}/reject`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ reason })
-                });
-                loadProbes();
-                showSuccess('Probe rejected');
-            } catch (err) {
-                showError('Error rejecting probe: ' + err.message);
-            }
-        }
-
-        document.querySelectorAll('.filter-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                const filter = tab.dataset.filter;
-                if (filter === 'all') {
-                    renderProbes(currentProbes);
-                } else {
-                    renderProbes(currentProbes.filter(p => (p.approval_status || 'pending') === filter));
-                }
-            });
-        });
-
-        document.getElementById('logout-btn').addEventListener('click', async (e) => {
-            e.preventDefault();
-            await apiFetch('/admin/api/logout', { method: 'POST' });
-            window.location.href = '/';
-        });
-
-        fetchCsrfToken().then(() => loadProbes());
-    </script>
+    <script defer src="/static/js/admin-common.js"></script>
+    <script defer src="/static/js/admin-probes.js"></script>
 </body>
 </html>

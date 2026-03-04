@@ -50,44 +50,6 @@
         </div>
     </div>
 
-    <script>
-        const API_BASE = '/api';
-        
-        document.getElementById('login-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const btn = document.getElementById('login-btn');
-            const errorDiv = document.getElementById('error');
-            
-            btn.disabled = true;
-            btn.textContent = 'Logging in...';
-            errorDiv.style.display = 'none';
-            
-            try {
-                const response = await fetch(`${API_BASE}/auth/login`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    window.location.href = '/admin';
-                } else {
-                    errorDiv.textContent = data.error || 'Invalid credentials';
-                    errorDiv.style.display = 'block';
-                }
-            } catch (error) {
-                errorDiv.textContent = 'Connection error. Please try again.';
-                errorDiv.style.display = 'block';
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Login';
-            }
-        });
-    </script>
+    <script defer src="/static/js/admin-login.js"></script>
 </body>
 </html>
