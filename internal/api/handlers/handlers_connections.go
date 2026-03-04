@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -223,6 +224,7 @@ func (h *Handler) GetConnectionTraffic(c *gin.Context) {
 	}
 	data, err := h.db.GetConnectionTraffic(id, rangeStr)
 	if err != nil {
+		log.Printf("GetConnectionTraffic(%d, %s) error: %v", id, rangeStr, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get traffic data"))
 		return
 	}
@@ -249,6 +251,7 @@ func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
 	}
 	data, err := h.db.GetVPNChartData(id, tunnel, rangeStr)
 	if err != nil {
+		log.Printf("GetVPNChartData(%d, %s, %s) error: %v", id, tunnel, rangeStr, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get VPN chart data"))
 		return
 	}

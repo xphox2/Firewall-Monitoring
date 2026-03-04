@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.77] - 2026-03-04
+
+### Fixed
+- Fix LAG() delta queries: use manual SQL placeholders for IN clauses (GORM Raw doesn't reliably expand slices in subqueries)
+- Fix first-row delta bug: LAG() returning NULL on first row was falling through to ELSE branch returning raw cumulative counter instead of NULL — now explicitly returns NULL so first row is properly filtered
+- Add error logging to traffic and VPN chart handlers for debugging 500s
+
 ## [0.10.76] - 2026-03-04
 
 ### Fixed

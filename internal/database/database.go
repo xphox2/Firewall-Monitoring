@@ -1628,20 +1628,25 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
 	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
-	// Counter resets (new value < old value) use the raw value as the delta (bytes since reset).
+	// First row per partition (LAG is NULL) returns NULL and is filtered by the outer WHERE.
+	// Counter resets (new value < old value) use the raw value as the delta.
 	query := fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
 		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
 		FROM (
 			SELECT %s as bucket,
-				CASE WHEN bytes_in >= LAG(bytes_in) OVER w
-					THEN bytes_in - LAG(bytes_in) OVER w ELSE bytes_in END as delta_in,
-				CASE WHEN bytes_out >= LAG(bytes_out) OVER w
-					THEN bytes_out - LAG(bytes_out) OVER w ELSE bytes_out END as delta_out,
-				CASE WHEN packets_in >= LAG(packets_in) OVER w
-					THEN packets_in - LAG(packets_in) OVER w ELSE packets_in END as delta_pin,
-				CASE WHEN packets_out >= LAG(packets_out) OVER w
-					THEN packets_out - LAG(packets_out) OVER w ELSE packets_out END as delta_pout
+				CASE WHEN LAG(bytes_in) OVER w IS NULL THEN NULL
+					WHEN bytes_in >= LAG(bytes_in) OVER w THEN bytes_in - LAG(bytes_in) OVER w
+					ELSE bytes_in END as delta_in,
+				CASE WHEN LAG(bytes_out) OVER w IS NULL THEN NULL
+					WHEN bytes_out >= LAG(bytes_out) OVER w THEN bytes_out - LAG(bytes_out) OVER w
+					ELSE bytes_out END as delta_out,
+				CASE WHEN LAG(packets_in) OVER w IS NULL THEN NULL
+					WHEN packets_in >= LAG(packets_in) OVER w THEN packets_in - LAG(packets_in) OVER w
+					ELSE packets_in END as delta_pin,
+				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
+					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
+					ELSE packets_out END as delta_pout
 			FROM vpn_statuses
 			WHERE device_id = ? AND tunnel_name = ? AND timestamp > ?
 			WINDOW w AS (ORDER BY timestamp)
@@ -1971,29 +1976,48 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 		return []VPNChartBucket{}, nil
 	}
 
+	// Build explicit placeholders for IN clauses (GORM Raw doesn't reliably expand slices)
+	var args []interface{}
+	devPH := make([]string, len(deviceIDs))
+	for i, id := range deviceIDs {
+		devPH[i] = "?"
+		args = append(args, id)
+	}
+	namePH := make([]string, len(allNames))
+	for i, n := range allNames {
+		namePH[i] = "?"
+		args = append(args, n)
+	}
+	args = append(args, cutoff)
+
 	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
-	// Each device+tunnel partition is diffed independently, then deltas are summed per bucket.
+	// First row per partition (LAG is NULL) returns NULL and is filtered by the outer WHERE.
 	query := fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
 		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
 		FROM (
 			SELECT %s as bucket,
-				CASE WHEN bytes_in >= LAG(bytes_in) OVER w
-					THEN bytes_in - LAG(bytes_in) OVER w ELSE bytes_in END as delta_in,
-				CASE WHEN bytes_out >= LAG(bytes_out) OVER w
-					THEN bytes_out - LAG(bytes_out) OVER w ELSE bytes_out END as delta_out,
-				CASE WHEN packets_in >= LAG(packets_in) OVER w
-					THEN packets_in - LAG(packets_in) OVER w ELSE packets_in END as delta_pin,
-				CASE WHEN packets_out >= LAG(packets_out) OVER w
-					THEN packets_out - LAG(packets_out) OVER w ELSE packets_out END as delta_pout
+				CASE WHEN LAG(bytes_in) OVER w IS NULL THEN NULL
+					WHEN bytes_in >= LAG(bytes_in) OVER w THEN bytes_in - LAG(bytes_in) OVER w
+					ELSE bytes_in END as delta_in,
+				CASE WHEN LAG(bytes_out) OVER w IS NULL THEN NULL
+					WHEN bytes_out >= LAG(bytes_out) OVER w THEN bytes_out - LAG(bytes_out) OVER w
+					ELSE bytes_out END as delta_out,
+				CASE WHEN LAG(packets_in) OVER w IS NULL THEN NULL
+					WHEN packets_in >= LAG(packets_in) OVER w THEN packets_in - LAG(packets_in) OVER w
+					ELSE packets_in END as delta_pin,
+				CASE WHEN LAG(packets_out) OVER w IS NULL THEN NULL
+					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
+					ELSE packets_out END as delta_pout
 			FROM vpn_statuses
-			WHERE device_id IN ? AND tunnel_name IN ? AND timestamp > ?
+			WHERE device_id IN (%s) AND tunnel_name IN (%s) AND timestamp > ?
 			WINDOW w AS (PARTITION BY device_id, tunnel_name ORDER BY timestamp)
 		) WHERE delta_in IS NOT NULL
-		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr)
+		GROUP BY bucket ORDER BY bucket ASC`,
+		bucketExpr, strings.Join(devPH, ","), strings.Join(namePH, ","))
 
 	var rows []VPNChartBucket
-	err = d.db.Raw(query, deviceIDs, allNames, cutoff).Scan(&rows).Error
+	err = d.db.Raw(query, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
