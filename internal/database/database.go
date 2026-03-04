@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2047,9 +2048,40 @@ type ConnectionFlowResult struct {
 	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
 }
 
+// cidrToLikePattern converts a CIDR subnet to a SQL LIKE pattern.
+// Works for /8, /16, /24 which cover ~99% of real VPN subnets.
+// Returns empty string for invalid, too-broad (e.g. 0.0.0.0/0), or unsupported prefix lengths.
+func cidrToLikePattern(cidr string) string {
+	cidr = strings.TrimSpace(cidr)
+	if cidr == "" || cidr == "0.0.0.0/0" {
+		return ""
+	}
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return "" // IPv6 not supported
+	}
+	ones, _ := ipNet.Mask.Size()
+	network := ipNet.IP.To4()
+	switch {
+	case ones >= 24:
+		return fmt.Sprintf("%d.%d.%d.%%", network[0], network[1], network[2])
+	case ones >= 16:
+		return fmt.Sprintf("%d.%d.%%", network[0], network[1])
+	case ones >= 8:
+		return fmt.Sprintf("%d.%%", network[0])
+	default:
+		return "" // too broad
+	}
+}
+
 // GetConnectionFlowStats returns sFlow traffic analysis for a connection.
+// Primary strategy: filter flows by VPN subnet pairs (local/remote).
+// Fallback: match tunnel interface indices by name (including Phase1Name).
 func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFlowResult, error) {
-	// Use connection-specific tunnel names only (not ALL tunnels from both devices)
 	srcDeviceID, dstDeviceID, srcTunnelNames, dstTunnelNames, err := d.getConnectionTunnelNames(connID)
 	if err != nil {
 		return nil, err
@@ -2065,43 +2097,78 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	deviceIDs := []uint{srcDeviceID, dstDeviceID}
 
-	// Find interface indices matching this connection's specific tunnels
-	var tunnelIfIndices []int
-	ifIndexSet := make(map[int]bool)
-
-	// Strategy 1: Match tunnel name to interface name
-	var ifaces []models.InterfaceStats
-	d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)",
-		deviceIDs, tunnelNames, tunnelNames, tunnelNames).Scan(&ifaces)
-	for _, iface := range ifaces {
-		ifIndexSet[iface.Index] = true
+	// --- Strategy 1: Subnet-based filtering ---
+	// Query VPN statuses for these tunnel names to get (local_subnet, remote_subnet) pairs
+	type subnetPair struct {
+		LocalSubnet  string
+		RemoteSubnet string
 	}
+	var pairs []subnetPair
+	d.db.Raw(`SELECT DISTINCT local_subnet, remote_subnet FROM vpn_status
+		WHERE device_id IN ? AND tunnel_name IN ? AND local_subnet != '' AND remote_subnet != ''`,
+		deviceIDs, tunnelNames).Scan(&pairs)
 
-	// Strategy 2: Match VPN-type interfaces (tunnel, ipsec types) — only if strategy 1 found nothing
-	if len(ifIndexSet) == 0 {
-		var vpnIfaces []models.InterfaceStats
-		d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (type_name IN ('tunnel','ipsec','vxlan','gre') OR name LIKE 'vpn%' OR name LIKE 'ipsec%' OR name LIKE 'tun%' OR name LIKE 'vxlan%')",
-			deviceIDs).Scan(&vpnIfaces)
-		for _, iface := range vpnIfaces {
-			ifIndexSet[iface.Index] = true
+	// Convert subnet pairs to LIKE patterns
+	var subnetConditions []string
+	var subnetArgs []interface{}
+	for _, p := range pairs {
+		localPattern := cidrToLikePattern(p.LocalSubnet)
+		remotePattern := cidrToLikePattern(p.RemoteSubnet)
+		if localPattern == "" || remotePattern == "" {
+			continue
 		}
-	}
-
-	for idx := range ifIndexSet {
-		tunnelIfIndices = append(tunnelIfIndices, idx)
-	}
-
-	if len(tunnelIfIndices) == 0 {
-		return &ConnectionFlowResult{}, nil
+		// Bidirectional: src in local AND dst in remote, OR vice versa
+		subnetConditions = append(subnetConditions,
+			"(src_addr LIKE ? AND dst_addr LIKE ?)",
+			"(src_addr LIKE ? AND dst_addr LIKE ?)")
+		subnetArgs = append(subnetArgs, localPattern, remotePattern, remotePattern, localPattern)
 	}
 
 	result := &ConnectionFlowResult{}
 	protoNames := map[uint8]string{0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP", 17: "UDP", 41: "IPv6", 47: "GRE", 50: "ESP", 51: "AH", 58: "ICMPv6", 88: "EIGRP", 89: "OSPF", 132: "SCTP"}
 
-	newBase := func() *gorm.DB {
-		return d.db.Model(&models.FlowSample{}).
-			Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff).
-			Where("input_if_index IN ? OR output_if_index IN ?", tunnelIfIndices, tunnelIfIndices)
+	var newBase func() *gorm.DB
+
+	if len(subnetConditions) > 0 {
+		// Use subnet-based filtering
+		subnetWhere := strings.Join(subnetConditions, " OR ")
+		newBase = func() *gorm.DB {
+			return d.db.Model(&models.FlowSample{}).
+				Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff).
+				Where(subnetWhere, subnetArgs...)
+		}
+	} else {
+		// --- Strategy 2 (fallback): Interface index matching with Phase1Names ---
+		// Collect Phase1Names alongside tunnel names for better interface matching
+		var phase1Names []string
+		d.db.Raw(`SELECT DISTINCT phase1_name FROM vpn_status
+			WHERE device_id IN ? AND tunnel_name IN ? AND phase1_name != ''`,
+			deviceIDs, tunnelNames).Pluck("phase1_name", &phase1Names)
+
+		allNames := make([]string, 0, len(tunnelNames)+len(phase1Names))
+		allNames = append(allNames, tunnelNames...)
+		allNames = append(allNames, phase1Names...)
+
+		var tunnelIfIndices []int
+		ifIndexSet := make(map[int]bool)
+		var ifaces []models.InterfaceStats
+		d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)",
+			deviceIDs, allNames, allNames, allNames).Scan(&ifaces)
+		for _, iface := range ifaces {
+			ifIndexSet[iface.Index] = true
+		}
+		for idx := range ifIndexSet {
+			tunnelIfIndices = append(tunnelIfIndices, idx)
+		}
+		if len(tunnelIfIndices) == 0 {
+			return &ConnectionFlowResult{}, nil
+		}
+
+		newBase = func() *gorm.DB {
+			return d.db.Model(&models.FlowSample{}).
+				Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff).
+				Where("input_if_index IN ? OR output_if_index IN ?", tunnelIfIndices, tunnelIfIndices)
+		}
 	}
 
 	// Total counts

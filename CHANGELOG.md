@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.79] - 2026-03-04
+
+### Fixed
+- Fix sFlow "Top Conversations" showing ALL device traffic instead of connection-specific VPN traffic
+- Primary filtering now uses VPN subnet pairs (local_subnet/remote_subnet → SQL LIKE patterns) instead of unreliable interface index matching
+- Improved fallback: include Phase1Names in interface name matching when subnets unavailable
+- Removed overly broad Strategy 2 that grabbed all tunnel-type interfaces from both devices
+
 ## [0.10.78] - 2026-03-04
 
 ### Fixed
