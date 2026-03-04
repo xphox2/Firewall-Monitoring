@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.72] - 2026-03-04
+
+### Fixed
+- Cross-fill empty Phase 2 subnets from paired tunnel in connection detail — hub-side ADVPN tunnels (e.g. NUDAY_LAN) now show local/remote subnet inferred from the spoke side's data
+
 ## [0.10.71] - 2026-03-04
 
 ### Fixed

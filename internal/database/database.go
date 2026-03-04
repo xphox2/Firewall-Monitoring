@@ -1700,6 +1700,41 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
+	// Cross-fill: if one side has empty subnets, infer from the other side (swapped).
+	// Hub-side ADVPN tunnels often have empty Phase 2 selectors in SNMP.
+	if len(result.SourceTunnels) > 0 && len(result.DestTunnels) > 0 {
+		for i := range result.SourceTunnels {
+			if result.SourceTunnels[i].LocalSubnet == "" || result.SourceTunnels[i].RemoteSubnet == "" {
+				for _, dst := range result.DestTunnels {
+					if dst.LocalSubnet != "" && dst.RemoteSubnet != "" {
+						if result.SourceTunnels[i].LocalSubnet == "" {
+							result.SourceTunnels[i].LocalSubnet = dst.RemoteSubnet
+						}
+						if result.SourceTunnels[i].RemoteSubnet == "" {
+							result.SourceTunnels[i].RemoteSubnet = dst.LocalSubnet
+						}
+						break
+					}
+				}
+			}
+		}
+		for i := range result.DestTunnels {
+			if result.DestTunnels[i].LocalSubnet == "" || result.DestTunnels[i].RemoteSubnet == "" {
+				for _, src := range result.SourceTunnels {
+					if src.LocalSubnet != "" && src.RemoteSubnet != "" {
+						if result.DestTunnels[i].LocalSubnet == "" {
+							result.DestTunnels[i].LocalSubnet = src.RemoteSubnet
+						}
+						if result.DestTunnels[i].RemoteSubnet == "" {
+							result.DestTunnels[i].RemoteSubnet = src.LocalSubnet
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// Phase 2 inverse matching: source's local_subnet == dest's remote_subnet (and vice versa)
 	for _, src := range result.SourceTunnels {
 		if src.LocalSubnet == "" || src.RemoteSubnet == "" {
