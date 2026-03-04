@@ -1666,27 +1666,21 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
-	// Collect VPN-visible WAN IPs from matched source tunnels for cross-referencing.
-	// For NAT'd tunnels: if a source tunnel points to remoteIP X, X is the dest's WAN IP.
-	// Collect the reverse too: any remote IP pointing at source = source's WAN IP.
-	srcRemoteIPs := make(map[string]bool) // IPs that source tunnels point TO (dest's WAN IPs)
-	for _, t := range result.SourceTunnels {
-		if t.RemoteIP != "" {
-			srcRemoteIPs[t.RemoteIP] = true
-		}
-	}
-	// Also collect IPs that dest tunnels point to (these are source's WAN IPs)
-	dstRemoteIPs := make(map[string]bool)
-	for _, t := range dstTunnels {
-		if t.RemoteIP != "" {
-			dstRemoteIPs[t.RemoteIP] = true
+	// For indirectly matched connections (NAT'd hub-spoke), dest tunnels' remote IPs
+	// are likely source's WAN IPs. Add them to srcIPs so dest tunnels can match.
+	// This is safe because the VPN detector already confirmed the connection.
+	if conn.MatchMethod == "tunnel_indirect" || conn.MatchMethod == "wan_inferred" {
+		for _, t := range dstTunnels {
+			if t.RemoteIP != "" {
+				srcIPs[t.RemoteIP] = true
+			}
 		}
 	}
 
-	// Filter dest tunnels: remote IP matches source device, tunnel name in known list,
-	// OR remote IP matches an IP that source tunnels are pointing FROM (inferred WAN)
+	// Filter dest tunnels: remote IP matches source device (including inferred WAN IPs),
+	// or tunnel name is in the known list from auto-detection
 	for _, t := range dstTunnels {
-		if srcIPs[t.RemoteIP] || knownTunnels[t.TunnelName] || srcRemoteIPs[t.RemoteIP] {
+		if srcIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
 			// Avoid duplicates
 			alreadyAdded := false
 			for _, existing := range result.DestTunnels {

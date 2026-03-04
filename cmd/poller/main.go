@@ -784,17 +784,26 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 
 	for _, iface := range ifaces {
 		// Accept overlay/local interface types, or vxlan-prefixed names
-		if !overlayTypes[strings.ToLower(iface.TypeName)] && !strings.HasPrefix(strings.ToLower(iface.Name), "vxlan") {
+		tn := strings.ToLower(iface.TypeName)
+		isOverlayType := overlayTypes[tn]
+		isVxlanName := strings.HasPrefix(strings.ToLower(iface.Name), "vxlan")
+		if !isOverlayType && !isVxlanName {
 			continue
 		}
 		normalized := normalizeIfName(iface.Name)
 		if skipNames[normalized] || isSystemIface(normalized) {
 			continue
 		}
+		// If accepted by name prefix but TypeName isn't an overlay type,
+		// force effective type to "vxlan" to prevent defaulting to "ipsec"
+		effectiveType := iface.TypeName
+		if !isOverlayType && isVxlanName {
+			effectiveType = "vxlan"
+		}
 		nameGroups[normalized] = append(nameGroups[normalized], ifEntry{
 			deviceID: iface.DeviceID,
 			name:     iface.Name,
-			typeName: iface.TypeName,
+			typeName: effectiveType,
 			status:   iface.Status,
 		})
 	}

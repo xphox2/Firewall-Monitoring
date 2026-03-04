@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.71] - 2026-03-04
+
+### Fixed
+- Fix connection detail page showing empty dest tunnels for NAT'd hub-spoke VPNs (tunnel_indirect/wan_inferred matches)
+  - Infers source device WAN IPs from dest tunnel remote IPs for indirectly matched connections
+  - Example: NUDAY-FW's `dialup-76.64.79.217` tunnel now correctly appears as dest tunnel for DC2-FW1 ↔ NUDAY-FW
+- Fix overlay detector assigning wrong connection type ("ipsec") to vxlan-named interfaces with empty/non-overlay TypeName
+  - Interfaces accepted by name prefix (e.g., vxlan500) now get effective type "vxlan" if their SNMP TypeName isn't an overlay type
+
 ## [0.10.70] - 2026-03-04
 
 ### Fixed
