@@ -990,7 +990,7 @@
             if (!result || !result.data || result.data.length === 0) return;
             var deviceId = result.data[0].id;
             
-            apiFetch(API_BASE + '/devices/' + deviceId + '/interfaces').then(function(ifResult) {
+            apiFetch(API_BASE + '/interfaces?device_id=' + deviceId).then(function(ifResult) {
                 if (!ifResult || !ifResult.data) return;
                 var ifSelect = document.querySelector('select[name="public_bandwidth_interfaces"]');
                 if (ifSelect) {
