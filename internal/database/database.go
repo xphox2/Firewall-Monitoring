@@ -1693,10 +1693,6 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 				continue
 			}
 			result.DestTunnels = append(result.DestTunnels, t)
-			result.TotalBytesIn += t.BytesIn
-			result.TotalBytesOut += t.BytesOut
-			result.TotalPacketsIn += t.PacketsIn
-			result.TotalPacketsOut += t.PacketsOut
 		}
 	}
 

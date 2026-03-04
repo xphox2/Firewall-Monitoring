@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.73] - 2026-03-04
+
+### Fixed
+- Fix doubled total bytes/packets in connection detail — was summing both source and dest tunnels but they represent the same traffic from opposite perspectives
+
 ## [0.10.72] - 2026-03-04
 
 ### Fixed
