@@ -1666,9 +1666,38 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		}
 	}
 
-	// Filter dest tunnels: remote IP matches source device OR tunnel name in known list
+	// Collect VPN-visible WAN IPs from matched source tunnels for cross-referencing.
+	// For NAT'd tunnels: if a source tunnel points to remoteIP X, X is the dest's WAN IP.
+	// Collect the reverse too: any remote IP pointing at source = source's WAN IP.
+	srcRemoteIPs := make(map[string]bool) // IPs that source tunnels point TO (dest's WAN IPs)
+	for _, t := range result.SourceTunnels {
+		if t.RemoteIP != "" {
+			srcRemoteIPs[t.RemoteIP] = true
+		}
+	}
+	// Also collect IPs that dest tunnels point to (these are source's WAN IPs)
+	dstRemoteIPs := make(map[string]bool)
 	for _, t := range dstTunnels {
-		if srcIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
+		if t.RemoteIP != "" {
+			dstRemoteIPs[t.RemoteIP] = true
+		}
+	}
+
+	// Filter dest tunnels: remote IP matches source device, tunnel name in known list,
+	// OR remote IP matches an IP that source tunnels are pointing FROM (inferred WAN)
+	for _, t := range dstTunnels {
+		if srcIPs[t.RemoteIP] || knownTunnels[t.TunnelName] || srcRemoteIPs[t.RemoteIP] {
+			// Avoid duplicates
+			alreadyAdded := false
+			for _, existing := range result.DestTunnels {
+				if existing.TunnelName == t.TunnelName && existing.DeviceID == t.DeviceID {
+					alreadyAdded = true
+					break
+				}
+			}
+			if alreadyAdded {
+				continue
+			}
 			result.DestTunnels = append(result.DestTunnels, t)
 			result.TotalBytesIn += t.BytesIn
 			result.TotalBytesOut += t.BytesOut

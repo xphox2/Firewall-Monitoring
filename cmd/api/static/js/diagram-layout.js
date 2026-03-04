@@ -1,20 +1,30 @@
-// diagram-layout.js — FWDiagram.Layout: Circular positions, drag-and-drop, device/cloud node rendering
+// diagram-layout.js — FWDiagram.Layout: Circular positions, drag-and-drop, device/cloud node rendering, site groups
 (function() {
     'use strict';
 
     const STORAGE_KEY = 'fwmon-diagram-positions';
     const NODE_W = 150, NODE_H = 64;
+    const SITE_PAD = 24; // padding around device nodes inside site groups
     let positions = [];
     let dragTarget = null;
     let dragStartPos = null;
     let dragMoved = false;
     let dragOffset = { x: 0, y: 0 };
+    let siteGroupEls = []; // { g, rectEl, labelEl, siteId, deviceIds }
 
-    function computePositions(devices) {
+    function computePositions(devices, siteMap) {
         const dim = FWDiagram.getDimensions();
         const saved = loadPositions();
-        positions = devices.map((d, i) => {
-            const a = (2 * Math.PI * i) / devices.length - Math.PI / 2;
+
+        // Sort devices by site so same-site devices are adjacent in the circle
+        const sorted = devices.slice().sort((a, b) => {
+            const sa = (siteMap && siteMap[a.id]) || 0;
+            const sb = (siteMap && siteMap[b.id]) || 0;
+            return sa - sb;
+        });
+
+        positions = sorted.map((d, i) => {
+            const a = (2 * Math.PI * i) / sorted.length - Math.PI / 2;
             const defaultX = dim.cx + dim.R * Math.cos(a);
             const defaultY = dim.cy + dim.R * Math.sin(a);
             const key = String(d.id);
@@ -30,6 +40,94 @@
     }
 
     function getPositions() { return positions; }
+
+    // Draw dashed rounded rectangles around same-site device clusters
+    function drawSiteGroups(siteMap, siteNames) {
+        const svg = FWDiagram.getSVG();
+        siteGroupEls = [];
+        if (!siteMap || !positions.length) return;
+
+        // Group position indices by siteId
+        const sitePosMap = {}; // siteId → [positionIndex, ...]
+        positions.forEach((p, idx) => {
+            const siteId = siteMap[p.device.id];
+            if (!siteId) return; // skip unassigned
+            if (!sitePosMap[siteId]) sitePosMap[siteId] = [];
+            sitePosMap[siteId].push(idx);
+        });
+
+        Object.keys(sitePosMap).forEach(siteId => {
+            const indices = sitePosMap[siteId];
+            if (indices.length < 1) return;
+
+            const siteName = (siteNames && siteNames[siteId]) || ('Site ' + siteId);
+            const bounds = computeSiteBounds(indices);
+
+            const g = FWDiagram.createEl('g');
+            g.setAttribute('class', 'site-group');
+
+            const rect = FWDiagram.createEl('rect');
+            rect.setAttribute('x', bounds.x);
+            rect.setAttribute('y', bounds.y);
+            rect.setAttribute('width', bounds.w);
+            rect.setAttribute('height', bounds.h);
+            rect.setAttribute('rx', '12');
+            rect.setAttribute('fill', 'none');
+            rect.setAttribute('stroke', '#30363d');
+            rect.setAttribute('stroke-width', '1.5');
+            rect.setAttribute('stroke-dasharray', '6,4');
+            rect.setAttribute('opacity', '0.7');
+            g.appendChild(rect);
+
+            const label = FWDiagram.createEl('text');
+            label.setAttribute('x', bounds.x + bounds.w / 2);
+            label.setAttribute('y', bounds.y - 6);
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('fill', '#8b949e');
+            label.setAttribute('font-size', '11');
+            label.setAttribute('font-weight', '500');
+            label.textContent = siteName;
+            g.appendChild(label);
+
+            // Insert at the beginning of SVG so it's behind everything
+            if (svg.firstChild) {
+                svg.insertBefore(g, svg.firstChild);
+            } else {
+                svg.appendChild(g);
+            }
+
+            siteGroupEls.push({ g, rectEl: rect, labelEl: label, siteId, deviceIds: indices });
+        });
+    }
+
+    function computeSiteBounds(indices) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        indices.forEach(idx => {
+            const p = positions[idx];
+            minX = Math.min(minX, p.x - NODE_W / 2);
+            minY = Math.min(minY, p.y - NODE_H / 2);
+            maxX = Math.max(maxX, p.x + NODE_W / 2);
+            maxY = Math.max(maxY, p.y + NODE_H / 2);
+        });
+        return {
+            x: minX - SITE_PAD,
+            y: minY - SITE_PAD - 14, // extra room for label
+            w: (maxX - minX) + SITE_PAD * 2,
+            h: (maxY - minY) + SITE_PAD * 2 + 14
+        };
+    }
+
+    function redrawSiteGroups() {
+        siteGroupEls.forEach(entry => {
+            const bounds = computeSiteBounds(entry.deviceIds);
+            entry.rectEl.setAttribute('x', bounds.x);
+            entry.rectEl.setAttribute('y', bounds.y);
+            entry.rectEl.setAttribute('width', bounds.w);
+            entry.rectEl.setAttribute('height', bounds.h);
+            entry.labelEl.setAttribute('x', bounds.x + bounds.w / 2);
+            entry.labelEl.setAttribute('y', bounds.y - 6);
+        });
+    }
 
     function drawDeviceNode(p, vpnInfo, onBadgeClick) {
         const svg = FWDiagram.getSVG();
@@ -192,6 +290,7 @@
         dragTarget.p.y = pt.y - dragOffset.y;
         dragTarget.g.setAttribute('transform', `translate(${dragTarget.p.x - NODE_W/2}, ${dragTarget.p.y - NODE_H/2})`);
         FWDiagram.Connections.redrawPaths();
+        redrawSiteGroups();
     }
 
     function endDrag(e) {
@@ -237,6 +336,8 @@
         getPositions,
         drawDeviceNode,
         drawCloudNode,
+        drawSiteGroups,
+        redrawSiteGroups,
         resetLayout,
         savePositions,
         NODE_W,

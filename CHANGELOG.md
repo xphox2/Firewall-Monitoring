@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.67] - 2026-03-03
+
+### Fixed
+- L2VLAN connections now accumulate ALL matching interface names (was stopping after first match)
+- buildCIDR now preserves wildcard subnets (0.0.0.0/0) for Phase 2 selectors
+- Connection detail panel now shows dest tunnels for NAT'd VPN scenarios via WAN IP cross-referencing
+
+### Added
+- WAN IP inference phase in VPN auto-detection — catches NAT'd hub-spoke tunnels (e.g., dialup-x.x.x.x)
+- Site grouping in connection diagram — dashed rounded rectangles around same-site device clusters
+- Straight lines for same-site connections with parallel offsets for multiple connections
+- Tunnels column in connections table with count badge and abbreviated names
+- Multi-line tunnel list in connection detail panel
+- Discovery badges for `wan_inferred` and `overlay_name` match methods
+
 ## [0.10.66] - 2026-03-03
 
 ### Security

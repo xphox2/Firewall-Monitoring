@@ -226,7 +226,14 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 
 // buildCIDR combines an IP address and subnet mask into CIDR notation (e.g., "10.0.0.0/24").
 func buildCIDR(addr, mask string) string {
-	if addr == "" || addr == "0.0.0.0" {
+	if addr == "" {
+		return ""
+	}
+	// Wildcard selector: 0.0.0.0/0.0.0.0 → "0.0.0.0/0" (Phase 2 "any" selector)
+	if addr == "0.0.0.0" {
+		if mask == "" || mask == "0.0.0.0" {
+			return "0.0.0.0/0"
+		}
 		return ""
 	}
 	ip := net.ParseIP(addr)

@@ -1121,12 +1121,18 @@
 
         FWDiagram.Particles.stop();
         FWDiagram.init('connection-diagram');
-        FWDiagram.Layout.computePositions(currentDevices);
+        FWDiagram.Layout.computePositions(currentDevices, deviceSiteMap);
         FWDiagram.Connections.drawAll(
             currentDevices, currentConnections, deviceSiteMap, currentVpnMap,
             function(conn) { FWDiagram.Panels.showRichConnDetailPanel(conn); },
             function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
         );
+
+        // Build siteNames map from currentSites for site group labels
+        var siteNames = {};
+        currentSites.forEach(function(s) { siteNames[s.id] = s.name; });
+        FWDiagram.Layout.drawSiteGroups(deviceSiteMap, siteNames);
+
         FWDiagram.Layout.getPositions().forEach(function(p) {
             var vpnInfo = currentVpnMap[String(p.device.id)];
             FWDiagram.Layout.drawDeviceNode(p, vpnInfo, function(devId) {

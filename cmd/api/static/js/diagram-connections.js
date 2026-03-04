@@ -1,8 +1,8 @@
-// diagram-connections.js — FWDiagram.Connections: Path drawing, UP-only filter, arc geometry
+// diagram-connections.js — FWDiagram.Connections: Path drawing, UP-only filter, straight same-site lines, cross-site arcs
 (function() {
     'use strict';
 
-    let pathRegistry = []; // { pathEl, seg1El, seg2El, conn, srcIdx, dstIdx, type }
+    let pathRegistry = []; // { pathEl, seg1El, seg2El, conn, srcIdx, dstIdx, type, pairIdx, pairTotal }
     let offnetRegistry = []; // { pathEl, deviceIdx }
 
     function drawAll(devices, conns, siteMap, vpnMap, onConnClick, onVPNClick) {
@@ -43,6 +43,25 @@
         const hasCloudNode = devicesWithOffnet.length > 0 || crossSiteConns.length > 0;
         let cloudPathIdx = 0;
 
+        // Pre-compute pair offsets for same-site connections (parallel line offsets)
+        const pairKey = (c) => {
+            const a = Math.min(c.source_device_id, c.dest_device_id);
+            const b = Math.max(c.source_device_id, c.dest_device_id);
+            return a + ':' + b;
+        };
+        const sameSitePairCounts = {};
+        const sameSitePairIdx = {};
+        upSameSite.forEach(c => {
+            const k = pairKey(c);
+            sameSitePairCounts[k] = (sameSitePairCounts[k] || 0) + 1;
+        });
+        upSameSite.forEach(c => {
+            const k = pairKey(c);
+            if (sameSitePairIdx[k] === undefined) sameSitePairIdx[k] = 0;
+            c._pairIdx = sameSitePairIdx[k]++;
+            c._pairTotal = sameSitePairCounts[k];
+        });
+
         // --- 1) Off-net cloud-to-device dashed paths (only UP) ---
         devicesWithOffnet.forEach(info => {
             if (!info.anyUp) return;
@@ -76,7 +95,7 @@
             cloudPathIdx++;
         });
 
-        // --- 2) Same-site UP connections (outward arcs) ---
+        // --- 2) Same-site UP connections (straight lines with parallel offsets) ---
         upSameSite.forEach((conn, ci) => {
             const si = devices.findIndex(d => d.id === conn.source_device_id);
             const di = devices.findIndex(d => d.id === conn.dest_device_id);
@@ -87,7 +106,7 @@
             const isIndirect = conn.match_method === 'tunnel_indirect';
             const color = isIndirect ? '#f0883e' : cs.color;
 
-            const pathD = buildSameSiteArc(s.x, s.y, t.x, t.y, cx, cy, ci);
+            const pathD = buildSameSitePath(s.x, s.y, t.x, t.y, conn._pairIdx, conn._pairTotal);
             const pathId = `conn-path-ss-${ci}`;
 
             const hitPath = FWDiagram.createEl('path');
@@ -109,7 +128,10 @@
             path.addEventListener('click', () => onConnClick(conn));
             svg.appendChild(path);
 
-            pathRegistry.push({ pathEl: path, hitEl: hitPath, conn, srcIdx: si, dstIdx: di, type: 'same', ci });
+            pathRegistry.push({
+                pathEl: path, hitEl: hitPath, conn, srcIdx: si, dstIdx: di,
+                type: 'same', ci, pairIdx: conn._pairIdx, pairTotal: conn._pairTotal
+            });
 
             // Traffic-proportional particles
             const vpnInfo = vpnMap[String(conn.source_device_id)];
@@ -182,17 +204,21 @@
         return { hasCloudNode, crossSiteConns, sameSiteConns, devicesWithOffnet };
     }
 
-    // Outward arc: control point pushes AWAY from cloud center
-    function buildSameSiteArc(sx, sy, tx, ty, cx, cy, idx) {
-        const mx = (sx + tx) / 2, my = (sy + ty) / 2;
-        // Direction from center to midpoint (outward)
-        const dx = mx - cx, dy = my - cy;
-        const len = Math.sqrt(dx*dx + dy*dy) || 1;
-        const outX = dx / len, outY = dy / len;
-        const bulge = 60 + idx * 20;
-        const cpx = mx + outX * bulge;
-        const cpy = my + outY * bulge;
-        return `M${sx},${sy} Q${cpx},${cpy} ${tx},${ty}`;
+    // Straight line for same-site connections with perpendicular offset for parallel lines
+    function buildSameSitePath(sx, sy, tx, ty, pairIdx, pairTotal) {
+        if (pairTotal <= 1) {
+            return `M${sx},${sy} L${tx},${ty}`;
+        }
+        // Offset perpendicular to the line connecting source and dest
+        const OFFSET_STEP = 9; // px between parallel lines
+        const dx = tx - sx, dy = ty - sy;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx = -dy / len, ny = dx / len; // perpendicular unit vector
+        // Center the offsets: e.g., for 3 lines, offsets are -9, 0, +9
+        const mid = (pairTotal - 1) / 2;
+        const offset = (pairIdx - mid) * OFFSET_STEP;
+        const ox = nx * offset, oy = ny * offset;
+        return `M${sx + ox},${sy + oy} L${tx + ox},${ty + oy}`;
     }
 
     // Cross-site: fan across 60-degree arc through cloud transit points
@@ -210,7 +236,7 @@
         const transitX = cx + transitR * Math.cos(angle);
         const transitY = cy + transitR * Math.sin(angle);
 
-        // Build curved segments: Source→transit, transit→Dest
+        // Build curved segments: Source->transit, transit->Dest
         const off1 = 20 + idx * 8;
         const off2 = -(20 + idx * 8);
         const seg1D = buildCurvedSegment(sx, sy, transitX, transitY, off1);
@@ -243,7 +269,7 @@
             if (!s || !t) return;
 
             if (entry.type === 'same') {
-                const d = buildSameSiteArc(s.x, s.y, t.x, t.y, cx, cy, entry.ci);
+                const d = buildSameSitePath(s.x, s.y, t.x, t.y, entry.pairIdx, entry.pairTotal);
                 entry.pathEl.setAttribute('d', d);
                 if (entry.hitEl) entry.hitEl.setAttribute('d', d);
             } else if (entry.type === 'cross') {

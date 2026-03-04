@@ -219,15 +219,33 @@
             'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
             'tunnel_name': '<span class="badge" style="background:#d29922;font-size:0.65rem;padding:1px 5px;">Tunnel Name</span>',
             'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
+            'wan_inferred': '<span class="badge" style="background:#da3633;font-size:0.65rem;padding:1px 5px;">WAN Inferred</span>',
+            'overlay_name': '<span class="badge" style="background:#39d4e0;font-size:0.65rem;padding:1px 5px;">Overlay</span>',
             'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
         };
         return badges[method] || badges['ip_match'];
     }
 
+    function formatTunnelCell(tunnelNames) {
+        if (!tunnelNames) return '<span style="color:#484f58;">-</span>';
+        var names = tunnelNames.split(',').map(function(n) { return n.trim(); }).filter(Boolean);
+        var count = names.length;
+        var badge = '<span class="badge" style="background:#30363d;font-size:0.65rem;padding:1px 5px;margin-right:4px;">' + count + '</span>';
+        var MAX_DISPLAY = 2;
+        var displayed = names.slice(0, MAX_DISPLAY).map(function(n) {
+            return AC.escapeHtml(n.length > 18 ? n.slice(0, 17) + '\u2026' : n);
+        }).join(', ');
+        var fullList = AC.escapeHtml(names.join(', '));
+        if (names.length > MAX_DISPLAY) {
+            displayed += ', \u2026';
+        }
+        return '<span title="' + fullList + '">' + badge + displayed + '</span>';
+    }
+
     function renderConnectionsTable() {
         var tbody = document.querySelector('#connections-table tbody');
         if (currentConnections.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="loading">No connections configured</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="loading">No connections configured</td></tr>';
             return;
         }
 
@@ -241,6 +259,7 @@
                 '<td><span class="type-badge ' + AC.escapeHtml(c.connection_type) + '">' + AC.escapeHtml(c.connection_type || 'ipsec').toUpperCase() + '</span></td>' +
                 '<td><span class="badge ' + AC.escapeHtml(c.status) + '">' + AC.escapeHtml(c.status || 'unknown').toUpperCase() + '</span></td>' +
                 '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
+                '<td>' + formatTunnelCell(c.tunnel_names) + '</td>' +
                 '<td>' +
                 '<button class="btn sm secondary" data-action="edit-connection" data-id="' + c.id + '">Edit</button> ' +
                 '<button class="btn sm danger" data-action="delete-connection" data-id="' + c.id + '">Delete</button>' +
@@ -266,6 +285,18 @@
         document.getElementById('details-panel').classList.add('open');
     }
 
+    function formatTunnelList(tunnelNames) {
+        if (!tunnelNames) return '';
+        var names = tunnelNames.split(',').map(function(n) { return n.trim(); }).filter(Boolean);
+        if (names.length === 0) return '';
+        var html = '<p><strong>Tunnels (' + names.length + '):</strong></p><ul style="margin:2px 0 8px 16px;padding:0;list-style:disc;">';
+        for (var i = 0; i < names.length; i++) {
+            html += '<li style="font-size:0.85rem;color:#c9d1d9;">' + AC.escapeHtml(names[i]) + '</li>';
+        }
+        html += '</ul>';
+        return html;
+    }
+
     function showConnectionDetails(conn) {
         document.getElementById('details-title').textContent = 'Connection Details';
         document.getElementById('details-content').innerHTML =
@@ -276,7 +307,7 @@
             '<p><strong>Source:</strong> ' + (AC.escapeHtml(conn.source_device && conn.source_device.name) || 'DEV-' + conn.source_device_id) + '</p>' +
             '<p><strong>Destination:</strong> ' + (AC.escapeHtml(conn.dest_device && conn.dest_device.name) || 'DEV-' + conn.dest_device_id) + '</p>' +
             '<p><strong>Discovery:</strong> ' + matchMethodBadge(conn.match_method, conn.auto_detected) + '</p>' +
-            (conn.tunnel_names ? '<p><strong>Tunnels:</strong> ' + AC.escapeHtml(conn.tunnel_names) + '</p>' : '') +
+            formatTunnelList(conn.tunnel_names) +
             '<p><strong>Latency:</strong> ' + (conn.latency ? conn.latency + 'ms' : '-') + '</p>' +
             '<p><strong>Last Check:</strong> ' + (conn.last_check ? new Date(conn.last_check).toLocaleString() : 'Never') + '</p>' +
             (conn.notes ? '<p><strong>Notes:</strong> ' + AC.escapeHtml(conn.notes) + '</p>' : '') +

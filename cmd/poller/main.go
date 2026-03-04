@@ -523,6 +523,104 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		}
 	}
 
+	// Phase 3: WAN IP inference from matched pairs.
+	// For NAT'd hub-spoke VPNs, infer WAN IPs from established pairs:
+	// If src has a tunnel pointing to remoteIP X and we matched it to dest,
+	// then X is dest's WAN IP. Similarly in reverse. Then re-scan unmatched tunnels.
+	inferredIPs := make(map[uint]map[string]bool) // deviceID → set of inferred WAN IPs
+	for _, pi := range pairs {
+		for _, t := range vpnByDevice[pi.sourceID] {
+			// If this tunnel's remote IP resolves to the dest device, it's the dest's WAN IP
+			if rd, ok := ipToDevice[t.RemoteIP]; ok && rd.ID == pi.destID {
+				if inferredIPs[pi.destID] == nil {
+					inferredIPs[pi.destID] = make(map[string]bool)
+				}
+				inferredIPs[pi.destID][t.RemoteIP] = true
+			}
+		}
+		for _, t := range vpnByDevice[pi.destID] {
+			if rd, ok := ipToDevice[t.RemoteIP]; ok && rd.ID == pi.sourceID {
+				if inferredIPs[pi.sourceID] == nil {
+					inferredIPs[pi.sourceID] = make(map[string]bool)
+				}
+				inferredIPs[pi.sourceID][t.RemoteIP] = true
+			}
+		}
+	}
+
+	// Also infer from indirect matches: if src tunnel matched dest by name,
+	// the tunnel's remote IP is the dest's WAN, and vice versa.
+	for _, pi := range pairs {
+		for _, t := range vpnByDevice[pi.sourceID] {
+			if pi.tunnelNames[t.TunnelName] && t.RemoteIP != "" {
+				if _, known := ipToDevice[t.RemoteIP]; !known {
+					if inferredIPs[pi.destID] == nil {
+						inferredIPs[pi.destID] = make(map[string]bool)
+					}
+					inferredIPs[pi.destID][t.RemoteIP] = true
+				}
+			}
+		}
+		for _, t := range vpnByDevice[pi.destID] {
+			if pi.tunnelNames[t.TunnelName] && t.RemoteIP != "" {
+				if _, known := ipToDevice[t.RemoteIP]; !known {
+					if inferredIPs[pi.sourceID] == nil {
+						inferredIPs[pi.sourceID] = make(map[string]bool)
+					}
+					inferredIPs[pi.sourceID][t.RemoteIP] = true
+				}
+			}
+		}
+	}
+
+	// Re-scan previously unmatched tunnels using inferred WAN IPs
+	if len(inferredIPs) > 0 {
+		for _, vpn := range vpnStatuses {
+			if vpn.DeviceID == 0 || vpn.RemoteIP == "" {
+				continue
+			}
+			// Skip if already resolved by direct IP match
+			if _, resolved := ipToDevice[vpn.RemoteIP]; resolved {
+				continue
+			}
+			// Check if remote IP matches any device's inferred WAN IP
+			for devID, wanIPs := range inferredIPs {
+				if devID == vpn.DeviceID {
+					continue
+				}
+				if !wanIPs[vpn.RemoteIP] {
+					continue
+				}
+				// This tunnel's remote IP matches an inferred WAN IP of devID
+				key := pairKey(vpn.DeviceID, devID)
+				pi, exists := pairs[key]
+				if !exists {
+					srcID, dstID := vpn.DeviceID, devID
+					if srcID > dstID {
+						srcID, dstID = dstID, srcID
+					}
+					ct := "ipsec"
+					if vpn.TunnelType == "sslvpn" {
+						ct = "ssl"
+					}
+					pi = &pairInfo{
+						sourceID:    srcID,
+						destID:      dstID,
+						tunnelNames: make(map[string]bool),
+						matchMethod: "wan_inferred",
+						connType:    ct,
+					}
+					pairs[key] = pi
+				}
+				pi.tunnelNames[vpn.TunnelName] = true
+				if vpn.Status == "up" {
+					pi.anyUp = true
+				}
+				break
+			}
+		}
+	}
+
 	for _, pi := range pairs {
 		status := "down"
 		if pi.anyUp {
@@ -705,10 +803,18 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 		}
 		return fmt.Sprintf("%d:%d", a, b)
 	}
-	// Dedup by pair + connection type — allows ipsec AND l2vlan between same pair
-	processed := make(map[string]bool)
-	created := 0
 
+	// Accumulator: collect all matching interface names per device-pair + connection type
+	type overlayPairInfo struct {
+		sourceID  uint
+		destID    uint
+		connType  string
+		ifNames   map[string]bool // all matching interface names
+		anyUp     bool
+	}
+	pairAccum := make(map[string]*overlayPairInfo)
+
+	// Pass 1: accumulate interface names across all nameGroups
 	for _, entries := range nameGroups {
 		// Deduplicate by device
 		seen := make(map[uint]*ifEntry)
@@ -721,7 +827,6 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 			continue
 		}
 
-		// Create pairwise connections for hub-spoke
 		deviceList := make([]*ifEntry, 0, len(seen))
 		for _, e := range seen {
 			deviceList = append(deviceList, e)
@@ -730,18 +835,9 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 		for i := 0; i < len(deviceList); i++ {
 			for j := i + 1; j < len(deviceList); j++ {
 				a, b := deviceList[i], deviceList[j]
-
-				// Determine type from this specific pair's interface types
 				connType := pairConnType(a.typeName, b.typeName)
 
-				key := pairKey(a.deviceID, b.deviceID) + ":" + connType
-				if processed[key] {
-					continue
-				}
-
-				// Validation by category:
-				// - l2vlan (local segment): requires same site
-				// - l3ipvlan/vxlan (overlays): requires a direct VPN tunnel between endpoints
+				// Validation by category
 				if localTypes[connType] {
 					if !sameSite(a.deviceID, b.deviceID) {
 						continue
@@ -752,35 +848,57 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 					}
 				}
 
-				processed[key] = true
-
-				srcID, dstID := a.deviceID, b.deviceID
-				if srcID > dstID {
-					srcID, dstID = dstID, srcID
+				key := pairKey(a.deviceID, b.deviceID) + ":" + connType
+				pi, exists := pairAccum[key]
+				if !exists {
+					srcID, dstID := a.deviceID, b.deviceID
+					if srcID > dstID {
+						srcID, dstID = dstID, srcID
+					}
+					pi = &overlayPairInfo{
+						sourceID: srcID,
+						destID:   dstID,
+						connType: connType,
+						ifNames:  make(map[string]bool),
+					}
+					pairAccum[key] = pi
 				}
-
-				status := "down"
+				pi.ifNames[a.name] = true
 				if a.status == "up" && b.status == "up" {
-					status = "up"
-				}
-
-				srcName, dstName := "?", "?"
-				if d, ok := deviceByID[srcID]; ok {
-					srcName = d.Name
-				}
-				if d, ok := deviceByID[dstID]; ok {
-					dstName = d.Name
-				}
-				connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
-
-				matchMethod := "overlay_name"
-
-				if err := p.db.UpsertAutoConnection(srcID, dstID, status, a.name, connName, connType, matchMethod); err != nil {
-					log.Printf("Overlay auto-detect: failed to upsert connection %s - %v", connName, err)
-				} else {
-					created++
+					pi.anyUp = true
 				}
 			}
+		}
+	}
+
+	// Pass 2: upsert once per pair with full comma-separated interface name list
+	created := 0
+	for _, pi := range pairAccum {
+		status := "down"
+		if pi.anyUp {
+			status = "up"
+		}
+
+		names := make([]string, 0, len(pi.ifNames))
+		for n := range pi.ifNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		tunnelNames := strings.Join(names, ", ")
+
+		srcName, dstName := "?", "?"
+		if d, ok := deviceByID[pi.sourceID]; ok {
+			srcName = d.Name
+		}
+		if d, ok := deviceByID[pi.destID]; ok {
+			dstName = d.Name
+		}
+		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
+
+		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, "overlay_name"); err != nil {
+			log.Printf("Overlay auto-detect: failed to upsert connection %s - %v", connName, err)
+		} else {
+			created++
 		}
 	}
 
