@@ -32,10 +32,12 @@
             body: JSON.stringify(payload)
         }).then(function(resp) {
             if (resp.ok) {
-                console.log('Saved public interface:', ifaceName, isPublic);
+                console.log('Saved:', publicInterfaces);
             } else {
-                console.error('Failed to save');
+                console.error('Failed to save, status:', resp.status);
             }
+        })['catch'](function(err) { 
+            console.error('Error saving:', err); 
         });
     };
 

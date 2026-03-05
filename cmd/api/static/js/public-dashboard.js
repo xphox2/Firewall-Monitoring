@@ -68,11 +68,12 @@
     }
 
     function loadAllData() {
-        fetchAllDevices();
-        if (displaySettings['public_show_interfaces'] !== 'false') fetchAllInterfaces();
-        if (displaySettings['public_show_bandwidth'] !== 'false') fetchBandwidth();
-        if (displaySettings['public_show_vpn'] !== 'false') fetchAllVPN();
-        if (displaySettings['public_show_connections'] !== 'false') fetchConnections();
+        fetchAllDevices().then(function() {
+            if (displaySettings['public_show_interfaces'] !== 'false') fetchAllInterfaces();
+            if (displaySettings['public_show_bandwidth'] !== 'false') fetchBandwidth();
+            if (displaySettings['public_show_vpn'] !== 'false') fetchAllVPN();
+            if (displaySettings['public_show_connections'] !== 'false') fetchConnections();
+        });
     }
 
     function fetchAllDevices() {
@@ -193,35 +194,29 @@
     }
 
     function fetchBandwidth() {
-        fetch(API_BASE + '/public/devices')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (!data || !data.success || !data.data) return;
-                
-                var devices = data.data;
-                var pubIfaces = [];
-                
-                devices.forEach(function(device) {
-                    var ifaces = publicInterfaces[device.id] || [];
-                    if (ifaces.length > 0) {
-                        ifaces.forEach(function(name) {
-                            pubIfaces.push({ deviceId: device.id, deviceName: device.name, name: name });
-                        });
-                    }
+        var pubIfaces = [];
+        
+        allDevices.forEach(function(device) {
+            var ifaces = publicInterfaces[device.id] || [];
+            if (ifaces.length > 0) {
+                ifaces.forEach(function(name) {
+                    pubIfaces.push({ deviceId: device.id, deviceName: device.name, name: name });
                 });
+            }
+        });
 
-                if (pubIfaces.length === 0) {
-                    document.getElementById('bandwidth-charts').innerHTML = '<div class="loading">No public interfaces configured for bandwidth charts</div>';
-                    return;
-                }
+        if (pubIfaces.length === 0) {
+            document.getElementById('bandwidth-charts').innerHTML = '<div class="loading">No public interfaces configured for bandwidth charts</div>';
+            return;
+        }
 
-                var controls = document.getElementById('bandwidth-controls');
-                controls.style.display = 'flex';
+        var controls = document.getElementById('bandwidth-controls');
+        controls.style.display = 'flex';
 
-                var select = document.getElementById('bandwidth-interface-select');
-                select.innerHTML = pubIfaces.map(function(i) {
-                    return '<option value="' + i.deviceId + '|' + escapeHtml(i.name) + '">' + escapeHtml(i.deviceName) + ' - ' + escapeHtml(i.name) + '</option>';
-                }).join('');
+        var select = document.getElementById('bandwidth-interface-select');
+        select.innerHTML = pubIfaces.map(function(i) {
+            return '<option value="' + i.deviceId + '|' + escapeHtml(i.name) + '">' + escapeHtml(i.deviceName) + ' - ' + escapeHtml(i.name) + '</option>';
+        }).join('');
 
                 select.onchange = function() {
                     loadBandwidthChart();
@@ -239,7 +234,6 @@
 
                 currentIfaceKey = pubIfaces[0].deviceId + '|' + pubIfaces[0].name;
                 loadBandwidthChart();
-            })['catch'](function(e) { console.error('Bandwidth error:', e); });
     }
 
     function loadBandwidthChart() {

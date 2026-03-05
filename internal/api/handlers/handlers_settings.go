@@ -131,6 +131,8 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
 				return
 			}
+		case "public_interfaces", "public_vpn_tunnels", "public_vpn_tunnels_by_device", "public_bandwidth_interfaces":
+			// No validation needed for JSON string settings
 		case "smtp_password":
 			// Skip masked passwords
 			if s.Value == "********" {

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.84] - 2026-03-04
+
+### Fixed
+- Public interface checkbox now saves properly (added missing switch case in backend)
+- Fixed race condition in public dashboard loading (now waits for devices before loading data)
+- Fixed duplicate device fetch in bandwidth section
+
+### Changed
+- Public dashboard shows all device data together without waiting for dropdown
+
 ## [0.10.83] - 2026-03-04
 
 ### Changed
