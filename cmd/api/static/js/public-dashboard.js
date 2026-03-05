@@ -9,7 +9,7 @@
     var allInterfaces = {};
     var publicInterfaces = {};
     var currentIfaceKey = null;
-    var bandwidthChart = null;
+    var bandwidthCharts = {}; // Store chart instances per interface index
     var chartOptions = { view: 'rate', range: '1h' };
 
     function escapeHtml(str) {
@@ -293,6 +293,7 @@
         var viewSelect = document.getElementById('bandwidth-view-select');
         if (viewSelect) {
             viewSelect.onchange = function() {
+                destroyAllCharts();
                 chartOptions.view = this.value;
                 renderAllBandwidthCharts();
             };
@@ -301,12 +302,22 @@
         var rangeSelect = document.getElementById('bandwidth-range-select');
         if (rangeSelect) {
             rangeSelect.onchange = function() {
+                destroyAllCharts();
                 chartOptions.range = this.value;
                 renderAllBandwidthCharts();
             };
         }
 
         renderAllBandwidthCharts(pubIfaces);
+    }
+
+    function destroyAllCharts() {
+        for (var key in bandwidthCharts) {
+            if (bandwidthCharts[key]) {
+                bandwidthCharts[key].destroy();
+            }
+        }
+        bandwidthCharts = {};
     }
 
     function renderAllBandwidthCharts(pubIfaces) {
@@ -476,36 +487,46 @@
             });
         }
 
-        new Chart(ctx, {
-            type: 'line',
-            data: { labels: data.labels, datasets: datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { intersect: false, mode: 'index' },
-                plugins: { legend: { display: chartOptions.view === 'mix', labels: { color: '#fff' } } },
-                scales: {
-                    x: { display: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: 'rgba(255,255,255,0.6)', maxTicksLimit: 8 } },
-                    y: { 
-                        display: chartOptions.view !== 'total',
-                        position: 'left',
-                        grid: { color: 'rgba(255,255,255,0.1)' }, 
-                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return v + ' Mbps'; } },
-                        title: { display: chartOptions.view !== 'total', text: 'Mbps', color: 'rgba(255,255,255,0.6)' }
-                    },
-                    y1: {
-                        display: chartOptions.view === 'total' || chartOptions.view === 'mix',
-                        position: 'right',
-                        grid: { display: false },
-                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
-                            if (chartOptions.view === 'total') return formatBytes(v);
-                            return v.toFixed(2) + ' GB';
-                        }},
-                        title: { display: chartOptions.view === 'total' || chartOptions.view === 'mix', text: chartOptions.view === 'total' ? 'Bytes' : 'Total GB', color: 'rgba(255,255,255,0.6)' }
+        var chartKey = iface.deviceId + '-' + iface.name;
+        var existingChart = bandwidthCharts[chartKey];
+
+        if (existingChart) {
+            existingChart.data.labels = data.labels;
+            existingChart.data.datasets = datasets;
+            existingChart.update('none');
+        } else {
+            bandwidthCharts[chartKey] = new Chart(ctx, {
+                type: 'line',
+                data: { labels: data.labels, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 0 },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: { legend: { display: chartOptions.view === 'mix', labels: { color: '#fff' } } },
+                    scales: {
+                        x: { display: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: 'rgba(255,255,255,0.6)', maxTicksLimit: 8 } },
+                        y: { 
+                            display: chartOptions.view !== 'total',
+                            position: 'left',
+                            grid: { color: 'rgba(255,255,255,0.1)' }, 
+                            ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return v + ' Mbps'; } },
+                            title: { display: chartOptions.view !== 'total', text: 'Mbps', color: 'rgba(255,255,255,0.6)' }
+                        },
+                        y1: {
+                            display: chartOptions.view === 'total' || chartOptions.view === 'mix',
+                            position: 'right',
+                            grid: { display: false },
+                            ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
+                                if (chartOptions.view === 'total') return formatBytes(v);
+                                return v.toFixed(2) + ' GB';
+                            }},
+                            title: { display: chartOptions.view === 'total' || chartOptions.view === 'mix', text: chartOptions.view === 'total' ? 'Bytes' : 'Total GB', color: 'rgba(255,255,255,0.6)' }
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
     }
 
     function fetchAllVPN() {
