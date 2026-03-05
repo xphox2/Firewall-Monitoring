@@ -258,14 +258,14 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	if len(stats) < 2 {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
 			"labels":   []string{},
 			"rx_total": []float64{},
 			"tx_total": []float64{},
 			"rx_rate":  []float64{},
 			"tx_rate":  []float64{},
-			"total_rx": 0,
-			"total_tx": 0,
+			"total_rx": float64(0),
+			"total_tx": float64(0),
 			"view":     viewType,
 			"range":    rangeStr,
 		}))
@@ -345,14 +345,14 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		txRate = append(txRate, tRate)
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
 		"labels":   labels,
 		"rx_total": rxTotalVals,
 		"tx_total": txTotalVals,
 		"rx_rate":  rxRate,
 		"tx_rate":  txRate,
-		"total_rx": totalRx,
-		"total_tx": totalTx,
+		"total_rx": float64(totalRx),
+		"total_tx": float64(totalTx),
 		"view":     viewType,
 		"range":    rangeStr,
 	}))
