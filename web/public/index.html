@@ -47,7 +47,8 @@
 
         .chart-controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center; }
         .chart-controls label { font-size: 0.85rem; color: rgba(255,255,255,0.7); }
-        .chart-controls select { padding: 6px 12px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; color: #fff; font-size: 0.85rem; }
+        .chart-controls select { padding: 6px 12px; background: #1a1a2e; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; color: #fff; font-size: 0.85rem; }
+        .chart-controls select option { background: #1a1a2e; color: #fff; }
         .chart-container { position: relative; height: 300px; width: 100%; }
         .chart-card { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); }
         .chart-card h3 { font-size: 1rem; margin-bottom: 15px; color: #fff; }
@@ -56,6 +57,10 @@
         .chart-card .stat span { color: #00d4ff; font-weight: 600; }
         .chart-card .stat.rx span { color: #00ff88; }
         .chart-card .stat.tx span { color: #ff9500; }
+        .bandwidth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 20px; }
+        .chart-card.collapsed .chart-container { display: none; }
+        .chart-card .chart-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .chart-card .collapse-btn { background: none; border: none; color: #fff; cursor: pointer; font-size: 1.2rem; padding: 0 10px; }
 
         .vpn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; }
         .vpn-card { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); }
@@ -116,9 +121,7 @@
 
         <div class="section hidden" id="card-bandwidth">
             <h2>Bandwidth</h2>
-            <div class="chart-controls" id="bandwidth-controls" style="display:none;">
-                <label>Interface:</label>
-                <select id="bandwidth-interface-select"></select>
+            <div class="chart-controls" id="bandwidth-controls">
                 <label>View:</label>
                 <select id="bandwidth-view-select">
                     <option value="rate">Throughput (Mbps)</option>
@@ -136,7 +139,7 @@
                     <option value="7d">7 Days</option>
                 </select>
             </div>
-            <div id="bandwidth-charts">
+            <div class="bandwidth-grid" id="bandwidth-charts">
                 <div class="loading">Loading bandwidth data...</div>
             </div>
         </div>
