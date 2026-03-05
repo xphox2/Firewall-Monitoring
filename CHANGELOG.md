@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.81] - 2026-03-04
+
+### Changed
+- Simplified public dashboard interface selection - now "Show Public" checkbox directly on device detail page
+- Per-device interface selection stored as JSON: {"1":["wan1","wan2"],"2":["dmz"]}
+- Removed complex Settings page dropdowns - just check "Public" box on each interface
+
 ## [0.10.80] - 2026-03-04
 
 ### Added

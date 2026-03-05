@@ -11,8 +11,45 @@
     var ifaceCharts = {};
     var currentChartRange = '24h';
     var statusHistoryChart = null;
+    var publicInterfaces = {}; // {"iface1":true,"iface2":true}
 
     var deviceId = window.location.pathname.split('/').pop();
+
+    function loadPublicInterfaces() {
+        fetch('/admin/api/display-settings', { credentials: 'same-origin' })
+            .then(function(resp) { return resp.json(); })
+            .then(function(result) {
+                if (result && result.data && result.data.public_interfaces) {
+                    try {
+                        publicInterfaces = JSON.parse(result.data.public_interfaces);
+                        if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
+                    } catch(e) { publicInterfaces = {}; }
+                }
+            })['catch'](function() {});
+    }
+
+    function isPublicIface(iface) {
+        var list = publicInterfaces[deviceId] || [];
+        return list.indexOf(iface.name) !== -1;
+    }
+
+    function savePublicInterface(ifaceName, isPublic) {
+        if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
+        var idx = publicInterfaces[deviceId].indexOf(ifaceName);
+        if (isPublic && idx === -1) {
+            publicInterfaces[deviceId].push(ifaceName);
+        } else if (!isPublic && idx !== -1) {
+            publicInterfaces[deviceId].splice(idx, 1);
+        }
+        
+        var payload = [{ key: 'public_interfaces', value: JSON.stringify(publicInterfaces), category: 'display', type: 'string' }];
+        fetch('/admin/api/settings', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': AC.getCsrfToken() },
+            body: JSON.stringify(payload)
+        })['catch'](function() {});
+    }
 
     function loadDevice() {
         fetch('/admin/api/devices/' + deviceId + '/detail', { credentials: 'same-origin' })
@@ -308,6 +345,7 @@
                 '<td>' + ((iface.in_errors || 0) + (iface.out_errors || 0)) + '</td>' +
                 '<td>' + (iface.mtu || '-') + '</td>' +
                 '<td style="font-family:monospace;font-size:0.78rem">' + esc(iface.mac_address || '-') + '</td>' +
+                '<td><input type="checkbox" class="public-iface-check" data-iface="' + esc(iface.name || '') + '"' + (isPublicIface(iface) ? ' checked' : '') + '></td>' +
                 '</tr>';
 
             if (isExpanded) {
@@ -763,12 +801,20 @@
             loadInterfaceChart(parseInt(el.dataset.index, 10), el.dataset.range);
         }
     });
+    
+    AC.delegateEvent('change', {
+        'public-iface-check': function(el, e) {
+            e.stopPropagation();
+            savePublicInterface(el.dataset.iface, el.checked);
+        }
+    });
 
     // Auto-refresh every 60 seconds
     setInterval(loadDevice, 60000);
 
     // Initial load — wait for CSRF token fetch then load
     AC.fetchCsrfToken().then(function() {
+        loadPublicInterfaces();
         loadDevice();
     });
 })();

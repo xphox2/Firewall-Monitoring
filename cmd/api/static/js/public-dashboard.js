@@ -190,8 +190,13 @@
             return;
         }
         
-        var selectedIfaces = displaySettings['public_bandwidth_interfaces'];
-        var selectedArray = selectedIfaces ? selectedIfaces.split(',') : [];
+        // Get public interfaces for current device from JSON format: {"1":["wan1"],"2":["dmz"]}
+        var publicInterfaces = {};
+        try {
+            publicInterfaces = JSON.parse(displaySettings['public_interfaces'] || '{}');
+        } catch(e) { publicInterfaces = {}; }
+        var selectedArray = publicInterfaces[currentDeviceId] || [];
+        var showAllIfNothingSelected = selectedArray.length === 0;
         var ifacesToShow = selectedArray.length > 0 
             ? interfaces.filter(function(i) { return selectedArray.indexOf(i.name) !== -1 || selectedArray.indexOf('Interface ' + i.index) !== -1; })
             : interfaces;
@@ -217,8 +222,11 @@
             return;
         }
 
-        var selectedIfaces = displaySettings['public_bandwidth_interfaces'];
-        var selectedArray = selectedIfaces ? selectedIfaces.split(',') : [];
+        var publicInterfaces = {};
+        try {
+            publicInterfaces = JSON.parse(displaySettings['public_interfaces'] || '{}');
+        } catch(e) { publicInterfaces = {}; }
+        var selectedArray = publicInterfaces[currentDeviceId] || [];
         var ifacesToShow = selectedArray.length > 0 
             ? interfaces.filter(function(i) { return selectedArray.indexOf(i.name) !== -1 || selectedArray.indexOf('Interface ' + i.index) !== -1; })
             : interfaces.slice(0, 4);
