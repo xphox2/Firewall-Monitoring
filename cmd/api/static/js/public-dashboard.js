@@ -363,8 +363,8 @@
     function renderSingleBandwidthChart(data, iface, chartIdx) {
         var latestRx = (data.rx_rate && data.rx_rate.length > 0) ? data.rx_rate[data.rx_rate.length - 1] : 0;
         var latestTx = (data.tx_rate && data.tx_rate.length > 0) ? data.tx_rate[data.tx_rate.length - 1] : 0;
-        var totalRx = (data.rx_total && data.rx_total.length > 0) ? data.rx_total[data.rx_total.length - 1] : 0;
-        var totalTx = (data.tx_total && data.tx_total.length > 0) ? data.tx_total[data.tx_total.length - 1] : 0;
+        var totalRx = data.total_rx || 0;
+        var totalTx = data.total_tx || 0;
 
         var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
         var wanSpeed = device && device.wan_speed_mbps ? device.wan_speed_mbps : 1000;
@@ -449,11 +449,16 @@
             });
         }
         
-        // Total view shows cumulative bytes
+        // Total view shows cumulative bytes transferred during period
         if (chartOptions.view === 'total') {
+            var firstRx = data.rx_total.length > 0 ? data.rx_total[0] : 0;
+            var firstTx = data.tx_total.length > 0 ? data.tx_total[0] : 0;
+            // Convert to cumulative transferred (delta from first value)
+            var cumulativeRx = data.rx_total.map(function(v) { return Math.max(0, v - firstRx); });
+            var cumulativeTx = data.tx_total.map(function(v) { return Math.max(0, v - firstTx); });
             datasets.push({
-                label: 'RX (Bytes)',
-                data: data.rx_total,
+                label: 'RX Transferred',
+                data: cumulativeRx,
                 borderColor: '#00ff88',
                 backgroundColor: 'rgba(0, 255, 136, 0.1)',
                 fill: true,
@@ -461,8 +466,8 @@
                 pointRadius: 0
             });
             datasets.push({
-                label: 'TX (Bytes)',
-                data: data.tx_total,
+                label: 'TX Transferred',
+                data: cumulativeTx,
                 borderColor: '#ff9500',
                 backgroundColor: 'rgba(255, 149, 0, 0.1)',
                 fill: true,

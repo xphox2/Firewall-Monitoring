@@ -215,35 +215,43 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	var bucketExpr string
 	var hours int
 	var maxPoints int
+	var bucketLabel string // format for display
 
 	switch rangeStr {
 	case "5m":
 		hours = 5
-		bucketExpr = "strftime('%H:%M', timestamp)"
-		maxPoints = 60
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketLabel = "%H:%M"
+		maxPoints = 300 // 5 minutes of 1-minute intervals
 	case "15m":
 		hours = 15
-		bucketExpr = "strftime('%H:%M', timestamp)"
-		maxPoints = 60
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketLabel = "%H:%M"
+		maxPoints = 900 // 15 minutes
 	case "6h":
 		hours = 6
-		bucketExpr = "strftime('%H:%M', timestamp)"
-		maxPoints = 72
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketLabel = "%H:%M"
+		maxPoints = 360 // 6 hours of 1-minute intervals
 	case "24h":
 		hours = 24
-		bucketExpr = "strftime('%H:%M', timestamp)"
-		maxPoints = 144
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketLabel = "%H:00"
+		maxPoints = 24 * 4 // 24 hours of 15-minute buckets
 	case "7d":
 		hours = 168
-		bucketExpr = "strftime('%m-%d %H:00', timestamp)"
-		maxPoints = 168
+		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketLabel = "%m-%d %H:00"
+		maxPoints = 168 * 4 // 168 hours of hourly buckets
 	case "90d":
 		hours = 2160
-		bucketExpr = "strftime('%m-%d', timestamp)"
+		bucketExpr = "strftime('%Y-%m-%d', timestamp)"
+		bucketLabel = "%m-%d"
 		maxPoints = 90
 	default: // 1h
 		hours = 1
-		bucketExpr = "strftime('%H:%M', timestamp)"
+		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketLabel = "%H:%M"
 		maxPoints = 60
 	}
 
@@ -273,11 +281,41 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		return
 	}
 
+	// Format labels for display
 	labels := make([]string, 0, len(rows))
+	for _, r := range rows {
+		t, err := time.Parse("2006-01-02 15:04", r.Bucket)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", r.Bucket)
+		}
+		if err == nil {
+			labels = append(labels, t.Format(bucketLabel))
+		} else {
+			labels = append(labels, r.Bucket)
+		}
+	}
+
 	rxTotal := make([]float64, 0, len(rows))
 	txTotal := make([]float64, 0, len(rows))
 	rxRate := make([]float64, 0, len(rows))
 	txRate := make([]float64, 0, len(rows))
+
+	// For total transferred, calculate delta between first and last bucket
+	var totalRx, totalTx float64
+	if len(rows) > 1 {
+		totalRx = rows[len(rows)-1].InBytes - rows[0].InBytes
+		totalTx = rows[len(rows)-1].OutBytes - rows[0].OutBytes
+		// Handle counter rollover (if negative, use last value)
+		if totalRx < 0 {
+			totalRx = rows[len(rows)-1].InBytes
+		}
+		if totalTx < 0 {
+			totalTx = rows[len(rows)-1].OutBytes
+		}
+	} else if len(rows) == 1 {
+		totalRx = rows[0].InBytes
+		totalTx = rows[0].OutBytes
+	}
 
 	for i, r := range rows {
 		labels = append(labels, r.Bucket)
@@ -312,12 +350,16 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		txRate = append(txRate, tRate)
 	}
 
+	// For chart display, use cumulative counter values
+	// For stats display, use the calculated totals
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"labels":   labels,
 		"rx_total": rxTotal,
 		"tx_total": txTotal,
 		"rx_rate":  rxRate,
 		"tx_rate":  txRate,
+		"total_rx": totalRx,
+		"total_tx": totalTx,
 		"view":     viewType,
 		"range":    rangeStr,
 	}))
