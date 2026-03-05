@@ -14,6 +14,9 @@
     var publicInterfaces = {}; // {"iface1":true,"iface2":true}
 
     var deviceId = window.location.pathname.split('/').pop();
+    if (!deviceId || deviceId === 'detail') {
+        deviceId = null;
+    }
 
     window.togglePublicIface = function(ifaceName, isPublic) {
         if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
@@ -57,30 +60,6 @@
     function isPublicIface(iface) {
         var list = publicInterfaces[deviceId] || [];
         return list.indexOf(iface.name) !== -1;
-    }
-
-    function savePublicInterface(ifaceName, isPublic) {
-        if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
-        var idx = publicInterfaces[deviceId].indexOf(ifaceName);
-        if (isPublic && idx === -1) {
-            publicInterfaces[deviceId].push(ifaceName);
-        } else if (!isPublic && idx !== -1) {
-            publicInterfaces[deviceId].splice(idx, 1);
-        }
-        
-        var payload = [{ key: 'public_interfaces', value: JSON.stringify(publicInterfaces), category: 'display', type: 'string' }];
-        fetch('/admin/api/settings', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': AC.getCsrfToken() },
-            body: JSON.stringify(payload)
-        }).then(function(resp) {
-            if (!resp.ok) {
-                console.error('Failed to save public interface settings');
-            }
-        })['catch'](function(err) { 
-            console.error('Error saving public interface:', err); 
-        });
     }
 
     function loadDevice() {
@@ -751,7 +730,7 @@
     }
 
     function formatBytes(bytes) {
-        if (!bytes || bytes === 0) return '0 B';
+        if (bytes == null || bytes === 0) return '0 B';
         var units = ['B', 'KB', 'MB', 'GB', 'TB'];
         var i = 0;
         var val = bytes;
