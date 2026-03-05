@@ -399,6 +399,7 @@
 
         var datasets = [];
         
+        // Rate view and Mix view show throughput (Mbps)
         if (chartOptions.view === 'rate' || chartOptions.view === 'mix') {
             datasets.push({
                 label: 'RX (Mbps)',
@@ -407,7 +408,8 @@
                 backgroundColor: 'rgba(0, 255, 136, 0.1)',
                 fill: true,
                 tension: 0.4,
-                pointRadius: 0
+                pointRadius: 0,
+                yAxisID: 'y'
             });
             datasets.push({
                 label: 'TX (Mbps)',
@@ -416,10 +418,38 @@
                 backgroundColor: 'rgba(255, 149, 0, 0.1)',
                 fill: true,
                 tension: 0.4,
-                pointRadius: 0
+                pointRadius: 0,
+                yAxisID: 'y'
             });
         }
         
+        // Mix view also shows total bytes on secondary axis
+        if (chartOptions.view === 'mix') {
+            datasets.push({
+                label: 'RX Total (GB)',
+                data: data.rx_total.map(function(v) { return v / 1024 / 1024 / 1024; }),
+                borderColor: '#00cc66',
+                backgroundColor: 'transparent',
+                borderDash: [5, 5],
+                fill: false,
+                tension: 0.4,
+                pointRadius: 0,
+                yAxisID: 'y1'
+            });
+            datasets.push({
+                label: 'TX Total (GB)',
+                data: data.tx_total.map(function(v) { return v / 1024 / 1024 / 1024; }),
+                borderColor: '#cc7700',
+                backgroundColor: 'transparent',
+                borderDash: [5, 5],
+                fill: false,
+                tension: 0.4,
+                pointRadius: 0,
+                yAxisID: 'y1'
+            });
+        }
+        
+        // Total view shows cumulative bytes
         if (chartOptions.view === 'total') {
             datasets.push({
                 label: 'RX (Bytes)',
@@ -453,14 +483,20 @@
                     x: { display: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: 'rgba(255,255,255,0.6)', maxTicksLimit: 8 } },
                     y: { 
                         display: chartOptions.view !== 'total',
+                        position: 'left',
                         grid: { color: 'rgba(255,255,255,0.1)' }, 
-                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return v + ' Mbps'; } }
+                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return v + ' Mbps'; } },
+                        title: { display: chartOptions.view !== 'total', text: 'Mbps', color: 'rgba(255,255,255,0.6)' }
                     },
                     y1: {
-                        display: chartOptions.view === 'total',
+                        display: chartOptions.view === 'total' || chartOptions.view === 'mix',
                         position: 'right',
-                        grid: { color: 'rgba(255,255,255,0.1)' },
-                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return formatBytes(v); } }
+                        grid: { display: false },
+                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
+                            if (chartOptions.view === 'total') return formatBytes(v);
+                            return v.toFixed(2) + ' GB';
+                        }},
+                        title: { display: chartOptions.view === 'total' || chartOptions.view === 'mix', text: chartOptions.view === 'total' ? 'Bytes' : 'Total GB', color: 'rgba(255,255,255,0.6)' }
                     }
                 }
             }

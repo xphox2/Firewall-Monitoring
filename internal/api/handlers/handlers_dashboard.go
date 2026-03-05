@@ -215,52 +215,45 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	var bucketExpr string
 	var hours int
 	var maxPoints int
-	var bucketSeconds int // seconds per bucket for rate calculation
 
 	switch rangeStr {
 	case "5m":
 		hours = 5
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 60
-		bucketSeconds = 60
 	case "15m":
 		hours = 15
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 60
-		bucketSeconds = 60
 	case "6h":
 		hours = 6
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 72
-		bucketSeconds = 60
 	case "24h":
 		hours = 24
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 144
-		bucketSeconds = 60
 	case "7d":
 		hours = 168
 		bucketExpr = "strftime('%m-%d %H:00', timestamp)"
 		maxPoints = 168
-		bucketSeconds = 3600
 	case "90d":
 		hours = 2160
 		bucketExpr = "strftime('%m-%d', timestamp)"
 		maxPoints = 90
-		bucketSeconds = 86400
 	default: // 1h
 		hours = 1
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 60
-		bucketSeconds = 60
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
+	// Use MAX to get counter value at end of each bucket period
 	var rows []bucketResult
 	err = h.db.Gorm().Model(&models.InterfaceStats{}).
 		Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
-		Select(fmt.Sprintf("%s as bucket, SUM(in_bytes) as in_bytes, SUM(out_bytes) as out_bytes", bucketExpr)).
+		Select(fmt.Sprintf("%s as bucket, MAX(in_bytes) as in_bytes, MAX(out_bytes) as out_bytes", bucketExpr)).
 		Group("bucket").Order("bucket ASC").Limit(maxPoints).Scan(&rows).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))
@@ -286,17 +279,34 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	rxRate := make([]float64, 0, len(rows))
 	txRate := make([]float64, 0, len(rows))
 
-	for _, r := range rows {
+	for i, r := range rows {
 		labels = append(labels, r.Bucket)
 		rxTotal = append(rxTotal, r.InBytes)
 		txTotal = append(txTotal, r.OutBytes)
 
-		// Calculate average rate for this bucket period
-		// SUM(bytes) / seconds_in_bucket * 8 bits/byte / 1,000,000 = Mbps
+		// Calculate rate from delta between consecutive buckets
+		// MAX gives us the counter value at end of each bucket period
 		var rRate, tRate float64
-		if bucketSeconds > 0 {
-			rRate = (r.InBytes * 8) / float64(bucketSeconds) / 1000000
-			tRate = (r.OutBytes * 8) / float64(bucketSeconds) / 1000000
+		if i > 0 {
+			prev := rows[i-1]
+			deltaBytesR := r.InBytes - prev.InBytes
+			deltaBytesT := r.OutBytes - prev.OutBytes
+
+			// Determine time delta based on range
+			var bucketSeconds float64 = 60 // default for minute-level buckets
+			if rangeStr == "7d" {
+				bucketSeconds = 3600
+			} else if rangeStr == "90d" {
+				bucketSeconds = 86400
+			}
+
+			// Convert to Mbps: bytes * 8 bits/byte / 1,000,000 / seconds
+			if deltaBytesR >= 0 && bucketSeconds > 0 {
+				rRate = (deltaBytesR * 8) / bucketSeconds / 1000000
+			}
+			if deltaBytesT >= 0 && bucketSeconds > 0 {
+				tRate = (deltaBytesT * 8) / bucketSeconds / 1000000
+			}
 		}
 		rxRate = append(rxRate, rRate)
 		txRate = append(txRate, tRate)
