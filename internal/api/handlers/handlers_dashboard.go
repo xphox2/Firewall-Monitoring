@@ -259,8 +259,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	if len(rows) < 2 {
-		c.JSON(http.StatusOK, gin.H{
-			"success":  true,
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"labels":   []string{},
 			"rx_total": []float64{},
 			"tx_total": []float64{},
@@ -268,7 +267,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 			"tx_rate":  []float64{},
 			"view":     viewType,
 			"range":    rangeStr,
-		})
+		}))
 		return
 	}
 
@@ -314,8 +313,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		txRate = append(txRate, tRate)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"labels":   labels,
 		"rx_total": rxTotal,
 		"tx_total": txTotal,
@@ -323,7 +321,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		"tx_rate":  txRate,
 		"view":     viewType,
 		"range":    rangeStr,
-	})
+	}))
 }
 
 func (h *Handler) GetPublicVPN(c *gin.Context) {
