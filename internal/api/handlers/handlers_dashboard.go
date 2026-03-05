@@ -295,8 +295,8 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		}
 	}
 
-	rxTotal := make([]float64, 0, len(rows))
-	txTotal := make([]float64, 0, len(rows))
+	rxTotalVals := make([]float64, 0, len(rows))
+	txTotalVals := make([]float64, 0, len(rows))
 	rxRate := make([]float64, 0, len(rows))
 	txRate := make([]float64, 0, len(rows))
 
@@ -318,9 +318,8 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	for i, r := range rows {
-		labels = append(labels, r.Bucket)
-		rxTotal = append(rxTotal, r.InBytes)
-		txTotal = append(txTotal, r.OutBytes)
+		rxTotalVals = append(rxTotalVals, r.InBytes)
+		txTotalVals = append(txTotalVals, r.OutBytes)
 
 		// Calculate rate from delta between consecutive buckets
 		// MAX gives us the counter value at end of each bucket period
@@ -354,8 +353,8 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	// For stats display, use the calculated totals
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"labels":   labels,
-		"rx_total": rxTotal,
-		"tx_total": txTotal,
+		"rx_total": rxTotalVals,
+		"tx_total": txTotalVals,
 		"rx_rate":  rxRate,
 		"tx_rate":  txRate,
 		"total_rx": totalRx,
