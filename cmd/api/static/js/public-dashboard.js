@@ -372,20 +372,26 @@
     }
 
     function renderSingleBandwidthChart(data, iface, chartIdx) {
-        var latestRx = (data.rx_rate && data.rx_rate.length > 0) ? data.rx_rate[data.rx_rate.length - 1] : 0;
-        var latestTx = (data.tx_rate && data.tx_rate.length > 0) ? data.tx_rate[data.tx_rate.length - 1] : 0;
+        // Ensure arrays exist
+        var rxRateArr = Array.isArray(data.rx_rate) ? data.rx_rate : [];
+        var txRateArr = Array.isArray(data.tx_rate) ? data.tx_rate : [];
+        var rxTotalArr = Array.isArray(data.rx_total) ? data.rx_total : [];
+        var txTotalArr = Array.isArray(data.tx_total) ? data.tx_total : [];
+        
+        var latestRx = rxRateArr.length > 0 ? rxRateArr[rxRateArr.length - 1] : 0;
+        var latestTx = txRateArr.length > 0 ? txRateArr[txRateArr.length - 1] : 0;
         
         // Calculate totals from cumulative counter values (last - first)
         var totalRx = 0;
         var totalTx = 0;
-        if (data.rx_total && data.rx_total.length > 1) {
-            var firstRx = data.rx_total[0];
-            var lastRx = data.rx_total[data.rx_total.length - 1];
-            var firstTx = data.tx_total[0];
-            var lastTx = data.tx_total[data.tx_total.length - 1];
+        if (rxTotalArr.length > 1 && txTotalArr.length > 1) {
+            var firstRx = Number(rxTotalArr[0]) || 0;
+            var lastRx = Number(rxTotalArr[rxTotalArr.length - 1]) || 0;
+            var firstTx = Number(txTotalArr[0]) || 0;
+            var lastTx = Number(txTotalArr[txTotalArr.length - 1]) || 0;
             totalRx = lastRx - firstRx;
             totalTx = lastTx - firstTx;
-            if (totalRx < 0) totalRx = lastRx; // counter rollover
+            if (totalRx < 0) totalRx = lastRx;
             if (totalTx < 0) totalTx = lastTx;
         }
 
