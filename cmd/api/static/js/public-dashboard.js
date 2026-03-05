@@ -386,13 +386,13 @@
         var totalTx = 0;
         if (rxTotalArr.length > 1 && txTotalArr.length > 1) {
             var firstRx = Number(rxTotalArr[0]) || 0;
-            var lastRx = Number(rxTotalArr[rxTotalArr.length - 1]) || 0;
-            var firstTx = Number(txTotalArr[0]) || 0;
-            var lastTx = Number(txTotalArr[txTotalArr.length - 1]) || 0;
-            totalRx = lastRx - firstRx;
-            totalTx = lastTx - firstTx;
-            if (totalRx < 0) totalRx = lastRx;
-            if (totalTx < 0) totalTx = lastTx;
+            var lastRxVal = Number(rxTotalArr[rxTotalArr.length - 1]) || 0;
+            var firstTxVal = Number(txTotalArr[0]) || 0;
+            var lastTxVal = Number(txTotalArr[txTotalArr.length - 1]) || 0;
+            totalRx = lastRxVal - firstRx;
+            totalTx = lastTxVal - firstTxVal;
+            if (totalRx < 0) totalRx = lastRxVal;
+            if (totalTx < 0) totalTx = lastTxVal;
         }
 
         var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
@@ -404,15 +404,9 @@
             var rxPercent = usePercentage ? ((latestRx / wanSpeed) * 100).toFixed(1) : null;
             var txPercent = usePercentage ? ((latestTx / wanSpeed) * 100).toFixed(1) : null;
 
-            // Get totals directly from the last values in the arrays
-            var displayTotalRx = 0;
-            var displayTotalTx = 0;
-            if (rxTotalArr.length > 0) {
-                displayTotalRx = Number(rxTotalArr[rxTotalArr.length - 1]) - Number(rxTotalArr[0]);
-                displayTotalTx = Number(txTotalArr[txTotalArr.length - 1]) - Number(txTotalArr[0]);
-                if (displayTotalRx < 0) displayTotalRx = Number(rxTotalArr[rxTotalArr.length - 1]);
-                if (displayTotalTx < 0) displayTotalTx = Number(txTotalArr[txTotalArr.length - 1]);
-            }
+            // Use pre-calculated totals
+            var displayTotalRx = totalRx;
+            var displayTotalTx = totalTx;
 
             if (chartOptions.view === 'rate') {
                 var html = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span>';
