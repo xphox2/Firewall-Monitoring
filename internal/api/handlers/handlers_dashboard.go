@@ -214,36 +214,44 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	var bucketExpr string
 	var hours int
 	var maxPoints int
+	var bucketSeconds int // seconds per bucket for rate calculation
 
 	switch rangeStr {
 	case "5m":
 		hours = 5
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 60
+		bucketSeconds = 60
 	case "15m":
 		hours = 15
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 60
+		bucketSeconds = 60
 	case "6h":
 		hours = 6
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 72
+		bucketSeconds = 60
 	case "24h":
 		hours = 24
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 144
+		bucketSeconds = 60
 	case "7d":
 		hours = 168
 		bucketExpr = "strftime('%m-%d %H:00', timestamp)"
 		maxPoints = 168
+		bucketSeconds = 3600
 	case "90d":
 		hours = 2160
 		bucketExpr = "strftime('%m-%d', timestamp)"
 		maxPoints = 90
+		bucketSeconds = 86400
 	default: // 1h
 		hours = 1
 		bucketExpr = "strftime('%H:%M', timestamp)"
 		maxPoints = 60
+		bucketSeconds = 60
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
@@ -277,37 +285,17 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	rxRate := make([]float64, 0, len(rows))
 	txRate := make([]float64, 0, len(rows))
 
-	for i, r := range rows {
+	for _, r := range rows {
 		labels = append(labels, r.Bucket)
 		rxTotal = append(rxTotal, r.InBytes)
 		txTotal = append(txTotal, r.OutBytes)
 
+		// Calculate average rate for this bucket period
+		// SUM(bytes) / seconds_in_bucket * 8 bits/byte / 1,000,000 = Mbps
 		var rRate, tRate float64
-		if i > 0 {
-			prev := rows[i-1]
-			deltaBytesR := r.InBytes - prev.InBytes
-			deltaBytesT := r.OutBytes - prev.OutBytes
-
-			var prevTime, currTime time.Time
-			var parseErr error
-			if rangeStr == "90d" {
-				prevTime, parseErr = time.Parse("01-02", prev.Bucket)
-				currTime, parseErr = time.Parse("01-02", r.Bucket)
-			} else if rangeStr == "7d" {
-				prevTime, parseErr = time.Parse("01-02 15:04", prev.Bucket)
-				currTime, parseErr = time.Parse("01-02 15:04", r.Bucket)
-			} else {
-				prevTime, parseErr = time.Parse("15:04", prev.Bucket)
-				currTime, parseErr = time.Parse("15:04", r.Bucket)
-			}
-
-			if parseErr == nil {
-				deltaTime := currTime.Sub(prevTime).Seconds()
-				if deltaTime > 0 {
-					rRate = (deltaBytesR * 8) / deltaTime / 1000000
-					tRate = (deltaBytesT * 8) / deltaTime / 1000000
-				}
-			}
+		if bucketSeconds > 0 {
+			rRate = (r.InBytes * 8) / float64(bucketSeconds) / 1000000
+			tRate = (r.OutBytes * 8) / float64(bucketSeconds) / 1000000
 		}
 		rxRate = append(rxRate, rRate)
 		txRate = append(txRate, tRate)
