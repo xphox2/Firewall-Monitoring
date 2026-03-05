@@ -247,8 +247,8 @@
             };
         }
 
-                currentIfaceKey = pubIfaces[0].deviceId + '|' + pubIfaces[0].name;
-                loadBandwidthChart();
+        currentIfaceKey = pubIfaces[0].deviceId + '|' + pubIfaces[0].name;
+        loadBandwidthChart();
     }
 
     function loadBandwidthChart() {
@@ -303,7 +303,9 @@
             '<div class="chart-container"><canvas id="bandwidth-chart-canvas"></canvas></div>' +
             '</div>';
 
-        var ctx = document.getElementById('bandwidth-chart-canvas').getContext('2d');
+        var canvasEl = document.getElementById('bandwidth-chart-canvas');
+        if (!canvasEl) return;
+        var ctx = canvasEl.getContext('2d');
         
         if (bandwidthChart) {
             bandwidthChart.destroy();
@@ -429,8 +431,9 @@
 
     function renderConnections(connections) {
         var container = document.getElementById('connections-map');
+        if (!container) return;
         if (!connections || connections.length === 0) {
-            container.innerHTML = '<div class="loading">No connections configured</div>';
+            if (container) container.innerHTML = '<div class="loading">No connections configured</div>';
             return;
         }
 
