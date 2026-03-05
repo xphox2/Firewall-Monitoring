@@ -362,6 +362,7 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 }
 
 func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
+	isAdmin := c.GetBool("is_admin")
 	defaults := map[string]string{
 		"public_show_hostname":         "true",
 		"public_show_uptime":           "true",
@@ -371,6 +372,8 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 		"public_show_interfaces":       "true",
 		"public_show_bandwidth":        "false",
 		"public_bandwidth_interfaces":  "",
+		"public_bandwidth_layout":      "grid",
+		"public_bandwidth_height":      "400",
 		"public_show_vpn":              "false",
 		"public_vpn_tunnels":           "",
 		"public_show_connections":      "false",
@@ -380,7 +383,8 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	}
 
 	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(defaults))
+		resp := gin.H{"success": true, "data": defaults, "is_admin": isAdmin}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 
@@ -395,5 +399,6 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 		result[s.Key] = s.Value
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(result))
+	resp := gin.H{"success": true, "data": result, "is_admin": isAdmin}
+	c.JSON(http.StatusOK, resp)
 }

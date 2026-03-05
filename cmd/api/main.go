@@ -164,6 +164,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		public := api.Group("/public")
 		public.Use(middleware.PublicRateLimiter())
+		public.Use(middleware.CheckAdminAuth(authManager))
 		{
 			public.GET("/devices", handler.GetPublicDevices)
 			public.GET("/dashboard", handler.GetPublicDashboard)

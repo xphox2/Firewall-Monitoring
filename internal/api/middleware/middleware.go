@@ -130,6 +130,31 @@ func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
+		c.Set("is_admin", true)
+		c.Next()
+	}
+}
+
+// CheckAdminAuth checks if user is admin but doesn't require authentication
+func CheckAdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token, err := c.Cookie("auth_token")
+		if err != nil {
+			c.Set("is_admin", false)
+			c.Next()
+			return
+		}
+
+		claims, err := authManager.ValidateToken(token)
+		if err != nil {
+			c.Set("is_admin", false)
+			c.Next()
+			return
+		}
+
+		c.Set("username", claims.Username)
+		c.Set("user_id", claims.UserID)
+		c.Set("is_admin", true)
 		c.Next()
 	}
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -203,60 +204,118 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	rangeStr := c.DefaultQuery("range", "1h")
-	validRanges := map[string]int{"1m": 1, "5m": 5, "15m": 15, "1h": 60, "6h": 360, "24h": 1440, "7d": 10080, "90d": 129600}
-	hours, ok := validRanges[rangeStr]
-	if !ok {
-		hours = 60
+
+	type bucketResult struct {
+		Bucket   string
+		InBytes  float64
+		OutBytes float64
 	}
 
-	since := time.Now().Add(-time.Duration(hours) * time.Minute)
+	var bucketExpr string
+	var hours int
+	var maxPoints int
 
-	var stats []models.InterfaceStats
-	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, since).
-		Order("timestamp ASC").Limit(2000).Find(&stats).Error
+	switch rangeStr {
+	case "5m":
+		hours = 5
+		bucketExpr = "strftime('%H:%M', timestamp)"
+		maxPoints = 60
+	case "15m":
+		hours = 15
+		bucketExpr = "strftime('%H:%M', timestamp)"
+		maxPoints = 60
+	case "6h":
+		hours = 6
+		bucketExpr = "strftime('%H:%M', timestamp)"
+		maxPoints = 72
+	case "24h":
+		hours = 24
+		bucketExpr = "strftime('%H:%M', timestamp)"
+		maxPoints = 144
+	case "7d":
+		hours = 168
+		bucketExpr = "strftime('%m-%d %H:00', timestamp)"
+		maxPoints = 168
+	case "90d":
+		hours = 2160
+		bucketExpr = "strftime('%m-%d', timestamp)"
+		maxPoints = 90
+	default: // 1h
+		hours = 1
+		bucketExpr = "strftime('%H:%M', timestamp)"
+		maxPoints = 60
+	}
+
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	var rows []bucketResult
+	err = h.db.Gorm().Model(&models.InterfaceStats{}).
+		Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
+		Select(fmt.Sprintf("%s as bucket, SUM(in_bytes) as in_bytes, SUM(out_bytes) as out_bytes", bucketExpr)).
+		Group("bucket").Order("bucket ASC").Limit(maxPoints).Scan(&rows).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))
 		return
 	}
 
-	if len(stats) < 2 {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	if len(rows) < 2 {
+		c.JSON(http.StatusOK, gin.H{
+			"success":  true,
 			"labels":   []string{},
 			"rx_total": []float64{},
 			"tx_total": []float64{},
 			"rx_rate":  []float64{},
 			"tx_rate":  []float64{},
-		}))
+			"view":     viewType,
+			"range":    rangeStr,
+		})
 		return
 	}
 
-	labels := make([]string, 0, len(stats))
-	rxTotal := make([]float64, 0, len(stats))
-	txTotal := make([]float64, 0, len(stats))
-	rxRate := make([]float64, 0, len(stats))
-	txRate := make([]float64, 0, len(stats))
+	labels := make([]string, 0, len(rows))
+	rxTotal := make([]float64, 0, len(rows))
+	txTotal := make([]float64, 0, len(rows))
+	rxRate := make([]float64, 0, len(rows))
+	txRate := make([]float64, 0, len(rows))
 
-	for i, s := range stats {
-		labels = append(labels, s.Timestamp.Format("15:04"))
-		rxTotal = append(rxTotal, float64(s.InBytes))
-		txTotal = append(txTotal, float64(s.OutBytes))
+	for i, r := range rows {
+		labels = append(labels, r.Bucket)
+		rxTotal = append(rxTotal, r.InBytes)
+		txTotal = append(txTotal, r.OutBytes)
 
 		var rRate, tRate float64
 		if i > 0 {
-			prev := stats[i-1]
-			deltaBytesR := float64(s.InBytes) - float64(prev.InBytes)
-			deltaBytesT := float64(s.OutBytes) - float64(prev.OutBytes)
-			deltaTime := s.Timestamp.Sub(prev.Timestamp).Seconds()
-			if deltaTime > 0 {
-				rRate = (deltaBytesR * 8) / deltaTime / 1000000
-				tRate = (deltaBytesT * 8) / deltaTime / 1000000
+			prev := rows[i-1]
+			deltaBytesR := r.InBytes - prev.InBytes
+			deltaBytesT := r.OutBytes - prev.OutBytes
+
+			var prevTime, currTime time.Time
+			var parseErr error
+			if rangeStr == "90d" {
+				prevTime, parseErr = time.Parse("01-02", prev.Bucket)
+				currTime, parseErr = time.Parse("01-02", r.Bucket)
+			} else if rangeStr == "7d" {
+				prevTime, parseErr = time.Parse("01-02 15:04", prev.Bucket)
+				currTime, parseErr = time.Parse("01-02 15:04", r.Bucket)
+			} else {
+				prevTime, parseErr = time.Parse("15:04", prev.Bucket)
+				currTime, parseErr = time.Parse("15:04", r.Bucket)
+			}
+
+			if parseErr == nil {
+				deltaTime := currTime.Sub(prevTime).Seconds()
+				if deltaTime > 0 {
+					rRate = (deltaBytesR * 8) / deltaTime / 1000000
+					tRate = (deltaBytesT * 8) / deltaTime / 1000000
+				}
 			}
 		}
 		rxRate = append(rxRate, rRate)
 		txRate = append(txRate, tRate)
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
 		"labels":   labels,
 		"rx_total": rxTotal,
 		"tx_total": txTotal,
@@ -264,7 +323,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		"tx_rate":  txRate,
 		"view":     viewType,
 		"range":    rangeStr,
-	}))
+	})
 }
 
 func (h *Handler) GetPublicVPN(c *gin.Context) {

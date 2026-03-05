@@ -69,6 +69,79 @@
         refreshTimer = setInterval(function() { 
             loadAllData(); 
         }, interval * 1000);
+
+        applyBandwidthLayout();
+        setupAdminControls();
+    }
+
+    function applyBandwidthLayout() {
+        var layout = displaySettings['public_bandwidth_layout'] || 'grid';
+        var height = parseInt(displaySettings['public_bandwidth_height']) || 400;
+        
+        var grid = document.getElementById('bandwidth-charts');
+        if (grid) {
+            grid.classList.remove('layout-grid', 'layout-full');
+            grid.classList.add('layout-' + layout);
+        }
+
+        var containers = document.querySelectorAll('.chart-container');
+        containers.forEach(function(c) {
+            c.style.height = height + 'px';
+        });
+    }
+
+    function setupAdminControls() {
+        var isAdmin = displaySettings['is_admin'] === true || displaySettings['is_admin'] === 'true';
+        var adminControls = document.getElementById('admin-bandwidth-controls');
+        
+        if (!isAdmin || !adminControls) return;
+
+        adminControls.classList.remove('hidden');
+
+        var layoutSelect = document.getElementById('admin-layout-select');
+        var heightSelect = document.getElementById('admin-height-select');
+        var saveBtn = document.getElementById('save-layout-btn');
+        var saveStatus = document.getElementById('layout-save-status');
+
+        if (layoutSelect) {
+            layoutSelect.value = displaySettings['public_bandwidth_layout'] || 'grid';
+        }
+        if (heightSelect) {
+            heightSelect.value = displaySettings['public_bandwidth_height'] || '400';
+        }
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function() {
+                var newLayout = layoutSelect.value;
+                var newHeight = heightSelect.value;
+
+                fetch(API_BASE + '/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        settings: [
+                            { key: 'public_bandwidth_layout', value: newLayout, category: 'display', type: 'string' },
+                            { key: 'public_bandwidth_height', value: newHeight, category: 'display', type: 'string' }
+                        ]
+                    })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data && data.success) {
+                        displaySettings['public_bandwidth_layout'] = newLayout;
+                        displaySettings['public_bandwidth_height'] = newHeight;
+                        applyBandwidthLayout();
+                        saveStatus.classList.remove('hidden');
+                        setTimeout(function() {
+                            saveStatus.classList.add('hidden');
+                        }, 2000);
+                    }
+                })['catch'](function(e) {
+                    console.error('Error saving layout:', e);
+                });
+            });
+        }
     }
 
     function loadAllData() {

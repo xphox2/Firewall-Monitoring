@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.87] - 2026-03-04
+
+### Fixed
+- Fixed bandwidth chart ranges (now uses proper time-bucketed aggregation)
+- Removed 1-minute range option (minimum is now 5 minutes)
+
+### Added
+- Public dashboard bandwidth layout options (grid/full width)
+- Public dashboard chart height configuration
+- Admin controls on public page to customize bandwidth layout
+- Admin detection middleware for public API
+
 ## [0.10.86] - 2026-03-04
 
 ### Fixed
