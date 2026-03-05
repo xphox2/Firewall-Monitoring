@@ -490,16 +490,11 @@
             });
         }
         
-        // Total view shows cumulative bytes transferred during period
+        // Total view - use same data as mix but on primary axis
         if (chartOptions.view === 'total') {
-            var firstRx = rxTotalArr.length > 0 ? rxTotalArr[0] : 0;
-            var firstTx = txTotalArr.length > 0 ? txTotalArr[0] : 0;
-            // Convert to cumulative transferred (delta from first value)
-            var cumulativeRx = rxTotalArr.map(function(v) { return Math.max(0, v - firstRx); });
-            var cumulativeTx = txTotalArr.map(function(v) { return Math.max(0, v - firstTx); });
             datasets.push({
-                label: 'RX Transferred',
-                data: cumulativeRx,
+                label: 'RX Total (Bytes)',
+                data: rxTotalArr,
                 borderColor: '#00ff88',
                 backgroundColor: 'rgba(0, 255, 136, 0.1)',
                 fill: true,
@@ -507,8 +502,8 @@
                 pointRadius: 0
             });
             datasets.push({
-                label: 'TX Transferred',
-                data: cumulativeTx,
+                label: 'TX Total (Bytes)',
+                data: txTotalArr,
                 borderColor: '#ff9500',
                 backgroundColor: 'rgba(255, 149, 0, 0.1)',
                 fill: true,
@@ -516,7 +511,7 @@
                 pointRadius: 0
             });
         }
-
+        
         var chartKey = iface.deviceId + '-' + iface.name;
         var existingChart = bandwidthCharts[chartKey];
 
@@ -533,25 +528,27 @@
                     maintainAspectRatio: false,
                     animation: { duration: 0 },
                     interaction: { intersect: false, mode: 'index' },
-                    plugins: { legend: { display: chartOptions.view === 'mix', labels: { color: '#fff' } } },
+                    plugins: { legend: { display: chartOptions.view === 'mix' || chartOptions.view === 'total', labels: { color: '#fff' } } },
                     scales: {
                         x: { display: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: 'rgba(255,255,255,0.6)', maxTicksLimit: 8 } },
                         y: { 
-                            display: chartOptions.view !== 'total',
+                            display: chartOptions.view !== 'mix',
                             position: 'left',
                             grid: { color: 'rgba(255,255,255,0.1)' }, 
-                            ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return v + ' Mbps'; } },
-                            title: { display: chartOptions.view !== 'total', text: 'Mbps', color: 'rgba(255,255,255,0.6)' }
+                            ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
+                                if (chartOptions.view === 'total') return formatBytes(v);
+                                return v + ' Mbps'; 
+                            }},
+                            title: { display: chartOptions.view !== 'mix', text: chartOptions.view === 'total' ? 'Bytes' : 'Mbps', color: 'rgba(255,255,255,0.6)' }
                         },
                         y1: {
-                            display: chartOptions.view === 'total' || chartOptions.view === 'mix',
+                            display: chartOptions.view === 'mix',
                             position: 'right',
                             grid: { display: false },
                             ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
-                                if (chartOptions.view === 'total') return formatBytes(v);
                                 return v.toFixed(2) + ' GB';
                             }},
-                            title: { display: chartOptions.view === 'total' || chartOptions.view === 'mix', text: chartOptions.view === 'total' ? 'Bytes' : 'Total GB', color: 'rgba(255,255,255,0.6)' }
+                            title: { display: chartOptions.view === 'mix', text: 'Total GB', color: 'rgba(255,255,255,0.6)' }
                         }
                     }
                 }
