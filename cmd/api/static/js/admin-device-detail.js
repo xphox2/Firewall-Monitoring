@@ -345,7 +345,7 @@
                 '<td>' + ((iface.in_errors || 0) + (iface.out_errors || 0)) + '</td>' +
                 '<td>' + (iface.mtu || '-') + '</td>' +
                 '<td style="font-family:monospace;font-size:0.78rem">' + esc(iface.mac_address || '-') + '</td>' +
-                '<td><input type="checkbox" class="public-iface-check" data-iface="' + esc(iface.name || '') + '"' + (isPublicIface(iface) ? ' checked' : '') + '></td>' +
+                '<td><input type="checkbox" class="public-iface-check" data-iface="' + esc(iface.name || '') + '"' + (isPublicIface(iface) ? ' checked' : '') + ' onclick="event.stopPropagation()"></td>' +
                 '</tr>';
 
             if (isExpanded) {
