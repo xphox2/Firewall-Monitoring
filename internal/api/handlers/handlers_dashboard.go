@@ -217,33 +217,33 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	switch rangeStr {
 	case "5m":
 		hours = 5
-		maxPoints = 300
+		maxPoints = 10 // 5 min of data at 60s intervals
 	case "15m":
 		hours = 15
-		maxPoints = 900
+		maxPoints = 20 // 15 min of data
 	case "6h":
 		hours = 6
-		maxPoints = 360
+		maxPoints = 360 // 6 hours at 1 point per minute
 	case "24h":
 		hours = 24
-		maxPoints = 96
+		maxPoints = 96 // 24 hours at 15-min intervals
 	case "7d":
 		hours = 168
-		maxPoints = 168
+		maxPoints = 168 // 168 hours at hourly intervals
 	case "90d":
 		hours = 2160
-		maxPoints = 90
+		maxPoints = 90 // 90 days
 	default: // 1h
 		hours = 1
-		maxPoints = 60
+		maxPoints = 60 // 1 hour at 1 point per minute
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	// Get raw data points and aggregate in Go
+	// Get raw data points
 	var stats []models.InterfaceStats
 	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
-		Order("timestamp ASC").Limit(maxPoints).Find(&stats).Error
+		Order("timestamp ASC").Find(&stats).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))
 		return
@@ -264,33 +264,22 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		return
 	}
 
-	// Aggregate data into buckets
-	type dataPoint struct {
-		timestamp time.Time
-		inBytes   uint64
-		outBytes  uint64
-	}
-
-	// Sample data points evenly
-	var sampled []dataPoint
-	step := len(stats) / maxPoints
-	if step < 1 {
-		step = 1
-	}
-	for i := 0; i < len(stats); i += step {
-		sampled = append(sampled, dataPoint{
-			timestamp: stats[i].Timestamp,
-			inBytes:   stats[i].InBytes,
-			outBytes:  stats[i].OutBytes,
-		})
-	}
-	// Always include the last point
-	if len(sampled) == 0 || sampled[len(sampled)-1].timestamp != stats[len(stats)-1].Timestamp {
-		sampled = append(sampled, dataPoint{
-			timestamp: stats[len(stats)-1].Timestamp,
-			inBytes:   stats[len(stats)-1].InBytes,
-			outBytes:  stats[len(stats)-1].OutBytes,
-		})
+	// Downsample if too many points
+	var sampled []models.InterfaceStats
+	if len(stats) > maxPoints {
+		step := len(stats) / maxPoints
+		for i := 0; i < len(stats); i += step {
+			sampled = append(sampled, stats[i])
+			if len(sampled) >= maxPoints {
+				break
+			}
+		}
+		// Always include last point
+		if len(sampled) == 0 || sampled[len(sampled)-1].Timestamp != stats[len(stats)-1].Timestamp {
+			sampled = append(sampled, stats[len(stats)-1])
+		}
+	} else {
+		sampled = stats
 	}
 
 	labels := make([]string, 0, len(sampled))
@@ -304,27 +293,27 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	if len(sampled) > 1 {
 		last := sampled[len(sampled)-1]
 		first := sampled[0]
-		totalRx = float64(last.inBytes) - float64(first.inBytes)
-		totalTx = float64(last.outBytes) - float64(first.outBytes)
+		totalRx = float64(last.InBytes) - float64(first.InBytes)
+		totalTx = float64(last.OutBytes) - float64(first.OutBytes)
 		if totalRx < 0 {
-			totalRx = float64(last.inBytes)
+			totalRx = float64(last.InBytes)
 		}
 		if totalTx < 0 {
-			totalTx = float64(last.outBytes)
+			totalTx = float64(last.OutBytes)
 		}
 	}
 
 	for i, p := range sampled {
-		labels = append(labels, p.timestamp.Format("15:04"))
-		rxTotalVals = append(rxTotalVals, float64(p.inBytes))
-		txTotalVals = append(txTotalVals, float64(p.outBytes))
+		labels = append(labels, p.Timestamp.Format("15:04"))
+		rxTotalVals = append(rxTotalVals, float64(p.InBytes))
+		txTotalVals = append(txTotalVals, float64(p.OutBytes))
 
 		var rRate, tRate float64
 		if i > 0 {
 			prev := sampled[i-1]
-			deltaBytesR := float64(p.inBytes) - float64(prev.inBytes)
-			deltaBytesT := float64(p.outBytes) - float64(prev.outBytes)
-			deltaTime := p.timestamp.Sub(prev.timestamp).Seconds()
+			deltaBytesR := float64(p.InBytes) - float64(prev.InBytes)
+			deltaBytesT := float64(p.OutBytes) - float64(prev.OutBytes)
+			deltaTime := p.Timestamp.Sub(prev.Timestamp).Seconds()
 
 			if deltaTime > 0 && deltaBytesR >= 0 {
 				rRate = (deltaBytesR * 8) / deltaTime / 1000000
@@ -337,8 +326,6 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		txRate = append(txRate, tRate)
 	}
 
-	// For chart display, use cumulative counter values
-	// For stats display, use the calculated totals
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"labels":   labels,
 		"rx_total": rxTotalVals,
