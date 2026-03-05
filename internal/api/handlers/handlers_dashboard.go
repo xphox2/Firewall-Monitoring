@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -212,137 +211,126 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		OutBytes float64
 	}
 
-	var bucketExpr string
 	var hours int
 	var maxPoints int
-	var bucketLabel string // format for display
 
 	switch rangeStr {
 	case "5m":
 		hours = 5
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
-		bucketLabel = "%H:%M"
-		maxPoints = 300 // 5 minutes of 1-minute intervals
+		maxPoints = 300
 	case "15m":
 		hours = 15
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
-		bucketLabel = "%H:%M"
-		maxPoints = 900 // 15 minutes
+		maxPoints = 900
 	case "6h":
 		hours = 6
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
-		bucketLabel = "%H:%M"
-		maxPoints = 360 // 6 hours of 1-minute intervals
+		maxPoints = 360
 	case "24h":
 		hours = 24
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
-		bucketLabel = "%H:00"
-		maxPoints = 24 * 4 // 24 hours of 15-minute buckets
+		maxPoints = 96
 	case "7d":
 		hours = 168
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
-		bucketLabel = "%m-%d %H:00"
-		maxPoints = 168 * 4 // 168 hours of hourly buckets
+		maxPoints = 168
 	case "90d":
 		hours = 2160
-		bucketExpr = "strftime('%Y-%m-%d', timestamp)"
-		bucketLabel = "%m-%d"
 		maxPoints = 90
 	default: // 1h
 		hours = 1
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
-		bucketLabel = "%H:%M"
 		maxPoints = 60
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	// Use MAX to get counter value at end of each bucket period
-	var rows []bucketResult
-	err = h.db.Gorm().Model(&models.InterfaceStats{}).
-		Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
-		Select(fmt.Sprintf("%s as bucket, MAX(in_bytes) as in_bytes, MAX(out_bytes) as out_bytes", bucketExpr)).
-		Group("bucket").Order("bucket ASC").Limit(maxPoints).Scan(&rows).Error
+	// Get raw data points and aggregate in Go
+	var stats []models.InterfaceStats
+	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
+		Order("timestamp ASC").Limit(maxPoints).Find(&stats).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))
 		return
 	}
 
-	if len(rows) < 2 {
+	if len(stats) < 2 {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 			"labels":   []string{},
 			"rx_total": []float64{},
 			"tx_total": []float64{},
 			"rx_rate":  []float64{},
 			"tx_rate":  []float64{},
+			"total_rx": 0,
+			"total_tx": 0,
 			"view":     viewType,
 			"range":    rangeStr,
 		}))
 		return
 	}
 
-	// Format labels for display
-	labels := make([]string, 0, len(rows))
-	for _, r := range rows {
-		t, err := time.Parse("2006-01-02 15:04", r.Bucket)
-		if err != nil {
-			t, err = time.Parse("2006-01-02", r.Bucket)
-		}
-		if err == nil {
-			labels = append(labels, t.Format(bucketLabel))
-		} else {
-			labels = append(labels, r.Bucket)
-		}
+	// Aggregate data into buckets
+	type dataPoint struct {
+		timestamp time.Time
+		inBytes   uint64
+		outBytes  uint64
 	}
 
-	rxTotalVals := make([]float64, 0, len(rows))
-	txTotalVals := make([]float64, 0, len(rows))
-	rxRate := make([]float64, 0, len(rows))
-	txRate := make([]float64, 0, len(rows))
+	// Sample data points evenly
+	var sampled []dataPoint
+	step := len(stats) / maxPoints
+	if step < 1 {
+		step = 1
+	}
+	for i := 0; i < len(stats); i += step {
+		sampled = append(sampled, dataPoint{
+			timestamp: stats[i].Timestamp,
+			inBytes:   stats[i].InBytes,
+			outBytes:  stats[i].OutBytes,
+		})
+	}
+	// Always include the last point
+	if len(sampled) == 0 || sampled[len(sampled)-1].timestamp != stats[len(stats)-1].Timestamp {
+		sampled = append(sampled, dataPoint{
+			timestamp: stats[len(stats)-1].Timestamp,
+			inBytes:   stats[len(stats)-1].InBytes,
+			outBytes:  stats[len(stats)-1].OutBytes,
+		})
+	}
 
-	// For total transferred, calculate delta between first and last bucket
+	labels := make([]string, 0, len(sampled))
+	rxTotalVals := make([]float64, 0, len(sampled))
+	txTotalVals := make([]float64, 0, len(sampled))
+	rxRate := make([]float64, 0, len(sampled))
+	txRate := make([]float64, 0, len(sampled))
+
+	// Calculate totals
 	var totalRx, totalTx float64
-	if len(rows) > 1 {
-		totalRx = rows[len(rows)-1].InBytes - rows[0].InBytes
-		totalTx = rows[len(rows)-1].OutBytes - rows[0].OutBytes
-		// Handle counter rollover (if negative, use last value)
+	if len(sampled) > 1 {
+		last := sampled[len(sampled)-1]
+		first := sampled[0]
+		totalRx = float64(last.inBytes) - float64(first.inBytes)
+		totalTx = float64(last.outBytes) - float64(first.outBytes)
 		if totalRx < 0 {
-			totalRx = rows[len(rows)-1].InBytes
+			totalRx = float64(last.inBytes)
 		}
 		if totalTx < 0 {
-			totalTx = rows[len(rows)-1].OutBytes
+			totalTx = float64(last.outBytes)
 		}
-	} else if len(rows) == 1 {
-		totalRx = rows[0].InBytes
-		totalTx = rows[0].OutBytes
 	}
 
-	for i, r := range rows {
-		rxTotalVals = append(rxTotalVals, r.InBytes)
-		txTotalVals = append(txTotalVals, r.OutBytes)
+	for i, p := range sampled {
+		labels = append(labels, p.timestamp.Format("15:04"))
+		rxTotalVals = append(rxTotalVals, float64(p.inBytes))
+		txTotalVals = append(txTotalVals, float64(p.outBytes))
 
-		// Calculate rate from delta between consecutive buckets
-		// MAX gives us the counter value at end of each bucket period
 		var rRate, tRate float64
 		if i > 0 {
-			prev := rows[i-1]
-			deltaBytesR := r.InBytes - prev.InBytes
-			deltaBytesT := r.OutBytes - prev.OutBytes
+			prev := sampled[i-1]
+			deltaBytesR := float64(p.inBytes) - float64(prev.inBytes)
+			deltaBytesT := float64(p.outBytes) - float64(prev.outBytes)
+			deltaTime := p.timestamp.Sub(prev.timestamp).Seconds()
 
-			// Determine time delta based on range
-			var bucketSeconds float64 = 60 // default for minute-level buckets
-			if rangeStr == "7d" {
-				bucketSeconds = 3600
-			} else if rangeStr == "90d" {
-				bucketSeconds = 86400
+			if deltaTime > 0 && deltaBytesR >= 0 {
+				rRate = (deltaBytesR * 8) / deltaTime / 1000000
 			}
-
-			// Convert to Mbps: bytes * 8 bits/byte / 1,000,000 / seconds
-			if deltaBytesR >= 0 && bucketSeconds > 0 {
-				rRate = (deltaBytesR * 8) / bucketSeconds / 1000000
-			}
-			if deltaBytesT >= 0 && bucketSeconds > 0 {
-				tRate = (deltaBytesT * 8) / bucketSeconds / 1000000
+			if deltaTime > 0 && deltaBytesT >= 0 {
+				tRate = (deltaBytesT * 8) / deltaTime / 1000000
 			}
 		}
 		rxRate = append(rxRate, rRate)
