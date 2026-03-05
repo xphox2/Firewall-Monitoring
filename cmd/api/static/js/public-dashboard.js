@@ -389,19 +389,19 @@
         var latestRx = rxRateArr.length > 0 ? rxRateArr[rxRateArr.length - 1] : 0;
         var latestTx = txRateArr.length > 0 ? txRateArr[txRateArr.length - 1] : 0;
         
-        // Calculate totals from cumulative counter values (last - first)
-        var totalRx = 0;
-        var totalTx = 0;
+        // Calculate totals (delta = last - first)
+        var totalDeltaRx = 0;
+        var totalDeltaTx = 0;
         if (rxTotalArr.length > 1 && txTotalArr.length > 1) {
-            var firstRx = rxTotalArr[0];
-            var lastRxVal = rxTotalArr[rxTotalArr.length - 1];
-            var firstTxVal = txTotalArr[0];
-            var lastTxVal = txTotalArr[txTotalArr.length - 1];
-            totalRx = lastRxVal - firstRx;
-            totalTx = lastTxVal - firstTxVal;
-            if (totalRx < 0) totalRx = lastRxVal;
-            if (totalTx < 0) totalTx = lastTxVal;
+            totalDeltaRx = rxTotalArr[rxTotalArr.length - 1] - rxTotalArr[0];
+            totalDeltaTx = txTotalArr[txTotalArr.length - 1] - txTotalArr[0];
+            if (totalDeltaRx < 0) totalDeltaRx = rxTotalArr[rxTotalArr.length - 1];
+            if (totalDeltaTx < 0) totalDeltaTx = txTotalArr[txTotalArr.length - 1];
         }
+
+        // Convert to cumulative transferred for chart display
+        var cumulativeRx = rxTotalArr.map(function(v, i) { return Math.max(0, v - rxTotalArr[0]); });
+        var cumulativeTx = txTotalArr.map(function(v, i) { return Math.max(0, v - txTotalArr[0]); });
 
         var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
         var wanSpeed = device && device.wan_speed_mbps ? device.wan_speed_mbps : 1000;
@@ -412,9 +412,9 @@
             var rxPercent = usePercentage ? ((latestRx / wanSpeed) * 100).toFixed(1) : null;
             var txPercent = usePercentage ? ((latestTx / wanSpeed) * 100).toFixed(1) : null;
 
-            // Force to number
-            var displayTotalRx = Number(totalRx) || 0;
-            var displayTotalTx = Number(totalTx) || 0;
+            // Use delta totals
+            var displayTotalRx = Number(totalDeltaRx) || 0;
+            var displayTotalTx = Number(totalDeltaTx) || 0;
 
             if (chartOptions.view === 'rate') {
                 var html = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span>';
@@ -468,7 +468,7 @@
         if (chartOptions.view === 'mix') {
             datasets.push({
                 label: 'RX Total (GB)',
-                data: rxTotalArr.map(function(v) { return v / 1024 / 1024 / 1024; }),
+                data: cumulativeRx.map(function(v) { return v / 1024 / 1024 / 1024; }),
                 borderColor: '#00cc66',
                 backgroundColor: 'transparent',
                 borderDash: [5, 5],
@@ -479,7 +479,7 @@
             });
             datasets.push({
                 label: 'TX Total (GB)',
-                data: txTotalArr.map(function(v) { return v / 1024 / 1024 / 1024; }),
+                data: cumulativeTx.map(function(v) { return v / 1024 / 1024 / 1024; }),
                 borderColor: '#cc7700',
                 backgroundColor: 'transparent',
                 borderDash: [5, 5],
@@ -494,7 +494,7 @@
         if (chartOptions.view === 'total') {
             datasets.push({
                 label: 'RX Total (Bytes)',
-                data: rxTotalArr,
+                data: cumulativeRx,
                 borderColor: '#00ff88',
                 backgroundColor: 'rgba(0, 255, 136, 0.1)',
                 fill: true,
@@ -503,7 +503,7 @@
             });
             datasets.push({
                 label: 'TX Total (Bytes)',
-                data: txTotalArr,
+                data: cumulativeTx,
                 borderColor: '#ff9500',
                 backgroundColor: 'rgba(255, 149, 0, 0.1)',
                 fill: true,
