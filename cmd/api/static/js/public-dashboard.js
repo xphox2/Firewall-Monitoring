@@ -27,7 +27,7 @@
     });
 
     function fetchDisplaySettings() {
-        fetch(API_BASE + '/public/display-settings')
+        return fetch(API_BASE + '/public/display-settings')
             .then(function(response) { if (!response.ok) return; return response.json(); })
             .then(function(data) {
                 if (data && data.success && data.data) {
