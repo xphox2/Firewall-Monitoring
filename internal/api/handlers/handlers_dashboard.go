@@ -216,29 +216,37 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 
 	switch rangeStr {
 	case "5m":
-		hours = 5
-		maxPoints = 10 // 5 min of data at 60s intervals
+		hours = 0 // special case - use minutes
+		maxPoints = 10
 	case "15m":
-		hours = 15
-		maxPoints = 20 // 15 min of data
+		hours = 0
+		maxPoints = 20
 	case "6h":
 		hours = 6
-		maxPoints = 360 // 6 hours at 1 point per minute
+		maxPoints = 360
 	case "24h":
 		hours = 24
-		maxPoints = 96 // 24 hours at 15-min intervals
+		maxPoints = 96
 	case "7d":
 		hours = 168
-		maxPoints = 168 // 168 hours at hourly intervals
+		maxPoints = 168
 	case "90d":
 		hours = 2160
-		maxPoints = 90 // 90 days
+		maxPoints = 90
 	default: // 1h
 		hours = 1
-		maxPoints = 60 // 1 hour at 1 point per minute
+		maxPoints = 60
 	}
 
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	// Calculate cutoff time
+	var cutoff time.Time
+	if rangeStr == "5m" {
+		cutoff = time.Now().Add(-5 * time.Minute)
+	} else if rangeStr == "15m" {
+		cutoff = time.Now().Add(-15 * time.Minute)
+	} else {
+		cutoff = time.Now().Add(-time.Duration(hours) * time.Hour)
+	}
 
 	// Get raw data points
 	var stats []models.InterfaceStats
@@ -304,7 +312,14 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	for i, p := range sampled {
-		labels = append(labels, p.Timestamp.Format("15:04"))
+		// Use appropriate time format based on range
+		var labelFormat string
+		if rangeStr == "5m" || rangeStr == "15m" {
+			labelFormat = "15:04:05" // include seconds for short ranges
+		} else {
+			labelFormat = "15:04"
+		}
+		labels = append(labels, p.Timestamp.Format(labelFormat))
 		rxTotalVals = append(rxTotalVals, float64(p.InBytes))
 		txTotalVals = append(txTotalVals, float64(p.OutBytes))
 
