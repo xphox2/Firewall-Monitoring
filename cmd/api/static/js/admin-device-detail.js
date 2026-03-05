@@ -15,6 +15,30 @@
 
     var deviceId = window.location.pathname.split('/').pop();
 
+    window.togglePublicIface = function(ifaceName, isPublic) {
+        if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
+        var idx = publicInterfaces[deviceId].indexOf(ifaceName);
+        if (isPublic && idx === -1) {
+            publicInterfaces[deviceId].push(ifaceName);
+        } else if (!isPublic && idx !== -1) {
+            publicInterfaces[deviceId].splice(idx, 1);
+        }
+        
+        var payload = [{ key: 'public_interfaces', value: JSON.stringify(publicInterfaces), category: 'display', type: 'string' }];
+        fetch('/admin/api/settings', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': AC.getCsrfToken() },
+            body: JSON.stringify(payload)
+        }).then(function(resp) {
+            if (resp.ok) {
+                console.log('Saved public interface:', ifaceName, isPublic);
+            } else {
+                console.error('Failed to save');
+            }
+        });
+    };
+
     function loadPublicInterfaces() {
         fetch('/admin/api/display-settings', { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
@@ -351,7 +375,7 @@
                 '<td>' + ((iface.in_errors || 0) + (iface.out_errors || 0)) + '</td>' +
                 '<td>' + (iface.mtu || '-') + '</td>' +
                 '<td style="font-family:monospace;font-size:0.78rem">' + esc(iface.mac_address || '-') + '</td>' +
-                '<td><input type="checkbox" class="public-iface-check" data-iface="' + esc(iface.name || '') + '"' + (isPublicIface(iface) ? ' checked' : '') + ' onclick="event.stopPropagation()"></td>' +
+                '<td><input type="checkbox" ' + (isPublicIface(iface) ? 'checked ' : '') + 'onclick="window.togglePublicIface(\'' + esc(iface.name) + '\', this.checked)"></td>' +
                 '</tr>';
 
             if (isExpanded) {
@@ -805,13 +829,6 @@
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
             loadInterfaceChart(parseInt(el.dataset.index, 10), el.dataset.range);
-        }
-    });
-    
-    AC.delegateEvent('change', {
-        'public-iface-check': function(el, e) {
-            e.stopPropagation();
-            savePublicInterface(el.dataset.iface, el.checked);
         }
     });
 
