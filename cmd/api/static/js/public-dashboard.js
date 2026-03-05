@@ -436,7 +436,7 @@
         if (chartOptions.view === 'rate' || chartOptions.view === 'mix') {
             datasets.push({
                 label: 'RX (Mbps)',
-                data: data.rx_rate,
+                data: rxRateArr,
                 borderColor: '#00ff88',
                 backgroundColor: 'rgba(0, 255, 136, 0.1)',
                 fill: true,
@@ -446,7 +446,7 @@
             });
             datasets.push({
                 label: 'TX (Mbps)',
-                data: data.tx_rate,
+                data: txRateArr,
                 borderColor: '#ff9500',
                 backgroundColor: 'rgba(255, 149, 0, 0.1)',
                 fill: true,
@@ -460,7 +460,7 @@
         if (chartOptions.view === 'mix') {
             datasets.push({
                 label: 'RX Total (GB)',
-                data: data.rx_total.map(function(v) { return v / 1024 / 1024 / 1024; }),
+                data: rxTotalArr.map(function(v) { return v / 1024 / 1024 / 1024; }),
                 borderColor: '#00cc66',
                 backgroundColor: 'transparent',
                 borderDash: [5, 5],
@@ -471,7 +471,7 @@
             });
             datasets.push({
                 label: 'TX Total (GB)',
-                data: data.tx_total.map(function(v) { return v / 1024 / 1024 / 1024; }),
+                data: txTotalArr.map(function(v) { return v / 1024 / 1024 / 1024; }),
                 borderColor: '#cc7700',
                 backgroundColor: 'transparent',
                 borderDash: [5, 5],
@@ -484,11 +484,11 @@
         
         // Total view shows cumulative bytes transferred during period
         if (chartOptions.view === 'total') {
-            var firstRx = data.rx_total.length > 0 ? data.rx_total[0] : 0;
-            var firstTx = data.tx_total.length > 0 ? data.tx_total[0] : 0;
+            var firstRx = rxTotalArr.length > 0 ? rxTotalArr[0] : 0;
+            var firstTx = txTotalArr.length > 0 ? txTotalArr[0] : 0;
             // Convert to cumulative transferred (delta from first value)
-            var cumulativeRx = data.rx_total.map(function(v) { return Math.max(0, v - firstRx); });
-            var cumulativeTx = data.tx_total.map(function(v) { return Math.max(0, v - firstTx); });
+            var cumulativeRx = rxTotalArr.map(function(v) { return Math.max(0, v - firstRx); });
+            var cumulativeTx = txTotalArr.map(function(v) { return Math.max(0, v - firstTx); });
             datasets.push({
                 label: 'RX Transferred',
                 data: cumulativeRx,
