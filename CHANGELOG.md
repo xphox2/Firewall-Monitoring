@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.82] - 2026-03-04
+
+### Added
+- Fancy interface bandwidth charts on public dashboard with Chart.js
+- View types: Throughput (Mbps), Total Transferred, Mix (Both)
+- Time ranges: 1m, 5m, 15m, 1h, 6h, 24h, 7d
+- Interface selector to switch between public interfaces
+
 ## [0.10.81] - 2026-03-04
 
 ### Changed

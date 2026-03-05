@@ -168,6 +168,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			public.GET("/devices", handler.GetPublicDevices)
 			public.GET("/dashboard", handler.GetPublicDashboard)
 			public.GET("/interfaces", handler.GetPublicInterfaces)
+			public.GET("/interfaces/chart", handler.GetPublicInterfaceChart)
 			public.GET("/vpn", handler.GetPublicVPN)
 			public.GET("/connections", handler.GetPublicConnections)
 			public.GET("/display-settings", handler.GetPublicDisplaySettings)

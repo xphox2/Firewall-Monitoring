@@ -166,6 +166,95 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No interface data available"))
 }
 
+func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+
+	deviceID, hasDevice := h.resolvePublicDeviceID(c)
+	if !hasDevice {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Device ID required"))
+		return
+	}
+
+	ifIndexStr := c.Query("index")
+	ifIndex, err := strconv.Atoi(ifIndexStr)
+	if err != nil || ifIndex < 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid interface index"))
+		return
+	}
+
+	viewType := c.DefaultQuery("view", "rate")
+	if viewType != "total" && viewType != "rate" && viewType != "mix" {
+		viewType = "rate"
+	}
+
+	rangeStr := c.DefaultQuery("range", "1h")
+	validRanges := map[string]int{"1m": 1, "5m": 5, "15m": 15, "1h": 60, "6h": 360, "24h": 1440, "7d": 10080}
+	hours, ok := validRanges[rangeStr]
+	if !ok {
+		hours = 60
+	}
+
+	since := time.Now().Add(-time.Duration(hours) * time.Minute)
+
+	var stats []models.InterfaceStats
+	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, since).
+		Order("timestamp ASC").Limit(2000).Find(&stats).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))
+		return
+	}
+
+	if len(stats) < 2 {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"labels":   []string{},
+			"rx_total": []float64{},
+			"tx_total": []float64{},
+			"rx_rate":  []float64{},
+			"tx_rate":  []float64{},
+		}))
+		return
+	}
+
+	labels := make([]string, 0, len(stats))
+	rxTotal := make([]float64, 0, len(stats))
+	txTotal := make([]float64, 0, len(stats))
+	rxRate := make([]float64, 0, len(stats))
+	txRate := make([]float64, 0, len(stats))
+
+	for i, s := range stats {
+		labels = append(labels, s.Timestamp.Format("15:04"))
+		rxTotal = append(rxTotal, float64(s.InBytes))
+		txTotal = append(txTotal, float64(s.OutBytes))
+
+		var rRate, tRate float64
+		if i > 0 {
+			prev := stats[i-1]
+			deltaBytesR := float64(s.InBytes) - float64(prev.InBytes)
+			deltaBytesT := float64(s.OutBytes) - float64(prev.OutBytes)
+			deltaTime := s.Timestamp.Sub(prev.Timestamp).Seconds()
+			if deltaTime > 0 {
+				rRate = (deltaBytesR * 8) / deltaTime / 1000000
+				tRate = (deltaBytesT * 8) / deltaTime / 1000000
+			}
+		}
+		rxRate = append(rxRate, rRate)
+		txRate = append(txRate, tRate)
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"labels":   labels,
+		"rx_total": rxTotal,
+		"tx_total": txTotal,
+		"rx_rate":  rxRate,
+		"tx_rate":  txRate,
+		"view":     viewType,
+		"range":    rangeStr,
+	}))
+}
+
 func (h *Handler) GetPublicVPN(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

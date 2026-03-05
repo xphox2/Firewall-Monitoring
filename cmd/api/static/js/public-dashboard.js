@@ -6,7 +6,13 @@
     var refreshTimer;
     var displaySettings = {};
     var currentDeviceId = null;
-    var interfaceHistory = {};
+    var publicInterfaces = [];
+    var currentIfaceIndex = null;
+    var bandwidthChart = null;
+    var chartOptions = {
+        view: 'rate',
+        range: '1h'
+    };
 
     function escapeHtml(str) {
         if (!str) return '';
@@ -217,44 +223,202 @@
 
     function updateBandwidthCharts(interfaces) {
         var container = document.getElementById('bandwidth-charts');
+        var controls = document.getElementById('bandwidth-controls');
+        
         if (!interfaces || interfaces.length === 0) {
             container.innerHTML = '<div class="loading">No interface data</div>';
             return;
         }
 
-        var publicInterfaces = {};
+        var pubInterfaces = {};
         try {
-            publicInterfaces = JSON.parse(displaySettings['public_interfaces'] || '{}');
-        } catch(e) { publicInterfaces = {}; }
-        var selectedArray = publicInterfaces[currentDeviceId] || [];
-        var ifacesToShow = selectedArray.length > 0 
-            ? interfaces.filter(function(i) { return selectedArray.indexOf(i.name) !== -1 || selectedArray.indexOf('Interface ' + i.index) !== -1; })
-            : interfaces.slice(0, 4);
+            pubInterfaces = JSON.parse(displaySettings['public_interfaces'] || '{}');
+        } catch(e) { pubInterfaces = {}; }
+        
+        publicInterfaces = pubInterfaces[currentDeviceId] || [];
+        if (publicInterfaces.length === 0) {
+            publicInterfaces = interfaces.slice(0, 3).map(function(i) { return i.name; });
+        }
 
-        container.innerHTML = ifacesToShow.map(function(iface) {
-            var rxPercent = Math.min(100, (iface.in_bytes / (iface.speed || 1000000000)) * 100);
-            var txPercent = Math.min(100, (iface.out_bytes / (iface.speed || 1000000000)) * 100);
-            return '<div class="bandwidth-chart">' +
-                '<div class="chart-header">' +
-                '<div class="interface-name">' + escapeHtml(iface.name || 'Interface ' + iface.index) + '</div>' +
-                '<div class="bandwidth-values">' +
-                '<span>&darr; ' + formatBytes(iface.in_bytes) + '/s</span>' +
-                '<span>&uarr; ' + formatBytes(iface.out_bytes) + '/s</span>' +
-                '</div></div>' +
-                '<div class="bandwidth-bar-container">' +
-                '<div class="bandwidth-bar-wrapper">' +
-                '<label>RX</label>' +
-                '<div class="bandwidth-bar">' +
-                '<div class="bar-fill rx" style="width: ' + rxPercent + '%"></div>' +
-                '<span class="bar-value">' + rxPercent.toFixed(1) + '%</span>' +
-                '</div></div>' +
-                '<div class="bandwidth-bar-wrapper">' +
-                '<label>TX</label>' +
-                '<div class="bandwidth-bar">' +
-                '<div class="bar-fill tx" style="width: ' + txPercent + '%"></div>' +
-                '<span class="bar-value">' + txPercent.toFixed(1) + '%</span>' +
-                '</div></div></div></div>';
+        controls.style.display = 'flex';
+        var select = document.getElementById('bandwidth-interface-select');
+        select.innerHTML = publicInterfaces.map(function(name) {
+            return '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
         }).join('');
+
+        if (!currentIfaceIndex || publicInterfaces.indexOf(currentIfaceIndex) === -1) {
+            currentIfaceIndex = publicInterfaces[0];
+        }
+        select.value = currentIfaceIndex;
+
+        select.onchange = function() {
+            currentIfaceIndex = this.value;
+            fetchBandwidthChartData();
+        };
+
+        document.getElementById('bandwidth-view-select').onchange = function() {
+            chartOptions.view = this.value;
+            fetchBandwidthChartData();
+        };
+
+        document.getElementById('bandwidth-range-select').onchange = function() {
+            chartOptions.range = this.value;
+            fetchBandwidthChartData();
+        };
+
+        fetchBandwidthChartData();
+    }
+
+    function fetchBandwidthChartData() {
+        var iface = publicInterfaces.find(function(i) { return i === currentIfaceIndex; });
+        if (!iface || !currentDeviceId) return;
+
+        var allInterfaces = document.getElementById('interfaces').querySelectorAll('.interface-card');
+        var ifaceIndex = null;
+        
+        fetch(API_BASE + '/public/interfaces?device_id=' + currentDeviceId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data || !data.success) return;
+                var found = data.data.find(function(i) { return i.name === currentIfaceIndex; });
+                if (found) {
+                    loadBandwidthChart(found.index);
+                }
+            })['catch'](function() {});
+    }
+
+    function loadBandwidthChart(ifaceIndex) {
+        var url = API_BASE + '/public/interfaces/chart?device_id=' + currentDeviceId + '&index=' + ifaceIndex + '&view=' + chartOptions.view + '&range=' + chartOptions.range;
+        
+        fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data || !data.success) return;
+                renderBandwidthChart(data.data, ifaceIndex);
+            })['catch'](function() {});
+    }
+
+    function renderBandwidthChart(data, ifaceIndex) {
+        var container = document.getElementById('bandwidth-charts');
+        
+        var latestRx = data.rx_rate ? data.rx_rate[data.rx_rate.length - 1] : 0;
+        var latestTx = data.tx_rate ? data.tx_rate[data.tx_rate.length - 1] : 0;
+        var totalRx = data.rx_total ? data.rx_total[data.rx_total.length - 1] : 0;
+        var totalTx = data.tx_total ? data.tx_total[data.tx_total.length - 1] : 0;
+
+        var statsHtml = '';
+        if (chartOptions.view === 'rate') {
+            statsHtml = '<div class="stat rx"><span>&darr; ' + latestRx.toFixed(2) + ' Mbps</span></div>' +
+                        '<div class="stat tx"><span>&uarr; ' + latestTx.toFixed(2) + ' Mbps</span></div>';
+        } else if (chartOptions.view === 'total') {
+            statsHtml = '<div class="stat rx"><span>&darr; ' + formatBytes(totalRx) + '</span></div>' +
+                        '<div class="stat tx"><span>&uarr; ' + formatBytes(totalTx) + '</span></div>';
+        } else {
+            statsHtml = '<div class="stat rx"><span>&darr; ' + latestRx.toFixed(2) + ' Mbps</span> (' + formatBytes(totalRx) + ')</div>' +
+                        '<div class="stat tx"><span>&uarr; ' + latestTx.toFixed(2) + ' Mbps</span> (' + formatBytes(totalTx) + ')</div>';
+        }
+
+        container.innerHTML = '<div class="chart-card">' +
+            '<h3>' + escapeHtml(currentIfaceIndex) + '</h3>' +
+            '<div class="current-stats">' + statsHtml + '</div>' +
+            '<div class="chart-container"><canvas id="bandwidth-chart-canvas"></canvas></div>' +
+            '</div>';
+
+        var ctx = document.getElementById('bandwidth-chart-canvas').getContext('2d');
+        
+        if (bandwidthChart) {
+            bandwidthChart.destroy();
+        }
+
+        var datasets = [];
+        var yAxisLabel = '';
+        
+        if (chartOptions.view === 'rate' || chartOptions.view === 'mix') {
+            datasets.push({
+                label: 'RX (Mbps)',
+                data: data.rx_rate,
+                borderColor: '#00ff88',
+                backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0
+            });
+            datasets.push({
+                label: 'TX (Mbps)',
+                data: data.tx_rate,
+                borderColor: '#ff9500',
+                backgroundColor: 'rgba(255, 149, 0, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0
+            });
+            yAxisLabel = 'Mbps';
+        }
+        
+        if (chartOptions.view === 'total') {
+            datasets.push({
+                label: 'RX (Bytes)',
+                data: data.rx_total,
+                borderColor: '#00ff88',
+                backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0,
+                yAxisID: 'y1'
+            });
+            datasets.push({
+                label: 'TX (Bytes)',
+                data: data.tx_total,
+                borderColor: '#ff9500',
+                backgroundColor: 'rgba(255, 149, 0, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0,
+                yAxisID: 'y1'
+            });
+        }
+
+        bandwidthChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        display: chartOptions.view === 'mix',
+                        labels: { color: '#fff' }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: 'rgba(255,255,255,0.6)', maxTicksLimit: 12 }
+                    },
+                    y: {
+                        display: chartOptions.view !== 'total',
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return v + ' ' + yAxisLabel; } },
+                        title: { display: chartOptions.view !== 'total', text: yAxisLabel, color: 'rgba(255,255,255,0.6)' }
+                    },
+                    y1: {
+                        display: chartOptions.view === 'total',
+                        position: 'right',
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { return formatBytes(v); } },
+                        title: { display: chartOptions.view === 'total', text: 'Bytes', color: 'rgba(255,255,255,0.6)' }
+                    }
+                }
+            }
+        });
     }
 
     function updateVPN(tunnels) {
