@@ -516,8 +516,11 @@
         var existingChart = bandwidthCharts[chartKey];
 
         if (existingChart) {
-            existingChart.data.labels = data.labels;
-            existingChart.data.datasets = datasets;
+            // Use slice() to create copies, not references
+            existingChart.data.labels = data.labels.slice();
+            existingChart.data.datasets = datasets.map(function(ds) {
+                return { ...ds, data: ds.data.slice() };
+            });
             existingChart.update('none');
         } else {
             bandwidthCharts[chartKey] = new Chart(ctx, {
