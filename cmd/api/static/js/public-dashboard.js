@@ -374,10 +374,20 @@
     function renderSingleBandwidthChart(data, iface, chartIdx) {
         var latestRx = (data.rx_rate && data.rx_rate.length > 0) ? data.rx_rate[data.rx_rate.length - 1] : 0;
         var latestTx = (data.tx_rate && data.tx_rate.length > 0) ? data.tx_rate[data.tx_rate.length - 1] : 0;
-        var totalRx = data.total_rx;
-        var totalTx = data.total_tx;
-        if (typeof totalRx !== 'number') totalRx = 0;
-        if (typeof totalTx !== 'number') totalTx = 0;
+        
+        // Calculate totals from cumulative counter values (last - first)
+        var totalRx = 0;
+        var totalTx = 0;
+        if (data.rx_total && data.rx_total.length > 1) {
+            var firstRx = data.rx_total[0];
+            var lastRx = data.rx_total[data.rx_total.length - 1];
+            var firstTx = data.tx_total[0];
+            var lastTx = data.tx_total[data.tx_total.length - 1];
+            totalRx = lastRx - firstRx;
+            totalTx = lastTx - firstTx;
+            if (totalRx < 0) totalRx = lastRx; // counter rollover
+            if (totalTx < 0) totalTx = lastTx;
+        }
 
         var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
         var wanSpeed = device && device.wan_speed_mbps ? device.wan_speed_mbps : 1000;
