@@ -94,7 +94,11 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 			// Get device name
 			var dev models.Device
 			h.db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev)
-			uptimeStats := h.uptimeTrack.GetStats()
+			var uptimeStats *uptime.UptimeStats
+			if h.uptimeTrack != nil {
+				stats := h.uptimeTrack.GetStats()
+				uptimeStats = &stats
+			}
 			publicData := gin.H{
 				"hostname":     status.Hostname,
 				"device_name":  dev.Name,
@@ -114,7 +118,11 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	} else if h.db != nil {
 		status, err := h.db.GetLatestSystemStatus()
 		if err == nil && status != nil {
-			uptimeStats := h.uptimeTrack.GetStats()
+			var uptimeStats *uptime.UptimeStats
+			if h.uptimeTrack != nil {
+				stats := h.uptimeTrack.GetStats()
+				uptimeStats = &stats
+			}
 			publicData := gin.H{
 				"hostname":     status.Hostname,
 				"version":      status.Version,
