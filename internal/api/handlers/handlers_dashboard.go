@@ -67,7 +67,11 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	if !hasDevice && h.snmpClient != nil {
 		status, err := h.snmpClient.GetSystemStatus()
 		if err == nil {
-			uptimeStats := h.uptimeTrack.GetStats()
+			var uptimeStats *uptime.UptimeStats
+			if h.uptimeTrack != nil {
+				stats := h.uptimeTrack.GetStats()
+				uptimeStats = &stats
+			}
 			publicData := gin.H{
 				"hostname":     status.Hostname,
 				"version":      status.Version,
@@ -293,7 +297,7 @@ func (h *Handler) GetPublicConnections(c *gin.Context) {
 	}
 
 	var connections []models.DeviceConnection
-	if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Find(&connections).Error; err != nil {
+	if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(100).Find(&connections).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get connections"))
 		return
 	}
