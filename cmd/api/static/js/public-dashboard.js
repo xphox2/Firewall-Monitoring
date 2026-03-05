@@ -374,8 +374,10 @@
     function renderSingleBandwidthChart(data, iface, chartIdx) {
         var latestRx = (data.rx_rate && data.rx_rate.length > 0) ? data.rx_rate[data.rx_rate.length - 1] : 0;
         var latestTx = (data.tx_rate && data.tx_rate.length > 0) ? data.tx_rate[data.tx_rate.length - 1] : 0;
-        var totalRx = data.total_rx || 0;
-        var totalTx = data.total_tx || 0;
+        
+        // Handle both possible key formats (snake_case from Go, camelCase as fallback)
+        var totalRx = data.total_rx !== undefined ? data.total_rx : (data.totalRx || 0);
+        var totalTx = data.total_tx !== undefined ? data.total_tx : (data.totalTx || 0);
 
         var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
         var wanSpeed = device && device.wan_speed_mbps ? device.wan_speed_mbps : 1000;
