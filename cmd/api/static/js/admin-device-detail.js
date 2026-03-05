@@ -48,7 +48,13 @@
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': AC.getCsrfToken() },
             body: JSON.stringify(payload)
-        })['catch'](function() {});
+        }).then(function(resp) {
+            if (!resp.ok) {
+                console.error('Failed to save public interface settings');
+            }
+        })['catch'](function(err) { 
+            console.error('Error saving public interface:', err); 
+        });
     }
 
     function loadDevice() {
@@ -814,7 +820,8 @@
 
     // Initial load — wait for CSRF token fetch then load
     AC.fetchCsrfToken().then(function() {
-        loadPublicInterfaces();
+        return loadPublicInterfaces();
+    }).then(function() {
         loadDevice();
     });
 })();
