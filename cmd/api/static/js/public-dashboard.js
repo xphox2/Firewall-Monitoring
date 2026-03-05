@@ -410,9 +410,10 @@
             var rxPercent = usePercentage ? ((latestRx / wanSpeed) * 100).toFixed(1) : null;
             var txPercent = usePercentage ? ((latestTx / wanSpeed) * 100).toFixed(1) : null;
 
-            // Use pre-calculated totals
-            var displayTotalRx = totalRx;
-            var displayTotalTx = totalTx;
+            // Use pre-calculated totals - ensure they're valid numbers
+            var displayTotalRx = Number(totalRx) || 0;
+            var displayTotalTx = Number(totalTx) || 0;
+            console.log('displayTotalRx:', displayTotalRx, 'displayTotalTx:', displayTotalTx);
 
             if (chartOptions.view === 'rate') {
                 var html = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span>';
