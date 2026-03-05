@@ -316,8 +316,12 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		var labelFormat string
 		if rangeStr == "5m" || rangeStr == "15m" {
 			labelFormat = "15:04:05" // include seconds for short ranges
+		} else if rangeStr == "7d" {
+			labelFormat = "01-02 15:00" // date and hour for 7 days
+		} else if rangeStr == "90d" {
+			labelFormat = "01-02" // just date for 90 days
 		} else {
-			labelFormat = "15:04"
+			labelFormat = "15:04" // hour:minute for 1h, 6h, 24h
 		}
 		labels = append(labels, p.Timestamp.Format(labelFormat))
 		rxTotalVals = append(rxTotalVals, float64(p.InBytes))
