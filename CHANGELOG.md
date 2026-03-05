@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.83] - 2026-03-04
+
+### Changed
+- Public dashboard now shows ALL devices in combined table view (no dropdown)
+- Combined CPU/Memory/Uptime/Sessions table for all firewalls
+- All public interfaces from all devices shown in grid
+- Fixed bandwidth charts to only show public interfaces
+
 ## [0.10.82] - 2026-03-04
 
 ### Added
