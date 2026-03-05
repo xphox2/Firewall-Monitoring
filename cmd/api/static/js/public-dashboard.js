@@ -372,15 +372,11 @@
     }
 
     function renderSingleBandwidthChart(data, iface, chartIdx) {
-        console.log('Chart data:', data);
-        
-        // Ensure arrays exist
-        var rxRateArr = Array.isArray(data.rx_rate) ? data.rx_rate : [];
-        var txRateArr = Array.isArray(data.tx_rate) ? data.tx_rate : [];
-        var rxTotalArr = Array.isArray(data.rx_total) ? data.rx_total : [];
-        var txTotalArr = Array.isArray(data.tx_total) ? data.tx_total : [];
-        
-        console.log('rxTotalArr:', rxTotalArr, 'length:', rxTotalArr.length);
+        // Ensure arrays exist and convert to numbers
+        var rxRateArr = Array.isArray(data.rx_rate) ? data.rx_rate.map(Number) : [];
+        var txRateArr = Array.isArray(data.tx_rate) ? data.tx_rate.map(Number) : [];
+        var rxTotalArr = Array.isArray(data.rx_total) ? data.rx_total.map(Number) : [];
+        var txTotalArr = Array.isArray(data.tx_total) ? data.tx_total.map(Number) : [];
         
         var latestRx = rxRateArr.length > 0 ? rxRateArr[rxRateArr.length - 1] : 0;
         var latestTx = txRateArr.length > 0 ? txRateArr[txRateArr.length - 1] : 0;
@@ -388,15 +384,13 @@
         // Calculate totals from cumulative counter values (last - first)
         var totalRx = 0;
         var totalTx = 0;
-        console.log('Checking totals - rxTotalArr length:', rxTotalArr.length, 'txTotalArr length:', txTotalArr.length);
         if (rxTotalArr.length > 1 && txTotalArr.length > 1) {
-            var firstRx = Number(rxTotalArr[0]) || 0;
-            var lastRxVal = Number(rxTotalArr[rxTotalArr.length - 1]) || 0;
-            var firstTxVal = Number(txTotalArr[0]) || 0;
-            var lastTxVal = Number(txTotalArr[txTotalArr.length - 1]) || 0;
+            var firstRx = rxTotalArr[0];
+            var lastRxVal = rxTotalArr[rxTotalArr.length - 1];
+            var firstTxVal = txTotalArr[0];
+            var lastTxVal = txTotalArr[txTotalArr.length - 1];
             totalRx = lastRxVal - firstRx;
             totalTx = lastTxVal - firstTxVal;
-            console.log('Calculated totalRx:', totalRx, 'totalTx:', totalTx);
             if (totalRx < 0) totalRx = lastRxVal;
             if (totalTx < 0) totalTx = lastTxVal;
         }
@@ -410,10 +404,9 @@
             var rxPercent = usePercentage ? ((latestRx / wanSpeed) * 100).toFixed(1) : null;
             var txPercent = usePercentage ? ((latestTx / wanSpeed) * 100).toFixed(1) : null;
 
-            // Use pre-calculated totals - ensure they're valid numbers
+            // Force to number
             var displayTotalRx = Number(totalRx) || 0;
             var displayTotalTx = Number(totalTx) || 0;
-            console.log('displayTotalRx:', displayTotalRx, 'displayTotalTx:', displayTotalTx);
 
             if (chartOptions.view === 'rate') {
                 var html = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span>';
