@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.86] - 2026-03-04
+
+### Fixed
+- Removed orphaned duplicate code in public-dashboard.js that caused syntax error
+
 ## [0.10.85] - 2026-03-04
 
 ### Fixed
