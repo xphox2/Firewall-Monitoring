@@ -294,6 +294,7 @@
         if (viewSelect) {
             viewSelect.onchange = function() {
                 destroyAllCharts();
+                bandwidthChartsInitialized = false;
                 chartOptions.view = this.value;
                 renderAllBandwidthCharts();
             };
@@ -303,6 +304,7 @@
         if (rangeSelect) {
             rangeSelect.onchange = function() {
                 destroyAllCharts();
+                bandwidthChartsInitialized = false;
                 chartOptions.range = this.value;
                 renderAllBandwidthCharts();
             };
@@ -320,6 +322,8 @@
         bandwidthCharts = {};
     }
 
+    var bandwidthChartsInitialized = false;
+
     function renderAllBandwidthCharts(pubIfaces) {
         if (!pubIfaces) {
             pubIfaces = [];
@@ -334,18 +338,22 @@
         var container = document.getElementById('bandwidth-charts');
         if (!container) return;
 
-        var chartHtml = pubIfaces.map(function(iface, idx) {
-            return '<div class="chart-card" id="chart-card-' + idx + '">' +
-                '<div class="chart-header">' +
-                '<h3>' + escapeHtml(iface.deviceName) + ' - ' + escapeHtml(iface.name) + '</h3>' +
-                '<button class="collapse-btn" onclick="document.getElementById(\'chart-card-' + idx + '\').classList.toggle(\'collapsed\')">−</button>' +
-                '</div>' +
-                '<div class="current-stats" id="stats-' + idx + '"><span class="loading">Loading...</span></div>' +
-                '<div class="chart-container"><canvas id="chart-canvas-' + idx + '"></canvas></div>' +
-                '</div>';
-        }).join('');
+        // Only create HTML once, not on every refresh
+        if (!bandwidthChartsInitialized) {
+            var chartHtml = pubIfaces.map(function(iface, idx) {
+                return '<div class="chart-card" id="chart-card-' + idx + '">' +
+                    '<div class="chart-header">' +
+                    '<h3>' + escapeHtml(iface.deviceName) + ' - ' + escapeHtml(iface.name) + '</h3>' +
+                    '<button class="collapse-btn" onclick="document.getElementById(\'chart-card-' + idx + '\').classList.toggle(\'collapsed\')">−</button>' +
+                    '</div>' +
+                    '<div class="current-stats" id="stats-' + idx + '"><span class="loading">Loading...</span></div>' +
+                    '<div class="chart-container"><canvas id="chart-canvas-' + idx + '"></canvas></div>' +
+                    '</div>';
+            }).join('');
 
-        container.innerHTML = chartHtml;
+            container.innerHTML = chartHtml;
+            bandwidthChartsInitialized = true;
+        }
 
         pubIfaces.forEach(function(iface, idx) {
             loadBandwidthChartForIface(iface, idx);
