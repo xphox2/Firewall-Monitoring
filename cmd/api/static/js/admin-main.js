@@ -1068,12 +1068,14 @@
             document.getElementById('device-site').value = d.site_id || '';
             document.getElementById('device-location').value = d.location || '';
             document.getElementById('device-description').value = d.description || '';
+            document.getElementById('device-wan-speed').value = d.wan_speed_mbps || 1000;
         } else {
             document.getElementById('device-form').reset();
             document.getElementById('device-id').value = '';
             document.getElementById('device-snmp-port').value = '161';
             document.getElementById('device-snmp-version').value = '2c';
             document.getElementById('device-community').value = 'public';
+            document.getElementById('device-wan-speed').value = '1000';
         }
         toggleV3Fields();
     }
@@ -1147,6 +1149,7 @@
                 vendor: document.getElementById('device-vendor').value || 'fortigate',
                 location: document.getElementById('device-location').value,
                 description: document.getElementById('device-description').value,
+                wan_speed_mbps: parseInt(document.getElementById('device-wan-speed').value),
                 enabled: true
             };
             if (snmpVersion === '3') {

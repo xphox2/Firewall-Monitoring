@@ -30,9 +30,10 @@ func (h *Handler) GetPublicDevices(c *gin.Context) {
 	result := make([]gin.H, 0, len(devices))
 	for _, d := range devices {
 		result = append(result, gin.H{
-			"id":     d.ID,
-			"name":   d.Name,
-			"status": d.Status,
+			"id":             d.ID,
+			"name":           d.Name,
+			"status":         d.Status,
+			"wan_speed_mbps": d.WanSpeedMbps,
 		})
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(result))

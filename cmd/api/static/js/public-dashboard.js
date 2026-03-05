@@ -366,17 +366,30 @@
         var totalRx = (data.rx_total && data.rx_total.length > 0) ? data.rx_total[data.rx_total.length - 1] : 0;
         var totalTx = (data.tx_total && data.tx_total.length > 0) ? data.tx_total[data.tx_total.length - 1] : 0;
 
+        var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
+        var wanSpeed = device && device.wan_speed_mbps ? device.wan_speed_mbps : 1000;
+        var usePercentage = wanSpeed > 0;
+
         var statsEl = document.getElementById('stats-' + chartIdx);
         if (statsEl) {
+            var rxPercent = usePercentage ? ((latestRx / wanSpeed) * 100).toFixed(1) : null;
+            var txPercent = usePercentage ? ((latestTx / wanSpeed) * 100).toFixed(1) : null;
+
             if (chartOptions.view === 'rate') {
-                statsEl.innerHTML = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span></div>' +
-                    '<div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span></div>';
+                var html = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span>';
+                if (rxPercent) html += ' <span class="percent">(' + rxPercent + '%)</span>';
+                html += '</div><div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span>';
+                if (txPercent) html += ' <span class="percent">(' + txPercent + '%)</span>';
+                html += '</div>';
+                statsEl.innerHTML = html;
             } else if (chartOptions.view === 'total') {
                 statsEl.innerHTML = '<div class="stat rx"><span>&darr; ' + formatBytes(totalRx) + '</span></div>' +
                     '<div class="stat tx"><span>&uarr; ' + formatBytes(totalTx) + '</span></div>';
             } else {
-                statsEl.innerHTML = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(totalRx) + ')</div>' +
-                    '<div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(totalTx) + ')</div>';
+                statsEl.innerHTML = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(totalRx) + ')' +
+                    (rxPercent ? ' <span class="percent">(' + rxPercent + '%)</span>' : '') + '</div>' +
+                    '<div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(totalTx) + ')' +
+                    (txPercent ? ' <span class="percent">(' + txPercent + '%)</span>' : '') + '</div>';
             }
         }
 

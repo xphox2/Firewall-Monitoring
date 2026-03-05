@@ -1,12 +1,18 @@
 # Changelog
 
-## [0.10.87] - 2026-03-04
+## [0.10.88] - 2026-03-04
+
+### Added
+- WAN link speed setting per device (for usage percentage calculations)
+- Bandwidth charts now show usage percentage based on configured WAN speed
 
 ### Fixed
 - Fixed bandwidth chart ranges (now uses proper time-bucketed aggregation)
 - Removed 1-minute range option (minimum is now 5 minutes)
+- Fixed negative Mbps values in aggregated bandwidth charts
+- Fixed API response format for bandwidth charts
 
-### Added
+### Added (0.10.87)
 - Public dashboard bandwidth layout options (grid/full width)
 - Public dashboard chart height configuration
 - Admin controls on public page to customize bandwidth layout

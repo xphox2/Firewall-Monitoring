@@ -60,22 +60,22 @@ type InterfaceStats struct {
 }
 
 type VPNStatus struct {
-	ID            uint      `json:"id" gorm:"primaryKey"`
-	Timestamp     time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
-	DeviceID      uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
-	TunnelName    string    `json:"tunnel_name"`
-	TunnelType    string    `json:"tunnel_type"`
-	RemoteIP      string    `json:"remote_ip"`
-	Status        string    `json:"status"`
-	BytesIn       uint64    `json:"bytes_in"`
-	BytesOut      uint64    `json:"bytes_out"`
-	PacketsIn     uint64    `json:"packets_in"`
-	PacketsOut    uint64    `json:"packets_out"`
-	State         string    `json:"state"`
-	Phase1Name    string    `json:"phase1_name"`
-	LocalSubnet   string    `json:"local_subnet"`
-	RemoteSubnet  string    `json:"remote_subnet"`
-	TunnelUptime  uint64    `json:"tunnel_uptime"`
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	Timestamp    time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
+	DeviceID     uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
+	TunnelName   string    `json:"tunnel_name"`
+	TunnelType   string    `json:"tunnel_type"`
+	RemoteIP     string    `json:"remote_ip"`
+	Status       string    `json:"status"`
+	BytesIn      uint64    `json:"bytes_in"`
+	BytesOut     uint64    `json:"bytes_out"`
+	PacketsIn    uint64    `json:"packets_in"`
+	PacketsOut   uint64    `json:"packets_out"`
+	State        string    `json:"state"`
+	Phase1Name   string    `json:"phase1_name"`
+	LocalSubnet  string    `json:"local_subnet"`
+	RemoteSubnet string    `json:"remote_subnet"`
+	TunnelUptime uint64    `json:"tunnel_uptime"`
 }
 
 type HAStatus struct {
@@ -142,14 +142,14 @@ type LicenseInfo struct {
 }
 
 type HardwareSensor struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_hwsensor_device_ts,priority:2"`
-	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_hwsensor_device_ts,priority:1"`
-	Name        string    `json:"name"`
-	Type        string    `json:"type"`
-	Value       float64   `json:"value"`
-	Status      string    `json:"status"`
-	Unit        string    `json:"unit"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_hwsensor_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_hwsensor_device_ts,priority:1"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Value     float64   `json:"value"`
+	Status    string    `json:"status"`
+	Unit      string    `json:"unit"`
 }
 
 type ProcessorStats struct {
@@ -163,16 +163,16 @@ type ProcessorStats struct {
 func (ProcessorStats) TableName() string { return "processor_stats" }
 
 type TrapEvent struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_trap_device_ts,priority:2"`
-	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_trap_device_ts,priority:1"`
-	ProbeID     uint      `json:"probe_id" gorm:"index"`
-	SourceIP    string    `json:"source_ip"`
-	TrapOID     string    `json:"trap_oid"`
-	TrapType    string    `json:"trap_type"`
-	Severity    string    `json:"severity"`
-	Message     string    `json:"message"`
-	Processed   bool      `json:"processed"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_trap_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_trap_device_ts,priority:1"`
+	ProbeID   uint      `json:"probe_id" gorm:"index"`
+	SourceIP  string    `json:"source_ip"`
+	TrapOID   string    `json:"trap_oid"`
+	TrapType  string    `json:"trap_type"`
+	Severity  string    `json:"severity"`
+	Message   string    `json:"message"`
+	Processed bool      `json:"processed"`
 }
 
 type Alert struct {
@@ -229,6 +229,7 @@ type Device struct {
 	Probe          *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
 	Location       string    `json:"location"`
 	Description    string    `json:"description"`
+	WanSpeedMbps   int       `json:"wan_speed_mbps" gorm:"default:1000"` // WAN link speed in Mbps (default 1Gbps)
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	LastPolled     time.Time `json:"last_polled"`
@@ -250,22 +251,22 @@ type DeviceTunnel struct {
 }
 
 type DeviceConnection struct {
-	ID             uint       `json:"id" gorm:"primaryKey"`
-	Name           string     `json:"name" gorm:"not null"`
-	SourceDeviceID uint       `json:"source_device_id" gorm:"not null;index"`
-	SourceDevice   *Device    `json:"source_device,omitempty" gorm:"foreignKey:SourceDeviceID"`
-	SourceTunnelID uint       `json:"source_tunnel_id"`
-	DestDeviceID   uint       `json:"dest_device_id" gorm:"not null;index"`
-	DestDevice     *Device    `json:"dest_device,omitempty" gorm:"foreignKey:DestDeviceID"`
-	DestTunnelID   uint       `json:"dest_tunnel_id"`
-	ConnectionType string     `json:"connection_type" gorm:"default:ipsec"`
-	Status         string     `json:"status" gorm:"default:unknown"`
-	Latency        float64    `json:"latency"`
-	LastCheck      time.Time  `json:"last_check"`
-	Notes          string     `json:"notes"`
-	AutoDetected   bool       `json:"auto_detected" gorm:"default:false"`
-	TunnelNames    string     `json:"tunnel_names"`
-	MatchMethod    string     `json:"match_method" gorm:"default:ip_match"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Name           string    `json:"name" gorm:"not null"`
+	SourceDeviceID uint      `json:"source_device_id" gorm:"not null;index"`
+	SourceDevice   *Device   `json:"source_device,omitempty" gorm:"foreignKey:SourceDeviceID"`
+	SourceTunnelID uint      `json:"source_tunnel_id"`
+	DestDeviceID   uint      `json:"dest_device_id" gorm:"not null;index"`
+	DestDevice     *Device   `json:"dest_device,omitempty" gorm:"foreignKey:DestDeviceID"`
+	DestTunnelID   uint      `json:"dest_tunnel_id"`
+	ConnectionType string    `json:"connection_type" gorm:"default:ipsec"`
+	Status         string    `json:"status" gorm:"default:unknown"`
+	Latency        float64   `json:"latency"`
+	LastCheck      time.Time `json:"last_check"`
+	Notes          string    `json:"notes"`
+	AutoDetected   bool      `json:"auto_detected" gorm:"default:false"`
+	TunnelNames    string    `json:"tunnel_names"`
+	MatchMethod    string    `json:"match_method" gorm:"default:ip_match"`
 }
 
 type InterfaceAddress struct {
@@ -381,42 +382,42 @@ type PingResult struct {
 }
 
 type PingStats struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:1"`
-	ProbeID     uint      `json:"probe_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:2"`
-	TargetIP    string    `json:"target_ip" gorm:"index:idx_pingstats_device_probe_target,priority:3"`
-	MinLatency  float64   `json:"min_latency"`
-	MaxLatency  float64   `json:"max_latency"`
-	AvgLatency  float64   `json:"avg_latency"`
-	PacketLoss  float64   `json:"packet_loss"`
-	Samples     int       `json:"samples"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	DeviceID   uint      `json:"device_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:1"`
+	ProbeID    uint      `json:"probe_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:2"`
+	TargetIP   string    `json:"target_ip" gorm:"index:idx_pingstats_device_probe_target,priority:3"`
+	MinLatency float64   `json:"min_latency"`
+	MaxLatency float64   `json:"max_latency"`
+	AvgLatency float64   `json:"avg_latency"`
+	PacketLoss float64   `json:"packet_loss"`
+	Samples    int       `json:"samples"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-func (SystemStatus) TableName() string        { return "system_status" }
-func (InterfaceStats) TableName() string      { return "interface_stats" }
-func (VPNStatus) TableName() string           { return "vpn_status" }
-func (HAStatus) TableName() string            { return "ha_status" }
-func (SecurityStats) TableName() string       { return "security_stats" }
-func (SDWANHealth) TableName() string         { return "sdwan_health" }
-func (LicenseInfo) TableName() string         { return "license_info" }
-func (HardwareSensor) TableName() string      { return "hardware_sensors" }
-func (TrapEvent) TableName() string           { return "trap_events" }
-func (Alert) TableName() string               { return "alerts" }
-func (UptimeRecord) TableName() string        { return "uptime_records" }
-func (LoginAttempt) TableName() string        { return "login_attempts" }
-func (Device) TableName() string              { return "devices" }
-func (DeviceTunnel) TableName() string        { return "device_tunnels" }
-func (DeviceConnection) TableName() string    { return "device_connections" }
-func (InterfaceAddress) TableName() string    { return "interface_addresses" }
-func (SystemSetting) TableName() string       { return "system_settings" }
-func (Admin) TableName() string               { return "admins" }
-func (Site) TableName() string                { return "sites" }
-func (Probe) TableName() string               { return "probes" }
-func (ProbeApproval) TableName() string       { return "probe_approvals" }
-func (ProbeHeartbeat) TableName() string      { return "probe_heartbeats" }
-func (PingResult) TableName() string          { return "ping_results" }
-func (PingStats) TableName() string           { return "ping_stats" }
+func (SystemStatus) TableName() string     { return "system_status" }
+func (InterfaceStats) TableName() string   { return "interface_stats" }
+func (VPNStatus) TableName() string        { return "vpn_status" }
+func (HAStatus) TableName() string         { return "ha_status" }
+func (SecurityStats) TableName() string    { return "security_stats" }
+func (SDWANHealth) TableName() string      { return "sdwan_health" }
+func (LicenseInfo) TableName() string      { return "license_info" }
+func (HardwareSensor) TableName() string   { return "hardware_sensors" }
+func (TrapEvent) TableName() string        { return "trap_events" }
+func (Alert) TableName() string            { return "alerts" }
+func (UptimeRecord) TableName() string     { return "uptime_records" }
+func (LoginAttempt) TableName() string     { return "login_attempts" }
+func (Device) TableName() string           { return "devices" }
+func (DeviceTunnel) TableName() string     { return "device_tunnels" }
+func (DeviceConnection) TableName() string { return "device_connections" }
+func (InterfaceAddress) TableName() string { return "interface_addresses" }
+func (SystemSetting) TableName() string    { return "system_settings" }
+func (Admin) TableName() string            { return "admins" }
+func (Site) TableName() string             { return "sites" }
+func (Probe) TableName() string            { return "probes" }
+func (ProbeApproval) TableName() string    { return "probe_approvals" }
+func (ProbeHeartbeat) TableName() string   { return "probe_heartbeats" }
+func (PingResult) TableName() string       { return "ping_results" }
+func (PingStats) TableName() string        { return "ping_stats" }
 
 type SyslogMessage struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
@@ -439,24 +440,24 @@ type SyslogMessage struct {
 func (SyslogMessage) TableName() string { return "syslog_messages" }
 
 type FlowSample struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	Timestamp       time.Time `json:"timestamp" gorm:"index;index:idx_flow_device_ts,priority:2"`
-	DeviceID        uint      `json:"device_id" gorm:"index;index:idx_flow_device_ts,priority:1"`
-	ProbeID         uint      `json:"probe_id" gorm:"index"`
-	SamplerAddress  string    `json:"sampler_address"`
-	SequenceNumber  uint32    `json:"sequence_number"`
-	SamplingRate    uint32    `json:"sampling_rate"`
-	SrcAddr         string    `json:"src_addr"`
-	DstAddr         string    `json:"dst_addr"`
-	SrcPort         uint16    `json:"src_port"`
-	DstPort         uint16    `json:"dst_port"`
-	Protocol        uint8     `json:"protocol"`
-	Bytes           uint64    `json:"bytes"`
-	Packets         uint64    `json:"packets"`
-	InputIfIndex    uint32    `json:"input_if_index"`
-	OutputIfIndex   uint32    `json:"output_if_index"`
-	TCPFlags        uint8     `json:"tcp_flags"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_flow_device_ts,priority:2"`
+	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_flow_device_ts,priority:1"`
+	ProbeID        uint      `json:"probe_id" gorm:"index"`
+	SamplerAddress string    `json:"sampler_address"`
+	SequenceNumber uint32    `json:"sequence_number"`
+	SamplingRate   uint32    `json:"sampling_rate"`
+	SrcAddr        string    `json:"src_addr"`
+	DstAddr        string    `json:"dst_addr"`
+	SrcPort        uint16    `json:"src_port"`
+	DstPort        uint16    `json:"dst_port"`
+	Protocol       uint8     `json:"protocol"`
+	Bytes          uint64    `json:"bytes"`
+	Packets        uint64    `json:"packets"`
+	InputIfIndex   uint32    `json:"input_if_index"`
+	OutputIfIndex  uint32    `json:"output_if_index"`
+	TCPFlags       uint8     `json:"tcp_flags"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }
@@ -642,15 +643,15 @@ func (s *SystemStatus) ToJSON() string {
 }
 
 type DashboardData struct {
-	Devices         []Device              `json:"devices"`
-	SystemStatus    SystemStatus          `json:"system_status"`
-	Interfaces      []InterfaceStats      `json:"interfaces"`
-	VPNStatus       []VPNStatus           `json:"vpn_status"`
-	HAStatus        *HAStatus             `json:"ha_status"`
-	HardwareSensors []HardwareSensor      `json:"hardware_sensors"`
-	RecentAlerts    []Alert               `json:"recent_alerts"`
-	UptimeData      *UptimeRecord         `json:"uptime_data"`
-	Connections     []DeviceConnection    `json:"connections"`
+	Devices         []Device           `json:"devices"`
+	SystemStatus    SystemStatus       `json:"system_status"`
+	Interfaces      []InterfaceStats   `json:"interfaces"`
+	VPNStatus       []VPNStatus        `json:"vpn_status"`
+	HAStatus        *HAStatus          `json:"ha_status"`
+	HardwareSensors []HardwareSensor   `json:"hardware_sensors"`
+	RecentAlerts    []Alert            `json:"recent_alerts"`
+	UptimeData      *UptimeRecord      `json:"uptime_data"`
+	Connections     []DeviceConnection `json:"connections"`
 }
 
 type APIResponse struct {
