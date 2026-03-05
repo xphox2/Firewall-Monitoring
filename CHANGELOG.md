@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.85] - 2026-03-04
+
+### Fixed
+- Critical: Race condition - settings now load before fetching data
+- Fixed toFixed() crash on undefined bandwidth data
+- Added missing null checks for DOM elements
+- Added 90d range support for bandwidth charts
+
 ## [0.10.84] - 2026-03-04
 
 ### Fixed

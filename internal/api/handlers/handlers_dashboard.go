@@ -191,7 +191,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	rangeStr := c.DefaultQuery("range", "1h")
-	validRanges := map[string]int{"1m": 1, "5m": 5, "15m": 15, "1h": 60, "6h": 360, "24h": 1440, "7d": 10080}
+	validRanges := map[string]int{"1m": 1, "5m": 5, "15m": 15, "1h": 60, "6h": 360, "24h": 1440, "7d": 10080, "90d": 129600}
 	hours, ok := validRanges[rangeStr]
 	if !ok {
 		hours = 60

@@ -22,6 +22,10 @@
 
     document.getElementById('footer-year').textContent = new Date().getFullYear();
 
+    fetchDisplaySettings().then(function() {
+        loadAllData();
+    });
+
     function fetchDisplaySettings() {
         fetch(API_BASE + '/public/display-settings')
             .then(function(response) { if (!response.ok) return; return response.json(); })
@@ -102,6 +106,7 @@
 
     function renderDevicesTable() {
         var tbody = document.getElementById('devices-body');
+        if (!tbody) return;
         if (!allDevices.length) {
             tbody.innerHTML = '<tr><td colspan="6" class="loading">No devices configured</td></tr>';
             return;
@@ -153,6 +158,7 @@
 
     function renderPublicInterfaces() {
         var container = document.getElementById('interfaces');
+        if (!container) return;
         var interfaces = [];
 
         allDevices.forEach(function(device) {
@@ -206,31 +212,40 @@
         });
 
         if (pubIfaces.length === 0) {
-            document.getElementById('bandwidth-charts').innerHTML = '<div class="loading">No public interfaces configured for bandwidth charts</div>';
+            var bc = document.getElementById('bandwidth-charts');
+            if (bc) bc.innerHTML = '<div class="loading">No public interfaces configured for bandwidth charts</div>';
             return;
         }
 
         var controls = document.getElementById('bandwidth-controls');
+        if (!controls) return;
         controls.style.display = 'flex';
 
         var select = document.getElementById('bandwidth-interface-select');
+        if (!select) return;
         select.innerHTML = pubIfaces.map(function(i) {
             return '<option value="' + i.deviceId + '|' + escapeHtml(i.name) + '">' + escapeHtml(i.deviceName) + ' - ' + escapeHtml(i.name) + '</option>';
         }).join('');
 
-                select.onchange = function() {
-                    loadBandwidthChart();
-                };
+        select.onchange = function() {
+            loadBandwidthChart();
+        };
 
-                document.getElementById('bandwidth-view-select').onchange = function() {
-                    chartOptions.view = this.value;
-                    loadBandwidthChart();
-                };
+        var viewSelect = document.getElementById('bandwidth-view-select');
+        if (viewSelect) {
+            viewSelect.onchange = function() {
+                chartOptions.view = this.value;
+                loadBandwidthChart();
+            };
+        }
 
-                document.getElementById('bandwidth-range-select').onchange = function() {
-                    chartOptions.range = this.value;
-                    loadBandwidthChart();
-                };
+        var rangeSelect = document.getElementById('bandwidth-range-select');
+        if (rangeSelect) {
+            rangeSelect.onchange = function() {
+                chartOptions.range = this.value;
+                loadBandwidthChart();
+            };
+        }
 
                 currentIfaceKey = pubIfaces[0].deviceId + '|' + pubIfaces[0].name;
                 loadBandwidthChart();
@@ -263,22 +278,23 @@
 
     function renderBandwidthChart(data, ifaceName) {
         var container = document.getElementById('bandwidth-charts');
+        if (!container || !data) return;
         
-        var latestRx = data.rx_rate ? data.rx_rate[data.rx_rate.length - 1] : 0;
-        var latestTx = data.tx_rate ? data.tx_rate[data.tx_rate.length - 1] : 0;
-        var totalRx = data.rx_total ? data.rx_total[data.rx_total.length - 1] : 0;
-        var totalTx = data.tx_total ? data.tx_total[data.tx_total.length - 1] : 0;
+        var latestRx = (data.rx_rate && data.rx_rate.length > 0) ? data.rx_rate[data.rx_rate.length - 1] : 0;
+        var latestTx = (data.tx_rate && data.tx_rate.length > 0) ? data.tx_rate[data.tx_rate.length - 1] : 0;
+        var totalRx = (data.rx_total && data.rx_total.length > 0) ? data.rx_total[data.rx_total.length - 1] : 0;
+        var totalTx = (data.tx_total && data.tx_total.length > 0) ? data.tx_total[data.tx_total.length - 1] : 0;
 
         var statsHtml = '';
         if (chartOptions.view === 'rate') {
-            statsHtml = '<div class="stat rx"><span>&darr; ' + latestRx.toFixed(2) + ' Mbps</span></div>' +
-                        '<div class="stat tx"><span>&uarr; ' + latestTx.toFixed(2) + ' Mbps</span></div>';
+            statsHtml = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span></div>' +
+                        '<div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span></div>';
         } else if (chartOptions.view === 'total') {
             statsHtml = '<div class="stat rx"><span>&darr; ' + formatBytes(totalRx) + '</span></div>' +
                         '<div class="stat tx"><span>&uarr; ' + formatBytes(totalTx) + '</span></div>';
         } else {
-            statsHtml = '<div class="stat rx"><span>&darr; ' + latestRx.toFixed(2) + ' Mbps</span> (' + formatBytes(totalRx) + ')</div>' +
-                        '<div class="stat tx"><span>&uarr; ' + latestTx.toFixed(2) + ' Mbps</span> (' + formatBytes(totalTx) + ')</div>';
+            statsHtml = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(totalRx) + ')</div>' +
+                        '<div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(totalTx) + ')</div>';
         }
 
         container.innerHTML = '<div class="chart-card">' +
@@ -386,8 +402,9 @@
 
     function renderVPN(tunnels) {
         var container = document.getElementById('vpn-tunnels');
+        if (!container) return;
         if (!tunnels || tunnels.length === 0) {
-            container.innerHTML = '<div class="loading">No VPN tunnels found</div>';
+            if (container) container.innerHTML = '<div class="loading">No VPN tunnels found</div>';
             return;
         }
 
