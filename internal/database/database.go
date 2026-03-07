@@ -1798,6 +1798,17 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 	// Filter source tunnels: remote IP matches dest device OR tunnel name in known list
 	for _, t := range srcTunnels {
 		if destIPs[t.RemoteIP] || knownTunnels[t.TunnelName] {
+			// Avoid duplicates
+			alreadyAdded := false
+			for _, existing := range result.SourceTunnels {
+				if existing.TunnelName == t.TunnelName && existing.DeviceID == t.DeviceID {
+					alreadyAdded = true
+					break
+				}
+			}
+			if alreadyAdded {
+				continue
+			}
 			result.SourceTunnels = append(result.SourceTunnels, t)
 			result.TotalBytesIn += t.BytesIn
 			result.TotalBytesOut += t.BytesOut
