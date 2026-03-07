@@ -271,6 +271,11 @@ func (p *Poller) pollDevice(device *models.Device) {
 	} else if len(vpnStatuses) == 0 {
 		log.Printf("Device %s: VPN: 0 tunnels (none configured or no IPsec active)", device.Name)
 	} else {
+		log.Printf("Device %s: VPN: found %d tunnels", device.Name, len(vpnStatuses))
+		for i, v := range vpnStatuses {
+			log.Printf("Device %s: VPN tunnel[%d]: name=%s phase1=%s type=%s local_subnet=%s remote_subnet=%s",
+				device.Name, i, v.TunnelName, v.Phase1Name, v.TunnelType, v.LocalSubnet, v.RemoteSubnet)
+		}
 		now := time.Now()
 		for i := range vpnStatuses {
 			vpnStatuses[i].DeviceID = device.ID
