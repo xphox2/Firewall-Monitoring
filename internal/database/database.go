@@ -126,28 +126,36 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Force add IRC columns using raw SQL - use transaction to recover from errors
-	addColumn := func(table, col, def string) {
-		d.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col + " " + def)
+	// Add missing IRC columns - check existence first
+	type columnCheck struct {
+		Table  string
+		Column string
+		Type   string
 	}
-
-	// Add IRC server columns - ignore errors if already exists
-	addColumn("irc_servers", "nickserv_identify", "BOOLEAN DEFAULT 0")
-	addColumn("irc_servers", "server_password", "VARCHAR(255)")
-	addColumn("irc_servers", "sasl_enabled", "BOOLEAN DEFAULT 0")
-	addColumn("irc_servers", "sasl_username", "VARCHAR(255)")
-	addColumn("irc_servers", "sasl_password", "VARCHAR(255)")
-	addColumn("irc_servers", "auto_reconnect", "BOOLEAN DEFAULT 1")
-	addColumn("irc_servers", "reconnect_delay", "INTEGER DEFAULT 30")
-	addColumn("irc_servers", "last_connected", "TIMESTAMP")
-	addColumn("irc_servers", "last_error", "TEXT")
-
-	addColumn("irc_channels", "chanserv_name", "VARCHAR(255)")
-	addColumn("irc_channels", "chanserv_password", "VARCHAR(255)")
-	addColumn("irc_channels", "chan_oper_pass", "VARCHAR(255)")
-	addColumn("irc_channels", "auto_join", "BOOLEAN DEFAULT 1")
-	addColumn("irc_channels", "send_alerts", "BOOLEAN DEFAULT 0")
-	addColumn("irc_channels", "send_status", "BOOLEAN DEFAULT 0")
+	columnsToAdd := []columnCheck{
+		{"irc_servers", "nickserv_identify", "BOOLEAN DEFAULT 0"},
+		{"irc_servers", "server_password", "VARCHAR(255)"},
+		{"irc_servers", "sasl_enabled", "BOOLEAN DEFAULT 0"},
+		{"irc_servers", "sasl_username", "VARCHAR(255)"},
+		{"irc_servers", "sasl_password", "VARCHAR(255)"},
+		{"irc_servers", "auto_reconnect", "BOOLEAN DEFAULT 1"},
+		{"irc_servers", "reconnect_delay", "INTEGER DEFAULT 30"},
+		{"irc_servers", "last_connected", "TIMESTAMP"},
+		{"irc_servers", "last_error", "TEXT"},
+		{"irc_channels", "chanserv_name", "VARCHAR(255)"},
+		{"irc_channels", "chanserv_password", "VARCHAR(255)"},
+		{"irc_channels", "chan_oper_pass", "VARCHAR(255)"},
+		{"irc_channels", "auto_join", "BOOLEAN DEFAULT 1"},
+		{"irc_channels", "send_alerts", "BOOLEAN DEFAULT 0"},
+		{"irc_channels", "send_status", "BOOLEAN DEFAULT 0"},
+	}
+	for _, c := range columnsToAdd {
+		var count int
+		d.db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", c.Table, c.Column).Scan(&count)
+		if count == 0 {
+			d.db.Exec("ALTER TABLE " + c.Table + " ADD COLUMN " + c.Column + " " + c.Type)
+		}
+	}
 
 	return nil
 }
