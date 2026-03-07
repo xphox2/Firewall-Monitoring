@@ -1,15 +1,17 @@
 # Changelog
 
-## [0.10.90] - 2026-03-07
+## [0.10.91] - 2026-03-07
 
 ### Fixed
-- VPN tunnel type detection now properly discovers IPSec vs SSL-VPN via SNMP OID trees instead of guessing from tunnel names
-- SSL-VPN tunnels now properly tracked separately from IPSec tunnels
+- VPN tunnel type detection now properly discovers tunnel types via SNMP OID trees:
+  - IPSec site-to-site (fgVpnTunTable) → "ipsec"
+  - IPSec dialup (fgVpnDialupTable) → "ipsec-dialup"  
+  - SSL-VPN (fgVpnSslTunnelTable) → "sslvpn"
 
 ### Added
 - Admin interfaces page now shows both Status (operational) and Admin (enabled/disabled) columns
 - VPN tunnel detail page now shows State column to distinguish between active tunnels vs tunnels with active traffic (online)
-- VPN tunnel tab count now shows "online/up" count (tunnels with traffic vs tunnels that are up)
+- VPN tunnel tab count now shows "online/up" count
 
 ## [0.10.88] - 2026-03-04
 

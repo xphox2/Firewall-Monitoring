@@ -36,6 +36,15 @@ var (
 	fgOIDVPNTunnelStatus     = ".1.3.6.1.4.1.12356.101.12.2.2.1.20"
 	fgOIDVPNTunnelUpTime     = ".1.3.6.1.4.1.12356.101.12.2.2.1.21"
 
+	fgBaseOIDVPNDialup       = ".1.3.6.1.4.1.12356.101.12.2.1.1"
+	fgOIDVPNDialupPhase1Name = ".1.3.6.1.4.1.12356.101.12.2.1.1.2"
+	fgOIDVPNDialupName       = ".1.3.6.1.4.1.12356.101.12.2.1.1.3"
+	fgOIDVPNDialupRemoteGW   = ".1.3.6.1.4.1.12356.101.12.2.1.1.4"
+	fgOIDVPNDialupInOctets   = ".1.3.6.1.4.1.12356.101.12.2.1.1.7"
+	fgOIDVPNDialupOutOctets  = ".1.3.6.1.4.1.12356.101.12.2.1.1.8"
+	fgOIDVPNDialupStatus     = ".1.3.6.1.4.1.12356.101.12.2.1.1.9"
+	fgOIDVPNDialupUpTime     = ".1.3.6.1.4.1.12356.101.12.2.1.1.10"
+
 	fgBaseOIDSSLVPN          = ".1.3.6.1.4.1.12356.101.12.3.1.1"
 	fgOIDSSLVPNLoginName     = ".1.3.6.1.4.1.12356.101.12.3.1.1.3"
 	fgOIDSSLVPNLoginState    = ".1.3.6.1.4.1.12356.101.12.3.1.1.6"
@@ -135,17 +144,28 @@ func (f *FortiGateProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, 
 	var allTunnels []models.VPNStatus
 	var sslvpnUsers, sslvpnSessions int
 
-	// Walk IPSec tunnels
+	// Walk IPSec site-to-site tunnels
 	ipsecPdus, err := s.Walk(fgBaseOIDVPNTunnel)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("failed to walk IPSec tunnel table: %w", err)
 	}
 	ipsecTunnels := f.ParseVPNStatus(ipsecPdus)
-	// Mark as ipsec type (IPSec tunnels don't have a separate type field in the OID)
+	// Mark as ipsec type
 	for i := range ipsecTunnels {
 		ipsecTunnels[i].TunnelType = "ipsec"
 	}
 	allTunnels = append(allTunnels, ipsecTunnels...)
+
+	// Walk IPSec dialup tunnels
+	dialupPdus, err := s.Walk(fgBaseOIDVPNDialup)
+	if err == nil && len(dialupPdus) > 0 {
+		dialupTunnels := f.ParseVPNDialupStatus(dialupPdus)
+		// Mark as ipsec-dialup type
+		for i := range dialupTunnels {
+			dialupTunnels[i].TunnelType = "ipsec-dialup"
+		}
+		allTunnels = append(allTunnels, dialupTunnels...)
+	}
 
 	// Walk SSL-VPN tunnels
 	sslvpnPdus, err := s.Walk(fgBaseOIDSSLVPN)
@@ -162,6 +182,83 @@ func (f *FortiGateProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, 
 	}
 
 	return allTunnels, sslvpnUsers, sslvpnSessions, nil
+}
+
+func (f *FortiGateProfile) ParseVPNDialupStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
+	tunnelMap := make(map[int]*models.VPNStatus)
+
+	for _, pdu := range pdus {
+		if !isValidPDU(pdu) {
+			continue
+		}
+		name := pdu.Name
+
+		if strings.HasPrefix(name, fgOIDVPNDialupPhase1Name+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupPhase1Name)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.Phase1Name = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, fgOIDVPNDialupName+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupName)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.TunnelName = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, fgOIDVPNDialupRemoteGW+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupRemoteGW)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.RemoteIP = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, fgOIDVPNDialupInOctets+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupInOctets)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.BytesIn = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		} else if strings.HasPrefix(name, fgOIDVPNDialupOutOctets+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupOutOctets)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.BytesOut = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		} else if strings.HasPrefix(name, fgOIDVPNDialupStatus+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupStatus)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			statusVal := gosnmp.ToBigInt(pdu.Value).Int64()
+			if statusVal == 2 {
+				t.Status = "up"
+				t.State = "active"
+			} else {
+				t.Status = "down"
+				t.State = "inactive"
+			}
+		} else if strings.HasPrefix(name, fgOIDVPNDialupUpTime+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupUpTime)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.TunnelUptime = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		}
+	}
+
+	now := time.Now()
+	result := make([]models.VPNStatus, 0, len(tunnelMap))
+	for _, t := range tunnelMap {
+		t.Timestamp = now
+		result = append(result, *t)
+	}
+	return result
 }
 
 func (f *FortiGateProfile) ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
