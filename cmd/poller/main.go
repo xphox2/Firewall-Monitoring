@@ -674,6 +674,47 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		}
 		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
 
+		// Get Phase 2 subnets from peer devices
+		// If a tunnel is missing subnets on one side (e.g., HUB), try to get from peer
+		srcTunnels := vpnByDevice[pi.sourceID]
+		dstTunnels := vpnByDevice[pi.destID]
+		
+		// Find matching tunnels by name and collect Phase 2 info from both sides
+		var localSubnet, remoteSubnet string
+		for _, st := range srcTunnels {
+			if pi.tunnelNames[st.TunnelName] && st.LocalSubnet != "" {
+				localSubnet = st.LocalSubnet
+				break
+			}
+		}
+		for _, dt := range dstTunnels {
+			if pi.tunnelNames[dt.TunnelName] && dt.RemoteSubnet != "" {
+				remoteSubnet = dt.RemoteSubnet
+				break
+			}
+		}
+		// If still missing, swap: get remote from source and local from dest
+		if remoteSubnet == "" {
+			for _, st := range srcTunnels {
+				if pi.tunnelNames[st.TunnelName] && st.RemoteSubnet != "" {
+					remoteSubnet = st.RemoteSubnet
+					break
+				}
+			}
+		}
+		if localSubnet == "" {
+			for _, dt := range dstTunnels {
+				if pi.tunnelNames[dt.TunnelName] && dt.LocalSubnet != "" {
+					localSubnet = dt.LocalSubnet
+					break
+				}
+			}
+		}
+
+		if localSubnet != "" && remoteSubnet != "" {
+			log.Printf("Device %s: Phase2: local=%s remote=%s for connection %s", srcName, localSubnet, remoteSubnet, connName)
+		}
+
 		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, pi.matchMethod); err != nil {
 			log.Printf("VPN auto-detect: failed to upsert connection %s - %v", connName, err)
 		}

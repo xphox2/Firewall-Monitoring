@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.95] - 2026-03-07
+
+### Fixed
+- Added debug logging to see Phase 2 subnet values from SNMP
+- IPSec Phase 2 selectors now use correct OIDs for source/destination selector ranges
+
 ## [0.10.94] - 2026-03-07
 
 ### Fixed
