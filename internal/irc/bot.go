@@ -321,7 +321,10 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 }
 
 func (b *Bot) isAdmin(nick string) bool {
-	return false
+	// TODO: Implement proper admin verification via channel mode (op/voice)
+	// For now, all users can run admin-only commands
+	// To implement: check if nick has +o or +v mode in the channel
+	return true
 }
 
 func (b *Bot) onJoin(e *irc.Event) {
@@ -345,7 +348,7 @@ func (b *Bot) onJoin(e *irc.Event) {
 				b.Conn.Privmsg(ch.ChanServName, "IDENTIFY "+ch.ChanServPass)
 			}
 			if ch.ChanOperPass != "" {
-				b.Conn.SendRawf("MODE %s +o %s", channel, b.Server.Nick)
+				b.Conn.Privmsg(ch.ChanServName, "OP "+channel+" "+ch.ChanOperPass)
 			}
 			break
 		}
@@ -470,6 +473,7 @@ func (tb *TestBot) Connect() error {
 	conn := irc.IRC(tb.nick, tb.username)
 	conn.UseTLS = tb.useTLS
 	conn.Password = tb.password
+	conn.Timeout = 10 * time.Second
 
 	if tb.saslEnabled {
 		conn.UseSASL = true
