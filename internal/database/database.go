@@ -126,48 +126,28 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Add missing columns for IRC tables - first ensure tables exist, then add columns
-	m := d.db.Migrator()
-	ircServer := &models.IRCServer{}
-	ircChannel := &models.IRCChannel{}
-
-	// Create tables if they don't exist
-	if !m.HasTable(ircServer) {
-		if err := m.CreateTable(ircServer); err != nil {
-			log.Printf("Failed to create irc_servers table: %v", err)
-		}
-	}
-	if !m.HasTable(ircChannel) {
-		if err := m.CreateTable(ircChannel); err != nil {
-			log.Printf("Failed to create irc_channels table: %v", err)
-		}
+	// Force add IRC columns using raw SQL - use transaction to recover from errors
+	addColumn := func(table, col, def string) {
+		d.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col + " " + def)
 	}
 
-	// Add missing columns
-	ircServerCols := []string{
-		"nickserv_identify", "server_password", "sasl_enabled",
-		"sasl_username", "sasl_password", "auto_reconnect",
-		"reconnect_delay", "last_connected", "last_error",
-	}
-	for _, col := range ircServerCols {
-		if !m.HasColumn(ircServer, col) {
-			if err := m.AddColumn(ircServer, col); err != nil {
-				log.Printf("Failed to add column %s to irc_servers: %v", col, err)
-			}
-		}
-	}
+	// Add IRC server columns - ignore errors if already exists
+	addColumn("irc_servers", "nickserv_identify", "BOOLEAN DEFAULT 0")
+	addColumn("irc_servers", "server_password", "VARCHAR(255)")
+	addColumn("irc_servers", "sasl_enabled", "BOOLEAN DEFAULT 0")
+	addColumn("irc_servers", "sasl_username", "VARCHAR(255)")
+	addColumn("irc_servers", "sasl_password", "VARCHAR(255)")
+	addColumn("irc_servers", "auto_reconnect", "BOOLEAN DEFAULT 1")
+	addColumn("irc_servers", "reconnect_delay", "INTEGER DEFAULT 30")
+	addColumn("irc_servers", "last_connected", "TIMESTAMP")
+	addColumn("irc_servers", "last_error", "TEXT")
 
-	ircChannelCols := []string{
-		"chanserv_name", "chanserv_password", "chan_oper_pass",
-		"auto_join", "send_alerts", "send_status",
-	}
-	for _, col := range ircChannelCols {
-		if !m.HasColumn(ircChannel, col) {
-			if err := m.AddColumn(ircChannel, col); err != nil {
-				log.Printf("Failed to add column %s to irc_channels: %v", col, err)
-			}
-		}
-	}
+	addColumn("irc_channels", "chanserv_name", "VARCHAR(255)")
+	addColumn("irc_channels", "chanserv_password", "VARCHAR(255)")
+	addColumn("irc_channels", "chan_oper_pass", "VARCHAR(255)")
+	addColumn("irc_channels", "auto_join", "BOOLEAN DEFAULT 1")
+	addColumn("irc_channels", "send_alerts", "BOOLEAN DEFAULT 0")
+	addColumn("irc_channels", "send_status", "BOOLEAN DEFAULT 0")
 
 	return nil
 }
