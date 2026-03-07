@@ -114,6 +114,21 @@ func LoginRateLimiter() gin.HandlerFunc {
 	}
 }
 
+func ProbeRateLimiter() gin.HandlerFunc {
+	limiter := newIPRateLimiter(rate.Limit(30), 60) // 30 req/s, burst of 60
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if !limiter.getLimiter(ip).Allow() {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Rate limit exceeded",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, err := c.Cookie("auth_token")

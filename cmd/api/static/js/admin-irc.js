@@ -3,7 +3,8 @@ let channels = [];
 let commands = [];
 
 async function apiCall(url, options = {}) {
-    const csrfToken = AdminCommon ? AdminCommon.getCsrfToken() : '';
+    await AdminCommon.fetchCsrfToken();
+    const csrfToken = AdminCommon.getCsrfToken();
     const headers = {
         'Content-Type': 'application/json',
         ...(csrfToken && { 'X-CSRF-Token': csrfToken }),

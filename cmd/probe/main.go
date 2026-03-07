@@ -12,7 +12,6 @@ import (
 
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
-	"firewall-mon/internal/ping"
 	"firewall-mon/internal/relay"
 	"firewall-mon/internal/sflow"
 	"firewall-mon/internal/snmp"
@@ -38,7 +37,7 @@ type ProbeConfig struct {
 
 func LoadProbeConfig() *ProbeConfig {
 	cfg := &ProbeConfig{
-		ServerURL:    getEnv("PROBE_SERVER_URL", "https://stats.technicallabs.org"),
+		ServerURL:    getEnv("PROBE_SERVER_URL", ""),
 		ListenTrap:   getEnv("PROBE_LISTEN_TRAP", "0.0.0.0:162"),
 		ListenSyslog: getEnv("PROBE_LISTEN_SYSLOG", "0.0.0.0:514"),
 		ListenSFlow:  getEnv("PROBE_LISTEN_SFLOW", "0.0.0.0:6343"),
@@ -63,6 +62,9 @@ func LoadProbeConfig() *ProbeConfig {
 	}
 	if cfg.RegistrationKey == "" {
 		log.Fatal("PROBE_REGISTRATION_KEY is required")
+	}
+	if cfg.ServerURL == "" {
+		log.Fatal("PROBE_SERVER_URL is required")
 	}
 
 	return cfg
@@ -123,7 +125,6 @@ type Probe struct {
 	SyslogTCPServer *syslog.SyslogReceiver
 	SyslogUDPServer *syslog.UDPSyslogReceiver
 	SFlowReceiver   *sflow.SFlowReceiver
-	PingCollector   *ping.PingCollector
 	stopChan        chan struct{}
 }
 
@@ -234,16 +235,17 @@ func (p *Probe) Start() error {
 	fmt.Println()
 
 	if err := p.RelayClient.Start(); err != nil {
+		p.cleanup()
 		return fmt.Errorf("failed to start relay client: %w", err)
 	}
+
+	go p.startHeartbeat()
+	go p.startSNMPPolling()
 
 	fmt.Println("========================================")
 	fmt.Println("  Probe is running")
 	fmt.Println("========================================")
 	fmt.Println()
-
-	go p.startHeartbeat()
-	go p.startSNMPPolling()
 
 	return nil
 }
@@ -371,10 +373,7 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 	}
 }
 
-func (p *Probe) Stop() error {
-	fmt.Println()
-	fmt.Println("Shutting down probe...")
-
+func (p *Probe) cleanup() {
 	close(p.stopChan)
 
 	if p.TrapReceiver != nil {
@@ -393,13 +392,16 @@ func (p *Probe) Stop() error {
 		p.SFlowReceiver.Stop()
 	}
 
-	if p.PingCollector != nil {
-		p.PingCollector.Stop()
-	}
-
 	if p.RelayClient != nil {
 		p.RelayClient.Stop()
 	}
+}
+
+func (p *Probe) Stop() error {
+	fmt.Println()
+	fmt.Println("Shutting down probe...")
+
+	p.cleanup()
 
 	fmt.Println("Probe stopped")
 	return nil

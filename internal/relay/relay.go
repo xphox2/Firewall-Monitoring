@@ -27,6 +27,8 @@ type RelayConfig struct {
 	SyncInterval    time.Duration
 }
 
+const maxQueueSize = 10000
+
 type RelayClient struct {
 	Config      RelayConfig
 	httpClient  *http.Client
@@ -128,9 +130,6 @@ func (h *BaseDataHandler) HandleSyslogMessage(msg *SyslogMessage) {}
 func (h *BaseDataHandler) HandleFlowSample(sample *FlowSample)    {}
 
 func NewRelayClient(config RelayConfig) *RelayClient {
-	if config.ServerURL == "" {
-		config.ServerURL = "https://stats.technicallabs.org"
-	}
 	if config.SyncInterval == 0 {
 		config.SyncInterval = 30 * time.Second
 	}
@@ -298,6 +297,9 @@ func (r *RelayClient) SendTrap(trap *TrapEvent) error {
 	}
 
 	r.mu.Lock()
+	if len(r.trapQueue) >= maxQueueSize {
+		r.trapQueue = r.trapQueue[1:]
+	}
 	r.trapQueue = append(r.trapQueue, trap)
 	r.mu.Unlock()
 
@@ -310,6 +312,9 @@ func (r *RelayClient) SendPingResult(result *PingResult) error {
 	}
 
 	r.mu.Lock()
+	if len(r.pingQueue) >= maxQueueSize {
+		r.pingQueue = r.pingQueue[1:]
+	}
 	r.pingQueue = append(r.pingQueue, result)
 	r.mu.Unlock()
 
@@ -322,6 +327,9 @@ func (r *RelayClient) SendSyslogMessage(msg *SyslogMessage) error {
 	}
 
 	r.mu.Lock()
+	if len(r.syslogQueue) >= maxQueueSize {
+		r.syslogQueue = r.syslogQueue[1:]
+	}
 	r.syslogQueue = append(r.syslogQueue, msg)
 	r.mu.Unlock()
 
@@ -334,6 +342,9 @@ func (r *RelayClient) SendFlowSample(sample *FlowSample) error {
 	}
 
 	r.mu.Lock()
+	if len(r.flowQueue) >= maxQueueSize {
+		r.flowQueue = r.flowQueue[1:]
+	}
 	r.flowQueue = append(r.flowQueue, sample)
 	r.mu.Unlock()
 
