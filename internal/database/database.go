@@ -126,11 +126,24 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Add missing columns for IRC tables using GORM Migrator
+	// Add missing columns for IRC tables - first ensure tables exist, then add columns
 	m := d.db.Migrator()
 	ircServer := &models.IRCServer{}
 	ircChannel := &models.IRCChannel{}
 
+	// Create tables if they don't exist
+	if !m.HasTable(ircServer) {
+		if err := m.CreateTable(ircServer); err != nil {
+			log.Printf("Failed to create irc_servers table: %v", err)
+		}
+	}
+	if !m.HasTable(ircChannel) {
+		if err := m.CreateTable(ircChannel); err != nil {
+			log.Printf("Failed to create irc_channels table: %v", err)
+		}
+	}
+
+	// Add missing columns
 	ircServerCols := []string{
 		"nickserv_identify", "server_password", "sasl_enabled",
 		"sasl_username", "sasl_password", "auto_reconnect",
