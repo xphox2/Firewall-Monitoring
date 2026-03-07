@@ -355,8 +355,8 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 		log.Printf("Failed to send interface stats for %s: %v", dev.Name, err)
 	}
 
-	// Collect VPN tunnel status (silently skip if device has no VPN)
-	vpnStatuses, vpnErr := client.GetVPNStatus()
+	// Collect VPN tunnel status (IPSec + dialup + SSL-VPN + GRE)
+	vpnStatuses, sslvpnUsers, sslvpnTunnels, vpnErr := client.GetAllVPNTunnels()
 	if vpnErr == nil && len(vpnStatuses) > 0 {
 		for i := range vpnStatuses {
 			vpnStatuses[i].DeviceID = dev.ID
@@ -364,6 +364,9 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 		}
 		if err := p.RelayClient.SendVPNStatuses(vpnStatuses); err != nil {
 			log.Printf("Failed to send VPN statuses for %s: %v", dev.Name, err)
+		}
+		if sslvpnUsers > 0 || sslvpnTunnels > 0 {
+			log.Printf("Device %s: SSL-VPN: %d users, %d sessions", dev.Name, sslvpnUsers, sslvpnTunnels)
 		}
 	}
 }
