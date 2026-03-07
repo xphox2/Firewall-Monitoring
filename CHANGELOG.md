@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.99] - 2026-03-07
+
+### Added
+- IRC !status command now shows a 6-line visual ASCII health dashboard with:
+  - Device counts (online/offline/total) with color indicators
+  - CPU and memory usage with visual progress bars
+  - VPN tunnel status (up/total), active alerts, and session count
+  - IRC color codes for green (healthy), red (alerts/down), orange (bars)
+- Status provider now includes CPU/memory averages, session totals, and VPN tunnel counts
+
 ## [0.10.98] - 2026-03-07
 
 ### Fixed

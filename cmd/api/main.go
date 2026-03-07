@@ -104,11 +104,43 @@ func main() {
 		db.Gorm().Model(&models.Device{}).Where("status = ?", "online").Count(&onlineCount)
 		db.Gorm().Model(&models.Device{}).Where("status = ?", "offline").Count(&offlineCount)
 		db.Gorm().Model(&models.Alert{}).Where("acknowledged = ?", false).Count(&alertCount)
+
+		var devices []models.Device
+		db.Gorm().Find(&devices)
+		var cpuAvg, memAvg float64
+		var totalSessions int
+		if len(devices) > 0 {
+			var totalCPU, totalMem float64
+			for _, d := range devices {
+				var status models.SystemStatus
+				if err := db.Gorm().Where("device_id = ?", d.ID).Order("timestamp DESC").First(&status).Error; err == nil {
+					totalCPU += status.CPUUsage
+					totalMem += status.MemoryUsage
+					totalSessions += status.SessionCount
+				}
+			}
+			cpuAvg = totalCPU / float64(len(devices))
+			memAvg = totalMem / float64(len(devices))
+		}
+
+		var vpnUp, vpnTotal int64
+		db.Gorm().Model(&models.VPNStatus{}).
+			Where("timestamp = (SELECT MAX(v2.timestamp) FROM vpn_status v2 WHERE v2.device_id = vpn_status.device_id AND v2.tunnel_name = vpn_status.tunnel_name)").
+			Count(&vpnTotal)
+		db.Gorm().Model(&models.VPNStatus{}).
+			Where("status = ? AND timestamp = (SELECT MAX(v2.timestamp) FROM vpn_status v2 WHERE v2.device_id = vpn_status.device_id AND v2.tunnel_name = vpn_status.tunnel_name)", "up").
+			Count(&vpnUp)
+
 		return map[string]interface{}{
 			"device_count":    int(deviceCount),
 			"online_devices":  int(onlineCount),
 			"offline_devices": int(offlineCount),
 			"alert_count":     int(alertCount),
+			"cpu_avg":         cpuAvg,
+			"memory_avg":      memAvg,
+			"sessions":        totalSessions,
+			"vpn_up":          int(vpnUp),
+			"vpn_total":       int(vpnTotal),
 		}, nil
 	})
 	ircManager.SetStatsProvider(func() (map[string]interface{}, error) {

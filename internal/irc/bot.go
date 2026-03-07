@@ -322,7 +322,12 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 	}
 
 	if response != "" {
-		b.Conn.Privmsg(target, response)
+		lines := strings.Split(response, "\n")
+		for _, line := range lines {
+			if line != "" {
+				b.Conn.Privmsg(target, line)
+			}
+		}
 	}
 }
 
@@ -404,26 +409,48 @@ func (b *Bot) updateStatus(status, errMsg string) {
 	b.db.Model(b.Server).Updates(updates)
 }
 
-func formatStatusResponse(status map[string]interface{}) string {
-	var parts []string
+func makeBar(pct float64, width int) string {
+	filled := int(pct / 100.0 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	return strings.Repeat("\u2588", filled) + strings.Repeat("\u2591", width-filled)
+}
 
-	if v, ok := status["device_count"].(int); ok {
-		parts = append(parts, fmt.Sprintf("Devices: %d", v))
+func formatSessions(n int) string {
+	if n >= 1000000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
 	}
-	if v, ok := status["online_devices"].(int); ok {
-		parts = append(parts, fmt.Sprintf("Online: %d", v))
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
-	if v, ok := status["offline_devices"].(int); ok {
-		parts = append(parts, fmt.Sprintf("Offline: %d", v))
-	}
-	if v, ok := status["alert_count"].(int); ok {
-		parts = append(parts, fmt.Sprintf("Alerts: %d", v))
-	}
+	return fmt.Sprintf("%d", n)
+}
 
-	if len(parts) == 0 {
-		return "No status data available"
+func formatStatusResponse(s map[string]interface{}) string {
+	deviceCount, _ := s["device_count"].(int)
+	onlineCount, _ := s["online_devices"].(int)
+	offlineCount, _ := s["offline_devices"].(int)
+	alertCount, _ := s["alert_count"].(int)
+	cpuAvg, _ := s["cpu_avg"].(float64)
+	memAvg, _ := s["memory_avg"].(float64)
+	sessions, _ := s["sessions"].(int)
+	vpnUp, _ := s["vpn_up"].(int)
+	vpnTotal, _ := s["vpn_total"].(int)
+
+	const barW = 20
+	lines := []string{
+		"\x0314\x02\u250C\u2500 Firewall Monitor \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\x0F",
+		fmt.Sprintf("\x0314\u2502\x0F Devices: \x0303%d up\x0F \x0304%d dn\x0F \x0314%d total\x0F          \x0314\u2502\x0F", onlineCount, offlineCount, deviceCount),
+		fmt.Sprintf("\x0314\u2502\x0F CPU  [\x0307%s\x0F] %5.1f%%       \x0314\u2502\x0F", makeBar(cpuAvg, barW), cpuAvg),
+		fmt.Sprintf("\x0314\u2502\x0F MEM  [\x0307%s\x0F] %5.1f%%       \x0314\u2502\x0F", makeBar(memAvg, barW), memAvg),
+		fmt.Sprintf("\x0314\u2502\x0F VPN: \x0303%d\x0F/\x0314%d\x0F up \x0314\u2502\x0F Alerts: \x0304%d\x0F \x0314\u2502\x0F Sess: %s  \x0314\u2502\x0F", vpnUp, vpnTotal, alertCount, formatSessions(sessions)),
+		"\x0314\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\x0F",
 	}
-	return strings.Join(parts, " | ")
+	return strings.Join(lines, "\n")
 }
 
 func formatStatsResponse(stats map[string]interface{}) string {
