@@ -1,5 +1,87 @@
 # Lessons Learned
 
+## Issue: IRC Server Save Fails - Missing Database Columns
+
+### Problem
+"Failed to save server: SQL logic error: no such column: nickserv_identify"
+
+### Root Causes
+
+1. **GORM AutoMigrate doesn't add columns to existing tables in SQLite**
+   - AutoMigrate creates new tables but doesn't reliably add new columns to existing tables
+   - **Lesson**: Use GORM Migrator (HasColumn + AddColumn) for schema changes on existing tables
+
+2. **Raw SQL approach failed**
+   - SQLite doesn't support "ADD COLUMN IF NOT EXISTS" syntax
+   - My early raw SQL attempts failed because they weren't checking column existence properly
+   - **Lesson**: Always use GORM's Migrator for database schema changes, not raw SQL
+
+3. **Handler workarounds were wrong**
+   - Initially tried skipping fields in the handler to avoid the error
+   - This broke functionality (fields not saved)
+   - **Lesson**: Fix the root cause (migration) not symptoms
+
+### Fix Applied
+
+Used GORM Migrator to add missing columns after AutoMigrate:
+```go
+m := d.db.Migrator()
+if !m.HasColumn(&models.IRCServer{}, "nickserv_identify") {
+    m.AddColumn(&models.IRCServer{}, "nickserv_identify")
+}
+```
+
+### Prevention
+- Always use GORM Migrator for column additions on existing tables
+- Test migrations on an existing database, not just fresh ones
+- Don't work around database issues in handlers - fix the migration
+
+---
+
+## Issue: IRC TLS Connection Fails
+
+### Problem
+"tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config"
+
+### Root Cause
+When UseTLS is true, the go-ircevent library requires ServerName to be set in TLSConfig.
+
+### Fix
+```go
+conn.UseTLS = server.UseTLS
+if server.UseTLS && server.ServerHost != "" {
+    conn.TLSConfig = &tls.Config{
+        ServerName: server.ServerHost,
+    }
+}
+```
+
+### Lesson
+- Third-party library TLS requirements vary - always check what fields are needed
+
+---
+
+## Issue: CSRF Token Missing on IRC Page
+
+### Problem
+"CSRF token missing" error on IRC page.
+
+### Root Cause
+The JavaScript called getCsrfToken() immediately without waiting for the async fetch to complete.
+
+### Fix
+Added await before getting token:
+```js
+await AdminCommon.fetchCsrfToken();
+const csrfToken = AdminCommon.getCsrfToken();
+```
+
+### Lesson
+- Always await async token fetches before using them
+- Check how AdminCommon loads in other working pages
+
+---
+
 ## Issue: Blank Admin Pages (Sites, Pending Approvals)
 
 ### Problem
