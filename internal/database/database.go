@@ -126,42 +126,29 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Add missing IRC columns - SQLite compatible approach
-	type columnCheck struct {
-		Table  string
-		Column string
-		Type   string
+	// Use GORM Migrator to add missing columns - handles SQLite properly
+	m := d.db.Migrator()
+	ircServerCols := []string{
+		"nickserv_identify", "server_password", "sasl_enabled",
+		"sasl_username", "sasl_password", "auto_reconnect",
+		"reconnect_delay", "last_connected", "last_error",
 	}
-	columnsToAdd := []columnCheck{
-		{"irc_servers", "nickserv_identify", "BOOLEAN DEFAULT 0"},
-		{"irc_servers", "server_password", "VARCHAR(255)"},
-		{"irc_servers", "sasl_enabled", "BOOLEAN DEFAULT 0"},
-		{"irc_servers", "sasl_username", "VARCHAR(255)"},
-		{"irc_servers", "sasl_password", "VARCHAR(255)"},
-		{"irc_servers", "auto_reconnect", "BOOLEAN DEFAULT 1"},
-		{"irc_servers", "reconnect_delay", "INTEGER DEFAULT 30"},
-		{"irc_servers", "last_connected", "TIMESTAMP"},
-		{"irc_servers", "last_error", "TEXT"},
-		{"irc_channels", "chanserv_name", "VARCHAR(255)"},
-		{"irc_channels", "chanserv_password", "VARCHAR(255)"},
-		{"irc_channels", "chan_oper_pass", "VARCHAR(255)"},
-		{"irc_channels", "auto_join", "BOOLEAN DEFAULT 1"},
-		{"irc_channels", "send_alerts", "BOOLEAN DEFAULT 0"},
-		{"irc_channels", "send_status", "BOOLEAN DEFAULT 0"},
-	}
-	for _, c := range columnsToAdd {
-		// Check if column exists using PRAGMA
-		var columns []struct{ Name string }
-		d.db.Raw("PRAGMA table_info(" + c.Table + ")").Scan(&columns)
-		found := false
-		for _, col := range columns {
-			if col.Name == c.Column {
-				found = true
-				break
+	for _, col := range ircServerCols {
+		if !m.HasColumn(&models.IRCServer{}, col) {
+			if err := m.AddColumn(&models.IRCServer{}, col); err != nil {
+				log.Printf("IRC migrate: add column %s: %v", col, err)
 			}
 		}
-		if !found {
-			d.db.Exec("ALTER TABLE " + c.Table + " ADD COLUMN " + c.Column + " " + c.Type)
+	}
+	ircChannelCols := []string{
+		"chanserv_name", "chanserv_password", "chan_oper_pass",
+		"auto_join", "send_alerts", "send_status",
+	}
+	for _, col := range ircChannelCols {
+		if !m.HasColumn(&models.IRCChannel{}, col) {
+			if err := m.AddColumn(&models.IRCChannel{}, col); err != nil {
+				log.Printf("IRC migrate: add column %s: %v", col, err)
+			}
 		}
 	}
 
