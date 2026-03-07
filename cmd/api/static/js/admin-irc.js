@@ -3,7 +3,7 @@ let channels = [];
 let commands = [];
 
 async function apiCall(url, options = {}) {
-    const csrfToken = localStorage.getItem('csrf_token');
+    const csrfToken = AC ? AC.getCsrfToken() : '';
     const headers = {
         'Content-Type': 'application/json',
         ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
