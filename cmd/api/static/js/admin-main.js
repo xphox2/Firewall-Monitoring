@@ -367,11 +367,12 @@
                     '<td>' + escapeHtml(i.type_name || String(i.type)) + '</td>' +
                     '<td>' + formatIfaceSpeed(i) + '</td>' +
                     '<td><span class="badge ' + i.status + '">' + escapeHtml(i.status) + '</span></td>' +
+                    '<td><span class="badge ' + (i.admin_status === 'up' ? 'up' : 'down') + '">' + escapeHtml(i.admin_status || 'unknown') + '</span></td>' +
                     '<td>' + formatBytesShort(i.in_bytes) + '</td>' +
                     '<td>' + formatBytesShort(i.out_bytes) + '</td>' +
                     '<td>' + ((i.in_errors || 0) + (i.out_errors || 0)) + '</td>' +
                 '</tr>';
-            }).join('') || '<tr><td colspan="9" class="empty-state">No interfaces found</td></tr>';
+            }).join('') || '<tr><td colspan="10" class="empty-state">No interfaces found</td></tr>';
 
             var totalPages = Math.ceil(total / ifacePageSize) || 1;
             document.getElementById('iface-page-info').textContent = 'Page ' + ifacePage + ' of ' + totalPages + ' (' + total + ' interfaces)';

@@ -53,7 +53,7 @@
 
         /* Status Badges */
         .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-        .badge.online, .badge.up { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+        .badge.online, .badge.up, .badge.active { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
         .badge.offline, .badge.down { background: rgba(248, 81, 73, 0.15); color: #f85149; }
         .badge.unknown { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
         .badge.warning { background: rgba(210, 153, 34, 0.15); color: #d29922; }
@@ -61,6 +61,7 @@
         .badge.vxlan { background: rgba(130, 80, 223, 0.15); color: #bc8cff; }
         .badge.tunnel { background: rgba(56, 139, 253, 0.15); color: #58a6ff; }
         .badge.lag { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+        .badge.inactive { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
 
         /* Stat Cards */
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -298,6 +299,7 @@
                                 <th>Type</th>
                                 <th>Remote GW</th>
                                 <th>Status</th>
+                                <th>State</th>
                                 <th>Local Subnet</th>
                                 <th>Remote Subnet</th>
                                 <th>Bytes In</th>

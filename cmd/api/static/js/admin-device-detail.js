@@ -483,12 +483,17 @@
         empty.style.display = 'none';
 
         body.innerHTML = vpn.map(function(v) {
+            var hasTraffic = (v.bytes_in > 0) || (v.bytes_out > 0);
+            var state = v.state || (v.status === 'up' ? 'active' : 'inactive');
+            var stateClass = (state === 'active' && hasTraffic) ? 'active' : (state === 'active' ? 'up' : 'inactive');
+            var stateLabel = (state === 'active' && hasTraffic) ? 'Online' : state;
             return '<tr>' +
                 '<td>' + esc(v.phase1_name || v.tunnel_name) + '</td>' +
                 '<td><strong>' + esc(v.tunnel_name) + '</strong></td>' +
                 '<td>' + getTunnelTypeBadge(v.tunnel_type) + '</td>' +
                 '<td>' + esc(v.remote_ip) + '</td>' +
                 '<td><span class="badge ' + v.status + '">' + v.status + '</span></td>' +
+                '<td><span class="badge ' + stateClass + '">' + stateLabel + '</span></td>' +
                 '<td><code style="color:#58a6ff;font-size:0.8rem;">' + esc(v.local_subnet || '-') + '</code></td>' +
                 '<td><code style="color:#3fb950;font-size:0.8rem;">' + esc(v.remote_subnet || '-') + '</code></td>' +
                 '<td>' + formatBytes(v.bytes_in) + '</td>' +
@@ -499,8 +504,9 @@
 
         // Update tab label with count
         var upCount = vpn.filter(function(v) { return v.status === 'up'; }).length;
+        var onlineCount = vpn.filter(function(v) { var hasTraffic = (v.bytes_in > 0) || (v.bytes_out > 0); var state = v.state || (v.status === 'up' ? 'active' : 'inactive'); return state === 'active' && hasTraffic; }).length;
         var vpnTab = document.querySelector('[data-tab="vpn"]');
-        if (vpnTab) vpnTab.textContent = 'VPN Tunnels (' + upCount + '/' + vpn.length + ')';
+        if (vpnTab) vpnTab.textContent = 'VPN Tunnels (' + onlineCount + '/' + upCount + ' online/up)';
     }
 
     function renderSensors() {
