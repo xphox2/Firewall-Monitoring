@@ -129,10 +129,12 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	if len(results) > 1000 {
 		results = results[:1000]
 	}
+	log.Printf("ReceivePingResults: probe %d received %d results", probe.ID, len(results))
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	saved := 0
 	for i := range results {
 		if results[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[results[i].DeviceID] {
+			log.Printf("ReceivePingResults: device %d not allowed for probe %d", results[i].DeviceID, probe.ID)
 			continue
 		}
 		results[i].ProbeID = probe.ID
@@ -148,6 +150,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		// Aggregate into PingStats
 		h.updatePingStats(results[i].DeviceID, probe.ID, results[i].TargetIP, results[i].Latency, results[i].PacketLoss)
 	}
+	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, saved)
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
 }
 
