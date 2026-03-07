@@ -73,7 +73,7 @@ function renderServers() {
     }
     
     container.innerHTML = servers.map(server => {
-        const serverChannels = channels.filter(c => c.server_id === server.id);
+        const serverChannels = server.channels || [];
         return `
             <div class="server-card">
                 <div class="server-card-header">
@@ -146,7 +146,7 @@ async function saveServer(e) {
         nick: document.getElementById('serverNick').value,
         username: document.getElementById('serverUsername').value,
         real_name: document.getElementById('serverRealName').value,
-        password: document.getElementById('serverPassword').value,
+        server_password: document.getElementById('serverPassword').value,
         nickserv_password: document.getElementById('serverNickServPassword').value,
         nickserv_identify: document.getElementById('serverNickServIdentify').checked,
         use_tls: document.getElementById('serverUseTLS').checked,
@@ -217,7 +217,7 @@ async function testServer() {
         server_port: parseInt(document.getElementById('serverPort').value),
         nick: document.getElementById('serverNick').value,
         username: document.getElementById('serverUsername').value,
-        password: document.getElementById('serverPassword').value,
+        server_password: document.getElementById('serverPassword').value,
         use_tls: document.getElementById('serverUseTLS').checked,
         sasl_enabled: document.getElementById('serverSASLEnabled').checked,
         sasl_username: document.getElementById('serverSASLUsername').value,

@@ -163,7 +163,7 @@ func (b *Bot) Start() {
 			ServerName: server.ServerHost,
 		}
 	}
-	conn.Password = server.Password
+	conn.Password = server.ServerPassword
 
 	if server.SASLEnabled {
 		conn.UseSASL = true

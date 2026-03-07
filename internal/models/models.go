@@ -616,51 +616,51 @@ type SitePingStats struct {
 func (SitePingStats) TableName() string { return "site_ping_stats" }
 
 type IRCServer struct {
-	ID                uint          `json:"id" gorm:"primaryKey"`
-	Name              string        `json:"name" gorm:"not null"`
-	ServerHost        string        `json:"server_host" gorm:"not null"`
-	ServerPort        int           `json:"server_port" gorm:"default:6667"`
-	UseTLS            bool          `json:"use_tls" gorm:"default:false"`
-	Nick              string        `json:"nick" gorm:"not null"`
-	NickServPassword  string        `json:"nickserv_password"`
-	NickServIdentify  bool          `json:"nickserv_identify" gorm:"default:false"`
-	Username          string        `json:"username"`
-	RealName          string        `json:"real_name"`
-	Password          string        `json:"server_password"`
-	SASLEnabled       bool          `json:"sasl_enabled" gorm:"default:false"`
-	SASLUsername      string        `json:"sasl_username"`
-	SASLPassword      string        `json:"sasl_password"`
-	Channels          []IRCChannel  `json:"channels,omitempty" gorm:"foreignKey:ServerID"`
-	Enabled           bool          `json:"enabled" gorm:"default:true"`
-	Status            string        `json:"status" gorm:"default:disconnected"` // connected, disconnected, connecting, error
-	LastConnected    *time.Time    `json:"last_connected"`
-	LastError         string        `json:"last_error"`
-	AutoReconnect     bool          `json:"auto_reconnect" gorm:"default:true"`
-	ReconnectDelay    int           `json:"reconnect_delay" gorm:"default:30"` // seconds
-	CreatedAt         time.Time    `json:"created_at"`
-	UpdatedAt         time.Time    `json:"updated_at"`
+	ID               uint         `json:"id" gorm:"primaryKey"`
+	Name             string       `json:"name" gorm:"column:name;not null"`
+	ServerHost       string       `json:"server_host" gorm:"column:server_host;not null"`
+	ServerPort       int          `json:"server_port" gorm:"column:server_port;default:6667"`
+	UseTLS           bool         `json:"use_tls" gorm:"column:use_tls;default:false"`
+	Nick             string       `json:"nick" gorm:"column:nick;not null"`
+	NickServPassword string       `json:"nickserv_password" gorm:"column:nickserv_password"`
+	NickServIdentify bool         `json:"nickserv_identify" gorm:"column:nickserv_identify;default:false"`
+	Username         string       `json:"username" gorm:"column:username"`
+	RealName         string       `json:"real_name" gorm:"column:real_name"`
+	ServerPassword   string       `json:"server_password" gorm:"column:server_password"`
+	SASLEnabled      bool         `json:"sasl_enabled" gorm:"column:sasl_enabled;default:false"`
+	SASLUsername     string       `json:"sasl_username" gorm:"column:sasl_username"`
+	SASLPassword     string       `json:"sasl_password" gorm:"column:sasl_password"`
+	Channels         []IRCChannel `json:"channels,omitempty" gorm:"foreignKey:ServerID"`
+	Enabled          bool         `json:"enabled" gorm:"column:enabled;default:true"`
+	Status           string       `json:"status" gorm:"column:status;default:disconnected"`
+	LastConnected    *time.Time   `json:"last_connected" gorm:"column:last_connected"`
+	LastError        string       `json:"last_error" gorm:"column:last_error"`
+	AutoReconnect    bool         `json:"auto_reconnect" gorm:"column:auto_reconnect;default:true"`
+	ReconnectDelay   int          `json:"reconnect_delay" gorm:"column:reconnect_delay;default:30"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 func (IRCServer) TableName() string { return "irc_servers" }
 
 type IRCChannel struct {
-	ID            uint       `json:"id" gorm:"primaryKey"`
-	ServerID      uint       `json:"server_id" gorm:"not null;index"`
-	Server        *IRCServer `json:"server,omitempty" gorm:"foreignKey:ServerID"`
-	ChannelName   string     `json:"channel_name" gorm:"not null"`
-	ChannelKey    string     `json:"channel_key"`
-	ChanServName  string     `json:"chanserv_name"`
-	ChanServPass  string     `json:"chanserv_password"`
-	ChanOperPass  string     `json:"chan_oper_pass"` // Channel operator password for taking ops
-	AutoJoin      bool       `json:"auto_join" gorm:"default:true"`
-	SendAlerts    bool       `json:"send_alerts" gorm:"default:false"`     // Send system alerts to this channel
-	SendStatus    bool       `json:"send_status" gorm:"default:false"`      // Respond to !status in this channel
-	StatusInterval int       `json:"status_interval" gorm:"default:300"`   // Auto status interval in seconds (0 to disable)
-	Enabled       bool       `json:"enabled" gorm:"default:true"`
-	Status        string     `json:"status" gorm:"default:pending"` // pending, joined, left, error
-	JoinedAt      *time.Time `json:"joined_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             uint       `json:"id" gorm:"primaryKey"`
+	ServerID       uint       `json:"server_id" gorm:"column:server_id;not null;index"`
+	Server         *IRCServer `json:"server,omitempty" gorm:"foreignKey:ServerID"`
+	ChannelName    string     `json:"channel_name" gorm:"column:channel_name;not null"`
+	ChannelKey     string     `json:"channel_key" gorm:"column:channel_key"`
+	ChanServName   string     `json:"chanserv_name" gorm:"column:chanserv_name"`
+	ChanServPass   string     `json:"chanserv_password" gorm:"column:chanserv_password"`
+	ChanOperPass   string     `json:"chan_oper_pass" gorm:"column:chan_oper_pass"`
+	AutoJoin       bool       `json:"auto_join" gorm:"column:auto_join;default:true"`
+	SendAlerts     bool       `json:"send_alerts" gorm:"column:send_alerts;default:false"`
+	SendStatus     bool       `json:"send_status" gorm:"column:send_status;default:false"`
+	StatusInterval int        `json:"status_interval" gorm:"column:status_interval;default:300"`
+	Enabled        bool       `json:"enabled" gorm:"column:enabled;default:true"`
+	Status         string     `json:"status" gorm:"column:status;default:pending"`
+	JoinedAt       *time.Time `json:"joined_at" gorm:"column:joined_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 func (IRCChannel) TableName() string { return "irc_channels" }

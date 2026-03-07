@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.98] - 2026-03-07
+
+### Fixed
+- Standardized navigation sidebar across all admin pages (consistent order, icons, sections)
+- Added "System" section with Settings and IRC links to all admin pages
+- Fixed Connections/Interfaces order in device-detail and connection-detail pages
+- IRC: renamed model field `Password` to `ServerPassword` with explicit gorm column tags
+- IRC: fixed frontend sending wrong JSON key (`password` instead of `server_password`)
+- IRC: fixed server card not showing channels (was using empty global array instead of preloaded data)
+- IRC: removed broken manual column migration code, replaced with one-time schema fix
+- IRC: fixed update handler returning stale data after save
+- IRC page sidebar now matches all other admin pages
+- IRC page logout link now uses standard data-action="logout" pattern
+
 ## [0.10.97] - 2026-03-07
 
 ### Fixed

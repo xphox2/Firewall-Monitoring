@@ -106,9 +106,12 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 
 	if err := h.db.Gorm().Model(&server).Updates(updates).Error; err != nil {
 		log.Printf("Failed to update IRC server %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server: " + err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server: "+err.Error()))
 		return
 	}
+
+	// Re-fetch to return current state
+	h.db.Gorm().Preload("Channels").First(&server, id)
 
 	if mgr := h.GetIRCManager(); mgr != nil {
 		if server.Enabled {

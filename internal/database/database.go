@@ -126,42 +126,22 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Use GORM Migrator to ensure IRC tables and columns exist
+	// One-time fix: if IRC tables have wrong column names from prior migrations,
+	// drop and recreate them. Detect by checking for the correct server_password column.
 	m := d.db.Migrator()
-
-	// First ensure tables exist
-	if !m.HasTable(&models.IRCServer{}) {
-		if err := m.CreateTable(&models.IRCServer{}); err != nil {
-			log.Printf("IRC migrate: create table irc_servers: %v", err)
-		}
-	}
-	if !m.HasTable(&models.IRCChannel{}) {
-		if err := m.CreateTable(&models.IRCChannel{}); err != nil {
-			log.Printf("IRC migrate: create table irc_channels: %v", err)
-		}
-	}
-
-	// Then add missing columns
-	ircServerCols := []string{
-		"nickserv_identify", "server_password", "sasl_enabled",
-		"sasl_username", "sasl_password", "auto_reconnect",
-		"reconnect_delay", "last_connected", "last_error",
-	}
-	for _, col := range ircServerCols {
-		if !m.HasColumn(&models.IRCServer{}, col) {
-			if err := m.AddColumn(&models.IRCServer{}, col); err != nil {
-				log.Printf("IRC migrate: add column %s: %v", col, err)
+	if m.HasTable(&models.IRCServer{}) && !m.HasColumn(&models.IRCServer{}, "ServerPassword") {
+		log.Println("IRC migrate: detected old schema, recreating IRC tables")
+		ircTables := []interface{}{&models.IRCMessageLog{}, &models.IRCCommand{}, &models.IRCChannel{}, &models.IRCServer{}}
+		for _, tbl := range ircTables {
+			if m.HasTable(tbl) {
+				if err := m.DropTable(tbl); err != nil {
+					log.Printf("IRC migrate: drop table: %v", err)
+				}
 			}
 		}
-	}
-	ircChannelCols := []string{
-		"chanserv_name", "chanserv_password", "chan_oper_pass",
-		"auto_join", "send_alerts", "send_status",
-	}
-	for _, col := range ircChannelCols {
-		if !m.HasColumn(&models.IRCChannel{}, col) {
-			if err := m.AddColumn(&models.IRCChannel{}, col); err != nil {
-				log.Printf("IRC migrate: add column %s: %v", col, err)
+		for _, tbl := range ircTables {
+			if err := d.db.AutoMigrate(tbl); err != nil {
+				log.Printf("IRC migrate: recreate table: %v", err)
 			}
 		}
 	}
