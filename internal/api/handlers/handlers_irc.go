@@ -82,8 +82,11 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 		return
 	}
 
-	delete(updates, "id")
-	delete(updates, "created_at")
+	// Remove fields that should not be updated
+	skipFields := []string{"id", "created_at", "updated_at", "status", "last_connected", "last_error"}
+	for _, f := range skipFields {
+		delete(updates, f)
+	}
 
 	// Skip empty strings for required fields to avoid NOT NULL constraint errors
 	if v, ok := updates["name"].(string); ok && v == "" {
