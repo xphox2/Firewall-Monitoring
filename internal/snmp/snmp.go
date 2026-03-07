@@ -565,6 +565,7 @@ func (s *SNMPClient) GetInterfaceAddresses() ([]models.InterfaceAddress, error) 
 func getIndexFromOID(oid, base string) int {
 	partial := strings.TrimPrefix(oid, base+".")
 	parts := strings.Split(partial, ".")
+	log.Printf("getIndexFromOID: oid=%s base=%s partial=%s parts=%v", oid, base, partial, parts)
 	if len(parts) >= 1 {
 		// Handle both single and multi-index OIDs
 		// For OID like .1.2.3.4.1.1, parts[0]="4", parts[1]="1" - we want the LAST part for the index
@@ -572,13 +573,16 @@ func getIndexFromOID(oid, base string) int {
 		var index int
 		// Try last element first (works for OIDs like 1.1, 1.2)
 		if n, _ := fmt.Sscanf(parts[len(parts)-1], "%d", &index); n == 1 {
+			log.Printf("getIndexFromOID: returning %d (last element)", index)
 			return index
 		}
 		// Fall back to first element
 		if n, _ := fmt.Sscanf(parts[0], "%d", &index); n == 1 {
+			log.Printf("getIndexFromOID: returning %d (first element)", index)
 			return index
 		}
 	}
+	log.Printf("getIndexFromOID: returning -1")
 	return -1
 }
 
