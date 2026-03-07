@@ -127,31 +127,40 @@ func (d *Database) migrate() error {
 	}
 
 	// Add missing columns for IRC tables (existing databases may be missing these)
-	ircServerCols := []string{
-		"nickserv_identify",
-		"server_password",
-		"sasl_enabled",
-		"sasl_username",
-		"sasl_password",
-		"auto_reconnect",
-		"reconnect_delay",
-		"last_connected",
-		"last_error",
+	// SQLite doesn't support IF NOT EXISTS, so we check first
+	ircServerCols := map[string]string{
+		"nickserv_identify": "BOOLEAN DEFAULT 0",
+		"server_password":   "VARCHAR(255)",
+		"sasl_enabled":     "BOOLEAN DEFAULT 0",
+		"sasl_username":    "VARCHAR(255)",
+		"sasl_password":    "VARCHAR(255)",
+		"auto_reconnect":   "BOOLEAN DEFAULT 1",
+		"reconnect_delay":  "INTEGER DEFAULT 30",
+		"last_connected":   "TIMESTAMP",
+		"last_error":       "TEXT",
 	}
-	for _, col := range ircServerCols {
-		d.db.Exec("ALTER TABLE irc_servers ADD COLUMN IF NOT EXISTS " + col + " VARCHAR(255)")
+	for col, def := range ircServerCols {
+		var count int
+		d.db.Raw("SELECT COUNT(*) FROM pragma_table_info('irc_servers') WHERE name = ?", col).Scan(&count)
+		if count == 0 {
+			d.db.Exec("ALTER TABLE irc_servers ADD COLUMN " + col + " " + def)
+		}
 	}
 
-	ircChannelCols := []string{
-		"chanserv_name",
-		"chanserv_password",
-		"chan_oper_pass",
-		"auto_join",
-		"send_alerts",
-		"send_status",
+	ircChannelCols := map[string]string{
+		"chanserv_name":   "VARCHAR(255)",
+		"chanserv_password": "VARCHAR(255)",
+		"chan_oper_pass":  "VARCHAR(255)",
+		"auto_join":       "BOOLEAN DEFAULT 1",
+		"send_alerts":     "BOOLEAN DEFAULT 0",
+		"send_status":     "BOOLEAN DEFAULT 0",
 	}
-	for _, col := range ircChannelCols {
-		d.db.Exec("ALTER TABLE irc_channels ADD COLUMN IF NOT EXISTS " + col + " VARCHAR(255)")
+	for col, def := range ircChannelCols {
+		var count int
+		d.db.Raw("SELECT COUNT(*) FROM pragma_table_info('irc_channels') WHERE name = ?", col).Scan(&count)
+		if count == 0 {
+			d.db.Exec("ALTER TABLE irc_channels ADD COLUMN " + col + " " + def)
+		}
 	}
 
 	return nil
