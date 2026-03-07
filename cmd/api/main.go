@@ -303,10 +303,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "network.html", nil)
 		})
 
-		admin.GET("/irc", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "irc.html", nil)
-		})
-
 		admin.GET("/devices/:id", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "device-detail.html", nil)
 		})

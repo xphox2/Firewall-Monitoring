@@ -761,24 +761,30 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 	}
 
 	hasDirectLink := func(devA, devB uint) bool {
-		// Check if device A has a VPN tunnel pointing to device B's IP
+		// Check if device A has an UP VPN tunnel pointing to device B's IP
 		for _, t := range vpnByDevice[devA] {
+			if t.Status != "up" {
+				continue
+			}
 			if did, ok := ipToDeviceID[t.RemoteIP]; ok && did == devB {
 				return true
 			}
 		}
-		// Check if device B has a VPN tunnel pointing to device A's IP
+		// Check if device B has an UP VPN tunnel pointing to device A's IP
 		for _, t := range vpnByDevice[devB] {
+			if t.Status != "up" {
+				continue
+			}
 			if did, ok := ipToDeviceID[t.RemoteIP]; ok && did == devA {
 				return true
 			}
 		}
 		// Fallback: check if detectVPNConnections already created a tunnel/ipsec connection
-		// (handles NAT'd tunnels matched via tunnel_indirect method)
+		// that is UP (handles NAT'd tunnels matched via tunnel_indirect method)
 		if p.db != nil {
 			for _, ct := range []string{"ipsec", "gre", "tunnel", "ssl"} {
 				conn, _ := p.db.FindConnectionByDevicePairAndType(devA, devB, ct)
-				if conn != nil {
+				if conn != nil && conn.Status == "up" {
 					return true
 				}
 			}
@@ -804,18 +810,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 		"l2vlan": true, "l3ipvlan": true, "vxlan": true,
 	}
 
-	// Validation categories:
-	// - l2vlan (local segment): requires same site
-	// - l3ipvlan/vxlan (overlays): requires a direct VPN tunnel between endpoints
-	localTypes := map[string]bool{"l2vlan": true}
-	sameSite := func(devA, devB uint) bool {
-		da, oa := deviceByID[devA]
-		db, ob := deviceByID[devB]
-		if !oa || !ob || da.SiteID == nil || db.SiteID == nil {
-			return false
-		}
-		return *da.SiteID == *db.SiteID
-	}
+	// Validation: ALL overlay types require a direct VPN tunnel between endpoints
 	// normalizeIfName strips formatting differences so vlan500, vlan 500,
 	// vlan.500, vlan-500, vlan_500, VLAN500 all match as "vlan500".
 	normalizeIfName := func(name string) string {
@@ -904,23 +899,20 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 			deviceList = append(deviceList, e)
 		}
 
-		for i := 0; i < len(deviceList); i++ {
-			for j := i + 1; j < len(deviceList); j++ {
-				a, b := deviceList[i], deviceList[j]
-				connType := pairConnType(a.typeName, b.typeName)
+	// Validation: ALL overlay types (l2vlan, l3ipvlan, vxlan) require a direct VPN tunnel
+	// between endpoints to ensure the interfaces are actually connected and passing traffic.
+	// Simply matching names or being at the same site is not sufficient.
+	for i := 0; i < len(deviceList); i++ {
+		for j := i + 1; j < len(deviceList); j++ {
+			a, b := deviceList[i], deviceList[j]
+			connType := pairConnType(a.typeName, b.typeName)
 
-				// Validation by category
-				if localTypes[connType] {
-					if !sameSite(a.deviceID, b.deviceID) {
-						continue
-					}
-				} else {
-					if !hasDirectLink(a.deviceID, b.deviceID) {
-						continue
-					}
-				}
+			// Require direct VPN link for ALL overlay types (l2vlan, l3ipvlan, vxlan)
+			if !hasDirectLink(a.deviceID, b.deviceID) {
+				continue
+			}
 
-				key := pairKey(a.deviceID, b.deviceID) + ":" + connType
+			key := pairKey(a.deviceID, b.deviceID) + ":" + connType
 				pi, exists := pairAccum[key]
 				if !exists {
 					srcID, dstID := a.deviceID, b.deviceID
