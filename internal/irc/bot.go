@@ -1,6 +1,7 @@
 package irc
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"strings"
@@ -157,6 +158,11 @@ func (b *Bot) Start() {
 		conn.RealName = server.Nick
 	}
 	conn.UseTLS = server.UseTLS
+	if server.UseTLS && server.ServerHost != "" {
+		conn.TLSConfig = &tls.Config{
+			ServerName: server.ServerHost,
+		}
+	}
 	conn.Password = server.Password
 
 	if server.SASLEnabled {
@@ -472,6 +478,11 @@ func (tb *TestBot) Connect() error {
 	}
 	conn := irc.IRC(tb.nick, tb.username)
 	conn.UseTLS = tb.useTLS
+	if tb.useTLS && tb.serverHost != "" {
+		conn.TLSConfig = &tls.Config{
+			ServerName: tb.serverHost,
+		}
+	}
 	conn.Password = tb.password
 	conn.Timeout = 10 * time.Second
 
