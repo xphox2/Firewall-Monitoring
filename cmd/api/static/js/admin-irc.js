@@ -3,19 +3,6 @@ let channels = [];
 let commands = [];
 
 async function apiCall(url, options = {}) {
-    // Wait for AdminCommon to be available if not yet loaded
-    if (typeof AdminCommon === 'undefined') {
-        await new Promise(resolve => {
-            const check = setInterval(() => {
-                if (typeof AdminCommon !== 'undefined') {
-                    clearInterval(check);
-                    resolve();
-                }
-            }, 100);
-            // Timeout after 5 seconds
-            setTimeout(() => { clearInterval(check); resolve(); }, 5000);
-        });
-    }
     const csrfToken = AdminCommon ? AdminCommon.getCsrfToken() : '';
     const headers = {
         'Content-Type': 'application/json',
