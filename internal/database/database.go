@@ -1787,6 +1787,13 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 
 	// Cross-fill: if one side has empty subnets, infer from the other side (swapped).
 	// Hub-side ADVPN tunnels often have empty Phase 2 selectors in SNMP.
+	log.Printf("GetConnectionDetail %d: source_tunnels=%d dest_tunnels=%d", connID, len(result.SourceTunnels), len(result.DestTunnels))
+	for i, t := range result.SourceTunnels {
+		log.Printf("GetConnectionDetail %d: source_tunnel[%d] name=%s local=%s remote=%s", connID, i, t.TunnelName, t.LocalSubnet, t.RemoteSubnet)
+	}
+	for i, t := range result.DestTunnels {
+		log.Printf("GetConnectionDetail %d: dest_tunnel[%d] name=%s local=%s remote=%s", connID, i, t.TunnelName, t.LocalSubnet, t.RemoteSubnet)
+	}
 	if len(result.SourceTunnels) > 0 && len(result.DestTunnels) > 0 {
 		for i := range result.SourceTunnels {
 			if result.SourceTunnels[i].LocalSubnet == "" || result.SourceTunnels[i].RemoteSubnet == "" {
