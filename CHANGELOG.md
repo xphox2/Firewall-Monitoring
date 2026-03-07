@@ -1,21 +1,15 @@
 # Changelog
 
+## [0.10.96] - 2026-03-07
+
+### Fixed
+- Device VPN page now cross-fills Phase 2 subnets from peer devices when local device doesn't expose them (HUB limitation)
+
 ## [0.10.95] - 2026-03-07
 
 ### Fixed
 - Added debug logging to see Phase 2 subnet values from SNMP
 - IPSec Phase 2 selectors now use correct OIDs for source/destination selector ranges
-
-## [0.10.94] - 2026-03-07
-
-### Fixed
-- IPSec site-to-site tunnels now properly capture Phase 2 subnet selectors (source/destination IP ranges)
-- Previously using incorrect OIDs for gateway IPs instead of Phase 2 selectors
-
-### Added
-- IPSec dialup Phase 2 subnet selectors (local/remote subnets)
-- GRE tunnel detection from interface table (ifType=47)
-- VPN tunnel type detection via SNMP OID trees
 
 ## [0.10.88] - 2026-03-04
 

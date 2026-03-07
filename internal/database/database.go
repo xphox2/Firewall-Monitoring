@@ -221,6 +221,38 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 	}
 	var statuses []models.VPNStatus
 	err := d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).Find(&statuses).Error
+	if err != nil || len(statuses) == 0 {
+		return statuses, err
+	}
+
+	// Cross-fill Phase 2 subnets from peer devices
+	// Find connections involving this device
+	var connections []models.DeviceConnection
+	d.db.Where("source_device_id = ? OR dest_device_id = ?", deviceID, deviceID).Find(&connections)
+	
+	for i := range statuses {
+		if statuses[i].LocalSubnet == "" || statuses[i].RemoteSubnet == "" {
+			// Find peer device from connections
+			for _, conn := range connections {
+				peerID := conn.SourceDeviceID
+				if peerID == deviceID {
+					peerID = conn.DestDeviceID
+				}
+				// Get tunnels from peer that match by name
+				var peerStatuses []models.VPNStatus
+				d.db.Where("device_id = ? AND tunnel_name = ?", peerID, statuses[i].TunnelName).Find(&peerStatuses)
+				for _, peerTunnel := range peerStatuses {
+					if peerTunnel.LocalSubnet != "" && statuses[i].LocalSubnet == "" {
+						statuses[i].LocalSubnet = peerTunnel.LocalSubnet
+					}
+					if peerTunnel.RemoteSubnet != "" && statuses[i].RemoteSubnet == "" {
+						statuses[i].RemoteSubnet = peerTunnel.RemoteSubnet
+					}
+				}
+			}
+		}
+	}
+
 	return statuses, err
 }
 
