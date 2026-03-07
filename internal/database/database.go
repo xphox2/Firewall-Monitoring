@@ -126,7 +126,7 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Add missing IRC columns - check existence first
+	// Add missing IRC columns - SQLite compatible approach
 	type columnCheck struct {
 		Table  string
 		Column string
@@ -150,9 +150,17 @@ func (d *Database) migrate() error {
 		{"irc_channels", "send_status", "BOOLEAN DEFAULT 0"},
 	}
 	for _, c := range columnsToAdd {
-		var count int
-		d.db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", c.Table, c.Column).Scan(&count)
-		if count == 0 {
+		// Check if column exists using PRAGMA
+		var columns []struct{ Name string }
+		d.db.Raw("PRAGMA table_info(" + c.Table + ")").Scan(&columns)
+		found := false
+		for _, col := range columns {
+			if col.Name == c.Column {
+				found = true
+				break
+			}
+		}
+		if !found {
 			d.db.Exec("ALTER TABLE " + c.Table + " ADD COLUMN " + c.Column + " " + c.Type)
 		}
 	}
