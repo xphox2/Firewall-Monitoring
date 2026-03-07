@@ -126,8 +126,22 @@ func (d *Database) migrate() error {
 		}
 	}
 
-	// Use GORM Migrator to add missing columns - handles SQLite properly
+	// Use GORM Migrator to ensure IRC tables and columns exist
 	m := d.db.Migrator()
+
+	// First ensure tables exist
+	if !m.HasTable(&models.IRCServer{}) {
+		if err := m.CreateTable(&models.IRCServer{}); err != nil {
+			log.Printf("IRC migrate: create table irc_servers: %v", err)
+		}
+	}
+	if !m.HasTable(&models.IRCChannel{}) {
+		if err := m.CreateTable(&models.IRCChannel{}); err != nil {
+			log.Printf("IRC migrate: create table irc_channels: %v", err)
+		}
+	}
+
+	// Then add missing columns
 	ircServerCols := []string{
 		"nickserv_identify", "server_password", "sasl_enabled",
 		"sasl_username", "sasl_password", "auto_reconnect",
