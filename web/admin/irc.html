@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRC Management - Firewall Monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
+
+        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
+        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
+        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
+        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
+        .nav-section { margin-bottom: 16px; }
+        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
+        .nav-item:hover { background: #21262d; color: #e6edf3; }
+        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
+        .nav-item.danger { color: #f85149; }
+        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
+        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
+
+        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .card h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
+        .btn:hover { background: #2ea043; }
+        .btn.danger { background: #da3633; }
+        .btn.danger:hover { background: #e5534b; }
+        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
+        .btn.secondary:hover { background: #30363d; }
+        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        table { width: 100%; border-collapse: collapse; }
+        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
+        tr:hover { background: #1c2128; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
+        .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
+        .form-group input { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
+        .form-group input:focus, .form-group select:focus { border-color: #58a6ff; outline: none; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+        .checkbox-label input { width: auto; }
+        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 520px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .modal-header h2 { font-size: 1.1rem; color: #e6edf3; }
+        .modal-close { cursor: pointer; font-size: 1.3rem; color: #8b949e; background: none; border: none; padding: 4px; }
+        .modal-close:hover { color: #e6edf3; }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+        .loading { text-align: center; padding: 30px; color: #484f58; }
+        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .empty { text-align: center; padding: 40px; color: #8b949e; }
+        .tab-nav { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #30363d; }
+        .tab-btn { background: none; border: none; color: #8b949e; padding: 10px 16px; cursor: pointer; font-size: 0.88rem; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+        .tab-btn:hover { color: #e6edf3; }
+        .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .status-badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
+        .status-connected { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .status-disconnected { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .status-connecting { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+        .status-error { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+        .status-joined { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
+        .status-pending { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+        .status-left { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+        .server-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 15px; }
+        .server-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .server-card-header h3 { color: #58a6ff; }
+        .server-info { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 0.85rem; }
+        .server-info span { color: #8b949e; }
+        .channel-list { margin-top: 12px; padding-top: 12px; border-top: 1px solid #21262d; }
+        .channel-tag { display: inline-block; background: #21262d; padding: 4px 10px; border-radius: 4px; margin-right: 8px; margin-bottom: 8px; font-size: 0.82rem; }
+        .actions { display: flex; gap: 6px; }
+        .message-area { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; min-height: 200px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; margin-bottom: 12px; }
+        .message-area .msg { margin-bottom: 4px; }
+        .message-area .msg .nick { color: #58a6ff; }
+        .message-area .msg .time { color: #484f58; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Firewall Monitor</h2>
+            <div class="subtitle">Admin Panel</div>
+        </div>
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Monitoring</div>
+                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
+                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
+                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#127760;</span> Sites</a>
+                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9651;</span> Probes</a>
+                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#128196;</span> Syslog</a>
+                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8644;</span> Flows</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">Alerts</div>
+                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#128276;</span> Alerts</a>
+                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#128480;</span> Traps</a>
+            </div>
+            <div class="nav-section">
+                <div class="nav-section-title">System</div>
+                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
+                <a class="nav-item active" href="/admin/irc"><span class="nav-icon">&#128172;</span> IRC</a>
+                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#127760;</span> Network</a>
+            </div>
+        </div>
+        <div class="sidebar-footer">
+            <a class="nav-item" href="/admin/logout"><span class="nav-icon">&#10145;</span> Logout</a>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="page-header">
+            <h1>IRC Management</h1>
+            <button class="btn" onclick="openServerModal()">Add Server</button>
+        </div>
+
+        <div id="alertMessage"></div>
+
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('servers')">Servers</button>
+            <button class="tab-btn" onclick="switchTab('channels')">Channels</button>
+            <button class="tab-btn" onclick="switchTab('commands')">Commands</button>
+            <button class="tab-btn" onclick="switchTab('send')">Send Message</button>
+        </div>
+
+        <div id="tab-servers" class="tab-content active">
+            <div class="card">
+                <h2>IRC Servers</h2>
+                <div id="serversList">
+                    <div class="loading">Loading servers...</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-channels" class="tab-content">
+            <div class="card">
+                <h2>
+                    Channels
+                    <button class="btn sm" onclick="openChannelModal()">Add Channel</button>
+                </h2>
+                <div id="channelsList">
+                    <div class="loading">Loading channels...</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-commands" class="tab-content">
+            <div class="card">
+                <h2>
+                    Custom Commands
+                    <button class="btn sm" onclick="openCommandModal()">Add Command</button>
+                </h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Command</th>
+                            <th>Description</th>
+                            <th>Type</th>
+                            <th>Admin Only</th>
+                            <th>Enabled</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="commandsList">
+                        <tr><td colspan="6" class="loading">Loading commands...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-send" class="tab-content">
+            <div class="card">
+                <h2>Send IRC Message</h2>
+                <div class="form-group">
+                    <label>Server</label>
+                    <select id="sendServerSelect" onchange="loadChannelsForSend()">
+                        <option value="">Select a server...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Channel</label>
+                    <select id="sendChannelSelect">
+                        <option value="">Select a channel...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Message</label>
+                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..."></textarea>
+                </div>
+                <button class="btn" onclick="sendMessage()">Send Message</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="serverModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="serverModalTitle">Add Server</h2>
+                <button class="modal-close" onclick="closeServerModal()">&times;</button>
+            </div>
+            <form id="serverForm" onsubmit="saveServer(event)">
+                <input type="hidden" id="serverId">
+                <div class="form-group">
+                    <label>Server Name</label>
+                    <input type="text" id="serverName" required placeholder="e.g., My IRC Server">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Server Host</label>
+                        <input type="text" id="serverHost" required placeholder="e.g., irc.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Server Port</label>
+                        <input type="number" id="serverPort" value="6667" min="1" max="65535">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Nick</label>
+                        <input type="text" id="serverNick" required placeholder="BotNick">
+                    </div>
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="serverUsername" placeholder="username">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Real Name</label>
+                    <input type="text" id="serverRealName" placeholder="Real Name">
+                </div>
+                <div class="form-group">
+                    <label>Server Password (optional)</label>
+                    <input type="password" id="serverPassword" placeholder="Server password">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>NickServ Password (optional)</label>
+                        <input type="password" id="serverNickServPassword" placeholder="For IDENTIFY">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="serverNickServIdentify">
+                            Identify to NickServ
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="serverUseTLS">
+                        Use TLS/SSL
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>SASL Authentication</label>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="serverSASLEnabled">
+                                Enable SASL
+                            </label>
+                        </div>
+                    </div>
+                    <div id="saslFields" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>SASL Username</label>
+                                <input type="text" id="serverSASLUsername" placeholder="SASL username">
+                            </div>
+                            <div class="form-group">
+                                <label>SASL Password</label>
+                                <input type="password" id="serverSASLPassword" placeholder="SASL password">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="serverEnabled" checked>
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="serverAutoReconnect" checked>
+                        Auto Reconnect
+                    </label>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeServerModal()">Cancel</button>
+                    <button type="button" class="btn secondary" onclick="testServer()">Test</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="channelModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="channelModalTitle">Add Channel</h2>
+                <button class="modal-close" onclick="closeChannelModal()">&times;</button>
+            </div>
+            <form id="channelForm" onsubmit="saveChannel(event)">
+                <input type="hidden" id="channelId">
+                <div class="form-group">
+                    <label>Server</label>
+                    <select id="channelServerId" required>
+                        <option value="">Select a server...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Channel Name</label>
+                    <input type="text" id="channelName" required placeholder="e.g., #mychannel">
+                </div>
+                <div class="form-group">
+                    <label>Channel Key (optional)</label>
+                    <input type="password" id="channelKey" placeholder="Channel password">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>ChanServ Name (optional)</label>
+                        <input type="text" id="channelChanServName" placeholder="NickServ">
+                    </div>
+                    <div class="form-group">
+                        <label>ChanServ Password</label>
+                        <input type="password" id="channelChanServPass" placeholder="For IDENTIFY">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="channelAutoJoin" checked>
+                        Auto Join
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="channelSendAlerts">
+                        Send Alerts to Channel
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="channelSendStatus">
+                        Respond to !status Commands
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="channelEnabled" checked>
+                        Enabled
+                    </label>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeChannelModal()">Cancel</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="commandModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="commandModalTitle">Add Command</h2>
+                <button class="modal-close" onclick="closeCommandModal()">&times;</button>
+            </div>
+            <form id="commandForm" onsubmit="saveCommand(event)">
+                <input type="hidden" id="commandId">
+                <div class="form-group">
+                    <label>Command</label>
+                    <input type="text" id="commandCmd" required placeholder="e.g., !status">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="commandDescription" placeholder="What this command does">
+                </div>
+                <div class="form-group">
+                    <label>Command Type</label>
+                    <select id="commandType" onchange="toggleCommandResponse()">
+                        <option value="static">Static Response</option>
+                        <option value="status">System Status</option>
+                        <option value="stats">System Stats</option>
+                        <option value="custom">Custom Script</option>
+                    </select>
+                </div>
+                <div class="form-group" id="responseField">
+                    <label>Response</label>
+                    <textarea id="commandResponse" rows="4" placeholder="Response text or script..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="commandAdminOnly">
+                        Admin Only
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="commandEnabled" checked>
+                        Enabled
+                    </label>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" onclick="closeCommandModal()">Cancel</button>
+                    <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/js/admin-irc.js"></script>
+</body>
+</html>

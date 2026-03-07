@@ -111,6 +111,10 @@ func (d *Database) migrate() error {
 		&models.SDWANHealth{},
 		&models.LicenseInfo{},
 		&models.InterfaceAddress{},
+		&models.IRCServer{},
+		&models.IRCChannel{},
+		&models.IRCCommand{},
+		&models.IRCMessageLog{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.

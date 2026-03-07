@@ -9,6 +9,7 @@ import (
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/irc"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/uptime"
@@ -22,6 +23,7 @@ type Handler struct {
 	snmpClient   *snmp.SNMPClient
 	uptimeTrack  *uptime.UptimeTracker
 	alertManager *alerts.AlertManager
+	ircManager   *irc.Manager
 	db           *database.Database
 	mu           sync.RWMutex
 }
@@ -33,6 +35,18 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 		uptimeTrack: uptime.NewUptimeTracker(cfg),
 		db:          db,
 	}
+}
+
+func (h *Handler) SetIRCManager(mgr *irc.Manager) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.ircManager = mgr
+}
+
+func (h *Handler) GetIRCManager() *irc.Manager {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.ircManager
 }
 
 func (h *Handler) SetAlertManager(am *alerts.AlertManager) {

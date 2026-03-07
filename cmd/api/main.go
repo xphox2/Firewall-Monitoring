@@ -17,6 +17,8 @@ import (
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/irc"
+	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/snmp"
 
@@ -94,6 +96,47 @@ func main() {
 		handler.SetSNMPClient(snmpClient)
 		defer snmpClient.Close()
 	}
+
+	ircManager := irc.NewManager(db.Gorm())
+	ircManager.SetStatusProvider(func() (map[string]interface{}, error) {
+		var deviceCount, onlineCount, offlineCount, alertCount int64
+		db.Gorm().Model(&models.Device{}).Count(&deviceCount)
+		db.Gorm().Model(&models.Device{}).Where("status = ?", "online").Count(&onlineCount)
+		db.Gorm().Model(&models.Device{}).Where("status = ?", "offline").Count(&offlineCount)
+		db.Gorm().Model(&models.Alert{}).Where("acknowledged = ?", false).Count(&alertCount)
+		return map[string]interface{}{
+			"device_count":    int(deviceCount),
+			"online_devices":  int(onlineCount),
+			"offline_devices": int(offlineCount),
+			"alert_count":     int(alertCount),
+		}, nil
+	})
+	ircManager.SetStatsProvider(func() (map[string]interface{}, error) {
+		var devices []models.Device
+		db.Gorm().Find(&devices)
+		var totalDevices = len(devices)
+		var cpuAvg, memAvg float64
+		if totalDevices > 0 {
+			var totalCPU, totalMem float64
+			for _, d := range devices {
+				var status models.SystemStatus
+				if err := db.Gorm().Where("device_id = ?", d.ID).Order("timestamp DESC").First(&status).Error; err == nil {
+					totalCPU += status.CPUUsage
+					totalMem += status.MemoryUsage
+				}
+			}
+			cpuAvg = totalCPU / float64(totalDevices)
+			memAvg = totalMem / float64(totalDevices)
+		}
+		return map[string]interface{}{
+			"total_devices": totalDevices,
+			"cpu_avg":       cpuAvg,
+			"memory_avg":    memAvg,
+		}, nil
+	})
+	ircManager.Start()
+	handler.SetIRCManager(ircManager)
+	defer ircManager.Stop()
 
 	setupRoutes(router, cfg, handler, authManager)
 
@@ -260,6 +303,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "network.html", nil)
 		})
 
+		admin.GET("/irc", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "irc.html", nil)
+		})
+
 		admin.GET("/devices/:id", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "device-detail.html", nil)
 		})
@@ -338,5 +385,29 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/settings/test-email", handler.TestEmail)
 		admin.POST("/api/settings/test-webhook", handler.TestWebhook)
 		admin.GET("/api/display-settings", handler.GetPublicDisplaySettings)
+
+		admin.GET("/irc", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "irc.html", nil)
+		})
+
+		admin.GET("/api/irc/servers", handler.GetIRCServer)
+		admin.POST("/api/irc/servers", handler.CreateIRCServer)
+		admin.PUT("/api/irc/servers/:id", handler.UpdateIRCServer)
+		admin.DELETE("/api/irc/servers/:id", handler.DeleteIRCServer)
+		admin.POST("/api/irc/servers/:id/connect", handler.ConnectIRCServer)
+		admin.POST("/api/irc/servers/:id/disconnect", handler.DisconnectIRCServer)
+		admin.POST("/api/irc/servers/test", handler.TestIRCServer)
+
+		admin.GET("/api/irc/channels", handler.GetIRCChannels)
+		admin.POST("/api/irc/channels", handler.CreateIRCChannel)
+		admin.PUT("/api/irc/channels/:id", handler.UpdateIRCChannel)
+		admin.DELETE("/api/irc/channels/:id", handler.DeleteIRCChannel)
+
+		admin.GET("/api/irc/commands", handler.GetIRCCommands)
+		admin.POST("/api/irc/commands", handler.CreateIRCCommand)
+		admin.PUT("/api/irc/commands/:id", handler.UpdateIRCCommand)
+		admin.DELETE("/api/irc/commands/:id", handler.DeleteIRCCommand)
+
+		admin.POST("/api/irc/send", handler.SendIRCMessage)
 	}
 }
