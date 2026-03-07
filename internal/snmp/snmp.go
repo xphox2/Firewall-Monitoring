@@ -2,6 +2,7 @@ package snmp
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -400,7 +401,17 @@ func (s *SNMPClient) GetAllVPNTunnels() ([]models.VPNStatus, int, int, error) {
 	if profile == nil {
 		return nil, 0, 0, fmt.Errorf("no vendor profile available")
 	}
-	return profile.GetAllVPNTunnels(s)
+	tunnels, sslUsers, sslSessions, err := profile.GetAllVPNTunnels(s)
+	// Debug: log what we got
+	log.Printf("SNMP GetAllVPNTunnels: got %d tunnels, sslUsers=%d, sslSessions=%d, err=%v",
+		len(tunnels), sslUsers, sslSessions, err)
+	for i, t := range tunnels {
+		if i < 5 {
+			log.Printf("SNMP VPN[%d]: name=%s phase1=%s type=%s local_subnet=%s remote_subnet=%s",
+				i, t.TunnelName, t.Phase1Name, t.TunnelType, t.LocalSubnet, t.RemoteSubnet)
+		}
+	}
+	return tunnels, sslUsers, sslSessions, err
 }
 
 func (s *SNMPClient) GetSSLVPNStatus(vendor ...string) (int, int, error) {
