@@ -23,14 +23,16 @@ var (
 	fgOIDSystemVersion   = ".1.3.6.1.4.1.12356.101.4.1.1.0"
 	fgOIDSystemHostname  = ".1.3.6.1.4.1.12356.101.4.1.2.0"
 
-	fgBaseOIDVPNTunnel       = ".1.3.6.1.4.1.12356.101.12.2.2.1"
+	fgBaseOIDVPNTunnel        = ".1.3.6.1.4.1.12356.101.12.2.2.1"
 	fgOIDVPNTunnelPhase1Name = ".1.3.6.1.4.1.12356.101.12.2.2.1.2"
 	fgOIDVPNTunnelName       = ".1.3.6.1.4.1.12356.101.12.2.2.1.3"
 	fgOIDVPNTunnelRemoteGW   = ".1.3.6.1.4.1.12356.101.12.2.2.1.4"
-	fgOIDVPNTunnelRemoteAddr = ".1.3.6.1.4.1.12356.101.12.2.2.1.5"
-	fgOIDVPNTunnelRemoteMask = ".1.3.6.1.4.1.12356.101.12.2.2.1.6"
-	fgOIDVPNTunnelLocalAddr  = ".1.3.6.1.4.1.12356.101.12.2.2.1.7"
-	fgOIDVPNTunnelLocalMask  = ".1.3.6.1.4.1.12356.101.12.2.2.1.8"
+	// Phase 2 selectors - source (local) subnet
+	fgOIDVPNTunnelSrcBeginIP = ".1.3.6.1.4.1.12356.101.12.2.2.1.8"  // Source selector begin IP
+	fgOIDVPNTunnelSrcEndIP   = ".1.3.6.1.4.1.12356.101.12.2.2.1.9"  // Source selector end IP
+	// Phase 2 selectors - destination (remote) subnet
+	fgOIDVPNTunnelDstBeginIP = ".1.3.6.1.4.1.12356.101.12.2.2.1.11" // Destination selector begin IP
+	fgOIDVPNTunnelDstEndIP   = ".1.3.6.1.4.1.12356.101.12.2.2.1.12" // Destination selector end IP
 	fgOIDVPNTunnelInOctets   = ".1.3.6.1.4.1.12356.101.12.2.2.1.18"
 	fgOIDVPNTunnelOutOctets  = ".1.3.6.1.4.1.12356.101.12.2.2.1.19"
 	fgOIDVPNTunnelStatus     = ".1.3.6.1.4.1.12356.101.12.2.2.1.20"
@@ -495,11 +497,11 @@ func (f *FortiGateProfile) ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int) {
 
 func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
 	tunnelMap := make(map[int]*models.VPNStatus)
-	// Temporary storage for subnet addr/mask to combine into CIDR
-	localAddrs := make(map[int]string)
-	localMasks := make(map[int]string)
-	remoteAddrs := make(map[int]string)
-	remoteMasks := make(map[int]string)
+	// Temporary storage for Phase 2 subnet selectors (source=destination=local, dest=remote)
+	srcBeginIPs := make(map[int]string)
+	srcEndIPs := make(map[int]string)
+	dstBeginIPs := make(map[int]string)
+	dstEndIPs := make(map[int]string)
 
 	for _, pdu := range pdus {
 		name := pdu.Name
@@ -524,25 +526,25 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 			}
 			t := getOrCreateVPN(tunnelMap, idx)
 			t.RemoteIP = safeString(pdu.Value)
-		} else if strings.HasPrefix(name, fgOIDVPNTunnelRemoteAddr+".") {
-			idx := getIndexFromOID(name, fgOIDVPNTunnelRemoteAddr)
+		} else if strings.HasPrefix(name, fgOIDVPNTunnelSrcBeginIP+".") {
+			idx := getIndexFromOID(name, fgOIDVPNTunnelSrcBeginIP)
 			if idx >= 0 {
-				remoteAddrs[idx] = safeString(pdu.Value)
+				srcBeginIPs[idx] = safeString(pdu.Value)
 			}
-		} else if strings.HasPrefix(name, fgOIDVPNTunnelRemoteMask+".") {
-			idx := getIndexFromOID(name, fgOIDVPNTunnelRemoteMask)
+		} else if strings.HasPrefix(name, fgOIDVPNTunnelSrcEndIP+".") {
+			idx := getIndexFromOID(name, fgOIDVPNTunnelSrcEndIP)
 			if idx >= 0 {
-				remoteMasks[idx] = safeString(pdu.Value)
+				srcEndIPs[idx] = safeString(pdu.Value)
 			}
-		} else if strings.HasPrefix(name, fgOIDVPNTunnelLocalAddr+".") {
-			idx := getIndexFromOID(name, fgOIDVPNTunnelLocalAddr)
+		} else if strings.HasPrefix(name, fgOIDVPNTunnelDstBeginIP+".") {
+			idx := getIndexFromOID(name, fgOIDVPNTunnelDstBeginIP)
 			if idx >= 0 {
-				localAddrs[idx] = safeString(pdu.Value)
+				dstBeginIPs[idx] = safeString(pdu.Value)
 			}
-		} else if strings.HasPrefix(name, fgOIDVPNTunnelLocalMask+".") {
-			idx := getIndexFromOID(name, fgOIDVPNTunnelLocalMask)
+		} else if strings.HasPrefix(name, fgOIDVPNTunnelDstEndIP+".") {
+			idx := getIndexFromOID(name, fgOIDVPNTunnelDstEndIP)
 			if idx >= 0 {
-				localMasks[idx] = safeString(pdu.Value)
+				dstEndIPs[idx] = safeString(pdu.Value)
 			}
 		} else if strings.HasPrefix(name, fgOIDVPNTunnelInOctets+".") {
 			idx := getIndexFromOID(name, fgOIDVPNTunnelInOctets)
@@ -586,8 +588,22 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 	result := make([]models.VPNStatus, 0, len(tunnelMap))
 	for idx, t := range tunnelMap {
 		t.Timestamp = now
-		t.LocalSubnet = buildCIDR(localAddrs[idx], localMasks[idx])
-		t.RemoteSubnet = buildCIDR(remoteAddrs[idx], remoteMasks[idx])
+		// Build Local Subnet (Phase 2 source selector)
+		srcBegin := srcBeginIPs[idx]
+		srcEnd := srcEndIPs[idx]
+		if srcBegin != "" && srcEnd != "" && srcBegin != srcEnd {
+			t.LocalSubnet = srcBegin + " - " + srcEnd
+		} else if srcBegin != "" {
+			t.LocalSubnet = srcBegin
+		}
+		// Build Remote Subnet (Phase 2 destination selector)
+		dstBegin := dstBeginIPs[idx]
+		dstEnd := dstEndIPs[idx]
+		if dstBegin != "" && dstEnd != "" && dstBegin != dstEnd {
+			t.RemoteSubnet = dstBegin + " - " + dstEnd
+		} else if dstBegin != "" {
+			t.RemoteSubnet = dstBegin
+		}
 		result = append(result, *t)
 	}
 	return result
