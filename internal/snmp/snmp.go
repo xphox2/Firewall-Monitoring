@@ -2,7 +2,6 @@ package snmp
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -401,17 +400,7 @@ func (s *SNMPClient) GetAllVPNTunnels() ([]models.VPNStatus, int, int, error) {
 	if profile == nil {
 		return nil, 0, 0, fmt.Errorf("no vendor profile available")
 	}
-	tunnels, sslUsers, sslSessions, err := profile.GetAllVPNTunnels(s)
-	// Debug: log what we got
-	log.Printf("SNMP GetAllVPNTunnels: got %d tunnels, sslUsers=%d, sslSessions=%d, err=%v",
-		len(tunnels), sslUsers, sslSessions, err)
-	for i, t := range tunnels {
-		if i < 5 {
-			log.Printf("SNMP VPN[%d]: name=%s phase1=%s type=%s local_subnet=%s remote_subnet=%s",
-				i, t.TunnelName, t.Phase1Name, t.TunnelType, t.LocalSubnet, t.RemoteSubnet)
-		}
-	}
-	return tunnels, sslUsers, sslSessions, err
+	return profile.GetAllVPNTunnels(s)
 }
 
 func (s *SNMPClient) GetSSLVPNStatus(vendor ...string) (int, int, error) {
@@ -565,24 +554,18 @@ func (s *SNMPClient) GetInterfaceAddresses() ([]models.InterfaceAddress, error) 
 func getIndexFromOID(oid, base string) int {
 	partial := strings.TrimPrefix(oid, base+".")
 	parts := strings.Split(partial, ".")
-	log.Printf("getIndexFromOID: oid=%s base=%s partial=%s parts=%v", oid, base, partial, parts)
 	if len(parts) >= 1 {
-		// Handle both single and multi-index OIDs
-		// For OID like .1.2.3.4.1.1, parts[0]="4", parts[1]="1" - we want the LAST part for the index
-		// For OID like .1.2.3.4.1.3, parts[0]="3" - we want that
+		// Handle OIDs like .1.2.3.4.1.3.1.1 where index is the LAST element
+		// This is the standard SNMP table indexing pattern
 		var index int
-		// Try last element first (works for OIDs like 1.1, 1.2)
 		if n, _ := fmt.Sscanf(parts[len(parts)-1], "%d", &index); n == 1 {
-			log.Printf("getIndexFromOID: returning %d (last element)", index)
 			return index
 		}
-		// Fall back to first element
+		// Fallback to first element for simpler OIDs
 		if n, _ := fmt.Sscanf(parts[0], "%d", &index); n == 1 {
-			log.Printf("getIndexFromOID: returning %d (first element)", index)
 			return index
 		}
 	}
-	log.Printf("getIndexFromOID: returning -1")
 	return -1
 }
 

@@ -1,15 +1,15 @@
 # Changelog
 
+## [0.10.97] - 2026-03-07
+
+### Fixed
+- Fixed OID index extraction for VPN tunnels (getIndexFromOID now correctly extracts multi-part indices)
+- Device VPN page now cross-fills Phase 2 subnets from peer devices
+
 ## [0.10.96] - 2026-03-07
 
 ### Fixed
 - Device VPN page now cross-fills Phase 2 subnets from peer devices when local device doesn't expose them (HUB limitation)
-
-## [0.10.95] - 2026-03-07
-
-### Fixed
-- Added debug logging to see Phase 2 subnet values from SNMP
-- IPSec Phase 2 selectors now use correct OIDs for source/destination selector ranges
 
 ## [0.10.88] - 2026-03-04
 

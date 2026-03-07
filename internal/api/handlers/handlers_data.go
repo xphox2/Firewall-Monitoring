@@ -398,14 +398,6 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 	if len(statuses) > 500 {
 		statuses = statuses[:500]
 	}
-	// Debug: log VPN tunnel details
-	log.Printf("Probe %d: received %d VPN tunnels", probe.ID, len(statuses))
-	for i, v := range statuses {
-		if i < 5 { // only log first 5
-			log.Printf("Probe %d: VPN[%d] name=%s phase1=%s type=%s local=%s remote=%s",
-				probe.ID, i, v.TunnelName, v.Phase1Name, v.TunnelType, v.LocalSubnet, v.RemoteSubnet)
-		}
-	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	deviceIDs := make(map[uint]bool)
 	filtered := statuses[:0]
