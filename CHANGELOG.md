@@ -1,17 +1,18 @@
 # Changelog
 
-## [0.10.92] - 2026-03-07
+## [0.10.93] - 2026-03-07
 
 ### Fixed
 - VPN tunnel type detection now discovers all tunnel types via SNMP OID trees:
   - IPSec site-to-site (fgVpnTunTable) → "ipsec" with Phase 2 local/remote subnet selectors
-  - IPSec dialup (fgVpnDialupTable) → "ipsec-dialup"
+  - IPSec dialup (fgVpnDialupTable) → "ipsec-dialup" with Phase 2 local/remote subnet selectors
   - SSL-VPN (fgVpnSslTunnelTable) → "sslvpn"
   - GRE tunnels (interface ifType=47) → "gre"
 - Added ifType 47 (GRE) to interface type mappings
 
 ### Added
 - GRE tunnel detection from interface table (ifType=47)
+- IPSec dialup Phase 2 subnet selectors (remote subnet begin/end, local subnet)
 
 ## [0.10.88] - 2026-03-04
 

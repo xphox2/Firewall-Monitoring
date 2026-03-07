@@ -40,10 +40,13 @@ var (
 	fgOIDVPNDialupPhase1Name = ".1.3.6.1.4.1.12356.101.12.2.1.1.2"
 	fgOIDVPNDialupName       = ".1.3.6.1.4.1.12356.101.12.2.1.1.3"
 	fgOIDVPNDialupRemoteGW   = ".1.3.6.1.4.1.12356.101.12.2.1.1.4"
-	fgOIDVPNDialupInOctets   = ".1.3.6.1.4.1.12356.101.12.2.1.1.7"
-	fgOIDVPNDialupOutOctets  = ".1.3.6.1.4.1.12356.101.12.2.1.1.8"
-	fgOIDVPNDialupStatus     = ".1.3.6.1.4.1.12356.101.12.2.1.1.9"
-	fgOIDVPNDialupUpTime     = ".1.3.6.1.4.1.12356.101.12.2.1.1.10"
+	fgOIDVPNDialupSrcBegin   = ".1.3.6.1.4.1.12356.101.12.2.1.1.5" // Remote subnet begin (Phase 2)
+	fgOIDVPNDialupSrcEnd     = ".1.3.6.1.4.1.12356.101.12.2.1.1.6" // Remote subnet end (Phase 2)
+	fgOIDVPNDialupDstAddr    = ".1.3.6.1.4.1.12356.101.12.2.1.1.7" // Local subnet (Phase 2)
+	fgOIDVPNDialupInOctets   = ".1.3.6.1.4.1.12356.101.12.2.1.1.9"
+	fgOIDVPNDialupOutOctets  = ".1.3.6.1.4.1.12356.101.12.2.1.1.10"
+	fgOIDVPNDialupStatus     = ".1.3.6.1.4.1.12356.101.12.2.1.1.11"
+	fgOIDVPNDialupUpTime     = ".1.3.6.1.4.1.12356.101.12.2.1.1.12"
 
 	fgBaseOIDSSLVPN          = ".1.3.6.1.4.1.12356.101.12.3.1.1"
 	fgOIDSSLVPNLoginName     = ".1.3.6.1.4.1.12356.101.12.3.1.1.3"
@@ -312,6 +315,10 @@ func (f *FortiGateProfile) ParseGRETunnels(pdus []gosnmp.SnmpPDU) []models.VPNSt
 
 func (f *FortiGateProfile) ParseVPNDialupStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
 	tunnelMap := make(map[int]*models.VPNStatus)
+	// Temporary storage for Phase 2 subnet selectors
+	remoteSubnetBegin := make(map[int]string)
+	remoteSubnetEnd := make(map[int]string)
+	localSubnetAddr := make(map[int]string)
 
 	for _, pdu := range pdus {
 		if !isValidPDU(pdu) {
@@ -340,6 +347,21 @@ func (f *FortiGateProfile) ParseVPNDialupStatus(pdus []gosnmp.SnmpPDU) []models.
 			}
 			t := getOrCreateVPN(tunnelMap, idx)
 			t.RemoteIP = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, fgOIDVPNDialupSrcBegin+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupSrcBegin)
+			if idx >= 0 {
+				remoteSubnetBegin[idx] = safeString(pdu.Value)
+			}
+		} else if strings.HasPrefix(name, fgOIDVPNDialupSrcEnd+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupSrcEnd)
+			if idx >= 0 {
+				remoteSubnetEnd[idx] = safeString(pdu.Value)
+			}
+		} else if strings.HasPrefix(name, fgOIDVPNDialupDstAddr+".") {
+			idx := getIndexFromOID(name, fgOIDVPNDialupDstAddr)
+			if idx >= 0 {
+				localSubnetAddr[idx] = safeString(pdu.Value)
+			}
 		} else if strings.HasPrefix(name, fgOIDVPNDialupInOctets+".") {
 			idx := getIndexFromOID(name, fgOIDVPNDialupInOctets)
 			if idx < 0 {
@@ -380,8 +402,22 @@ func (f *FortiGateProfile) ParseVPNDialupStatus(pdus []gosnmp.SnmpPDU) []models.
 
 	now := time.Now()
 	result := make([]models.VPNStatus, 0, len(tunnelMap))
-	for _, t := range tunnelMap {
+	for idx, t := range tunnelMap {
 		t.Timestamp = now
+		// Build Phase 2 subnets for dialup tunnels
+		// Remote subnet: begin IP / end IP
+		remoteBegin := remoteSubnetBegin[idx]
+		remoteEnd := remoteSubnetEnd[idx]
+		if remoteBegin != "" && remoteEnd != "" {
+			t.RemoteSubnet = remoteBegin + " - " + remoteEnd
+		} else if remoteBegin != "" {
+			t.RemoteSubnet = remoteBegin
+		}
+		// Local subnet: single address from dialup
+		localAddr := localSubnetAddr[idx]
+		if localAddr != "" {
+			t.LocalSubnet = localAddr
+		}
 		result = append(result, *t)
 	}
 	return result
