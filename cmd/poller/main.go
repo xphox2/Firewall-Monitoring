@@ -264,8 +264,8 @@ func (p *Poller) pollDevice(device *models.Device) {
 		log.Printf("Device %s: %d interface addresses collected", device.Name, len(ifAddrs))
 	}
 
-	// Collect VPN tunnel status
-	vpnStatuses, err := client.GetVPNStatus(vendor)
+	// Collect all VPN tunnel status (IPSec + SSL-VPN with proper type detection)
+	vpnStatuses, sslvpnUsers, sslvpnTunnels, err := client.GetAllVPNTunnels()
 	if err != nil {
 		log.Printf("Device %s: VPN walk error - %v", device.Name, err)
 	} else if len(vpnStatuses) == 0 {
@@ -286,11 +286,8 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 	}
 
-	// Collect SSL-VPN users/sessions
-	sslvpnUsers, sslvpnTunnels, err := client.GetSSLVPNStatus(vendor)
-	if err != nil {
-		log.Printf("Device %s: SSL-VPN walk error - %v", device.Name, err)
-	} else if sslvpnUsers > 0 || sslvpnTunnels > 0 {
+	// Update SSL-VPN user/session counts
+	if sslvpnUsers > 0 || sslvpnTunnels > 0 {
 		log.Printf("Device %s: SSL-VPN: %d users, %d active sessions", device.Name, sslvpnUsers, sslvpnTunnels)
 		if p.db != nil {
 			if err := p.db.UpdateDeviceSSLVPN(device.ID, sslvpnUsers, sslvpnTunnels); err != nil {

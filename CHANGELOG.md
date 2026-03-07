@@ -1,12 +1,14 @@
 # Changelog
 
-## [0.10.89] - 2026-03-07
+## [0.10.90] - 2026-03-07
+
+### Fixed
+- VPN tunnel type detection now properly discovers IPSec vs SSL-VPN via SNMP OID trees instead of guessing from tunnel names
+- SSL-VPN tunnels now properly tracked separately from IPSec tunnels
 
 ### Added
 - Admin interfaces page now shows both Status (operational) and Admin (enabled/disabled) columns
 - VPN tunnel detail page now shows State column to distinguish between active tunnels vs tunnels with active traffic (online)
-
-### Fixed
 - VPN tunnel tab count now shows "online/up" count (tunnels with traffic vs tunnels that are up)
 
 ## [0.10.88] - 2026-03-04

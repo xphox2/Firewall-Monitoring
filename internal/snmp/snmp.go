@@ -394,6 +394,14 @@ func (s *SNMPClient) GetVPNStatus(vendor ...string) ([]models.VPNStatus, error) 
 	return profile.ParseVPNStatus(pdus), nil
 }
 
+func (s *SNMPClient) GetAllVPNTunnels() ([]models.VPNStatus, int, int, error) {
+	profile := s.resolveVendor("")
+	if profile == nil {
+		return nil, 0, 0, fmt.Errorf("no vendor profile available")
+	}
+	return profile.GetAllVPNTunnels(s)
+}
+
 func (s *SNMPClient) GetSSLVPNStatus(vendor ...string) (int, int, error) {
 	v := ""
 	if len(vendor) > 0 {

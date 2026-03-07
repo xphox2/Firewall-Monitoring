@@ -131,6 +131,90 @@ func (f *FortiGateProfile) VPNBaseOID() string { return fgBaseOIDVPNTunnel }
 
 func (f *FortiGateProfile) SSLVPNBaseOID() string { return fgBaseOIDSSLVPN }
 
+func (f *FortiGateProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+	var allTunnels []models.VPNStatus
+	var sslvpnUsers, sslvpnSessions int
+
+	// Walk IPSec tunnels
+	ipsecPdus, err := s.Walk(fgBaseOIDVPNTunnel)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("failed to walk IPSec tunnel table: %w", err)
+	}
+	ipsecTunnels := f.ParseVPNStatus(ipsecPdus)
+	// Mark as ipsec type (IPSec tunnels don't have a separate type field in the OID)
+	for i := range ipsecTunnels {
+		ipsecTunnels[i].TunnelType = "ipsec"
+	}
+	allTunnels = append(allTunnels, ipsecTunnels...)
+
+	// Walk SSL-VPN tunnels
+	sslvpnPdus, err := s.Walk(fgBaseOIDSSLVPN)
+	if err != nil {
+		// SSL-VPN may not be available on all devices
+		sslErr := err.Error()
+		if !strings.Contains(sslErr, "noSuchName") && !strings.Contains(sslErr, "NoSuchObject") {
+			// Log but don't fail - SSL-VPN is optional
+		}
+	} else {
+		sslvpnTunnels := f.ParseSSLVPNTunnels(sslvpnPdus)
+		allTunnels = append(allTunnels, sslvpnTunnels...)
+		sslvpnUsers, sslvpnSessions = f.ParseSSLVPNStatus(sslvpnPdus)
+	}
+
+	return allTunnels, sslvpnUsers, sslvpnSessions, nil
+}
+
+func (f *FortiGateProfile) ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
+	tunnelMap := make(map[int]*models.VPNStatus)
+
+	for _, pdu := range pdus {
+		if !isValidPDU(pdu) {
+			continue
+		}
+		name := pdu.Name
+
+		// fgVpnSslTableEntry indexes
+		if strings.HasPrefix(name, fgOIDSSLVPNLoginName+".") {
+			idx := getIndexFromOID(name, fgOIDSSLVPNLoginName)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.TunnelName = safeString(pdu.Value)
+			t.TunnelType = "sslvpn"
+		} else if strings.HasPrefix(name, fgOIDSSLVPNLoginState+".") {
+			idx := getIndexFromOID(name, fgOIDSSLVPNLoginState)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			state := gosnmp.ToBigInt(pdu.Value).Int64()
+			if state == 1 {
+				t.Status = "up"
+				t.State = "active"
+			} else {
+				t.Status = "down"
+				t.State = "inactive"
+			}
+		} else if strings.HasPrefix(name, fgOIDSSLVPNLoginDuration+".") {
+			idx := getIndexFromOID(name, fgOIDSSLVPNLoginDuration)
+			if idx < 0 {
+				continue
+			}
+			t := getOrCreateVPN(tunnelMap, idx)
+			t.TunnelUptime = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		}
+	}
+
+	now := time.Now()
+	result := make([]models.VPNStatus, 0, len(tunnelMap))
+	for _, t := range tunnelMap {
+		t.Timestamp = now
+		result = append(result, *t)
+	}
+	return result
+}
+
 func (f *FortiGateProfile) ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int) {
 	var users, sessions int
 	for _, pdu := range pdus {
@@ -245,23 +329,9 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 		t.Timestamp = now
 		t.LocalSubnet = buildCIDR(localAddrs[idx], localMasks[idx])
 		t.RemoteSubnet = buildCIDR(remoteAddrs[idx], remoteMasks[idx])
-		// Detect tunnel type based on name patterns
-		t.TunnelType = detectTunnelType(t.TunnelName, t.Phase1Name)
 		result = append(result, *t)
 	}
 	return result
-}
-
-func detectTunnelType(tunnelName, phase1Name string) string {
-	name := tunnelName + phase1Name
-	upper := strings.ToUpper(name)
-	if strings.HasPrefix(upper, "RA_") || strings.Contains(upper, "SSL") || strings.Contains(upper, "SSLVPN") {
-		return "sslvpn"
-	}
-	if strings.Contains(upper, "DIALUP") || strings.Contains(upper, "DIAL-UP") || strings.Contains(upper, "CLIENT") {
-		return "ipsec-dialup"
-	}
-	return "ipsec"
 }
 
 // buildCIDR combines an IP address and subnet mask into CIDR notation (e.g., "10.0.0.0/24").
