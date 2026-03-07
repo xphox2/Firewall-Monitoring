@@ -585,9 +585,9 @@
         body.innerHTML = pings.map(function(p) {
             return '<tr>' +
                 '<td>' + esc(p.target_ip) + '</td>' +
-                '<td>' + (p.min_latency ? p.min_latency.toFixed(2) + ' ms' : '-') + '</td>' +
-                '<td>' + (p.avg_latency ? p.avg_latency.toFixed(2) + ' ms' : '-') + '</td>' +
-                '<td>' + (p.max_latency ? p.max_latency.toFixed(2) + ' ms' : '-') + '</td>' +
+                '<td>' + (p.min_latency != null ? p.min_latency.toFixed(2) + ' ms' : '-') + '</td>' +
+                '<td>' + (p.avg_latency != null ? p.avg_latency.toFixed(2) + ' ms' : '-') + '</td>' +
+                '<td>' + (p.max_latency != null ? p.max_latency.toFixed(2) + ' ms' : '-') + '</td>' +
                 '<td>' + (p.packet_loss != null ? p.packet_loss.toFixed(1) + '%' : '-') + '</td>' +
                 '<td>' + (p.samples || 0) + '</td>' +
             '</tr>';
