@@ -1,17 +1,17 @@
 # Changelog
 
-## [0.10.91] - 2026-03-07
+## [0.10.92] - 2026-03-07
 
 ### Fixed
-- VPN tunnel type detection now properly discovers tunnel types via SNMP OID trees:
-  - IPSec site-to-site (fgVpnTunTable) → "ipsec"
-  - IPSec dialup (fgVpnDialupTable) → "ipsec-dialup"  
+- VPN tunnel type detection now discovers all tunnel types via SNMP OID trees:
+  - IPSec site-to-site (fgVpnTunTable) → "ipsec" with Phase 2 local/remote subnet selectors
+  - IPSec dialup (fgVpnDialupTable) → "ipsec-dialup"
   - SSL-VPN (fgVpnSslTunnelTable) → "sslvpn"
+  - GRE tunnels (interface ifType=47) → "gre"
+- Added ifType 47 (GRE) to interface type mappings
 
 ### Added
-- Admin interfaces page now shows both Status (operational) and Admin (enabled/disabled) columns
-- VPN tunnel detail page now shows State column to distinguish between active tunnels vs tunnels with active traffic (online)
-- VPN tunnel tab count now shows "online/up" count
+- GRE tunnel detection from interface table (ifType=47)
 
 ## [0.10.88] - 2026-03-04
 

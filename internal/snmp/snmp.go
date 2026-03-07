@@ -54,6 +54,7 @@ var IfTypeNames = map[int]string{
 	1:   "other",
 	6:   "ethernet",
 	24:  "loopback",
+	47:  "gre",
 	53:  "propVirtual",
 	131: "tunnel",
 	135: "l2vlan",

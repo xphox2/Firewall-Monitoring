@@ -181,7 +181,133 @@ func (f *FortiGateProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, 
 		sslvpnUsers, sslvpnSessions = f.ParseSSLVPNStatus(sslvpnPdus)
 	}
 
+	// Walk GRE tunnels from interface table (ifType=47)
+	grePdus, err := s.Walk(BaseOIDInterface)
+	if err == nil {
+		greTunnels := f.ParseGRETunnels(grePdus)
+		allTunnels = append(allTunnels, greTunnels...)
+	}
+
 	return allTunnels, sslvpnUsers, sslvpnSessions, nil
+}
+
+func (f *FortiGateProfile) ParseGRETunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
+	interfaces := make(map[int]map[string]interface{})
+	
+	for _, pdu := range pdus {
+		if !isValidPDU(pdu) {
+			continue
+		}
+		name := pdu.Name
+		
+		if strings.HasPrefix(name, OIDIfDescr+".") {
+			idx := getIndexFromOID(name, OIDIfDescr)
+			if idx < 0 {
+				continue
+			}
+			if interfaces[idx] == nil {
+				interfaces[idx] = make(map[string]interface{})
+			}
+			interfaces[idx]["name"] = safeString(pdu.Value)
+		} else if strings.HasPrefix(name, OIDIfType+".") {
+			idx := getIndexFromOID(name, OIDIfType)
+			if idx < 0 {
+				continue
+			}
+			if interfaces[idx] == nil {
+				interfaces[idx] = make(map[string]interface{})
+			}
+			interfaces[idx]["type"] = int(gosnmp.ToBigInt(pdu.Value).Int64())
+		} else if strings.HasPrefix(name, OIDIfOperStatus+".") {
+			idx := getIndexFromOID(name, OIDIfOperStatus)
+			if idx < 0 {
+				continue
+			}
+			if interfaces[idx] == nil {
+				interfaces[idx] = make(map[string]interface{})
+			}
+			status := gosnmp.ToBigInt(pdu.Value).Int64()
+			if status == 1 {
+				interfaces[idx]["status"] = "up"
+			} else if status == 2 {
+				interfaces[idx]["status"] = "down"
+			} else {
+				interfaces[idx]["status"] = "unknown"
+			}
+		} else if strings.HasPrefix(name, OIDIfAdminStatus+".") {
+			idx := getIndexFromOID(name, OIDIfAdminStatus)
+			if idx < 0 {
+				continue
+			}
+			if interfaces[idx] == nil {
+				interfaces[idx] = make(map[string]interface{})
+			}
+			adminStatus := gosnmp.ToBigInt(pdu.Value).Int64()
+			if adminStatus == 1 {
+				interfaces[idx]["admin_status"] = "up"
+			} else {
+				interfaces[idx]["admin_status"] = "down"
+			}
+		} else if strings.HasPrefix(name, OIDIfInOctets+".") {
+			idx := getIndexFromOID(name, OIDIfInOctets)
+			if idx < 0 {
+				continue
+			}
+			if interfaces[idx] == nil {
+				interfaces[idx] = make(map[string]interface{})
+			}
+			interfaces[idx]["bytes_in"] = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		} else if strings.HasPrefix(name, OIDIfOutOctets+".") {
+			idx := getIndexFromOID(name, OIDIfOutOctets)
+			if idx < 0 {
+				continue
+			}
+			if interfaces[idx] == nil {
+				interfaces[idx] = make(map[string]interface{})
+			}
+			interfaces[idx]["bytes_out"] = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+		}
+	}
+
+	// Filter for GRE interfaces (ifType = 47)
+	var result []models.VPNStatus
+	now := time.Now()
+	for idx, iface := range interfaces {
+		ifType, _ := iface["type"].(int)
+		if ifType == 47 { // GRE tunnel
+			name, _ := iface["name"].(string)
+			if name == "" {
+				name = fmt.Sprintf("gre.%d", idx)
+			}
+			status, _ := iface["status"].(string)
+			state := "inactive"
+			if status == "up" {
+				state = "active"
+			}
+			
+			var bytesIn, bytesOut uint64
+			if b, ok := iface["bytes_in"].(uint64); ok {
+				bytesIn = b
+			}
+			if b, ok := iface["bytes_out"].(uint64); ok {
+				bytesOut = b
+			}
+			
+			vpn := models.VPNStatus{
+				Timestamp:  now,
+				TunnelName: name,
+				TunnelType: "gre",
+				Status:     status,
+				State:      state,
+				BytesIn:    bytesIn,
+				BytesOut:   bytesOut,
+			}
+			// For GRE, we don't have remote/local subnet in interface stats
+			// Could add additional OID walks for GRE-specific data if available
+			result = append(result, vpn)
+		}
+	}
+	return result
 }
 
 func (f *FortiGateProfile) ParseVPNDialupStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
