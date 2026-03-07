@@ -36,6 +36,11 @@ var (
 	fgOIDVPNTunnelStatus     = ".1.3.6.1.4.1.12356.101.12.2.2.1.20"
 	fgOIDVPNTunnelUpTime     = ".1.3.6.1.4.1.12356.101.12.2.2.1.21"
 
+	fgBaseOIDSSLVPN          = ".1.3.6.1.4.1.12356.101.12.3.1.1"
+	fgOIDSSLVPNLoginName     = ".1.3.6.1.4.1.12356.101.12.3.1.1.3"
+	fgOIDSSLVPNLoginState    = ".1.3.6.1.4.1.12356.101.12.3.1.1.6"
+	fgOIDSSLVPNLoginDuration = ".1.3.6.1.4.1.12356.101.12.3.1.1.7"
+
 	fgOIDHWSensorEntry = ".1.3.6.1.4.1.12356.101.4.3.2.1"
 	fgOIDHWSensorName  = ".1.3.6.1.4.1.12356.101.4.3.2.1.2"
 	fgOIDHWSensorValue = ".1.3.6.1.4.1.12356.101.4.3.2.1.3"
@@ -123,6 +128,27 @@ func (f *FortiGateProfile) ParseSystemStatus(pdus []gosnmp.SnmpPDU) *models.Syst
 }
 
 func (f *FortiGateProfile) VPNBaseOID() string { return fgBaseOIDVPNTunnel }
+
+func (f *FortiGateProfile) SSLVPNBaseOID() string { return fgBaseOIDSSLVPN }
+
+func (f *FortiGateProfile) ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int) {
+	var users, sessions int
+	for _, pdu := range pdus {
+		if !isValidPDU(pdu) {
+			continue
+		}
+		name := pdu.Name
+		if strings.HasPrefix(name, fgOIDSSLVPNLoginName+".") {
+			users++
+		} else if strings.HasPrefix(name, fgOIDSSLVPNLoginState+".") {
+			state := gosnmp.ToBigInt(pdu.Value).Int64()
+			if state == 1 { // up/active
+				sessions++
+			}
+		}
+	}
+	return users, sessions
+}
 
 func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
 	tunnelMap := make(map[int]*models.VPNStatus)
@@ -219,9 +245,23 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 		t.Timestamp = now
 		t.LocalSubnet = buildCIDR(localAddrs[idx], localMasks[idx])
 		t.RemoteSubnet = buildCIDR(remoteAddrs[idx], remoteMasks[idx])
+		// Detect tunnel type based on name patterns
+		t.TunnelType = detectTunnelType(t.TunnelName, t.Phase1Name)
 		result = append(result, *t)
 	}
 	return result
+}
+
+func detectTunnelType(tunnelName, phase1Name string) string {
+	name := tunnelName + phase1Name
+	upper := strings.ToUpper(name)
+	if strings.HasPrefix(upper, "RA_") || strings.Contains(upper, "SSL") || strings.Contains(upper, "SSLVPN") {
+		return "sslvpn"
+	}
+	if strings.Contains(upper, "DIALUP") || strings.Contains(upper, "DIAL-UP") || strings.Contains(upper, "CLIENT") {
+		return "ipsec-dialup"
+	}
+	return "ipsec"
 }
 
 // buildCIDR combines an IP address and subnet mask into CIDR notation (e.g., "10.0.0.0/24").

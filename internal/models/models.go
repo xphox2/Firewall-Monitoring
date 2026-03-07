@@ -230,6 +230,8 @@ type Device struct {
 	Location       string    `json:"location"`
 	Description    string    `json:"description"`
 	WanSpeedMbps   int       `json:"wan_speed_mbps" gorm:"default:1000"` // WAN link speed in Mbps (default 1Gbps)
+	SSLVPNUsers    int       `json:"sslvpn_users" gorm:"default:0"`
+	SSLVPNTunnels  int       `json:"sslvpn_tunnels" gorm:"default:0"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	LastPolled     time.Time `json:"last_polled"`

@@ -34,6 +34,10 @@ type VendorProfile interface {
 	VPNBaseOID() string
 	ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus
 
+	// SSL-VPN
+	SSLVPNBaseOID() string
+	ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int)
+
 	// Hardware sensors
 	HWSensorBaseOID() string
 	ParseHardwareSensors(pdus []gosnmp.SnmpPDU) []models.HardwareSensor

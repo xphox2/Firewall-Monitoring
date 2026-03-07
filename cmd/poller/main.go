@@ -286,6 +286,19 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 	}
 
+	// Collect SSL-VPN users/sessions
+	sslvpnUsers, sslvpnTunnels, err := client.GetSSLVPNStatus(vendor)
+	if err != nil {
+		log.Printf("Device %s: SSL-VPN walk error - %v", device.Name, err)
+	} else if sslvpnUsers > 0 || sslvpnTunnels > 0 {
+		log.Printf("Device %s: SSL-VPN: %d users, %d active sessions", device.Name, sslvpnUsers, sslvpnTunnels)
+		if p.db != nil {
+			if err := p.db.UpdateDeviceSSLVPN(device.ID, sslvpnUsers, sslvpnTunnels); err != nil {
+				log.Printf("Device %s: failed to update SSL-VPN status - %v", device.Name, err)
+			}
+		}
+	}
+
 	// Collect hardware sensors
 	sensors, err := client.GetHardwareSensors(vendor)
 	if err != nil {
