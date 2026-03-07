@@ -125,6 +125,35 @@ func (d *Database) migrate() error {
 			log.Printf("AutoMigrate warning for %T: %v", model, err)
 		}
 	}
+
+	// Add missing columns for IRC tables (existing databases may be missing these)
+	ircServerCols := []string{
+		"nickserv_identify",
+		"server_password",
+		"sasl_enabled",
+		"sasl_username",
+		"sasl_password",
+		"auto_reconnect",
+		"reconnect_delay",
+		"last_connected",
+		"last_error",
+	}
+	for _, col := range ircServerCols {
+		d.db.Exec("ALTER TABLE irc_servers ADD COLUMN IF NOT EXISTS " + col + " VARCHAR(255)")
+	}
+
+	ircChannelCols := []string{
+		"chanserv_name",
+		"chanserv_password",
+		"chan_oper_pass",
+		"auto_join",
+		"send_alerts",
+		"send_status",
+	}
+	for _, col := range ircChannelCols {
+		d.db.Exec("ALTER TABLE irc_channels ADD COLUMN IF NOT EXISTS " + col + " VARCHAR(255)")
+	}
+
 	return nil
 }
 
