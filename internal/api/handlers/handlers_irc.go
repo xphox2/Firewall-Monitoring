@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -84,8 +85,25 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 	delete(updates, "id")
 	delete(updates, "created_at")
 
+	// Skip empty strings for required fields to avoid NOT NULL constraint errors
+	if v, ok := updates["name"].(string); ok && v == "" {
+		delete(updates, "name")
+	}
+	if v, ok := updates["server_host"].(string); ok && v == "" {
+		delete(updates, "server_host")
+	}
+	if v, ok := updates["nick"].(string); ok && v == "" {
+		delete(updates, "nick")
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		return
+	}
+
 	if err := h.db.Gorm().Model(&server).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server"))
+		log.Printf("Failed to update IRC server %d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server: " + err.Error()))
 		return
 	}
 
