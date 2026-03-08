@@ -907,18 +907,23 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 
 		// Validation: Overlay connection requirements:
 		// - L2VLAN between same-site devices: NO VPN tunnel required (can use local switching)
-		// - L2VLAN cross-site, L3IPVLAN, VXLAN: Require direct VPN tunnel between endpoints
+		// Overlay connection requirements:
+		// - L2VLAN: ONLY allowed between same-site devices (never cross-site)
+		// - L3IPVLAN, VXLAN: Require direct VPN tunnel between endpoints
 		for i := 0; i < len(deviceList); i++ {
 			for j := i + 1; j < len(deviceList); j++ {
 				a, b := deviceList[i], deviceList[j]
 				connType := pairConnType(a.typeName, b.typeName)
 
-				// L2VLAN between same-site devices - no VPN tunnel needed
+				// L2VLAN is ONLY allowed between same-site devices - never cross-site
 				isSameSite := sameSite(a.deviceID, b.deviceID)
-				if connType == "l2vlan" && isSameSite {
-					// Allow without VPN tunnel
+				if connType == "l2vlan" || connType == "bridge" {
+					if !isSameSite {
+						continue // L2VLAN/bridge cannot cross sites
+					}
+					// Same-site L2VLAN/bridge - no VPN tunnel needed
 				} else if !hasDirectLink(a.deviceID, b.deviceID) {
-					// All other overlay types require VPN tunnel
+					// L3IPVLAN, VXLAN require VPN tunnel
 					continue
 				}
 
