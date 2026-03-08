@@ -470,9 +470,9 @@ const (
 	boxBR     = "+"
 	blockFull = "|"
 	statusDot = "*"
-	boxW      = 30 // total visible width per device box
-	barW      = 16 // progress bar character width
-	contentW  = 26 // boxW - 4: usable between "| " and " |"
+	boxW      = 38 // total visible width per device box
+	barW      = 22 // progress bar character width
+	contentW  = 34 // boxW - 4: usable between "| " and " |"
 )
 
 // setC sets IRC foreground color without resetting other formatting
@@ -587,16 +587,16 @@ func deviceBox(d map[string]interface{}) [6]string {
 	header := setC(cGrey) + boxTL + boxH + setC(cWhite) + " " + dispName + " " +
 		setC(cGrey) + strings.Repeat(boxH, dashFill) + uptimePart + " " + boxH + boxTR + ircReset
 
-	// Line 2: CPU [||||||||||||||||]  42%
-	// visible: "CPU [" (5) + barW (16) + "]" (1) + "%4s" (4) = 26 = contentW
-	cpuPct := fmt.Sprintf("%3.0f%%", cpu)
-	cpuContent := "CPU [" + makeColorBar(cpu) + "]" + cpuPct
-	line2 := boxLine(cpuContent, 5+barW+1+4)
+	// Line 2: CPU  [||||||||||||||||||||||] 42%
+	// visible: "CPU  [" (6) + barW (22) + "]" (1) + " %3.0f%%" (5) = 34 = contentW
+	cpuPct := fmt.Sprintf(" %3.0f%%", cpu)
+	cpuContent := "CPU  [" + makeColorBar(cpu) + "]" + cpuPct
+	line2 := boxLine(cpuContent, 6+barW+1+5)
 
-	// Line 3: MEM [||||||||||||||||]  62%
-	memPct := fmt.Sprintf("%3.0f%%", mem)
-	memContent := "MEM [" + makeColorBar(mem) + "]" + memPct
-	line3 := boxLine(memContent, 5+barW+1+4)
+	// Line 3: MEM  [||||||||||||||||||||||] 62%
+	memPct := fmt.Sprintf(" %3.0f%%", mem)
+	memContent := "MEM  [" + makeColorBar(mem) + "]" + memPct
+	line3 := boxLine(memContent, 6+barW+1+5)
 
 	// Line 4: VPN: 4/5 up  Alerts: 1
 	vpnText := fmt.Sprintf("VPN:%d/%d", vpnUp, vpnTot)
@@ -618,7 +618,7 @@ func deviceBox(d map[string]interface{}) [6]string {
 	l5irc := fmt.Sprintf("Sess:%s  ", sessStr) + setC(sColor) + statusDot + " " + status + setC(cWhite)
 	line5 := boxLine(l5irc, visLen(l5plain))
 
-	// Line 6: footer +----------------------------+
+	// Line 6: footer +------------------------------------+
 	footer := setC(cGrey) + boxBL + strings.Repeat(boxH, boxW-2) + boxBR + ircReset
 
 	return [6]string{header, line2, line3, line4, line5, footer}

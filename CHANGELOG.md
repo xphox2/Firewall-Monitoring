@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.104] - 2026-03-07
+
+### Changed
+- IRC !status: widened device boxes from 30 to 38 chars (supports longer firewall names up to ~17 chars)
+- IRC !status: widened progress bars from 16 to 22 chars for better visual resolution
+
 ## [0.10.103] - 2026-03-07
 
 ### Fixed
