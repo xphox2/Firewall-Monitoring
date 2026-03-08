@@ -21,6 +21,32 @@
         return csrfTokenCache;
     }
 
+    var DEFAULT_TIMEZONE = 'America/New_York';
+
+    function getTimezone() {
+        return localStorage.getItem('display_timezone') || DEFAULT_TIMEZONE;
+    }
+
+    function setTimezone(tz) {
+        localStorage.setItem('display_timezone', tz);
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '-';
+        var tz = getTimezone();
+        return d.toLocaleString(undefined, { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatDateShort(dateStr) {
+        if (!dateStr) return '-';
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '-';
+        var tz = getTimezone();
+        return d.toLocaleString(undefined, { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
     function escapeHtml(str) {
         if (!str) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -101,7 +127,11 @@
         showSuccess: showSuccess,
         apiFetch: apiFetch,
         doLogout: doLogout,
-        delegateEvent: delegateEvent
+        delegateEvent: delegateEvent,
+        getTimezone: getTimezone,
+        setTimezone: setTimezone,
+        formatDate: formatDate,
+        formatDateShort: formatDateShort
     };
 
     // Set globals for diagram-panels.js interop

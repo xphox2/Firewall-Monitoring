@@ -20,6 +20,17 @@
         });
     }
 
+    function getTimezone() {
+        return displaySettings['display_timezone'] || 'America/New_York';
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '-';
+        return d.toLocaleString(undefined, { timeZone: getTimezone(), year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
     document.getElementById('footer-year').textContent = new Date().getFullYear();
 
     fetchDisplaySettings().then(function() {

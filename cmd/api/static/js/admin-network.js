@@ -281,7 +281,7 @@
             '<p><strong>Status:</strong> <span class="badge ' + device.status + '">' + (device.status || 'unknown') + '</span></p>' +
             '<p><strong>Location:</strong> ' + (AC.escapeHtml(device.location) || '-') + '</p>' +
             '<p><strong>Site:</strong> ' + ((device.site && device.site.name) || 'Unassigned') + '</p>' +
-            '<p><strong>Last Polled:</strong> ' + (device.last_polled ? new Date(device.last_polled).toLocaleString() : 'Never') + '</p>' +
+            '<p><strong>Last Polled:</strong> ' + (device.last_polled ? AC.formatDate(device.last_polled) : 'Never') + '</p>' +
             '</div>' +
             '<button class="btn sm secondary" data-action="go-to-devices">Go to Devices</button>';
         document.getElementById('details-panel').classList.add('open');
@@ -311,7 +311,7 @@
             '<p><strong>Discovery:</strong> ' + matchMethodBadge(conn.match_method, conn.auto_detected) + '</p>' +
             formatTunnelList(conn.tunnel_names) +
             '<p><strong>Latency:</strong> ' + (conn.latency ? conn.latency + 'ms' : '-') + '</p>' +
-            '<p><strong>Last Check:</strong> ' + (conn.last_check ? new Date(conn.last_check).toLocaleString() : 'Never') + '</p>' +
+            '<p><strong>Last Check:</strong> ' + (conn.last_check ? AC.formatDate(conn.last_check) : 'Never') + '</p>' +
             (conn.notes ? '<p><strong>Notes:</strong> ' + AC.escapeHtml(conn.notes) + '</p>' : '') +
             '</div>' +
             '<a href="/admin/connections/' + conn.id + '" class="btn sm" style="margin-bottom:8px;display:inline-block;text-decoration:none;">View Full Details &rarr;</a> ' +

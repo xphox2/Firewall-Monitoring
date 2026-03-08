@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.111] - 2026-03-07
+
+### Added
+- Configurable display timezone for all admin and public dashboard pages
+- Timezone selector in Settings page with full list of world timezones (defaults to America/New_York / Eastern)
+- `display_timezone` system setting persisted in DB and synced to localStorage
+- Centralized `formatDate()` / `formatDateShort()` helpers in admin-common.js
+- Public dashboard also respects the configured timezone via display-settings API
+- All date/time displays across admin pages (syslog, flows, alerts, traps, devices, probes, network map) now use the configured timezone
+
 ## [0.10.110] - 2026-03-07
 
 ### Added

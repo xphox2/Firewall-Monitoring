@@ -7,6 +7,8 @@
     var escapeHtml = AC.escapeHtml;
     var apiFetch = AC.apiFetch;
 
+    var formatDate = AC.formatDate;
+
     // Expose apiFetch globally for diagram-panels.js interop
     window.apiFetch = apiFetch;
 
@@ -318,7 +320,7 @@
                     if (sessEl) { sessEl.textContent = 'No data'; sessEl.title = '0 system_status records (device_id=' + id + ').'; }
                     return;
                 }
-                var polledInfo = e.status_time ? 'Last: ' + new Date(e.status_time).toLocaleString() + ' | ' + rows + ' records' : rows + ' records';
+                var polledInfo = e.status_time ? 'Last: ' + formatDate(e.status_time) + ' | ' + rows + ' records' : rows + ' records';
                 if (cpuEl) {
                     cpuEl.textContent = e.cpu_usage.toFixed(1) + '%';
                     cpuEl.style.color = e.cpu_usage >= 80 ? '#f85149' : (e.cpu_usage >= 60 ? '#d29922' : '#3fb950');
@@ -568,7 +570,7 @@
         var tbody = document.querySelector('#syslog-table tbody');
         var html = messages.map(function(m) {
             return '<tr>' +
-                '<td style="white-space:nowrap;">' + new Date(m.timestamp).toLocaleString() + '</td>' +
+                '<td style="white-space:nowrap;">' + formatDate(m.timestamp) + '</td>' +
                 '<td class="mono">' + escapeHtml(m.source_ip) + '</td>' +
                 '<td>' + escapeHtml(m.hostname) + '</td>' +
                 '<td><span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></td>' +
@@ -690,7 +692,7 @@
         var tbody = document.querySelector('#flows-table tbody');
         var html = samples.map(function(f) {
             return '<tr>' +
-                '<td style="white-space:nowrap;">' + new Date(f.timestamp).toLocaleString() + '</td>' +
+                '<td style="white-space:nowrap;">' + formatDate(f.timestamp) + '</td>' +
                 '<td class="mono">' + escapeHtml(f.src_addr) + ':' + f.src_port + '</td>' +
                 '<td>&#8594;</td>' +
                 '<td class="mono">' + escapeHtml(f.dst_addr) + ':' + f.dst_port + '</td>' +
@@ -777,7 +779,7 @@
         var tbody = document.querySelector('#alerts-full-table tbody');
         var html = alerts.map(function(a) {
             return '<tr>' +
-                '<td>' + new Date(a.timestamp).toLocaleString() + '</td>' +
+                '<td>' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + getDeviceName(a.device_id) + '</td>' +
                 '<td>' + escapeHtml(a.alert_type) + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
@@ -859,7 +861,7 @@
         var tbody = document.querySelector('#traps-table tbody');
         var html = traps.map(function(t) {
             return '<tr>' +
-                '<td>' + new Date(t.timestamp).toLocaleString() + '</td>' +
+                '<td>' + formatDate(t.timestamp) + '</td>' +
                 '<td class="mono">' + escapeHtml(t.source_ip) + '</td>' +
                 '<td>' + escapeHtml(t.trap_type) + '</td>' +
                 '<td><span class="badge ' + escapeHtml(t.severity) + '">' + escapeHtml(t.severity).toUpperCase() + '</span></td>' +
@@ -907,10 +909,49 @@
     }
 
     // ---- Settings ----
+    var TIMEZONE_LIST = [
+        'Pacific/Midway', 'Pacific/Honolulu', 'America/Anchorage', 'America/Los_Angeles',
+        'America/Phoenix', 'America/Denver', 'America/Chicago', 'America/New_York',
+        'America/Halifax', 'America/St_Johns', 'America/Sao_Paulo', 'America/Argentina/Buenos_Aires',
+        'Atlantic/South_Georgia', 'Atlantic/Azores', 'UTC',
+        'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Helsinki',
+        'Europe/Moscow', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata',
+        'Asia/Dhaka', 'Asia/Bangkok', 'Asia/Shanghai', 'Asia/Tokyo',
+        'Australia/Sydney', 'Pacific/Auckland', 'Pacific/Fiji'
+    ];
+
+    function populateTimezoneSelect() {
+        var sel = document.getElementById('display-timezone');
+        if (!sel) return;
+        var current = AC.getTimezone();
+        sel.innerHTML = TIMEZONE_LIST.map(function(tz) {
+            var label = tz.replace(/_/g, ' ');
+            try {
+                var now = new Date();
+                var short = now.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'short' }).split(', ').pop().split(' ').pop();
+                label = tz.replace(/_/g, ' ') + ' (' + short + ')';
+            } catch(e) {}
+            return '<option value="' + tz + '"' + (tz === current ? ' selected' : '') + '>' + label + '</option>';
+        }).join('');
+        sel.addEventListener('change', function() {
+            AC.setTimezone(sel.value);
+        });
+    }
+
+    populateTimezoneSelect();
+
     function loadSettings() {
         apiFetch(API_BASE + '/settings').then(function(result) {
             if (!result) return;
             var settings = result.data || [];
+
+            // Load timezone from DB and sync to localStorage
+            var tzSetting = settings.find(function(s) { return s.key === 'display_timezone'; });
+            if (tzSetting && tzSetting.value) {
+                AC.setTimezone(tzSetting.value);
+                var tzSel = document.getElementById('display-timezone');
+                if (tzSel) tzSel.value = tzSetting.value;
+            }
 
             var alertSettings = settings.filter(function(s) { return s.category === 'alerts'; });
             var notifSettings = settings.filter(function(s) { return s.category === 'notifications'; });
@@ -1315,6 +1356,12 @@
             settings.push({ key: 'public_vpn_tunnels', value: selectedVpns, category: 'display', type: 'string' });
         }
         
+        var tzSel = document.getElementById('display-timezone');
+        if (tzSel && tzSel.value) {
+            settings.push({ key: 'display_timezone', value: tzSel.value, category: 'display', type: 'string' });
+            AC.setTimezone(tzSel.value);
+        }
+
         apiFetch(API_BASE + '/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }).then(function() {
             alert('Settings saved!');
         })['catch'](function(err) { alert('Error: ' + err.message); });

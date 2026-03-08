@@ -36,7 +36,7 @@
                 '</div>' +
                 '<div class="probe-details">' +
                 '<div><span>Listen:</span> ' + AC.escapeHtml(p.listen_address || '') + ':' + (p.listen_port || '') + '</div>' +
-                '<div><span>Created:</span> ' + (p.created_at ? new Date(p.created_at).toLocaleString() : 'N/A') + '</div>' +
+                '<div><span>Created:</span> ' + (p.created_at ? AC.formatDate(p.created_at) : 'N/A') + '</div>' +
                 '</div>' +
                 '<div class="probe-actions">' +
                 '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +

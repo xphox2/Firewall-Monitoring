@@ -80,6 +80,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"public_show_connections":      true,
 		"public_interfaces":            true,
 		"public_vpn_tunnels_by_device": true,
+		"display_timezone":             true,
 	}
 
 	secretKeys := map[string]bool{
@@ -129,6 +130,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		case "smtp_host", "smtp_username", "smtp_from", "smtp_to":
 			if len(s.Value) > 255 {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
+				return
+			}
+		case "display_timezone":
+			if len(s.Value) > 64 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid timezone value"))
 				return
 			}
 		case "public_interfaces", "public_vpn_tunnels", "public_vpn_tunnels_by_device", "public_bandwidth_interfaces":
@@ -380,6 +386,7 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 		"public_refresh_interval":      "30",
 		"public_interfaces":            "{}", // JSON: {"1":["wan1"],"2":["dmz"]}
 		"public_vpn_tunnels_by_device": "{}", // JSON: {"1":["tunnel1"],"2":["tunnel2"]}
+		"display_timezone":             "America/New_York",
 	}
 
 	if h.db == nil {
@@ -389,7 +396,7 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	}
 
 	var settings []models.SystemSetting
-	h.db.Gorm().Where("`key` LIKE ?", "public_%").Find(&settings)
+	h.db.Gorm().Where("`key` LIKE ? OR `key` = ?", "public_%", "display_timezone").Find(&settings)
 
 	result := make(map[string]string)
 	for k, v := range defaults {

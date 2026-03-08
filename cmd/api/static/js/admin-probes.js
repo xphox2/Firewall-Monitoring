@@ -47,7 +47,7 @@
         tbody.innerHTML = probes.map(function(p) {
             var approvalStatus = p.approval_status || 'pending';
             var lastSeen = p.last_seen && p.last_seen !== '0001-01-01T00:00:00Z'
-                ? new Date(p.last_seen).toLocaleString() : 'Never';
+                ? AC.formatDate(p.last_seen) : 'Never';
             var html = '<tr>' +
                 '<td><strong>' + AC.escapeHtml(p.name) + '</strong>' +
                 (p.description ? '<br><span class="info-text">' + AC.escapeHtml(p.description) + '</span>' : '') +
