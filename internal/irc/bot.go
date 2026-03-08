@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -89,7 +90,25 @@ func (m *Manager) loadAndStartBots() {
 	}
 	m.mu.Unlock()
 
+	m.seedDefaultCommands()
 	m.loadCommands()
+}
+
+func (m *Manager) seedDefaultCommands() {
+	defaults := []models.IRCCommand{
+		{Command: "!status", Description: "Show system health dashboard", CommandType: "status", Enabled: true},
+		{Command: "!stats", Description: "Show CPU/memory averages", CommandType: "stats", Enabled: true},
+		{Command: "!help", Description: "List available commands", CommandType: "help", Enabled: true},
+	}
+	for _, def := range defaults {
+		var count int64
+		m.db.Model(&models.IRCCommand{}).Where("command = ?", def.Command).Count(&count)
+		if count == 0 {
+			if err := m.db.Create(&def).Error; err != nil {
+				log.Printf("IRC: Failed to seed command %s: %v", def.Command, err)
+			}
+		}
+	}
 }
 
 func (m *Manager) loadCommands() {
@@ -322,6 +341,21 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 		} else {
 			response = "Stats provider not configured"
 		}
+	case "help":
+		b.manager.mu.RLock()
+		var cmds []string
+		for name, c := range b.manager.commands {
+			if c.Enabled {
+				desc := c.Description
+				if desc == "" {
+					desc = c.CommandType
+				}
+				cmds = append(cmds, fmt.Sprintf("  %s - %s", name, desc))
+			}
+		}
+		b.manager.mu.RUnlock()
+		sort.Strings(cmds)
+		response = "Available commands:\n" + strings.Join(cmds, "\n")
 	default:
 		response = cmd.Response
 	}

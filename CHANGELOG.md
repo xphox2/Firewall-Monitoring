@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.101] - 2026-03-07
+
+### Fixed
+- IRC: seed default commands (!status, !stats, !help) on startup so they work without manual creation
+- IRC: added !help command type that lists all available commands
+
 ## [0.10.100] - 2026-03-07
 
 ### Fixed
