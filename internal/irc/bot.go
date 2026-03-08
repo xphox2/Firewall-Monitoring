@@ -450,29 +450,21 @@ func (b *Bot) updateStatus(status, errMsg string) {
 }
 
 // IRC formatting constants
-// Strategy: use setC() to change colors inline without \x0F reset.
-// Only one \x0F at the very end of each line. This prevents mid-line
-// resets from breaking alignment or killing monospace mode.
+// Pure ASCII characters only — Unicode box-drawing chars break alignment
+// in mIRC with Fixedsys font (font-linking substitutes different-width glyphs).
+// Bars use colored spaces (background color = the bar) which works in every font.
 const (
-	ircColor  = "\x03"
-	ircReset  = "\x0F"
-	cWhite    = "00"
-	cBlack    = "01"
-	cGreen    = "03"
-	cRed      = "04"
-	cYellow   = "08"
-	cGrey     = "14"
-	boxH      = "\u2500" // ─
-	boxV      = "\u2502" // │
-	boxTL     = "\u250C" // ┌
-	boxTR     = "\u2510" // ┐
-	boxBL     = "\u2514" // └
-	boxBR     = "\u2518" // ┘
-	blockFull = "\u2588" // █
-	statusDot = "\u25CF" // ●
-	boxW      = 38 // total visible width per device box
-	barW      = 22 // progress bar character width
-	contentW  = 34 // boxW - 4: usable between "| " and " |"
+	ircColor = "\x03"
+	ircBold  = "\x02"
+	ircReset = "\x0F"
+	cBlack   = "01"
+	cGreen   = "03"
+	cRed     = "04"
+	cYellow  = "08"
+	cGrey    = "14"
+	boxW     = 38 // total visible width per device box
+	barW     = 22 // progress bar width (colored spaces)
+	contentW = 34 // boxW - 4: usable between "| " and " |"
 )
 
 // setC sets IRC foreground color without resetting other formatting
@@ -504,13 +496,14 @@ func makeColorBar(pct float64) string {
 	}
 	empty := barW - filled
 	var bar string
+	// Use colored SPACES for bars — works with any font including Fixedsys
 	if filled > 0 {
-		bar += setCBg(barColor(pct), cBlack) + strings.Repeat(blockFull, filled)
+		bar += setCBg(barColor(pct), barColor(pct)) + strings.Repeat(" ", filled)
 	}
 	if empty > 0 {
-		bar += setCBg(cBlack, cBlack) + strings.Repeat(blockFull, empty)
+		bar += setCBg(cBlack, cBlack) + strings.Repeat(" ", empty)
 	}
-	// Reset all formatting to clear black background from bar
+	// Reset all formatting to clear background color
 	bar += ircReset
 	return bar
 }
@@ -556,7 +549,7 @@ func boxLine(ircContent string, pVisLen int) string {
 	if pad < 0 {
 		pad = 0
 	}
-	return setC(cGrey) + boxV + setC(cWhite) + " " + ircContent + strings.Repeat(" ", pad) + " " + setC(cGrey) + boxV + ircReset
+	return setC(cGrey) + "|" + ircReset + " " + ircContent + strings.Repeat(" ", pad) + " " + setC(cGrey) + "|" + ircReset
 }
 
 func deviceBox(d map[string]interface{}) [6]string {
@@ -573,8 +566,8 @@ func deviceBox(d map[string]interface{}) [6]string {
 	upStr := formatUptime(upSec)
 	uptimePart := "(Up: " + upStr + ")"
 
-	// Line 1: header +- NAME ---- (Up: Xd Xh) -+
-	// visible = +(1) + -(1) + " "(1) + name + " "(1) + dashes + uptimePart + " "(1) + -(1) + +(1) = 7 + name + dashes + uptime
+	// Line 1: header +- NAME --- (Up: Xd Xh) -+
+	// visible: +(1) + -(1) + " "(1) + name + " "(1) + dashes + uptimePart + " "(1) + -(1) + +(1) = 7 + name + dashes + uptime
 	maxName := boxW - 7 - 1 - len(uptimePart)
 	if maxName < 3 {
 		maxName = 3
@@ -584,29 +577,29 @@ func deviceBox(d map[string]interface{}) [6]string {
 	if dashFill < 1 {
 		dashFill = 1
 	}
-	header := setC(cGrey) + boxTL + boxH + setC(cWhite) + " " + dispName + " " +
-		setC(cGrey) + strings.Repeat(boxH, dashFill) + uptimePart + " " + boxH + boxTR + ircReset
+	header := setC(cGrey) + "+-" + ircReset + " " + ircBold + dispName + ircBold + " " +
+		setC(cGrey) + strings.Repeat("-", dashFill) + uptimePart + " -+" + ircReset
 
-	// Line 2: CPU  [||||||||||||||||||||||] 42%
+	// Line 2: CPU  [                      ]  42%
 	// visible: "CPU  [" (6) + barW (22) + "]" (1) + " %3.0f%%" (5) = 34 = contentW
 	cpuPct := fmt.Sprintf(" %3.0f%%", cpu)
-	cpuContent := "CPU  [" + makeColorBar(cpu) + setC(cWhite) + "]" + cpuPct
+	cpuContent := "CPU  [" + makeColorBar(cpu) + "]" + cpuPct
 	line2 := boxLine(cpuContent, 6+barW+1+5)
 
-	// Line 3: MEM  [||||||||||||||||||||||] 62%
+	// Line 3: MEM  [                      ]  62%
 	memPct := fmt.Sprintf(" %3.0f%%", mem)
-	memContent := "MEM  [" + makeColorBar(mem) + setC(cWhite) + "]" + memPct
+	memContent := "MEM  [" + makeColorBar(mem) + "]" + memPct
 	line3 := boxLine(memContent, 6+barW+1+5)
 
-	// Line 4: VPN: 4/5 up  Alerts: 1
-	vpnText := fmt.Sprintf("VPN:%d/%d", vpnUp, vpnTot)
-	alertText := fmt.Sprintf("Alrt:%d", alerts)
-	l4plain := vpnText + "  " + alertText
-	l4irc := "VPN:" + setC(cGreen) + fmt.Sprintf("%d", vpnUp) + setC(cWhite) + fmt.Sprintf("/%d", vpnTot) +
-		"  Alrt:" + setC(cRed) + fmt.Sprintf("%d", alerts) + setC(cWhite)
-	line4 := boxLine(l4irc, visLen(l4plain))
+	// Line 4: VPN: 4/5    Alerts: 1
+	vpnText := fmt.Sprintf("VPN: %d/%d", vpnUp, vpnTot)
+	alertText := fmt.Sprintf("Alerts: %d", alerts)
+	l4plain := vpnText + "    " + alertText
+	l4irc := "VPN: " + setC(cGreen) + fmt.Sprintf("%d", vpnUp) + ircReset + fmt.Sprintf("/%d", vpnTot) +
+		"    Alerts: " + setC(cRed) + fmt.Sprintf("%d", alerts) + ircReset
+	line4 := boxLine(l4irc, len(l4plain))
 
-	// Line 5: Sess: 5.2k  * online
+	// Line 5: Sess: 5.2k   * online
 	sessStr := formatSessions(sess)
 	var sColor string
 	if status == "online" {
@@ -614,12 +607,12 @@ func deviceBox(d map[string]interface{}) [6]string {
 	} else {
 		sColor = cRed
 	}
-	l5plain := fmt.Sprintf("Sess:%s  %s %s", sessStr, statusDot, status)
-	l5irc := fmt.Sprintf("Sess:%s  ", sessStr) + setC(sColor) + statusDot + " " + status + setC(cWhite)
-	line5 := boxLine(l5irc, visLen(l5plain))
+	l5plain := fmt.Sprintf("Sess: %s   * %s", sessStr, status)
+	l5irc := fmt.Sprintf("Sess: %s   ", sessStr) + setC(sColor) + "* " + status + ircReset
+	line5 := boxLine(l5irc, len(l5plain))
 
 	// Line 6: footer +------------------------------------+
-	footer := setC(cGrey) + boxBL + strings.Repeat(boxH, boxW-2) + boxBR + ircReset
+	footer := setC(cGrey) + "+" + strings.Repeat("-", boxW-2) + "+" + ircReset
 
 	return [6]string{header, line2, line3, line4, line5, footer}
 }

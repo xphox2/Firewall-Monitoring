@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.108] - 2026-03-07
+
+### Fixed
+- IRC !status: switch to pure ASCII characters for mIRC Fixedsys compatibility (Unicode box-drawing chars cause font-linking misalignment)
+- IRC !status: use colored spaces for progress bars instead of block chars (works with any font)
+- IRC !status: bold device name in header, cleaner layout with grey borders
+- IRC !status: all text/labels use only ASCII 0-127 characters
+
 ## [0.10.107] - 2026-03-07
 
 ### Fixed
