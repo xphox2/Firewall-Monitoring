@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.106] - 2026-03-07
+
+### Fixed
+- IRC !status: fix bar background color bleeding into text after progress bars
+
 ## [0.10.105] - 2026-03-07
 
 ### Fixed

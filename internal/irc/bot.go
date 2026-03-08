@@ -510,8 +510,8 @@ func makeColorBar(pct float64) string {
 	if empty > 0 {
 		bar += setCBg(cBlack, cBlack) + strings.Repeat(blockFull, empty)
 	}
-	// Reset bg by setting fg only — next setC() call will clear bg context
-	bar += setC(cWhite)
+	// Reset all formatting to clear black background from bar
+	bar += ircReset
 	return bar
 }
 
