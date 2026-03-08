@@ -827,36 +827,13 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 		return strings.NewReplacer(" ", "", ".", "", "-", "", "_", "").Replace(n)
 	}
 
-	// Determine connection type by name pattern (more reliable than device-reported type)
-	// - vxlan* prefix -> VXLAN
-	// - vlan* pattern -> L2VLAN
-	// - Otherwise use device-reported type
-	ifaceTypeByName := func(name string) string {
-		n := strings.ToLower(name)
-		if strings.HasPrefix(n, "vxlan") {
-			return "vxlan"
+	// Use device-reported type directly - if devices report different types, just use whichever
+	pairConnType := func(typeA, typeB string) string {
+		a := strings.ToLower(typeA)
+		if a != "" {
+			return a
 		}
-		if strings.HasPrefix(n, "vlan") || strings.Contains(n, "vlan") {
-			return "l2vlan"
-		}
-		return ""
-	}
-
-	// For paired devices, use name-based type if available, otherwise fall back to device type
-	pairConnType := func(name, typeA, typeB string) string {
-		// First try name-based detection
-		if nt := ifaceTypeByName(name); nt != "" {
-			return nt
-		}
-		// Fall back to device-reported types with priority: l3ipvlan > vxlan > l2vlan
-		a, b := strings.ToLower(typeA), strings.ToLower(typeB)
-		if a == "l3ipvlan" || b == "l3ipvlan" {
-			return "l3ipvlan"
-		}
-		if a == "vxlan" || b == "vxlan" {
-			return "vxlan"
-		}
-		return "l2vlan"
+		return strings.ToLower(typeB)
 	}
 
 	type ifEntry struct {
@@ -934,7 +911,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 		for i := 0; i < len(deviceList); i++ {
 			for j := i + 1; j < len(deviceList); j++ {
 				a, b := deviceList[i], deviceList[j]
-				connType := pairConnType(a.name, a.typeName, b.typeName)
+				connType := pairConnType(a.typeName, b.typeName)
 
 				// L2VLAN between same-site devices - no VPN tunnel needed
 				isSameSite := sameSite(a.deviceID, b.deviceID)
