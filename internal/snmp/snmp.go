@@ -61,6 +61,7 @@ var IfTypeNames = map[int]string{
 	136: "l3ipvlan",
 	150: "mplsTunnel",
 	161: "lag",
+	209: "bridge",
 	351: "vxlan",
 }
 

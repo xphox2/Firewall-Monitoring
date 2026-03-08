@@ -816,7 +816,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 	// Only overlay and local interface types — tunnel carriers (ipsec, gre, etc.)
 	// are handled exclusively by detectVPNConnections using actual VPN data.
 	overlayTypes := map[string]bool{
-		"l2vlan": true, "l3ipvlan": true, "vxlan": true,
+		"l2vlan": true, "l3ipvlan": true, "vxlan": true, "bridge": true,
 	}
 
 	// Validation: ALL overlay types require a direct VPN tunnel between endpoints
