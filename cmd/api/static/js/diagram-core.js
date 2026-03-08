@@ -133,12 +133,28 @@
     }
 
     function zoomIn() {
-        zoom = Math.min(ZOOM_MAX, zoom * 1.25);
+        const oldZoom = zoom;
+        const newZoom = Math.min(ZOOM_MAX, zoom * 1.25);
+        if (newZoom === oldZoom) return;
+        // Zoom toward center of viewport
+        const centerX = panX + (W / oldZoom) / 2;
+        const centerY = panY + (H / oldZoom) / 2;
+        zoom = newZoom;
+        panX = centerX - (W / newZoom) / 2;
+        panY = centerY - (H / newZoom) / 2;
         updateViewBox();
     }
 
     function zoomOut() {
-        zoom = Math.max(ZOOM_MIN, zoom * 0.8);
+        const oldZoom = zoom;
+        const newZoom = Math.max(ZOOM_MIN, zoom * 0.8);
+        if (newZoom === oldZoom) return;
+        // Zoom toward center of viewport
+        const centerX = panX + (W / oldZoom) / 2;
+        const centerY = panY + (H / oldZoom) / 2;
+        zoom = newZoom;
+        panX = centerX - (W / newZoom) / 2;
+        panY = centerY - (H / newZoom) / 2;
         updateViewBox();
     }
 

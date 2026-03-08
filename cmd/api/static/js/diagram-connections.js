@@ -240,19 +240,26 @@
         const startAngle = midAngle - spreadRad / 2;
         const angle = startAngle + idx * step;
 
-        // Transit point near cloud center with offset
+        // Transit point near cloud center
         const transitR = 25;
         const transitX = cx + transitR * Math.cos(angle);
         const transitY = cy + transitR * Math.sin(angle);
 
-        // Build straight segments: Source->transit, transit->Dest with offset for parallel lines
+        // Calculate offset perpendicular to the overall source->dest direction
+        // This ensures both segments are offset in the same direction and meet at transit point
         const OFFSET_STEP = 16;
-        const off1 = (idx - (total - 1) / 2) * OFFSET_STEP;
-        const off2 = -off1;
+        const mid = (total - 1) / 2;
+        const offsetAmount = (idx - mid) * OFFSET_STEP;
 
-        // Calculate perpendicular offset for each segment
-        const seg1D = buildStraightOffset(sx, sy, transitX, transitY, off1);
-        const seg2D = buildStraightOffset(transitX, transitY, tx, ty, off2);
+        // Perpendicular to overall direction (sx,sy) -> (tx,ty)
+        const dx = tx - sx, dy = ty - sy;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx = -dy / len, ny = dx / len; // perpendicular unit vector
+        const ox = nx * offsetAmount, oy = ny * offsetAmount;
+
+        // Both segments use the same offset so they meet at transit point
+        const seg1D = `M${sx + ox},${sy + oy} L${transitX + ox},${transitY + oy}`;
+        const seg2D = `M${transitX + ox},${transitY + oy} L${tx + ox},${ty + oy}`;
 
         return { seg1D, seg2D };
     }
