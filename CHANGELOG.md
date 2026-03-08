@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.105] - 2026-03-07
+
+### Fixed
+- IRC !status: restored Unicode box-drawing characters (│─┌┐└┘█●) — ASCII looked worse
+
 ## [0.10.104] - 2026-03-07
 
 ### Changed
