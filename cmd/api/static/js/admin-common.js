@@ -36,7 +36,7 @@
         var d = new Date(dateStr);
         if (isNaN(d.getTime())) return '-';
         var tz = getTimezone();
-        return d.toLocaleString(undefined, { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        return d.toLocaleString('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     }
 
     function formatDateShort(dateStr) {
@@ -44,7 +44,7 @@
         var d = new Date(dateStr);
         if (isNaN(d.getTime())) return '-';
         var tz = getTimezone();
-        return d.toLocaleString(undefined, { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        return d.toLocaleString('en-US', { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
     }
 
     function escapeHtml(str) {
@@ -133,6 +133,18 @@
         formatDate: formatDate,
         formatDateShort: formatDateShort
     };
+
+    // Eagerly load timezone from server on page load
+    function loadTimezoneFromServer() {
+        fetch(API_BASE + '/display-settings', { credentials: 'same-origin' })
+            .then(function(res) { if (res.ok) return res.json(); })
+            .then(function(data) {
+                if (data && data.data && data.data['display_timezone']) {
+                    setTimezone(data.data['display_timezone']);
+                }
+            })['catch'](function() {});
+    }
+    loadTimezoneFromServer();
 
     // Set globals for diagram-panels.js interop
     window.API_BASE = API_BASE;
