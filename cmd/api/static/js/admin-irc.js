@@ -312,11 +312,18 @@ function openChannelModal(channel = null) {
     document.getElementById('channelAutoJoin').checked = channel ? channel.auto_join : true;
     document.getElementById('channelSendAlerts').checked = channel ? channel.send_alerts : false;
     document.getElementById('channelSendStatus').checked = channel ? channel.send_status : false;
+    document.getElementById('channelStatusInterval').value = channel ? Math.round((channel.status_interval || 300) / 60) : 5;
     document.getElementById('channelEnabled').checked = channel ? channel.enabled : true;
+    toggleStatusInterval();
 }
 
 function closeChannelModal() {
     document.getElementById('channelModal').classList.remove('active');
+}
+
+function toggleStatusInterval() {
+    const checked = document.getElementById('channelSendStatus').checked;
+    document.getElementById('statusIntervalGroup').style.display = checked ? 'block' : 'none';
 }
 
 async function saveChannel(e) {
@@ -331,6 +338,7 @@ async function saveChannel(e) {
         auto_join: document.getElementById('channelAutoJoin').checked,
         send_alerts: document.getElementById('channelSendAlerts').checked,
         send_status: document.getElementById('channelSendStatus').checked,
+        status_interval: parseInt(document.getElementById('channelStatusInterval').value || '5') * 60,
         enabled: document.getElementById('channelEnabled').checked
     };
     

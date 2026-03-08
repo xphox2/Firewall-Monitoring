@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.110] - 2026-03-07
+
+### Added
+- IRC auto-status: periodic automatic status messages posted to channels on a configurable interval
+- New `statusLoop` goroutine in IRC Manager ticks every 30s and sends status to channels with `SendStatus` enabled
+- Channel modal: interval input (in minutes) shown when "Auto-Post Status" is checked
+- Interval stored in seconds in DB, displayed as minutes in the UI
+
+### Fixed
+- IRC !status: removed bold formatting from device name in header
+- IRC !status: removed extra space before closing `-+` in header to fix alignment
+
 ## [0.10.109] - 2026-03-07
 
 ### Fixed

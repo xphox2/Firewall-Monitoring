@@ -359,9 +359,13 @@
                 </div>
                 <div class="form-group">
                     <label class="checkbox-label">
-                        <input type="checkbox" id="channelSendStatus">
-                        Respond to !status Commands
+                        <input type="checkbox" id="channelSendStatus" onchange="toggleStatusInterval()">
+                        Auto-Post Status
                     </label>
+                </div>
+                <div class="form-group" id="statusIntervalGroup" style="display:none;">
+                    <label>Status Interval (minutes)</label>
+                    <input type="number" id="channelStatusInterval" min="1" max="1440" value="5" placeholder="Interval in minutes">
                 </div>
                 <div class="form-group">
                     <label class="checkbox-label">

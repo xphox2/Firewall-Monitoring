@@ -28,22 +28,24 @@ type Bot struct {
 }
 
 type Manager struct {
-	db       *gorm.DB
-	bots     map[uint]*Bot
-	mu       sync.RWMutex
-	commands map[string]*models.IRCCommand
-	wg       sync.WaitGroup
-	quit     chan struct{}
-	statusFn func() (map[string]interface{}, error)
-	statsFn  func() (map[string]interface{}, error)
+	db         *gorm.DB
+	bots       map[uint]*Bot
+	mu         sync.RWMutex
+	commands   map[string]*models.IRCCommand
+	wg         sync.WaitGroup
+	quit       chan struct{}
+	statusFn   func() (map[string]interface{}, error)
+	statsFn    func() (map[string]interface{}, error)
+	lastStatus map[uint]time.Time
 }
 
 func NewManager(db *gorm.DB) *Manager {
 	return &Manager{
-		db:       db,
-		bots:     make(map[uint]*Bot),
-		commands: make(map[string]*models.IRCCommand),
-		quit:     make(chan struct{}),
+		db:         db,
+		bots:       make(map[uint]*Bot),
+		commands:   make(map[string]*models.IRCCommand),
+		quit:       make(chan struct{}),
+		lastStatus: make(map[uint]time.Time),
 	}
 }
 
@@ -58,6 +60,7 @@ func (m *Manager) SetStatsProvider(fn func() (map[string]interface{}, error)) {
 func (m *Manager) Start() {
 	go m.loadAndStartBots()
 	go m.reconnectLoop()
+	go m.statusLoop()
 }
 
 func (m *Manager) Stop() {
@@ -146,6 +149,77 @@ func (m *Manager) reconnectLoop() {
 				}
 			}
 			m.mu.RUnlock()
+		}
+	}
+}
+
+func (m *Manager) statusLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.quit:
+			return
+		case <-ticker.C:
+			m.sendAutoStatus()
+		}
+	}
+}
+
+func (m *Manager) sendAutoStatus() {
+	if m.statusFn == nil {
+		return
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, bot := range m.bots {
+		bot.mu.RLock()
+		conn := bot.Conn
+		bot.mu.RUnlock()
+		if conn == nil {
+			continue
+		}
+
+		for i := range bot.Server.Channels {
+			ch := &bot.Server.Channels[i]
+			if !ch.Enabled || !ch.SendStatus {
+				continue
+			}
+
+			interval := time.Duration(ch.StatusInterval) * time.Second
+			if interval <= 0 {
+				interval = 300 * time.Second
+			}
+
+			bot.mu.RLock()
+			joined := bot.channels[ch.ChannelName]
+			bot.mu.RUnlock()
+			if !joined {
+				continue
+			}
+
+			if time.Since(m.lastStatus[ch.ID]) < interval {
+				continue
+			}
+
+			status, err := m.statusFn()
+			if err != nil {
+				log.Printf("IRC: Auto-status error for %s: %v", ch.ChannelName, err)
+				continue
+			}
+
+			response := formatStatusResponse(status)
+			lines := strings.Split(response, "\n")
+			for _, line := range lines {
+				if line != "" {
+					conn.Privmsg(ch.ChannelName, line)
+				}
+			}
+
+			m.lastStatus[ch.ID] = time.Now()
 		}
 	}
 }
@@ -568,19 +642,19 @@ func deviceBox(d map[string]interface{}) [6]string {
 	upStr := formatUptime(upSec)
 	uptimePart := "(Up: " + upStr + ")"
 
-	// Line 1: header +- NAME --- (Up: Xd Xh) -+
-	// visible: +(1) + -(1) + " "(1) + name + " "(1) + dashes + uptimePart + " "(1) + -(1) + +(1) = 7 + name + dashes + uptime
-	maxName := boxW - 7 - 1 - len(uptimePart)
+	// Line 1: header +- NAME --- (Up: Xd Xh)-+
+	// visible: +(1) + -(1) + " "(1) + name + " "(1) + dashes + uptimePart + -(1) + +(1) = 6 + name + dashes + uptime
+	maxName := boxW - 6 - 1 - len(uptimePart)
 	if maxName < 3 {
 		maxName = 3
 	}
 	dispName := truncStr(name, maxName)
-	dashFill := boxW - 7 - visLen(dispName) - len(uptimePart)
+	dashFill := boxW - 6 - visLen(dispName) - len(uptimePart)
 	if dashFill < 1 {
 		dashFill = 1
 	}
-	header := setC(cGrey) + "+-" + ircReset + " " + ircBold + dispName + ircBold + " " +
-		setC(cGrey) + strings.Repeat("-", dashFill) + uptimePart + " -+" + ircReset
+	header := setC(cGrey) + "+-" + ircReset + " " + dispName + " " +
+		setC(cGrey) + strings.Repeat("-", dashFill) + uptimePart + "-+" + ircReset
 
 	// Line 2: CPU  [                      ]  42%
 	// visible: "CPU  [" (6) + barW (22) + "]" (1) + " %3.0f%%" (5) = 34 = contentW
