@@ -4,7 +4,7 @@
 
     const STORAGE_KEY = 'fwmon-diagram-positions';
     const NODE_W = 150, NODE_H = 64;
-    const SITE_PAD = 24; // padding around device nodes inside site groups
+    const SITE_PAD = 40; // padding around device nodes inside site groups
     let positions = [];
     let dragTarget = null;
     let dragStartPos = null;
@@ -75,7 +75,7 @@
             rect.setAttribute('width', bounds.w);
             rect.setAttribute('height', bounds.h);
             rect.setAttribute('rx', '12');
-            rect.setAttribute('fill', 'none');
+            rect.setAttribute('fill', 'transparent');
             rect.setAttribute('stroke', '#30363d');
             rect.setAttribute('stroke-width', '1.5');
             rect.setAttribute('stroke-dasharray', '6,4');
