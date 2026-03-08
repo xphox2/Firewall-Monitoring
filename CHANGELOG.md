@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.103] - 2026-03-07
+
+### Fixed
+- IRC !status: fixed box misalignment caused by \x0F resets killing monospace mid-line
+- IRC !status: fixed padding errors from using byte length instead of rune count (Unicode chars like ● counted as 3 bytes)
+- IRC !status: replaced per-element color+reset wrapping with inline color-set approach (single \x0F at end of each line)
+- IRC !status: switched from Unicode box-drawing chars to ASCII for maximum client compatibility
+- IRC !status: removed unreliable \x11 monospace toggle that was inconsistently applied
+
 ## [0.10.102] - 2026-03-07
 
 ### Changed
