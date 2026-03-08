@@ -448,15 +448,72 @@ func (b *Bot) updateStatus(status, errMsg string) {
 	b.db.Model(b.Server).Updates(updates)
 }
 
-func makeBar(pct float64, width int) string {
-	filled := int(pct / 100.0 * float64(width))
-	if filled > width {
-		filled = width
+// IRC formatting constants
+const (
+	ircColor  = "\x03"
+	ircMono   = "\x11"
+	ircReset  = "\x0F"
+	ircGreen  = "03"
+	ircRed    = "04"
+	ircYellow = "08"
+	ircGrey   = "14"
+	ircBlack  = "01"
+	boxH      = "\u2500" // ─
+	boxV      = "\u2502" // │
+	boxTL     = "\u250C" // ┌
+	boxTR     = "\u2510" // ┐
+	boxBL     = "\u2514" // └
+	boxBR     = "\u2518" // ┘
+	blockFull = "\u2588" // █
+	statusDot = "\u25CF" // ●
+	boxW      = 30       // total visible width per device box
+	barW      = 16       // progress bar character width
+	contentW  = 26       // boxW - 4: usable between "│ " and " │"
+)
+
+func barColor(pct float64) string {
+	if pct > 85 {
+		return ircRed
+	}
+	if pct > 60 {
+		return ircYellow
+	}
+	return ircGreen
+}
+
+func makeColorBar(pct float64) string {
+	filled := int(pct / 100.0 * float64(barW))
+	if filled > barW {
+		filled = barW
 	}
 	if filled < 0 {
 		filled = 0
 	}
-	return strings.Repeat("\u2588", filled) + strings.Repeat("\u2591", width-filled)
+	empty := barW - filled
+	var bar string
+	if filled > 0 {
+		bar += ircColor + barColor(pct) + "," + ircBlack + strings.Repeat(blockFull, filled)
+	}
+	if empty > 0 {
+		bar += ircColor + ircBlack + "," + ircBlack + strings.Repeat(blockFull, empty)
+	}
+	return bar
+}
+
+func formatUptime(seconds uint64) string {
+	if seconds == 0 {
+		return "N/A"
+	}
+	days := seconds / 86400
+	hours := (seconds % 86400) / 3600
+	mins := (seconds % 3600) / 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	return fmt.Sprintf("%dm", mins)
 }
 
 func formatSessions(n int) string {
@@ -469,25 +526,112 @@ func formatSessions(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-func formatStatusResponse(s map[string]interface{}) string {
-	deviceCount, _ := s["device_count"].(int)
-	onlineCount, _ := s["online_devices"].(int)
-	offlineCount, _ := s["offline_devices"].(int)
-	alertCount, _ := s["alert_count"].(int)
-	cpuAvg, _ := s["cpu_avg"].(float64)
-	memAvg, _ := s["memory_avg"].(float64)
-	sessions, _ := s["sessions"].(int)
-	vpnUp, _ := s["vpn_up"].(int)
-	vpnTotal, _ := s["vpn_total"].(int)
+func truncStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
+}
 
-	const barW = 20
-	lines := []string{
-		"\x0314\x02\u250C\u2500 Firewall Monitor \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\x0F",
-		fmt.Sprintf("\x0314\u2502\x0F Devices: \x0303%d up\x0F \x0304%d dn\x0F \x0314%d total\x0F          \x0314\u2502\x0F", onlineCount, offlineCount, deviceCount),
-		fmt.Sprintf("\x0314\u2502\x0F CPU  [\x0307%s\x0F] %5.1f%%       \x0314\u2502\x0F", makeBar(cpuAvg, barW), cpuAvg),
-		fmt.Sprintf("\x0314\u2502\x0F MEM  [\x0307%s\x0F] %5.1f%%       \x0314\u2502\x0F", makeBar(memAvg, barW), memAvg),
-		fmt.Sprintf("\x0314\u2502\x0F VPN: \x0303%d\x0F/\x0314%d\x0F up \x0314\u2502\x0F Alerts: \x0304%d\x0F \x0314\u2502\x0F Sess: %s  \x0314\u2502\x0F", vpnUp, vpnTotal, alertCount, formatSessions(sessions)),
-		"\x0314\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\x0F",
+// grey wraps text in grey IRC color
+func grey(s string) string { return ircColor + ircGrey + s + ircReset }
+
+// ctext wraps text in a specific IRC color
+func ctext(color, s string) string { return ircColor + color + s + ircReset }
+
+// boxContent wraps content between grey "│ " and " │", padded to boxW visible chars.
+// visLen is the visible character count of content (excluding IRC codes).
+func boxContent(ircContent string, visLen int) string {
+	pad := contentW - visLen
+	if pad < 0 {
+		pad = 0
+	}
+	return grey(boxV) + " " + ircContent + strings.Repeat(" ", pad) + " " + grey(boxV)
+}
+
+func deviceBox(d map[string]interface{}) [6]string {
+	name, _ := d["name"].(string)
+	status, _ := d["status"].(string)
+	cpu, _ := d["cpu"].(float64)
+	mem, _ := d["mem"].(float64)
+	sess, _ := d["sessions"].(int)
+	upSec, _ := d["uptime"].(uint64)
+	vpnUp, _ := d["vpn_up"].(int)
+	vpnTot, _ := d["vpn_total"].(int)
+	alerts, _ := d["alerts"].(int)
+
+	upStr := formatUptime(upSec)
+	uptimePart := "(Up: " + upStr + ")"
+
+	// Line 1: header ┌─ NAME ──── (Up: Xd Xh) ─┐
+	// visible = ┌(1) + ─(1) + " "(1) + name + " "(1) + dashes + uptimePart + " "(1) + ─(1) + ┐(1) = 7 + name + dashes + uptime
+	maxName := boxW - 7 - 1 - len(uptimePart) // leave at least 1 dash
+	if maxName < 3 {
+		maxName = 3
+	}
+	dispName := truncStr(name, maxName)
+	dashFill := boxW - 7 - len(dispName) - len(uptimePart)
+	if dashFill < 1 {
+		dashFill = 1
+	}
+	header := grey(boxTL+boxH) + " " + dispName + " " + grey(strings.Repeat(boxH, dashFill)+uptimePart+" "+boxH+boxTR)
+
+	// Line 2: CPU [████████████████]  42%
+	// visible: "CPU [" (5) + barW (16) + "]" (1) + "%4s" (4) = 26 = contentW
+	cpuPct := fmt.Sprintf("%3.0f%%", cpu)
+	cpuContent := "CPU [" + makeColorBar(cpu) + ircReset + "]" + cpuPct
+	line2 := boxContent(cpuContent, 5+barW+1+4)
+
+	// Line 3: MEM [████████████████]  62%
+	memPct := fmt.Sprintf("%3.0f%%", mem)
+	memContent := "MEM [" + makeColorBar(mem) + ircReset + "]" + memPct
+	line3 := boxContent(memContent, 5+barW+1+4)
+
+	// Line 4: VPN: 4/5 up  Alerts: 1
+	vpnText := fmt.Sprintf("VPN:%d/%d", vpnUp, vpnTot)
+	alertText := fmt.Sprintf("Alrt:%d", alerts)
+	l4plain := vpnText + "  " + alertText
+	l4irc := "VPN:" + ctext(ircGreen, fmt.Sprintf("%d", vpnUp)) + fmt.Sprintf("/%d", vpnTot) +
+		"  Alrt:" + ctext(ircRed, fmt.Sprintf("%d", alerts))
+	line4 := boxContent(l4irc, len(l4plain))
+
+	// Line 5: Sess: 5.2k  ● online
+	sessStr := formatSessions(sess)
+	var sColor string
+	if status == "online" {
+		sColor = ircGreen
+	} else {
+		sColor = ircRed
+	}
+	l5plain := fmt.Sprintf("Sess:%s  %s %s", sessStr, statusDot, status)
+	l5irc := fmt.Sprintf("Sess:%s  %s %s", sessStr, ctext(sColor, statusDot), ctext(sColor, status))
+	line5 := boxContent(l5irc, len(l5plain))
+
+	// Line 6: footer └────────────────────────────┘
+	footer := grey(boxBL + strings.Repeat(boxH, boxW-2) + boxBR)
+
+	return [6]string{header, line2, line3, line4, line5, footer}
+}
+
+func formatStatusResponse(s map[string]interface{}) string {
+	devSlice, ok := s["devices"].([]map[string]interface{})
+	if !ok || len(devSlice) == 0 {
+		return "No devices configured"
+	}
+
+	boxes := make([][6]string, len(devSlice))
+	for i, d := range devSlice {
+		boxes[i] = deviceBox(d)
+	}
+
+	// Combine side by side: each IRC line joins all device boxes at that row
+	var lines []string
+	for row := 0; row < 6; row++ {
+		var parts []string
+		for _, box := range boxes {
+			parts = append(parts, box[row])
+		}
+		lines = append(lines, ircMono+strings.Join(parts, " ")+ircReset)
 	}
 	return strings.Join(lines, "\n")
 }

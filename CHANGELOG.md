@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.102] - 2026-03-07
+
+### Changed
+- IRC !status: per-device side-by-side boxes with individual CPU/MEM/VPN/alerts/sessions
+- Progress bars use color thresholds: green (≤60%), yellow (60-85%), red (>85%) on black background
+- Wider 16-char bars for better visual resolution
+- Device uptime shown in header: ┌─ NAME ──── (Up: 45d 3h) ─┐
+- Status provider now returns per-device data instead of aggregates
+- Monospace toggle (\x11) wrapping for proper alignment across IRC clients
+
 ## [0.10.101] - 2026-03-07
 
 ### Fixed
