@@ -224,8 +224,13 @@ func (b *Bot) Start() {
 }
 
 func (b *Bot) Stop() {
-	close(b.quit)
 	b.mu.Lock()
+	select {
+	case <-b.quit:
+		// already closed
+	default:
+		close(b.quit)
+	}
 	if b.Conn != nil {
 		b.Conn.Quit()
 		b.Conn = nil

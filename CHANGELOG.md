@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.100] - 2026-03-07
+
+### Fixed
+- IRC disconnect panic: Bot.Stop() no longer panics on double-close of quit channel
+
 ## [0.10.99] - 2026-03-07
 
 ### Added
