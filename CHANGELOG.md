@@ -1,9 +1,9 @@
 # Changelog
 
-## [0.10.106] - 2026-03-07
+## [0.10.107] - 2026-03-07
 
 ### Fixed
-- IRC !status: fix bar background color bleeding into text after progress bars
+- IRC !status: restore explicit white color after bar reset so bracket/percentage text renders consistently
 
 ## [0.10.105] - 2026-03-07
 

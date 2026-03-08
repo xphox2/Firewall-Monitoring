@@ -120,3 +120,53 @@ New admin pages (sites.html, probe-pending.html) showed completely blank white s
 - Test pages incrementally - start with minimal HTML, add JS one piece at a time
 - Use browser console (F12) to check for JavaScript errors immediately
 - Don't use arrow functions if targeting broader compatibility without transpilation
+
+---
+
+## Issue: IRC !status Output Misaligned in IRC Clients
+
+### Problem
+Box-drawing status output looked correct in tests but was misaligned when rendered in actual IRC clients.
+
+### Root Causes Found
+
+1. **`len()` counts bytes, not visible characters**
+   - Unicode chars like `●` (U+25CF) are 3 bytes but 1 visible char
+   - Using `len()` for padding calculation caused 2-char errors per Unicode symbol
+   - **Fix**: Use `utf8.RuneCountInString()` for visible width
+   - **Lesson**: ALWAYS use rune count, never byte length, for visible width calculations
+
+2. **`\x0F` (reset all) kills ALL formatting mid-line**
+   - Original code wrapped every border char in `grey()` which applied color+reset (`\x03XX...\x0F`)
+   - Each `\x0F` reset killed any monospace toggle, bold, etc.
+   - The `\x11` monospace set at line start was killed by the first `grey()` call
+   - **Lesson**: Minimize `\x0F` usage. Use `\x03XX` (set color) to change colors inline without reset.
+
+3. **IRC background color persists when only foreground is set**
+   - Per spec: "If only the foreground color is set, the background color stays the same"
+   - After bars set bg=black via `\x03XX,01`, using `\x03XX` (fg-only) does NOT clear the black bg
+   - **Fix**: Use `\x0F` (reset all) specifically after bars to clear background, then re-set foreground
+   - **Lesson**: After any `\x03XX,YY` bg color, you MUST use `\x0F` or `\x03` (bare) to clear bg
+
+4. **`\x11` monospace is unreliable**
+   - Only supported by IRCCloud, TheLounge, Textual — NOT mIRC, HexChat, irssi, WeeChat
+   - Gets killed by `\x0F` anyway
+   - Most IRC clients use monospace fonts by default
+   - **Lesson**: Don't rely on `\x11`. Most clients are already monospace.
+
+### Correct IRC Color Pattern
+```go
+// Set color without reset (no \x0F):
+func setC(c string) string { return "\x03" + c }
+// Set fg+bg:
+func setCBg(fg, bg string) string { return "\x03" + fg + "," + bg }
+// Always use 2-digit color codes (00-14) to prevent digit-parsing ambiguity
+// Only use \x0F at end of each line, or after bars to clear background
+// After bar \x0F, re-apply setC(cWhite) before continuing text
+```
+
+### Prevention
+- Research protocol specs BEFORE implementing formatting code
+- Test with actual IRC clients, not just string-stripping tests
+- Don't change visual appearance when fixing alignment bugs — fix only what's broken
+- Don't make multiple unrelated changes in one pass (size + format + characters)

@@ -590,12 +590,12 @@ func deviceBox(d map[string]interface{}) [6]string {
 	// Line 2: CPU  [||||||||||||||||||||||] 42%
 	// visible: "CPU  [" (6) + barW (22) + "]" (1) + " %3.0f%%" (5) = 34 = contentW
 	cpuPct := fmt.Sprintf(" %3.0f%%", cpu)
-	cpuContent := "CPU  [" + makeColorBar(cpu) + "]" + cpuPct
+	cpuContent := "CPU  [" + makeColorBar(cpu) + setC(cWhite) + "]" + cpuPct
 	line2 := boxLine(cpuContent, 6+barW+1+5)
 
 	// Line 3: MEM  [||||||||||||||||||||||] 62%
 	memPct := fmt.Sprintf(" %3.0f%%", mem)
-	memContent := "MEM  [" + makeColorBar(mem) + "]" + memPct
+	memContent := "MEM  [" + makeColorBar(mem) + setC(cWhite) + "]" + memPct
 	line3 := boxLine(memContent, 6+barW+1+5)
 
 	// Line 4: VPN: 4/5 up  Alerts: 1
