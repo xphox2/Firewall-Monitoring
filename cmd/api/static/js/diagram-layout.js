@@ -11,6 +11,8 @@
     let dragMoved = false;
     let dragOffset = { x: 0, y: 0 };
     let siteGroupEls = []; // { g, rectEl, labelEl, siteId, deviceIds }
+    let siteDragTarget = null; // { siteId, deviceIds, startPositions: [{x, y}, ...] }
+    let siteMapGlobal = null; // Store siteMap for site dragging
 
     function computePositions(devices, siteMap) {
         const dim = FWDiagram.getDimensions();
@@ -45,6 +47,7 @@
     function drawSiteGroups(siteMap, siteNames) {
         const svg = FWDiagram.getSVG();
         siteGroupEls = [];
+        siteMapGlobal = siteMap;
         if (!siteMap || !positions.length) return;
 
         // Group position indices by siteId
@@ -77,6 +80,9 @@
             rect.setAttribute('stroke-width', '1.5');
             rect.setAttribute('stroke-dasharray', '6,4');
             rect.setAttribute('opacity', '0.7');
+            rect.style.cursor = 'move';
+            rect.addEventListener('mousedown', (e) => startSiteDrag(e, siteId, indices));
+            rect.addEventListener('touchstart', (e) => startSiteDrag(e.touches[0], siteId, indices), { passive: false });
             g.appendChild(rect);
 
             const label = FWDiagram.createEl('text');
@@ -308,6 +314,82 @@
             }
         }
         dragTarget = null;
+    }
+
+    // Site dragging - move all devices in a site together
+    function startSiteDrag(e, siteId, deviceIndices) {
+        if (e.ctrlKey || e.metaKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Store starting positions of all devices in this site
+        const startPositions = deviceIndices.map(idx => ({
+            x: positions[idx].x,
+            y: positions[idx].y
+        }));
+
+        siteDragTarget = {
+            siteId,
+            deviceIndices,
+            startPositions,
+            startClientX: e.clientX,
+            startClientY: e.clientY
+        };
+        dragMoved = false;
+
+        window.addEventListener('mousemove', onSiteDrag);
+        window.addEventListener('mouseup', endSiteDrag);
+        window.addEventListener('touchmove', onSiteDragTouch, { passive: false });
+        window.addEventListener('touchend', endSiteDrag);
+    }
+
+    function onSiteDragTouch(e) {
+        e.preventDefault();
+        onSiteDrag(e.touches[0]);
+    }
+
+    function onSiteDrag(e) {
+        if (!siteDragTarget) return;
+        const dist = Math.sqrt((e.clientX - siteDragTarget.startClientX)**2 + (e.clientY - siteDragTarget.startClientY)**2);
+        if (dist > 5) dragMoved = true;
+        if (!dragMoved) return;
+
+        const pt = FWDiagram.svgPoint(e.clientX, e.clientY);
+        const startPt = FWDiagram.svgPoint(siteDragTarget.startClientX, siteDragTarget.startClientY);
+        const dx = pt.x - startPt.x;
+        const dy = pt.y - startPt.y;
+
+        // Move all devices in the site by the same delta
+        siteDragTarget.deviceIndices.forEach((idx, i) => {
+            positions[idx].x = siteDragTarget.startPositions[i].x + dx;
+            positions[idx].y = siteDragTarget.startPositions[i].y + dy;
+        });
+
+        // Update all device node transforms
+        const deviceNodes = document.querySelectorAll('.device-node');
+        deviceNodes.forEach(g => {
+            const deviceId = parseInt(g.dataset.deviceId);
+            const pos = positions.find(p => p.device.id === deviceId);
+            if (pos) {
+                g.setAttribute('transform', `translate(${pos.x - NODE_W/2}, ${pos.y - NODE_H/2})`);
+            }
+        });
+
+        // Redraw connections and site groups
+        FWDiagram.Connections.redrawPaths();
+        redrawSiteGroups();
+    }
+
+    function endSiteDrag(e) {
+        window.removeEventListener('mousemove', onSiteDrag);
+        window.removeEventListener('mouseup', endSiteDrag);
+        window.removeEventListener('touchmove', onSiteDragTouch);
+        window.removeEventListener('touchend', endSiteDrag);
+
+        if (siteDragTarget && dragMoved) {
+            savePositions();
+        }
+        siteDragTarget = null;
     }
 
     function savePositions() {

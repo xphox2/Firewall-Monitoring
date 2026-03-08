@@ -74,6 +74,9 @@
             const hitPath = FWDiagram.createEl('path');
             hitPath.setAttribute('d', pathD);
             hitPath.setAttribute('class', 'conn-hit-area');
+            hitPath.setAttribute('fill', 'none');
+            hitPath.setAttribute('stroke', 'transparent');
+            hitPath.setAttribute('stroke-width', '12');
             hitPath.addEventListener('click', () => onVPNClick(info.deviceId, true));
             svg.appendChild(hitPath);
 
@@ -112,6 +115,9 @@
             const hitPath = FWDiagram.createEl('path');
             hitPath.setAttribute('d', pathD);
             hitPath.setAttribute('class', 'conn-hit-area');
+            hitPath.setAttribute('fill', 'none');
+            hitPath.setAttribute('stroke', 'transparent');
+            hitPath.setAttribute('stroke-width', '12');
             hitPath.addEventListener('click', () => onConnClick(conn));
             svg.appendChild(hitPath);
 
@@ -160,6 +166,9 @@
                 const hitPath = FWDiagram.createEl('path');
                 hitPath.setAttribute('d', seg.d);
                 hitPath.setAttribute('class', 'conn-hit-area');
+                hitPath.setAttribute('fill', 'none');
+                hitPath.setAttribute('stroke', 'transparent');
+                hitPath.setAttribute('stroke-width', '12');
                 hitPath.addEventListener('click', () => onConnClick(conn));
                 svg.appendChild(hitPath);
 
@@ -210,18 +219,18 @@
             return `M${sx},${sy} L${tx},${ty}`;
         }
         // Offset perpendicular to the line connecting source and dest
-        const OFFSET_STEP = 9; // px between parallel lines
+        const OFFSET_STEP = 16; // px between parallel lines (increased for better pickability)
         const dx = tx - sx, dy = ty - sy;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
         const nx = -dy / len, ny = dx / len; // perpendicular unit vector
-        // Center the offsets: e.g., for 3 lines, offsets are -9, 0, +9
+        // Center the offsets: e.g., for 3 lines, offsets are -16, 0, +16
         const mid = (pairTotal - 1) / 2;
         const offset = (pairIdx - mid) * OFFSET_STEP;
         const ox = nx * offset, oy = ny * offset;
         return `M${sx + ox},${sy + oy} L${tx + ox},${ty + oy}`;
     }
 
-    // Cross-site: fan across 60-degree arc through cloud transit points
+    // Cross-site: straight lines through cloud transit points (no curves for better pickability)
     function buildCrossSiteSegments(sx, sy, tx, ty, cx, cy, idx, total) {
         // Compute angular spread: 60 degrees total, centered on midpoint angle
         const midAngle = Math.atan2((sy + ty) / 2 - cy, (sx + tx) / 2 - cx);
@@ -236,22 +245,25 @@
         const transitX = cx + transitR * Math.cos(angle);
         const transitY = cy + transitR * Math.sin(angle);
 
-        // Build curved segments: Source->transit, transit->Dest
-        const off1 = 20 + idx * 8;
-        const off2 = -(20 + idx * 8);
-        const seg1D = buildCurvedSegment(sx, sy, transitX, transitY, off1);
-        const seg2D = buildCurvedSegment(transitX, transitY, tx, ty, off2);
+        // Build straight segments: Source->transit, transit->Dest with offset for parallel lines
+        const OFFSET_STEP = 16;
+        const off1 = (idx - (total - 1) / 2) * OFFSET_STEP;
+        const off2 = -off1;
+
+        // Calculate perpendicular offset for each segment
+        const seg1D = buildStraightOffset(sx, sy, transitX, transitY, off1);
+        const seg2D = buildStraightOffset(transitX, transitY, tx, ty, off2);
 
         return { seg1D, seg2D };
     }
 
-    function buildCurvedSegment(x1, y1, x2, y2, offset) {
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    // Build straight line with perpendicular offset
+    function buildStraightOffset(x1, y1, x2, y2, offset) {
         const dx = x2 - x1, dy = y2 - y1;
-        const len = Math.sqrt(dx*dx + dy*dy) || 1;
-        const cpx = mx + (-dy / len) * offset;
-        const cpy = my + (dx / len) * offset;
-        return `M${x1},${y1} Q${cpx},${cpy} ${x2},${y2}`;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        const nx = -dy / len, ny = dx / len; // perpendicular unit vector
+        const ox = nx * offset, oy = ny * offset;
+        return `M${x1 + ox},${y1 + oy} L${x2 + ox},${y2 + oy}`;
     }
 
     function computePathD_line(x1, y1, x2, y2) {
@@ -295,6 +307,6 @@
     FWDiagram.Connections = {
         drawAll,
         redrawPaths,
-        buildCurvedSegment
+        buildStraightOffset
     };
 })();

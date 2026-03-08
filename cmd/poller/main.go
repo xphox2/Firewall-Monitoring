@@ -671,7 +671,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 		// If a tunnel is missing subnets on one side (e.g., HUB), try to get from peer
 		srcTunnels := vpnByDevice[pi.sourceID]
 		dstTunnels := vpnByDevice[pi.destID]
-		
+
 		// Find matching tunnels by name and collect Phase 2 info from both sides
 		var localSubnet, remoteSubnet string
 		for _, st := range srcTunnels {
@@ -736,6 +736,15 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 	deviceByID := make(map[uint]*models.Device, len(devices))
 	for i := range devices {
 		deviceByID[devices[i].ID] = &devices[i]
+	}
+
+	sameSite := func(devA, devB uint) bool {
+		da, oa := deviceByID[devA]
+		db, ob := deviceByID[devB]
+		if !oa || !ob || da.SiteID == nil || db.SiteID == nil {
+			return false
+		}
+		return *da.SiteID == *db.SiteID
 	}
 
 	// Build IP → device ID map for direct-link verification
@@ -873,11 +882,11 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 
 	// Accumulator: collect all matching interface names per device-pair + connection type
 	type overlayPairInfo struct {
-		sourceID  uint
-		destID    uint
-		connType  string
-		ifNames   map[string]bool // all matching interface names
-		anyUp     bool
+		sourceID uint
+		destID   uint
+		connType string
+		ifNames  map[string]bool // all matching interface names
+		anyUp    bool
 	}
 	pairAccum := make(map[string]*overlayPairInfo)
 
@@ -899,20 +908,24 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 			deviceList = append(deviceList, e)
 		}
 
-	// Validation: ALL overlay types (l2vlan, l3ipvlan, vxlan) require a direct VPN tunnel
-	// between endpoints to ensure the interfaces are actually connected and passing traffic.
-	// Simply matching names or being at the same site is not sufficient.
-	for i := 0; i < len(deviceList); i++ {
-		for j := i + 1; j < len(deviceList); j++ {
-			a, b := deviceList[i], deviceList[j]
-			connType := pairConnType(a.typeName, b.typeName)
+		// Validation: Overlay connection requirements:
+		// - L2VLAN between same-site devices: NO VPN tunnel required (can use local switching)
+		// - L2VLAN cross-site, L3IPVLAN, VXLAN: Require direct VPN tunnel between endpoints
+		for i := 0; i < len(deviceList); i++ {
+			for j := i + 1; j < len(deviceList); j++ {
+				a, b := deviceList[i], deviceList[j]
+				connType := pairConnType(a.typeName, b.typeName)
 
-			// Require direct VPN link for ALL overlay types (l2vlan, l3ipvlan, vxlan)
-			if !hasDirectLink(a.deviceID, b.deviceID) {
-				continue
-			}
+				// L2VLAN between same-site devices - no VPN tunnel needed
+				isSameSite := sameSite(a.deviceID, b.deviceID)
+				if connType == "l2vlan" && isSameSite {
+					// Allow without VPN tunnel
+				} else if !hasDirectLink(a.deviceID, b.deviceID) {
+					// All other overlay types require VPN tunnel
+					continue
+				}
 
-			key := pairKey(a.deviceID, b.deviceID) + ":" + connType
+				key := pairKey(a.deviceID, b.deviceID) + ":" + connType
 				pi, exists := pairAccum[key]
 				if !exists {
 					srcID, dstID := a.deviceID, b.deviceID
