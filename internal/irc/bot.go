@@ -508,10 +508,12 @@ func makeColorBar(pct float64) string {
 	return bar
 }
 
-func formatUptime(seconds uint64) string {
-	if seconds == 0 {
+func formatUptime(csec uint64) string {
+	if csec == 0 {
 		return "N/A"
 	}
+	// fgSysUpTime is in hundredths of a second (centiseconds)
+	seconds := csec / 100
 	days := seconds / 86400
 	hours := (seconds % 86400) / 3600
 	mins := (seconds % 3600) / 60

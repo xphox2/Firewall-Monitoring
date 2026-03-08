@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.109] - 2026-03-07
+
+### Fixed
+- IRC !status: uptime was 100x too high — fgSysUpTime returns centiseconds (hundredths of a second), not seconds
+
 ## [0.10.108] - 2026-03-07
 
 ### Fixed
