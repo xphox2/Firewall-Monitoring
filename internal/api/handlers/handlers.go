@@ -110,6 +110,7 @@ var validVendors = map[string]bool{
 	"fortigate": true,
 	"paloalto":  true,
 	"cisco_asa": true,
+	"firewalla": true,
 	"generic":   true,
 }
 

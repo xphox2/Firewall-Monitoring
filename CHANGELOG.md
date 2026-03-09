@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.112] - 2026-03-09
+
+### Added
+- **Firewalla vendor support**: New SNMP vendor profile for Firewalla devices using standard Linux MIBs (UCD-SNMP-MIB, HOST-RESOURCES-MIB, SNMPv2-MIB)
+- Firewalla option in admin UI device vendor dropdown
+- Firewalla added to valid vendor list for device create/update API validation
+
 ## [0.10.111] - 2026-03-07
 
 ### Added
