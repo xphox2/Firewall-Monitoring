@@ -107,13 +107,14 @@ func isValidExternalIP(ipStr string) bool {
 }
 
 var validVendors = map[string]bool{
-	"fortigate": true,
-	"paloalto":  true,
-	"cisco_asa": true,
-	"firewalla": true,
-	"pfsense":   true,
-	"opnsense":  true,
-	"generic":   true,
+	"fortigate":  true,
+	"paloalto":   true,
+	"cisco_asa":  true,
+	"sonicwall":  true,
+	"firewalla":  true,
+	"pfsense":    true,
+	"opnsense":   true,
+	"generic":    true,
 }
 
 func isValidVendor(vendor string) bool {

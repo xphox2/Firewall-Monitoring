@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.116] - 2026-03-09
+
+### Added
+- Palo Alto Networks vendor profile with PAN-COMMON-MIB support (system status, sessions, GlobalProtect stats, AV/threat versions)
+- Palo Alto VPN tunnel detection via IF-MIB tunnel.* interface patterns with 64-bit counter support
+- Palo Alto hardware sensors via ENTITY-SENSOR-MIB (temperature, fan, voltage, power)
+- Palo Alto per-CPU stats via HOST-RESOURCES-MIB (management plane, data plane)
+- Palo Alto SNMP trap definitions (VPN, HA, hardware, GlobalProtect, threat events)
+- SonicWall vendor profile with SNWL-COMMON-MIB and SONICWALL-FIREWALL-IP-STATISTICS-MIB
+- SonicWall system status (CPU, RAM, session count from enterprise OIDs)
+- SonicWall IPSec VPN tunnel monitoring via sonicSAStatTable (peer gateway, subnets, byte counters)
+- SonicWall hardware sensor monitoring via sonicwallSensorsTable
+- SonicWall SNMP trap definitions (IPSec, HA, IPS, security services, WAN failover)
+- SonicWall added to valid vendors list and admin dropdown
+
 ## [0.10.115] - 2026-03-09
 
 ### Added

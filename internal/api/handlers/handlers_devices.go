@@ -65,7 +65,7 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		device.Vendor = "fortigate"
 	}
 	if !isValidVendor(device.Vendor) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, firewalla, pfsense, opnsense, or generic"))
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
 		return
 	}
 
@@ -192,7 +192,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if vendorVal, ok := filteredUpdates["vendor"]; ok {
 		vendorStr, isStr := vendorVal.(string)
 		if !isStr || !isValidVendor(vendorStr) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, firewalla, pfsense, opnsense, or generic"))
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
 			return
 		}
 	}
