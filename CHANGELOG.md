@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.113] - 2026-03-09
+
+### Added
+- **pfSense vendor support**: SNMP vendor profile using UCD-SNMP-MIB + BEGEMOT-PF-MIB for CPU, memory, PF state count, and per-CPU load
+- **OPNsense vendor support**: SNMP vendor profile with same FreeBSD/PF MIB stack and OPNsense-specific version parsing
+- pfSense and OPNsense options in admin UI device vendor dropdown
+- Vendor validation updated for pfsense and opnsense
+
 ## [0.10.112] - 2026-03-09
 
 ### Added

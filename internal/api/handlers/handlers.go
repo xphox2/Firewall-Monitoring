@@ -111,6 +111,8 @@ var validVendors = map[string]bool{
 	"paloalto":  true,
 	"cisco_asa": true,
 	"firewalla": true,
+	"pfsense":   true,
+	"opnsense":  true,
 	"generic":   true,
 }
 
