@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.115] - 2026-03-09
+
+### Added
+- Firewalla VPN tunnel detection via IF-MIB interface name patterns (WireGuard wg*, OpenVPN tun*/tap*, IPSec vti*)
+- Linux-specific VPN helper (`vendor_linux_vpn.go`) with ifType-based disambiguation for ambiguous tun* interfaces
+- `linuxGetAllVPNTunnels()` function with 64-bit counter support via ifXTable
+
 ## [0.10.114] - 2026-03-09
 
 ### Added
