@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.114] - 2026-03-09
+
+### Added
+- **VPN tunnel detection for pfSense & OPNsense**: Discover VPN tunnels from IF-MIB interface name patterns (OpenVPN `ovpns*/ovpnc*`, WireGuard `wg*/tun_wg*`, IPSec VTI `ipsec*`) with status and traffic counters
+- Shared BSD VPN helper (`vendor_bsd_vpn.go`) with IF-MIB walk + ifXTable 64-bit counter support
+
 ## [0.10.113] - 2026-03-09
 
 ### Added

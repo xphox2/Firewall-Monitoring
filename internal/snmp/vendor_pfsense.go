@@ -146,12 +146,14 @@ func extractPfSenseVersion(sysDescr string) string {
 	return sysDescr
 }
 
-// VPN: not exposed via SNMP on pfSense.
+// VPN: Detected via IF-MIB interface name patterns.
+// OpenVPN (ovpns*/ovpnc*), WireGuard (wg*/tun_wg*), and route-based IPSec
+// (ipsec*) interfaces are real OS interfaces with status and traffic counters.
 
-func (p *PfSenseProfile) VPNBaseOID() string { return "" }
+func (p *PfSenseProfile) VPNBaseOID() string { return BaseOIDInterface }
 
 func (p *PfSenseProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
-	return nil
+	return parseBSDVPNFromInterfacePDUs(pdus)
 }
 
 func (p *PfSenseProfile) SSLVPNBaseOID() string { return "" }
@@ -165,7 +167,7 @@ func (p *PfSenseProfile) ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VPNS
 }
 
 func (p *PfSenseProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
-	return nil, 0, 0, nil
+	return bsdGetAllVPNTunnels(s)
 }
 
 // Hardware sensors: not available via bsnmpd.
