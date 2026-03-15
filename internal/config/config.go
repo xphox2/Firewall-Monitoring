@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"strconv"
@@ -33,6 +34,7 @@ type ServerConfig struct {
 	TLSKeyFile     string
 	AdminSecretKey string
 	JWTSecretKey   string
+	EncryptionKey  string
 	CookieSecure   bool
 	CookieSameSite string
 }
@@ -135,6 +137,7 @@ func Load() *Config {
 			TLSKeyFile:     getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
 			AdminSecretKey: getEnv("ADMIN_SECRET_KEY", ""),
 			JWTSecretKey:   getEnv("JWT_SECRET_KEY", ""),
+			EncryptionKey:  getEnv("ENCRYPTION_KEY", ""),
 			CookieSecure:   getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSameSite: getEnv("COOKIE_SAMESITE", "Strict"),
 		},
@@ -214,6 +217,66 @@ func Load() *Config {
 			SFlowAllowedSources:  getEnv("SFLOW_ALLOWED_SOURCES", ""),
 		},
 	}
+}
+
+// Validate checks configuration for common mistakes and logs warnings.
+// Returns an error only for fatal misconfigurations.
+func (c *Config) Validate() error {
+	// Port range checks
+	if port, err := strconv.Atoi(c.Server.Port); err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("SERVER_PORT must be 1-65535, got %q", c.Server.Port)
+	}
+	if c.SNMP.SNMPPort < 1 || c.SNMP.SNMPPort > 65535 {
+		return fmt.Errorf("SNMP_PORT must be 1-65535, got %d", c.SNMP.SNMPPort)
+	}
+
+	// SNMP version
+	switch c.SNMP.Version {
+	case "1", "2c", "3":
+		// valid
+	default:
+		return fmt.Errorf("SNMP_VERSION must be '1', '2c', or '3', got %q", c.SNMP.Version)
+	}
+
+	// SNMPv3 credential consistency
+	if c.SNMP.Version == "3" {
+		if c.SNMP.V3Username == "" {
+			log.Println("WARNING: SNMP_VERSION=3 but SNMP_V3_USERNAME not set")
+		}
+		if c.SNMP.V3AuthType != "" && c.SNMP.V3AuthPass == "" {
+			log.Println("WARNING: SNMP_V3_AUTH_TYPE set but SNMP_V3_AUTH_PASS is empty")
+		}
+		if c.SNMP.V3PrivType != "" && c.SNMP.V3PrivPass == "" {
+			log.Println("WARNING: SNMP_V3_PRIV_TYPE set but SNMP_V3_PRIV_PASS is empty")
+		}
+	}
+
+	// TLS cert files
+	if c.Server.EnableTLS {
+		if c.Server.TLSCertFile == "" || c.Server.TLSKeyFile == "" {
+			return fmt.Errorf("SERVER_ENABLE_TLS=true but TLS cert/key files not configured")
+		}
+	}
+
+	// Secrets warnings
+	if c.Server.JWTSecretKey == "" {
+		log.Println("WARNING: JWT_SECRET_KEY not set — a random key will be generated (tokens invalidated on restart)")
+	}
+	if c.Server.EncryptionKey == "" && c.Server.JWTSecretKey == "" {
+		log.Println("WARNING: Neither ENCRYPTION_KEY nor JWT_SECRET_KEY set — database credentials will not be encrypted")
+	}
+
+	// Alert email config consistency
+	if c.Alerts.EmailEnabled && c.Alerts.SMTPHost == "" {
+		log.Println("WARNING: EMAIL_ENABLED=true but SMTP_HOST not set — email alerts will fail")
+	}
+
+	// Bcrypt cost bounds
+	if c.Auth.BcryptCost < 4 || c.Auth.BcryptCost > 31 {
+		return fmt.Errorf("BCRYPT_COST must be 4-31, got %d", c.Auth.BcryptCost)
+	}
+
+	return nil
 }
 
 // V3MsgFlags returns the SNMPv3 message flags based on configured auth/priv.

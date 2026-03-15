@@ -17,6 +17,12 @@ func (h *Handler) GetIRCServer(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get IRC servers"))
 		return
 	}
+	for i := range servers {
+		h.db.DecryptIRCServerSecrets(&servers[i])
+		for j := range servers[i].Channels {
+			h.db.DecryptIRCChannelSecrets(&servers[i].Channels[j])
+		}
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(servers))
 }
 
@@ -31,6 +37,10 @@ func (h *Handler) GetIRCServerByID(c *gin.Context) {
 	if err := h.db.Gorm().Preload("Channels").First(&server, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Server not found"))
 		return
+	}
+	h.db.DecryptIRCServerSecrets(&server)
+	for i := range server.Channels {
+		h.db.DecryptIRCChannelSecrets(&server.Channels[i])
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(server))
 }
@@ -50,6 +60,8 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 	if server.ServerPort == 0 {
 		server.ServerPort = 6667
 	}
+
+	h.db.EncryptIRCServerSecrets(&server)
 
 	if err := h.db.Gorm().Create(&server).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create server"))
@@ -104,9 +116,16 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 		return
 	}
 
+	// Encrypt password fields before saving
+	for _, field := range []string{"server_password", "nickserv_password", "sasl_password"} {
+		if v, ok := updates[field].(string); ok && v != "" {
+			updates[field] = h.db.EncryptField(v)
+		}
+	}
+
 	if err := h.db.Gorm().Model(&server).Updates(updates).Error; err != nil {
 		log.Printf("Failed to update IRC server %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server: "+err.Error()))
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server"))
 		return
 	}
 
@@ -224,6 +243,8 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 		return
 	}
 
+	h.db.EncryptIRCChannelSecrets(&channel)
+
 	if err := h.db.Gorm().Create(&channel).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create channel"))
 		return
@@ -257,6 +278,13 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 
 	delete(updates, "id")
 	delete(updates, "created_at")
+
+	// Encrypt password fields before saving
+	for _, field := range []string{"chanserv_password", "chan_oper_pass", "channel_key"} {
+		if v, ok := updates[field].(string); ok && v != "" {
+			updates[field] = h.db.EncryptField(v)
+		}
+	}
 
 	if err := h.db.Gorm().Model(&channel).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update channel"))

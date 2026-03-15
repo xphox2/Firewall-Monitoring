@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.118] - 2026-03-15
+
+### Security
+- Encrypt IRC passwords (ServerPassword, NickServPassword, SASLPassword, ChanServPass, ChanOperPass, ChannelKey) with AES-256-GCM — same encryption used for SNMP credentials
+- Separate database encryption key from JWT secret via new `ENCRYPTION_KEY` env var (falls back to JWT secret with warning for backwards compatibility)
+- Fix decryption failure returning raw ciphertext — now returns empty string and logs warning
+- Tighten Content-Security-Policy: remove `unsafe-inline` and `unsafe-eval` from `script-src`
+- Convert all inline event handlers in IRC admin page to `addEventListener` for CSP compliance
+- Add startup configuration validation: port ranges, SNMP version, TLS cert paths, bcrypt cost bounds, missing secret warnings
+- Fix raw database error message exposure in IRC server update endpoint
+
+### Fixed
+- Add mutex to poller's `prevIfaceStats` map — prevents concurrent map write panic under load
+- Sanitize IRC server update error response (no longer leaks internal DB errors)
+
 ## [0.10.117] - 2026-03-15
 
 ### Fixed

@@ -37,6 +37,7 @@ type Manager struct {
 	statusFn   func() (map[string]interface{}, error)
 	statsFn    func() (map[string]interface{}, error)
 	lastStatus map[uint]time.Time
+	decryptFn  func(string) string
 }
 
 func NewManager(db *gorm.DB) *Manager {
@@ -55,6 +56,25 @@ func (m *Manager) SetStatusProvider(fn func() (map[string]interface{}, error)) {
 
 func (m *Manager) SetStatsProvider(fn func() (map[string]interface{}, error)) {
 	m.statsFn = fn
+}
+
+func (m *Manager) SetDecryptFunc(fn func(string) string) {
+	m.decryptFn = fn
+}
+
+// decryptServerSecrets decrypts IRC server and channel credentials in-place.
+func (m *Manager) decryptServerSecrets(s *models.IRCServer) {
+	if m.decryptFn == nil {
+		return
+	}
+	s.ServerPassword = m.decryptFn(s.ServerPassword)
+	s.NickServPassword = m.decryptFn(s.NickServPassword)
+	s.SASLPassword = m.decryptFn(s.SASLPassword)
+	for i := range s.Channels {
+		s.Channels[i].ChanServPass = m.decryptFn(s.Channels[i].ChanServPass)
+		s.Channels[i].ChanOperPass = m.decryptFn(s.Channels[i].ChanOperPass)
+		s.Channels[i].ChannelKey = m.decryptFn(s.Channels[i].ChannelKey)
+	}
 }
 
 func (m *Manager) Start() {
@@ -83,6 +103,7 @@ func (m *Manager) loadAndStartBots() {
 	m.mu.Lock()
 	for _, server := range servers {
 		if server.Enabled {
+			m.decryptServerSecrets(&server)
 			bot := m.createBot(&server)
 			m.bots[server.ID] = bot
 			m.wg.Add(1)
@@ -889,6 +910,7 @@ func (m *Manager) RestartBot(serverID uint) error {
 		return err
 	}
 
+	m.decryptServerSecrets(&server)
 	newBot := m.createBot(&server)
 	m.mu.Lock()
 	m.bots[serverID] = newBot

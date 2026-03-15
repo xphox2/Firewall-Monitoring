@@ -130,16 +130,16 @@
     <div class="main">
         <div class="page-header">
             <h1>IRC Management</h1>
-            <button class="btn" onclick="openServerModal()">Add Server</button>
+            <button class="btn" data-action="open-server-modal">Add Server</button>
         </div>
 
         <div id="alertMessage"></div>
 
         <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('servers')">Servers</button>
-            <button class="tab-btn" onclick="switchTab('channels')">Channels</button>
-            <button class="tab-btn" onclick="switchTab('commands')">Commands</button>
-            <button class="tab-btn" onclick="switchTab('send')">Send Message</button>
+            <button class="tab-btn active" data-tab="servers">Servers</button>
+            <button class="tab-btn" data-tab="channels">Channels</button>
+            <button class="tab-btn" data-tab="commands">Commands</button>
+            <button class="tab-btn" data-tab="send">Send Message</button>
         </div>
 
         <div id="tab-servers" class="tab-content active">
@@ -155,7 +155,7 @@
             <div class="card">
                 <h2>
                     Channels
-                    <button class="btn sm" onclick="openChannelModal()">Add Channel</button>
+                    <button class="btn sm" data-action="open-channel-modal">Add Channel</button>
                 </h2>
                 <div id="channelsList">
                     <div class="loading">Loading channels...</div>
@@ -167,7 +167,7 @@
             <div class="card">
                 <h2>
                     Custom Commands
-                    <button class="btn sm" onclick="openCommandModal()">Add Command</button>
+                    <button class="btn sm" data-action="open-command-modal">Add Command</button>
                 </h2>
                 <table>
                     <thead>
@@ -192,7 +192,7 @@
                 <h2>Send IRC Message</h2>
                 <div class="form-group">
                     <label>Server</label>
-                    <select id="sendServerSelect" onchange="loadChannelsForSend()">
+                    <select id="sendServerSelect">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
@@ -206,7 +206,7 @@
                     <label>Message</label>
                     <textarea id="sendMessage" rows="4" placeholder="Enter your message..."></textarea>
                 </div>
-                <button class="btn" onclick="sendMessage()">Send Message</button>
+                <button class="btn" data-action="send-message">Send Message</button>
             </div>
         </div>
     </div>
@@ -215,9 +215,9 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="serverModalTitle">Add Server</h2>
-                <button class="modal-close" onclick="closeServerModal()">&times;</button>
+                <button class="modal-close" data-action="close-server-modal">&times;</button>
             </div>
-            <form id="serverForm" onsubmit="saveServer(event)">
+            <form id="serverForm">
                 <input type="hidden" id="serverId">
                 <div class="form-group">
                     <label>Server Name</label>
@@ -305,8 +305,8 @@
                     </label>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="closeServerModal()">Cancel</button>
-                    <button type="button" class="btn secondary" onclick="testServer()">Test</button>
+                    <button type="button" class="btn secondary" data-action="close-server-modal">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="test-server">Test</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
             </form>
@@ -317,9 +317,9 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="channelModalTitle">Add Channel</h2>
-                <button class="modal-close" onclick="closeChannelModal()">&times;</button>
+                <button class="modal-close" data-action="close-channel-modal">&times;</button>
             </div>
-            <form id="channelForm" onsubmit="saveChannel(event)">
+            <form id="channelForm">
                 <input type="hidden" id="channelId">
                 <div class="form-group">
                     <label>Server</label>
@@ -359,7 +359,7 @@
                 </div>
                 <div class="form-group">
                     <label class="checkbox-label">
-                        <input type="checkbox" id="channelSendStatus" onchange="toggleStatusInterval()">
+                        <input type="checkbox" id="channelSendStatus">
                         Auto-Post Status
                     </label>
                 </div>
@@ -374,7 +374,7 @@
                     </label>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="closeChannelModal()">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="close-channel-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
             </form>
@@ -385,9 +385,9 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="commandModalTitle">Add Command</h2>
-                <button class="modal-close" onclick="closeCommandModal()">&times;</button>
+                <button class="modal-close" data-action="close-command-modal">&times;</button>
             </div>
-            <form id="commandForm" onsubmit="saveCommand(event)">
+            <form id="commandForm">
                 <input type="hidden" id="commandId">
                 <div class="form-group">
                     <label>Command</label>
@@ -399,7 +399,7 @@
                 </div>
                 <div class="form-group">
                     <label>Command Type</label>
-                    <select id="commandType" onchange="toggleCommandResponse()">
+                    <select id="commandType">
                         <option value="static">Static Response</option>
                         <option value="status">System Status</option>
                         <option value="stats">System Stats</option>
@@ -423,7 +423,7 @@
                     </label>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn secondary" onclick="closeCommandModal()">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="close-command-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>
             </form>

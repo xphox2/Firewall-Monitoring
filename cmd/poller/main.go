@@ -25,6 +25,7 @@ type Poller struct {
 	db             *database.Database
 	alertManager   *alerts.AlertManager
 	prevIfaceStats map[string]*models.InterfaceStats // "deviceID_ifName" -> previous stats
+	ifaceStatsMu   sync.RWMutex
 	stopChan       chan struct{}
 }
 
@@ -234,16 +235,20 @@ func (p *Poller) pollDevice(device *models.Device) {
 				log.Printf("Device %s: interface alert check error - %v", device.Name, err)
 			}
 			// Check interface error/discard rates
+			p.ifaceStatsMu.RLock()
 			if err := p.alertManager.CheckInterfaceErrors(interfaces, p.prevIfaceStats); err != nil {
 				log.Printf("Device %s: interface error check error - %v", device.Name, err)
 			}
+			p.ifaceStatsMu.RUnlock()
 		}
 		// Store current stats as previous for next poll cycle
+		p.ifaceStatsMu.Lock()
 		for i := range interfaces {
 			key := fmt.Sprintf("%d_%s", interfaces[i].DeviceID, interfaces[i].Name)
 			iface := interfaces[i]
 			p.prevIfaceStats[key] = &iface
 		}
+		p.ifaceStatsMu.Unlock()
 	}
 
 	// Collect interface IP addresses (standard IP-MIB, vendor-neutral)
@@ -1232,6 +1237,9 @@ func (p *Poller) Stop() error {
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting SNMP Poller...")

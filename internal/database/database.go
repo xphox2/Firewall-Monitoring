@@ -63,7 +63,10 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	sqlDB.SetConnMaxLifetime(0)
 
 	var encKey []byte
-	if cfg.Server.JWTSecretKey != "" {
+	if cfg.Server.EncryptionKey != "" {
+		encKey = deriveKey(cfg.Server.EncryptionKey)
+	} else if cfg.Server.JWTSecretKey != "" {
+		log.Println("WARNING: ENCRYPTION_KEY not set — falling back to JWT secret for database encryption. Set ENCRYPTION_KEY for independent key rotation.")
 		encKey = deriveKey(cfg.Server.JWTSecretKey)
 	}
 

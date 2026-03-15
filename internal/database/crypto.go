@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io"
+	"log"
 	"strings"
 
 	"firewall-mon/internal/models"
@@ -81,7 +82,8 @@ func decryptField(ciphertext string, key []byte) string {
 	nonce, encrypted := data[:nonceSize], data[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, encrypted, nil)
 	if err != nil {
-		return ciphertext
+		log.Printf("WARNING: Failed to decrypt field (wrong key or tampered data): %v", err)
+		return ""
 	}
 
 	return string(plaintext)
@@ -104,6 +106,39 @@ func (d *Database) DecryptDeviceSecrets(dev *models.Device) {
 	dev.SNMPCommunity = decryptField(dev.SNMPCommunity, d.encKey)
 	dev.SNMPV3AuthPass = decryptField(dev.SNMPV3AuthPass, d.encKey)
 	dev.SNMPV3PrivPass = decryptField(dev.SNMPV3PrivPass, d.encKey)
+}
+
+// DecryptField decrypts a single string value from database storage.
+func (d *Database) DecryptField(ciphertext string) string {
+	return decryptField(ciphertext, d.encKey)
+}
+
+// EncryptIRCServerSecrets encrypts IRC credential fields on a server.
+func (d *Database) EncryptIRCServerSecrets(s *models.IRCServer) {
+	s.ServerPassword = encryptField(s.ServerPassword, d.encKey)
+	s.NickServPassword = encryptField(s.NickServPassword, d.encKey)
+	s.SASLPassword = encryptField(s.SASLPassword, d.encKey)
+}
+
+// DecryptIRCServerSecrets decrypts IRC credential fields on a server.
+func (d *Database) DecryptIRCServerSecrets(s *models.IRCServer) {
+	s.ServerPassword = decryptField(s.ServerPassword, d.encKey)
+	s.NickServPassword = decryptField(s.NickServPassword, d.encKey)
+	s.SASLPassword = decryptField(s.SASLPassword, d.encKey)
+}
+
+// EncryptIRCChannelSecrets encrypts IRC channel credential fields.
+func (d *Database) EncryptIRCChannelSecrets(ch *models.IRCChannel) {
+	ch.ChanServPass = encryptField(ch.ChanServPass, d.encKey)
+	ch.ChanOperPass = encryptField(ch.ChanOperPass, d.encKey)
+	ch.ChannelKey = encryptField(ch.ChannelKey, d.encKey)
+}
+
+// DecryptIRCChannelSecrets decrypts IRC channel credential fields.
+func (d *Database) DecryptIRCChannelSecrets(ch *models.IRCChannel) {
+	ch.ChanServPass = decryptField(ch.ChanServPass, d.encKey)
+	ch.ChanOperPass = decryptField(ch.ChanOperPass, d.encKey)
+	ch.ChannelKey = decryptField(ch.ChannelKey, d.encKey)
 }
 
 // migrateEncryptSecrets encrypts any plaintext SNMP credentials in the database.
@@ -132,9 +167,61 @@ func (d *Database) migrateEncryptSecrets() {
 		}
 		if changed {
 			d.db.Model(&dev).Updates(map[string]interface{}{
-				"snmp_community":  dev.SNMPCommunity,
+				"snmp_community":   dev.SNMPCommunity,
 				"snmpv3_auth_pass": dev.SNMPV3AuthPass,
 				"snmpv3_priv_pass": dev.SNMPV3PrivPass,
+			})
+		}
+	}
+
+	// Encrypt IRC server credentials
+	var servers []models.IRCServer
+	d.db.Find(&servers)
+	for _, srv := range servers {
+		changed := false
+		if srv.ServerPassword != "" && !strings.HasPrefix(srv.ServerPassword, encPrefix) {
+			srv.ServerPassword = encryptField(srv.ServerPassword, d.encKey)
+			changed = true
+		}
+		if srv.NickServPassword != "" && !strings.HasPrefix(srv.NickServPassword, encPrefix) {
+			srv.NickServPassword = encryptField(srv.NickServPassword, d.encKey)
+			changed = true
+		}
+		if srv.SASLPassword != "" && !strings.HasPrefix(srv.SASLPassword, encPrefix) {
+			srv.SASLPassword = encryptField(srv.SASLPassword, d.encKey)
+			changed = true
+		}
+		if changed {
+			d.db.Model(&srv).Updates(map[string]interface{}{
+				"server_password":  srv.ServerPassword,
+				"nickserv_password": srv.NickServPassword,
+				"sasl_password":    srv.SASLPassword,
+			})
+		}
+	}
+
+	// Encrypt IRC channel credentials
+	var channels []models.IRCChannel
+	d.db.Find(&channels)
+	for _, ch := range channels {
+		changed := false
+		if ch.ChanServPass != "" && !strings.HasPrefix(ch.ChanServPass, encPrefix) {
+			ch.ChanServPass = encryptField(ch.ChanServPass, d.encKey)
+			changed = true
+		}
+		if ch.ChanOperPass != "" && !strings.HasPrefix(ch.ChanOperPass, encPrefix) {
+			ch.ChanOperPass = encryptField(ch.ChanOperPass, d.encKey)
+			changed = true
+		}
+		if ch.ChannelKey != "" && !strings.HasPrefix(ch.ChannelKey, encPrefix) {
+			ch.ChannelKey = encryptField(ch.ChannelKey, d.encKey)
+			changed = true
+		}
+		if changed {
+			d.db.Model(&ch).Updates(map[string]interface{}{
+				"chanserv_password": ch.ChanServPass,
+				"chan_oper_pass":    ch.ChanOperPass,
+				"channel_key":      ch.ChannelKey,
 			})
 		}
 	}

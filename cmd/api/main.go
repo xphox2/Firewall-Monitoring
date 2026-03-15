@@ -27,6 +27,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 
 	if cfg.Server.JWTSecretKey == "" {
 		secret, err := auth.GenerateSecureToken(32)
@@ -98,6 +101,7 @@ func main() {
 	}
 
 	ircManager := irc.NewManager(db.Gorm())
+	ircManager.SetDecryptFunc(db.DecryptField)
 	ircManager.SetStatusProvider(func() (map[string]interface{}, error) {
 		var devices []models.Device
 		db.Gorm().Find(&devices)

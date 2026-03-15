@@ -28,13 +28,13 @@ function showAlert(message, isError = true) {
     setTimeout(() => alertDiv.style.display = 'none', 5000);
 }
 
-function switchTab(tabName) {
+function switchTab(tabName, clickedBtn) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-    
-    event.target.classList.add('active');
+
+    if (clickedBtn) clickedBtn.classList.add('active');
     document.getElementById('tab-' + tabName).classList.add('active');
-    
+
     if (tabName === 'servers') loadServers();
     else if (tabName === 'channels') loadChannels();
     else if (tabName === 'commands') loadCommands();
@@ -80,10 +80,10 @@ function renderServers() {
                     <h3>${escapeHtml(server.name)}</h3>
                     <div class="actions">
                         <span class="status-badge ${getStatusClass(server.status)}">${escapeHtml(server.status)}</span>
-                        <button class="btn sm secondary" onclick="connectServer(${server.id})">Connect</button>
-                        <button class="btn sm secondary" onclick="disconnectServer(${server.id})">Disconnect</button>
-                        <button class="btn sm secondary" onclick="editServer(${server.id})">Edit</button>
-                        <button class="btn sm danger" onclick="deleteServer(${server.id})">Delete</button>
+                        <button class="btn sm secondary" data-action="connect-server" data-id="${server.id}">Connect</button>
+                        <button class="btn sm secondary" data-action="disconnect-server" data-id="${server.id}">Disconnect</button>
+                        <button class="btn sm secondary" data-action="edit-server" data-id="${server.id}">Edit</button>
+                        <button class="btn sm danger" data-action="delete-server" data-id="${server.id}">Delete</button>
                     </div>
                 </div>
                 <div class="server-info">
@@ -281,8 +281,8 @@ function renderChannels() {
                             <td><span class="status-badge ${getStatusClass(ch.status)}">${escapeHtml(ch.status)}</span></td>
                             <td>
                                 <div class="actions">
-                                    <button class="btn sm secondary" onclick="editChannel(${ch.id})">Edit</button>
-                                    <button class="btn sm danger" onclick="deleteChannel(${ch.id})">Delete</button>
+                                    <button class="btn sm secondary" data-action="edit-channel" data-id="${ch.id}">Edit</button>
+                                    <button class="btn sm danger" data-action="delete-channel" data-id="${ch.id}">Delete</button>
                                 </div>
                             </td>
                         </tr>
@@ -403,8 +403,8 @@ function renderCommands() {
             <td>${cmd.enabled ? 'Yes' : 'No'}</td>
             <td>
                 <div class="actions">
-                    <button class="btn sm secondary" onclick="editCommand(${cmd.id})">Edit</button>
-                    <button class="btn sm danger" onclick="deleteCommand(${cmd.id})">Delete</button>
+                    <button class="btn sm secondary" data-action="edit-command" data-id="${cmd.id}">Edit</button>
+                    <button class="btn sm danger" data-action="delete-command" data-id="${cmd.id}">Delete</button>
                 </div>
             </td>
         </tr>
@@ -435,6 +435,45 @@ function toggleCommandResponse() {
 }
 
 document.getElementById('commandType').addEventListener('change', toggleCommandResponse);
+document.getElementById('channelSendStatus').addEventListener('change', toggleStatusInterval);
+document.getElementById('sendServerSelect').addEventListener('change', loadChannelsForSend);
+
+// Form submit listeners
+document.getElementById('serverForm').addEventListener('submit', saveServer);
+document.getElementById('channelForm').addEventListener('submit', saveChannel);
+document.getElementById('commandForm').addEventListener('submit', saveCommand);
+
+// Event delegation for data-action buttons and tabs
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    var id = btn.getAttribute('data-id');
+    if (id) id = parseInt(id, 10);
+
+    switch (action) {
+        case 'open-server-modal': openServerModal(); break;
+        case 'close-server-modal': closeServerModal(); break;
+        case 'test-server': testServer(); break;
+        case 'open-channel-modal': openChannelModal(); break;
+        case 'close-channel-modal': closeChannelModal(); break;
+        case 'open-command-modal': openCommandModal(); break;
+        case 'close-command-modal': closeCommandModal(); break;
+        case 'send-message': sendMessage(); break;
+        case 'connect-server': connectServer(id); break;
+        case 'disconnect-server': disconnectServer(id); break;
+        case 'edit-server': editServer(id); break;
+        case 'delete-server': deleteServer(id); break;
+        case 'edit-channel': editChannel(id); break;
+        case 'delete-channel': deleteChannel(id); break;
+        case 'edit-command': editCommand(id); break;
+        case 'delete-command': deleteCommand(id); break;
+    }
+
+    // Tab switching
+    var tab = btn.getAttribute('data-tab');
+    if (tab) switchTab(tab, btn);
+});
 
 async function saveCommand(e) {
     e.preventDefault();
