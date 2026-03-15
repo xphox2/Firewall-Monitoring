@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.117] - 2026-03-15
+
+### Fixed
+- IRC bot nick collision infinite loop: 433 handler now appends underscore to current nick instead of always trying the same static alternate nick
+- Removed NICK event echo loop that caused cascading rename storms when multiple bot instances connected
+- Reconnect loop now checks connection state under proper lock and spawns reconnects in goroutines to prevent duplicate connections
+- onQuit handler now ignores other users' QUIT messages instead of clearing bot connection state
+- Added DISCONNECTED callback for reliable TCP drop detection
+- Start() now checks quit channel to prevent reconnecting a stopped bot
+- RestartBot only starts new bot if server is enabled
+
 ## [0.10.116] - 2026-03-09
 
 ### Added

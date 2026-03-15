@@ -144,8 +144,15 @@ func (m *Manager) reconnectLoop() {
 		case <-ticker.C:
 			m.mu.RLock()
 			for _, bot := range m.bots {
-				if bot.Server.AutoReconnect && bot.Conn == nil {
-					bot.Start()
+				bot.mu.RLock()
+				needsReconnect := bot.Server.AutoReconnect && bot.Conn == nil
+				bot.mu.RUnlock()
+				if needsReconnect {
+					m.wg.Add(1)
+					go func(b *Bot) {
+						defer m.wg.Done()
+						b.Start()
+					}(bot)
 				}
 			}
 			m.mu.RUnlock()
@@ -242,6 +249,14 @@ func (b *Bot) Start() {
 		return
 	}
 
+	// Check if bot was stopped — don't reconnect a stopped bot
+	select {
+	case <-b.quit:
+		b.mu.Unlock()
+		return
+	default:
+	}
+
 	server := b.Server
 	conn := irc.IRC(server.Nick, server.Username)
 	if server.Username == "" {
@@ -287,19 +302,28 @@ func (b *Bot) Start() {
 		b.onQuit(e)
 	})
 
+	conn.AddCallback("DISCONNECTED", func(e *irc.Event) {
+		log.Printf("IRC: Connection lost to %s", b.Server.ServerHost)
+		b.mu.Lock()
+		b.Conn = nil
+		b.mu.Unlock()
+		b.updateStatus("disconnected", "connection lost")
+	})
+
 	conn.AddCallback("NOTICE", func(e *irc.Event) {
 		b.onNotice(e)
 	})
 
 	conn.AddCallback("433", func(e *irc.Event) {
-		newNick := server.Nick + "_"
-		conn.Nick(newNick)
-	})
-
-	conn.AddCallback("NICK", func(e *irc.Event) {
-		if e.Nick == conn.GetNick() && len(e.Arguments) > 0 {
-			conn.Nick(e.Arguments[0])
+		// Nick in use — append underscore to the CURRENT nick, not the original
+		currentNick := conn.GetNick()
+		newNick := currentNick + "_"
+		// Safety limit: don't let nicks grow unbounded
+		if len(newNick) > 30 {
+			newNick = server.Nick + fmt.Sprintf("_%d", time.Now().Unix()%10000)
 		}
+		log.Printf("IRC: Nick %q in use, trying %q", currentNick, newNick)
+		conn.Nick(newNick)
 	})
 
 	b.mu.Unlock()
@@ -497,6 +521,10 @@ func (b *Bot) onPart(e *irc.Event) {
 }
 
 func (b *Bot) onQuit(e *irc.Event) {
+	// Only handle our own quit, not other users quitting the server
+	if e.Nick != b.Conn.GetNick() {
+		return
+	}
 	log.Printf("IRC: Disconnected from %s", b.Server.ServerHost)
 	b.mu.Lock()
 	b.Conn = nil
@@ -866,11 +894,13 @@ func (m *Manager) RestartBot(serverID uint) error {
 	m.bots[serverID] = newBot
 	m.mu.Unlock()
 
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		newBot.Start()
-	}()
+	if server.Enabled {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			newBot.Start()
+		}()
+	}
 
 	return nil
 }
