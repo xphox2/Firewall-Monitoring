@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -254,6 +255,49 @@ func SecureHeaders() gin.HandlerFunc {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+		c.Next()
+	}
+}
+
+// CORS restricts cross-origin requests. By default only same-origin is allowed.
+// Set CORS_ALLOWED_ORIGINS env var to a comma-separated list to allow specific origins.
+func CORS(cfg *config.Config) gin.HandlerFunc {
+	allowedOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
+	origins := make(map[string]bool)
+	if allowedOrigins != "" {
+		for _, o := range strings.Split(allowedOrigins, ",") {
+			origins[strings.TrimSpace(o)] = true
+		}
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin == "" {
+			c.Next()
+			return
+		}
+
+		// If no specific origins configured, reject all cross-origin requests
+		if len(origins) == 0 {
+			c.Header("Vary", "Origin")
+			c.Next()
+			return
+		}
+
+		if origins[origin] || origins["*"] {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Max-Age", "86400")
+			c.Header("Vary", "Origin")
+		}
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
 		c.Next()
 	}
 }

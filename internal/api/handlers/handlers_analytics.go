@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -239,7 +240,11 @@ func (h *Handler) GetUptime(c *gin.Context) {
 
 	var records []models.UptimeRecord
 	if h.db != nil {
-		records, _ = h.db.GetUptimeRecords(100)
+		var err error
+		records, err = h.db.GetUptimeRecords(100)
+		if err != nil {
+			log.Printf("Failed to get uptime records: %v", err)
+		}
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{

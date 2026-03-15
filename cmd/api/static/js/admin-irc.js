@@ -94,7 +94,7 @@ function renderServers() {
                 ${serverChannels.length > 0 ? `
                     <div class="channel-list">
                         <strong>Channels:</strong>
-                        ${serverChannels.map(ch => `<span class="channel-tag">${escapeHtml(ch.channel_name)} <span class="status-badge ${getStatusClass(ch.status)}">${ch.status}</span></span>`).join('')}
+                        ${serverChannels.map(ch => `<span class="channel-tag">${escapeHtml(ch.channel_name)} <span class="status-badge ${getStatusClass(ch.status)}">${escapeHtml(ch.status)}</span></span>`).join('')}
                     </div>
                 ` : ''}
                 ${server.last_error ? `<div style="color: #f85149; margin-top: 10px; font-size: 0.85rem;">Error: ${escapeHtml(server.last_error)}</div>` : ''}

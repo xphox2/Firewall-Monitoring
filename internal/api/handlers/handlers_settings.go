@@ -144,6 +144,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			if s.Value == "********" {
 				continue
 			}
+			// Encrypt secret values before storage
+			if s.Value != "" && h.db != nil {
+				s.Value = h.db.EncryptField(s.Value)
+			}
 		}
 		if secretKeys[s.Key] {
 			s.IsSecret = true
@@ -183,6 +187,9 @@ func (h *Handler) getNotificationSetting(key string) string {
 	if h.db != nil {
 		var s models.SystemSetting
 		if err := h.db.Gorm().Where("`key` = ?", key).First(&s).Error; err == nil && s.Value != "" {
+			if s.IsSecret {
+				return h.db.DecryptField(s.Value)
+			}
 			return s.Value
 		}
 	}
@@ -396,7 +403,9 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	}
 
 	var settings []models.SystemSetting
-	h.db.Gorm().Where("`key` LIKE ? OR `key` = ?", "public_%", "display_timezone").Find(&settings)
+	if err := h.db.Gorm().Where("`key` LIKE ? OR `key` = ?", "public_%", "display_timezone").Find(&settings).Error; err != nil {
+		log.Printf("Failed to get public settings: %v", err)
+	}
 
 	result := make(map[string]string)
 	for k, v := range defaults {

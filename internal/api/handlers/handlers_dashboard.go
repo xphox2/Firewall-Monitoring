@@ -94,7 +94,9 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 		if err := h.db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&status).Error; err == nil {
 			// Get device name
 			var dev models.Device
-			h.db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev)
+			if err := h.db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev).Error; err != nil {
+				log.Printf("Device %d: failed to get device name: %v", deviceID, err)
+			}
 			var uptimeStats *uptime.UptimeStats
 			if h.uptimeTrack != nil {
 				stats := h.uptimeTrack.GetStats()
@@ -164,7 +166,9 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 		var latestIface models.InterfaceStats
 		if err := h.db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
 			var ifaces []models.InterfaceStats
-			h.db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces)
+			if err := h.db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces).Error; err != nil {
+				log.Printf("Device %d: failed to get interfaces at timestamp: %v", deviceID, err)
+			}
 			c.JSON(http.StatusOK, models.SuccessResponse(ifaces))
 			return
 		}
@@ -469,7 +473,10 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 
 	var recentAlerts []models.Alert
 	if h.db != nil {
-		alerts, _ := h.db.GetAlerts(10, nil)
+		alerts, err := h.db.GetAlerts(10, nil)
+		if err != nil {
+			log.Printf("Failed to get recent alerts: %v", err)
+		}
 		recentAlerts = alerts
 	}
 
@@ -531,7 +538,9 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		for _, dev := range devices {
 			e := &DeviceEnrichment{DeviceID: dev.ID}
 			// Count total system_status rows for this device
-			h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&e.StatusRows)
+			if err := h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&e.StatusRows).Error; err != nil {
+				log.Printf("Device %d: failed to count status rows: %v", dev.ID, err)
+			}
 			// Latest system status
 			var ss models.SystemStatus
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
@@ -545,8 +554,12 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 			var latestIface models.InterfaceStats
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
 				var total, up int64
-				h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Count(&total)
-				h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestIface.Timestamp).Count(&up)
+				if err := h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Count(&total).Error; err != nil {
+					log.Printf("Device %d: failed to count interfaces: %v", dev.ID, err)
+				}
+				if err := h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestIface.Timestamp).Count(&up).Error; err != nil {
+					log.Printf("Device %d: failed to count up interfaces: %v", dev.ID, err)
+				}
 				e.IfaceTotal = int(total)
 				e.IfaceUp = int(up)
 				e.IfaceDown = int(total - up)
@@ -555,8 +568,12 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 			var latestVPN models.VPNStatus
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestVPN).Error; err == nil {
 				var vpnTotal, vpnUp int64
-				h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestVPN.Timestamp).Count(&vpnTotal)
-				h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestVPN.Timestamp).Count(&vpnUp)
+				if err := h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestVPN.Timestamp).Count(&vpnTotal).Error; err != nil {
+					log.Printf("Device %d: failed to count VPN statuses: %v", dev.ID, err)
+				}
+				if err := h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestVPN.Timestamp).Count(&vpnUp).Error; err != nil {
+					log.Printf("Device %d: failed to count up VPN statuses: %v", dev.ID, err)
+				}
 				e.VPNTotal = int(vpnTotal)
 				e.VPNUp = int(vpnUp)
 			}
@@ -565,15 +582,21 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestHA).Error; err == nil {
 				e.HAMode = latestHA.SystemMode
 				var memberCount int64
-				h.db.Gorm().Model(&models.HAStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestHA.Timestamp).Count(&memberCount)
+				if err := h.db.Gorm().Model(&models.HAStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestHA.Timestamp).Count(&memberCount).Error; err != nil {
+					log.Printf("Device %d: failed to count HA members: %v", dev.ID, err)
+				}
 				e.HAMembers = int(memberCount)
 			}
 			// SD-WAN health summary
 			var latestSDWAN models.SDWANHealth
 			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestSDWAN).Error; err == nil {
 				var sdTotal, sdAlive int64
-				h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestSDWAN.Timestamp).Count(&sdTotal)
-				h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ? AND state = 'alive'", dev.ID, latestSDWAN.Timestamp).Count(&sdAlive)
+				if err := h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestSDWAN.Timestamp).Count(&sdTotal).Error; err != nil {
+					log.Printf("Device %d: failed to count SD-WAN health: %v", dev.ID, err)
+				}
+				if err := h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ? AND state = 'alive'", dev.ID, latestSDWAN.Timestamp).Count(&sdAlive).Error; err != nil {
+					log.Printf("Device %d: failed to count alive SD-WAN: %v", dev.ID, err)
+				}
 				e.SDWANTotal = int(sdTotal)
 				e.SDWANAlive = int(sdAlive)
 			}
@@ -602,7 +625,10 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 	}
 
 	var devices []models.Device
-	h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Find(&devices)
+	if err := h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Find(&devices).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		return
+	}
 
 	type DeviceDiag struct {
 		DeviceID   uint       `json:"device_id"`
@@ -628,7 +654,9 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 			ProbeID:    dev.ProbeID,
 		}
 
-		h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&diag.StatusRows)
+		if err := h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&diag.StatusRows).Error; err != nil {
+			log.Printf("Device %d: failed to count status rows: %v", dev.ID, err)
+		}
 
 		var ss models.SystemStatus
 		if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {

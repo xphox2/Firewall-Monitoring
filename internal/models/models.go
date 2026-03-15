@@ -170,7 +170,7 @@ type TrapEvent struct {
 	SourceIP  string    `json:"source_ip"`
 	TrapOID   string    `json:"trap_oid"`
 	TrapType  string    `json:"trap_type"`
-	Severity  string    `json:"severity"`
+	Severity  string    `json:"severity" gorm:"index:idx_trap_severity"`
 	Message   string    `json:"message"`
 	Processed bool      `json:"processed"`
 }
@@ -186,13 +186,13 @@ type Alert struct {
 	Threshold    float64   `json:"threshold"`
 	CurrentValue float64   `json:"current_value"`
 	Notified     bool      `json:"notified"`
-	Acknowledged bool      `json:"acknowledged"`
+	Acknowledged bool      `json:"acknowledged" gorm:"index:idx_alert_ack"`
 }
 
 type UptimeRecord struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
-	Timestamp      time.Time `json:"timestamp"`
-	DeviceID       uint      `json:"device_id" gorm:"index"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index:idx_uptime_device_ts,priority:2"`
+	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_uptime_device_ts,priority:1"`
 	DeviceUptime   uint64    `json:"device_uptime"`
 	TotalDowntime  float64   `json:"total_downtime_seconds"`
 	UptimePercent  float64   `json:"uptime_percent"`
@@ -323,7 +323,7 @@ type Probe struct {
 	RegistrationKey string     `json:"registration_key" gorm:"uniqueIndex"`
 	Enabled         bool       `json:"enabled" gorm:"default:true"`
 	Status          string     `json:"status" gorm:"default:pending"`
-	ApprovalStatus  string     `json:"approval_status" gorm:"default:pending"`
+	ApprovalStatus  string     `json:"approval_status" gorm:"default:pending;index:idx_probe_approval"`
 	ApprovedAt      *time.Time `json:"approved_at"`
 	ApprovedBy      *uint      `json:"approved_by"`
 	RejectedAt      *time.Time `json:"rejected_at"`
@@ -361,13 +361,13 @@ type ProbeApproval struct {
 
 type ProbeHeartbeat struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
-	ProbeID   uint      `json:"probe_id" gorm:"index;not null"`
+	ProbeID   uint      `json:"probe_id" gorm:"index:idx_heartbeat_probe_ts,priority:1;not null"`
 	Probe     *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
 	Status    string    `json:"status"` // online, offline
 	IPAddress string    `json:"ip_address"`
 	Version   string    `json:"version"`
 	Uptime    uint64    `json:"uptime"`
-	Timestamp time.Time `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_heartbeat_probe_ts,priority:2"`
 }
 
 type PingResult struct {
@@ -434,7 +434,7 @@ type SyslogMessage struct {
 	Message        string    `json:"message"`
 	Priority       int       `json:"priority"`
 	Facility       int       `json:"facility"`
-	Severity       int       `json:"severity"`
+	Severity       int       `json:"severity" gorm:"index:idx_syslog_severity"`
 	SourceIP       string    `json:"source_ip"`
 	CreatedAt      time.Time `json:"created_at"`
 }

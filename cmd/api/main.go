@@ -71,14 +71,18 @@ func main() {
 	}()
 
 	if cfg.IsGeneratedPassword() {
+		pw := cfg.Auth.AdminPassword
+		masked := pw[:3] + "***" + pw[len(pw)-3:]
 		log.Println("========================================")
 		log.Println("AUTO-GENERATED ADMIN PASSWORD")
 		log.Printf("Username: %s", cfg.Auth.AdminUsername)
-		log.Printf("Password has been auto-generated.")
-		log.Println("Check container logs at startup or set ADMIN_PASSWORD env var.")
-		// Print password only once to stderr for retrieval
-		fmt.Fprintf(os.Stderr, "Generated admin password: %s\n", cfg.Auth.AdminPassword)
+		log.Printf("Password: %s (set ADMIN_PASSWORD env var to override)", masked)
 		log.Println("========================================")
+		// Write full password to a secure file readable only by the process owner
+		pwFile := "/data/.admin-password"
+		if err := os.WriteFile(pwFile, []byte(pw+"\n"), 0600); err == nil {
+			log.Printf("Full password written to %s", pwFile)
+		}
 	}
 
 	// Clear plaintext password from memory after initialization
@@ -208,9 +212,11 @@ func main() {
 
 func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handler, authManager *auth.AuthManager) {
 	router.Use(middleware.SecureHeaders())
+	router.Use(middleware.CORS(cfg))
 	router.Use(middleware.RequestLogger())
-	router.Use(middleware.RateLimiter(cfg))
 	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
+	// Rate limiter applied per-group below instead of globally so authenticated
+	// admin users don't share buckets with unauthenticated requests.
 
 	subFS, _ := fs.Sub(staticFiles, "static")
 	router.StaticFS("/static", http.FS(subFS))
@@ -231,6 +237,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	})
 
 	api := router.Group("/api")
+	api.Use(middleware.RateLimiter(cfg))
 	{
 		api.GET("/health", handler.GetHealth)
 

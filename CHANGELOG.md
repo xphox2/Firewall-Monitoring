@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.119] - 2026-03-15
+
+### Security
+- Add CORS middleware with configurable `CORS_ALLOWED_ORIGINS` (defaults to same-origin only)
+- Move rate limiter from global to per-group so authenticated admin users don't share buckets with unauthenticated requests
+- Encrypt SMTP password in system_settings using AES-256-GCM
+- Redact auto-generated admin password from stderr; write full password to secure file `/data/.admin-password` instead
+- Escape remaining unescaped `ch.status` in IRC admin JS to prevent XSS
+
+### Performance
+- Optimize GetDeviceDetail: reduce 12 sequential queries to 6 using subquery pattern (`WHERE timestamp = (SELECT MAX...)`)
+- Add composite database indexes: Alert.Acknowledged, UptimeRecord(device_id,timestamp), ProbeHeartbeat(probe_id,timestamp), Probe.ApprovalStatus, SyslogMessage.Severity, TrapEvent.Severity
+
+### Fixed
+- Fix PingCollector goroutine leak: Stop() now sets running=false before close(stopCh) and waits outside lock
+- Add error logging to ~30 swallowed database query errors across handlers (devices, dashboard, analytics, settings, sites, probes)
+
 ## [0.10.118] - 2026-03-15
 
 ### Security

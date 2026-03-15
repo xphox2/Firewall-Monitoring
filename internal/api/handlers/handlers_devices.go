@@ -14,6 +14,7 @@ import (
 	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) GetDevices(c *gin.Context) {
@@ -266,60 +267,71 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		systemStatus = &ss
 	}
 
-	// Latest interface stats (most recent timestamp)
-	var latestIface models.InterfaceStats
+	// Helper: get all records at the latest timestamp for a device (single query with subquery)
+	db := h.db.Gorm()
+	latestSnapshotQuery := func(table string) *gorm.DB {
+		return db.Where("device_id = ? AND timestamp = (SELECT MAX(timestamp) FROM "+table+" WHERE device_id = ?)", id, id)
+	}
+
+	// Latest interface stats
 	var interfaces []models.InterfaceStats
-	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestIface).Error; err == nil {
-		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestIface.Timestamp).Find(&interfaces)
+	if err := latestSnapshotQuery("interface_stats").Find(&interfaces).Error; err != nil {
+		log.Printf("Device %d: failed to get interface stats: %v", id, err)
 	}
 
 	// Latest VPN statuses
-	vpnStatuses, _ := h.db.GetLatestVPNStatuses(id)
+	vpnStatuses, err := h.db.GetLatestVPNStatuses(id)
+	if err != nil {
+		log.Printf("Device %d: failed to get VPN statuses: %v", id, err)
+	}
 
 	// Latest hardware sensors
-	var latestSensor models.HardwareSensor
 	var sensors []models.HardwareSensor
-	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestSensor).Error; err == nil {
-		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestSensor.Timestamp).Find(&sensors)
+	if err := latestSnapshotQuery("hardware_sensors").Find(&sensors).Error; err != nil {
+		log.Printf("Device %d: failed to get hardware sensors: %v", id, err)
 	}
 
 	// Latest processor stats
-	processorStats, _ := h.db.GetLatestProcessorStats(id)
+	processorStats, err := h.db.GetLatestProcessorStats(id)
+	if err != nil {
+		log.Printf("Device %d: failed to get processor stats: %v", id, err)
+	}
 
 	// Recent alerts
 	var recentAlerts []models.Alert
-	h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").Limit(20).Find(&recentAlerts)
+	if err := db.Where("device_id = ?", id).Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
+		log.Printf("Device %d: failed to get recent alerts: %v", id, err)
+	}
 
 	// Ping stats
 	var pingStats []models.PingStats
-	h.db.Gorm().Where("device_id = ?", id).Order("updated_at DESC").Limit(100).Find(&pingStats)
+	if err := db.Where("device_id = ?", id).Order("updated_at DESC").Limit(100).Find(&pingStats).Error; err != nil {
+		log.Printf("Device %d: failed to get ping stats: %v", id, err)
+	}
 
 	// Latest HA status
-	var latestHA models.HAStatus
 	var haStatus []models.HAStatus
-	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestHA).Error; err == nil {
-		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestHA.Timestamp).Find(&haStatus)
+	if err := latestSnapshotQuery("ha_status").Find(&haStatus).Error; err != nil {
+		log.Printf("Device %d: failed to get HA status: %v", id, err)
 	}
 
 	// Latest security stats
 	var securityStats *models.SecurityStats
 	var secStats models.SecurityStats
-	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&secStats).Error; err == nil {
+	if err := db.Where("device_id = ?", id).Order("timestamp DESC").First(&secStats).Error; err == nil {
 		securityStats = &secStats
 	}
 
 	// Latest SD-WAN health
-	var latestSDWAN models.SDWANHealth
 	var sdwanHealth []models.SDWANHealth
-	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestSDWAN).Error; err == nil {
-		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestSDWAN.Timestamp).Find(&sdwanHealth)
+	if err := latestSnapshotQuery("sdwan_health").Find(&sdwanHealth).Error; err != nil {
+		log.Printf("Device %d: failed to get SD-WAN health: %v", id, err)
 	}
 
 	// Latest license info
-	var latestLicense models.LicenseInfo
 	var licenseInfo []models.LicenseInfo
-	if err := h.db.Gorm().Where("device_id = ?", id).Order("timestamp DESC").First(&latestLicense).Error; err == nil {
-		h.db.Gorm().Where("device_id = ? AND timestamp = ?", id, latestLicense.Timestamp).Find(&licenseInfo)
+	if err := latestSnapshotQuery("license_info").Find(&licenseInfo).Error; err != nil {
+		log.Printf("Device %d: failed to get license info: %v", id, err)
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -477,7 +489,10 @@ func (h *Handler) GetAllInterfaces(c *gin.Context) {
 		}
 
 		var ifaces []models.InterfaceStats
-		h.db.Gorm().Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Find(&ifaces)
+		if err := h.db.Gorm().Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Find(&ifaces).Error; err != nil {
+			log.Printf("Device %d: failed to get interfaces at timestamp: %v", dev.ID, err)
+			continue
+		}
 
 		for _, iface := range ifaces {
 			if filterStatus != "" && iface.Status != filterStatus {
@@ -632,8 +647,14 @@ func (h *Handler) GetDeviceSecurityStats(c *gin.Context) {
 		hours = 24
 	}
 
-	latest, _ := h.db.GetLatestSecurityStats(uint(id))
-	history, _ := h.db.GetSecurityStatsHistory(uint(id), hours)
+	latest, err := h.db.GetLatestSecurityStats(uint(id))
+	if err != nil {
+		log.Printf("Device %d: failed to get latest security stats: %v", id, err)
+	}
+	history, err := h.db.GetSecurityStatsHistory(uint(id), hours)
+	if err != nil {
+		log.Printf("Device %d: failed to get security stats history: %v", id, err)
+	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"latest":  latest,
@@ -652,7 +673,11 @@ func (h *Handler) GetDeviceSDWANHealth(c *gin.Context) {
 		return
 	}
 
-	health, _ := h.db.GetLatestSDWANHealth(uint(id))
+	health, err := h.db.GetLatestSDWANHealth(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get SD-WAN health"))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"health": health}))
 }
 
@@ -667,6 +692,10 @@ func (h *Handler) GetDeviceHAStatus(c *gin.Context) {
 		return
 	}
 
-	ha, _ := h.db.GetLatestHAStatus(uint(id))
+	ha, err := h.db.GetLatestHAStatus(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get HA status"))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"ha_status": ha}))
 }

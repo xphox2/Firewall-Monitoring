@@ -62,14 +62,15 @@ func (p *PingCollector) Start() {
 
 func (p *PingCollector) Stop() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if !p.running {
+		p.mu.Unlock()
 		return
 	}
-
-	close(p.stopCh)
-	p.wg.Wait()
 	p.running = false
+	close(p.stopCh)
+	p.mu.Unlock()
+	// Wait outside lock so run() goroutine can finish without deadlocking
+	p.wg.Wait()
 	log.Println("[Ping] Collector stopped")
 }
 

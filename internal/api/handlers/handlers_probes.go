@@ -72,8 +72,8 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		return
 	}
 
-	existing, _ := h.db.GetProbeByName(probe.Name)
-	if existing != nil {
+	existing, err := h.db.GetProbeByName(probe.Name)
+	if err == nil && existing != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Probe with this name already exists"))
 		return
 	}

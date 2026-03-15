@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -42,7 +43,9 @@ func (h *Handler) GetSite(c *gin.Context) {
 	}
 
 	var children []models.Site
-	h.db.Gorm().Where("parent_site_id = ?", id).Find(&children)
+	if err := h.db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
+		log.Printf("Site %d: failed to get children: %v", id, err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":  true,
