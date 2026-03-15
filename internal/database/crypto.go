@@ -28,6 +28,10 @@ func encryptField(plaintext string, key []byte) string {
 	if plaintext == "" || len(key) == 0 {
 		return plaintext
 	}
+	// Already encrypted — don't double-encrypt
+	if strings.HasPrefix(plaintext, encPrefix) {
+		return plaintext
+	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -83,7 +87,7 @@ func decryptField(ciphertext string, key []byte) string {
 	plaintext, err := gcm.Open(nil, nonce, encrypted, nil)
 	if err != nil {
 		log.Printf("WARNING: Failed to decrypt field (wrong key or tampered data): %v", err)
-		return ""
+		return ciphertext
 	}
 
 	return string(plaintext)

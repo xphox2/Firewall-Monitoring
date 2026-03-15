@@ -53,6 +53,7 @@ func (p *PingCollector) Start() {
 		return
 	}
 	p.running = true
+	p.stopCh = make(chan struct{}) // Re-create in case Stop() was called before
 	p.mu.Unlock()
 
 	p.wg.Add(1)

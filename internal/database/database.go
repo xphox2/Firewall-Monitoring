@@ -66,7 +66,7 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	if cfg.Server.EncryptionKey != "" {
 		encKey = deriveKey(cfg.Server.EncryptionKey)
 	} else if cfg.Server.JWTSecretKey != "" {
-		log.Println("WARNING: ENCRYPTION_KEY not set — falling back to JWT secret for database encryption. Set ENCRYPTION_KEY for independent key rotation.")
+		log.Println("WARNING: ENCRYPTION_KEY not set — falling back to JWT secret for database encryption. To use a separate key, set ENCRYPTION_KEY to the SAME value as JWT_SECRET_KEY first, then rotate it.")
 		encKey = deriveKey(cfg.Server.JWTSecretKey)
 	}
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.120] - 2026-03-15
+
+### Fixed
+- Fix IRC handlers returning encrypted ciphertext to API clients on create/update (all 4 endpoints now decrypt before responding)
+- Fix `GetIRCChannels` endpoint not decrypting channel secrets
+- Fix `UpdateIRCChannel` returning stale pre-update data (now re-fetches from DB)
+- Fix double-encryption risk: `encryptField` now skips values already prefixed with `{enc}`
+- Fix decryption failure returning empty string (reverted to returning ciphertext so auth fails loudly instead of silently)
+- Fix nil pointer dereference in IRC bot `onQuit` when `b.Conn` is nil (now checks under mutex)
+- Fix `PingCollector.Start()` being a no-op after `Stop()` (re-creates `stopCh` channel)
+- Fix potential panic when admin password is shorter than 6 characters during masking
+- Fix admin password file using hardcoded `/data/` path; now uses database directory
+- Fix CORS middleware returning 204 for OPTIONS from disallowed origins (moved inside allowed block)
+- Improve ENCRYPTION_KEY warning to guide safe migration from JWT-derived key
+
 ## [0.10.119] - 2026-03-15
 
 ### Security

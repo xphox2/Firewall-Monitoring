@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -72,14 +73,17 @@ func main() {
 
 	if cfg.IsGeneratedPassword() {
 		pw := cfg.Auth.AdminPassword
-		masked := pw[:3] + "***" + pw[len(pw)-3:]
+		masked := "***"
+		if len(pw) >= 6 {
+			masked = pw[:3] + "***" + pw[len(pw)-3:]
+		}
 		log.Println("========================================")
 		log.Println("AUTO-GENERATED ADMIN PASSWORD")
 		log.Printf("Username: %s", cfg.Auth.AdminUsername)
 		log.Printf("Password: %s (set ADMIN_PASSWORD env var to override)", masked)
 		log.Println("========================================")
-		// Write full password to a secure file readable only by the process owner
-		pwFile := "/data/.admin-password"
+		// Write full password to a file next to the database, readable only by the process owner
+		pwFile := filepath.Join(filepath.Dir(cfg.Database.FilePath), ".admin-password")
 		if err := os.WriteFile(pwFile, []byte(pw+"\n"), 0600); err == nil {
 			log.Printf("Full password written to %s", pwFile)
 		}

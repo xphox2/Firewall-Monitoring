@@ -291,11 +291,14 @@ func CORS(cfg *config.Config) gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Max-Age", "86400")
 			c.Header("Vary", "Origin")
-		}
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
+			if c.Request.Method == "OPTIONS" {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+		} else {
+			// Origin not allowed — don't set CORS headers
+			c.Header("Vary", "Origin")
 		}
 
 		c.Next()

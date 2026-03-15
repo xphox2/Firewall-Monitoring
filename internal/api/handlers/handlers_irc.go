@@ -72,6 +72,8 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 		mgr.ReloadCommands()
 	}
 
+	// Decrypt before returning so client sees plaintext, not ciphertext
+	h.db.DecryptIRCServerSecrets(&server)
 	c.JSON(http.StatusOK, models.SuccessResponse(server))
 }
 
@@ -143,6 +145,11 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 		mgr.ReloadCommands()
 	}
 
+	// Decrypt before returning so client sees plaintext, not ciphertext
+	h.db.DecryptIRCServerSecrets(&server)
+	for i := range server.Channels {
+		h.db.DecryptIRCChannelSecrets(&server.Channels[i])
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(server))
 }
 
@@ -228,6 +235,9 @@ func (h *Handler) GetIRCChannels(c *gin.Context) {
 			return
 		}
 	}
+	for i := range channels {
+		h.db.DecryptIRCChannelSecrets(&channels[i])
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(channels))
 }
 
@@ -254,6 +264,7 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 		mgr.RestartBot(channel.ServerID)
 	}
 
+	h.db.DecryptIRCChannelSecrets(&channel)
 	c.JSON(http.StatusOK, models.SuccessResponse(channel))
 }
 
@@ -295,6 +306,9 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 		mgr.RestartBot(channel.ServerID)
 	}
 
+	// Re-fetch and decrypt for response
+	h.db.Gorm().First(&channel, id)
+	h.db.DecryptIRCChannelSecrets(&channel)
 	c.JSON(http.StatusOK, models.SuccessResponse(channel))
 }
 

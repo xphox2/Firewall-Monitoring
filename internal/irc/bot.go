@@ -543,7 +543,10 @@ func (b *Bot) onPart(e *irc.Event) {
 
 func (b *Bot) onQuit(e *irc.Event) {
 	// Only handle our own quit, not other users quitting the server
-	if e.Nick != b.Conn.GetNick() {
+	b.mu.RLock()
+	conn := b.Conn
+	b.mu.RUnlock()
+	if conn == nil || e.Nick != conn.GetNick() {
 		return
 	}
 	log.Printf("IRC: Disconnected from %s", b.Server.ServerHost)
