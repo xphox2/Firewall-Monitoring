@@ -106,6 +106,20 @@ func migrateTyped[T any](tableName string, batchSize int) migrateFn {
 			return
 		}
 
+		// Advance PG sequence past source MAX(id) BEFORE copying, so concurrent
+		// inserts (from probes) get IDs above the migrated range and don't clash.
+		var srcMaxID int64
+		srcDB.Table(tableName).Select("COALESCE(MAX(id), 0)").Scan(&srcMaxID)
+		if srcMaxID > 0 {
+			seqSQL := fmt.Sprintf(
+				"SELECT setval(pg_get_serial_sequence('%s','id'), %d)",
+				tableName, srcMaxID,
+			)
+			if err := d.db.Exec(seqSQL).Error; err != nil {
+				log.Printf("[migrate] %s: failed to pre-advance sequence: %v", tableName, err)
+			}
+		}
+
 		// Migrate in typed batches
 		var migrated int64
 		for offset := 0; int64(offset) < srcCount; offset += batchSize {
