@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.122] - 2026-03-17
+
+### Fixed
+- Fix PostgreSQL DSN breaking when password/user/dbname contain spaces or special characters (now properly quoted)
+- Fix VPN chart queries using unaliased subqueries that fail on PostgreSQL (`FROM (...) AS deltas`)
+
 ## [0.10.121] - 2026-03-17
 
 ### Added

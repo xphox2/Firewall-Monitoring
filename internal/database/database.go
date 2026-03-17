@@ -33,6 +33,17 @@ func (d *Database) Gorm() *gorm.DB {
 	return d.db
 }
 
+// pgQuote quotes a value for use in a PostgreSQL key=value DSN.
+// Wraps in single quotes and escapes embedded single quotes and backslashes.
+func pgQuote(s string) string {
+	if !strings.ContainsAny(s, " '\\") {
+		return s
+	}
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return "'" + s + "'"
+}
+
 func NewDatabase(cfg *config.Config) (*Database, error) {
 	var db *gorm.DB
 	var dial Dialect
@@ -45,8 +56,9 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	switch cfg.Database.Type {
 	case "postgres":
 		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
-			cfg.Database.Password, cfg.Database.Name, cfg.Database.SSLMode)
+			cfg.Database.Host, cfg.Database.Port,
+			pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),
+			pgQuote(cfg.Database.Name), cfg.Database.SSLMode)
 		db, err = gorm.Open(postgres.Open(dsn), gormCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
@@ -1832,7 +1844,7 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 			FROM vpn_status
 			WHERE device_id = ? AND tunnel_name = ? AND timestamp > ?
 			WINDOW w AS (ORDER BY timestamp)
-		) WHERE delta_in IS NOT NULL
+		) AS deltas WHERE delta_in IS NOT NULL
 		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr)
 
 	var rows []VPNChartBucket
@@ -2212,7 +2224,7 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 			FROM vpn_status
 			WHERE device_id IN (%s) AND tunnel_name IN (%s) AND timestamp > ?
 			WINDOW w AS (PARTITION BY device_id, tunnel_name ORDER BY timestamp)
-		) WHERE delta_in IS NOT NULL
+		) AS deltas WHERE delta_in IS NOT NULL
 		GROUP BY bucket ORDER BY bucket ASC`,
 		bucketExpr, strings.Join(devPH, ","), strings.Join(namePH, ","))
 
