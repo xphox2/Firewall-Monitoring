@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -165,6 +166,34 @@ func (d *Database) MigrateFromSQLite(sourceDBPath string, state *MigrationState)
 
 	for i, t := range tables {
 		d.migrateTable(srcDB, state, i, t)
+	}
+
+	// Check if any table had errors
+	hasErrors := false
+	state.mu.RLock()
+	for _, ts := range state.Tables {
+		if ts.Status == "error" {
+			hasErrors = true
+			break
+		}
+	}
+	state.mu.RUnlock()
+
+	// Rename source SQLite file so migration doesn't re-trigger on next restart
+	if !hasErrors {
+		renamed := sourceDBPath + ".migrated"
+		if err := os.Rename(sourceDBPath, renamed); err != nil {
+			log.Printf("[migrate] warning: could not rename source file: %v", err)
+		} else {
+			log.Printf("[migrate] renamed %s → %s", sourceDBPath, renamed)
+		}
+		// Also rename WAL/SHM files if they exist
+		for _, suffix := range []string{"-wal", "-shm"} {
+			old := sourceDBPath + suffix
+			if _, err := os.Stat(old); err == nil {
+				os.Rename(old, renamed+suffix)
+			}
+		}
 	}
 
 	log.Println("[migrate] data migration complete")

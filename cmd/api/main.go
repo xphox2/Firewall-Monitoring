@@ -94,6 +94,18 @@ func main() {
 
 	handler := handlers.NewHandler(cfg, authManager, db)
 
+	// Auto-migrate from SQLite if running on PostgreSQL and old SQLite file exists
+	if db.IsPostgres() {
+		sqlitePath := cfg.Database.FilePath
+		if sqlitePath == "" {
+			sqlitePath = "/data/firewall-mon.db"
+		}
+		if _, err := os.Stat(sqlitePath); err == nil {
+			log.Printf("PostgreSQL mode with SQLite file at %s — starting automatic data migration", sqlitePath)
+			go db.MigrateFromSQLite(sqlitePath, handler.MigrateState())
+		}
+	}
+
 	// Create alert manager for data ingestion handlers (syslog alerts, etc.)
 	notif := notifier.NewNotifier(cfg)
 	alertMgr := alerts.NewAlertManager(cfg, notif, db)

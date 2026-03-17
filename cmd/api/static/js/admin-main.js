@@ -1518,6 +1518,11 @@
                     t.migrated + ' / ' + t.total_rows + '</td><td>' + progressBar + '</td></tr>';
             }).join('');
 
+            // Start polling if running and not already polling
+            if (s.running && !migrationPollTimer) {
+                migrationPollTimer = setInterval(pollMigrationStatus, 2000);
+            }
+
             // Handle completion
             if (!s.running && s.finished_at) {
                 if (migrationPollTimer) { clearInterval(migrationPollTimer); migrationPollTimer = null; }

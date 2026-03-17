@@ -39,6 +39,10 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	}
 }
 
+func (h *Handler) MigrateState() *database.MigrationState {
+	return h.migrateState
+}
+
 func (h *Handler) SetIRCManager(mgr *irc.Manager) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

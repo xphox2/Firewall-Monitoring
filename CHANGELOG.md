@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.124] - 2026-03-17
+
+### Changed
+- **Auto-migration on startup**: When `DB_TYPE=postgres` and the old SQLite file exists on disk, migration starts automatically — no manual action needed
+- After successful migration, the SQLite file is renamed to `.migrated` (plus WAL/SHM) so it won't re-trigger on next restart
+- Settings page shows live migration progress if one is running; manual start form available as fallback
+
 ## [0.10.123] - 2026-03-17
 
 ### Added
