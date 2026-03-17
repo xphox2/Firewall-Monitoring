@@ -339,7 +339,7 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 	}
 
 	var settings []models.SystemSetting
-	if err := db.Where("`key` IN ?", []string{
+	if err := db.Where("\"key\" IN ?", []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
 		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",

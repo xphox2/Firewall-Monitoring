@@ -186,7 +186,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 func (h *Handler) getNotificationSetting(key string) string {
 	if h.db != nil {
 		var s models.SystemSetting
-		if err := h.db.Gorm().Where("`key` = ?", key).First(&s).Error; err == nil && s.Value != "" {
+		if err := h.db.Gorm().Where("\"key\" = ?", key).First(&s).Error; err == nil && s.Value != "" {
 			if s.IsSecret {
 				return h.db.DecryptField(s.Value)
 			}
@@ -403,7 +403,7 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	}
 
 	var settings []models.SystemSetting
-	if err := h.db.Gorm().Where("`key` LIKE ? OR `key` = ?", "public_%", "display_timezone").Find(&settings).Error; err != nil {
+	if err := h.db.Gorm().Where("\"key\" LIKE ? OR \"key\" = ?", "public_%", "display_timezone").Find(&settings).Error; err != nil {
 		log.Printf("Failed to get public settings: %v", err)
 	}
 
