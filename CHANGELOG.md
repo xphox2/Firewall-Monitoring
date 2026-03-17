@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.123] - 2026-03-17
+
+### Added
+- **Admin database migration tool**: New SQLite-to-PostgreSQL data migration in the Settings page for users switching from SQLite to PostgreSQL
+- Migration engine (`internal/database/migrate_data.go`) copies all tables in FK-safe order with configurable batch sizes (1000 for high-volume tables, 500 for others)
+- Per-table progress tracking with real-time status updates (pending, running, done, skipped, error)
+- Idempotent migration — tables that already contain data in PostgreSQL are automatically skipped
+- PostgreSQL sequences automatically reset to `MAX(id)` after each table migration
+- 3 new admin API endpoints: `GET /admin/api/migrate/precheck`, `POST /admin/api/migrate/start`, `GET /admin/api/migrate/status`
+- Migration UI card on Settings page with overall progress bar, per-table status table, and 2-second polling
+- `Database.IsPostgres()` accessor method for dialect detection
+
 ## [0.10.122] - 2026-03-17
 
 ### Fixed

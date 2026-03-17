@@ -668,6 +668,37 @@
             <div class="card">
                 <button class="btn" data-action="save-settings">Save Settings</button>
             </div>
+            <div class="card" id="migration-card" style="display:none;">
+                <div class="card-header"><h2>Database Migration (SQLite to PostgreSQL)</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Migrate data from an existing SQLite database into the current PostgreSQL database. Tables that already contain data will be skipped.</p>
+                <div id="migration-unavailable" style="display:none;">
+                    <p style="color: #f85149; font-size: 0.85rem;">Migration is only available when the server is running with PostgreSQL (DB_TYPE=postgres).</p>
+                </div>
+                <div id="migration-form" style="display:none;">
+                    <div class="form-group">
+                        <label>SQLite Database Path</label>
+                        <input type="text" id="migration-source-path" placeholder="/data/firewall-mon.db">
+                    </div>
+                    <button class="btn" data-action="start-migration">Start Migration</button>
+                </div>
+                <div id="migration-progress" style="display:none;">
+                    <div style="margin-bottom: 12px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                            <span style="font-size:0.82rem; color:#8b949e;" id="migration-overall-label">Overall Progress</span>
+                            <span style="font-size:0.82rem; color:#8b949e;" id="migration-overall-pct">0%</span>
+                        </div>
+                        <div style="background:#21262d; border-radius:4px; height:8px; overflow:hidden;">
+                            <div id="migration-overall-bar" style="background:#3fb950; height:100%; width:0%; transition:width 0.3s;"></div>
+                        </div>
+                    </div>
+                    <table class="data-table" style="font-size:0.82rem;">
+                        <thead><tr><th>Table</th><th>Status</th><th>Rows</th><th>Progress</th></tr></thead>
+                        <tbody id="migration-table-body"></tbody>
+                    </table>
+                    <div id="migration-error" style="display:none; color:#f85149; margin-top:12px; font-size:0.85rem;"></div>
+                    <div id="migration-done" style="display:none; color:#3fb950; margin-top:12px; font-size:0.85rem;">Migration complete.</div>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -25,15 +25,17 @@ type Handler struct {
 	alertManager *alerts.AlertManager
 	ircManager   *irc.Manager
 	db           *database.Database
+	migrateState *database.MigrationState
 	mu           sync.RWMutex
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
 	return &Handler{
-		config:      cfg,
-		authManager: authManager,
-		uptimeTrack: uptime.NewUptimeTracker(cfg),
-		db:          db,
+		config:       cfg,
+		authManager:  authManager,
+		uptimeTrack:  uptime.NewUptimeTracker(cfg),
+		db:           db,
+		migrateState: &database.MigrationState{},
 	}
 }
 

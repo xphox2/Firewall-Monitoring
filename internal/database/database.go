@@ -33,6 +33,10 @@ func (d *Database) Gorm() *gorm.DB {
 	return d.db
 }
 
+func (d *Database) IsPostgres() bool {
+	return d.dialect.IsPostgres()
+}
+
 // pgQuote quotes a value for use in a PostgreSQL key=value DSN.
 // Wraps in single quotes and escapes embedded single quotes and backslashes.
 func pgQuote(s string) string {

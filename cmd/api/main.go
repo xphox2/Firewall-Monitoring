@@ -422,6 +422,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/settings/test-webhook", handler.TestWebhook)
 		admin.GET("/api/display-settings", handler.GetPublicDisplaySettings)
 
+		admin.GET("/api/migrate/precheck", handler.GetMigrationPrecheck)
+		admin.POST("/api/migrate/start", handler.StartMigration)
+		admin.GET("/api/migrate/status", handler.GetMigrationStatus)
+
 		admin.GET("/irc", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "irc.html", nil)
 		})
