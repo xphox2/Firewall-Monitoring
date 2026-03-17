@@ -152,6 +152,43 @@ func setTableError(state *MigrationState, idx int, msg string) {
 	state.mu.Unlock()
 }
 
+// MigrateAdminsFromSQLite copies just the admins table synchronously so that
+// InitAdmin sees the imported admin and preserves the old password. This is
+// fast (typically 1 row) and should be called before InitAdmin.
+func (d *Database) MigrateAdminsFromSQLite(sourceDBPath string) {
+	srcDB, err := gorm.Open(sqlite.Open(sourceDBPath+"?mode=ro"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		log.Printf("[migrate] admins pre-import: failed to open source: %v", err)
+		return
+	}
+	sqlConn, _ := srcDB.DB()
+	defer sqlConn.Close()
+
+	var dstCount int64
+	d.db.Table("admins").Count(&dstCount)
+	if dstCount > 0 {
+		return // already has data
+	}
+
+	var rows []models.Admin
+	if err := srcDB.Order("id ASC").Find(&rows).Error; err != nil {
+		log.Printf("[migrate] admins pre-import: read error: %v", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if err := d.db.Create(&rows).Error; err != nil {
+		log.Printf("[migrate] admins pre-import: write error: %v", err)
+		return
+	}
+	// Reset sequence
+	d.db.Exec("SELECT setval(pg_get_serial_sequence('admins','id'), COALESCE((SELECT MAX(id) FROM admins), 1))")
+	log.Printf("[migrate] admins pre-import: imported %d admin(s)", len(rows))
+}
+
 // MigrateFromSQLite copies all rows from the source SQLite database into the
 // current (PostgreSQL) database. Progress is reported via state. This method
 // is intended to be called in a goroutine.
