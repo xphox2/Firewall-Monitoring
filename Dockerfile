@@ -17,14 +17,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fwmon-poller ./cmd/poller
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fwmon-trap ./cmd/trap-receiver
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fwmon-probe ./cmd/probe
 
-# Stage 2: Final Alpine image
+# Stage 2: Final Alpine image with embedded PostgreSQL
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates bash wget su-exec
+RUN apk add --no-cache ca-certificates bash wget su-exec postgresql16 postgresql16-contrib
 
 RUN addgroup -S fwmon && adduser -S fwmon -G fwmon
 
-RUN mkdir -p /app /data /config && chown -R fwmon:fwmon /data /config
+RUN mkdir -p /app /data /data/pgdata /config && chown -R fwmon:fwmon /data /config
 
 WORKDIR /app
 
@@ -45,6 +45,6 @@ RUN chown -R fwmon:fwmon /app
 EXPOSE 8080 162/udp 514/udp 6343/udp 8089
 
 LABEL org.opencontainers.image.title="Firewall Mon" \
-      org.opencontainers.image.version="0.10.64"
+      org.opencontainers.image.version="0.10.125"
 
 ENTRYPOINT ["./entrypoint.sh"]

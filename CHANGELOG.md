@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.125] - 2026-03-17
+
+### Changed
+- **Embedded PostgreSQL in Docker image**: PostgreSQL 16 is now installed inside the container and starts automatically — no external database needed
+- Entrypoint initializes PG data directory on first run, creates database/user, and sets `DB_TYPE=postgres` for all services
+- PG data persists in `/data/pgdata` alongside existing volume mount
+- Existing SQLite data at `/data/firewall-mon.db` is auto-migrated on first startup, then renamed to `.migrated`
+- Graceful shutdown stops app services first, then PostgreSQL
+- PG tuned for embedded use: 128MB shared buffers, 30 max connections, unix socket only (no TCP)
+
 ## [0.10.124] - 2026-03-17
 
 ### Changed
