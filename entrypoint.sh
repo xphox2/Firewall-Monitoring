@@ -44,7 +44,7 @@ fi
 
 # Start PostgreSQL
 echo "Starting PostgreSQL..."
-su-exec postgres pg_ctl -D "$PGDATA" -l /data/postgresql.log -w start > /dev/null
+su-exec postgres pg_ctl -D "$PGDATA" -l "$PGDATA/postgresql.log" -w start > /dev/null
 
 # Create database and user if they don't exist
 su-exec postgres psql -h "$PGRUN" -c "SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'" | grep -q 1 || \
