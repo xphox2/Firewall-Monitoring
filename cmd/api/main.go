@@ -51,9 +51,22 @@ func main() {
 	defer db.Close()
 	log.Println("Database initialized")
 
+	// Auto-migrate from SQLite BEFORE admin init so the old admin/password is preserved
+	var migrateState database.MigrationState
+	if db.IsPostgres() {
+		sqlitePath := cfg.Database.FilePath
+		if sqlitePath == "" {
+			sqlitePath = "/data/firewall-mon.db"
+		}
+		if _, err := os.Stat(sqlitePath); err == nil {
+			log.Printf("PostgreSQL mode with SQLite file at %s — starting data migration", sqlitePath)
+			db.MigrateFromSQLite(sqlitePath, &migrateState)
+		}
+	}
+
 	authManager := auth.NewAuthManager(cfg, db)
 
-	// Initialize admin in database
+	// Initialize admin in database (skips if admin already exists from migration)
 	if db != nil {
 		hashedPassword, err := authManager.HashPassword(cfg.Auth.AdminPassword)
 		if err != nil {
@@ -93,18 +106,7 @@ func main() {
 	cfg.Auth.AdminPassword = ""
 
 	handler := handlers.NewHandler(cfg, authManager, db)
-
-	// Auto-migrate from SQLite if running on PostgreSQL and old SQLite file exists
-	if db.IsPostgres() {
-		sqlitePath := cfg.Database.FilePath
-		if sqlitePath == "" {
-			sqlitePath = "/data/firewall-mon.db"
-		}
-		if _, err := os.Stat(sqlitePath); err == nil {
-			log.Printf("PostgreSQL mode with SQLite file at %s — starting automatic data migration", sqlitePath)
-			go db.MigrateFromSQLite(sqlitePath, handler.MigrateState())
-		}
-	}
+	handler.SetMigrateState(&migrateState)
 
 	// Create alert manager for data ingestion handlers (syslog alerts, etc.)
 	notif := notifier.NewNotifier(cfg)
