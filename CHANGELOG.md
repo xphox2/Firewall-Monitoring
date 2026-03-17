@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.121] - 2026-03-17
+
+### Added
+- **PostgreSQL support**: Add PostgreSQL as primary database backend (`DB_TYPE=postgres`) with connection pooling (25 open / 10 idle), while keeping SQLite as default for small deployments
+- **Batch inserts**: High-volume data (syslog, traps, pings) now buffered and flushed in batches — syslog: 500 items / 2s, traps/pings: 100 items / 5s
+- **Batch save API methods**: `SaveSyslogMessages`, `SaveTrapEvents`, `SavePingResults` for single-transaction bulk inserts from probe handlers
+- **Configurable retention periods**: Per-data-type retention via env vars (`RETENTION_SYSLOG_DAYS`, `RETENTION_FLOW_DAYS`, `RETENTION_TRAP_DAYS`, `RETENTION_STATUS_DAYS`, `RETENTION_PING_DAYS`, `RETENTION_ALERT_DAYS`, `RETENTION_DEFAULT_DAYS`), default 90 days
+- **DB SSL mode**: `DB_SSL_MODE` env var for PostgreSQL connections (default: `disable`)
+
+### Changed
+- **SQL dialect abstraction**: All 15 `strftime()` calls and 3 backtick-quoted identifiers replaced with dialect-aware helpers supporting both SQLite and PostgreSQL
+- **Probe data handlers**: `ReceiveSyslogMessages`, `ReceiveTrapEvents`, `ReceivePingResults` now use single batch inserts instead of per-row saves
+- **CleanupOldData**: Now accepts `RetentionConfig` with per-table retention periods instead of a single `days` parameter
+- **Database Close**: Flushes all batch inserters before closing the connection
+
 ## [0.10.120] - 2026-03-15
 
 ### Fixed

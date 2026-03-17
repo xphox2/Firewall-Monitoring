@@ -24,25 +24,29 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	if len(messages) > 1000 {
 		messages = messages[:1000]
 	}
-	saved := 0
+	now := time.Now()
 	for i := range messages {
 		messages[i].ProbeID = probe.ID
 		if messages[i].Timestamp.IsZero() {
-			messages[i].Timestamp = time.Now()
+			messages[i].Timestamp = now
 		}
-		if err := h.db.SaveSyslogMessage(&messages[i]); err != nil {
-			log.Printf("Failed to save syslog message: %v", err)
-			continue
-		}
-		saved++
-		// Fire alerts for critical syslog messages (severity 0-2)
-		if h.alertManager != nil && messages[i].Severity <= 2 {
-			if err := h.alertManager.ProcessSyslog(&messages[i]); err != nil {
-				log.Printf("Failed to process syslog alert: %v", err)
+	}
+	if err := h.db.SaveSyslogMessages(messages); err != nil {
+		log.Printf("Failed to batch save syslog messages: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save syslog messages"))
+		return
+	}
+	// Fire alerts for critical syslog messages (severity 0-2)
+	if h.alertManager != nil {
+		for i := range messages {
+			if messages[i].Severity <= 2 {
+				if err := h.alertManager.ProcessSyslog(&messages[i]); err != nil {
+					log.Printf("Failed to process syslog alert: %v", err)
+				}
 			}
 		}
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(messages)}))
 }
 
 func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
@@ -59,22 +63,24 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		traps = traps[:1000]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	saved := 0
+	now := time.Now()
+	filtered := traps[:0]
 	for i := range traps {
 		if traps[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[traps[i].DeviceID] {
 			continue
 		}
 		traps[i].ProbeID = probe.ID
 		if traps[i].Timestamp.IsZero() {
-			traps[i].Timestamp = time.Now()
+			traps[i].Timestamp = now
 		}
-		if err := h.db.SaveTrapEvent(&traps[i]); err != nil {
-			log.Printf("Failed to save trap event: %v", err)
-			continue
-		}
-		saved++
+		filtered = append(filtered, traps[i])
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+	if err := h.db.SaveTrapEvents(filtered); err != nil {
+		log.Printf("Failed to batch save trap events: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save trap events"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
@@ -131,7 +137,8 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	}
 	log.Printf("ReceivePingResults: probe %d received %d results", probe.ID, len(results))
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	saved := 0
+	now := time.Now()
+	filtered := results[:0]
 	for i := range results {
 		if results[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[results[i].DeviceID] {
 			log.Printf("ReceivePingResults: device %d not allowed for probe %d", results[i].DeviceID, probe.ID)
@@ -139,19 +146,21 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		}
 		results[i].ProbeID = probe.ID
 		if results[i].Timestamp.IsZero() {
-			results[i].Timestamp = time.Now()
+			results[i].Timestamp = now
 		}
-		if err := h.db.SavePingResult(&results[i]); err != nil {
-			log.Printf("Failed to save ping result: %v", err)
-			continue
-		}
-		saved++
-
-		// Aggregate into PingStats
-		h.updatePingStats(results[i].DeviceID, probe.ID, results[i].TargetIP, results[i].Latency, results[i].PacketLoss)
+		filtered = append(filtered, results[i])
 	}
-	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, saved)
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+	if err := h.db.SavePingResults(filtered); err != nil {
+		log.Printf("Failed to batch save ping results: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save ping results"))
+		return
+	}
+	// Aggregate into PingStats
+	for _, r := range filtered {
+		h.updatePingStats(r.DeviceID, probe.ID, r.TargetIP, r.Latency, r.PacketLoss)
+	}
+	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, len(filtered))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, latency, packetLoss float64) {

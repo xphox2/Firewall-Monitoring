@@ -14,13 +14,14 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	SNMP     SNMPConfig
-	Database DatabaseConfig
-	Auth     AuthConfig
-	Alerts   AlertsConfig
-	Uptime   UptimeConfig
-	Probe    ProbeConfig
+	Server    ServerConfig
+	SNMP      SNMPConfig
+	Database  DatabaseConfig
+	Auth      AuthConfig
+	Alerts    AlertsConfig
+	Uptime    UptimeConfig
+	Probe     ProbeConfig
+	Retention RetentionConfig
 }
 
 type ServerConfig struct {
@@ -65,6 +66,17 @@ type DatabaseConfig struct {
 	User     string
 	Password string
 	FilePath string
+	SSLMode  string
+}
+
+type RetentionConfig struct {
+	DefaultDays int
+	SyslogDays  int
+	FlowDays    int
+	TrapDays    int
+	StatusDays  int
+	PingDays    int
+	AlertDays   int
 }
 
 type AuthConfig struct {
@@ -165,6 +177,16 @@ func Load() *Config {
 			User:     getEnv("DB_USER", "firewall_mon"),
 			Password: getEnv("DB_PASSWORD", ""),
 			FilePath: getEnv("DB_FILE_PATH", "/data/firewall-mon.db"),
+			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
+		},
+		Retention: RetentionConfig{
+			DefaultDays: getIntEnv("RETENTION_DEFAULT_DAYS", 90),
+			SyslogDays:  getIntEnv("RETENTION_SYSLOG_DAYS", 0),
+			FlowDays:    getIntEnv("RETENTION_FLOW_DAYS", 0),
+			TrapDays:    getIntEnv("RETENTION_TRAP_DAYS", 0),
+			StatusDays:  getIntEnv("RETENTION_STATUS_DAYS", 0),
+			PingDays:    getIntEnv("RETENTION_PING_DAYS", 0),
+			AlertDays:   getIntEnv("RETENTION_ALERT_DAYS", 0),
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
@@ -276,6 +298,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("BCRYPT_COST must be 4-31, got %d", c.Auth.BcryptCost)
 	}
 
+	// PostgreSQL requires DB_HOST
+	if c.Database.Type == "postgres" && c.Database.Host == "" {
+		return fmt.Errorf("DB_HOST is required when DB_TYPE=postgres")
+	}
+
 	return nil
 }
 
@@ -326,6 +353,17 @@ func (s *SNMPConfig) V3PrivProto() gosnmp.SnmpV3PrivProtocol {
 	default:
 		return gosnmp.NoPriv
 	}
+}
+
+// Days returns the retention period for a given data type, falling back to DefaultDays.
+func (r *RetentionConfig) Days(perType int) int {
+	if perType > 0 {
+		return perType
+	}
+	if r.DefaultDays > 0 {
+		return r.DefaultDays
+	}
+	return 90
 }
 
 func getEnv(key, defaultValue string) string {

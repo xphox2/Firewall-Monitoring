@@ -1,0 +1,62 @@
+package database
+
+import "fmt"
+
+// Dialect abstracts SQL differences between SQLite and PostgreSQL.
+type Dialect interface {
+	// TimeBucket returns a SQL expression that truncates column to the given
+	// unit ("minute", "hour", or "day") and formats it as a string.
+	TimeBucket(unit, column string) string
+
+	// QuoteIdent returns name wrapped in the dialect's identifier-quoting characters.
+	QuoteIdent(name string) string
+
+	// IsPostgres reports whether this dialect targets PostgreSQL.
+	IsPostgres() bool
+}
+
+// ---------- SQLite ----------
+
+type sqliteDialect struct{}
+
+func (sqliteDialect) TimeBucket(unit, column string) string {
+	switch unit {
+	case "minute":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
+	case "hour":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
+	case "day":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
+	default:
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column) // default to hour
+	}
+}
+
+func (sqliteDialect) QuoteIdent(name string) string {
+	return "`" + name + "`"
+}
+
+func (sqliteDialect) IsPostgres() bool { return false }
+
+// ---------- PostgreSQL ----------
+
+type postgresDialect struct{}
+
+func (postgresDialect) TimeBucket(unit, column string) string {
+	switch unit {
+	case "minute":
+		return fmt.Sprintf("to_char(date_trunc('minute', %s), 'YYYY-MM-DD HH24:MI')", column)
+	case "hour":
+		return fmt.Sprintf("to_char(date_trunc('hour', %s), 'YYYY-MM-DD HH24:00')", column)
+	case "day":
+		return fmt.Sprintf("to_char(date_trunc('day', %s), 'YYYY-MM-DD')", column)
+	default:
+		return fmt.Sprintf("to_char(date_trunc('hour', %s), 'YYYY-MM-DD HH24:00')", column)
+	}
+}
+
+func (postgresDialect) QuoteIdent(name string) string {
+	return `"` + name + `"`
+}
+
+func (postgresDialect) IsPostgres() bool { return true }

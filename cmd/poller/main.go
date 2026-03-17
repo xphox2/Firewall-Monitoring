@@ -70,10 +70,10 @@ func (p *Poller) Start() error {
 			p.pollAllDevices()
 		case <-cleanupTicker.C:
 			if p.db != nil {
-				if err := p.db.CleanupOldData(90); err != nil {
+				if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
 					log.Printf("Data cleanup error: %v", err)
 				} else {
-					log.Println("Old data cleanup completed (>90 days)")
+					log.Println("Old data cleanup completed")
 				}
 			}
 			if p.alertManager != nil {

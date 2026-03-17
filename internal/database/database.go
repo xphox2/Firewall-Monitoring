@@ -15,13 +15,18 @@ import (
 	"firewall-mon/internal/models"
 
 	"github.com/glebarez/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 type Database struct {
-	db     *gorm.DB
-	encKey []byte
+	db          *gorm.DB
+	encKey      []byte
+	dialect     Dialect
+	syslogBatch *BatchInserter[models.SyslogMessage]
+	trapBatch   *BatchInserter[models.TrapEvent]
+	pingBatch   *BatchInserter[models.PingResult]
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -29,38 +34,63 @@ func (d *Database) Gorm() *gorm.DB {
 }
 
 func NewDatabase(cfg *config.Config) (*Database, error) {
-	dbPath := cfg.Database.FilePath
-	if dbPath == "" {
-		dbPath = "/data/firewall-mon.db"
-	}
+	var db *gorm.DB
+	var dial Dialect
+	var err error
 
-	dir := filepath.Dir(dbPath)
-	if dir == "." {
-		dir = "/data"
-	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create database directory: %w", err)
-	}
-
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+	gormCfg := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// Enable WAL mode for better concurrent read performance
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
+	switch cfg.Database.Type {
+	case "postgres":
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+			cfg.Database.Password, cfg.Database.Name, cfg.Database.SSLMode)
+		db, err = gorm.Open(postgres.Open(dsn), gormCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
+		}
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			return nil, fmt.Errorf("failed to get underlying sql.DB: %w", dbErr)
+		}
+		sqlDB.SetMaxOpenConns(25)
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetConnMaxLifetime(5 * time.Minute)
+		sqlDB.SetConnMaxIdleTime(1 * time.Minute)
+		dial = postgresDialect{}
+		log.Printf("Database: connected to PostgreSQL at %s:%d/%s", cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	default: // "sqlite"
+		dbPath := cfg.Database.FilePath
+		if dbPath == "" {
+			dbPath = "/data/firewall-mon.db"
+		}
+		dir := filepath.Dir(dbPath)
+		if dir == "." {
+			dir = "/data"
+		}
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		}
+		db, err = gorm.Open(sqlite.Open(dbPath), gormCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to database: %w", err)
+		}
+		// Enable WAL mode for better concurrent read performance
+		db.Exec("PRAGMA journal_mode=WAL")
+		db.Exec("PRAGMA busy_timeout=5000")
+		sqlDB, dbErr := db.DB()
+		if dbErr != nil {
+			return nil, fmt.Errorf("failed to get underlying sql.DB: %w", dbErr)
+		}
+		// SQLite only supports one writer at a time; MaxOpenConns=1 prevents "database is locked" errors
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+		sqlDB.SetConnMaxLifetime(0)
+		dial = sqliteDialect{}
 	}
-	// SQLite only supports one writer at a time; MaxOpenConns=1 prevents "database is locked" errors
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	sqlDB.SetConnMaxLifetime(0)
 
 	var encKey []byte
 	if cfg.Server.EncryptionKey != "" {
@@ -70,7 +100,19 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		encKey = deriveKey(cfg.Server.JWTSecretKey)
 	}
 
-	d := &Database{db: db, encKey: encKey}
+	d := &Database{db: db, encKey: encKey, dialect: dial}
+
+	// Initialize batch inserters
+	d.syslogBatch = NewBatchInserter[models.SyslogMessage](500, 2*time.Second, func(items []models.SyslogMessage) error {
+		return d.db.Create(&items).Error
+	})
+	d.trapBatch = NewBatchInserter[models.TrapEvent](100, 5*time.Second, func(items []models.TrapEvent) error {
+		return d.db.Create(&items).Error
+	})
+	d.pingBatch = NewBatchInserter[models.PingResult](100, 5*time.Second, func(items []models.PingResult) error {
+		return d.db.Create(&items).Error
+	})
+
 	if err := d.migrate(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
@@ -322,7 +364,18 @@ func (d *Database) AcknowledgeAlert(id uint) error {
 }
 
 func (d *Database) SaveTrapEvent(trap *models.TrapEvent) error {
+	if d.trapBatch != nil {
+		d.trapBatch.Add(*trap)
+		return nil
+	}
 	return d.db.Create(trap).Error
+}
+
+func (d *Database) SaveTrapEvents(traps []models.TrapEvent) error {
+	if len(traps) == 0 {
+		return nil
+	}
+	return d.db.Create(&traps).Error
 }
 
 func (d *Database) GetTrapEvents(limit int) ([]models.TrapEvent, error) {
@@ -360,44 +413,62 @@ func (d *Database) GetLoginAttempts(since time.Time, limit int) ([]models.LoginA
 	return attempts, err
 }
 
-func (d *Database) CleanupOldData(days int) error {
-	cutoff := time.Now().AddDate(0, 0, -days)
+func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
+	type cleanupEntry struct {
+		model interface{}
+		name  string
+		days  int
+	}
 
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.SystemStatus{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup system_status: %w", err)
+	statusDays := ret.Days(ret.StatusDays)
+	syslogDays := ret.Days(ret.SyslogDays)
+	flowDays := ret.Days(ret.FlowDays)
+	trapDays := ret.Days(ret.TrapDays)
+	pingDays := ret.Days(ret.PingDays)
+	alertDays := ret.Days(ret.AlertDays)
+	defaultDays := ret.Days(0)
+
+	entries := []cleanupEntry{
+		{&models.SystemStatus{}, "system_status", statusDays},
+		{&models.InterfaceStats{}, "interface_stats", statusDays},
+		{&models.ProcessorStats{}, "processor_stats", statusDays},
+		{&models.HardwareSensor{}, "hardware_sensors", statusDays},
+		{&models.TrapEvent{}, "trap_event", trapDays},
+		{&models.LoginAttempt{}, "login_attempt", defaultDays},
+		{&models.SyslogMessage{}, "syslog_message", syslogDays},
+		{&models.FlowSample{}, "flow_sample", flowDays},
+		{&models.InterfaceAddress{}, "interface_addresses", statusDays},
+		{&models.PingResult{}, "ping_result", pingDays},
 	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.InterfaceStats{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup interface_stats: %w", err)
+
+	for _, e := range entries {
+		cutoff := time.Now().AddDate(0, 0, -e.days)
+		if err := d.db.Where("timestamp < ?", cutoff).Delete(e.model).Error; err != nil {
+			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
+		}
 	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.ProcessorStats{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup processor_stats: %w", err)
-	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.HardwareSensor{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup hardware_sensors: %w", err)
-	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.TrapEvent{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup trap_event: %w", err)
-	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.LoginAttempt{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup login_attempt: %w", err)
-	}
-	if err := d.db.Where("acknowledged = true AND timestamp < ?", cutoff).Delete(&models.Alert{}).Error; err != nil {
+
+	// Alerts: only delete acknowledged alerts
+	alertCutoff := time.Now().AddDate(0, 0, -alertDays)
+	if err := d.db.Where("acknowledged = true AND timestamp < ?", alertCutoff).Delete(&models.Alert{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup alert: %w", err)
-	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup syslog_message: %w", err)
-	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.FlowSample{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup flow_sample: %w", err)
-	}
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.InterfaceAddress{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup interface_addresses: %w", err)
 	}
 
 	return nil
 }
 
 func (d *Database) Close() error {
+	// Flush and stop all batch inserters before closing the DB
+	if d.syslogBatch != nil {
+		d.syslogBatch.Stop()
+	}
+	if d.trapBatch != nil {
+		d.trapBatch.Stop()
+	}
+	if d.pingBatch != nil {
+		d.pingBatch.Stop()
+	}
+
 	sqlDB, err := d.db.DB()
 	if err != nil {
 		return err
@@ -889,7 +960,18 @@ func (d *Database) GetProbeHeartbeats(probeID uint) ([]models.ProbeHeartbeat, er
 }
 
 func (d *Database) SavePingResult(result *models.PingResult) error {
+	if d.pingBatch != nil {
+		d.pingBatch.Add(*result)
+		return nil
+	}
 	return d.db.Create(result).Error
+}
+
+func (d *Database) SavePingResults(results []models.PingResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	return d.db.Create(&results).Error
 }
 
 func (d *Database) GetPingResults(deviceID uint, limit int) ([]models.PingResult, error) {
@@ -937,7 +1019,7 @@ func (d *Database) GetLatestProcessorStats(deviceID uint) ([]models.ProcessorSta
 	}
 	var stats []models.ProcessorStats
 	err := d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).
-		Order("`index` ASC").Find(&stats).Error
+		Order(d.dialect.QuoteIdent("index") + " ASC").Find(&stats).Error
 	return stats, err
 }
 
@@ -1032,7 +1114,18 @@ func (d *Database) SaveLicenseInfo(licenses []models.LicenseInfo) error {
 }
 
 func (d *Database) SaveSyslogMessage(msg *models.SyslogMessage) error {
+	if d.syslogBatch != nil {
+		d.syslogBatch.Add(*msg)
+		return nil
+	}
 	return d.db.Create(msg).Error
+}
+
+func (d *Database) SaveSyslogMessages(msgs []models.SyslogMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	return d.db.Create(&msgs).Error
 }
 
 func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) {
@@ -1078,23 +1171,24 @@ func (d *Database) GetInterfaceChartData(deviceID uint, ifIndex int, rangeStr st
 	switch rangeStr {
 	case "7d":
 		hours = 168
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
 	case "30d":
 		hours = 720
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
 	case "90d":
 		hours = 2160
-		bucketExpr = "strftime('%Y-%m-%d', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("day", "timestamp")
 	default: // 24h
 		hours = 24
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	quotedIndex := d.dialect.QuoteIdent("index")
 
 	var rows []InterfaceChartBucket
 	err := d.db.Model(&models.InterfaceStats{}).
-		Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
+		Where(fmt.Sprintf("device_id = ? AND %s = ? AND timestamp > ?", quotedIndex), deviceID, ifIndex, cutoff).
 		Select(fmt.Sprintf("%s as bucket, AVG(in_bytes) as in_bytes, AVG(out_bytes) as out_bytes, AVG(in_packets) as in_packets, AVG(out_packets) as out_packets, AVG(in_errors) as in_errors, AVG(out_errors) as out_errors", bucketExpr)).
 		Group("bucket").Order("bucket ASC").Scan(&rows).Error
 	if err != nil {
@@ -1198,7 +1292,7 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		Bucket string `json:"bucket"`
 		Total  int64  `json:"total"`
 	}
-	newBase().Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, SUM(bytes) as total").
+	newBase().Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(bytes) as total").
 		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
 	for _, t := range timeSeries {
 		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
@@ -1222,7 +1316,7 @@ func (d *Database) timeSeriesCount(model interface{}, cutoff time.Time) []TimeBu
 		Count  int64
 	}
 	d.db.Model(model).Where("timestamp > ?", cutoff).
-		Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, COUNT(*) as count").
+		Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, COUNT(*) as count").
 		Group("bucket").Order("bucket ASC").Scan(&rows)
 	buckets := make([]TimeBucket, 0, len(rows))
 	for _, r := range rows {
@@ -1701,16 +1795,16 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 	switch rangeStr {
 	case "1h":
 		hours = 1
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
 	case "7d":
 		hours = 168
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
 	case "30d":
 		hours = 720
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
 	default: // 24h
 		hours = 24
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
@@ -2049,16 +2143,16 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 	switch rangeStr {
 	case "1h":
 		hours = 1
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
 	case "7d":
 		hours = 168
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
 	case "30d":
 		hours = 720
-		bucketExpr = "strftime('%Y-%m-%d %H:00', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
 	default:
 		hours = 24
-		bucketExpr = "strftime('%Y-%m-%d %H:%M', timestamp)"
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
 	}
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
@@ -2257,7 +2351,7 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		var tunnelIfIndices []int
 		ifIndexSet := make(map[int]bool)
 		var ifaces []models.InterfaceStats
-		d.db.Raw("SELECT DISTINCT device_id, `index` FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)",
+		d.db.Raw(fmt.Sprintf("SELECT DISTINCT device_id, %s FROM interface_stats WHERE device_id IN ? AND (name IN ? OR description IN ? OR alias IN ?)", d.dialect.QuoteIdent("index")),
 			deviceIDs, allNames, allNames, allNames).Scan(&ifaces)
 		for _, iface := range ifaces {
 			ifIndexSet[iface.Index] = true
@@ -2348,7 +2442,7 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		Bucket string `json:"bucket"`
 		Total  int64  `json:"total"`
 	}
-	newBase().Select("strftime('%Y-%m-%d %H:00', timestamp) as bucket, SUM(bytes) as total").
+	newBase().Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(bytes) as total").
 		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
 	for _, t := range timeSeries {
 		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
