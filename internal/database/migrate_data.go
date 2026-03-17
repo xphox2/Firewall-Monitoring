@@ -61,10 +61,95 @@ func (ms *MigrationState) Snapshot() MigrationSnapshot {
 	return snap
 }
 
-type tableEntry struct {
-	model     interface{}
-	tableName string
-	batchSize int
+// migrateFn is a function that migrates one table. Each is a closure over a
+// concrete model type so GORM handles SQLite↔PG type mapping (bools, times).
+type migrateFn func(d *Database, srcDB *gorm.DB, state *MigrationState, idx int)
+
+// migrateTyped returns a migrateFn for model type T with the given batch size.
+func migrateTyped[T any](tableName string, batchSize int) migrateFn {
+	return func(d *Database, srcDB *gorm.DB, state *MigrationState, idx int) {
+		// Count source rows
+		var srcCount int64
+		if err := srcDB.Table(tableName).Count(&srcCount).Error; err != nil {
+			setTableError(state, idx, fmt.Sprintf("count source: %v", err))
+			log.Printf("[migrate] %s: failed to count source: %v", tableName, err)
+			return
+		}
+
+		state.mu.Lock()
+		state.Tables[idx].TotalRows = srcCount
+		state.Tables[idx].Status = "running"
+		state.mu.Unlock()
+
+		if srcCount == 0 {
+			state.mu.Lock()
+			state.Tables[idx].Status = "done"
+			state.mu.Unlock()
+			log.Printf("[migrate] %s: 0 rows, skipping", tableName)
+			return
+		}
+
+		// Idempotency: skip if target already has data
+		var dstCount int64
+		if err := d.db.Table(tableName).Count(&dstCount).Error; err != nil {
+			setTableError(state, idx, fmt.Sprintf("count target: %v", err))
+			log.Printf("[migrate] %s: failed to count target: %v", tableName, err)
+			return
+		}
+		if dstCount > 0 {
+			state.mu.Lock()
+			state.Tables[idx].Status = "skipped"
+			state.Tables[idx].Migrated = dstCount
+			state.Tables[idx].Error = fmt.Sprintf("target already has %d rows", dstCount)
+			state.mu.Unlock()
+			log.Printf("[migrate] %s: target has %d rows, skipping", tableName, dstCount)
+			return
+		}
+
+		// Migrate in typed batches
+		var migrated int64
+		for offset := 0; int64(offset) < srcCount; offset += batchSize {
+			var rows []T
+			if err := srcDB.Order("id ASC").Offset(offset).Limit(batchSize).Find(&rows).Error; err != nil {
+				setTableError(state, idx, fmt.Sprintf("read at offset %d: %v", offset, err))
+				log.Printf("[migrate] %s: read error at offset %d: %v", tableName, offset, err)
+				return
+			}
+			if len(rows) == 0 {
+				break
+			}
+			if err := d.db.Create(&rows).Error; err != nil {
+				setTableError(state, idx, fmt.Sprintf("write at offset %d: %v", offset, err))
+				log.Printf("[migrate] %s: write error at offset %d: %v", tableName, offset, err)
+				return
+			}
+			migrated += int64(len(rows))
+			state.mu.Lock()
+			state.Tables[idx].Migrated = migrated
+			state.mu.Unlock()
+		}
+
+		// Reset PostgreSQL sequence
+		seqSQL := fmt.Sprintf(
+			"SELECT setval(pg_get_serial_sequence('%s','id'), COALESCE((SELECT MAX(id) FROM %s), 1))",
+			tableName, tableName,
+		)
+		if err := d.db.Exec(seqSQL).Error; err != nil {
+			log.Printf("[migrate] %s: failed to reset sequence: %v", tableName, err)
+		}
+
+		state.mu.Lock()
+		state.Tables[idx].Status = "done"
+		state.mu.Unlock()
+		log.Printf("[migrate] %s: migrated %d rows", tableName, migrated)
+	}
+}
+
+func setTableError(state *MigrationState, idx int, msg string) {
+	state.mu.Lock()
+	state.Tables[idx].Status = "error"
+	state.Tables[idx].Error = msg
+	state.mu.Unlock()
 }
 
 // MigrateFromSQLite copies all rows from the source SQLite database into the
@@ -99,58 +184,62 @@ func (d *Database) MigrateFromSQLite(sourceDBPath string, state *MigrationState)
 		log.Printf("[migrate] %s", state.Error)
 		return
 	}
-	sqlDB, err := srcDB.DB()
+	sqlConn, err := srcDB.DB()
 	if err != nil {
 		state.mu.Lock()
 		state.Error = fmt.Sprintf("failed to get underlying sql.DB: %v", err)
 		state.mu.Unlock()
 		return
 	}
-	defer sqlDB.Close()
+	defer sqlConn.Close()
 
-	// FK-safe order: parents before children, high-volume tables get larger batches
-	tables := []tableEntry{
+	// Table name + typed migration function, in FK-safe order
+	type entry struct {
+		name string
+		fn   migrateFn
+	}
+	tables := []entry{
 		// No FK dependencies
-		{&[]models.Admin{}, "admins", 500},
-		{&[]models.SystemSetting{}, "system_settings", 500},
-		{&[]models.LoginAttempt{}, "login_attempts", 500},
+		{"admins", migrateTyped[models.Admin]("admins", 500)},
+		{"system_settings", migrateTyped[models.SystemSetting]("system_settings", 500)},
+		{"login_attempts", migrateTyped[models.LoginAttempt]("login_attempts", 500)},
 		// Self-referential
-		{&[]models.Site{}, "sites", 500},
+		{"sites", migrateTyped[models.Site]("sites", 500)},
 		// → Site
-		{&[]models.Probe{}, "probes", 500},
+		{"probes", migrateTyped[models.Probe]("probes", 500)},
 		// → Site, Probe
-		{&[]models.Device{}, "devices", 500},
+		{"devices", migrateTyped[models.Device]("devices", 500)},
 		// → Device
-		{&[]models.DeviceTunnel{}, "device_tunnels", 500},
-		{&[]models.DeviceConnection{}, "device_connections", 500},
+		{"device_tunnels", migrateTyped[models.DeviceTunnel]("device_tunnels", 500)},
+		{"device_connections", migrateTyped[models.DeviceConnection]("device_connections", 500)},
 		// → Probe
-		{&[]models.ProbeApproval{}, "probe_approvals", 500},
-		{&[]models.ProbeHeartbeat{}, "probe_heartbeats", 500},
-		// Device-dependent telemetry
-		{&[]models.SystemStatus{}, "system_status", 1000},
-		{&[]models.InterfaceStats{}, "interface_stats", 1000},
-		{&[]models.VPNStatus{}, "vpn_status", 1000},
-		{&[]models.HAStatus{}, "ha_status", 500},
-		{&[]models.HardwareSensor{}, "hardware_sensors", 500},
-		{&[]models.ProcessorStats{}, "processor_stats", 500},
-		{&[]models.TrapEvent{}, "trap_events", 500},
-		{&[]models.Alert{}, "alerts", 500},
-		{&[]models.UptimeRecord{}, "uptime_records", 500},
-		{&[]models.SecurityStats{}, "security_stats", 500},
-		{&[]models.SDWANHealth{}, "sdwan_health", 500},
-		{&[]models.LicenseInfo{}, "license_info", 500},
-		{&[]models.InterfaceAddress{}, "interface_addresses", 500},
-		{&[]models.PingResult{}, "ping_results", 1000},
-		{&[]models.PingStats{}, "ping_stats", 500},
-		{&[]models.SyslogMessage{}, "syslog_messages", 1000},
-		{&[]models.FlowSample{}, "flow_samples", 1000},
+		{"probe_approvals", migrateTyped[models.ProbeApproval]("probe_approvals", 500)},
+		{"probe_heartbeats", migrateTyped[models.ProbeHeartbeat]("probe_heartbeats", 500)},
+		// Device-dependent telemetry (high-volume get 1000)
+		{"system_status", migrateTyped[models.SystemStatus]("system_status", 1000)},
+		{"interface_stats", migrateTyped[models.InterfaceStats]("interface_stats", 1000)},
+		{"vpn_status", migrateTyped[models.VPNStatus]("vpn_status", 1000)},
+		{"ha_status", migrateTyped[models.HAStatus]("ha_status", 500)},
+		{"hardware_sensors", migrateTyped[models.HardwareSensor]("hardware_sensors", 500)},
+		{"processor_stats", migrateTyped[models.ProcessorStats]("processor_stats", 500)},
+		{"trap_events", migrateTyped[models.TrapEvent]("trap_events", 500)},
+		{"alerts", migrateTyped[models.Alert]("alerts", 500)},
+		{"uptime_records", migrateTyped[models.UptimeRecord]("uptime_records", 500)},
+		{"security_stats", migrateTyped[models.SecurityStats]("security_stats", 500)},
+		{"sdwan_health", migrateTyped[models.SDWANHealth]("sdwan_health", 500)},
+		{"license_info", migrateTyped[models.LicenseInfo]("license_info", 500)},
+		{"interface_addresses", migrateTyped[models.InterfaceAddress]("interface_addresses", 500)},
+		{"ping_results", migrateTyped[models.PingResult]("ping_results", 1000)},
+		{"ping_stats", migrateTyped[models.PingStats]("ping_stats", 500)},
+		{"syslog_messages", migrateTyped[models.SyslogMessage]("syslog_messages", 1000)},
+		{"flow_samples", migrateTyped[models.FlowSample]("flow_samples", 1000)},
 		// → Site
-		{&[]models.SiteDatabase{}, "site_databases", 500},
+		{"site_databases", migrateTyped[models.SiteDatabase]("site_databases", 500)},
 		// IRC tables
-		{&[]models.IRCServer{}, "irc_servers", 500},
-		{&[]models.IRCChannel{}, "irc_channels", 500},
-		{&[]models.IRCCommand{}, "irc_commands", 500},
-		{&[]models.IRCMessageLog{}, "irc_message_logs", 500},
+		{"irc_servers", migrateTyped[models.IRCServer]("irc_servers", 500)},
+		{"irc_channels", migrateTyped[models.IRCChannel]("irc_channels", 500)},
+		{"irc_commands", migrateTyped[models.IRCCommand]("irc_commands", 500)},
+		{"irc_message_logs", migrateTyped[models.IRCMessageLog]("irc_message_logs", 500)},
 	}
 
 	// Initialize table statuses
@@ -158,14 +247,14 @@ func (d *Database) MigrateFromSQLite(sourceDBPath string, state *MigrationState)
 	state.Tables = make([]TableMigrationStatus, len(tables))
 	for i, t := range tables {
 		state.Tables[i] = TableMigrationStatus{
-			TableName: t.tableName,
+			TableName: t.name,
 			Status:    "pending",
 		}
 	}
 	state.mu.Unlock()
 
 	for i, t := range tables {
-		d.migrateTable(srcDB, state, i, t)
+		t.fn(d, srcDB, state, i)
 	}
 
 	// Check if any table had errors
@@ -197,102 +286,4 @@ func (d *Database) MigrateFromSQLite(sourceDBPath string, state *MigrationState)
 	}
 
 	log.Println("[migrate] data migration complete")
-}
-
-// migrateTable copies one table from source to target.
-func (d *Database) migrateTable(srcDB *gorm.DB, state *MigrationState, idx int, t tableEntry) {
-	tableName := t.tableName
-
-	// Count rows in source
-	var srcCount int64
-	if err := srcDB.Table(tableName).Count(&srcCount).Error; err != nil {
-		state.mu.Lock()
-		state.Tables[idx].Status = "error"
-		state.Tables[idx].Error = fmt.Sprintf("count source: %v", err)
-		state.mu.Unlock()
-		log.Printf("[migrate] %s: failed to count source rows: %v", tableName, err)
-		return
-	}
-
-	state.mu.Lock()
-	state.Tables[idx].TotalRows = srcCount
-	state.Tables[idx].Status = "running"
-	state.mu.Unlock()
-
-	if srcCount == 0 {
-		state.mu.Lock()
-		state.Tables[idx].Status = "done"
-		state.mu.Unlock()
-		log.Printf("[migrate] %s: 0 rows, skipping", tableName)
-		return
-	}
-
-	// Check if target already has data → skip for idempotency
-	var dstCount int64
-	if err := d.db.Table(tableName).Count(&dstCount).Error; err != nil {
-		state.mu.Lock()
-		state.Tables[idx].Status = "error"
-		state.Tables[idx].Error = fmt.Sprintf("count target: %v", err)
-		state.mu.Unlock()
-		log.Printf("[migrate] %s: failed to count target rows: %v", tableName, err)
-		return
-	}
-	if dstCount > 0 {
-		state.mu.Lock()
-		state.Tables[idx].Status = "skipped"
-		state.Tables[idx].Migrated = dstCount
-		state.Tables[idx].Error = fmt.Sprintf("target already has %d rows", dstCount)
-		state.mu.Unlock()
-		log.Printf("[migrate] %s: target has %d rows, skipping", tableName, dstCount)
-		return
-	}
-
-	// Migrate in batches using raw map scanning for generality
-	batchSize := t.batchSize
-	var migrated int64
-
-	for offset := 0; int64(offset) < srcCount; offset += batchSize {
-		var rows []map[string]interface{}
-		if err := srcDB.Table(tableName).Order("id ASC").Offset(offset).Limit(batchSize).Find(&rows).Error; err != nil {
-			state.mu.Lock()
-			state.Tables[idx].Status = "error"
-			state.Tables[idx].Error = fmt.Sprintf("read batch at offset %d: %v", offset, err)
-			state.mu.Unlock()
-			log.Printf("[migrate] %s: read error at offset %d: %v", tableName, offset, err)
-			return
-		}
-
-		if len(rows) == 0 {
-			break
-		}
-
-		if err := d.db.Table(tableName).Create(rows).Error; err != nil {
-			state.mu.Lock()
-			state.Tables[idx].Status = "error"
-			state.Tables[idx].Error = fmt.Sprintf("write batch at offset %d: %v", offset, err)
-			state.mu.Unlock()
-			log.Printf("[migrate] %s: write error at offset %d: %v", tableName, offset, err)
-			return
-		}
-
-		migrated += int64(len(rows))
-		state.mu.Lock()
-		state.Tables[idx].Migrated = migrated
-		state.mu.Unlock()
-	}
-
-	// Reset PostgreSQL sequence to max(id)
-	seqSQL := fmt.Sprintf(
-		"SELECT setval(pg_get_serial_sequence('%s','id'), COALESCE((SELECT MAX(id) FROM %s), 1))",
-		tableName, tableName,
-	)
-	if err := d.db.Exec(seqSQL).Error; err != nil {
-		log.Printf("[migrate] %s: failed to reset sequence: %v", tableName, err)
-		// Non-fatal — continue
-	}
-
-	state.mu.Lock()
-	state.Tables[idx].Status = "done"
-	state.mu.Unlock()
-	log.Printf("[migrate] %s: migrated %d rows", tableName, migrated)
 }
