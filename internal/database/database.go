@@ -1006,6 +1006,9 @@ func (d *Database) GetLatestPingStats(deviceID uint, probeID uint) (*models.Ping
 }
 
 func (d *Database) SavePingStats(stats *models.PingStats) error {
+	if stats.ID == 0 {
+		return d.db.Create(stats).Error
+	}
 	return d.db.Save(stats).Error
 }
 
@@ -1347,8 +1350,9 @@ func (d *Database) groupByString(model interface{}, cutoff time.Time, groupCol s
 		Key   string
 		Count int64
 	}
+	qCol := d.dialect.QuoteIdent(groupCol)
 	d.db.Model(model).Where("timestamp > ?", cutoff).
-		Select(groupCol+" as key, COUNT(*) as count").Group(groupCol).Order("count DESC").Scan(&rows)
+		Select(qCol+" as key, COUNT(*) as count").Group(qCol).Order("count DESC").Scan(&rows)
 	counts := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
 		counts = append(counts, KeyCount{Key: r.Key, Count: r.Count})

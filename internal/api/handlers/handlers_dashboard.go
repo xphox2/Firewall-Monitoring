@@ -254,7 +254,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 
 	// Get raw data points
 	var stats []models.InterfaceStats
-	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
+	err = h.db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
 		Order("timestamp ASC").Find(&stats).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))

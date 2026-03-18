@@ -405,7 +405,7 @@ func (h *Handler) GetInterfaceHistory(c *gin.Context) {
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 
 	var stats []models.InterfaceStats
-	err = h.db.Gorm().Where("device_id = ? AND `index` = ? AND timestamp > ?", deviceIDUint, ifIndexInt, since).
+	err = h.db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceIDUint, ifIndexInt, since).
 		Order("timestamp ASC").Limit(500).Find(&stats).Error
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface history"))

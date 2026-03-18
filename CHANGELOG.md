@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.126] - 2026-03-17
+
+### Fixed
+- **Full PostgreSQL compatibility audit**: Fix all remaining SQLite-specific SQL across the codebase
+- Fix backtick-quoted `index` column in interface history/chart queries (handlers_devices.go, handlers_dashboard.go) — use double quotes for PG compatibility
+- Fix backtick-quoted `key` column in RefreshThresholds, getNotificationSetting, GetPublicDisplaySettings — use double quotes
+- Fix `SavePingStats` using GORM `.Save()` on new records (ID=0) which fails on PG — use `.Create()` for new, `.Save()` for existing
+- Fix `groupByString` not quoting column names — use `dialect.QuoteIdent()` for PG reserved word safety
+- Fix migration PK clash: advance PG sequence to source MAX(id) before copying rows so concurrent probe inserts don't collide
+
 ## [0.10.125] - 2026-03-17
 
 ### Changed
