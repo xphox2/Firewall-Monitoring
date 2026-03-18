@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,26 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// sanitizeNullBytes strips 0x00 bytes from all string fields in a struct.
+// PostgreSQL rejects null bytes in text columns; SQLite allows them.
+func sanitizeNullBytes(v any) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return
+	}
+	for i := 0; i < rv.NumField(); i++ {
+		f := rv.Field(i)
+		if f.Kind() == reflect.String && f.CanSet() {
+			if s := f.String(); strings.ContainsRune(s, 0) {
+				f.SetString(strings.ReplaceAll(s, "\x00", ""))
+			}
+		}
+	}
+}
 
 // TableMigrationStatus tracks the migration progress for a single table.
 type TableMigrationStatus struct {
@@ -131,6 +153,10 @@ func migrateTyped[T any](tableName string, batchSize int) migrateFn {
 			}
 			if len(rows) == 0 {
 				break
+			}
+			// Strip null bytes from strings — PG rejects 0x00 in text columns
+			for i := range rows {
+				sanitizeNullBytes(&rows[i])
 			}
 			if err := d.db.Create(&rows).Error; err != nil {
 				setTableError(state, idx, fmt.Sprintf("write at offset %d: %v", offset, err))
