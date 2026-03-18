@@ -111,21 +111,31 @@ func migrateTyped[T any](tableName string, batchSize int) migrateFn {
 			return
 		}
 
-		// Idempotency: skip if target already has data
+		// Idempotency: skip if target already has >= source rows (already migrated).
+		// If target has fewer rows (e.g. probe inserted a handful during migration),
+		// truncate and re-copy the full dataset.
 		var dstCount int64
 		if err := d.db.Table(tableName).Count(&dstCount).Error; err != nil {
 			setTableError(state, idx, fmt.Sprintf("count target: %v", err))
 			log.Printf("[migrate] %s: failed to count target: %v", tableName, err)
 			return
 		}
-		if dstCount > 0 {
+		if dstCount >= srcCount {
 			state.mu.Lock()
 			state.Tables[idx].Status = "skipped"
 			state.Tables[idx].Migrated = dstCount
 			state.Tables[idx].Error = fmt.Sprintf("target already has %d rows", dstCount)
 			state.mu.Unlock()
-			log.Printf("[migrate] %s: target has %d rows, skipping", tableName, dstCount)
+			log.Printf("[migrate] %s: target has %d rows (>= source %d), skipping", tableName, dstCount, srcCount)
 			return
+		}
+		if dstCount > 0 {
+			log.Printf("[migrate] %s: target has %d rows but source has %d — truncating target", tableName, dstCount, srcCount)
+			if err := d.db.Exec(fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY CASCADE", tableName)).Error; err != nil {
+				setTableError(state, idx, fmt.Sprintf("truncate: %v", err))
+				log.Printf("[migrate] %s: truncate failed: %v", tableName, err)
+				return
+			}
 		}
 
 		// Advance PG sequence past source MAX(id) BEFORE copying, so concurrent
