@@ -133,6 +133,22 @@
         .empty-state { text-align: center; padding: 40px 20px; color: #484f58; }
         .empty-state .empty-icon { font-size: 2rem; margin-bottom: 8px; }
 
+        /* Maintenance window enhancements */
+        .stat-card.accent-green { border-left: 3px solid #3fb950; }
+        .stat-card.accent-red { border-left: 3px solid #f85149; }
+        .stat-card.accent-blue { border-left: 3px solid #58a6ff; }
+        .stat-card.accent-gray { border-left: 3px solid #484f58; }
+        #maint-modal .modal-content { width: 600px; }
+        .scope-toggle { display: flex; gap: 0; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+        .scope-toggle label { flex: 1; text-align: center; padding: 8px 12px; font-size: 0.82rem; color: #8b949e; cursor: pointer; background: #0d1117; border-right: 1px solid #30363d; transition: all 0.15s; font-weight: 500; }
+        .scope-toggle label:last-child { border-right: none; }
+        .scope-toggle input[type="radio"] { display: none; }
+        .scope-toggle input[type="radio"]:checked + span { color: #58a6ff; background: rgba(56,139,253,0.15); }
+        .scope-toggle label:has(input:checked) { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        #maint-modal .form-group textarea { resize: vertical; min-height: 60px; }
+        .maint-table-actions { opacity: 0.5; transition: opacity 0.15s; white-space: nowrap; }
+        tr:hover .maint-table-actions { opacity: 1; }
+
         .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
         .setting-item { background: #0d1117; padding: 12px; border-radius: 6px; }
         .setting-item label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
@@ -557,9 +573,9 @@
         <!-- Maintenance Windows Page -->
         <div class="page" id="page-maintenance">
             <div class="stat-grid">
-                <div class="stat-card"><div class="stat-label">Active Now</div><div class="stat-value bad" id="mw-active">--</div></div>
-                <div class="stat-card"><div class="stat-label">Scheduled</div><div class="stat-value accent" id="mw-scheduled">--</div></div>
-                <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="mw-total">--</div></div>
+                <div class="stat-card accent-red"><div class="stat-label">Active Now</div><div class="stat-value bad" id="mw-active">--</div></div>
+                <div class="stat-card accent-blue"><div class="stat-label">Scheduled</div><div class="stat-value accent" id="mw-scheduled">--</div></div>
+                <div class="stat-card accent-gray"><div class="stat-label">Total</div><div class="stat-value" id="mw-total">--</div></div>
             </div>
             <div class="card">
                 <div class="card-header">
@@ -1040,31 +1056,25 @@
             </div>
             <form id="maint-form">
                 <input type="hidden" id="maint-id">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Name *</label>
-                        <input type="text" id="maint-name" required autocomplete="one-time-code">
-                    </div>
-                    <div class="form-group">
-                        <label>Scope</label>
-                        <select id="maint-scope">
-                            <option value="all">All Devices</option>
-                            <option value="device">Specific Device</option>
-                            <option value="site">Specific Site</option>
-                        </select>
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="maint-name" required autocomplete="one-time-code" placeholder="e.g. Monthly patching - Core switch">
+                </div>
+                <div class="form-group">
+                    <label>Scope</label>
+                    <div class="scope-toggle" id="maint-scope-toggle">
+                        <label><input type="radio" name="maint-scope" value="all" checked><span>All Devices</span></label>
+                        <label><input type="radio" name="maint-scope" value="device"><span>Device</span></label>
+                        <label><input type="radio" name="maint-scope" value="site"><span>Site</span></label>
                     </div>
                 </div>
-                <div class="form-row" id="maint-scope-device" style="display:none">
-                    <div class="form-group">
-                        <label>Device</label>
-                        <select id="maint-device-id"></select>
-                    </div>
+                <div class="form-group" id="maint-scope-device" style="display:none">
+                    <label>Device</label>
+                    <select id="maint-device-id"></select>
                 </div>
-                <div class="form-row" id="maint-scope-site" style="display:none">
-                    <div class="form-group">
-                        <label>Site</label>
-                        <select id="maint-site-id"></select>
-                    </div>
+                <div class="form-group" id="maint-scope-site" style="display:none">
+                    <label>Site</label>
+                    <select id="maint-site-id"></select>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -1076,20 +1086,16 @@
                         <input type="datetime-local" id="maint-end" required>
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group"><label><input type="checkbox" id="maint-suppress-all" checked> Suppress All Alert Types</label></div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="maint-suppress-all" checked> Suppress All Alert Types</label>
                 </div>
-                <div class="form-row" id="maint-alert-types-row" style="display:none">
-                    <div class="form-group">
-                        <label>Alert Types to Suppress (comma-separated)</label>
-                        <input type="text" id="maint-alert-types" placeholder="CPU_HIGH,DEVICE_OFFLINE" autocomplete="one-time-code">
-                    </div>
+                <div class="form-group" id="maint-alert-types-row" style="display:none">
+                    <label>Alert Types to Suppress (comma-separated)</label>
+                    <input type="text" id="maint-alert-types" placeholder="CPU_HIGH,DEVICE_OFFLINE" autocomplete="one-time-code">
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Notes</label>
-                        <textarea id="maint-notes" rows="2" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px"></textarea>
-                    </div>
+                <div class="form-group">
+                    <label>Notes</label>
+                    <textarea id="maint-notes" rows="3" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px" placeholder="Reason for maintenance, contact info, etc."></textarea>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" data-action="close-maint-modal">Cancel</button>

@@ -1797,33 +1797,78 @@
 
     function renderMaintenanceTable(windows) {
         var tbody = document.querySelector('#maintenance-table tbody');
-        var now = new Date();
-        var html = windows.map(function(w) {
-            var start = new Date(w.start_time);
-            var end = new Date(w.end_time);
-            var status = 'Expired';
-            var statusClass = 'unknown';
-            if (now >= start && now <= end) { status = 'Active'; statusClass = 'warning'; }
-            else if (now < start) { status = 'Scheduled'; statusClass = 'info'; }
+        if (!windows.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-icon">&#128295;</div>No maintenance windows scheduled</td></tr>';
+            return;
+        }
+        // Fetch device and site names for display
+        Promise.all([
+            apiFetch(API_BASE + '/devices'),
+            apiFetch(API_BASE + '/sites')
+        ]).then(function(results) {
+            var deviceMap = {};
+            var siteMap = {};
+            if (results[0] && results[0].data) {
+                results[0].data.forEach(function(d) { deviceMap[d.id] = d.name + (d.ip_address ? ' (' + d.ip_address + ')' : ''); });
+            }
+            if (results[1] && results[1].data) {
+                results[1].data.forEach(function(s) { siteMap[s.id] = s.name; });
+            }
+            var now = new Date();
+            var html = windows.map(function(w) {
+                var start = new Date(w.start_time);
+                var end = new Date(w.end_time);
+                var status = 'Expired';
+                var statusClass = 'unknown';
+                if (now >= start && now <= end) { status = 'Active'; statusClass = 'warning'; }
+                else if (now < start) { status = 'Scheduled'; statusClass = 'info'; }
 
-            var scope = 'All Devices';
-            if (w.device_id) scope = 'Device #' + w.device_id;
-            if (w.site_id) scope = 'Site #' + w.site_id;
+                var scope = 'All Devices';
+                if (w.device_id) scope = deviceMap[w.device_id] || ('Device #' + w.device_id);
+                if (w.site_id) scope = siteMap[w.site_id] || ('Site #' + w.site_id);
 
-            return '<tr>' +
-                '<td>' + escapeHtml(w.name) + '</td>' +
-                '<td>' + scope + '</td>' +
-                '<td>' + formatDate(w.start_time) + '</td>' +
-                '<td>' + formatDate(w.end_time) + '</td>' +
-                '<td>' + (w.recurring ? 'Yes' : 'No') + '</td>' +
-                '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
-                '<td>' +
-                    '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button> ' +
-                    '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
-                '</td>' +
-            '</tr>';
-        }).join('');
-        tbody.innerHTML = html || '<tr><td colspan="7" class="empty-state">No maintenance windows</td></tr>';
+                return '<tr>' +
+                    '<td>' + escapeHtml(w.name) + '</td>' +
+                    '<td>' + escapeHtml(scope) + '</td>' +
+                    '<td>' + formatDate(w.start_time) + '</td>' +
+                    '<td>' + formatDate(w.end_time) + '</td>' +
+                    '<td>' + (w.recurring ? 'Yes' : 'No') + '</td>' +
+                    '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
+                    '<td><span class="maint-table-actions">' +
+                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button> ' +
+                        '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
+                    '</span></td>' +
+                '</tr>';
+            }).join('');
+            tbody.innerHTML = html;
+        })['catch'](function() {
+            // Fallback: render with IDs if fetch fails
+            var now = new Date();
+            var html = windows.map(function(w) {
+                var start = new Date(w.start_time);
+                var end = new Date(w.end_time);
+                var status = 'Expired';
+                var statusClass = 'unknown';
+                if (now >= start && now <= end) { status = 'Active'; statusClass = 'warning'; }
+                else if (now < start) { status = 'Scheduled'; statusClass = 'info'; }
+                var scope = 'All Devices';
+                if (w.device_id) scope = 'Device #' + w.device_id;
+                if (w.site_id) scope = 'Site #' + w.site_id;
+                return '<tr>' +
+                    '<td>' + escapeHtml(w.name) + '</td>' +
+                    '<td>' + scope + '</td>' +
+                    '<td>' + formatDate(w.start_time) + '</td>' +
+                    '<td>' + formatDate(w.end_time) + '</td>' +
+                    '<td>' + (w.recurring ? 'Yes' : 'No') + '</td>' +
+                    '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
+                    '<td><span class="maint-table-actions">' +
+                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button> ' +
+                        '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
+                    '</span></td>' +
+                '</tr>';
+            }).join('');
+            tbody.innerHTML = html;
+        });
     }
 
     function showMaintModal(id) {
@@ -1833,18 +1878,45 @@
         document.getElementById('maint-id').value = '';
         document.getElementById('maint-suppress-all').checked = true;
         document.getElementById('maint-alert-types-row').style.display = 'none';
+        document.getElementById('maint-scope-device').style.display = 'none';
+        document.getElementById('maint-scope-site').style.display = 'none';
 
-        // Populate device/site selects
+        // Pre-fill datetime defaults: start=now, end=now+2h
+        var now = new Date();
+        var end = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        function toLocal(d) { return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
+        document.getElementById('maint-start').value = toLocal(now);
+        document.getElementById('maint-end').value = toLocal(end);
+
+        // Populate device select from API (not currentDevices which may be empty)
         var devSelect = document.getElementById('maint-device-id');
         var siteSelect = document.getElementById('maint-site-id');
-        devSelect.innerHTML = '<option value="">Select Device</option>' + currentDevices.map(function(d) {
-            return '<option value="' + d.id + '">' + escapeHtml(d.name) + '</option>';
-        }).join('');
+        apiFetch(API_BASE + '/devices').then(function(r) {
+            if (r && r.data) {
+                devSelect.innerHTML = '<option value="">Select Device</option>' + r.data.map(function(d) {
+                    var label = escapeHtml(d.name);
+                    if (d.ip_address) label += ' (' + escapeHtml(d.ip_address) + ')';
+                    return '<option value="' + d.id + '">' + label + '</option>';
+                }).join('');
+                // Re-apply device selection for edit mode
+                if (id) {
+                    var w = currentMaintenanceWindows.find(function(x) { return x.id === id; });
+                    if (w && w.device_id) devSelect.value = w.device_id;
+                }
+            }
+        });
         apiFetch(API_BASE + '/sites').then(function(r) {
             if (r && r.data) {
                 siteSelect.innerHTML = '<option value="">Select Site</option>' + r.data.map(function(s) {
-                    return '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>';
+                    var label = escapeHtml(s.name);
+                    if (s.region) label += ' (' + escapeHtml(s.region) + ')';
+                    return '<option value="' + s.id + '">' + label + '</option>';
                 }).join('');
+                // Re-apply site selection for edit mode
+                if (id) {
+                    var w = currentMaintenanceWindows.find(function(x) { return x.id === id; });
+                    if (w && w.site_id) siteSelect.value = w.site_id;
+                }
             }
         });
 
@@ -1859,17 +1931,19 @@
                 document.getElementById('maint-alert-types').value = w.alert_types || '';
             }
             document.getElementById('maint-notes').value = w.notes || '';
-            if (w.start_time) document.getElementById('maint-start').value = w.start_time.slice(0,16);
-            if (w.end_time) document.getElementById('maint-end').value = w.end_time.slice(0,16);
+            if (w.start_time) document.getElementById('maint-start').value = w.start_time.slice(0, 16);
+            if (w.end_time) document.getElementById('maint-end').value = w.end_time.slice(0, 16);
+            var scopeVal = 'all';
             if (w.device_id) {
-                document.getElementById('maint-scope').value = 'device';
+                scopeVal = 'device';
                 document.getElementById('maint-scope-device').style.display = '';
-                document.getElementById('maint-device-id').value = w.device_id;
             } else if (w.site_id) {
-                document.getElementById('maint-scope').value = 'site';
+                scopeVal = 'site';
                 document.getElementById('maint-scope-site').style.display = '';
-                document.getElementById('maint-site-id').value = w.site_id;
             }
+            // Set scope toggle radio
+            var scopeRadio = document.querySelector('input[name="maint-scope"][value="' + scopeVal + '"]');
+            if (scopeRadio) scopeRadio.checked = true;
         }
     }
 
@@ -1877,12 +1951,13 @@
         document.getElementById('maint-modal').classList.remove('active');
     }
 
-    // Toggle scope fields
-    var maintScope = document.getElementById('maint-scope');
-    if (maintScope) {
-        maintScope.addEventListener('change', function() {
-            document.getElementById('maint-scope-device').style.display = this.value === 'device' ? '' : 'none';
-            document.getElementById('maint-scope-site').style.display = this.value === 'site' ? '' : 'none';
+    // Toggle scope fields (radio buttons)
+    var maintScopeToggle = document.getElementById('maint-scope-toggle');
+    if (maintScopeToggle) {
+        maintScopeToggle.addEventListener('change', function(e) {
+            if (e.target.name !== 'maint-scope') return;
+            document.getElementById('maint-scope-device').style.display = e.target.value === 'device' ? '' : 'none';
+            document.getElementById('maint-scope-site').style.display = e.target.value === 'site' ? '' : 'none';
         });
     }
 
@@ -1898,7 +1973,8 @@
         maintForm.addEventListener('submit', function(e) {
             e.preventDefault();
             var id = document.getElementById('maint-id').value;
-            var scope = document.getElementById('maint-scope').value;
+            var scopeRadio = document.querySelector('input[name="maint-scope"]:checked');
+            var scope = scopeRadio ? scopeRadio.value : 'all';
             var data = {
                 name: document.getElementById('maint-name').value,
                 start_time: new Date(document.getElementById('maint-start').value).toISOString(),

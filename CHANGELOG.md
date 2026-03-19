@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.131] - 2026-03-18
+
+### Fixed
+- Maintenance window device dropdown was empty when navigating directly to page (fetched from `currentDevices` which required visiting Devices page first) — now fetches from `/api/devices` API
+- Maintenance table scope column showed "Device #3" instead of actual device/site names — now resolves names via API
+- Scope toggle in edit mode now correctly restores the saved scope selection
+
+### Improved
+- Maintenance modal: replaced scope dropdown with segmented radio toggle for better UX
+- Maintenance modal: pre-fills start time (now) and end time (now + 2 hours) for new windows
+- Maintenance modal: device select shows IP address, site select shows region
+- Maintenance modal: widened to 600px with better form spacing and placeholder text
+- Stat cards: added colored left border accents (red=active, blue=scheduled, gray=total)
+- Table: improved empty state with icon, hover-reveal action buttons
+- Notes textarea enlarged with placeholder guidance
+
 ## [0.10.130] - 2026-03-18
 
 ### Fixed
