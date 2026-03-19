@@ -453,11 +453,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.DELETE("/api/sites/:id/alert-config", handler.DeleteSiteAlertConfig)
 
 		// Maintenance windows
+		admin.GET("/api/maintenance-windows/active", handler.GetActiveMaintenanceWindows)
 		admin.GET("/api/maintenance-windows", handler.ListMaintenanceWindows)
 		admin.POST("/api/maintenance-windows", handler.CreateMaintenanceWindow)
 		admin.PUT("/api/maintenance-windows/:id", handler.UpdateMaintenanceWindow)
 		admin.DELETE("/api/maintenance-windows/:id", handler.DeleteMaintenanceWindow)
-		admin.GET("/api/maintenance-windows/active", handler.GetActiveMaintenanceWindows)
 
 		admin.POST("/api/logout", handler.Logout)
 

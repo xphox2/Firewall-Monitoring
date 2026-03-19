@@ -79,6 +79,13 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
+	// Verify exists
+	var existing models.MaintenanceWindow
+	if err := h.db.Gorm().First(&existing, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Maintenance window not found"))
+		return
+	}
+
 	var window models.MaintenanceWindow
 	if err := c.ShouldBindJSON(&window); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
@@ -86,6 +93,7 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 	}
 
 	window.ID = id
+	window.CreatedAt = existing.CreatedAt
 	if err := h.db.UpdateMaintenanceWindow(&window); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update maintenance window"))
 		return

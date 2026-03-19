@@ -107,7 +107,11 @@ func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteAlertPolicy(id); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		if err.Error() == "cannot delete the default alert policy" {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+		} else {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete alert policy"))
+		}
 		return
 	}
 

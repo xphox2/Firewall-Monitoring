@@ -81,49 +81,30 @@ func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
 func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	var errs []error
 
-	if nc.PolicyActive {
-		// Policy-driven: only send to explicitly enabled channels
-		if nc.EnableEmail && nc.EmailEnabled {
-			if err := n.sendEmail(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("email failed: %w", err))
-			}
+	// Determine per-channel eligibility: policy-driven or legacy
+	sendEmail := nc.EmailEnabled && (!nc.PolicyActive || nc.EnableEmail)
+	sendSlack := nc.SlackWebhookURL != "" && (!nc.PolicyActive || nc.EnableSlack)
+	sendDiscord := nc.DiscordWebhookURL != "" && (!nc.PolicyActive || nc.EnableDiscord)
+	sendWebhook := nc.WebHookURL != "" && (!nc.PolicyActive || nc.EnableWebhook)
+
+	if sendEmail {
+		if err := n.sendEmail(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("email failed: %w", err))
 		}
-		if nc.EnableSlack && nc.SlackWebhookURL != "" {
-			if err := n.sendSlack(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("slack failed: %w", err))
-			}
+	}
+	if sendSlack {
+		if err := n.sendSlack(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("slack failed: %w", err))
 		}
-		if nc.EnableDiscord && nc.DiscordWebhookURL != "" {
-			if err := n.sendDiscord(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("discord failed: %w", err))
-			}
+	}
+	if sendDiscord {
+		if err := n.sendDiscord(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("discord failed: %w", err))
 		}
-		if nc.EnableWebhook && nc.WebHookURL != "" {
-			if err := n.sendWebhook(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("webhook failed: %w", err))
-			}
-		}
-	} else {
-		// Legacy behaviour: send to all configured channels
-		if nc.EmailEnabled {
-			if err := n.sendEmail(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("email failed: %w", err))
-			}
-		}
-		if nc.SlackWebhookURL != "" {
-			if err := n.sendSlack(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("slack failed: %w", err))
-			}
-		}
-		if nc.DiscordWebhookURL != "" {
-			if err := n.sendDiscord(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("discord failed: %w", err))
-			}
-		}
-		if nc.WebHookURL != "" {
-			if err := n.sendWebhook(alert, nc); err != nil {
-				errs = append(errs, fmt.Errorf("webhook failed: %w", err))
-			}
+	}
+	if sendWebhook {
+		if err := n.sendWebhook(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("webhook failed: %w", err))
 		}
 	}
 

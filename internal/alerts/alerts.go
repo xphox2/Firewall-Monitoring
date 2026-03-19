@@ -26,6 +26,12 @@ type AlertManager struct {
 	policyCache   PolicyCache
 }
 
+// firedEntry pairs an alert with its resolved policy config for deferred notification.
+type firedEntry struct {
+	alert    models.Alert
+	resolved ResolvedAlertConfig
+}
+
 func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.Database) *AlertManager {
 	return &AlertManager{
 		config:        cfg,
@@ -72,10 +78,6 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		{"SESSIONS_HIGH", fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount)},
 	}
 
-	type firedEntry struct {
-		alert    models.Alert
-		resolved ResolvedAlertConfig
-	}
 	var fired []firedEntry
 
 	am.mu.Lock()
@@ -125,14 +127,25 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		}
 	}
 
-	// Recovery checks
-	for _, chk := range checks {
-		am.mu.Lock()
-		resolved := am.resolveAlertConfig(status.DeviceID, siteID, chk.alertType)
-		am.mu.Unlock()
-		if resolved.Threshold > 0 && chk.current < resolved.Threshold {
-			am.sendRecovery(chk.metricKey, chk.alertType,
-				fmt.Sprintf("%s recovered to %.1f", chk.metric, chk.current), status.DeviceID)
+	// Recovery checks — batch resolve under one lock, skip if in maintenance
+	am.mu.Lock()
+	type recoveryCheck struct {
+		metricCheck
+		resolved ResolvedAlertConfig
+	}
+	recoveryChecks := make([]recoveryCheck, len(checks))
+	for i, chk := range checks {
+		recoveryChecks[i] = recoveryCheck{chk, am.resolveAlertConfig(status.DeviceID, siteID, chk.alertType)}
+	}
+	am.mu.Unlock()
+
+	for _, rc := range recoveryChecks {
+		if rc.resolved.InMaintenance {
+			continue
+		}
+		if rc.resolved.Threshold > 0 && rc.current < rc.resolved.Threshold {
+			am.sendRecovery(rc.metricKey, rc.alertType,
+				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID)
 		}
 	}
 
@@ -140,10 +153,6 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 }
 
 func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats, siteID *uint) error {
-	type firedEntry struct {
-		alert    models.Alert
-		resolved ResolvedAlertConfig
-	}
 	var fired []firedEntry
 
 	am.mu.Lock()
@@ -251,10 +260,6 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 // CheckInterfaceErrors alerts when interfaces accumulate errors or discards since last poll.
 // prevMap maps "deviceID_ifName" to the previous InterfaceStats for delta computation.
 func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats, prevMap map[string]*models.InterfaceStats, siteID *uint) error {
-	type firedEntry struct {
-		alert    models.Alert
-		resolved ResolvedAlertConfig
-	}
 	var fired []firedEntry
 
 	am.mu.Lock()
@@ -535,10 +540,6 @@ func (am *AlertManager) saveAlert(alert *models.Alert) {
 }
 
 func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *uint) error {
-	type firedEntry struct {
-		alert    models.Alert
-		resolved ResolvedAlertConfig
-	}
 	var fired []firedEntry
 
 	am.mu.Lock()

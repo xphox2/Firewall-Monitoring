@@ -2561,17 +2561,13 @@ func (d *Database) GetDeviceFirstPoll(deviceID uint) (time.Time, error) {
 // --- Alert Policy CRUD ---
 
 func (d *Database) EnsureDefaultPolicy() {
-	var count int64
-	d.db.Model(&models.AlertPolicy{}).Where("is_default = ?", true).Count(&count)
-	if count == 0 {
-		policy := models.AlertPolicy{
-			Name:            "Default",
-			Description:     "Default alert policy — all notifications use global settings",
-			IsDefault:       true,
-			CooldownMinutes: 5,
-		}
-		d.db.Create(&policy)
-	}
+	var policy models.AlertPolicy
+	d.db.Where("is_default = ?", true).Attrs(models.AlertPolicy{
+		Name:            "Default",
+		Description:     "Default alert policy — all notifications use global settings",
+		IsDefault:       true,
+		CooldownMinutes: 5,
+	}).FirstOrCreate(&policy)
 }
 
 func (d *Database) GetAlertPolicies() ([]models.AlertPolicy, error) {
@@ -2654,6 +2650,9 @@ func (d *Database) UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error 
 		cfg.ID = existing.ID
 		return d.db.Save(cfg).Error
 	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
 	return d.db.Create(cfg).Error
 }
 
@@ -2684,6 +2683,9 @@ func (d *Database) UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error {
 	if err == nil {
 		cfg.ID = existing.ID
 		return d.db.Save(cfg).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
 	}
 	return d.db.Create(cfg).Error
 }
@@ -2740,9 +2742,9 @@ func (d *Database) UpdateAlertNotes(id uint, notes string) error {
 	return d.db.Model(&models.Alert{}).Where("id = ?", id).Update("notes", notes).Error
 }
 
-func (d *Database) GetUnacknowledgedAlerts(olderThan time.Time) ([]models.Alert, error) {
+func (d *Database) GetUnacknowledgedAlerts(since time.Time) ([]models.Alert, error) {
 	var alerts []models.Alert
-	err := d.db.Where("acknowledged = ? AND suppressed = ? AND timestamp < ?", false, false, olderThan).
+	err := d.db.Where("acknowledged = ? AND suppressed = ? AND timestamp > ?", false, false, since).
 		Find(&alerts).Error
 	return alerts, err
 }

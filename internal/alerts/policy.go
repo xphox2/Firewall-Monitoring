@@ -36,6 +36,7 @@ type ResolvedAlertConfig struct {
 // Refreshed once per poll cycle alongside threshold refresh.
 type PolicyCache struct {
 	policies      []models.AlertPolicy
+	policyByID    map[uint]*models.AlertPolicy
 	deviceConfigs map[uint]*models.DeviceAlertConfig
 	siteConfigs   map[uint]*models.SiteAlertConfig
 	windows       []models.MaintenanceWindow
@@ -75,27 +76,29 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 
 	cache := PolicyCache{
 		policies:      policies,
+		policyByID:    make(map[uint]*models.AlertPolicy, len(policies)),
 		deviceConfigs: make(map[uint]*models.DeviceAlertConfig, len(deviceConfigs)),
 		siteConfigs:   make(map[uint]*models.SiteAlertConfig, len(siteConfigs)),
 		windows:       windows,
 		loaded:        true,
 	}
 
+	for i := range policies {
+		cache.policyByID[policies[i].ID] = &policies[i]
+		if policies[i].IsDefault {
+			cache.defaultPolicy = &policies[i]
+		}
+	}
 	for i := range deviceConfigs {
 		cache.deviceConfigs[deviceConfigs[i].DeviceID] = &deviceConfigs[i]
 	}
 	for i := range siteConfigs {
 		cache.siteConfigs[siteConfigs[i].SiteID] = &siteConfigs[i]
 	}
-	for i := range policies {
-		if policies[i].IsDefault {
-			cache.defaultPolicy = &policies[i]
-			break
-		}
-	}
 
-	// No lock needed here — policyCache is only read/written under am.mu
+	am.mu.Lock()
 	am.policyCache = cache
+	am.mu.Unlock()
 }
 
 // resolveAlertConfig computes the effective alert configuration for a given device and alert type.
@@ -194,7 +197,8 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 	// Site-level threshold/cooldown overrides
 	if siteID != nil {
 		if siteCfg := am.policyCache.siteConfigs[*siteID]; siteCfg != nil {
-			resolved.Threshold = overrideSiteThreshold(resolved.Threshold, siteCfg, alertType)
+			resolved.Threshold = overrideThreshold(resolved.Threshold, alertType,
+				siteCfg.CPUThreshold, siteCfg.MemoryThreshold, siteCfg.DiskThreshold, siteCfg.SessionThreshold)
 			if siteCfg.CooldownMinutes > 0 {
 				resolved.CooldownMinutes = siteCfg.CooldownMinutes
 			}
@@ -203,12 +207,8 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 
 	// Device-level threshold/cooldown overrides (most specific wins)
 	if devCfg != nil {
-		resolved.Threshold = overrideThresholdFloat(resolved.Threshold, &models.DeviceAlertConfig{
-			CPUThreshold:     devCfg.CPUThreshold,
-			MemoryThreshold:  devCfg.MemoryThreshold,
-			DiskThreshold:    devCfg.DiskThreshold,
-			SessionThreshold: devCfg.SessionThreshold,
-		}, alertType)
+		resolved.Threshold = overrideThreshold(resolved.Threshold, alertType,
+			devCfg.CPUThreshold, devCfg.MemoryThreshold, devCfg.DiskThreshold, devCfg.SessionThreshold)
 		if devCfg.CooldownMinutes > 0 {
 			resolved.CooldownMinutes = devCfg.CooldownMinutes
 		}
@@ -254,12 +254,7 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 }
 
 func (am *AlertManager) findPolicy(id uint) *models.AlertPolicy {
-	for i := range am.policyCache.policies {
-		if am.policyCache.policies[i].ID == id {
-			return &am.policyCache.policies[i]
-		}
-	}
-	return nil
+	return am.policyCache.policyByID[id]
 }
 
 func (am *AlertManager) globalThresholdForType(alertType string) float64 {
@@ -289,8 +284,9 @@ func defaultSeverityForType(alertType string) string {
 	}
 }
 
-func overrideThresholdFloat(current float64, cfg *models.DeviceAlertConfig, alertType string) float64 {
-	cpu, mem, disk, sess := cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold
+// overrideThreshold returns the override threshold for the given alert type if > 0.
+// Works for both device and site configs by accepting raw field values.
+func overrideThreshold(current float64, alertType string, cpu, mem, disk float64, sess int) float64 {
 	switch alertType {
 	case "CPU_HIGH":
 		if cpu > 0 {
@@ -312,32 +308,11 @@ func overrideThresholdFloat(current float64, cfg *models.DeviceAlertConfig, aler
 	return current
 }
 
-func overrideSiteThreshold(current float64, cfg *models.SiteAlertConfig, alertType string) float64 {
-	switch alertType {
-	case "CPU_HIGH":
-		if cfg.CPUThreshold > 0 {
-			return cfg.CPUThreshold
-		}
-	case "MEMORY_HIGH":
-		if cfg.MemoryThreshold > 0 {
-			return cfg.MemoryThreshold
-		}
-	case "DISK_HIGH":
-		if cfg.DiskThreshold > 0 {
-			return cfg.DiskThreshold
-		}
-	case "SESSIONS_HIGH":
-		if cfg.SessionThreshold > 0 {
-			return float64(cfg.SessionThreshold)
-		}
-	}
-	return current
-}
-
 // BuildNotifyConfigFromResolved creates a NotifyConfig for use with the notifier.
 // It merges resolved policy config with global notification settings as fallbacks.
 func BuildNotifyConfigFromResolved(resolved ResolvedAlertConfig, globalNC notifier.NotifyConfig) notifier.NotifyConfig {
 	nc := notifier.NotifyConfig{
+		PolicyActive:  resolved.PolicyID != nil,
 		EnableEmail:   resolved.NotifyEmail,
 		EnableSlack:   resolved.NotifySlack,
 		EnableDiscord: resolved.NotifyDiscord,

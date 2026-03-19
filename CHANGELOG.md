@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.129] - 2026-03-18
+
+### Fixed
+- **Critical: Escalation query inverted** — `GetUnacknowledgedAlerts` used `timestamp < cutoff` instead of `timestamp > cutoff`, causing escalation checks to query alerts older than 24h instead of newer
+- **Critical: Missing PolicyActive flag** — `BuildNotifyConfigFromResolved` did not set `PolicyActive: true`, so policy-based channel routing was silently ignored and all channels fired via legacy path
+- **Critical: Route conflict** — `GET /api/maintenance-windows/active` registered after `/:id` param route, causing Gin to match "active" as an ID; moved specific route before parameterized routes
+- **Race condition in RefreshPolicyCache** — `policyCache` struct was assigned without holding `am.mu`, allowing torn reads during concurrent alert checks; now properly locks before assignment
+- **Upsert error masking** — `UpsertDeviceAlertConfig` and `UpsertSiteAlertConfig` treated all DB errors as "not found" and retried with Create; now explicitly checks for `gorm.ErrRecordNotFound`
+- **Recovery during maintenance** — Recovery notifications were sent even when the original alert was suppressed by a maintenance window; now skips recovery if `InMaintenance` is true
+- **EnsureDefaultPolicy race** — Check-then-create pattern could create duplicate default policies under concurrent startup; replaced with GORM `FirstOrCreate`
+- **UpdateMaintenanceWindow missing existence check** — Blindly updated by ID without verifying record exists; now returns 404 if not found
+- **DeleteAlertPolicy error leak** — Exposed raw database error messages to API response; now returns generic error for non-business errors
+- **Notes length unbounded** — `UpdateAlertNotes` accepted arbitrarily long notes; now validates max 4000 characters
+
+### Changed
+- **Performance: O(n) → O(1) policy lookup** — Added `policyByID` map to `PolicyCache` for constant-time policy resolution instead of linear scan
+- **Performance: Batch recovery lock** — Recovery checks in `CheckSystemStatus` now resolve all 4 alert types under a single lock acquisition instead of 4 separate lock/unlock cycles
+- **Code quality: Deduplicate `firedEntry`** — Extracted `firedEntry` struct to package-level type instead of 4 identical inline definitions
+- **Code quality: Consolidate threshold overrides** — Merged `overrideThresholdFloat` and `overrideSiteThreshold` into single `overrideThreshold` function accepting raw field values
+- **Code quality: Simplify SendAlert** — Replaced duplicated policy/legacy channel-check branches with unified boolean eligibility computation
+
 ## [0.10.128] - 2026-03-18
 
 ### Added

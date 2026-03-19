@@ -258,6 +258,11 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 		return
 	}
 
+	if len(body.Notes) > 4000 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Notes must be under 4000 characters"))
+		return
+	}
+
 	if err := h.db.UpdateAlertNotes(id, body.Notes); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update alert notes"))
 		return
