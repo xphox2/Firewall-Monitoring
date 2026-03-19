@@ -56,6 +56,10 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Policy name is required"))
 		return
 	}
+	if len(policy.Name) > 200 || len(policy.Description) > 1000 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name (max 200) or description (max 1000) too long"))
+		return
+	}
 
 	policy.ID = 0
 	if err := h.db.CreateAlertPolicy(&policy); err != nil {

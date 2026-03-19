@@ -784,7 +784,7 @@
             if (a.suppressed) {
                 statusCol = '<span class="badge unknown">MAINT</span>';
             } else if (a.acknowledged) {
-                statusCol = '<span class="badge info" title="' + (a.acknowledged_at ? formatDate(a.acknowledged_at) : '') + (a.notes ? ' — ' + escapeHtml(a.notes) : '') + '">ACK</span>';
+                statusCol = '<span class="badge info" title="' + escapeHtml((a.acknowledged_at ? formatDate(a.acknowledged_at) : '') + (a.notes ? ' — ' + a.notes : '')) + '">ACK</span>';
             } else {
                 statusCol = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Ack</button>';
             }

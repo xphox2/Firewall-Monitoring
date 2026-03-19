@@ -43,25 +43,6 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 	}
 }
 
-// checkThreshold creates an alert if the metric exceeds the threshold and the
-// cooldown for the given key has expired. Must be called with am.mu held.
-func (am *AlertManager) checkThreshold(now time.Time, deviceID uint, metricKey, alertType, severity, message, metricName string, current, threshold float64) *models.Alert {
-	if am.canAlert(metricKey, now) {
-		alert := models.Alert{
-			Timestamp:    now,
-			DeviceID:     deviceID,
-			AlertType:    alertType,
-			Severity:     severity,
-			Message:      message,
-			MetricName:   metricName,
-			Threshold:    threshold,
-			CurrentValue: current,
-		}
-		am.lastAlert[metricKey] = now
-		return &alert
-	}
-	return nil
-}
 
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *uint) error {
 	type metricCheck struct {
@@ -676,6 +657,13 @@ func (am *AlertManager) CheckEscalations() {
 		return
 	}
 
+	// Collect escalated alert IDs for batch update
+	type escalated struct {
+		id       uint
+		newCount int
+	}
+	var escalatedIDs []escalated
+
 	for _, alert := range alerts {
 		if alert.PolicyID == nil {
 			continue
@@ -687,43 +675,23 @@ func (am *AlertManager) CheckEscalations() {
 		if alert.EscalationCount >= policy.EscalationRepeat {
 			continue
 		}
-		// Check if enough time has passed since last escalation (or original alert)
 		elapsed := time.Since(alert.Timestamp)
 		expectedEscalations := int(elapsed.Minutes()) / policy.EscalationMinutes
 		if expectedEscalations <= alert.EscalationCount {
 			continue
 		}
 
-		// Re-send notification
-		nc := notifier.NotifyConfig{
-			PolicyActive:      true,
-			EnableEmail:       policy.NotifyEmail,
-			EnableSlack:       policy.NotifySlack,
-			EnableDiscord:     policy.NotifyDiscord,
-			EnableWebhook:     policy.NotifyWebhook,
-			EmailEnabled:      globalNC.EmailEnabled,
-			SMTPHost:          globalNC.SMTPHost,
-			SMTPPort:          globalNC.SMTPPort,
-			SMTPUsername:      globalNC.SMTPUsername,
-			SMTPPassword:      globalNC.SMTPPassword,
-			SMTPFrom:          globalNC.SMTPFrom,
-			SMTPTo:            policy.EmailRecipients,
-			SlackWebhookURL:   policy.SlackWebhookURL,
-			DiscordWebhookURL: policy.DiscordWebhookURL,
-			WebHookURL:        policy.WebhookURL,
-		}
-		if nc.SMTPTo == "" {
-			nc.SMTPTo = globalNC.SMTPTo
-		}
-		if nc.SlackWebhookURL == "" {
-			nc.SlackWebhookURL = globalNC.SlackWebhookURL
-		}
-		if nc.DiscordWebhookURL == "" {
-			nc.DiscordWebhookURL = globalNC.DiscordWebhookURL
-		}
-		if nc.WebHookURL == "" {
-			nc.WebHookURL = globalNC.WebHookURL
-		}
+		nc := BuildNotifyConfigFromResolved(ResolvedAlertConfig{
+			PolicyID:      alert.PolicyID,
+			NotifyEmail:   policy.NotifyEmail,
+			NotifySlack:   policy.NotifySlack,
+			NotifyDiscord: policy.NotifyDiscord,
+			NotifyWebhook: policy.NotifyWebhook,
+			EmailRecipients: policy.EmailRecipients,
+			SlackURL:        policy.SlackWebhookURL,
+			DiscordURL:      policy.DiscordWebhookURL,
+			WebhookURL:      policy.WebhookURL,
+		}, globalNC)
 
 		escalatedAlert := alert
 		escalatedAlert.Message = fmt.Sprintf("[ESCALATION %d/%d] %s", alert.EscalationCount+1, policy.EscalationRepeat, alert.Message)
@@ -733,8 +701,12 @@ func (am *AlertManager) CheckEscalations() {
 			continue
 		}
 
-		// Update escalation count
-		am.db.Gorm().Model(&models.Alert{}).Where("id = ?", alert.ID).
-			Update("escalation_count", alert.EscalationCount+1)
+		escalatedIDs = append(escalatedIDs, escalated{alert.ID, alert.EscalationCount + 1})
+	}
+
+	// Batch update escalation counts
+	for _, e := range escalatedIDs {
+		am.db.Gorm().Model(&models.Alert{}).Where("id = ?", e.id).
+			Update("escalation_count", e.newCount)
 	}
 }

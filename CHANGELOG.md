@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.130] - 2026-03-18
+
+### Fixed
+- Remove dead code: unused `checkThreshold` method left over from refactor
+- Add composite index `idx_alert_unack(acknowledged, suppressed, timestamp)` for efficient escalation queries
+- Add index on `policy_id` for alert policy lookups
+- Escape `formatDate()` output in ACK badge title attribute for defense-in-depth XSS prevention
+- Add input length validation on alert policy name (200 chars) and description (1000 chars)
+
+### Changed
+- Refactor `CheckEscalations` to use `BuildNotifyConfigFromResolved` instead of manually constructing NotifyConfig, reducing code duplication
+- Separate escalation notification sending from DB updates — all updates happen after notifications complete
+
 ## [0.10.129] - 2026-03-18
 
 ### Fixed

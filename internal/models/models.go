@@ -177,7 +177,7 @@ type TrapEvent struct {
 
 type Alert struct {
 	ID              uint       `json:"id" gorm:"primaryKey"`
-	Timestamp       time.Time  `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2"`
+	Timestamp       time.Time  `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2;index:idx_alert_unack,priority:3"`
 	DeviceID        uint       `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
 	AlertType       string     `json:"alert_type"`
 	Severity        string     `json:"severity"`
@@ -186,13 +186,13 @@ type Alert struct {
 	Threshold       float64    `json:"threshold"`
 	CurrentValue    float64    `json:"current_value"`
 	Notified        bool       `json:"notified"`
-	Acknowledged    bool       `json:"acknowledged" gorm:"index:idx_alert_ack"`
+	Acknowledged    bool       `json:"acknowledged" gorm:"index:idx_alert_ack;index:idx_alert_unack,priority:1"`
 	AcknowledgedAt  *time.Time `json:"acknowledged_at"`
 	ResolvedAt      *time.Time `json:"resolved_at"`
 	Notes           string     `json:"notes"`
-	PolicyID        *uint      `json:"policy_id"`
+	PolicyID        *uint      `json:"policy_id" gorm:"index"`
 	EscalationCount int        `json:"escalation_count" gorm:"default:0"`
-	Suppressed      bool       `json:"suppressed" gorm:"default:false"`
+	Suppressed      bool       `json:"suppressed" gorm:"default:false;index:idx_alert_unack,priority:2"`
 }
 
 type AlertPolicy struct {
