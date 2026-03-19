@@ -294,6 +294,7 @@
                     '<td id="dev-sess-' + d.id + '" style="color:#484f58">-</td>' +
                     '<td><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
                     '<td>' +
+                        '<button class="btn secondary sm" data-action="device-alert-config" data-id="' + d.id + '">Alerts</button> ' +
                         '<button class="btn secondary sm" data-action="edit-device" data-id="' + d.id + '">Edit</button> ' +
                         '<button class="btn danger sm" data-action="delete-device" data-id="' + d.id + '">Delete</button>' +
                     '</td>' +
@@ -301,8 +302,33 @@
             }).join('') || '<tr><td colspan="9" class="empty-state">No devices configured</td></tr>';
 
             loadDeviceEnrichments();
+            loadDeviceAlertIndicators();
         })['catch'](function(e) {
             console.error('Failed to load devices:', e);
+        });
+    }
+
+    function loadDeviceAlertIndicators() {
+        currentDevices.forEach(function(d) {
+            apiFetch(API_BASE + '/devices/' + d.id + '/alert-config').then(function(resp) {
+                if (!resp || !resp.data || !resp.data.id) return;
+                var cfg = resp.data;
+                var nameCell = document.querySelector('#devices-table a[href="/admin/devices/' + d.id + '"]');
+                if (!nameCell) return;
+                // Remove existing indicators
+                var existing = nameCell.parentNode.querySelector('.device-alert-indicator');
+                if (existing) existing.remove();
+                var indicator = document.createElement('span');
+                indicator.className = 'device-alert-indicator';
+                if (!cfg.alerts_enabled) {
+                    indicator.className += ' muted';
+                    indicator.title = 'Alerts disabled';
+                } else {
+                    indicator.className += ' custom';
+                    indicator.title = 'Custom alert config';
+                }
+                nameCell.parentNode.insertBefore(indicator, nameCell.nextSibling);
+            })['catch'](function() {});
         });
     }
 
@@ -2003,6 +2029,113 @@
         })['catch'](function(e) { alert('Delete failed: ' + e.message); });
     }
 
+    // ---- Device Alert Config Modal ----
+    function showDeviceAlertModal(deviceId) {
+        var device = currentDevices.find(function(d) { return d.id === deviceId; });
+        var title = device ? 'Alert Configuration: ' + device.name : 'Device Alert Configuration';
+        document.getElementById('device-alert-modal-title').textContent = title;
+        document.getElementById('device-alert-device-id').value = deviceId;
+
+        // Reset form
+        document.getElementById('device-alert-enabled').checked = true;
+        document.getElementById('device-alert-cpu').value = '';
+        document.getElementById('device-alert-memory').value = '';
+        document.getElementById('device-alert-disk').value = '';
+        document.getElementById('device-alert-sessions').value = '';
+        document.getElementById('device-alert-cooldown').value = '';
+
+        // Load policies for dropdown
+        var policySelect = document.getElementById('device-alert-policy');
+        policySelect.innerHTML = '<option value="">— Inherit from site/global —</option>';
+
+        Promise.all([
+            apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config'),
+            apiFetch(API_BASE + '/alert-policies')
+        ]).then(function(results) {
+            var configResp = results[0];
+            var policiesResp = results[1];
+
+            // Populate policy dropdown
+            if (policiesResp && policiesResp.data) {
+                policiesResp.data.forEach(function(p) {
+                    var opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name;
+                    policySelect.appendChild(opt);
+                });
+            }
+
+            // Populate config values
+            if (configResp && configResp.data) {
+                var cfg = configResp.data;
+                document.getElementById('device-alert-enabled').checked = cfg.alerts_enabled !== false;
+                if (cfg.policy_id) policySelect.value = cfg.policy_id;
+                if (cfg.cpu_threshold) document.getElementById('device-alert-cpu').value = cfg.cpu_threshold;
+                if (cfg.memory_threshold) document.getElementById('device-alert-memory').value = cfg.memory_threshold;
+                if (cfg.disk_threshold) document.getElementById('device-alert-disk').value = cfg.disk_threshold;
+                if (cfg.session_threshold) document.getElementById('device-alert-sessions').value = cfg.session_threshold;
+                if (cfg.cooldown_minutes) document.getElementById('device-alert-cooldown').value = cfg.cooldown_minutes;
+            }
+
+            document.getElementById('device-alert-modal').classList.add('active');
+        })['catch'](function(e) {
+            alert('Failed to load alert config: ' + e.message);
+        });
+    }
+
+    function closeDeviceAlertModal() {
+        document.getElementById('device-alert-modal').classList.remove('active');
+    }
+
+    function resetDeviceAlertConfig() {
+        var deviceId = document.getElementById('device-alert-device-id').value;
+        if (!deviceId) return;
+        if (!confirm('Reset alert configuration to defaults? This removes all overrides for this device.')) return;
+        apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config', { method: 'DELETE' }).then(function() {
+            closeDeviceAlertModal();
+            loadDevices();
+        })['catch'](function(e) { alert('Reset failed: ' + e.message); });
+    }
+
+    var deviceAlertForm = document.getElementById('device-alert-form');
+    if (deviceAlertForm) {
+        deviceAlertForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var deviceId = document.getElementById('device-alert-device-id').value;
+            if (!deviceId) return;
+
+            var data = {
+                device_id: parseInt(deviceId),
+                alerts_enabled: document.getElementById('device-alert-enabled').checked
+            };
+
+            var policyVal = document.getElementById('device-alert-policy').value;
+            if (policyVal) data.policy_id = parseInt(policyVal);
+            else data.policy_id = null;
+
+            var cpu = document.getElementById('device-alert-cpu').value;
+            var mem = document.getElementById('device-alert-memory').value;
+            var disk = document.getElementById('device-alert-disk').value;
+            var sess = document.getElementById('device-alert-sessions').value;
+            var cool = document.getElementById('device-alert-cooldown').value;
+
+            data.cpu_threshold = cpu !== '' ? parseFloat(cpu) : 0;
+            data.memory_threshold = mem !== '' ? parseFloat(mem) : 0;
+            data.disk_threshold = disk !== '' ? parseFloat(disk) : 0;
+            data.session_threshold = sess !== '' ? parseInt(sess) : 0;
+            data.cooldown_minutes = cool !== '' ? parseInt(cool) : 0;
+
+            apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).then(function() {
+                closeDeviceAlertModal();
+                loadDevices();
+            })['catch'](function(err) { alert('Error saving alert config: ' + err.message); });
+        });
+    }
+
     // ---- Event Delegation (click) ----
     AC.delegateEvent('click', {
         'show-device-modal': function() { showDeviceModal(); },
@@ -2028,6 +2161,9 @@
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },
+        'device-alert-config': function(el) { showDeviceAlertModal(parseInt(el.dataset.id)); },
+        'close-device-alert-modal': function() { closeDeviceAlertModal(); },
+        'reset-device-alert-config': function() { resetDeviceAlertConfig(); },
         'test-device-connection': function(el) { testDeviceConnection(el); },
         'close-connection-modal': function() { closeConnectionModal(); },
         'edit-device': function(el) { editDevice(parseInt(el.dataset.id)); },

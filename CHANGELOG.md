@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.132] - 2026-03-18
+
+### Added
+- Per-device alert configuration modal accessible via "Alerts" button on each device row
+- Toggle switch for enabling/disabling alerts per device
+- Alert policy assignment dropdown (inherits from site/global when unset)
+- Threshold override fields for CPU, Memory, Disk, Sessions, and Cooldown
+- "Reset to Defaults" button to remove all device-level overrides
+- Visual indicators on device table: red dot for muted alerts, yellow dot for custom config
+
 ## [0.10.131] - 2026-03-18
 
 ### Fixed
