@@ -17,6 +17,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
+	"firewall-mon/internal/report"
 	"firewall-mon/internal/snmp"
 )
 
@@ -24,16 +25,20 @@ type Poller struct {
 	cfg            *config.Config
 	db             *database.Database
 	alertManager   *alerts.AlertManager
+	notifier       *notifier.Notifier
+	rollingStats   *report.RollingStats
 	prevIfaceStats map[string]*models.InterfaceStats // "deviceID_ifName" -> previous stats
 	ifaceStatsMu   sync.RWMutex
 	stopChan       chan struct{}
 }
 
-func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager) *Poller {
+func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager, notif *notifier.Notifier) *Poller {
 	return &Poller{
 		cfg:            cfg,
 		db:             db,
 		alertManager:   am,
+		notifier:       notif,
+		rollingStats:   report.NewRollingStats(120),
 		prevIfaceStats: make(map[string]*models.InterfaceStats),
 		stopChan:       make(chan struct{}),
 	}
@@ -241,6 +246,38 @@ func (p *Poller) pollDevice(device *models.Device) {
 			}
 			p.ifaceStatsMu.RUnlock()
 		}
+		// Real-time spike detection on interface traffic
+		if p.cfg.Alerts.SpikeAlertEnabled && p.rollingStats != nil && p.alertManager != nil {
+			threshold := p.cfg.Alerts.SpikeStdDevThreshold
+			if threshold <= 0 {
+				threshold = 3.0
+			}
+			for _, iface := range interfaces {
+				if iface.Status != "up" {
+					continue
+				}
+				spike := p.rollingStats.AddAndCheck(iface.DeviceID, iface.Name, iface.InBytes, iface.OutBytes, threshold)
+				if spike != nil {
+					spikeAlert := models.Alert{
+						Timestamp:    spike.Timestamp,
+						DeviceID:     iface.DeviceID,
+						AlertType:    "TRAFFIC_SPIKE",
+						Severity:     spike.Severity,
+						Message:      fmt.Sprintf("Traffic spike on %s: %.0f bytes (mean: %.0f, σ: %.0f)", iface.Name, spike.Value, spike.Mean, spike.StdDev),
+						MetricName:   fmt.Sprintf("traffic_%s", iface.Name),
+						CurrentValue: spike.Value,
+					}
+					if p.db != nil {
+						p.db.SaveAlert(&spikeAlert)
+					}
+					nc := notifier.SnapshotConfig(&p.cfg.Alerts)
+					if err := p.notifier.SendAlert(&spikeAlert, nc); err != nil {
+						log.Printf("Device %s: spike alert send error - %v", device.Name, err)
+					}
+				}
+			}
+		}
+
 		// Store current stats as previous for next poll cycle
 		p.ifaceStatsMu.Lock()
 		for i := range interfaces {
@@ -1219,9 +1256,43 @@ func (p *Poller) updateDeviceStatus(device *models.Device, status string) {
 	if p.alertManager != nil {
 		if status == "offline" {
 			p.alertManager.CheckDeviceOffline(device)
+			// Send enhanced HTML critical alert email
+			p.sendCriticalAlertEmail(device, "DEVICE_OFFLINE",
+				fmt.Sprintf("Device %s (%s) is offline", device.Name, device.IPAddress))
 		} else if status == "online" {
 			p.alertManager.CheckDeviceOnline(device)
 		}
+	}
+}
+
+// sendCriticalAlertEmail sends an HTML email for critical alerts with embedded charts.
+func (p *Poller) sendCriticalAlertEmail(device *models.Device, alertType, message string) {
+	if p.notifier == nil || p.db == nil {
+		return
+	}
+	nc := notifier.SnapshotConfig(&p.cfg.Alerts)
+	if !nc.EmailEnabled {
+		return
+	}
+
+	alert := &models.Alert{
+		Timestamp: time.Now(),
+		DeviceID:  device.ID,
+		AlertType: alertType,
+		Severity:  "critical",
+		Message:   message,
+	}
+
+	recentHistory := report.GatherRecentHistory(p.db, device.ID)
+	subject, htmlBody, attachments, err := report.BuildCriticalAlertEmail(alert, device, recentHistory)
+	if err != nil {
+		log.Printf("Device %s: failed to build critical alert email - %v", device.Name, err)
+		return
+	}
+
+	recipients := p.cfg.Alerts.ReportRecipients
+	if err := p.notifier.SendHTMLEmail(subject, htmlBody, attachments, nc, recipients); err != nil {
+		log.Printf("Device %s: failed to send critical alert email - %v", device.Name, err)
 	}
 }
 
@@ -1254,7 +1325,10 @@ func main() {
 	notif := notifier.NewNotifier(cfg)
 	alertManager := alerts.NewAlertManager(cfg, notif, db)
 
-	poller := NewPoller(cfg, db, alertManager)
+	poller := NewPoller(cfg, db, alertManager, notif)
+
+	reportScheduler := report.NewReportScheduler(cfg, db, notif)
+	go reportScheduler.Start()
 
 	go func() {
 		if err := poller.Start(); err != nil {
@@ -1267,6 +1341,7 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down poller...")
+	reportScheduler.Stop()
 	poller.Stop()
 	log.Println("Poller exited")
 }

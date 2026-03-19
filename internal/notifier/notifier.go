@@ -2,16 +2,26 @@ package notifier
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"time"
 
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 )
+
+// Attachment represents an inline image for HTML emails.
+type Attachment struct {
+	ContentID string // e.g. "chart1" — referenced as cid:chart1 in HTML
+	Data      []byte
+	MIMEType  string // e.g. "image/png"
+}
 
 // NotifyConfig is a snapshot of notification-related configuration fields.
 // It is passed by value to avoid data races with concurrent config updates.
@@ -234,4 +244,94 @@ func (n *Notifier) sendWebhook(alert *models.Alert, nc NotifyConfig) error {
 	}
 
 	return n.postJSON(nc.WebHookURL, payload)
+}
+
+// SendHTMLEmail sends an HTML email with optional inline image attachments.
+// Builds a multipart/related MIME message with Content-ID references for images.
+// If recipients is empty, falls back to nc.SMTPTo.
+func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachment, nc NotifyConfig, recipients string) error {
+	if nc.SMTPHost == "" {
+		return nil
+	}
+	if !nc.EmailEnabled {
+		return nil
+	}
+
+	if recipients == "" {
+		recipients = nc.SMTPTo
+	}
+	if recipients == "" {
+		return fmt.Errorf("no recipients configured")
+	}
+
+	// Sanitize header values
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+		return s
+	}
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	boundary := writer.Boundary()
+
+	// Write top-level headers
+	buf.Reset()
+	fmt.Fprintf(&buf, "From: %s\r\n", sanitize(nc.SMTPFrom))
+	fmt.Fprintf(&buf, "To: %s\r\n", sanitize(recipients))
+	fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
+	fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
+	fmt.Fprintf(&buf, "Content-Type: multipart/related; boundary=%q\r\n", boundary)
+	fmt.Fprintf(&buf, "\r\n")
+
+	// HTML part
+	htmlHeader := make(textproto.MIMEHeader)
+	htmlHeader.Set("Content-Type", "text/html; charset=UTF-8")
+	htmlHeader.Set("Content-Transfer-Encoding", "quoted-printable")
+	htmlPart, err := writer.CreatePart(htmlHeader)
+	if err != nil {
+		return fmt.Errorf("failed to create HTML part: %w", err)
+	}
+	htmlPart.Write([]byte(htmlBody))
+
+	// Inline image attachments
+	for _, att := range attachments {
+		attHeader := make(textproto.MIMEHeader)
+		attHeader.Set("Content-Type", att.MIMEType)
+		attHeader.Set("Content-Transfer-Encoding", "base64")
+		attHeader.Set("Content-ID", "<"+att.ContentID+">")
+		attHeader.Set("Content-Disposition", "inline")
+		part, err := writer.CreatePart(attHeader)
+		if err != nil {
+			return fmt.Errorf("failed to create attachment part: %w", err)
+		}
+		encoded := base64.StdEncoding.EncodeToString(att.Data)
+		// Write in 76-char lines per RFC 2045
+		for i := 0; i < len(encoded); i += 76 {
+			end := i + 76
+			if end > len(encoded) {
+				end = len(encoded)
+			}
+			part.Write([]byte(encoded[i:end]))
+			part.Write([]byte("\r\n"))
+		}
+	}
+
+	writer.Close()
+
+	addr := fmt.Sprintf("%s:%d", nc.SMTPHost, nc.SMTPPort)
+	var auth smtp.Auth
+	if nc.SMTPUsername != "" {
+		auth = smtp.PlainAuth("", nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
+	}
+
+	recipientList := strings.Split(recipients, ",")
+	for i := range recipientList {
+		recipientList[i] = strings.TrimSpace(recipientList[i])
+	}
+
+	if err := smtp.SendMail(addr, auth, nc.SMTPFrom, recipientList, buf.Bytes()); err != nil {
+		return fmt.Errorf("failed to send HTML email: %w", err)
+	}
+	return nil
 }

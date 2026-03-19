@@ -343,6 +343,9 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
 		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",
+		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
+		"report_weekly_day", "report_recipients", "report_timezone",
+		"spike_stddev_threshold", "spike_alert_enabled",
 	}).Find(&settings).Error; err != nil {
 		log.Printf("RefreshThresholds: failed to read settings: %v", err)
 		return
@@ -394,6 +397,24 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 			am.config.Alerts.DiscordWebhookURL = s.Value
 		case "webhook_url":
 			am.config.Alerts.WebHookURL = s.Value
+		case "report_daily_enabled":
+			am.config.Alerts.ReportDailyEnabled = s.Value == "true"
+		case "report_daily_time":
+			am.config.Alerts.ReportDailyTime = s.Value
+		case "report_weekly_enabled":
+			am.config.Alerts.ReportWeeklyEnabled = s.Value == "true"
+		case "report_weekly_day":
+			am.config.Alerts.ReportWeeklyDay = s.Value
+		case "report_recipients":
+			am.config.Alerts.ReportRecipients = s.Value
+		case "report_timezone":
+			am.config.Alerts.ReportTimezone = s.Value
+		case "spike_stddev_threshold":
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+				am.config.Alerts.SpikeStdDevThreshold = v
+			}
+		case "spike_alert_enabled":
+			am.config.Alerts.SpikeAlertEnabled = s.Value == "true"
 		}
 	}
 }

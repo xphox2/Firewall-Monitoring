@@ -81,6 +81,14 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"public_interfaces":            true,
 		"public_vpn_tunnels_by_device": true,
 		"display_timezone":             true,
+		"report_daily_enabled":         true,
+		"report_daily_time":            true,
+		"report_weekly_enabled":        true,
+		"report_weekly_day":            true,
+		"report_recipients":            true,
+		"report_timezone":              true,
+		"spike_stddev_threshold":       true,
+		"spike_alert_enabled":          true,
 	}
 
 	secretKeys := map[string]bool{
@@ -112,7 +120,35 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for public_refresh_interval: must be at least 5"))
 				return
 			}
-		case "email_enabled", "public_show_hostname", "public_show_uptime",
+		case "spike_stddev_threshold":
+			v, err := strconv.ParseFloat(s.Value, 64)
+			if err != nil || v < 1.0 || v > 10.0 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for spike_stddev_threshold: must be 1.0-10.0"))
+				return
+			}
+		case "report_daily_time":
+			if len(s.Value) != 5 || s.Value[2] != ':' {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_daily_time: must be HH:MM format"))
+				return
+			}
+		case "report_weekly_day":
+			validDays := map[string]bool{"monday": true, "tuesday": true, "wednesday": true, "thursday": true, "friday": true, "saturday": true, "sunday": true}
+			if !validDays[strings.ToLower(s.Value)] {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_weekly_day: must be a day of the week"))
+				return
+			}
+		case "report_timezone":
+			if len(s.Value) > 64 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid timezone value"))
+				return
+			}
+		case "report_recipients":
+			if len(s.Value) > 500 {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Value for report_recipients is too long (max 500)"))
+				return
+			}
+		case "email_enabled", "report_daily_enabled", "report_weekly_enabled", "spike_alert_enabled",
+			"public_show_hostname", "public_show_uptime",
 			"public_show_cpu", "public_show_memory", "public_show_sessions", "public_show_interfaces",
 			"public_show_bandwidth", "public_show_vpn", "public_show_connections":
 			if s.Value != "true" && s.Value != "false" {

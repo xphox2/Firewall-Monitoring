@@ -104,6 +104,16 @@ type AlertsConfig struct {
 	DiskThreshold      float64
 	SessionThreshold   int
 	InterfaceDownAlert bool
+	// Report settings
+	ReportDailyEnabled  bool
+	ReportDailyTime     string // HH:MM format
+	ReportWeeklyEnabled bool
+	ReportWeeklyDay     string // monday, tuesday, etc.
+	ReportRecipients    string // comma-separated, defaults to SMTPTo
+	ReportTimezone      string // IANA timezone, default UTC
+	// Spike detection
+	SpikeStdDevThreshold float64
+	SpikeAlertEnabled    bool
 }
 
 type UptimeConfig struct {
@@ -197,21 +207,29 @@ func Load() *Config {
 			LockoutDuration:  getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
 		},
 		Alerts: AlertsConfig{
-			EmailEnabled:       getBoolEnv("EMAIL_ENABLED", false),
-			SMTPHost:           getEnv("SMTP_HOST", ""),
-			SMTPPort:           getIntEnv("SMTP_PORT", 587),
-			SMTPUsername:       getEnv("SMTP_USERNAME", ""),
-			SMTPPassword:       getEnv("SMTP_PASSWORD", ""),
-			SMTPFrom:           getEnv("SMTP_FROM", "firewall-mon@example.com"),
-			SMTPTo:             getEnv("SMTP_TO", "admin@example.com"),
-			SlackWebhookURL:    getEnv("SLACK_WEBHOOK_URL", ""),
-			DiscordWebhookURL:  getEnv("DISCORD_WEBHOOK_URL", ""),
-			WebHookURL:         getEnv("WEBHOOK_URL", ""),
-			CPUThreshold:       getFloatEnv("CPU_THRESHOLD", 80.0),
-			MemoryThreshold:    getFloatEnv("MEMORY_THRESHOLD", 80.0),
-			DiskThreshold:      getFloatEnv("DISK_THRESHOLD", 90.0),
-			SessionThreshold:   getIntEnv("SESSION_THRESHOLD", 100000),
-			InterfaceDownAlert: getBoolEnv("INTERFACE_DOWN_ALERT", true),
+			EmailEnabled:         getBoolEnv("EMAIL_ENABLED", false),
+			SMTPHost:             getEnv("SMTP_HOST", ""),
+			SMTPPort:             getIntEnv("SMTP_PORT", 587),
+			SMTPUsername:         getEnv("SMTP_USERNAME", ""),
+			SMTPPassword:         getEnv("SMTP_PASSWORD", ""),
+			SMTPFrom:             getEnv("SMTP_FROM", "firewall-mon@example.com"),
+			SMTPTo:               getEnv("SMTP_TO", "admin@example.com"),
+			SlackWebhookURL:      getEnv("SLACK_WEBHOOK_URL", ""),
+			DiscordWebhookURL:    getEnv("DISCORD_WEBHOOK_URL", ""),
+			WebHookURL:           getEnv("WEBHOOK_URL", ""),
+			CPUThreshold:         getFloatEnv("CPU_THRESHOLD", 80.0),
+			MemoryThreshold:      getFloatEnv("MEMORY_THRESHOLD", 80.0),
+			DiskThreshold:        getFloatEnv("DISK_THRESHOLD", 90.0),
+			SessionThreshold:     getIntEnv("SESSION_THRESHOLD", 100000),
+			InterfaceDownAlert:   getBoolEnv("INTERFACE_DOWN_ALERT", true),
+			ReportDailyEnabled:   getBoolEnv("REPORT_DAILY_ENABLED", false),
+			ReportDailyTime:      getEnv("REPORT_DAILY_TIME", "07:00"),
+			ReportWeeklyEnabled:  getBoolEnv("REPORT_WEEKLY_ENABLED", false),
+			ReportWeeklyDay:      getEnv("REPORT_WEEKLY_DAY", "monday"),
+			ReportRecipients:     getEnv("REPORT_RECIPIENTS", ""),
+			ReportTimezone:       getEnv("REPORT_TIMEZONE", "UTC"),
+			SpikeStdDevThreshold: getFloatEnv("SPIKE_STDDEV_THRESHOLD", 3.0),
+			SpikeAlertEnabled:    getBoolEnv("SPIKE_ALERT_ENABLED", false),
 		},
 		Uptime: UptimeConfig{
 			BaselineFile:    getEnv("UPTIME_BASELINE_FILE", "/var/lib/firewall-mon/uptime.json"),

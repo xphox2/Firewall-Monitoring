@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.127] - 2026-03-18
+
+### Added
+- **Scheduled HTML email reports**: Daily and weekly reports with embedded PNG charts (traffic, CPU/memory, uptime meter, alert trend) sent as MIME multipart/related emails
+- **Per-device 30-day uptime tracking**: Derived from `system_status` poll density — displayed as 99.99% format with visual uptime meter (green/red/grey)
+- **Traffic spike detection**: Rolling-window standard deviation analysis for both real-time alerts (`TRAFFIC_SPIKE`) and report annotations
+- **Enhanced critical alert emails**: Device-offline, VPN-down, and disk-critical alerts now include HTML formatting with recent CPU/memory charts
+- **Report scheduler** (`internal/report/`): New package with chart rendering via `go-chart/v2`, HTML templates with inline CSS, MIME email builder, data aggregation, and scheduling
+- **8 new settings**: `report_daily_enabled`, `report_daily_time`, `report_weekly_enabled`, `report_weekly_day`, `report_recipients`, `report_timezone`, `spike_stddev_threshold`, `spike_alert_enabled` — configurable via admin UI
+- **4 new database queries**: `GetAlertsByDeviceAndHours`, `GetTopInterfacesByTraffic`, `GetDevicePollCount`, `GetDeviceFirstPoll`
+- **MIME multipart email support**: `SendHTMLEmail()` in notifier with inline base64-encoded PNG images via Content-ID references
+
 ## [0.10.126] - 2026-03-17
 
 ### Fixed
