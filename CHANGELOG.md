@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.136] - 2026-03-19
+
+### Changed
+- **Connection Map**: Replaced custom SVG rendering engine (4 files, ~90KB) with Cytoscape.js graph library
+  - Native compound nodes for site grouping with automatic layout
+  - Native multi-edge support — parallel connections between same device pair shown as bezier curves
+  - Built-in zoom/pan with mouse wheel and drag
+  - fcose force-directed layout with compound node support (falls back to cose)
+- **Toolbar**: Added layer filter buttons (per connection type with color indicators), Show DOWN toggle, Fit, and Reset controls
+- **DOWN connections**: Now included in graph data but hidden by default; "Show DOWN" button reveals them as dashed/dimmed edges
+
+### Fixed
+- **Missing `/sites` API call**: `loadConnections()` now fetches sites, fixing site grouping that was silently broken
+- **Event listener accumulation**: Previous cy instance is destroyed on re-render, preventing sluggishness on tab switches
+- **0-device edge case**: Early return with message instead of crash when no devices exist
+
+### Removed
+- `diagram-core.js`, `diagram-layout.js`, `diagram-connections.js`, `diagram-particles.js` — replaced by `diagram-cytoscape.js`
+
+### Added
+- `diagram-cytoscape.js` — single Cytoscape.js module with data transformation, styling, layout, filtering, particle animation, and SVG overlay shim for tunnel-zoom compatibility
+- CDN dependencies: Cytoscape.js v3.30.4, cytoscape-fcose v2.2.0
+
 ## [0.10.135] - 2026-03-18
 
 ### Fixed

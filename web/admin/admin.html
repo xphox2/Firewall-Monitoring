@@ -121,14 +121,6 @@
         .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; }
 
         .connection-diagram { min-height: 500px; position: relative; background: #0d1117; border-radius: 8px; padding: 0; overflow: hidden; }
-        .connection-diagram svg { width: 100%; height: 100%; min-height: 500px; }
-        .conn-path { cursor: pointer; transition: stroke-width 0.2s; }
-        .conn-path:hover { stroke-width: 5 !important; }
-        .conn-hit-area { cursor: pointer; fill: none; stroke: transparent; stroke-width: 20; }
-        .device-node { cursor: pointer; }
-        .device-node:hover rect { stroke: #58a6ff !important; stroke-width: 2.5; }
-        .device-node text.dev-name { fill: #e6edf3; font-weight: 600; font-size: 13px; }
-        .device-node text.dev-ip { fill: #8b949e; font-size: 11px; }
         .conn-detail-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 12px; animation: slideUp 0.3s ease; }
         .conn-detail-panel h4 { margin: 0 0 12px 0; color: #e6edf3; font-size: 1rem; }
         .conn-detail-panel p { margin: 4px 0; font-size: 0.85rem; color: #8b949e; }
@@ -220,10 +212,9 @@
         @media (max-width: 900px) { .panel-kpi-grid { grid-template-columns: repeat(2, 1fr); } .tunnel-columns, .panel-flow-grid { grid-template-columns: 1fr; } }
     </style>
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-    <script defer src="/static/js/diagram-core.js"></script>
-    <script defer src="/static/js/diagram-layout.js"></script>
-    <script defer src="/static/js/diagram-connections.js"></script>
-    <script defer src="/static/js/diagram-particles.js"></script>
+    <script defer src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+    <script defer src="https://unpkg.com/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+    <script defer src="/static/js/diagram-cytoscape.js"></script>
     <script defer src="/static/js/diagram-panels.js"></script>
     <script defer src="/static/js/diagram-tunnel-zoom.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
@@ -390,7 +381,25 @@
                 </div>
             </div>
             <div class="card">
-                <div class="card-header"><h2>Connection Map</h2></div>
+                <div class="card-header">
+                    <h2>Connection Map</h2>
+                    <div id="diagram-toolbar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="all">All</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="ipsec" style="border-color:#58a6ff;">IPSec</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="ssl" style="border-color:#d29922;">SSL</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="vxlan" style="border-color:#8957e5;">VXLAN</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="l2vlan" style="border-color:#39d4e0;">L2VLAN</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="l3ipvlan" style="border-color:#da7de8;">L3IPVLAN</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="gre" style="border-color:#b392f0;">GRE</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="wan" style="border-color:#f0883e;">WAN</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="ethernet" style="border-color:#6e7681;">Ethernet</button>
+                        <button class="btn secondary sm active" data-action="dg-filter-type" data-type="lag" style="border-color:#d29922;">LAG</button>
+                        <span style="color:#30363d;">|</span>
+                        <button class="btn secondary sm" data-action="dg-toggle-down" id="btn-toggle-down">Show DOWN</button>
+                        <button class="btn secondary sm" data-action="dg-fit">Fit</button>
+                        <button class="btn secondary sm" data-action="dg-reset-layout">Reset</button>
+                    </div>
+                </div>
                 <div class="connection-diagram" id="connection-diagram">
                     <div class="loading">Add devices and connections to see the network diagram</div>
                 </div>

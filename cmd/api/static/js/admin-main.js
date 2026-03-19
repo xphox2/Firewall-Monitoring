@@ -492,15 +492,18 @@
         Promise.all([
             apiFetch(API_BASE + '/devices'),
             apiFetch(API_BASE + '/connections'),
-            apiFetch(API_BASE + '/connections/vpn-map')
+            apiFetch(API_BASE + '/connections/vpn-map'),
+            apiFetch(API_BASE + '/sites')
         ]).then(function(results) {
             var devicesResult = results[0];
             var connsResult = results[1];
             var vpnMapResult = results[2];
+            var sitesResult = results[3];
             if (!devicesResult || !connsResult) return;
             currentDevices = devicesResult.data || [];
             currentConnections = connsResult.data || [];
             currentVpnMap = vpnMapResult && vpnMapResult.data ? vpnMapResult.data : {};
+            currentSites = sitesResult && sitesResult.data ? sitesResult.data : [];
             window.currentConnections = currentConnections;
             window.currentDevices = currentDevices;
             deviceSiteMap = {};
@@ -1349,39 +1352,27 @@
 
     // ---- Connection Diagram ----
     function drawConnectionDiagram() {
-        var container = document.getElementById('connection-diagram');
         if (!FWDiagram.Panels.getCurrentPanelConnId()) {
             var panelContainer = document.getElementById('conn-detail-panel-container');
             if (panelContainer) panelContainer.innerHTML = '';
         }
 
         if (currentDevices.length === 0) {
-            container.innerHTML = '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
+            document.getElementById('connection-diagram').innerHTML =
+                '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
             return;
         }
 
-        FWDiagram.Particles.stop();
         FWDiagram.init('connection-diagram');
-        FWDiagram.Layout.computePositions(currentDevices, deviceSiteMap);
-        FWDiagram.Connections.drawAll(
-            currentDevices, currentConnections, deviceSiteMap, currentVpnMap,
+        var siteNames = {};
+        currentSites.forEach(function(s) { siteNames[s.id] = s.name; });
+        FWDiagram.setCallbacks(
             function(conn) { FWDiagram.Panels.showRichConnDetailPanel(conn); },
             function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
         );
-
-        // Build siteNames map from currentSites for site group labels
-        var siteNames = {};
-        currentSites.forEach(function(s) { siteNames[s.id] = s.name; });
-        FWDiagram.Layout.drawSiteGroups(deviceSiteMap, siteNames);
-
-        FWDiagram.Layout.getPositions().forEach(function(p) {
-            var vpnInfo = currentVpnMap[String(p.device.id)];
-            FWDiagram.Layout.drawDeviceNode(p, vpnInfo, function(devId) {
-                FWDiagram.Panels.showRichVPNDetailPanel(devId, false, currentDevices, currentVpnMap);
-            });
-        });
-        FWDiagram.Particles.start();
+        FWDiagram.render(currentDevices, currentConnections, deviceSiteMap, currentVpnMap, siteNames);
     }
+    window.drawConnectionDiagram = drawConnectionDiagram;
 
     function populateDeviceSelects() {
         ['connection-source', 'connection-dest'].forEach(function(sid) {
