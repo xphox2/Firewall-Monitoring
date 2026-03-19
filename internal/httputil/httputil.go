@@ -41,11 +41,11 @@ func ParseID(c *gin.Context) (uint, bool) {
 }
 
 // ParseHours extracts hours from the "hours" query parameter.
-// Default is 24, max is 168.
+// Default is 24, max is 8760 (1 year).
 func ParseHours(c *gin.Context) int {
 	hours := 24
 	if hq := c.Query("hours"); hq != "" {
-		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 168 {
+		if parsed, err := strconv.Atoi(hq); err == nil && parsed > 0 && parsed <= 8760 {
 			hours = parsed
 		}
 	}

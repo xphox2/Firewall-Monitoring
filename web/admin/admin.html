@@ -472,6 +472,13 @@
                 <div class="stat-card"><div class="stat-label">Unique Dests</div><div class="stat-value" id="flows-dests">--</div></div>
                 <div class="stat-card"><div class="stat-label">Protocols</div><div class="stat-value" id="flows-protocols">--</div></div>
             </div>
+            <div id="flows-local-traffic-bar" style="display:none;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:#8b949e;display:none">
+                &#9888; <strong style="color:#d2992a">Internal/Local Traffic (port 0):</strong>
+                <span id="flows-local-bytes" style="color:#c9d1d9;margin-left:8px">--</span> bytes,
+                <span id="flows-local-flows" style="color:#c9d1d9">--</span> flows,
+                <span id="flows-local-packets" style="color:#c9d1d9">--</span> packets
+                <span style="color:#484f58;margin-left:8px">(filtered from charts below)</span>
+            </div>
             <div class="chart-row">
                 <div class="chart-card">
                     <h3>Bandwidth Over Time</h3>

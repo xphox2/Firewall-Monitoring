@@ -697,6 +697,17 @@
             document.getElementById('flows-dests').textContent = (d.unique_dests || 0).toLocaleString();
             document.getElementById('flows-protocols').textContent = (d.protocol_count || 0).toLocaleString();
 
+            // Local traffic info bar
+            var localBar = document.getElementById('flows-local-traffic-bar');
+            if (localBar && d.local_traffic && d.local_traffic.bytes > 0) {
+                localBar.style.display = 'block';
+                document.getElementById('flows-local-bytes').textContent = formatBytes(d.local_traffic.bytes);
+                document.getElementById('flows-local-flows').textContent = (d.local_traffic.flows || 0).toLocaleString();
+                document.getElementById('flows-local-packets').textContent = (d.local_traffic.packets || 0).toLocaleString();
+            } else if (localBar) {
+                localBar.style.display = 'none';
+            }
+
             // Protocol doughnut
             var protoLabels = (d.by_protocol || []).map(function(p) { return p.key; });
             var protoCounts = (d.by_protocol || []).map(function(p) { return p.count; });

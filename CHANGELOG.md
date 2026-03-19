@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.135] - 2026-03-18
+
+### Fixed
+- **ParseHours** max raised from 168 → 8760: 1-month and 1-year time range buttons now work correctly instead of silently falling back to 24h
+- **sFlow charts**: Port-0 internal/local traffic (IPv6 link-local) filtered from Top Sources, Top Destinations, and Top Conversations to prevent one address from dominating all charts
+- **Bar chart scaling**: With local traffic separated, bar charts show balanced application traffic instead of 1.0B/2.0B scale
+
+### Added
+- Local traffic info bar on Flows page showing filtered port-0 bytes, flows, and packets
+- `LocalTraffic` field in `FlowStatsResult` API response
+
 ## [0.10.134] - 2026-03-18
 
 ### Fixed

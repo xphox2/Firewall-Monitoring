@@ -1285,6 +1285,11 @@ type FlowStatsResult struct {
 	TopDestinations  []KeyCount         `json:"top_destinations"`
 	TopConversations []FlowConversation `json:"top_conversations"`
 	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
+	LocalTraffic     struct {
+		Bytes   uint64 `json:"bytes"`
+		Packets uint64 `json:"packets"`
+		Flows   int64  `json:"flows"`
+	} `json:"local_traffic"`
 }
 
 // topAddrsByBytes returns top N addresses grouped by addrCol, ordered by total bytes descending.
@@ -1402,6 +1407,41 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		result.BitsPerSecond = float64(result.TotalBytes) * 8 / (float64(hours) * 3600)
 	}
 
+	// Local traffic stats (port-0 internal traffic, e.g. IPv6 link-local)
+	var localRaw struct {
+		Bytes   uint64
+		Packets uint64
+		Flows   int64
+	}
+	newRawBase().Where("src_port = 0 AND dst_port = 0").
+		Select("COALESCE(SUM(bytes),0) as bytes, COALESCE(SUM(packets),0) as packets, COUNT(*) as flows").
+		Scan(&localRaw)
+	result.LocalTraffic.Bytes = localRaw.Bytes
+	result.LocalTraffic.Packets = localRaw.Packets
+	result.LocalTraffic.Flows = localRaw.Flows
+
+	if useRollups {
+		var localRollup struct {
+			Bytes   uint64
+			Packets uint64
+			Flows   int64
+		}
+		newRollupBase().Where("dst_port = 0").
+			Select("COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets, COALESCE(SUM(flow_count),0) as flows").
+			Scan(&localRollup)
+		result.LocalTraffic.Bytes += localRollup.Bytes
+		result.LocalTraffic.Packets += localRollup.Packets
+		result.LocalTraffic.Flows += localRollup.Flows
+	}
+
+	// Filtered bases that exclude port-0 local traffic for top-N charts
+	newFilteredRawBase := func() *gorm.DB {
+		return newRawBase().Where("NOT (src_port = 0 AND dst_port = 0)")
+	}
+	newFilteredRollupBase := func() *gorm.DB {
+		return newRollupBase().Where("dst_port != 0")
+	}
+
 	// Protocol distribution (from raw; supplement with rollups)
 	var protocols []struct {
 		Protocol uint8
@@ -1450,21 +1490,21 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 	}
 	result.ProtocolCount = int64(len(protocols))
 
-	// Top sources by bytes
-	result.TopSources = topAddrsByBytes(newRawBase, "src_addr", 10)
+	// Top sources by bytes (filtered: excludes port-0 local traffic)
+	result.TopSources = topAddrsByBytes(newFilteredRawBase, "src_addr", 10)
 	if useRollups {
-		rollupSrc := topAddrsByBytesRollup(newRollupBase, "src_addr", 10)
+		rollupSrc := topAddrsByBytesRollup(newFilteredRollupBase, "src_addr", 10)
 		result.TopSources = mergeKeyCounts(result.TopSources, rollupSrc, 10)
 	}
 
-	// Top destinations by bytes
-	result.TopDestinations = topAddrsByBytes(newRawBase, "dst_addr", 10)
+	// Top destinations by bytes (filtered: excludes port-0 local traffic)
+	result.TopDestinations = topAddrsByBytes(newFilteredRawBase, "dst_addr", 10)
 	if useRollups {
-		rollupDst := topAddrsByBytesRollup(newRollupBase, "dst_addr", 10)
+		rollupDst := topAddrsByBytesRollup(newFilteredRollupBase, "dst_addr", 10)
 		result.TopDestinations = mergeKeyCounts(result.TopDestinations, rollupDst, 10)
 	}
 
-	// Top conversations (raw only — rollups lose port detail at higher tiers, but 5m rollups have dst_port)
+	// Top conversations (filtered: excludes port-0 local traffic)
 	var convos []struct {
 		SrcAddr  string
 		DstAddr  string
@@ -1473,7 +1513,7 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		Bytes    uint64
 		Packets  uint64
 	}
-	if err := newRawBase().Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
+	if err := newFilteredRawBase().Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
 		Group("src_addr, dst_addr, dst_port, protocol").
 		Order("bytes DESC").Limit(10).Scan(&convos).Error; err != nil {
 		log.Printf("Flow stats top conversations: %v", err)
