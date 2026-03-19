@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.133] - 2026-03-18
+
+### Added
+- Enterprise sFlow dashboard: 6 stat cards (Total Flows, Total Bytes, Avg Throughput, Unique Sources, Unique Dests, Protocol Count)
+- Bandwidth Over Time chart with adaptive bucketing (minute/hour/day based on time range)
+- Top Destinations horizontal bar chart (green, complements Top Sources)
+- Top Conversations table with % of total column and click-to-filter drill-down
+- `FlowRollup` model for scalable flow data aggregation
+- Rollup engine: auto-aggregates raw flows → 5m → 1h → 1d rollups every 5 minutes
+- `formatBps()` helper for human-readable bits/sec formatting (Kbps, Mbps, Gbps)
+- Est. Bytes column in flow samples table (bytes × sampling_rate)
+- 5-minute time bucket support in SQLite and PostgreSQL dialects
+
+### Changed
+- Flow time range buttons expanded: 1h, 6h, 24h, 1w, 1m, 1y (was: Today, 1 Week, 1 Month, 1 Year)
+- Bandwidth chart now shows bits/sec throughput instead of raw bytes
+- Flows API (`/api/flows/stats`) returns `bits_per_second`, `protocol_count`, `top_destinations`, `top_conversations`
+
 ## [0.10.132] - 2026-03-18
 
 ### Added

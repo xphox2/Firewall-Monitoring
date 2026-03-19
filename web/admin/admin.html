@@ -454,31 +454,50 @@
         <div class="page" id="page-flows">
             <div class="filter-bar" style="margin-bottom:12px">
                 <span style="color:#8b949e;font-size:0.85rem;margin-right:8px">Time Range:</span>
-                <button class="btn secondary sm flow-range-btn active" data-hours="24" data-action="set-flow-range">Today</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="168" data-action="set-flow-range">1 Week</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="720" data-action="set-flow-range">1 Month</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="8760" data-action="set-flow-range">1 Year</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="1" data-action="set-flow-range">1h</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="6" data-action="set-flow-range">6h</button>
+                <button class="btn secondary sm flow-range-btn active" data-hours="24" data-action="set-flow-range">24h</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="168" data-action="set-flow-range">1w</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="720" data-action="set-flow-range">1m</button>
+                <button class="btn secondary sm flow-range-btn" data-hours="8760" data-action="set-flow-range">1y</button>
             </div>
-            <div class="stat-grid" id="flows-stats-grid">
+            <div class="stat-grid" id="flows-stats-grid" style="grid-template-columns: repeat(6, 1fr);">
                 <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Total Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
+                <div class="stat-card"><div class="stat-label">Avg Throughput</div><div class="stat-value" id="flows-throughput">--</div></div>
                 <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="flows-sources">--</div></div>
-                <div class="stat-card"><div class="stat-label">Unique Destinations</div><div class="stat-value" id="flows-dests">--</div></div>
+                <div class="stat-card"><div class="stat-label">Unique Dests</div><div class="stat-value" id="flows-dests">--</div></div>
+                <div class="stat-card"><div class="stat-label">Protocols</div><div class="stat-value" id="flows-protocols">--</div></div>
             </div>
             <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Bandwidth Over Time</h3>
+                    <canvas id="flows-bytes-time-chart"></canvas>
+                </div>
                 <div class="chart-card">
                     <h3>Protocol Distribution</h3>
                     <canvas id="flows-protocol-chart"></canvas>
                 </div>
+            </div>
+            <div class="chart-row">
                 <div class="chart-card">
-                    <h3>Top Talkers (by bytes)</h3>
+                    <h3>Top Sources (by bytes)</h3>
                     <canvas id="flows-top-talkers-chart"></canvas>
                 </div>
-            </div>
-            <div class="chart-row" style="grid-template-columns: 1fr;">
                 <div class="chart-card">
-                    <h3>Bytes Over Time</h3>
-                    <canvas id="flows-bytes-time-chart"></canvas>
+                    <h3>Top Destinations (by bytes)</h3>
+                    <canvas id="flows-top-dests-chart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h2>Top Conversations</h2>
+                </div>
+                <div class="table-wrap" style="max-height: 360px;">
+                    <table id="flows-conversations-table">
+                        <thead><tr><th>Source</th><th>&#8594;</th><th>Destination</th><th>Protocol</th><th>Bytes</th><th>Packets</th><th>% of Total</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
                 </div>
             </div>
             <div class="card">
@@ -504,7 +523,7 @@
                 </div>
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="flows-table">
-                        <thead><tr><th>Time</th><th>Src IP:Port</th><th>&#8594;</th><th>Dst IP:Port</th><th>Protocol</th><th>Bytes</th><th>Packets</th><th>Rate</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th>&#8594;</th><th>Dst IP:Port</th><th>Protocol</th><th>Bytes</th><th>Est. Bytes</th><th>Packets</th><th>Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>

@@ -170,6 +170,7 @@ func (d *Database) migrate() error {
 		&models.PingStats{},
 		&models.SyslogMessage{},
 		&models.FlowSample{},
+		&models.FlowRollup{},
 		&models.SiteDatabase{},
 		&models.SecurityStats{},
 		&models.SDWANHealth{},
@@ -1256,13 +1257,17 @@ type KeyCount struct {
 
 // FlowStatsResult holds aggregated flow statistics
 type FlowStatsResult struct {
-	TotalFlows    int64      `json:"total_flows"`
-	TotalBytes    uint64     `json:"total_bytes"`
-	UniqueSources int64      `json:"unique_sources"`
-	UniqueDests   int64      `json:"unique_dests"`
-	ByProtocol    []KeyCount `json:"by_protocol"`
-	TopSources    []KeyCount `json:"top_sources"`
-	BytesOverTime []TimeBucket `json:"bytes_over_time"`
+	TotalFlows       int64              `json:"total_flows"`
+	TotalBytes       uint64             `json:"total_bytes"`
+	BitsPerSecond    float64            `json:"bits_per_second"`
+	UniqueSources    int64              `json:"unique_sources"`
+	UniqueDests      int64              `json:"unique_dests"`
+	ProtocolCount    int64              `json:"protocol_count"`
+	ByProtocol       []KeyCount         `json:"by_protocol"`
+	TopSources       []KeyCount         `json:"top_sources"`
+	TopDestinations  []KeyCount         `json:"top_destinations"`
+	TopConversations []FlowConversation `json:"top_conversations"`
+	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
 }
 
 // GetFlowStats returns aggregated flow statistics, optionally filtered by device.
@@ -1287,6 +1292,11 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 	newBase().Distinct("src_addr").Count(&result.UniqueSources)
 	newBase().Distinct("dst_addr").Count(&result.UniqueDests)
 
+	// Computed throughput
+	if hours > 0 {
+		result.BitsPerSecond = float64(result.TotalBytes) * 8 / (float64(hours) * 3600)
+	}
+
 	// Protocol distribution
 	var protocols []struct {
 		Protocol uint8 `json:"protocol"`
@@ -1302,6 +1312,7 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		}
 		result.ByProtocol = append(result.ByProtocol, KeyCount{Key: name, Count: p.Count})
 	}
+	result.ProtocolCount = int64(len(protocols))
 
 	// Top sources by bytes
 	var topSrc []struct {
@@ -1314,18 +1325,206 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		result.TopSources = append(result.TopSources, KeyCount{Key: s.SrcAddr, Count: s.Total})
 	}
 
-	// Bytes over time (hourly buckets)
+	// Top destinations by bytes
+	var topDst []struct {
+		DstAddr string `json:"dst_addr"`
+		Total   int64  `json:"total"`
+	}
+	newBase().Select("dst_addr, SUM(bytes) as total").Group("dst_addr").
+		Order("total DESC").Limit(10).Scan(&topDst)
+	for _, s := range topDst {
+		result.TopDestinations = append(result.TopDestinations, KeyCount{Key: s.DstAddr, Count: s.Total})
+	}
+
+	// Top conversations
+	var convos []struct {
+		SrcAddr  string `json:"src_addr"`
+		DstAddr  string `json:"dst_addr"`
+		DstPort  uint16 `json:"dst_port"`
+		Protocol uint8  `json:"protocol"`
+		Bytes    uint64 `json:"bytes"`
+		Packets  uint64 `json:"packets"`
+	}
+	newBase().Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
+		Group("src_addr, dst_addr, dst_port, protocol").
+		Order("bytes DESC").Limit(10).Scan(&convos)
+	for _, c := range convos {
+		name := protoNames[c.Protocol]
+		if name == "" {
+			name = fmt.Sprintf("Proto %d", c.Protocol)
+		}
+		result.TopConversations = append(result.TopConversations, FlowConversation{
+			SrcAddr:  c.SrcAddr,
+			DstAddr:  c.DstAddr,
+			DstPort:  c.DstPort,
+			Protocol: name,
+			Bytes:    c.Bytes,
+			Packets:  c.Packets,
+		})
+	}
+
+	// Adaptive time bucketing for bytes over time
+	bucketUnit := "hour"
+	if hours <= 6 {
+		bucketUnit = "minute"
+	} else if hours > 168 {
+		bucketUnit = "day"
+	}
 	var timeSeries []struct {
 		Bucket string `json:"bucket"`
 		Total  int64  `json:"total"`
 	}
-	newBase().Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(bytes) as total").
+	newBase().Select(d.dialect.TimeBucket(bucketUnit, "timestamp") + " as bucket, SUM(bytes) as total").
 		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
 	for _, t := range timeSeries {
 		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
 	}
 
 	return result, nil
+}
+
+// RunFlowRollupCycle aggregates raw flow samples into rollup buckets for scalability.
+// Called every 5 minutes by the poller:
+//  1. Raw flows older than 1h → 5m rollups
+//  2. 5m rollups older than 48h → 1h rollups
+//  3. 1h rollups older than 30d → 1d rollups
+func (d *Database) RunFlowRollupCycle() {
+	// Step 1: raw flows > 1h old → 5m rollups
+	cutoff1h := time.Now().Add(-1 * time.Hour)
+	d.aggregateFlowsToRollup(cutoff1h, "5m")
+
+	// Step 2: 5m rollups > 48h old → 1h rollups
+	cutoff48h := time.Now().Add(-48 * time.Hour)
+	d.aggregateRollupsUp("5m", "1h", cutoff48h)
+
+	// Step 3: 1h rollups > 30d old → 1d rollups
+	cutoff30d := time.Now().Add(-30 * 24 * time.Hour)
+	d.aggregateRollupsUp("1h", "1d", cutoff30d)
+}
+
+// aggregateFlowsToRollup groups raw FlowSamples older than cutoff into 5-minute rollups.
+func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string) {
+	bucketExpr := d.dialect.TimeBucket("5min", "timestamp")
+
+	type rollupRow struct {
+		Bucket          string
+		DeviceID        uint
+		SrcAddr         string
+		DstAddr         string
+		Protocol        uint8
+		BytesSum        uint64
+		PacketsSum      uint64
+		FlowCount       int64
+		SamplingRateAvg uint32
+	}
+
+	var rows []rollupRow
+	d.db.Model(&models.FlowSample{}).
+		Where("timestamp < ?", cutoff).
+		Select(bucketExpr+" as bucket, device_id, src_addr, dst_addr, protocol, "+
+			"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, "+
+			"AVG(sampling_rate) as sampling_rate_avg").
+		Group("bucket, device_id, src_addr, dst_addr, protocol").
+		Scan(&rows)
+
+	if len(rows) == 0 {
+		return
+	}
+
+	// Batch insert rollups
+	const batchSize = 1000
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := make([]models.FlowRollup, 0, end-i)
+		for _, r := range rows[i:end] {
+			ts, _ := time.Parse("2006-01-02 15:04", r.Bucket)
+			batch = append(batch, models.FlowRollup{
+				Timestamp:       ts,
+				DeviceID:        r.DeviceID,
+				IntervalType:    intervalType,
+				SrcAddr:         r.SrcAddr,
+				DstAddr:         r.DstAddr,
+				Protocol:        r.Protocol,
+				BytesSum:        r.BytesSum,
+				PacketsSum:      r.PacketsSum,
+				FlowCount:       r.FlowCount,
+				SamplingRateAvg: r.SamplingRateAvg,
+			})
+		}
+		d.db.Create(&batch)
+	}
+
+	// Delete consumed raw rows
+	d.db.Where("timestamp < ?", cutoff).Delete(&models.FlowSample{})
+	log.Printf("Flow rollup: aggregated %d groups from raw flows into %s rollups", len(rows), intervalType)
+}
+
+// aggregateRollupsUp promotes rollups from srcInterval older than cutoff into dstInterval.
+func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff time.Time) {
+	bucketUnit := "hour"
+	bucketFmt := "2006-01-02 15:04"
+	if dstInterval == "1d" {
+		bucketUnit = "day"
+		bucketFmt = "2006-01-02"
+	}
+	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
+
+	type rollupRow struct {
+		Bucket          string
+		DeviceID        uint
+		SrcAddr         string
+		DstAddr         string
+		Protocol        uint8
+		BytesSum        uint64
+		PacketsSum      uint64
+		FlowCount       int64
+		SamplingRateAvg uint32
+	}
+
+	var rows []rollupRow
+	d.db.Model(&models.FlowRollup{}).
+		Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+		Select(bucketExpr+" as bucket, device_id, src_addr, dst_addr, protocol, "+
+			"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, "+
+			"AVG(sampling_rate_avg) as sampling_rate_avg").
+		Group("bucket, device_id, src_addr, dst_addr, protocol").
+		Scan(&rows)
+
+	if len(rows) == 0 {
+		return
+	}
+
+	const batchSize = 1000
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := make([]models.FlowRollup, 0, end-i)
+		for _, r := range rows[i:end] {
+			ts, _ := time.Parse(bucketFmt, r.Bucket)
+			batch = append(batch, models.FlowRollup{
+				Timestamp:       ts,
+				DeviceID:        r.DeviceID,
+				IntervalType:    dstInterval,
+				SrcAddr:         r.SrcAddr,
+				DstAddr:         r.DstAddr,
+				Protocol:        r.Protocol,
+				BytesSum:        r.BytesSum,
+				PacketsSum:      r.PacketsSum,
+				FlowCount:       r.FlowCount,
+				SamplingRateAvg: r.SamplingRateAvg,
+			})
+		}
+		d.db.Create(&batch)
+	}
+
+	// Delete consumed source rollups
+	d.db.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).Delete(&models.FlowRollup{})
+	log.Printf("Flow rollup: promoted %d groups from %s to %s rollups", len(rows), srcInterval, dstInterval)
 }
 
 // EventStatsResult holds aggregated event statistics (alerts, traps, syslog)

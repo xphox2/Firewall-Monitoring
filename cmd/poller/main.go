@@ -69,10 +69,18 @@ func (p *Poller) Start() error {
 	cleanupTicker := time.NewTicker(24 * time.Hour)
 	defer cleanupTicker.Stop()
 
+	// Roll up flow data every 5 minutes
+	rollupTicker := time.NewTicker(5 * time.Minute)
+	defer rollupTicker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
 			p.pollAllDevices()
+		case <-rollupTicker.C:
+			if p.db != nil {
+				p.db.RunFlowRollupCycle()
+			}
 		case <-cleanupTicker.C:
 			if p.db != nil {
 				if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {

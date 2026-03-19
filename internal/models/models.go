@@ -562,6 +562,22 @@ type FlowSample struct {
 
 func (FlowSample) TableName() string { return "flow_samples" }
 
+type FlowRollup struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	Timestamp       time.Time `json:"timestamp" gorm:"index:idx_rollup_lookup,priority:3"`
+	DeviceID        uint      `json:"device_id" gorm:"index:idx_rollup_lookup,priority:1"`
+	IntervalType    string    `json:"interval_type" gorm:"size:4;index:idx_rollup_lookup,priority:2"` // "5m","1h","1d"
+	SrcAddr         string    `json:"src_addr"`
+	DstAddr         string    `json:"dst_addr"`
+	Protocol        uint8     `json:"protocol"`
+	BytesSum        uint64    `json:"bytes_sum"`
+	PacketsSum      uint64    `json:"packets_sum"`
+	FlowCount       int64     `json:"flow_count"`
+	SamplingRateAvg uint32    `json:"sampling_rate_avg"`
+}
+
+func (FlowRollup) TableName() string { return "flow_rollups" }
+
 type SiteDatabase struct {
 	ID           uint       `json:"id" gorm:"primaryKey"`
 	SiteID       uint       `json:"site_id" gorm:"uniqueIndex;not null"`

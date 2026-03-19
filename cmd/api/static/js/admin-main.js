@@ -95,6 +95,14 @@
     }
     window.formatBytes = formatBytes;
 
+    function formatBps(bps) {
+        if (!bps || bps === 0) return '0 bps';
+        var units = ['bps','Kbps','Mbps','Gbps','Tbps'];
+        var i = Math.floor(Math.log(bps) / Math.log(1000));
+        if (i >= units.length) i = units.length - 1;
+        return (bps / Math.pow(1000, i)).toFixed(1) + ' ' + units[i];
+    }
+
     function formatNum(n) { return n != null ? Number(n).toLocaleString() : '0'; }
     window.formatNum = formatNum;
 
@@ -657,6 +665,8 @@
 
     var bytesTickCallback = function(value) { return formatBytes(value); };
     var bytesTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y || ctx.parsed.x || 0); };
+    var bpsTickCallback = function(value) { return formatBps(value); };
+    var bpsTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBps(ctx.parsed.y || ctx.parsed.x || 0); };
 
     function loadFlowCharts() {
         var statsUrl = API_BASE + '/flows/stats?hours=' + flowStatsHours;
@@ -665,10 +675,13 @@
         apiFetch(statsUrl).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
+            // 6 stat cards
             document.getElementById('flows-total').textContent = (d.total_flows || 0).toLocaleString();
             document.getElementById('flows-bytes').textContent = formatBytes(d.total_bytes || 0);
+            document.getElementById('flows-throughput').textContent = formatBps(d.bits_per_second || 0);
             document.getElementById('flows-sources').textContent = (d.unique_sources || 0).toLocaleString();
             document.getElementById('flows-dests').textContent = (d.unique_dests || 0).toLocaleString();
+            document.getElementById('flows-protocols').textContent = (d.protocol_count || 0).toLocaleString();
 
             // Protocol doughnut
             var protoLabels = (d.by_protocol || []).map(function(p) { return p.key; });
@@ -676,7 +689,7 @@
             var protoColors = ['#58a6ff','#3fb950','#d2992a','#f85149','#bc8cff','#8b949e','#388bfd','#da3633'];
             createChart('flows-protocol-chart','doughnut',protoLabels,[{data:protoCounts,backgroundColor:protoColors.slice(0,protoLabels.length),borderWidth:0}]);
 
-            // Top talkers bar (horizontal)
+            // Top sources bar (horizontal)
             var srcLabels = (d.top_sources || []).map(function(s) { return s.key; });
             var srcCounts = (d.top_sources || []).map(function(s) { return s.count; });
             createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}],{
@@ -688,16 +701,51 @@
                 plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
             });
 
-            // Bytes over time
-            var timeLabels = (d.bytes_over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
-            var timeCounts = (d.bytes_over_time || []).map(function(b) { return b.count; });
-            createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Bytes',data:timeCounts,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}],{
+            // Top destinations bar (horizontal)
+            var dstLabels = (d.top_destinations || []).map(function(s) { return s.key; });
+            var dstCounts = (d.top_destinations || []).map(function(s) { return s.count; });
+            createChart('flows-top-dests-chart','bar',dstLabels,[{label:'Bytes',data:dstCounts,backgroundColor:'#3fb950',borderRadius:3}],{
+                indexAxis:'y',
                 scales: {
-                    x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' }, beginAtZero: true }
+                    x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
+                    y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
                 },
                 plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
             });
+
+            // Bandwidth over time (bits/sec)
+            var timeLabels = (d.bytes_over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
+            var timeBps = (d.bytes_over_time || []).map(function(b, idx, arr) {
+                // Estimate interval seconds based on bucket count and total hours
+                var intervalSec = (flowStatsHours * 3600) / Math.max(arr.length, 1);
+                return (b.count * 8) / intervalSec;
+            });
+            createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Throughput',data:timeBps,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}],{
+                scales: {
+                    x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
+                    y: { ticks: { color: '#484f58', font:{size:10}, callback: bpsTickCallback }, grid: { color: '#21262d' }, beginAtZero: true }
+                },
+                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bpsTooltipCallback } } }
+            });
+
+            // Top conversations table
+            var convTbody = document.querySelector('#flows-conversations-table tbody');
+            if (convTbody) {
+                var totalBytes = d.total_bytes || 1;
+                var convos = d.top_conversations || [];
+                convTbody.innerHTML = convos.map(function(c) {
+                    var pct = ((c.bytes / totalBytes) * 100).toFixed(1);
+                    return '<tr class="conv-row" style="cursor:pointer" data-src="' + escapeHtml(c.src_addr) + '" data-dst="' + escapeHtml(c.dst_addr) + '">' +
+                        '<td class="mono">' + escapeHtml(c.src_addr) + '</td>' +
+                        '<td>&#8594;</td>' +
+                        '<td class="mono">' + escapeHtml(c.dst_addr) + ':' + c.dst_port + '</td>' +
+                        '<td>' + escapeHtml(c.protocol) + '</td>' +
+                        '<td>' + formatBytes(c.bytes) + '</td>' +
+                        '<td>' + (c.packets || 0).toLocaleString() + '</td>' +
+                        '<td>' + pct + '%</td>' +
+                    '</tr>';
+                }).join('') || '<tr><td colspan="7" class="empty-state">No conversations</td></tr>';
+            }
         })['catch'](function(e) { console.error('Failed to load flow charts:', e); });
     }
 
@@ -719,6 +767,7 @@
     function renderFlowsTable(samples, append) {
         var tbody = document.querySelector('#flows-table tbody');
         var html = samples.map(function(f) {
+            var estBytes = f.sampling_rate ? f.bytes * f.sampling_rate : f.bytes;
             return '<tr>' +
                 '<td style="white-space:nowrap;">' + formatDate(f.timestamp) + '</td>' +
                 '<td class="mono">' + escapeHtml(f.src_addr) + ':' + f.src_port + '</td>' +
@@ -726,12 +775,13 @@
                 '<td class="mono">' + escapeHtml(f.dst_addr) + ':' + f.dst_port + '</td>' +
                 '<td>' + (PROTOCOL_NAMES[f.protocol] || f.protocol) + '</td>' +
                 '<td>' + formatBytes(f.bytes) + '</td>' +
+                '<td>' + formatBytes(estBytes) + '</td>' +
                 '<td>' + f.packets + '</td>' +
                 '<td>' + (f.sampling_rate ? '1:' + f.sampling_rate : '-') + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples</td></tr>';
+        else tbody.innerHTML = html || '<tr><td colspan="9" class="empty-state">No flow samples</td></tr>';
     }
 
     function loadMoreFlows() {
@@ -2181,6 +2231,17 @@
         'edit-maint': function(el) { showMaintModal(parseInt(el.dataset.id)); },
         'delete-maint': function(el) { deleteMaintWindow(parseInt(el.dataset.id)); },
         'toggle-expand': function(el) { el.classList.toggle('expanded'); }
+    });
+
+    // Click-to-filter: clicking a conversation row populates src/dst filters and reloads flow table
+    document.addEventListener('click', function(e) {
+        var row = e.target.closest('.conv-row');
+        if (!row) return;
+        var srcInput = document.getElementById('flows-filter-src');
+        var dstInput = document.getElementById('flows-filter-dst');
+        if (srcInput) srcInput.value = row.dataset.src || '';
+        if (dstInput) dstInput.value = row.dataset.dst || '';
+        loadFlows();
     });
 
     // ---- Init ----

@@ -23,6 +23,8 @@ func (sqliteDialect) TimeBucket(unit, column string) string {
 	switch unit {
 	case "minute":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
+	case "5min":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:', %s) || printf('%%02d', (CAST(strftime('%%M', %s) AS INTEGER) / 5) * 5)", column, column)
 	case "hour":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
 	case "day":
@@ -46,6 +48,8 @@ func (postgresDialect) TimeBucket(unit, column string) string {
 	switch unit {
 	case "minute":
 		return fmt.Sprintf("to_char(date_trunc('minute', %s), 'YYYY-MM-DD HH24:MI')", column)
+	case "5min":
+		return fmt.Sprintf("to_char(date_trunc('hour', %s) + INTERVAL '5 min' * FLOOR(EXTRACT(MINUTE FROM %s)/5), 'YYYY-MM-DD HH24:MI')", column, column)
 	case "hour":
 		return fmt.Sprintf("to_char(date_trunc('hour', %s), 'YYYY-MM-DD HH24:00')", column)
 	case "day":
