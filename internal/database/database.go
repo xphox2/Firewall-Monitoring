@@ -133,6 +133,9 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// Ensure a default alert policy exists
+	d.EnsureDefaultPolicy()
+
 	// Backfill vendor for existing devices
 	db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
 
@@ -176,6 +179,11 @@ func (d *Database) migrate() error {
 		&models.IRCChannel{},
 		&models.IRCCommand{},
 		&models.IRCMessageLog{},
+		&models.AlertPolicy{},
+		&models.AlertRule{},
+		&models.DeviceAlertConfig{},
+		&models.SiteAlertConfig{},
+		&models.MaintenanceWindow{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -2548,4 +2556,193 @@ func (d *Database) GetDeviceFirstPoll(deviceID uint) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	return *result.MinTS, nil
+}
+
+// --- Alert Policy CRUD ---
+
+func (d *Database) EnsureDefaultPolicy() {
+	var count int64
+	d.db.Model(&models.AlertPolicy{}).Where("is_default = ?", true).Count(&count)
+	if count == 0 {
+		policy := models.AlertPolicy{
+			Name:            "Default",
+			Description:     "Default alert policy — all notifications use global settings",
+			IsDefault:       true,
+			CooldownMinutes: 5,
+		}
+		d.db.Create(&policy)
+	}
+}
+
+func (d *Database) GetAlertPolicies() ([]models.AlertPolicy, error) {
+	var policies []models.AlertPolicy
+	err := d.db.Preload("Rules").Order("is_default DESC, name ASC").Find(&policies).Error
+	return policies, err
+}
+
+func (d *Database) GetAlertPolicy(id uint) (*models.AlertPolicy, error) {
+	var policy models.AlertPolicy
+	err := d.db.Preload("Rules").First(&policy, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func (d *Database) GetDefaultAlertPolicy() (*models.AlertPolicy, error) {
+	var policy models.AlertPolicy
+	err := d.db.Preload("Rules").Where("is_default = ?", true).First(&policy).Error
+	if err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func (d *Database) CreateAlertPolicy(policy *models.AlertPolicy) error {
+	return d.db.Create(policy).Error
+}
+
+func (d *Database) UpdateAlertPolicy(policy *models.AlertPolicy) error {
+	return d.db.Save(policy).Error
+}
+
+func (d *Database) DeleteAlertPolicy(id uint) error {
+	// Prevent deleting default policy
+	var policy models.AlertPolicy
+	if err := d.db.First(&policy, id).Error; err != nil {
+		return err
+	}
+	if policy.IsDefault {
+		return fmt.Errorf("cannot delete the default alert policy")
+	}
+	// Delete associated rules first
+	d.db.Where("policy_id = ?", id).Delete(&models.AlertRule{})
+	return d.db.Delete(&models.AlertPolicy{}, id).Error
+}
+
+func (d *Database) BatchUpsertAlertRules(policyID uint, rules []models.AlertRule) error {
+	// Delete existing rules for this policy
+	if err := d.db.Where("policy_id = ?", policyID).Delete(&models.AlertRule{}).Error; err != nil {
+		return err
+	}
+	// Insert new rules
+	for i := range rules {
+		rules[i].ID = 0
+		rules[i].PolicyID = policyID
+	}
+	if len(rules) > 0 {
+		return d.db.Create(&rules).Error
+	}
+	return nil
+}
+
+// --- Device Alert Config CRUD ---
+
+func (d *Database) GetDeviceAlertConfig(deviceID uint) (*models.DeviceAlertConfig, error) {
+	var cfg models.DeviceAlertConfig
+	err := d.db.Where("device_id = ?", deviceID).First(&cfg).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (d *Database) UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error {
+	var existing models.DeviceAlertConfig
+	err := d.db.Where("device_id = ?", cfg.DeviceID).First(&existing).Error
+	if err == nil {
+		cfg.ID = existing.ID
+		return d.db.Save(cfg).Error
+	}
+	return d.db.Create(cfg).Error
+}
+
+func (d *Database) DeleteDeviceAlertConfig(deviceID uint) error {
+	return d.db.Where("device_id = ?", deviceID).Delete(&models.DeviceAlertConfig{}).Error
+}
+
+func (d *Database) GetAllDeviceAlertConfigs() ([]models.DeviceAlertConfig, error) {
+	var configs []models.DeviceAlertConfig
+	err := d.db.Find(&configs).Error
+	return configs, err
+}
+
+// --- Site Alert Config CRUD ---
+
+func (d *Database) GetSiteAlertConfig(siteID uint) (*models.SiteAlertConfig, error) {
+	var cfg models.SiteAlertConfig
+	err := d.db.Where("site_id = ?", siteID).First(&cfg).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (d *Database) UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error {
+	var existing models.SiteAlertConfig
+	err := d.db.Where("site_id = ?", cfg.SiteID).First(&existing).Error
+	if err == nil {
+		cfg.ID = existing.ID
+		return d.db.Save(cfg).Error
+	}
+	return d.db.Create(cfg).Error
+}
+
+func (d *Database) DeleteSiteAlertConfig(siteID uint) error {
+	return d.db.Where("site_id = ?", siteID).Delete(&models.SiteAlertConfig{}).Error
+}
+
+func (d *Database) GetAllSiteAlertConfigs() ([]models.SiteAlertConfig, error) {
+	var configs []models.SiteAlertConfig
+	err := d.db.Find(&configs).Error
+	return configs, err
+}
+
+// --- Maintenance Window CRUD ---
+
+func (d *Database) GetMaintenanceWindows() ([]models.MaintenanceWindow, error) {
+	var windows []models.MaintenanceWindow
+	err := d.db.Order("start_time DESC").Find(&windows).Error
+	return windows, err
+}
+
+func (d *Database) GetActiveMaintenanceWindows() ([]models.MaintenanceWindow, error) {
+	var windows []models.MaintenanceWindow
+	now := time.Now()
+	err := d.db.Where("start_time <= ? AND end_time >= ?", now, now).Find(&windows).Error
+	return windows, err
+}
+
+func (d *Database) CreateMaintenanceWindow(w *models.MaintenanceWindow) error {
+	return d.db.Create(w).Error
+}
+
+func (d *Database) UpdateMaintenanceWindow(w *models.MaintenanceWindow) error {
+	return d.db.Save(w).Error
+}
+
+func (d *Database) DeleteMaintenanceWindow(id uint) error {
+	return d.db.Delete(&models.MaintenanceWindow{}, id).Error
+}
+
+// --- Enhanced Alert methods ---
+
+func (d *Database) AcknowledgeAlertEnhanced(id uint, notes string) error {
+	now := time.Now()
+	return d.db.Model(&models.Alert{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"acknowledged":    true,
+		"acknowledged_at": now,
+		"notes":           notes,
+	}).Error
+}
+
+func (d *Database) UpdateAlertNotes(id uint, notes string) error {
+	return d.db.Model(&models.Alert{}).Where("id = ?", id).Update("notes", notes).Error
+}
+
+func (d *Database) GetUnacknowledgedAlerts(olderThan time.Time) ([]models.Alert, error) {
+	var alerts []models.Alert
+	err := d.db.Where("acknowledged = ? AND suppressed = ? AND timestamp < ?", false, false, olderThan).
+		Find(&alerts).Error
+	return alerts, err
 }

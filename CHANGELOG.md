@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.128] - 2026-03-18
+
+### Added
+- **Per-device alert policies**: Reusable `AlertPolicy` bundles with per-alert-type rules, notification channel routing, cooldown overrides, and escalation settings
+- **Alert rules**: Per-alert-type configuration within policies — enable/disable, severity override, threshold override, per-channel notification toggles (tri-state: inherit/on/off)
+- **Device alert config**: Per-device policy assignment, threshold overrides (CPU/memory/disk/sessions), cooldown override, and master alerts-enabled toggle
+- **Site alert config**: Per-site default policy and threshold overrides inherited by all site devices unless overridden at device level
+- **Maintenance windows**: Time-based notification suppression per device, site, or fleet-wide — alerts still saved with `suppressed=true` for audit trail
+- **Escalation**: Re-sends notifications for unacknowledged alerts after configurable interval, up to configurable repeat limit
+- **Policy resolution engine** (`internal/alerts/policy.go`): Inheritance chain Device → Site → Policy Rule → Policy → Global defaults, computed per (device, alertType) with in-memory cache refreshed each poll cycle
+- **Enhanced Alert model**: New fields `acknowledged_at`, `resolved_at`, `notes`, `policy_id`, `escalation_count`, `suppressed`
+- **Alert acknowledgment with notes**: Acknowledge modal with optional notes textarea, `acknowledged_at` timestamp
+- **15 new API endpoints**: Full CRUD for alert policies, alert rules (batch upsert), device/site alert configs, maintenance windows, alert notes
+- **Admin UI**: New "Alert Policies" tab with policy list, create/edit/clone/delete, inline alert rules editor with tri-state channel toggles
+- **Admin UI**: New "Maintenance" tab with maintenance window list, create/edit with scope picker (all/device/site), datetime pickers, alert type filter
+- **Default policy auto-seeded**: `EnsureDefaultPolicy()` creates a "Default" policy on first boot — system works identically to pre-change with zero configuration
+
+### Changed
+- All alert check methods (`CheckSystemStatus`, `CheckInterfaceStatus`, `CheckVPNStatus`, `CheckInterfaceErrors`, `ProcessTrap`, `ProcessSyslog`) now accept `siteID` parameter and resolve per-device/policy configuration
+- `canAlertWithCooldown()` uses resolved cooldown duration instead of global default
+- `sendRecovery()` sets `resolved_at` on original alert records
+- `SendAlert()` in notifier respects per-channel enable flags from policy resolution (backward compatible: legacy behaviour when no policy active)
+- `RefreshThresholds()` now also refreshes the policy cache
+- `pollAllDevices()` calls `CheckEscalations()` at end of each cycle
+
 ## [0.10.127] - 2026-03-18
 
 ### Added

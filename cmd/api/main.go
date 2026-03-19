@@ -414,6 +414,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/interfaces", handler.GetAllInterfaces)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
+		admin.POST("/api/alerts/:id/notes", handler.UpdateAlertNotes)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
 		admin.GET("/api/alerts/stats", handler.GetAlertStats)
 		admin.GET("/api/traps/stats", handler.GetTrapStats)
@@ -433,6 +434,30 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/devices/:id/security-stats", handler.GetDeviceSecurityStats)
 		admin.GET("/api/devices/:id/sdwan-health", handler.GetDeviceSDWANHealth)
 		admin.GET("/api/devices/:id/ha-status", handler.GetDeviceHAStatus)
+
+		// Alert policies
+		admin.GET("/api/alert-policies", handler.ListAlertPolicies)
+		admin.POST("/api/alert-policies", handler.CreateAlertPolicy)
+		admin.GET("/api/alert-policies/:id", handler.GetAlertPolicy)
+		admin.PUT("/api/alert-policies/:id", handler.UpdateAlertPolicy)
+		admin.DELETE("/api/alert-policies/:id", handler.DeleteAlertPolicy)
+		admin.POST("/api/alert-policies/:id/clone", handler.CloneAlertPolicy)
+		admin.PUT("/api/alert-policies/:id/rules", handler.BatchUpsertAlertRules)
+
+		// Device/Site alert configs
+		admin.GET("/api/devices/:id/alert-config", handler.GetDeviceAlertConfig)
+		admin.PUT("/api/devices/:id/alert-config", handler.UpsertDeviceAlertConfig)
+		admin.DELETE("/api/devices/:id/alert-config", handler.DeleteDeviceAlertConfig)
+		admin.GET("/api/sites/:id/alert-config", handler.GetSiteAlertConfig)
+		admin.PUT("/api/sites/:id/alert-config", handler.UpsertSiteAlertConfig)
+		admin.DELETE("/api/sites/:id/alert-config", handler.DeleteSiteAlertConfig)
+
+		// Maintenance windows
+		admin.GET("/api/maintenance-windows", handler.ListMaintenanceWindows)
+		admin.POST("/api/maintenance-windows", handler.CreateMaintenanceWindow)
+		admin.PUT("/api/maintenance-windows/:id", handler.UpdateMaintenanceWindow)
+		admin.DELETE("/api/maintenance-windows/:id", handler.DeleteMaintenanceWindow)
+		admin.GET("/api/maintenance-windows/active", handler.GetActiveMaintenanceWindows)
 
 		admin.POST("/api/logout", handler.Logout)
 

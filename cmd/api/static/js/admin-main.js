@@ -132,6 +132,8 @@
             case 'settings': loadSettings(); break;
             case 'alerts': loadAlerts(); break;
             case 'traps': loadTraps(); break;
+            case 'alert-policies': loadAlertPolicies(); break;
+            case 'maintenance': loadMaintenance(); break;
         }
     }
 
@@ -778,23 +780,53 @@
     function renderAlertsTable(alerts, append) {
         var tbody = document.querySelector('#alerts-full-table tbody');
         var html = alerts.map(function(a) {
+            var statusCol = '';
+            if (a.suppressed) {
+                statusCol = '<span class="badge unknown">MAINT</span>';
+            } else if (a.acknowledged) {
+                statusCol = '<span class="badge info" title="' + (a.acknowledged_at ? formatDate(a.acknowledged_at) : '') + (a.notes ? ' — ' + escapeHtml(a.notes) : '') + '">ACK</span>';
+            } else {
+                statusCol = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Ack</button>';
+            }
             return '<tr>' +
                 '<td>' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + getDeviceName(a.device_id) + '</td>' +
                 '<td>' + escapeHtml(a.alert_type) + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td>' + escapeHtml(a.message) + '</td>' +
-                '<td>' + (a.acknowledged ? '<span class="badge info">ACK</span>' : '<button class="btn sm" data-action="acknowledge-alert" data-id="' + a.id + '">Ack</button>') + '</td>' +
+                '<td>' + statusCol + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
         else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No alerts</td></tr>';
     }
 
-    function acknowledgeAlert(id) {
-        apiFetch(API_BASE + '/alerts/' + id + '/acknowledge', {method:'POST'}).then(function() {
+    function showAckModal(id) {
+        document.getElementById('ack-alert-id').value = id;
+        document.getElementById('ack-notes').value = '';
+        document.getElementById('ack-modal').classList.add('active');
+    }
+
+    function closeAckModal() {
+        document.getElementById('ack-modal').classList.remove('active');
+    }
+
+    function acknowledgeAlert(id, notes) {
+        var body = notes ? {notes: notes} : {};
+        apiFetch(API_BASE + '/alerts/' + id + '/acknowledge', {method:'POST', body: body}).then(function() {
+            closeAckModal();
             loadAlerts();
         })['catch'](function(e) { console.error('Failed to acknowledge alert:', e); });
+    }
+
+    var ackForm = document.getElementById('ack-form');
+    if (ackForm) {
+        ackForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var id = parseInt(document.getElementById('ack-alert-id').value);
+            var notes = document.getElementById('ack-notes').value;
+            acknowledgeAlert(id, notes);
+        });
     }
 
     function loadMoreAlerts() {
@@ -1548,6 +1580,353 @@
         }
     }
 
+    // ---- Alert Policies ----
+    var currentPolicies = [];
+    var ALERT_TYPES = ['CPU_HIGH','MEMORY_HIGH','DISK_HIGH','SESSIONS_HIGH','INTERFACE_DOWN','INTERFACE_ERRORS','VPN_TUNNEL_DOWN','DEVICE_OFFLINE','TRAFFIC_SPIKE','SYSLOG_EMERGENCY','SYSLOG_ALERT','SYSLOG_CRITICAL'];
+
+    function loadAlertPolicies() {
+        apiFetch(API_BASE + '/alert-policies').then(function(result) {
+            if (!result) return;
+            currentPolicies = result.data || [];
+            document.getElementById('ap-total').textContent = currentPolicies.length;
+            renderPoliciesTable(currentPolicies);
+        })['catch'](function(e) { console.error('Failed to load policies:', e); });
+    }
+
+    function renderPoliciesTable(policies) {
+        var tbody = document.querySelector('#alert-policies-table tbody');
+        var html = policies.map(function(p) {
+            var channels = [];
+            if (p.notify_email) channels.push('Email');
+            if (p.notify_slack) channels.push('Slack');
+            if (p.notify_discord) channels.push('Discord');
+            if (p.notify_webhook) channels.push('Webhook');
+            var ruleCount = (p.rules || []).length;
+            return '<tr>' +
+                '<td>' + escapeHtml(p.name) + '</td>' +
+                '<td>' + escapeHtml(p.description || '') + '</td>' +
+                '<td>' + (p.is_default ? '<span class="badge info">DEFAULT</span>' : '') + '</td>' +
+                '<td>' + ruleCount + '</td>' +
+                '<td>' + (channels.length ? channels.join(', ') : '<span style="color:#484f58">Dashboard only</span>') + '</td>' +
+                '<td>' + p.cooldown_minutes + 'm</td>' +
+                '<td>' + (p.escalation_enabled ? p.escalation_minutes + 'm (' + p.escalation_repeat + 'x)' : 'Off') + '</td>' +
+                '<td>' +
+                    '<button class="btn secondary sm" data-action="edit-policy" data-id="' + p.id + '">Edit</button> ' +
+                    '<button class="btn secondary sm" data-action="clone-policy" data-id="' + p.id + '">Clone</button> ' +
+                    (p.is_default ? '' : '<button class="btn secondary sm" data-action="delete-policy" data-id="' + p.id + '">Delete</button>') +
+                '</td>' +
+            '</tr>';
+        }).join('');
+        tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No alert policies</td></tr>';
+    }
+
+    function showPolicyModal(id) {
+        document.getElementById('policy-modal').classList.add('active');
+        document.getElementById('policy-modal-title').textContent = id ? 'Edit Alert Policy' : 'Create Alert Policy';
+        document.getElementById('policy-form').reset();
+        document.getElementById('policy-id').value = '';
+
+        if (id) {
+            var p = currentPolicies.find(function(x) { return x.id === id; });
+            if (!p) return;
+            document.getElementById('policy-id').value = p.id;
+            document.getElementById('policy-name').value = p.name;
+            document.getElementById('policy-description').value = p.description || '';
+            document.getElementById('policy-cooldown').value = p.cooldown_minutes;
+            document.getElementById('policy-is-default').value = p.is_default ? 'true' : 'false';
+            document.getElementById('policy-notify-email').checked = p.notify_email;
+            document.getElementById('policy-notify-slack').checked = p.notify_slack;
+            document.getElementById('policy-notify-discord').checked = p.notify_discord;
+            document.getElementById('policy-notify-webhook').checked = p.notify_webhook;
+            document.getElementById('policy-email-recipients').value = p.email_recipients || '';
+            document.getElementById('policy-slack-url').value = p.slack_webhook_url || '';
+            document.getElementById('policy-discord-url').value = p.discord_webhook_url || '';
+            document.getElementById('policy-webhook-url').value = p.webhook_url || '';
+            document.getElementById('policy-escalation-enabled').checked = p.escalation_enabled;
+            document.getElementById('policy-escalation-minutes').value = p.escalation_minutes;
+            document.getElementById('policy-escalation-repeat').value = p.escalation_repeat;
+            populateRulesTable(p.rules || []);
+        } else {
+            populateRulesTable([]);
+        }
+    }
+
+    function populateRulesTable(existingRules) {
+        var tbody = document.getElementById('policy-rules-body');
+        var ruleMap = {};
+        existingRules.forEach(function(r) { ruleMap[r.alert_type] = r; });
+
+        var html = ALERT_TYPES.map(function(type) {
+            var r = ruleMap[type] || {};
+            var enabled = r.alert_type ? r.enabled : true;
+            var severity = r.severity || '';
+            var threshold = r.threshold || '';
+            var cooldown = (r.cooldown_minutes != null) ? r.cooldown_minutes : '';
+
+            function triState(field, val) {
+                if (val === true) return '<select data-field="' + field + '" class="sm"><option value="">Inherit</option><option value="true" selected>On</option><option value="false">Off</option></select>';
+                if (val === false) return '<select data-field="' + field + '" class="sm"><option value="">Inherit</option><option value="true">On</option><option value="false" selected>Off</option></select>';
+                return '<select data-field="' + field + '" class="sm"><option value="" selected>Inherit</option><option value="true">On</option><option value="false">Off</option></select>';
+            }
+
+            return '<tr data-alert-type="' + type + '">' +
+                '<td style="font-size:12px">' + escapeHtml(type) + '</td>' +
+                '<td><input type="checkbox" data-field="enabled" ' + (enabled ? 'checked' : '') + '></td>' +
+                '<td><select data-field="severity" class="sm"><option value="">Inherit</option><option value="critical"' + (severity==='critical' ? ' selected' : '') + '>Critical</option><option value="warning"' + (severity==='warning' ? ' selected' : '') + '>Warning</option><option value="info"' + (severity==='info' ? ' selected' : '') + '>Info</option></select></td>' +
+                '<td><input type="number" data-field="threshold" value="' + threshold + '" step="0.1" class="sm" style="width:70px"></td>' +
+                '<td>' + triState('notify_email', r.notify_email) + '</td>' +
+                '<td>' + triState('notify_slack', r.notify_slack) + '</td>' +
+                '<td>' + triState('notify_discord', r.notify_discord) + '</td>' +
+                '<td>' + triState('notify_webhook', r.notify_webhook) + '</td>' +
+                '<td><input type="number" data-field="cooldown_minutes" value="' + cooldown + '" class="sm" style="width:60px" min="1"></td>' +
+            '</tr>';
+        }).join('');
+        tbody.innerHTML = html;
+    }
+
+    function collectRules() {
+        var rows = document.querySelectorAll('#policy-rules-body tr');
+        var rules = [];
+        rows.forEach(function(row) {
+            var type = row.dataset.alertType;
+            var enabled = row.querySelector('[data-field="enabled"]').checked;
+            var severity = row.querySelector('[data-field="severity"]').value;
+            var threshold = parseFloat(row.querySelector('[data-field="threshold"]').value) || 0;
+            var cooldownVal = row.querySelector('[data-field="cooldown_minutes"]').value;
+            var cooldown = cooldownVal ? parseInt(cooldownVal) : null;
+
+            function triVal(field) {
+                var v = row.querySelector('[data-field="' + field + '"]').value;
+                if (v === 'true') return true;
+                if (v === 'false') return false;
+                return null;
+            }
+
+            rules.push({
+                alert_type: type,
+                enabled: enabled,
+                severity: severity,
+                threshold: threshold,
+                notify_email: triVal('notify_email'),
+                notify_slack: triVal('notify_slack'),
+                notify_discord: triVal('notify_discord'),
+                notify_webhook: triVal('notify_webhook'),
+                cooldown_minutes: cooldown
+            });
+        });
+        return rules;
+    }
+
+    function closePolicyModal() {
+        document.getElementById('policy-modal').classList.remove('active');
+    }
+
+    var policyForm = document.getElementById('policy-form');
+    if (policyForm) {
+        policyForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var id = document.getElementById('policy-id').value;
+            var data = {
+                name: document.getElementById('policy-name').value,
+                description: document.getElementById('policy-description').value,
+                cooldown_minutes: parseInt(document.getElementById('policy-cooldown').value) || 5,
+                is_default: document.getElementById('policy-is-default').value === 'true',
+                notify_email: document.getElementById('policy-notify-email').checked,
+                notify_slack: document.getElementById('policy-notify-slack').checked,
+                notify_discord: document.getElementById('policy-notify-discord').checked,
+                notify_webhook: document.getElementById('policy-notify-webhook').checked,
+                email_recipients: document.getElementById('policy-email-recipients').value,
+                slack_webhook_url: document.getElementById('policy-slack-url').value,
+                discord_webhook_url: document.getElementById('policy-discord-url').value,
+                webhook_url: document.getElementById('policy-webhook-url').value,
+                escalation_enabled: document.getElementById('policy-escalation-enabled').checked,
+                escalation_minutes: parseInt(document.getElementById('policy-escalation-minutes').value) || 30,
+                escalation_repeat: parseInt(document.getElementById('policy-escalation-repeat').value) || 3
+            };
+
+            var method = id ? 'PUT' : 'POST';
+            var url = id ? (API_BASE + '/alert-policies/' + id) : (API_BASE + '/alert-policies');
+
+            apiFetch(url, {method: method, body: data}).then(function(result) {
+                var policyId = id || (result.data && result.data.id);
+                if (policyId) {
+                    var rules = collectRules();
+                    return apiFetch(API_BASE + '/alert-policies/' + policyId + '/rules', {method: 'PUT', body: rules});
+                }
+            }).then(function() {
+                closePolicyModal();
+                loadAlertPolicies();
+            })['catch'](function(err) { alert('Error saving policy: ' + (err.message || err)); });
+        });
+    }
+
+    function clonePolicy(id) {
+        apiFetch(API_BASE + '/alert-policies/' + id + '/clone', {method: 'POST'}).then(function() {
+            loadAlertPolicies();
+        })['catch'](function(e) { alert('Clone failed: ' + e.message); });
+    }
+
+    function deletePolicy(id) {
+        if (!confirm('Delete this alert policy?')) return;
+        apiFetch(API_BASE + '/alert-policies/' + id, {method: 'DELETE'}).then(function() {
+            loadAlertPolicies();
+        })['catch'](function(e) { alert('Delete failed: ' + e.message); });
+    }
+
+    // ---- Maintenance Windows ----
+    var currentMaintenanceWindows = [];
+
+    function loadMaintenance() {
+        apiFetch(API_BASE + '/maintenance-windows').then(function(result) {
+            if (!result) return;
+            currentMaintenanceWindows = result.data || [];
+            var now = new Date();
+            var active = 0, scheduled = 0;
+            currentMaintenanceWindows.forEach(function(w) {
+                var start = new Date(w.start_time);
+                var end = new Date(w.end_time);
+                if (now >= start && now <= end) active++;
+                else if (now < start) scheduled++;
+            });
+            document.getElementById('mw-active').textContent = active;
+            document.getElementById('mw-scheduled').textContent = scheduled;
+            document.getElementById('mw-total').textContent = currentMaintenanceWindows.length;
+            renderMaintenanceTable(currentMaintenanceWindows);
+        })['catch'](function(e) { console.error('Failed to load maintenance windows:', e); });
+    }
+
+    function renderMaintenanceTable(windows) {
+        var tbody = document.querySelector('#maintenance-table tbody');
+        var now = new Date();
+        var html = windows.map(function(w) {
+            var start = new Date(w.start_time);
+            var end = new Date(w.end_time);
+            var status = 'Expired';
+            var statusClass = 'unknown';
+            if (now >= start && now <= end) { status = 'Active'; statusClass = 'warning'; }
+            else if (now < start) { status = 'Scheduled'; statusClass = 'info'; }
+
+            var scope = 'All Devices';
+            if (w.device_id) scope = 'Device #' + w.device_id;
+            if (w.site_id) scope = 'Site #' + w.site_id;
+
+            return '<tr>' +
+                '<td>' + escapeHtml(w.name) + '</td>' +
+                '<td>' + scope + '</td>' +
+                '<td>' + formatDate(w.start_time) + '</td>' +
+                '<td>' + formatDate(w.end_time) + '</td>' +
+                '<td>' + (w.recurring ? 'Yes' : 'No') + '</td>' +
+                '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
+                '<td>' +
+                    '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button> ' +
+                    '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+        tbody.innerHTML = html || '<tr><td colspan="7" class="empty-state">No maintenance windows</td></tr>';
+    }
+
+    function showMaintModal(id) {
+        document.getElementById('maint-modal').classList.add('active');
+        document.getElementById('maint-modal-title').textContent = id ? 'Edit Maintenance Window' : 'Create Maintenance Window';
+        document.getElementById('maint-form').reset();
+        document.getElementById('maint-id').value = '';
+        document.getElementById('maint-suppress-all').checked = true;
+        document.getElementById('maint-alert-types-row').style.display = 'none';
+
+        // Populate device/site selects
+        var devSelect = document.getElementById('maint-device-id');
+        var siteSelect = document.getElementById('maint-site-id');
+        devSelect.innerHTML = '<option value="">Select Device</option>' + currentDevices.map(function(d) {
+            return '<option value="' + d.id + '">' + escapeHtml(d.name) + '</option>';
+        }).join('');
+        apiFetch(API_BASE + '/sites').then(function(r) {
+            if (r && r.data) {
+                siteSelect.innerHTML = '<option value="">Select Site</option>' + r.data.map(function(s) {
+                    return '<option value="' + s.id + '">' + escapeHtml(s.name) + '</option>';
+                }).join('');
+            }
+        });
+
+        if (id) {
+            var w = currentMaintenanceWindows.find(function(x) { return x.id === id; });
+            if (!w) return;
+            document.getElementById('maint-id').value = w.id;
+            document.getElementById('maint-name').value = w.name;
+            document.getElementById('maint-suppress-all').checked = w.suppress_all;
+            if (!w.suppress_all) {
+                document.getElementById('maint-alert-types-row').style.display = '';
+                document.getElementById('maint-alert-types').value = w.alert_types || '';
+            }
+            document.getElementById('maint-notes').value = w.notes || '';
+            if (w.start_time) document.getElementById('maint-start').value = w.start_time.slice(0,16);
+            if (w.end_time) document.getElementById('maint-end').value = w.end_time.slice(0,16);
+            if (w.device_id) {
+                document.getElementById('maint-scope').value = 'device';
+                document.getElementById('maint-scope-device').style.display = '';
+                document.getElementById('maint-device-id').value = w.device_id;
+            } else if (w.site_id) {
+                document.getElementById('maint-scope').value = 'site';
+                document.getElementById('maint-scope-site').style.display = '';
+                document.getElementById('maint-site-id').value = w.site_id;
+            }
+        }
+    }
+
+    function closeMaintModal() {
+        document.getElementById('maint-modal').classList.remove('active');
+    }
+
+    // Toggle scope fields
+    var maintScope = document.getElementById('maint-scope');
+    if (maintScope) {
+        maintScope.addEventListener('change', function() {
+            document.getElementById('maint-scope-device').style.display = this.value === 'device' ? '' : 'none';
+            document.getElementById('maint-scope-site').style.display = this.value === 'site' ? '' : 'none';
+        });
+    }
+
+    var maintSuppressAll = document.getElementById('maint-suppress-all');
+    if (maintSuppressAll) {
+        maintSuppressAll.addEventListener('change', function() {
+            document.getElementById('maint-alert-types-row').style.display = this.checked ? 'none' : '';
+        });
+    }
+
+    var maintForm = document.getElementById('maint-form');
+    if (maintForm) {
+        maintForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var id = document.getElementById('maint-id').value;
+            var scope = document.getElementById('maint-scope').value;
+            var data = {
+                name: document.getElementById('maint-name').value,
+                start_time: new Date(document.getElementById('maint-start').value).toISOString(),
+                end_time: new Date(document.getElementById('maint-end').value).toISOString(),
+                suppress_all: document.getElementById('maint-suppress-all').checked,
+                alert_types: document.getElementById('maint-alert-types').value,
+                notes: document.getElementById('maint-notes').value
+            };
+            if (scope === 'device') data.device_id = parseInt(document.getElementById('maint-device-id').value) || null;
+            if (scope === 'site') data.site_id = parseInt(document.getElementById('maint-site-id').value) || null;
+
+            var method = id ? 'PUT' : 'POST';
+            var url = id ? (API_BASE + '/maintenance-windows/' + id) : (API_BASE + '/maintenance-windows');
+
+            apiFetch(url, {method: method, body: data}).then(function() {
+                closeMaintModal();
+                loadMaintenance();
+            })['catch'](function(err) { alert('Error: ' + (err.message || err)); });
+        });
+    }
+
+    function deleteMaintWindow(id) {
+        if (!confirm('Delete this maintenance window?')) return;
+        apiFetch(API_BASE + '/maintenance-windows/' + id, {method: 'DELETE'}).then(function() {
+            loadMaintenance();
+        })['catch'](function(e) { alert('Delete failed: ' + e.message); });
+    }
+
     // ---- Event Delegation (click) ----
     AC.delegateEvent('click', {
         'show-device-modal': function() { showDeviceModal(); },
@@ -1578,7 +1957,17 @@
         'edit-device': function(el) { editDevice(parseInt(el.dataset.id)); },
         'delete-device': function(el) { deleteDevice(parseInt(el.dataset.id)); },
         'delete-connection': function(el) { deleteConnection(parseInt(el.dataset.id)); },
-        'acknowledge-alert': function(el) { acknowledgeAlert(parseInt(el.dataset.id)); },
+        'show-ack-modal': function(el) { showAckModal(parseInt(el.dataset.id)); },
+        'close-ack-modal': function() { closeAckModal(); },
+        'show-policy-modal': function() { showPolicyModal(); },
+        'close-policy-modal': function() { closePolicyModal(); },
+        'edit-policy': function(el) { showPolicyModal(parseInt(el.dataset.id)); },
+        'clone-policy': function(el) { clonePolicy(parseInt(el.dataset.id)); },
+        'delete-policy': function(el) { deletePolicy(parseInt(el.dataset.id)); },
+        'show-maint-modal': function() { showMaintModal(); },
+        'close-maint-modal': function() { closeMaintModal(); },
+        'edit-maint': function(el) { showMaintModal(parseInt(el.dataset.id)); },
+        'delete-maint': function(el) { deleteMaintWindow(parseInt(el.dataset.id)); },
         'toggle-expand': function(el) { el.classList.toggle('expanded'); }
     });
 

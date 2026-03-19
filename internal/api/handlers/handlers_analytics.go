@@ -226,12 +226,44 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.AcknowledgeAlert(id); err != nil {
+	var body struct {
+		Notes string `json:"notes"`
+	}
+	// Allow empty body for backward compatibility
+	c.ShouldBindJSON(&body)
+
+	if err := h.db.AcknowledgeAlertEnhanced(id, body.Notes); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alert"))
 		return
 	}
 
 	c.JSON(http.StatusOK, models.MessageResponse("Alert acknowledged"))
+}
+
+func (h *Handler) UpdateAlertNotes(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Notes string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+
+	if err := h.db.UpdateAlertNotes(id, body.Notes); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update alert notes"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Alert notes updated"))
 }
 
 func (h *Handler) GetUptime(c *gin.Context) {

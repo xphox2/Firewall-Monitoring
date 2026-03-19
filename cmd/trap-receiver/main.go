@@ -32,7 +32,7 @@ func main() {
 		log.Printf("Received trap: %s - %s (Severity: %s)",
 			trap.TrapType, trap.Message, trap.Severity)
 
-		if err := alertManager.ProcessTrap(trap); err != nil {
+		if err := alertManager.ProcessTrap(trap, nil); err != nil {
 			log.Printf("Error processing trap: %v", err)
 		}
 	})

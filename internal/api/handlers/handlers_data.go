@@ -40,7 +40,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	if h.alertManager != nil {
 		for i := range messages {
 			if messages[i].Severity <= 2 {
-				if err := h.alertManager.ProcessSyslog(&messages[i]); err != nil {
+				if err := h.alertManager.ProcessSyslog(&messages[i], nil); err != nil {
 					log.Printf("Failed to process syslog alert: %v", err)
 				}
 			}

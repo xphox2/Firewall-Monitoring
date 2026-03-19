@@ -176,18 +176,116 @@ type TrapEvent struct {
 }
 
 type Alert struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	Timestamp    time.Time `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2"`
-	DeviceID     uint      `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
-	AlertType    string    `json:"alert_type"`
-	Severity     string    `json:"severity"`
-	Message      string    `json:"message"`
-	MetricName   string    `json:"metric_name"`
-	Threshold    float64   `json:"threshold"`
-	CurrentValue float64   `json:"current_value"`
-	Notified     bool      `json:"notified"`
-	Acknowledged bool      `json:"acknowledged" gorm:"index:idx_alert_ack"`
+	ID              uint       `json:"id" gorm:"primaryKey"`
+	Timestamp       time.Time  `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2"`
+	DeviceID        uint       `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
+	AlertType       string     `json:"alert_type"`
+	Severity        string     `json:"severity"`
+	Message         string     `json:"message"`
+	MetricName      string     `json:"metric_name"`
+	Threshold       float64    `json:"threshold"`
+	CurrentValue    float64    `json:"current_value"`
+	Notified        bool       `json:"notified"`
+	Acknowledged    bool       `json:"acknowledged" gorm:"index:idx_alert_ack"`
+	AcknowledgedAt  *time.Time `json:"acknowledged_at"`
+	ResolvedAt      *time.Time `json:"resolved_at"`
+	Notes           string     `json:"notes"`
+	PolicyID        *uint      `json:"policy_id"`
+	EscalationCount int        `json:"escalation_count" gorm:"default:0"`
+	Suppressed      bool       `json:"suppressed" gorm:"default:false"`
 }
+
+type AlertPolicy struct {
+	ID                uint        `json:"id" gorm:"primaryKey"`
+	Name              string      `json:"name" gorm:"uniqueIndex;not null"`
+	Description       string      `json:"description"`
+	IsDefault         bool        `json:"is_default" gorm:"default:false;index"`
+	NotifyEmail       bool        `json:"notify_email" gorm:"default:false"`
+	NotifySlack       bool        `json:"notify_slack" gorm:"default:false"`
+	NotifyDiscord     bool        `json:"notify_discord" gorm:"default:false"`
+	NotifyWebhook     bool        `json:"notify_webhook" gorm:"default:false"`
+	EmailRecipients   string      `json:"email_recipients"`
+	SlackWebhookURL   string      `json:"slack_webhook_url"`
+	DiscordWebhookURL string      `json:"discord_webhook_url"`
+	WebhookURL        string      `json:"webhook_url"`
+	CooldownMinutes   int         `json:"cooldown_minutes" gorm:"default:5"`
+	EscalationEnabled bool        `json:"escalation_enabled" gorm:"default:false"`
+	EscalationMinutes int         `json:"escalation_minutes" gorm:"default:30"`
+	EscalationRepeat  int         `json:"escalation_repeat" gorm:"default:3"`
+	CreatedAt         time.Time   `json:"created_at"`
+	UpdatedAt         time.Time   `json:"updated_at"`
+	Rules             []AlertRule `json:"rules,omitempty" gorm:"foreignKey:PolicyID"`
+}
+
+func (AlertPolicy) TableName() string { return "alert_policies" }
+
+type AlertRule struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	PolicyID        uint      `json:"policy_id" gorm:"uniqueIndex:idx_policy_alert_type,priority:1;not null"`
+	AlertType       string    `json:"alert_type" gorm:"uniqueIndex:idx_policy_alert_type,priority:2;not null"`
+	Enabled         bool      `json:"enabled" gorm:"default:true"`
+	Severity        string    `json:"severity"`
+	Threshold       float64   `json:"threshold"`
+	NotifyEmail     *bool     `json:"notify_email"`
+	NotifySlack     *bool     `json:"notify_slack"`
+	NotifyDiscord   *bool     `json:"notify_discord"`
+	NotifyWebhook   *bool     `json:"notify_webhook"`
+	CooldownMinutes *int      `json:"cooldown_minutes"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+func (AlertRule) TableName() string { return "alert_rules" }
+
+type DeviceAlertConfig struct {
+	ID               uint      `json:"id" gorm:"primaryKey"`
+	DeviceID         uint      `json:"device_id" gorm:"uniqueIndex;not null"`
+	PolicyID         *uint     `json:"policy_id" gorm:"index"`
+	CPUThreshold     float64   `json:"cpu_threshold"`
+	MemoryThreshold  float64   `json:"memory_threshold"`
+	DiskThreshold    float64   `json:"disk_threshold"`
+	SessionThreshold int       `json:"session_threshold"`
+	CooldownMinutes  int       `json:"cooldown_minutes"`
+	AlertsEnabled    bool      `json:"alerts_enabled" gorm:"default:true"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+func (DeviceAlertConfig) TableName() string { return "device_alert_configs" }
+
+type SiteAlertConfig struct {
+	ID               uint      `json:"id" gorm:"primaryKey"`
+	SiteID           uint      `json:"site_id" gorm:"uniqueIndex;not null"`
+	PolicyID         *uint     `json:"policy_id" gorm:"index"`
+	CPUThreshold     float64   `json:"cpu_threshold"`
+	MemoryThreshold  float64   `json:"memory_threshold"`
+	DiskThreshold    float64   `json:"disk_threshold"`
+	SessionThreshold int       `json:"session_threshold"`
+	CooldownMinutes  int       `json:"cooldown_minutes"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+func (SiteAlertConfig) TableName() string { return "site_alert_configs" }
+
+type MaintenanceWindow struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	DeviceID    *uint     `json:"device_id" gorm:"index"`
+	SiteID      *uint     `json:"site_id" gorm:"index"`
+	Name        string    `json:"name" gorm:"not null"`
+	StartTime   time.Time `json:"start_time" gorm:"not null;index"`
+	EndTime     time.Time `json:"end_time" gorm:"not null;index"`
+	Recurring   bool      `json:"recurring" gorm:"default:false"`
+	RecurRule   string    `json:"recur_rule"`
+	RecurDays   string    `json:"recur_days"`
+	SuppressAll bool      `json:"suppress_all" gorm:"default:true"`
+	AlertTypes  string    `json:"alert_types"`
+	Notes       string    `json:"notes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (MaintenanceWindow) TableName() string { return "maintenance_windows" }
 
 type UptimeRecord struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`

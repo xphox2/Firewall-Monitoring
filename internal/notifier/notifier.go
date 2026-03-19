@@ -36,6 +36,16 @@ type NotifyConfig struct {
 	SlackWebhookURL   string
 	DiscordWebhookURL string
 	WebHookURL        string
+	// Per-channel enable flags from alert policy resolution.
+	// When all are false and no policy is active, SendAlert falls through to
+	// the legacy behaviour (check EmailEnabled / webhook URL presence).
+	EnableEmail   bool
+	EnableSlack   bool
+	EnableDiscord bool
+	EnableWebhook bool
+	// PolicyActive indicates whether these flags came from a resolved policy.
+	// When false, SendAlert uses the legacy global-config behaviour.
+	PolicyActive bool
 }
 
 type Notifier struct {
@@ -71,27 +81,49 @@ func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
 func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	var errs []error
 
-	if nc.EmailEnabled {
-		if err := n.sendEmail(alert, nc); err != nil {
-			errs = append(errs, fmt.Errorf("email failed: %w", err))
+	if nc.PolicyActive {
+		// Policy-driven: only send to explicitly enabled channels
+		if nc.EnableEmail && nc.EmailEnabled {
+			if err := n.sendEmail(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("email failed: %w", err))
+			}
 		}
-	}
-
-	if nc.SlackWebhookURL != "" {
-		if err := n.sendSlack(alert, nc); err != nil {
-			errs = append(errs, fmt.Errorf("slack failed: %w", err))
+		if nc.EnableSlack && nc.SlackWebhookURL != "" {
+			if err := n.sendSlack(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("slack failed: %w", err))
+			}
 		}
-	}
-
-	if nc.DiscordWebhookURL != "" {
-		if err := n.sendDiscord(alert, nc); err != nil {
-			errs = append(errs, fmt.Errorf("discord failed: %w", err))
+		if nc.EnableDiscord && nc.DiscordWebhookURL != "" {
+			if err := n.sendDiscord(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("discord failed: %w", err))
+			}
 		}
-	}
-
-	if nc.WebHookURL != "" {
-		if err := n.sendWebhook(alert, nc); err != nil {
-			errs = append(errs, fmt.Errorf("webhook failed: %w", err))
+		if nc.EnableWebhook && nc.WebHookURL != "" {
+			if err := n.sendWebhook(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("webhook failed: %w", err))
+			}
+		}
+	} else {
+		// Legacy behaviour: send to all configured channels
+		if nc.EmailEnabled {
+			if err := n.sendEmail(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("email failed: %w", err))
+			}
+		}
+		if nc.SlackWebhookURL != "" {
+			if err := n.sendSlack(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("slack failed: %w", err))
+			}
+		}
+		if nc.DiscordWebhookURL != "" {
+			if err := n.sendDiscord(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("discord failed: %w", err))
+			}
+		}
+		if nc.WebHookURL != "" {
+			if err := n.sendWebhook(alert, nc); err != nil {
+				errs = append(errs, fmt.Errorf("webhook failed: %w", err))
+			}
 		}
 	}
 

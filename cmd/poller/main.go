@@ -163,6 +163,11 @@ func (p *Poller) pollAllDevices() {
 			log.Printf("Connection cleanup: removed %d stale auto-detected connection(s)", removed)
 		}
 	}
+
+	// Check for alert escalations
+	if p.alertManager != nil {
+		p.alertManager.CheckEscalations()
+	}
 }
 
 func (p *Poller) pollDevice(device *models.Device) {
@@ -216,7 +221,7 @@ func (p *Poller) pollDevice(device *models.Device) {
 
 	// Check alert thresholds
 	if p.alertManager != nil {
-		if err := p.alertManager.CheckSystemStatus(status); err != nil {
+		if err := p.alertManager.CheckSystemStatus(status, device.SiteID); err != nil {
 			log.Printf("Device %s: alert check error - %v", device.Name, err)
 		}
 	}
@@ -236,12 +241,12 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 		// Check interface alerts
 		if p.alertManager != nil {
-			if err := p.alertManager.CheckInterfaceStatus(interfaces); err != nil {
+			if err := p.alertManager.CheckInterfaceStatus(interfaces, device.SiteID); err != nil {
 				log.Printf("Device %s: interface alert check error - %v", device.Name, err)
 			}
 			// Check interface error/discard rates
 			p.ifaceStatsMu.RLock()
-			if err := p.alertManager.CheckInterfaceErrors(interfaces, p.prevIfaceStats); err != nil {
+			if err := p.alertManager.CheckInterfaceErrors(interfaces, p.prevIfaceStats, device.SiteID); err != nil {
 				log.Printf("Device %s: interface error check error - %v", device.Name, err)
 			}
 			p.ifaceStatsMu.RUnlock()
@@ -322,7 +327,7 @@ func (p *Poller) pollDevice(device *models.Device) {
 			}
 		}
 		if p.alertManager != nil {
-			p.alertManager.CheckVPNStatus(vpnStatuses)
+			p.alertManager.CheckVPNStatus(vpnStatuses, device.SiteID)
 		}
 	}
 
