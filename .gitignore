@@ -37,3 +37,16 @@ data/
 *.crt
 *.key
 *.pem
+
+# Claude Code local settings (user-specific tool permissions)
+.claude/
+
+# Cookies / session files
+cookies.txt
+
+# Scratch / debug dump files
+interfaces.json
+IRC-FORMAT.txt
+
+# Admin password file (written at runtime)
+.admin-password
