@@ -564,11 +564,12 @@ func (FlowSample) TableName() string { return "flow_samples" }
 
 type FlowRollup struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
-	Timestamp       time.Time `json:"timestamp" gorm:"index:idx_rollup_lookup,priority:3"`
+	Timestamp       time.Time `json:"timestamp" gorm:"index:idx_rollup_lookup,priority:3;index:idx_rollup_interval_ts,priority:2"`
 	DeviceID        uint      `json:"device_id" gorm:"index:idx_rollup_lookup,priority:1"`
-	IntervalType    string    `json:"interval_type" gorm:"size:4;index:idx_rollup_lookup,priority:2"` // "5m","1h","1d"
+	IntervalType    string    `json:"interval_type" gorm:"size:4;index:idx_rollup_lookup,priority:2;index:idx_rollup_interval_ts,priority:1"` // "5m","1h","1d"
 	SrcAddr         string    `json:"src_addr"`
 	DstAddr         string    `json:"dst_addr"`
+	DstPort         uint16    `json:"dst_port"`
 	Protocol        uint8     `json:"protocol"`
 	BytesSum        uint64    `json:"bytes_sum"`
 	PacketsSum      uint64    `json:"packets_sum"`

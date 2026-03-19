@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.134] - 2026-03-18
+
+### Fixed
+- **Critical**: `GetFlowStats` now queries both raw `flow_samples` and `flow_rollups` — dashboard no longer goes blank after rollup cycle
+- **Critical**: Rollup INSERT+DELETE wrapped in transactions to prevent data loss and duplicate entries on crash
+- **High**: BPS bandwidth chart now uses server-provided `bucket_seconds` instead of inaccurate client-side interval estimation
+- **High**: Added `DstPort` to `FlowRollup` model — conversation-level port detail preserved through rollup tiers
+- **High**: Combined 4 separate aggregate queries (COUNT, SUM, DISTINCT src, DISTINCT dst) into single query
+- **High**: Extracted duplicate `protoNames` map to package-level `ProtoNames` var with `protoName()` helper — fixes inconsistency where connection flow stats was missing 7 protocol names
+- **Medium**: Added `idx_rollup_interval_ts` composite index on `(interval_type, timestamp)` — rollup promotion queries no longer force full table scan
+- **Medium**: Rollup aggregation now paginated (50k groups per batch) to prevent OOM on high-cardinality networks
+- **Medium**: `formatBps()` now handles values < 1 and negative/NaN inputs without producing "undefined"
+- **Medium**: Added error checks on GORM queries in `GetFlowStats` — DB errors now propagate instead of silently showing zeros
+- **Low**: Replaced inline 6-column grid style with responsive `.stat-grid-6` CSS class (3-col at <1100px, 2-col at <600px)
+- **Low**: Rollup engine logs heartbeat when no data to aggregate
+- **Low**: Used weighted average `SUM(rate * count) / SUM(count)` for `sampling_rate_avg` when promoting rollups
+- **Low**: Extracted shared `horizBarOpts` function — eliminated duplicate horizontal bar chart config
+- **Low**: Extracted shared `topAddrsByBytes` helper — eliminated duplicate top src/dst query patterns
+- **Low**: Reduced rollup batch size from 1000 to 500 for better SQLite compatibility
+- Added `data-dport` attribute to conversation rows for future port-level drill-down
+
 ## [0.10.133] - 2026-03-18
 
 ### Added

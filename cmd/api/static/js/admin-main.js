@@ -96,9 +96,11 @@
     window.formatBytes = formatBytes;
 
     function formatBps(bps) {
-        if (!bps || bps === 0) return '0 bps';
+        if (!bps || bps <= 0) return '0 bps';
+        if (bps < 1) return bps.toFixed(2) + ' bps';
         var units = ['bps','Kbps','Mbps','Gbps','Tbps'];
         var i = Math.floor(Math.log(bps) / Math.log(1000));
+        if (i < 0) i = 0;
         if (i >= units.length) i = units.length - 1;
         return (bps / Math.pow(1000, i)).toFixed(1) + ' ' + units[i];
     }
@@ -668,6 +670,18 @@
     var bpsTickCallback = function(value) { return formatBps(value); };
     var bpsTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBps(ctx.parsed.y || ctx.parsed.x || 0); };
 
+    // Shared options for horizontal bar charts
+    var horizBarOpts = function(color) {
+        return {
+            indexAxis:'y',
+            scales: {
+                x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
+                y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
+            },
+            plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
+        };
+    };
+
     function loadFlowCharts() {
         var statsUrl = API_BASE + '/flows/stats?hours=' + flowStatsHours;
         var deviceFilter = document.getElementById('flows-filter-device');
@@ -692,32 +706,17 @@
             // Top sources bar (horizontal)
             var srcLabels = (d.top_sources || []).map(function(s) { return s.key; });
             var srcCounts = (d.top_sources || []).map(function(s) { return s.count; });
-            createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}],{
-                indexAxis:'y',
-                scales: {
-                    x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
-                },
-                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
-            });
+            createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}], horizBarOpts('#58a6ff'));
 
             // Top destinations bar (horizontal)
             var dstLabels = (d.top_destinations || []).map(function(s) { return s.key; });
             var dstCounts = (d.top_destinations || []).map(function(s) { return s.count; });
-            createChart('flows-top-dests-chart','bar',dstLabels,[{label:'Bytes',data:dstCounts,backgroundColor:'#3fb950',borderRadius:3}],{
-                indexAxis:'y',
-                scales: {
-                    x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
-                },
-                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
-            });
+            createChart('flows-top-dests-chart','bar',dstLabels,[{label:'Bytes',data:dstCounts,backgroundColor:'#3fb950',borderRadius:3}], horizBarOpts('#3fb950'));
 
-            // Bandwidth over time (bits/sec)
+            // Bandwidth over time (bits/sec) — use server-provided bucket interval
+            var intervalSec = d.bucket_seconds || 3600;
             var timeLabels = (d.bytes_over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
-            var timeBps = (d.bytes_over_time || []).map(function(b, idx, arr) {
-                // Estimate interval seconds based on bucket count and total hours
-                var intervalSec = (flowStatsHours * 3600) / Math.max(arr.length, 1);
+            var timeBps = (d.bytes_over_time || []).map(function(b) {
                 return (b.count * 8) / intervalSec;
             });
             createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Throughput',data:timeBps,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}],{
@@ -735,7 +734,7 @@
                 var convos = d.top_conversations || [];
                 convTbody.innerHTML = convos.map(function(c) {
                     var pct = ((c.bytes / totalBytes) * 100).toFixed(1);
-                    return '<tr class="conv-row" style="cursor:pointer" data-src="' + escapeHtml(c.src_addr) + '" data-dst="' + escapeHtml(c.dst_addr) + '">' +
+                    return '<tr class="conv-row" style="cursor:pointer" data-src="' + escapeHtml(c.src_addr) + '" data-dst="' + escapeHtml(c.dst_addr) + '" data-dport="' + c.dst_port + '">' +
                         '<td class="mono">' + escapeHtml(c.src_addr) + '</td>' +
                         '<td>&#8594;</td>' +
                         '<td class="mono">' + escapeHtml(c.dst_addr) + ':' + c.dst_port + '</td>' +
