@@ -113,7 +113,7 @@
                     edgeType: 'connection',
                     connType: c.connection_type || 'tunnel',
                     status: c.status || 'unknown',
-                    isIndirect: c.match_method === 'tunnel_indirect',
+                    isIndirect: c.match_method === 'tunnel_indirect' || c.match_method === 'wan_inferred' || c.match_method === 'overlay_name',
                     connObj: c,
                     label: (c.connection_type || 'tunnel').toUpperCase()
                 }

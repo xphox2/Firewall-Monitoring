@@ -214,16 +214,13 @@
     function matchMethodBadge(method, autoDetected) {
         if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
         var badges = {
-            'ip_match': '<span class="badge" style="background:#484f58;font-size:0.65rem;padding:1px 5px;">IP Match</span>',
-            'interface_ip': '<span class="badge" style="background:#1f6feb;font-size:0.65rem;padding:1px 5px;">WAN IP</span>',
-            'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Bidirectional</span>',
-            'vxlan_name': '<span class="badge" style="background:#8957e5;font-size:0.65rem;padding:1px 5px;">VXLAN</span>',
-            'tunnel_name': '<span class="badge" style="background:#d29922;font-size:0.65rem;padding:1px 5px;">Tunnel Name</span>',
+            'ip_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'interface_ip': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'subnet_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
             'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'wan_inferred': '<span class="badge" style="background:#da3633;font-size:0.65rem;padding:1px 5px;">WAN Inferred</span>',
-            'overlay_name': '<span class="badge" style="background:#39d4e0;font-size:0.65rem;padding:1px 5px;">Overlay</span>',
-            'subnet_match': '<span class="badge" style="background:#6e7681;font-size:0.65rem;padding:1px 5px;">Subnet</span>',
-            'manual': '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>'
+            'wan_inferred': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
+            'overlay_name': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>'
         };
         return badges[method] || badges['ip_match'];
     }
