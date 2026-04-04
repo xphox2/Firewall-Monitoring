@@ -1035,7 +1035,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 		}
 		connName := fmt.Sprintf("%s ↔ %s", srcName, dstName)
 
-		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, "overlay_name"); err != nil {
+		if err := p.db.UpsertAutoConnection(pi.sourceID, pi.destID, status, tunnelNames, connName, pi.connType, "name_match"); err != nil {
 			log.Printf("Overlay auto-detect: failed to upsert connection %s - %v", connName, err)
 		} else {
 			created++

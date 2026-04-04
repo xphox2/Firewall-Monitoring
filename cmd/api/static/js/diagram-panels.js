@@ -82,7 +82,7 @@
         const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
         const typeBadge = window.typeBadgeHtml(conn.connection_type);
         const statusBadge = `<span class="badge ${conn.status}">${window.escapeHtml((conn.status || 'unknown').toUpperCase())}</span>`;
-        const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',subnet_match:'Direct',tunnel_indirect:'Indirect',wan_inferred:'Indirect',overlay_name:'Indirect'};
+        const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',subnet_match:'Direct',tunnel_indirect:'Indirect',wan_inferred:'Indirect',name_match:'Indirect',overlay_name:'Indirect'};
         const methodBadge = conn.match_method ? `<span class="badge info" style="font-size:0.68rem;">${methodLabels[conn.match_method] || conn.match_method}</span>` : '';
 
         panel.innerHTML = `

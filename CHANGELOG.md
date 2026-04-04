@@ -5,7 +5,8 @@
 ### Fixed
 - **Connections page not loading**: Non-critical API calls (`/sites`, `/vpn-map`) in `loadConnections()` now have individual `.catch()` fallbacks so a failure in either doesn't prevent the connections table from rendering
 - **Stale cleanup wiping all connections**: Connection detection cycle now tracks whether any detector found connections; stale cleanup is skipped when all detectors return zero results, preventing mass deletion on transient failures
-- **Discovery badges**: Unified to consistent Direct/Indirect taxonomy across all views (connections table, network page, diagram panels). Removed stale methods (`vxlan_name`, `tunnel_name`) and added missing ones (`overlay_name`, `wan_inferred`, `subnet_match`). Indirect styling now applies to all indirect match methods on the connection diagram
+- **Discovery badges**: Unified to consistent Direct/Indirect taxonomy across all views (connections table, network page, diagram panels). Removed stale methods (`vxlan_name`, `tunnel_name`) and added missing ones (`wan_inferred`, `subnet_match`). Indirect styling now applies to all indirect match methods on the connection diagram
+- **Renamed `overlay_name` → `name_match`**: Internal match method for interface-name-based detection now uses clear terminology. Legacy `overlay_name` values still render correctly
 
 ## [0.10.136] - 2026-03-19
 
