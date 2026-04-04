@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.140] - 2026-04-04
+
+### Added
+- **Public dashboard CPU/Memory charts**: Per-device historical CPU and memory usage charts with time range selector (1h, 6h, 24h, 7d) on the public dashboard. Uses new `GET /api/public/status-history` endpoint
+- **Per-device public visibility toggle**: New `public_visible` field on Device model (defaults to true). Checkbox in admin devices table lets you hide specific firewalls from the public dashboard without disabling polling. `GetPublicDevices` now filters by both `enabled` and `public_visible`
+
 ## [0.10.139] - 2026-04-04
 
 ### Changed

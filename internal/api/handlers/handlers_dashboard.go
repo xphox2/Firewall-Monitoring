@@ -20,7 +20,7 @@ func (h *Handler) GetPublicDevices(c *gin.Context) {
 	}
 
 	var devices []models.Device
-	if err := h.db.Gorm().Where("enabled = ?", true).Find(&devices).Error; err != nil {
+	if err := h.db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Find(&devices).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
 		return
 	}
@@ -48,10 +48,10 @@ func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
 		}
 		return uint(id), true
 	}
-	// Default to first enabled device
+	// Default to first enabled + public-visible device
 	if h.db != nil {
 		var dev models.Device
-		if err := h.db.Gorm().Where("enabled = ?", true).Order("id ASC").First(&dev).Error; err == nil {
+		if err := h.db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Order("id ASC").First(&dev).Error; err == nil {
 			return dev.ID, true
 		}
 	}
@@ -423,6 +423,47 @@ func (h *Handler) GetPublicConnections(c *gin.Context) {
 			"type":   conn.ConnectionType,
 			"status": conn.Status,
 			"notes":  "",
+		})
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(result))
+}
+
+func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No data available"))
+		return
+	}
+
+	deviceID, hasDevice := h.resolvePublicDeviceID(c)
+	if !hasDevice {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("No device specified"))
+		return
+	}
+
+	hours := 24
+	if hStr := c.DefaultQuery("hours", "24"); hStr != "" {
+		if parsed, err := strconv.Atoi(hStr); err == nil && parsed > 0 && parsed <= 168 {
+			hours = parsed
+		}
+	}
+
+	statuses, err := h.db.GetSystemStatusHistory(deviceID, hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get status history"))
+		return
+	}
+
+	type publicPoint struct {
+		Timestamp   string  `json:"timestamp"`
+		CPUUsage    float64 `json:"cpu_usage"`
+		MemoryUsage float64 `json:"memory_usage"`
+	}
+	result := make([]publicPoint, 0, len(statuses))
+	for _, s := range statuses {
+		result = append(result, publicPoint{
+			Timestamp:   s.Timestamp.Format("2006-01-02T15:04:05Z"),
+			CPUUsage:    s.CPUUsage,
+			MemoryUsage: s.MemoryUsage,
 		})
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(result))

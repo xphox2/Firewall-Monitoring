@@ -130,6 +130,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		"location":         true,
 		"description":      true,
 		"enabled":          true,
+		"public_visible":   true,
 		"site_id":          true,
 		"probe_id":         true,
 		"vendor":           true,

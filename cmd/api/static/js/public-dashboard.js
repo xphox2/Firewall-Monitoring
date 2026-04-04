@@ -157,6 +157,7 @@
 
     function loadAllData() {
         fetchAllDevices().then(function() {
+            if (displaySettings['public_show_cpu'] !== 'false' || displaySettings['public_show_memory'] !== 'false') fetchCpuMemoryCharts(24);
             if (displaySettings['public_show_interfaces'] !== 'false') fetchAllInterfaces();
             if (displaySettings['public_show_bandwidth'] !== 'false') fetchBandwidth();
             if (displaySettings['public_show_vpn'] !== 'false') fetchAllVPN();
@@ -664,4 +665,110 @@
         var i = Math.floor(Math.log(bytes) / Math.log(1024));
         return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
     }
+
+    // ---- CPU & Memory Charts ----
+    var cpuMemCharts = {};
+
+    function fetchCpuMemoryCharts(hours) {
+        var container = document.getElementById('cpu-memory-charts');
+        if (!container || allDevices.length === 0) return;
+
+        // Destroy existing charts
+        Object.keys(cpuMemCharts).forEach(function(k) {
+            if (cpuMemCharts[k]) cpuMemCharts[k].destroy();
+        });
+        cpuMemCharts = {};
+
+        container.innerHTML = allDevices.map(function(d) {
+            return '<div class="cpu-mem-card"><h3>' + escapeHtml(d.name) + '</h3>' +
+                '<canvas id="cpu-mem-chart-' + d.id + '" height="200"></canvas></div>';
+        }).join('');
+
+        allDevices.forEach(function(device) {
+            fetch(API_BASE + '/public/status-history?device_id=' + device.id + '&hours=' + hours)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (!data || !data.success || !data.data) return;
+                    renderCpuMemChart(device, data.data);
+                })['catch'](function() {});
+        });
+    }
+
+    function renderCpuMemChart(device, points) {
+        var canvas = document.getElementById('cpu-mem-chart-' + device.id);
+        if (!canvas || points.length === 0) return;
+
+        var labels = points.map(function(p) {
+            var d = new Date(p.timestamp);
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        });
+
+        cpuMemCharts[device.id] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'CPU %',
+                        data: points.map(function(p) { return p.cpu_usage; }),
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88,166,255,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'Memory %',
+                        data: points.map(function(p) { return p.memory_usage; }),
+                        borderColor: '#3fb950',
+                        backgroundColor: 'rgba(63,185,80,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+                    tooltip: {
+                        backgroundColor: '#161b22',
+                        borderColor: '#30363d',
+                        borderWidth: 1,
+                        titleColor: '#e6edf3',
+                        bodyColor: '#8b949e',
+                        callbacks: {
+                            label: function(ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%'; }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#484f58', maxRotation: 0, maxTicksLimit: 8 },
+                        grid: { color: '#21262d' }
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: { color: '#484f58', callback: function(v) { return v + '%'; } },
+                        grid: { color: '#21262d' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Range pill click handler
+    document.addEventListener('click', function(e) {
+        var pill = e.target.closest('#cpu-mem-range .range-pill');
+        if (!pill) return;
+        document.querySelectorAll('#cpu-mem-range .range-pill').forEach(function(p) { p.classList.remove('active'); });
+        pill.classList.add('active');
+        fetchCpuMemoryCharts(parseInt(pill.dataset.hours));
+    });
 })();

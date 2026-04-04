@@ -96,6 +96,11 @@
         .legend-line { width: 30px; height: 3px; border-radius: 2px; }
         .legend-line.up { background: #00ff88; }
         .legend-line.down { background: #ff3b3b; }
+        .range-pill { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+        .range-pill:hover { border-color: #58a6ff; color: #e6edf3; }
+        .range-pill.active { background: #388bfd22; border-color: #58a6ff; color: #58a6ff; }
+        .cpu-mem-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+        .cpu-mem-card h3 { margin: 0 0 8px 0; font-size: 0.9rem; color: #e6edf3; }
     </style>
     <script src="/static/js/chart.umd.min.js"></script>
 </head>
@@ -123,6 +128,19 @@
                     <tr><td colspan="6" class="loading">Loading devices...</td></tr>
                 </tbody>
             </table>
+        </div>
+
+        <div class="section" id="card-cpu-memory">
+            <h2>CPU &amp; Memory Usage</h2>
+            <div class="chart-range-pills" id="cpu-mem-range" style="margin-bottom:12px;display:flex;gap:6px;">
+                <button class="range-pill" data-hours="1">1h</button>
+                <button class="range-pill" data-hours="6">6h</button>
+                <button class="range-pill active" data-hours="24">24h</button>
+                <button class="range-pill" data-hours="168">7d</button>
+            </div>
+            <div id="cpu-memory-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px;">
+                <div class="loading">Loading charts...</div>
+            </div>
         </div>
 
         <div class="section hidden" id="card-interfaces">

@@ -305,13 +305,14 @@
                     '<td id="dev-mem-' + d.id + '" style="color:#484f58">-</td>' +
                     '<td id="dev-sess-' + d.id + '" style="color:#484f58">-</td>' +
                     '<td><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
+                    '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td>' +
                         '<button class="btn secondary sm" data-action="device-alert-config" data-id="' + d.id + '">Alerts</button> ' +
                         '<button class="btn secondary sm" data-action="edit-device" data-id="' + d.id + '">Edit</button> ' +
                         '<button class="btn danger sm" data-action="delete-device" data-id="' + d.id + '">Delete</button>' +
                     '</td>' +
                 '</tr>';
-            }).join('') || '<tr><td colspan="9" class="empty-state">No devices configured</td></tr>';
+            }).join('') || '<tr><td colspan="10" class="empty-state">No devices configured</td></tr>';
 
             loadDeviceEnrichments();
             loadDeviceAlertIndicators();
@@ -2296,6 +2297,14 @@
         'close-connection-modal': function() { closeConnectionModal(); },
         'edit-device': function(el) { editDevice(parseInt(el.dataset.id)); },
         'delete-device': function(el) { deleteDevice(parseInt(el.dataset.id)); },
+        'toggle-public-visible': function(el) {
+            var id = parseInt(el.dataset.id);
+            var checked = el.checked;
+            apiFetch(API_BASE + '/devices/' + id, {
+                method: 'PUT',
+                body: { public_visible: checked }
+            })['catch'](function() { el.checked = !checked; });
+        },
         'delete-connection': function(el) { deleteConnection(parseInt(el.dataset.id)); },
         'show-ack-modal': function(el) { showAckModal(parseInt(el.dataset.id)); },
         'close-ack-modal': function() { closeAckModal(); },
