@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.139] - 2026-04-04
+
+### Fixed
+- **CSP blocking Cytoscape.js**: Switch CDN from `unpkg.com` to `cdn.jsdelivr.net` which is already whitelisted in the Content-Security-Policy `script-src` directive. Also add `https://cdn.jsdelivr.net` to `connect-src` to allow Chart.js source map fetching
+
 ## [0.10.138] - 2026-04-04
 
 ### Added
