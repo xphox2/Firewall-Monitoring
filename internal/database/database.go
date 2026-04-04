@@ -605,6 +605,103 @@ func (d *Database) GetAllConnections() ([]models.DeviceConnection, error) {
 	return conns, err
 }
 
+// GetConnectionStatuses returns only id and status for all connections (lightweight).
+func (d *Database) GetConnectionStatuses() ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+	err := d.db.Model(&models.DeviceConnection{}).Select("id, status").Find(&results).Error
+	return results, err
+}
+
+// GetDeviceStatuses returns only id and status for all devices (lightweight).
+func (d *Database) GetDeviceStatuses() ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+	err := d.db.Model(&models.Device{}).Select("id, status").Find(&results).Error
+	return results, err
+}
+
+// ConnectionEvent represents a unified event from alerts, traps, or syslog.
+type ConnectionEvent struct {
+	Timestamp time.Time `json:"timestamp"`
+	Source    string    `json:"source"`    // "alert", "trap", "syslog"
+	DeviceID  uint      `json:"device_id"`
+	Severity  string    `json:"severity"`
+	Type      string    `json:"type"`
+	Message   string    `json:"message"`
+}
+
+// GetConnectionEvents returns correlated events (alerts, traps, syslog) for two devices.
+func (d *Database) GetConnectionEvents(srcDeviceID, dstDeviceID uint, hours int) ([]ConnectionEvent, error) {
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	deviceIDs := []uint{srcDeviceID, dstDeviceID}
+	var events []ConnectionEvent
+
+	// Alerts
+	var alerts []models.Alert
+	d.db.Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff).
+		Order("timestamp DESC").Limit(50).Find(&alerts)
+	for _, a := range alerts {
+		events = append(events, ConnectionEvent{
+			Timestamp: a.Timestamp,
+			Source:    "alert",
+			DeviceID:  a.DeviceID,
+			Severity:  a.Severity,
+			Type:      a.AlertType,
+			Message:   a.Message,
+		})
+	}
+
+	// Traps
+	var traps []models.TrapEvent
+	d.db.Where("device_id IN ? AND timestamp > ?", deviceIDs, cutoff).
+		Order("timestamp DESC").Limit(50).Find(&traps)
+	for _, t := range traps {
+		events = append(events, ConnectionEvent{
+			Timestamp: t.Timestamp,
+			Source:    "trap",
+			DeviceID:  t.DeviceID,
+			Severity:  t.Severity,
+			Type:      t.TrapType,
+			Message:   t.Message,
+		})
+	}
+
+	// Syslog (severity <= 4 = warning and above)
+	var syslogs []models.SyslogMessage
+	d.db.Where("device_id IN ? AND severity <= 4 AND timestamp > ?", deviceIDs, cutoff).
+		Order("timestamp DESC").Limit(30).Find(&syslogs)
+	for _, s := range syslogs {
+		sev := "info"
+		if s.Severity <= 2 {
+			sev = "critical"
+		} else if s.Severity <= 4 {
+			sev = "warning"
+		}
+		events = append(events, ConnectionEvent{
+			Timestamp: s.Timestamp,
+			Source:    "syslog",
+			DeviceID:  s.DeviceID,
+			Severity:  sev,
+			Type:      "syslog",
+			Message:   s.Message,
+		})
+	}
+
+	// Sort by timestamp descending
+	for i := 0; i < len(events); i++ {
+		for j := i + 1; j < len(events); j++ {
+			if events[j].Timestamp.After(events[i].Timestamp) {
+				events[i], events[j] = events[j], events[i]
+			}
+		}
+	}
+
+	if len(events) > 100 {
+		events = events[:100]
+	}
+
+	return events, nil
+}
+
 // GetAllLatestVPNStatuses returns the latest VPN tunnel snapshot for every device.
 func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 	var statuses []models.VPNStatus

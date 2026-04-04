@@ -12,7 +12,7 @@
     var onConnClick = null;
     var onVPNClick = null;
     var hiddenTypes = {};
-    var showDown = false;
+    var showDown = true;
     var particleAnimId = null;
     var particleEls = [];
 
@@ -245,13 +245,26 @@
                     'line-dash-pattern': [2, 4, 8, 4]
                 }
             },
-            // DOWN edges
+            // DOWN edges — red X marker
             {
                 selector: 'edge[status="down"]',
                 style: {
                     'line-style': 'dashed',
                     'line-dash-pattern': [6, 4],
-                    'opacity': 0.4
+                    'opacity': 0.6,
+                    'label': '\u2716',
+                    'text-rotation': 'autorotate',
+                    'font-size': '18px',
+                    'color': '#f85149',
+                    'text-background-color': '#0d1117',
+                    'text-background-opacity': 0.9,
+                    'text-background-padding': '4px',
+                    'text-background-shape': 'roundrectangle',
+                    'text-border-color': '#f85149',
+                    'text-border-width': 1.5,
+                    'text-border-opacity': 0.8,
+                    'text-halign': 'center',
+                    'text-valign': 'center'
                 }
             },
             // Indirect match edges
@@ -766,6 +779,105 @@
         }
     });
 
+    // ---- 1h. Live Status Updates ----
+    function updateStatuses(connChanges, deviceChanges) {
+        if (!cy) return;
+
+        // Update connection edge statuses
+        if (connChanges && connChanges.length > 0) {
+            connChanges.forEach(function(ch) {
+                var edge = cy.getElementById('conn-' + ch.id);
+                if (!edge || edge.empty()) return;
+
+                var oldStatus = edge.data('status');
+                if (oldStatus === ch.status) return;
+
+                if (ch.status === 'down') {
+                    // UP → DOWN: flash red, then apply down style
+                    animateFlash(edge, '#f85149', function() {
+                        edge.data('status', 'down');
+                        // Remove particles for this edge
+                        particleEls = particleEls.filter(function(p) {
+                            return p.edge !== edge;
+                        });
+                    });
+                } else if (ch.status === 'up') {
+                    // DOWN → UP: flash green, then apply up style and add particles
+                    animateFlash(edge, '#3fb950', function() {
+                        edge.data('status', 'up');
+                        addParticlesForEdge(edge);
+                    });
+                } else {
+                    edge.data('status', ch.status);
+                }
+
+                // Update the connObj reference too
+                if (edge.data('connObj')) {
+                    edge.data('connObj').status = ch.status;
+                }
+            });
+            applyFilters();
+        }
+
+        // Update device node statuses
+        if (deviceChanges && deviceChanges.length > 0) {
+            deviceChanges.forEach(function(ch) {
+                var node = cy.getElementById('dev-' + ch.id);
+                if (!node || node.empty()) return;
+                node.data('status', ch.status);
+            });
+        }
+    }
+
+    function animateFlash(edge, color, onComplete) {
+        var origColor = edge.style('line-color');
+        var step = 0;
+        var maxFlashes = 3;
+
+        function flash() {
+            if (step >= maxFlashes * 2) {
+                if (onComplete) onComplete();
+                return;
+            }
+            var toColor = (step % 2 === 0) ? color : origColor;
+            var toWidth = (step % 2 === 0) ? 6 : 3;
+            edge.animate({
+                style: { 'line-color': toColor, 'width': toWidth, 'opacity': 1 }
+            }, {
+                duration: 200,
+                complete: function() { step++; flash(); }
+            });
+        }
+        flash();
+    }
+
+    function addParticlesForEdge(edge) {
+        if (!edge || edge.removed()) return;
+        if (particleEls.length >= MAX_PARTICLES) return;
+        var data = edge.data();
+        var cs = window.connStyle(data.connType);
+        var color = data.isIndirect ? '#f0883e' : (data.edgeType === 'offnet' ? '#3fb950' : cs.color);
+
+        particleEls.push({
+            edge: edge,
+            progress: Math.random(),
+            speed: 0.0003 + Math.random() * 0.0002,
+            direction: 1,
+            color: color,
+            radius: 3
+        });
+        if (particleEls.length < MAX_PARTICLES) {
+            particleEls.push({
+                edge: edge,
+                progress: Math.random(),
+                speed: 0.00025 + Math.random() * 0.00015,
+                direction: -1,
+                color: '#58a6ff',
+                radius: 2.5
+            });
+        }
+    }
+
     // ---- Public API ----
     window.FWDiagram = {
         NS: NS,
@@ -777,6 +889,7 @@
         createEl: createEl,
         svgPoint: svgPoint,
         setCallbacks: setCallbacks,
+        updateStatuses: updateStatuses,
         Layout: { resetLayout: resetLayout },
         Connections: { redrawPaths: function() {} },
         Particles: { start: startParticles, stop: stopParticles }

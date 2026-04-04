@@ -195,6 +195,13 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 }
 
 func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error {
+	// Handle LINK_UP as recovery for any active LINK_DOWN alert on this device
+	if trap.TrapType == "LINK_UP" {
+		key := fmt.Sprintf("trap_LINK_DOWN_%s", trap.SourceIP)
+		am.sendRecovery(key, "LINK_DOWN", trap.Message, trap.DeviceID)
+		return nil
+	}
+
 	if trap.Severity != "critical" && trap.Severity != "warning" {
 		return nil
 	}

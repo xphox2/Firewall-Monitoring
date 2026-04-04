@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.138] - 2026-04-04
+
+### Added
+- **Real-time connection map**: Diagram auto-refreshes every 15 seconds via lightweight `/api/connections/status-summary` endpoint. Status changes trigger animated transitions — red flash for DOWN, green flash for recovery
+- **Visual X marker on DOWN links**: DOWN edges now display a prominent red X icon with background badge, visible by default (showDown defaults to true)
+- **Events tab in connection panel**: Click any connection to see correlated alerts, traps, and syslog from both endpoint devices. DOWN connections auto-open the Events tab. Time range selector: 1h, 6h, 24h, 7d
+- **Standard linkUp/linkDown trap support**: SNMP trap receiver now handles IETF standard linkDown (`.1.3.6.1.6.3.1.1.5.3`) and linkUp (`.1.3.6.1.6.3.1.1.5.4`) traps for both SNMPv1 and v2c/v3 formats. Extracts interface index and description from varbinds
+- **LINK_UP recovery alerts**: When a LINK_UP trap arrives, any active LINK_DOWN alert for the same device is automatically resolved
+- **Connection events API**: New `GET /api/connections/:id/events` endpoint returns unified timeline of alerts, traps, and syslog for a connection's endpoint devices
+
 ## [0.10.137] - 2026-04-04
 
 ### Fixed

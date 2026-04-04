@@ -72,6 +72,41 @@
         if (tabName === 'flows' && currentPanelConnId && !panelChartInstances['proto']) {
             loadPanelFlowStats(currentPanelConnId, 24);
         }
+        if (tabName === 'events' && currentPanelConnId) {
+            loadPanelEvents(currentPanelConnId, 24);
+        }
+    }
+
+    function loadPanelEvents(connId, hours) {
+        const container = document.getElementById('panel-events-list');
+        if (!container) return;
+        container.innerHTML = '<div class="loading" style="padding:20px;">Loading events...</div>';
+
+        window.apiFetch(window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours).then(function(res) {
+            const events = res && res.data ? res.data : [];
+            if (events.length === 0) {
+                container.innerHTML = '<div style="padding:20px;color:#8b949e;text-align:center;">No events in the last ' + hours + 'h</div>';
+                return;
+            }
+            const sourceIcons = { alert: '\u{1F514}', trap: '\u26A1', syslog: '\u{1F4DD}' };
+            const sevColors = { critical: '#f85149', warning: '#d29922', info: '#58a6ff', notice: '#8b949e' };
+            container.innerHTML = '<table class="vpn-detail-table" style="font-size:0.78rem;"><thead><tr><th>Time</th><th>Source</th><th>Severity</th><th>Type</th><th>Message</th></tr></thead><tbody>' +
+                events.map(function(e) {
+                    const icon = sourceIcons[e.source] || '';
+                    const sevColor = sevColors[e.severity] || '#8b949e';
+                    const time = new Date(e.timestamp).toLocaleString();
+                    return '<tr>' +
+                        '<td style="white-space:nowrap;">' + window.escapeHtml(time) + '</td>' +
+                        '<td>' + icon + ' ' + window.escapeHtml(e.source) + '</td>' +
+                        '<td><span style="color:' + sevColor + ';font-weight:600;">' + window.escapeHtml(e.severity).toUpperCase() + '</span></td>' +
+                        '<td>' + window.escapeHtml(e.type || '-') + '</td>' +
+                        '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + window.escapeHtml(e.message || '') + '">' + window.escapeHtml(e.message || '-') + '</td>' +
+                    '</tr>';
+                }).join('') +
+                '</tbody></table>';
+        })['catch'](function() {
+            container.innerHTML = '<div style="padding:20px;color:#f85149;">Failed to load events</div>';
+        });
     }
 
     async function showRichConnDetailPanel(conn) {
@@ -107,6 +142,7 @@
                     <div class="panel-tab" data-tab="tunnels" data-action="dp-switch-tab">Tunnels</div>
                     <div class="panel-tab" data-tab="phase2" data-action="dp-switch-tab" id="ptab-phase2-tab" style="display:none;">Phase 2</div>
                     <div class="panel-tab" data-tab="flows" data-action="dp-switch-tab" id="ptab-flows-tab" style="display:none;">Flows</div>
+                    <div class="panel-tab" data-tab="events" data-action="dp-switch-tab">Events</div>
                 </div>
                 <div id="rich-panel-content">
                     <div class="panel-tab-content active" id="ptab-overview">
@@ -160,6 +196,17 @@
                             </div>
                         </div>
                     </div>
+                    <div class="panel-tab-content" id="ptab-events">
+                        <div class="panel-range-pills" id="panel-events-range">
+                            <div class="panel-range-pill" data-action="dp-events-range" data-hours="1">1h</div>
+                            <div class="panel-range-pill" data-action="dp-events-range" data-hours="6">6h</div>
+                            <div class="panel-range-pill active" data-action="dp-events-range" data-hours="24">24h</div>
+                            <div class="panel-range-pill" data-action="dp-events-range" data-hours="168">7d</div>
+                        </div>
+                        <div id="panel-events-list" style="max-height:400px;overflow-y:auto;">
+                            <div class="loading" style="padding:20px;">Loading events...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -197,6 +244,11 @@
 
             const flowsTab = document.getElementById('ptab-flows-tab');
             if (flowsTab) flowsTab.style.display = data.has_flow_data ? '' : 'none';
+
+            // Auto-switch to Events tab when connection is DOWN
+            if (conn.status === 'down') {
+                switchPanelTab('events');
+            }
         } catch (e) { console.error('Panel detail load failed:', e); }
     }
 
@@ -486,6 +538,11 @@
             setPanelTrafficRange(el.dataset.range);
         } else if (action === 'dp-flow-range') {
             setPanelFlowRange(parseInt(el.dataset.hours));
+        } else if (action === 'dp-events-range') {
+            var hrs = parseInt(el.dataset.hours);
+            el.parentElement.querySelectorAll('.panel-range-pill').forEach(function(p) { p.classList.remove('active'); });
+            el.classList.add('active');
+            if (currentPanelConnId) loadPanelEvents(currentPanelConnId, hrs);
         } else if (action === 'dp-toggle-tunnel') {
             togglePanelTunnel(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel);
         } else if (action === 'dp-tunnel-chart') {

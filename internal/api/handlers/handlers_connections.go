@@ -12,6 +12,64 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (h *Handler) GetConnectionStatusSummary(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
+			"connections": []interface{}{},
+			"devices":     []interface{}{},
+		}))
+		return
+	}
+
+	conns, err := h.db.GetConnectionStatuses()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get connection statuses"))
+		return
+	}
+
+	devs, err := h.db.GetDeviceStatuses()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get device statuses"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
+		"connections": conns,
+		"devices":     devs,
+	}))
+}
+
+func (h *Handler) GetConnectionEvents(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+
+	var conn models.DeviceConnection
+	if err := h.db.Gorm().First(&conn, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
+		return
+	}
+
+	hours := 24
+	if h := c.DefaultQuery("hours", "24"); h != "" {
+		if parsed, err := strconv.Atoi(h); err == nil && parsed > 0 && parsed <= 720 {
+			hours = parsed
+		}
+	}
+
+	events, err := h.db.GetConnectionEvents(conn.SourceDeviceID, conn.DestDeviceID, hours)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get events"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(events))
+}
+
 func (h *Handler) GetDeviceConnections(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.DeviceConnection{}))

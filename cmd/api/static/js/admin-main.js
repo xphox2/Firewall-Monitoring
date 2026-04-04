@@ -18,6 +18,7 @@
     var currentProbes = [];
     var currentSites = [];
     var adminRefreshTimer;
+    var connRefreshTimer;
     var syslogRefreshTimer;
     var syslogOffset = 0;
     var flowsOffset = 0;
@@ -127,6 +128,7 @@
             document.getElementById('page-' + page).classList.add('active');
             document.getElementById('page-title').textContent = item.textContent.trim();
             history.pushState(null, '', '/admin/' + (page === 'dashboard' ? '' : page));
+            if (page !== 'connections') stopConnRefresh();
             loadPageData(page);
         });
     });
@@ -528,9 +530,84 @@
 
             drawConnectionDiagram();
             populateDeviceSelects();
+            startConnRefresh();
         })['catch'](function(e) {
             console.error('Failed to load connections:', e);
         });
+    }
+
+    function startConnRefresh() {
+        stopConnRefresh();
+        connRefreshTimer = setInterval(pollConnectionStatuses, 15000);
+    }
+
+    function stopConnRefresh() {
+        if (connRefreshTimer) {
+            clearInterval(connRefreshTimer);
+            connRefreshTimer = null;
+        }
+    }
+
+    function pollConnectionStatuses() {
+        apiFetch(API_BASE + '/connections/status-summary').then(function(res) {
+            if (!res || !res.data) return;
+            var data = res.data;
+
+            // Diff connection statuses
+            var connChanges = [];
+            var connMap = {};
+            (data.connections || []).forEach(function(c) { connMap[c.id] = c.status; });
+            currentConnections.forEach(function(c) {
+                var newStatus = connMap[c.id];
+                if (newStatus && newStatus !== c.status) {
+                    connChanges.push({ id: c.id, status: newStatus, oldStatus: c.status });
+                    c.status = newStatus; // update in-memory
+                }
+            });
+
+            // Diff device statuses
+            var deviceChanges = [];
+            var devMap = {};
+            (data.devices || []).forEach(function(d) { devMap[d.id] = d.status; });
+            currentDevices.forEach(function(d) {
+                var newStatus = devMap[d.id];
+                if (newStatus && newStatus !== d.status) {
+                    deviceChanges.push({ id: d.id, status: newStatus, oldStatus: d.status });
+                    d.status = newStatus;
+                }
+            });
+
+            if (connChanges.length > 0 || deviceChanges.length > 0) {
+                FWDiagram.updateStatuses(connChanges, deviceChanges);
+
+                // Also update the connections table badges
+                connChanges.forEach(function(ch) {
+                    var badge = document.querySelector('#connections-table .badge.' + ch.oldStatus);
+                    // Simple: just re-render the table row status
+                });
+                // Re-render table for simplicity
+                if (connChanges.length > 0) {
+                    var tbody = document.querySelector('#connections-table tbody');
+                    if (tbody) {
+                        tbody.innerHTML = currentConnections.map(function(c) {
+                            var deleteBtn = c.auto_detected
+                                ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>'
+                                : '<button class="btn danger sm" data-action="delete-connection" data-id="' + c.id + '">Delete</button>';
+                            return '<tr>' +
+                                '<td>' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
+                                '<td>' + (escapeHtml(c.source_device ? c.source_device.name : '') || c.source_device_id) + '</td>' +
+                                '<td>' + (escapeHtml(c.dest_device ? c.dest_device.name : '') || c.dest_device_id) + '</td>' +
+                                '<td>' + escapeHtml(c.connection_type ? c.connection_type.toUpperCase() : 'IPSEC') + '</td>' +
+                                '<td><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
+                                '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
+                                '<td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
+                                '<td><a href="/admin/connections/' + c.id + '" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>' + deleteBtn + '</td>' +
+                            '</tr>';
+                        }).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
+                    }
+                }
+            }
+        })['catch'](function() {}); // silent fail for polling
     }
 
     // ---- Syslog ----
