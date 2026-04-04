@@ -415,7 +415,7 @@
             layout: layoutOpts,
             minZoom: 0.3,
             maxZoom: 3,
-            wheelSensitivity: 0.3,
+            wheelSensitivity: 1,
             boxSelectionEnabled: false
         });
 
