@@ -2,8 +2,8 @@
 
 ## [0.10.139] - 2026-04-04
 
-### Fixed
-- **CSP blocking Cytoscape.js**: Switch CDN from `unpkg.com` to `cdn.jsdelivr.net` which is already whitelisted in the Content-Security-Policy `script-src` directive. Also add `https://cdn.jsdelivr.net` to `connect-src` to allow Chart.js source map fetching
+### Changed
+- **Bundle all JS dependencies locally**: Chart.js, Cytoscape.js, and cytoscape-fcose are now embedded in `cmd/api/static/js/` instead of loaded from CDNs. Eliminates all external script dependencies, removes CDN URLs from CSP, and ensures the app works fully offline
 
 ## [0.10.138] - 2026-04-04
 
