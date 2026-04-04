@@ -681,7 +681,7 @@
 
         container.innerHTML = allDevices.map(function(d) {
             return '<div class="cpu-mem-card"><h3>' + escapeHtml(d.name) + '</h3>' +
-                '<canvas id="cpu-mem-chart-' + d.id + '" height="200"></canvas></div>';
+                '<div style="position:relative;height:200px;"><canvas id="cpu-mem-chart-' + d.id + '"></canvas></div></div>';
         }).join('');
 
         allDevices.forEach(function(device) {
