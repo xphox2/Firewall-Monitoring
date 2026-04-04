@@ -492,8 +492,8 @@
         Promise.all([
             apiFetch(API_BASE + '/devices'),
             apiFetch(API_BASE + '/connections'),
-            apiFetch(API_BASE + '/connections/vpn-map'),
-            apiFetch(API_BASE + '/sites')
+            apiFetch(API_BASE + '/connections/vpn-map').catch(function() { return {data: {}}; }),
+            apiFetch(API_BASE + '/sites').catch(function() { return {data: []}; })
         ]).then(function(results) {
             var devicesResult = results[0];
             var connsResult = results[1];

@@ -157,19 +157,23 @@ func (p *Poller) pollAllDevices() {
 		log.Printf("Marked %d probe-assigned device(s) offline (no data for >%v)", count, staleAfter)
 	}
 
-	// Auto-detect connections — record cycle start BEFORE both detectors
+	// Auto-detect connections — record cycle start BEFORE all detectors
 	// so the stale cleanup doesn't delete connections from the first detector.
 	connCycleStart := time.Now()
-	p.detectVPNConnections(devices)
-	p.detectOverlayConnections(devices)
-	p.detectPhysicalConnections(devices)
+	vpnCount := p.detectVPNConnections(devices)
+	overlayCount := p.detectOverlayConnections(devices)
+	physCount := p.detectPhysicalConnections(devices)
 
-	// Clean up auto-detected connections not refreshed by either detector
-	if p.db != nil {
+	// Clean up auto-detected connections not refreshed by any detector.
+	// Only run cleanup if at least one detector found connections — otherwise
+	// a transient failure (DB error, empty data) would wipe all existing connections.
+	if p.db != nil && (vpnCount+overlayCount+physCount) > 0 {
 		removed := p.db.CleanupStaleAutoConnectionsBefore(connCycleStart)
 		if removed > 0 {
 			log.Printf("Connection cleanup: removed %d stale auto-detected connection(s)", removed)
 		}
+	} else if p.db != nil {
+		log.Printf("Connection detection: all detectors found 0 connections, skipping stale cleanup to preserve existing data")
 	}
 
 	// Check for alert escalations
@@ -388,9 +392,10 @@ func (p *Poller) pollDevice(device *models.Device) {
 
 // detectVPNConnections matches VPN tunnel remote IPs to known device IPs
 // (management IP + all interface addresses) and auto-creates/updates DeviceConnection records.
-func (p *Poller) detectVPNConnections(devices []models.Device) {
+// Returns the number of connection pairs processed.
+func (p *Poller) detectVPNConnections(devices []models.Device) int {
 	if p.db == nil || len(devices) == 0 {
-		return
+		return 0
 	}
 
 	// Build IP → Device map from management IPs
@@ -422,10 +427,10 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 	vpnStatuses, err := p.db.GetAllLatestVPNStatuses()
 	if err != nil {
 		log.Printf("VPN auto-detect: failed to get VPN statuses - %v", err)
-		return
+		return 0
 	}
 	if len(vpnStatuses) == 0 {
-		return
+		return 0
 	}
 
 	// Index VPN tunnels by device ID for bidirectional checking
@@ -771,21 +776,22 @@ func (p *Poller) detectVPNConnections(devices []models.Device) {
 	if len(pairs) > 0 {
 		log.Printf("VPN auto-detect: processed %d connection(s) across %d devices", len(pairs), len(devices))
 	}
+	return len(pairs)
 }
 
 // detectOverlayConnections finds matching overlay/local interfaces across devices and
 // creates auto-detected connections. Only handles L2VLAN, L3IPVLAN, and VXLAN types.
 // Tunnel/IPSec/GRE connections are handled exclusively by detectVPNConnections which
 // uses actual VPN tunnel data (IPs, status) rather than name matching.
-func (p *Poller) detectOverlayConnections(devices []models.Device) {
+func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 	if p.db == nil || len(devices) == 0 {
-		return
+		return 0
 	}
 
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
 		log.Printf("Overlay auto-detect: failed to get interfaces - %v", err)
-		return
+		return 0
 	}
 
 	deviceByID := make(map[uint]*models.Device, len(devices))
@@ -1039,25 +1045,26 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) {
 	if created > 0 {
 		log.Printf("Overlay auto-detect: upserted %d connection(s)", created)
 	}
+	return created
 }
 
 // detectPhysicalConnections finds Ethernet/LAG interfaces on same-site devices
 // that share an IP subnet and creates auto-detected connections.
-func (p *Poller) detectPhysicalConnections(devices []models.Device) {
+func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 	if p.db == nil || len(devices) == 0 {
-		return
+		return 0
 	}
 
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
 		log.Printf("Physical auto-detect: failed to get interfaces - %v", err)
-		return
+		return 0
 	}
 
 	ifAddrs, err := p.db.GetLatestInterfaceAddresses()
 	if err != nil {
 		log.Printf("Physical auto-detect: failed to get interface addresses - %v", err)
-		return
+		return 0
 	}
 
 	deviceByID := make(map[uint]*models.Device, len(devices))
@@ -1255,6 +1262,7 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) {
 	if created > 0 {
 		log.Printf("Physical auto-detect: upserted %d connection(s)", created)
 	}
+	return created
 }
 
 func (p *Poller) updateDeviceStatus(device *models.Device, status string) {

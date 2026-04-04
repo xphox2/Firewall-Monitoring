@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.137] - 2026-04-04
+
+### Fixed
+- **Connections page not loading**: Non-critical API calls (`/sites`, `/vpn-map`) in `loadConnections()` now have individual `.catch()` fallbacks so a failure in either doesn't prevent the connections table from rendering
+- **Stale cleanup wiping all connections**: Connection detection cycle now tracks whether any detector found connections; stale cleanup is skipped when all detectors return zero results, preventing mass deletion on transient failures
+
 ## [0.10.136] - 2026-03-19
 
 ### Changed
