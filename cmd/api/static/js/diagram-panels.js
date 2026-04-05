@@ -125,7 +125,6 @@
                 <div class="panel-header">
                     <h4>${window.escapeHtml(conn.name)} ${typeBadge} ${statusBadge} ${methodBadge}</h4>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <button class="btn secondary sm" data-action="dp-tunnel-zoom" data-conn-id="${conn.id}" title="Inspect individual tunnels">Zoom In</button>
                         <a href="/admin/connections/${conn.id}" style="color:#58a6ff;font-size:0.8rem;text-decoration:none;font-weight:500;">Full Page &rarr;</a>
                         <button class="btn secondary sm" data-action="dp-close-panel">Close</button>
                     </div>
@@ -551,8 +550,6 @@
             pills.forEach(function(p) { p.classList.remove('active'); });
             el.classList.add('active');
             loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range);
-        } else if (action === 'dp-tunnel-zoom') {
-            if (FWDiagram.TunnelZoom) FWDiagram.TunnelZoom.show(parseInt(el.dataset.connId));
         }
     });
 

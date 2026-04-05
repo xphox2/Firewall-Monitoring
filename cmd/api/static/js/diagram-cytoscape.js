@@ -1,10 +1,11 @@
 // diagram-cytoscape.js — FWDiagram namespace: Cytoscape.js-based network diagram
+// Tunnel-bundled visualization: overlays ride inside tunnel carriers
 (function() {
     'use strict';
 
     var NS = 'http://www.w3.org/2000/svg';
     var STORAGE_KEY = 'fwmon-diagram-positions';
-    var MAX_PARTICLES = 50;
+    var MAX_PARTICLES = 80;
 
     var cy = null;
     var container = null;
@@ -15,25 +16,34 @@
     var showDown = true;
     var particleAnimId = null;
     var particleEls = [];
+    var expandedTunnels = {}; // tunnelEdgeId -> true
 
-    // ---- 1a. Data Transformation ----
+    // Connection type classification
+    var TUNNEL_TYPES = { ipsec: true, ssl: true, gre: true, tunnel: true };
+    var OVERLAY_TYPES = { l3ipvlan: true, vxlan: true };
+    var DIRECT_TYPES = { ethernet: true, lag: true, l2vlan: true, bridge: true };
+
+    var TYPE_COLORS = {
+        ipsec: '#58a6ff', ssl: '#d29922', gre: '#b392f0', tunnel: '#8b949e',
+        vxlan: '#8957e5', l2vlan: '#39d4e0', l3ipvlan: '#da7de8', bridge: '#39d4e0',
+        wan: '#f0883e', lag: '#d29922', ethernet: '#6e7681', offnet: '#3fb950'
+    };
+
+    // ---- 1a. Data Transformation (tunnel-bundled) ----
     function buildElements(devices, connections, siteMap, vpnMap, siteNames) {
         var elements = [];
         var siteIds = {};
 
-        // Collect unique sites
+        // Site compound nodes
         devices.forEach(function(d) {
             var sid = siteMap[d.id];
             if (sid && !siteIds[sid]) {
                 siteIds[sid] = true;
-                elements.push({
-                    group: 'nodes',
-                    data: {
-                        id: 'site-' + sid,
-                        label: (siteNames && siteNames[sid]) || ('Site ' + sid),
-                        nodeType: 'site'
-                    }
-                });
+                elements.push({ group: 'nodes', data: {
+                    id: 'site-' + sid,
+                    label: (siteNames && siteNames[sid]) || ('Site ' + sid),
+                    nodeType: 'site'
+                }});
             }
         });
 
@@ -48,17 +58,14 @@
             var nodeData = {
                 id: 'dev-' + d.id,
                 label: (d.name.length > 18 ? d.name.slice(0, 17) + '\u2026' : d.name) + '\n' + d.ip_address + vpnLabel,
-                nodeType: 'device',
-                deviceId: d.id,
-                status: d.status || 'unknown',
-                deviceObj: d,
-                vpnInfo: vpnInfo || null
+                nodeType: 'device', deviceId: d.id,
+                status: d.status || 'unknown', deviceObj: d, vpnInfo: vpnInfo || null
             };
             if (sid) nodeData.parent = 'site-' + sid;
             elements.push({ group: 'nodes', data: nodeData });
         });
 
-        // Check for off-net tunnels -> internet cloud
+        // Off-net cloud
         var hasCloud = false;
         var offnetDevices = [];
         devices.forEach(function(d) {
@@ -66,57 +73,84 @@
             if (!vpnInfo) return;
             var offnet = vpnInfo.tunnels.filter(function(t) { return t.matched_device_id === 0; });
             if (offnet.length > 0) {
-                var anyUp = offnet.some(function(t) { return t.status === 'up'; });
-                offnetDevices.push({ deviceId: d.id, anyUp: anyUp });
+                offnetDevices.push({ deviceId: d.id, anyUp: offnet.some(function(t) { return t.status === 'up'; }) });
                 hasCloud = true;
             }
         });
-
         if (hasCloud) {
-            elements.push({
-                group: 'nodes',
-                data: {
-                    id: 'cloud-internet',
-                    label: '\u2601 Internet',
-                    nodeType: 'cloud'
-                }
-            });
-
+            elements.push({ group: 'nodes', data: { id: 'cloud-internet', label: '\u2601 Internet', nodeType: 'cloud' }});
             offnetDevices.forEach(function(info) {
-                elements.push({
-                    group: 'edges',
-                    data: {
-                        id: 'offnet-' + info.deviceId,
-                        source: 'dev-' + info.deviceId,
-                        target: 'cloud-internet',
-                        edgeType: 'offnet',
-                        status: info.anyUp ? 'up' : 'down',
-                        deviceId: info.deviceId,
-                        connType: 'offnet'
-                    }
-                });
+                elements.push({ group: 'edges', data: {
+                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
+                    edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet'
+                }});
             });
         }
 
-        // Connection edges — include ALL (UP and DOWN)
+        // Group connections by device pair
+        var pairKey = function(a, b) { return Math.min(a, b) + ':' + Math.max(a, b); };
+        var pairs = {}; // pairKey -> { tunnels: [], overlays: [], directs: [] }
+
         connections.forEach(function(c) {
             var srcExists = devices.some(function(d) { return d.id === c.source_device_id; });
             var dstExists = devices.some(function(d) { return d.id === c.dest_device_id; });
             if (!srcExists || !dstExists) return;
 
-            elements.push({
-                group: 'edges',
-                data: {
+            var key = pairKey(c.source_device_id, c.dest_device_id);
+            if (!pairs[key]) pairs[key] = { tunnels: [], overlays: [], directs: [] };
+
+            if (TUNNEL_TYPES[c.connection_type]) {
+                pairs[key].tunnels.push(c);
+            } else if (OVERLAY_TYPES[c.connection_type]) {
+                pairs[key].overlays.push(c);
+            } else {
+                pairs[key].directs.push(c);
+            }
+        });
+
+        // Create edges per pair
+        Object.keys(pairs).forEach(function(key) {
+            var p = pairs[key];
+
+            // Tunnel carriers — bundle overlays inside
+            p.tunnels.forEach(function(tunnel) {
+                var childConns = p.overlays.slice(); // all overlays ride this tunnel
+                elements.push({ group: 'edges', data: {
+                    id: 'conn-' + tunnel.id,
+                    source: 'dev-' + tunnel.source_device_id,
+                    target: 'dev-' + tunnel.dest_device_id,
+                    edgeType: 'tunnel-bundle',
+                    connType: tunnel.connection_type,
+                    status: tunnel.status || 'unknown',
+                    connObj: tunnel,
+                    childConns: childConns,
+                    expanded: false,
+                    label: tunnel.connection_type.toUpperCase() + (childConns.length > 0 ? ' +' + childConns.length : '')
+                }});
+            });
+
+            // Orphan overlays (no tunnel carrier found) — show with warning
+            if (p.tunnels.length === 0 && p.overlays.length > 0) {
+                p.overlays.forEach(function(c) {
+                    elements.push({ group: 'edges', data: {
+                        id: 'conn-' + c.id,
+                        source: 'dev-' + c.source_device_id, target: 'dev-' + c.dest_device_id,
+                        edgeType: 'connection', connType: c.connection_type,
+                        status: c.status || 'unknown', connObj: c,
+                        label: c.connection_type.toUpperCase() + ' (no tunnel)'
+                    }});
+                });
+            }
+
+            // Direct connections (same-site) — standalone edges
+            p.directs.forEach(function(c) {
+                elements.push({ group: 'edges', data: {
                     id: 'conn-' + c.id,
-                    source: 'dev-' + c.source_device_id,
-                    target: 'dev-' + c.dest_device_id,
-                    edgeType: 'connection',
-                    connType: c.connection_type || 'tunnel',
-                    status: c.status || 'unknown',
-                    isIndirect: c.match_method === 'tunnel_indirect' || c.match_method === 'wan_inferred' || c.match_method === 'name_match' || c.match_method === 'overlay_name',
-                    connObj: c,
-                    label: (c.connection_type || 'tunnel').toUpperCase()
-                }
+                    source: 'dev-' + c.source_device_id, target: 'dev-' + c.dest_device_id,
+                    edgeType: 'connection', connType: c.connection_type,
+                    status: c.status || 'unknown', connObj: c,
+                    label: c.connection_type.toUpperCase()
+                }});
             });
         });
 
@@ -125,167 +159,69 @@
 
     // ---- 1b. Stylesheet ----
     function buildStylesheet() {
-        var styles = window.connStyle;
         return [
             // Site compound nodes
-            {
-                selector: 'node[nodeType="site"]',
-                style: {
-                    'background-opacity': 0,
-                    'border-width': 1.5,
-                    'border-style': 'dashed',
-                    'border-color': '#30363d',
-                    'border-opacity': 0.7,
-                    'label': 'data(label)',
-                    'text-valign': 'top',
-                    'text-halign': 'center',
-                    'font-size': '12px',
-                    'color': '#8b949e',
-                    'font-weight': '500',
-                    'text-margin-y': -8,
-                    'padding': '30px',
-                    'shape': 'roundrectangle',
-                    'corner-radius': 12,
-                    'min-width': '180px',
-                    'min-height': '80px'
-                }
-            },
+            { selector: 'node[nodeType="site"]', style: {
+                'background-opacity': 0, 'border-width': 1.5, 'border-style': 'dashed',
+                'border-color': '#30363d', 'border-opacity': 0.7, 'label': 'data(label)',
+                'text-valign': 'top', 'text-halign': 'center', 'font-size': '12px',
+                'color': '#8b949e', 'font-weight': '500', 'text-margin-y': -8,
+                'padding': '30px', 'shape': 'roundrectangle', 'corner-radius': 12,
+                'min-width': '180px', 'min-height': '80px'
+            }},
             // Device nodes
-            {
-                selector: 'node[nodeType="device"]',
-                style: {
-                    'width': 150,
-                    'height': 64,
-                    'shape': 'roundrectangle',
-                    'background-color': '#161b22',
-                    'border-width': 2,
-                    'border-color': '#30363d',
-                    'label': 'data(label)',
-                    'text-valign': 'center',
-                    'text-halign': 'center',
-                    'font-size': '11px',
-                    'color': '#e6edf3',
-                    'text-wrap': 'wrap',
-                    'text-max-width': '140px',
-                    'corner-radius': 8
-                }
-            },
-            {
-                selector: 'node[nodeType="device"][status="online"]',
-                style: { 'border-color': '#3fb950' }
-            },
-            {
-                selector: 'node[nodeType="device"][status="offline"]',
-                style: { 'border-color': '#f85149' }
-            },
+            { selector: 'node[nodeType="device"]', style: {
+                'width': 150, 'height': 64, 'shape': 'roundrectangle', 'background-color': '#161b22',
+                'border-width': 2, 'border-color': '#30363d', 'label': 'data(label)',
+                'text-valign': 'center', 'text-halign': 'center', 'font-size': '11px',
+                'color': '#e6edf3', 'text-wrap': 'wrap', 'text-max-width': '140px', 'corner-radius': 8
+            }},
+            { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#3fb950' } },
+            { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f85149' } },
             // Cloud node
-            {
-                selector: 'node[nodeType="cloud"]',
-                style: {
-                    'width': 120,
-                    'height': 40,
-                    'shape': 'roundrectangle',
-                    'background-color': '#0d1117',
-                    'border-width': 1.5,
-                    'border-style': 'dashed',
-                    'border-color': '#30363d',
-                    'label': 'data(label)',
-                    'text-valign': 'center',
-                    'text-halign': 'center',
-                    'font-size': '11px',
-                    'color': '#8b949e',
-                    'corner-radius': 20
-                }
-            },
-            // Particle nodes
-            {
-                selector: 'node[nodeType="particle"]',
-                style: {
-                    'width': 6,
-                    'height': 6,
-                    'shape': 'ellipse',
-                    'background-color': 'data(color)',
-                    'background-opacity': 0.85,
-                    'border-width': 0,
-                    'label': '',
-                    'events': 'no',
-                    'overlay-opacity': 0
-                }
-            },
-            // Default edge style
-            {
-                selector: 'edge',
-                style: {
-                    'curve-style': 'bezier',
-                    'control-point-step-size': 30,
-                    'width': 3,
-                    'line-color': '#8b949e',
-                    'target-arrow-shape': 'none',
-                    'opacity': 1
-                }
-            },
-            // Connection type edge styles
-            { selector: 'edge[connType="ipsec"]', style: { 'line-color': '#58a6ff', 'width': 3 } },
-            { selector: 'edge[connType="ssl"]', style: { 'line-color': '#d29922', 'width': 3 } },
-            { selector: 'edge[connType="vxlan"]', style: { 'line-color': '#8957e5', 'width': 3, 'line-style': 'dashed', 'line-dash-pattern': [8, 4] } },
-            { selector: 'edge[connType="l2vlan"]', style: { 'line-color': '#39d4e0', 'width': 3 } },
-            { selector: 'edge[connType="l3ipvlan"]', style: { 'line-color': '#da7de8', 'width': 3, 'line-style': 'dashed', 'line-dash-pattern': [12, 4] } },
-            { selector: 'edge[connType="gre"]', style: { 'line-color': '#b392f0', 'width': 3 } },
-            { selector: 'edge[connType="wan"]', style: { 'line-color': '#f0883e', 'width': 3 } },
+            { selector: 'node[nodeType="cloud"]', style: {
+                'width': 120, 'height': 40, 'shape': 'roundrectangle', 'background-color': '#0d1117',
+                'border-width': 1.5, 'border-style': 'dashed', 'border-color': '#30363d',
+                'label': 'data(label)', 'text-valign': 'center', 'text-halign': 'center',
+                'font-size': '11px', 'color': '#8b949e', 'corner-radius': 20
+            }},
+            // Default edge
+            { selector: 'edge', style: {
+                'curve-style': 'bezier', 'control-point-step-size': 30,
+                'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
+            }},
+            // Tunnel bundle edges — thicker pipe
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#484f58', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            // Connection type colors
+            { selector: 'edge[connType="ipsec"]', style: { 'line-color': '#58a6ff' } },
+            { selector: 'edge[connType="ssl"]', style: { 'line-color': '#d29922' } },
+            { selector: 'edge[connType="vxlan"]', style: { 'line-color': '#8957e5', 'line-style': 'dashed', 'line-dash-pattern': [8, 4] } },
+            { selector: 'edge[connType="l2vlan"]', style: { 'line-color': '#39d4e0' } },
+            { selector: 'edge[connType="l3ipvlan"]', style: { 'line-color': '#da7de8', 'line-style': 'dashed', 'line-dash-pattern': [12, 4] } },
+            { selector: 'edge[connType="gre"]', style: { 'line-color': '#b392f0' } },
+            { selector: 'edge[connType="wan"]', style: { 'line-color': '#f0883e' } },
             { selector: 'edge[connType="lag"]', style: { 'line-color': '#d29922', 'width': 4 } },
             { selector: 'edge[connType="ethernet"]', style: { 'line-color': '#6e7681', 'width': 2 } },
-            { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e', 'width': 3 } },
+            { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e' } },
+            // Sub-lane edges (expansion)
+            { selector: 'edge[edgeType="sublane"]', style: { 'width': 2, 'curve-style': 'unbundled-bezier', 'label': 'data(label)', 'font-size': '8px', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -8 } },
+            // Pipe background (expansion)
+            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 12, 'opacity': 0.15, 'line-color': '#58a6ff', 'curve-style': 'bezier' } },
             // Off-net edges
-            {
-                selector: 'edge[edgeType="offnet"]',
-                style: {
-                    'line-color': '#3fb950',
-                    'width': 2,
-                    'line-style': 'dashed',
-                    'line-dash-pattern': [2, 4, 8, 4]
-                }
-            },
-            // DOWN edges — red X marker
-            {
-                selector: 'edge[status="down"]',
-                style: {
-                    'line-style': 'dashed',
-                    'line-dash-pattern': [6, 4],
-                    'opacity': 0.6,
-                    'label': '\u2716',
-                    'text-rotation': 'autorotate',
-                    'font-size': '18px',
-                    'color': '#f85149',
-                    'text-background-color': '#0d1117',
-                    'text-background-opacity': 0.9,
-                    'text-background-padding': '4px',
-                    'text-background-shape': 'roundrectangle',
-                    'text-border-color': '#f85149',
-                    'text-border-width': 1.5,
-                    'text-border-opacity': 0.8,
-                    'text-halign': 'center',
-                    'text-valign': 'center'
-                }
-            },
-            // Indirect match edges
-            {
-                selector: 'edge[?isIndirect]',
-                style: {
-                    'line-color': '#f0883e',
-                    'line-style': 'dashed',
-                    'line-dash-pattern': [4, 6],
-                    'width': 2
-                }
-            },
+            { selector: 'edge[edgeType="offnet"]', style: { 'line-color': '#3fb950', 'width': 2, 'line-style': 'dashed', 'line-dash-pattern': [2, 4, 8, 4] } },
+            // DOWN edges — red X
+            { selector: 'edge[status="down"]', style: {
+                'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'opacity': 0.6,
+                'label': '\u2716', 'text-rotation': 'autorotate', 'font-size': '18px',
+                'color': '#f85149', 'text-background-color': '#0d1117',
+                'text-background-opacity': 0.9, 'text-background-padding': '4px',
+                'text-background-shape': 'roundrectangle', 'text-border-color': '#f85149',
+                'text-border-width': 1.5, 'text-border-opacity': 0.8,
+                'text-halign': 'center', 'text-valign': 'center'
+            }},
             // Selected states
-            {
-                selector: 'node:selected',
-                style: { 'border-color': '#58a6ff', 'border-width': 3 }
-            },
-            {
-                selector: 'edge:selected',
-                style: { 'width': 5, 'opacity': 1 }
-            }
+            { selector: 'node:selected', style: { 'border-color': '#58a6ff', 'border-width': 3 } },
+            { selector: 'edge:selected', style: { 'width': 5, 'opacity': 1 } }
         ];
     }
 
@@ -293,96 +229,38 @@
     function buildLayoutOptions(elements, siteMap) {
         var saved = loadPositions();
         var hasSaved = saved && Object.keys(saved).length > 0;
-
         if (hasSaved) {
-            return {
-                name: 'preset',
-                positions: function(node) {
-                    var id = node.id();
-                    var key = id.replace('dev-', '');
-                    if (saved[key]) return { x: saved[key].x, y: saved[key].y };
-                    return undefined;
-                },
-                fit: false
-            };
+            return { name: 'preset', positions: function(node) {
+                var key = node.id().replace('dev-', '');
+                if (saved[key]) return { x: saved[key].x, y: saved[key].y };
+                return undefined;
+            }, fit: false };
         }
-
-        // Check if fcose is available
-        if (typeof cytoscape !== 'undefined' && cytoscape.layouts && cytoscape.layouts['fcose']) {
-            // Use fcose if registered
-        }
-
-        // Try fcose, fall back to cose
-        var layoutName = 'cose';
-        try {
-            if (typeof cytoscapeFcose !== 'undefined' || (typeof cytoscape !== 'undefined' && cytoscape('core', 'layout') && true)) {
-                layoutName = 'fcose';
-            }
-        } catch (e) {}
-
-        // Test if fcose is actually available by checking registration
         var useFcose = false;
         try {
             var testDiv = document.createElement('div');
             testDiv.style.cssText = 'width:1px;height:1px;position:absolute;left:-9999px;';
             document.body.appendChild(testDiv);
             var testCy = cytoscape({ container: testDiv, elements: [{ data: { id: 'test' } }] });
-            try {
-                testCy.layout({ name: 'fcose' });
-                useFcose = true;
-            } catch (e2) {}
-            testCy.destroy();
-            document.body.removeChild(testDiv);
+            try { testCy.layout({ name: 'fcose' }); useFcose = true; } catch (e2) {}
+            testCy.destroy(); document.body.removeChild(testDiv);
         } catch (e) {}
 
-        if (useFcose) {
-            return {
-                name: 'fcose',
-                animate: true,
-                animationDuration: 500,
-                fit: true,
-                padding: 40,
-                nodeDimensionsIncludeLabels: true,
-                idealEdgeLength: function(edge) {
-                    // Shorter edges for same-site connections
-                    var src = edge.source();
-                    var tgt = edge.target();
-                    if (src.data('parent') && src.data('parent') === tgt.data('parent')) {
-                        return 100;
-                    }
-                    return 200;
-                },
-                nodeRepulsion: function() { return 8000; },
-                edgeElasticity: function() { return 0.1; },
-                gravity: 0.3,
-                gravityRange: 2.0,
-                quality: 'default'
-            };
-        }
-
-        return {
-            name: 'cose',
-            animate: true,
-            animationDuration: 500,
-            fit: true,
-            padding: 40,
-            nodeDimensionsIncludeLabels: true,
+        var opts = {
+            name: useFcose ? 'fcose' : 'cose', animate: true, animationDuration: 500,
+            fit: true, padding: 40, nodeDimensionsIncludeLabels: true,
             idealEdgeLength: function(edge) {
-                var src = edge.source();
-                var tgt = edge.target();
-                if (src.data('parent') && src.data('parent') === tgt.data('parent')) {
-                    return 100;
-                }
+                var src = edge.source(), tgt = edge.target();
+                if (src.data('parent') && src.data('parent') === tgt.data('parent')) return 100;
                 return 200;
-            },
-            nodeRepulsion: function() { return 8000; },
-            gravity: 0.3
+            }, nodeRepulsion: function() { return 8000; }, gravity: 0.3
         };
+        if (useFcose) { opts.edgeElasticity = function() { return 0.1; }; opts.gravityRange = 2.0; opts.quality = 'default'; }
+        return opts;
     }
 
     // ---- 1d. Init & Render ----
     function init(containerId) {
-        // Destroy previous instance
         cleanup();
         container = document.getElementById(containerId);
         if (!container) return;
@@ -392,186 +270,213 @@
 
     function render(devices, connections, siteMap, vpnMap, siteNames) {
         if (!container) return;
-
         if (devices.length === 0) {
             container.innerHTML = '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
             return;
         }
-
         var elements = buildElements(devices, connections, siteMap, vpnMap, siteNames);
         var stylesheet = buildStylesheet();
         var layoutOpts = buildLayoutOptions(elements, siteMap);
 
-        // Create cytoscape canvas div
         var cyDiv = document.createElement('div');
         cyDiv.id = 'cy-canvas';
         cyDiv.style.cssText = 'width:100%;height:100%;min-height:500px;';
         container.appendChild(cyDiv);
 
-        cy = cytoscape({
-            container: cyDiv,
-            elements: elements,
-            style: stylesheet,
-            layout: layoutOpts,
-            minZoom: 0.3,
-            maxZoom: 3,
-            wheelSensitivity: 1,
-            boxSelectionEnabled: false
-        });
+        cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
+            minZoom: 0.3, maxZoom: 3, wheelSensitivity: 1, boxSelectionEnabled: false });
 
-        // Apply filters
         applyFilters();
-
-        // Wire events
         wireEvents(devices, vpnMap);
-
-        // Start particles after layout settles
-        cy.one('layoutstop', function() {
-            startParticles();
-        });
-        // Also start after a timeout in case layoutstop doesn't fire (preset layout)
+        cy.one('layoutstop', function() { startParticles(); });
         setTimeout(function() { startParticles(); }, 600);
     }
 
     function cleanup() {
         stopParticles();
-        if (svgOverlay && svgOverlay.parentNode) {
-            svgOverlay.parentNode.removeChild(svgOverlay);
-        }
+        expandedTunnels = {};
+        if (svgOverlay && svgOverlay.parentNode) svgOverlay.parentNode.removeChild(svgOverlay);
         svgOverlay = null;
-        if (cy) {
-            cy.destroy();
-            cy = null;
-        }
+        if (cy) { cy.destroy(); cy = null; }
     }
 
     // ---- 1e. Event Handling ----
     function wireEvents(devices, vpnMap) {
         if (!cy) return;
 
-        // Edge tap
         cy.on('tap', 'edge', function(evt) {
             var edge = evt.target;
             var data = edge.data();
-            if (data.edgeType === 'connection' && data.connObj && onConnClick) {
+
+            // Tunnel bundle: toggle expand/collapse
+            if (data.edgeType === 'tunnel-bundle' && data.childConns && data.childConns.length > 0) {
+                if (expandedTunnels[data.id]) {
+                    collapseTunnel(data.id);
+                } else {
+                    expandTunnel(edge);
+                }
+                return;
+            }
+
+            // Regular connection or sublane: show detail panel
+            if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle' || data.edgeType === 'sublane') && data.connObj && onConnClick) {
                 onConnClick(data.connObj);
             } else if (data.edgeType === 'offnet' && data.deviceId && onVPNClick) {
                 onVPNClick(data.deviceId, true);
             }
         });
 
-        // Device node tap
         cy.on('tap', 'node[nodeType="device"]', function(evt) {
             var node = evt.target;
             var data = node.data();
-            var deviceId = data.deviceId;
-
-            // Check if click is on VPN badge area (bottom third)
             if (data.vpnInfo && data.vpnInfo.total > 0) {
                 var pos = evt.position;
                 var nodePos = node.position();
                 var h = node.height();
                 var relY = pos.y - (nodePos.y - h / 2);
-                if (relY > h * 0.6 && onVPNClick) {
-                    onVPNClick(deviceId, false);
-                    return;
-                }
+                if (relY > h * 0.6 && onVPNClick) { onVPNClick(data.deviceId, false); return; }
             }
-
-            // Navigate to device page
-            window.location.href = '/admin/devices/' + deviceId;
+            window.location.href = '/admin/devices/' + data.deviceId;
         });
 
-        // Cloud node tap
-        cy.on('tap', 'node[nodeType="cloud"]', function(evt) {
-            // Find connected off-net device
+        cy.on('tap', 'node[nodeType="cloud"]', function() {
             var edges = cy.edges('[edgeType="offnet"]');
-            if (edges.length === 1 && onVPNClick) {
-                onVPNClick(edges[0].data('deviceId'), true);
+            if (edges.length === 1 && onVPNClick) onVPNClick(edges[0].data('deviceId'), true);
+        });
+
+        cy.on('dragfree', 'node[nodeType="device"]', savePositions);
+        cy.on('dragfree', 'node[nodeType="site"]', savePositions);
+
+        // Escape key collapses all expanded tunnels
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                Object.keys(expandedTunnels).forEach(collapseTunnel);
             }
-        });
-
-        // Save positions on drag
-        cy.on('dragfree', 'node[nodeType="device"]', function() {
-            savePositions();
-        });
-
-        // Site compound drag - save all child positions
-        cy.on('dragfree', 'node[nodeType="site"]', function() {
-            savePositions();
         });
     }
 
-    // ---- 1f. Layer Filtering & DOWN Toggle ----
+    // ---- 1f. Tunnel Inline Expansion ----
+    function expandTunnel(edge) {
+        if (!cy) return;
+        var data = edge.data();
+        var children = data.childConns || [];
+        if (children.length === 0) return;
+
+        var tunnelId = data.id;
+        expandedTunnels[tunnelId] = true;
+
+        // Hide the parent tunnel edge
+        edge.style('display', 'none');
+
+        // Add pipe background edge
+        cy.add({ group: 'edges', data: {
+            id: tunnelId + '-pipe', source: data.source, target: data.target,
+            edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId
+        }});
+
+        // Add carrier lane
+        var offsets = [];
+        var totalLanes = children.length + 1; // +1 for the carrier itself
+        for (var i = 0; i < totalLanes; i++) {
+            offsets.push(-15 + (30 / (totalLanes - 1 || 1)) * i);
+        }
+
+        // Carrier sublane (the tunnel itself)
+        cy.add({ group: 'edges', data: {
+            id: tunnelId + '-carrier', source: data.source, target: data.target,
+            edgeType: 'sublane', connType: data.connType, status: data.status,
+            connObj: data.connObj, parentTunnel: tunnelId,
+            label: data.connType.toUpperCase()
+        }});
+        cy.getElementById(tunnelId + '-carrier').style({
+            'control-point-distances': [offsets[0]],
+            'control-point-weights': [0.5],
+            'line-color': TYPE_COLORS[data.connType] || '#8b949e'
+        });
+
+        // Child overlay sublanes
+        children.forEach(function(child, idx) {
+            var laneId = tunnelId + '-lane-' + child.id;
+            var color = TYPE_COLORS[child.connection_type] || '#8b949e';
+            cy.add({ group: 'edges', data: {
+                id: laneId, source: data.source, target: data.target,
+                edgeType: 'sublane', connType: child.connection_type, status: child.status,
+                connObj: child, parentTunnel: tunnelId,
+                label: child.connection_type.toUpperCase()
+            }});
+            cy.getElementById(laneId).style({
+                'control-point-distances': [offsets[idx + 1]],
+                'control-point-weights': [0.5],
+                'line-color': color
+            });
+        });
+
+        // Restart particles to include new sublanes
+        stopParticles();
+        startParticles();
+    }
+
+    function collapseTunnel(tunnelId) {
+        if (!cy) return;
+        delete expandedTunnels[tunnelId];
+
+        // Remove all sublane and pipe edges for this tunnel
+        cy.edges('[parentTunnel="' + tunnelId + '"]').remove();
+
+        // Show the parent tunnel edge again
+        var parentEdge = cy.getElementById(tunnelId);
+        if (parentEdge && !parentEdge.empty()) {
+            parentEdge.style('display', 'element');
+        }
+
+        stopParticles();
+        startParticles();
+    }
+
+    // ---- 1g. Layer Filtering & DOWN Toggle ----
     function applyFilters() {
         if (!cy) return;
-
         cy.edges().forEach(function(edge) {
             var data = edge.data();
+            if (data.edgeType === 'sublane' || data.edgeType === 'pipe-bg') return; // managed by expansion
             var hide = false;
-
-            // Type filter
-            if (data.edgeType === 'connection' && hiddenTypes[data.connType]) {
-                hide = true;
-            }
-
-            // DOWN filter
-            if (!showDown && data.status === 'down') {
-                hide = true;
-            }
-
+            if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle') && hiddenTypes[data.connType]) hide = true;
+            if (!showDown && data.status === 'down') hide = true;
+            if (expandedTunnels[data.id]) hide = true; // expanded tunnels are hidden, sublanes visible
             edge.style('display', hide ? 'none' : 'element');
         });
     }
 
     function toggleType(type) {
-        if (type === 'all') {
-            hiddenTypes = {};
-        } else {
-            if (hiddenTypes[type]) {
-                delete hiddenTypes[type];
-            } else {
-                hiddenTypes[type] = true;
-            }
-        }
-        applyFilters();
-        updateToolbarButtons();
+        if (type === 'all') { hiddenTypes = {}; }
+        else { if (hiddenTypes[type]) delete hiddenTypes[type]; else hiddenTypes[type] = true; }
+        applyFilters(); updateToolbarButtons();
     }
 
     function toggleDown() {
         showDown = !showDown;
         applyFilters();
         var btn = document.getElementById('btn-toggle-down');
-        if (btn) {
-            btn.classList.toggle('active', showDown);
-            btn.textContent = showDown ? 'Hide DOWN' : 'Show DOWN';
-        }
+        if (btn) { btn.classList.toggle('active', showDown); btn.textContent = showDown ? 'Hide DOWN' : 'Show DOWN'; }
     }
 
     function updateToolbarButtons() {
-        var btns = document.querySelectorAll('[data-action="dg-filter-type"]');
-        btns.forEach(function(btn) {
+        document.querySelectorAll('[data-action="dg-filter-type"]').forEach(function(btn) {
             var type = btn.dataset.type;
-            if (type === 'all') {
-                btn.classList.toggle('active', Object.keys(hiddenTypes).length === 0);
-            } else {
-                btn.classList.toggle('active', !hiddenTypes[type]);
-            }
+            btn.classList.toggle('active', type === 'all' ? Object.keys(hiddenTypes).length === 0 : !hiddenTypes[type]);
         });
     }
 
-    // ---- 1g. Particle Animation ----
+    // ---- 1h. Particle Animation (directional, tunnel-bundled) ----
     function startParticles() {
         if (!cy || particleAnimId) return;
-
         particleEls = [];
+
         var visibleEdges = cy.edges().filter(function(e) {
             return e.style('display') !== 'none' && e.data('status') === 'up';
         });
-
         if (visibleEdges.length === 0) return;
 
-        // Create particle overlay canvas
         var canvasDiv = container.querySelector('#cy-canvas');
         if (!canvasDiv) return;
 
@@ -589,36 +494,43 @@
         };
         resizeCanvas();
 
-        // Create particles for visible UP edges
         var count = 0;
         visibleEdges.forEach(function(edge) {
             if (count >= MAX_PARTICLES) return;
             var data = edge.data();
-            var cs = window.connStyle(data.connType);
-            var color = data.isIndirect ? '#f0883e' : (data.edgeType === 'offnet' ? '#3fb950' : cs.color);
 
-            // Forward particle
-            particleEls.push({
-                edge: edge,
-                progress: Math.random(),
-                speed: 0.0003 + Math.random() * 0.0002,
-                direction: 1,
-                color: color,
-                radius: 3
-            });
-            count++;
+            if (data.edgeType === 'tunnel-bundle') {
+                // Bundled: carrier particle + one dot per child overlay
+                var carrierColor = TYPE_COLORS[data.connType] || '#8b949e';
+                addParticlePair(edge, carrierColor, count);
+                count += 2;
 
-            if (count < MAX_PARTICLES) {
-                // Reverse particle
-                particleEls.push({
-                    edge: edge,
-                    progress: Math.random(),
-                    speed: 0.00025 + Math.random() * 0.00015,
-                    direction: -1,
-                    color: '#58a6ff',
-                    radius: 2.5
+                var children = data.childConns || [];
+                children.forEach(function(child) {
+                    if (count >= MAX_PARTICLES) return;
+                    var childColor = TYPE_COLORS[child.connection_type] || '#8b949e';
+                    // Stagger overlay dots so they don't overlap
+                    particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00025 + Math.random() * 0.0001,
+                        direction: 1, color: childColor, radius: 2.5, alpha: 0.9 });
+                    count++;
                 });
+            } else if (data.edgeType === 'sublane') {
+                // Expanded sublane: own particles
+                var color = TYPE_COLORS[data.connType] || '#8b949e';
+                addParticlePair(edge, color, count);
+                count += 2;
+            } else if (data.edgeType === 'offnet') {
+                // Off-net: device→cloud only (no reverse)
+                particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.0002,
+                    direction: 1, color: '#3fb950', radius: 3, alpha: 0.85 });
                 count++;
+            } else if (data.edgeType === 'pipe-bg') {
+                // No particles on pipe background
+            } else {
+                // Direct connection (ethernet, lag, l2vlan, etc.)
+                var directColor = TYPE_COLORS[data.connType] || '#8b949e';
+                addParticlePair(edge, directColor, count);
+                count += 2;
             }
         });
 
@@ -632,16 +544,12 @@
             var dt = timestamp - lastTime;
             lastTime = timestamp;
 
-            // Ensure canvas is right size
             var rect = canvasDiv.getBoundingClientRect();
-            if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-                resizeCanvas();
-            }
+            if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) resizeCanvas();
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.save();
             ctx.scale(dpr, dpr);
-
             var pan = cy.pan();
             var zoom = cy.zoom();
 
@@ -653,173 +561,100 @@
                 if (p.progress > 1) p.progress -= 1;
                 if (p.progress < 0) p.progress += 1;
 
-                // Get edge endpoints in model space
                 var src = p.edge.sourceEndpoint();
                 var tgt = p.edge.targetEndpoint();
                 if (!src || !tgt) return;
 
-                // Interpolate position in model space
                 var mx = src.x + (tgt.x - src.x) * p.progress;
                 var my = src.y + (tgt.y - src.y) * p.progress;
-
-                // Convert to rendered space
                 var rx = mx * zoom + pan.x;
                 var ry = my * zoom + pan.y;
 
                 ctx.beginPath();
-                ctx.arc(rx, ry, p.radius, 0, Math.PI * 2);
+                ctx.arc(rx, ry, p.radius * zoom, 0, Math.PI * 2);
                 ctx.fillStyle = p.color;
-                ctx.globalAlpha = 0.85;
+                ctx.globalAlpha = p.alpha || 0.85;
                 ctx.fill();
             });
 
             ctx.restore();
             particleAnimId = requestAnimationFrame(animate);
         }
-
         particleAnimId = requestAnimationFrame(animate);
     }
 
-    function stopParticles() {
-        if (particleAnimId) {
-            cancelAnimationFrame(particleAnimId);
-            particleAnimId = null;
+    function addParticlePair(edge, color, currentCount) {
+        if (currentCount >= MAX_PARTICLES) return;
+        // Forward: source → target (outbound)
+        particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.00015,
+            direction: 1, color: color, radius: 3, alpha: 0.85 });
+        if (currentCount + 1 < MAX_PARTICLES) {
+            // Reverse: target → source (return flow) — same color, dimmer, smaller
+            particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00022 + Math.random() * 0.0001,
+                direction: -1, color: color, radius: 2, alpha: 0.4 });
         }
+    }
+
+    function stopParticles() {
+        if (particleAnimId) { cancelAnimationFrame(particleAnimId); particleAnimId = null; }
         particleEls = [];
         var canvas = document.getElementById('particle-canvas');
         if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
     }
 
-    // ---- 1h. Position Persistence ----
+    // ---- 1i. Position Persistence ----
     function savePositions() {
         if (!cy) return;
         var data = {};
         cy.nodes('[nodeType="device"]').forEach(function(node) {
             var pos = node.position();
-            var key = String(node.data('deviceId'));
-            data[key] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+            data[String(node.data('deviceId'))] = { x: Math.round(pos.x), y: Math.round(pos.y) };
         });
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (e) {}
     }
+    function loadPositions() { try { var raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; } }
+    function resetLayout() { try { localStorage.removeItem(STORAGE_KEY); } catch (e) {} if (window.drawConnectionDiagram) window.drawConnectionDiagram(); }
+    function fitGraph() { if (cy) cy.fit(undefined, 40); }
 
-    function loadPositions() {
-        try {
-            var raw = localStorage.getItem(STORAGE_KEY);
-            return raw ? JSON.parse(raw) : {};
-        } catch (e) { return {}; }
-    }
-
-    function resetLayout() {
-        try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
-        if (window.drawConnectionDiagram) window.drawConnectionDiagram();
-    }
-
-    function fitGraph() {
-        if (cy) cy.fit(undefined, 40);
-    }
-
-    // ---- 1i. Compatibility Shim for diagram-tunnel-zoom.js ----
+    // ---- 1j. Compatibility Shims ----
     function getSVG() {
         if (svgOverlay) return svgOverlay;
         if (!container) return null;
-
         svgOverlay = document.createElementNS(NS, 'svg');
         var rect = container.getBoundingClientRect();
-        var w = rect.width || 800;
-        var h = Math.max(rect.height, 500);
+        var w = rect.width || 800; var h = Math.max(rect.height, 500);
         svgOverlay.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-        svgOverlay.setAttribute('width', '100%');
-        svgOverlay.setAttribute('height', h);
+        svgOverlay.setAttribute('width', '100%'); svgOverlay.setAttribute('height', h);
         svgOverlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:20;pointer-events:auto;';
         container.appendChild(svgOverlay);
         return svgOverlay;
     }
+    function getDimensions() { var rect = container ? container.getBoundingClientRect() : { width: 800, height: 500 }; var w = rect.width || 800; var h = Math.max(rect.height, 500); return { W: w, H: h, cx: w / 2, cy: h / 2, R: Math.min(w / 2, h / 2) - 90 }; }
+    function createEl(tag) { return document.createElementNS(NS, tag); }
+    function svgPoint(clientX, clientY) { if (!svgOverlay) return { x: clientX, y: clientY }; var pt = svgOverlay.createSVGPoint(); pt.x = clientX; pt.y = clientY; var ctm = svgOverlay.getScreenCTM(); if (!ctm) return { x: clientX, y: clientY }; return pt.matrixTransform(ctm.inverse()); }
+    function setCallbacks(connClickFn, vpnClickFn) { onConnClick = connClickFn; onVPNClick = vpnClickFn; }
 
-    function getDimensions() {
-        var rect = container ? container.getBoundingClientRect() : { width: 800, height: 500 };
-        var w = rect.width || 800;
-        var h = Math.max(rect.height, 500);
-        return { W: w, H: h, cx: w / 2, cy: h / 2, R: Math.min(w / 2, h / 2) - 90 };
-    }
-
-    function createEl(tag) {
-        return document.createElementNS(NS, tag);
-    }
-
-    function svgPoint(clientX, clientY) {
-        if (!svgOverlay) return { x: clientX, y: clientY };
-        var pt = svgOverlay.createSVGPoint();
-        pt.x = clientX;
-        pt.y = clientY;
-        var ctm = svgOverlay.getScreenCTM();
-        if (!ctm) return { x: clientX, y: clientY };
-        var inv = ctm.inverse();
-        var svgPt = pt.matrixTransform(inv);
-        return { x: svgPt.x, y: svgPt.y };
-    }
-
-    function setCallbacks(connClickFn, vpnClickFn) {
-        onConnClick = connClickFn;
-        onVPNClick = vpnClickFn;
-    }
-
-    // ---- Toolbar event delegation ----
-    document.addEventListener('click', function(e) {
-        var el = e.target.closest('[data-action]');
-        if (!el) return;
-        var action = el.dataset.action;
-        if (action === 'dg-filter-type') {
-            toggleType(el.dataset.type);
-        } else if (action === 'dg-toggle-down') {
-            toggleDown();
-        } else if (action === 'dg-fit') {
-            fitGraph();
-        } else if (action === 'dg-reset-layout') {
-            resetLayout();
-        }
-    });
-
-    // ---- 1h. Live Status Updates ----
+    // ---- 1k. Live Status Updates ----
     function updateStatuses(connChanges, deviceChanges) {
         if (!cy) return;
-
-        // Update connection edge statuses
         if (connChanges && connChanges.length > 0) {
             connChanges.forEach(function(ch) {
                 var edge = cy.getElementById('conn-' + ch.id);
                 if (!edge || edge.empty()) return;
-
                 var oldStatus = edge.data('status');
                 if (oldStatus === ch.status) return;
-
                 if (ch.status === 'down') {
-                    // UP → DOWN: flash red, then apply down style
                     animateFlash(edge, '#f85149', function() {
                         edge.data('status', 'down');
-                        // Remove particles for this edge
-                        particleEls = particleEls.filter(function(p) {
-                            return p.edge !== edge;
-                        });
+                        particleEls = particleEls.filter(function(p) { return p.edge !== edge; });
                     });
                 } else if (ch.status === 'up') {
-                    // DOWN → UP: flash green, then apply up style and add particles
-                    animateFlash(edge, '#3fb950', function() {
-                        edge.data('status', 'up');
-                        addParticlesForEdge(edge);
-                    });
-                } else {
-                    edge.data('status', ch.status);
-                }
-
-                // Update the connObj reference too
-                if (edge.data('connObj')) {
-                    edge.data('connObj').status = ch.status;
-                }
+                    animateFlash(edge, '#3fb950', function() { edge.data('status', 'up'); addParticlePair(edge, TYPE_COLORS[edge.data('connType')] || '#8b949e', particleEls.length); });
+                } else { edge.data('status', ch.status); }
+                if (edge.data('connObj')) edge.data('connObj').status = ch.status;
             });
             applyFilters();
         }
-
-        // Update device node statuses
         if (deviceChanges && deviceChanges.length > 0) {
             deviceChanges.forEach(function(ch) {
                 var node = cy.getElementById('dev-' + ch.id);
@@ -832,68 +667,32 @@
     function animateFlash(edge, color, onComplete) {
         var origColor = edge.style('line-color');
         var step = 0;
-        var maxFlashes = 3;
-
         function flash() {
-            if (step >= maxFlashes * 2) {
-                if (onComplete) onComplete();
-                return;
-            }
-            var toColor = (step % 2 === 0) ? color : origColor;
-            var toWidth = (step % 2 === 0) ? 6 : 3;
-            edge.animate({
-                style: { 'line-color': toColor, 'width': toWidth, 'opacity': 1 }
-            }, {
-                duration: 200,
-                complete: function() { step++; flash(); }
-            });
+            if (step >= 6) { if (onComplete) onComplete(); return; }
+            edge.animate({ style: { 'line-color': step % 2 === 0 ? color : origColor, 'width': step % 2 === 0 ? 6 : 3, 'opacity': 1 } },
+                { duration: 200, complete: function() { step++; flash(); } });
         }
         flash();
     }
 
-    function addParticlesForEdge(edge) {
-        if (!edge || edge.removed()) return;
-        if (particleEls.length >= MAX_PARTICLES) return;
-        var data = edge.data();
-        var cs = window.connStyle(data.connType);
-        var color = data.isIndirect ? '#f0883e' : (data.edgeType === 'offnet' ? '#3fb950' : cs.color);
-
-        particleEls.push({
-            edge: edge,
-            progress: Math.random(),
-            speed: 0.0003 + Math.random() * 0.0002,
-            direction: 1,
-            color: color,
-            radius: 3
-        });
-        if (particleEls.length < MAX_PARTICLES) {
-            particleEls.push({
-                edge: edge,
-                progress: Math.random(),
-                speed: 0.00025 + Math.random() * 0.00015,
-                direction: -1,
-                color: '#58a6ff',
-                radius: 2.5
-            });
-        }
-    }
+    // ---- Toolbar event delegation ----
+    document.addEventListener('click', function(e) {
+        var el = e.target.closest('[data-action]');
+        if (!el) return;
+        var action = el.dataset.action;
+        if (action === 'dg-filter-type') toggleType(el.dataset.type);
+        else if (action === 'dg-toggle-down') toggleDown();
+        else if (action === 'dg-fit') fitGraph();
+        else if (action === 'dg-reset-layout') resetLayout();
+    });
 
     // ---- Public API ----
     window.FWDiagram = {
-        NS: NS,
-        init: init,
-        render: render,
-        cleanup: cleanup,
-        getSVG: getSVG,
-        getDimensions: getDimensions,
-        createEl: createEl,
-        svgPoint: svgPoint,
-        setCallbacks: setCallbacks,
-        updateStatuses: updateStatuses,
+        NS: NS, init: init, render: render, cleanup: cleanup,
+        getSVG: getSVG, getDimensions: getDimensions, createEl: createEl, svgPoint: svgPoint,
+        setCallbacks: setCallbacks, updateStatuses: updateStatuses,
         Layout: { resetLayout: resetLayout },
         Connections: { redrawPaths: function() {} },
         Particles: { start: startParticles, stop: stopParticles }
     };
-    // diagram-panels.js assigns FWDiagram.Panels = {...}
-    // diagram-tunnel-zoom.js assigns FWDiagram.TunnelZoom = {...}
 })();

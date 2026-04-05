@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.143] - 2026-04-04
+
+### Changed
+- **Tunnel-bundled connection map**: Overlay networks (l3ipvlan, vxlan) no longer shown as separate edges. They ride inside their tunnel carrier (IPSec/SSL) as colored dots on the tunnel edge. Each dot color represents the network type inside the tunnel
+- **Inline tunnel expansion**: Click a tunnel edge with overlays to expand it into a "pipe" with sub-lanes — each overlay network gets its own labeled lane with directional particles. Click again or press Escape to collapse
+- **Directional particle flow**: Forward particles (source→target) are larger and brighter, return particles are smaller and dimmer with the same color. No more reverse-direction collisions. Off-net edges flow device→cloud only
+- **Same-site connections unchanged**: Ethernet, LAG, L2VLAN, and bridge connections remain as independent direct edges (they don't travel through tunnels)
+
+### Removed
+- **diagram-tunnel-zoom.js**: Old overlay zoom replaced by inline expansion. "Zoom In" button removed from connection detail panel
+
 ## [0.10.142] - 2026-04-04
 
 ### Fixed
