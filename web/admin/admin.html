@@ -479,11 +479,14 @@
             </div>
             <div class="stat-grid stat-grid-6" id="flows-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
-                <div class="stat-card"><div class="stat-label">Total Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
+                <div class="stat-card"><div class="stat-label">Sampled Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
+                <div class="stat-card"><div class="stat-label">Est. Actual Bytes</div><div class="stat-value good" id="flows-est-bytes">--</div></div>
                 <div class="stat-card"><div class="stat-label">Avg Throughput</div><div class="stat-value" id="flows-throughput">--</div></div>
                 <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="flows-sources">--</div></div>
                 <div class="stat-card"><div class="stat-label">Unique Dests</div><div class="stat-value" id="flows-dests">--</div></div>
                 <div class="stat-card"><div class="stat-label">Protocols</div><div class="stat-value" id="flows-protocols">--</div></div>
+                <div class="stat-card"><div class="stat-label">Sampling Rate</div><div class="stat-value" id="flows-sampling-rate">--</div></div>
+                <div class="stat-card"><div class="stat-label">Total Packets</div><div class="stat-value" id="flows-packets">--</div></div>
             </div>
             <div id="flows-local-traffic-bar" style="display:none;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:#8b949e;display:none">
                 &#9888; <strong style="color:#d2992a">Internal/Local Traffic (port 0):</strong>
@@ -510,6 +513,17 @@
                 <div class="chart-card">
                     <h3>Top Destinations (by bytes)</h3>
                     <canvas id="flows-top-dests-chart"></canvas>
+                </div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-card">
+                    <h3>Top Ports (by bytes)</h3>
+                    <canvas id="flows-top-ports-chart"></canvas>
+                </div>
+                <div class="chart-card" id="flows-retention-card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;color:#8b949e;font-size:0.85rem;">
+                    <div style="font-size:2rem;margin-bottom:8px;">&#128202;</div>
+                    <div><strong>Data Retention:</strong> <span id="flows-retention-days">365</span> days</div>
+                    <div style="margin-top:4px;color:#484f58;">Flow rollups: 5m → 1h → 1d</div>
                 </div>
             </div>
             <div class="card">

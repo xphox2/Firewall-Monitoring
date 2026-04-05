@@ -734,10 +734,13 @@
             // 6 stat cards
             document.getElementById('flows-total').textContent = (d.total_flows || 0).toLocaleString();
             document.getElementById('flows-bytes').textContent = formatBytes(d.total_bytes || 0);
+            document.getElementById('flows-est-bytes').textContent = formatBytes(d.estimated_bytes || d.total_bytes || 0);
             document.getElementById('flows-throughput').textContent = formatBps(d.bits_per_second || 0);
             document.getElementById('flows-sources').textContent = (d.unique_sources || 0).toLocaleString();
             document.getElementById('flows-dests').textContent = (d.unique_dests || 0).toLocaleString();
             document.getElementById('flows-protocols').textContent = (d.protocol_count || 0).toLocaleString();
+            document.getElementById('flows-sampling-rate').textContent = d.avg_sampling_rate > 1 ? '1:' + Math.round(d.avg_sampling_rate) : 'None';
+            document.getElementById('flows-packets').textContent = (d.total_packets || 0).toLocaleString();
 
             // Local traffic info bar
             var localBar = document.getElementById('flows-local-traffic-bar');
@@ -765,6 +768,11 @@
             var dstLabels = (d.top_destinations || []).map(function(s) { return s.key; });
             var dstCounts = (d.top_destinations || []).map(function(s) { return s.count; });
             createChart('flows-top-dests-chart','bar',dstLabels,[{label:'Bytes',data:dstCounts,backgroundColor:'#3fb950',borderRadius:3}], horizBarOpts('#3fb950'));
+
+            // Top ports bar (horizontal)
+            var portLabels = (d.top_ports || []).map(function(s) { return s.key; });
+            var portCounts = (d.top_ports || []).map(function(s) { return s.count; });
+            createChart('flows-top-ports-chart','bar',portLabels,[{label:'Bytes',data:portCounts,backgroundColor:'#d2992a',borderRadius:3}], horizBarOpts('#d2992a'));
 
             // Bandwidth over time (bits/sec) — use server-provided bucket interval
             var intervalSec = d.bucket_seconds || 3600;

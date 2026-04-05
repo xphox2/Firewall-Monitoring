@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.153] - 2026-04-05
+
+### Changed
+- **Flow retention increased to 365 days**: Default `RETENTION_FLOW_DAYS` changed from 90 to 365. Rollups compress old data (5m → 1h → 1d) so storage is manageable. The 1-year time range button now has data to show.
+
+### Added
+- **Enterprise sFlow dashboard enhancements**:
+  - **Estimated Actual Bytes** stat card: Shows `sampled_bytes × avg_sampling_rate` for true traffic volume
+  - **Sampling Rate** stat card: Shows the average sampling ratio (e.g., "1:4096") so users know data is sampled
+  - **Total Packets** stat card
+  - **Top Ports chart**: Horizontal bar chart showing top 10 destination ports by bytes with well-known port names (HTTPS, SSH, DNS, etc.)
+  - **Data Retention info card**: Shows current retention period and rollup tiers
+- **Top destination ports query**: `GetFlowStats` now returns `top_ports` with port-to-name mapping for 17 well-known services
+
 ## [0.10.152] - 2026-04-05
 
 ### Added

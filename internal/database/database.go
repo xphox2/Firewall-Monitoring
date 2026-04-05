@@ -1342,19 +1342,30 @@ func protoName(p uint8) string {
 }
 
 // FlowStatsResult holds aggregated flow statistics
+var wellKnownPorts = map[uint16]string{
+	22: "SSH", 25: "SMTP", 53: "DNS", 80: "HTTP", 110: "POP3", 143: "IMAP",
+	443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S", 3389: "RDP",
+	8080: "HTTP-Alt", 8443: "HTTPS-Alt", 500: "IKE", 4500: "NAT-T",
+	1194: "OpenVPN", 51820: "WireGuard",
+}
+
 type FlowStatsResult struct {
 	TotalFlows       int64              `json:"total_flows"`
 	TotalBytes       uint64             `json:"total_bytes"`
+	TotalPackets     uint64             `json:"total_packets"`
 	BitsPerSecond    float64            `json:"bits_per_second"`
 	UniqueSources    int64              `json:"unique_sources"`
 	UniqueDests      int64              `json:"unique_dests"`
 	ProtocolCount    int64              `json:"protocol_count"`
 	BucketSeconds    int                `json:"bucket_seconds"`
+	AvgSamplingRate  float64            `json:"avg_sampling_rate"`
+	EstimatedBytes   uint64             `json:"estimated_bytes"`
 	ByProtocol       []KeyCount         `json:"by_protocol"`
 	TopSources       []KeyCount         `json:"top_sources"`
 	TopDestinations  []KeyCount         `json:"top_destinations"`
 	TopConversations []FlowConversation `json:"top_conversations"`
 	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
+	TopPorts         []KeyCount         `json:"top_ports"`
 	LocalTraffic     struct {
 		Bytes   uint64 `json:"bytes"`
 		Packets uint64 `json:"packets"`
@@ -1471,6 +1482,21 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 				result.UniqueDests = rollupAgg.UniqueDests
 			}
 		}
+	}
+
+	// Total packets from raw
+	var totalPkts struct{ Sum uint64 }
+	newRawBase().Select("COALESCE(SUM(packets),0) as sum").Scan(&totalPkts)
+	result.TotalPackets = totalPkts.Sum
+
+	// Average sampling rate (0 means no sampling or unknown)
+	var avgRate struct{ Rate float64 }
+	newRawBase().Select("COALESCE(AVG(CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE NULL END),0) as rate").Scan(&avgRate)
+	result.AvgSamplingRate = avgRate.Rate
+	if result.AvgSamplingRate > 1 {
+		result.EstimatedBytes = uint64(float64(result.TotalBytes) * result.AvgSamplingRate)
+	} else {
+		result.EstimatedBytes = result.TotalBytes
 	}
 
 	// Computed throughput
@@ -1591,6 +1617,21 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 			Bytes:    c.Bytes,
 			Packets:  c.Packets,
 		})
+	}
+
+	// Top destination ports
+	var topPorts []struct {
+		Port  uint16
+		Total int64
+	}
+	newFilteredRawBase().Select("dst_port as port, SUM(bytes) as total").
+		Where("dst_port > 0").Group("dst_port").Order("total DESC").Limit(10).Scan(&topPorts)
+	for _, p := range topPorts {
+		portName := fmt.Sprintf("%d", p.Port)
+		if n, ok := wellKnownPorts[p.Port]; ok {
+			portName = n
+		}
+		result.TopPorts = append(result.TopPorts, KeyCount{Key: portName, Count: p.Total})
 	}
 
 	// Adaptive time bucketing for bytes over time

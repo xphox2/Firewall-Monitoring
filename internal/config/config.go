@@ -192,7 +192,7 @@ func Load() *Config {
 		Retention: RetentionConfig{
 			DefaultDays: getIntEnv("RETENTION_DEFAULT_DAYS", 90),
 			SyslogDays:  getIntEnv("RETENTION_SYSLOG_DAYS", 0),
-			FlowDays:    getIntEnv("RETENTION_FLOW_DAYS", 0),
+			FlowDays:    getIntEnv("RETENTION_FLOW_DAYS", 365),
 			TrapDays:    getIntEnv("RETENTION_TRAP_DAYS", 0),
 			StatusDays:  getIntEnv("RETENTION_STATUS_DAYS", 0),
 			PingDays:    getIntEnv("RETENTION_PING_DAYS", 0),
