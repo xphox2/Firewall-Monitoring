@@ -536,12 +536,17 @@
 
             if (connChanges.length > 0 || deviceChanges.length > 0) {
                 FWDiagram.updateStatuses(connChanges, deviceChanges);
+            }
 
-                // Also update the connections table badges
-                connChanges.forEach(function(ch) {
-                    var badge = document.querySelector('#connections-table .badge.' + ch.oldStatus);
-                    // Simple: just re-render the table row status
-                });
+            // Refresh VPN badges on device nodes
+            apiFetch(API_BASE + '/connections/vpn-map').then(function(vpnRes) {
+                if (vpnRes && vpnRes.data) {
+                    currentVpnMap = vpnRes.data;
+                    FWDiagram.updateVPNBadges(currentVpnMap);
+                }
+            })['catch'](function() {});
+
+            if (connChanges.length > 0) {
                 // Re-render table for simplicity
                 if (connChanges.length > 0) {
                     var tbody = document.querySelector('#connections-table tbody');

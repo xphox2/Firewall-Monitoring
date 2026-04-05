@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.149] - 2026-04-05
+
+### Fixed
+- **Straight lines**: All edges are now straight (removed bezier curves and multi-edge detection). Expanded sublanes also use straight lines through the cloud
+- **Expanded tunnels route through cloud**: Cross-site tunnel expansion creates sublane halves through the Internet cloud (Device→Cloud + Cloud→Device) instead of going direct
+- **Cloud icon centered**: Cloud node is now a 64px emoji on a transparent 100px ellipse, properly centered
+- **Site spacing**: Increased node repulsion (15000), edge length (350), node separation (200), and reduced gravity (0.15) to prevent sites from overlapping
+- **VPN badge real-time updates**: VPN up/down counts on device nodes refresh every 15 seconds via VPN map polling. When a tunnel drops, the badge updates immediately
+- **DOWN tunnel X marker**: DOWN edges show the red X marker on straight lines correctly
+
 ## [0.10.148] - 2026-04-05
 
 ### Removed

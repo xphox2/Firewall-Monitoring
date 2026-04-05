@@ -254,22 +254,19 @@
             }},
             { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#3fb950' } },
             { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f85149' } },
-            // Cloud node — large cloud icon
+            // Cloud node — large cloud icon centered
             { selector: 'node[nodeType="cloud"]', style: {
-                'width': 80, 'height': 80, 'shape': 'ellipse',
-                'background-color': '#161b22', 'background-opacity': 0.6,
+                'width': 100, 'height': 100, 'shape': 'ellipse',
+                'background-color': '#0d1117', 'background-opacity': 0,
                 'border-width': 0,
-                'label': '\u2601', 'text-valign': 'center', 'text-halign': 'center',
-                'font-size': '48px', 'color': '#30363d'
+                'label': '\u2601\uFE0F', 'text-valign': 'center', 'text-halign': 'center',
+                'font-size': '64px', 'color': '#484f58',
+                'text-margin-x': 0, 'text-margin-y': 0
             }},
-            // Default edge — straight lines, bezier only when multiple edges between same nodes
+            // Default edge — all straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
                 'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
-            }},
-            // Multiple edges between same nodes get bezier curves
-            { selector: 'edge.multi-edge', style: {
-                'curve-style': 'bezier', 'control-point-step-size': 40
             }},
             // Tunnel bundle edges — thicker pipe
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#484f58', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
@@ -284,10 +281,10 @@
             { selector: 'edge[connType="lag"]', style: { 'line-color': '#d29922', 'width': 4 } },
             { selector: 'edge[connType="ethernet"]', style: { 'line-color': '#6e7681', 'width': 2 } },
             { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e' } },
-            // Sub-lane edges (expansion)
-            { selector: 'edge[edgeType="sublane"]', style: { 'width': 2, 'curve-style': 'unbundled-bezier', 'label': 'data(label)', 'font-size': '8px', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -8 } },
+            // Sub-lane edges (expansion) — straight through cloud
+            { selector: 'edge[edgeType="sublane"]', style: { 'width': 2, 'label': 'data(label)', 'font-size': '8px', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -8 } },
             // Pipe background (expansion)
-            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 12, 'opacity': 0.15, 'line-color': '#58a6ff', 'curve-style': 'bezier' } },
+            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 12, 'opacity': 0.15, 'line-color': '#58a6ff' } },
             // Off-net edges
             { selector: 'edge[edgeType="offnet"]', style: { 'line-color': '#3fb950', 'width': 2, 'line-style': 'dashed', 'line-dash-pattern': [2, 4, 8, 4] } },
             // DOWN edges — red X
@@ -346,17 +343,19 @@
 
         var opts = {
             name: useFcose ? 'fcose' : 'cose', animate: true, animationDuration: 500,
-            fit: true, padding: 40, nodeDimensionsIncludeLabels: true,
+            fit: true, padding: 60, nodeDimensionsIncludeLabels: true,
             idealEdgeLength: function(edge) {
                 var src = edge.source(), tgt = edge.target();
-                if (src.data('parent') && src.data('parent') === tgt.data('parent')) return 120;
-                return 250;
-            }, nodeRepulsion: function() { return 8000; }, gravity: 0.3
+                if (src.data('parent') && src.data('parent') === tgt.data('parent')) return 100;
+                return 350;
+            }, nodeRepulsion: function() { return 15000; }, gravity: 0.15
         };
         if (useFcose) {
-            opts.edgeElasticity = function() { return 0.1; };
-            opts.gravityRange = 2.0;
+            opts.edgeElasticity = function() { return 0.05; };
+            opts.gravityRange = 3.0;
             opts.quality = 'default';
+            opts.numIter = 5000;
+            opts.nodeSeparation = 200;
             if (alignConstraints.length > 0) opts.alignmentConstraint = { horizontal: alignConstraints.map(function(c) { return c.offsets.map(function(o) { return o.node; }); }) };
         }
         return opts;
@@ -388,19 +387,6 @@
 
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
-
-        // Mark edges that share source/target pairs for bezier curves
-        var edgePairs = {};
-        cy.edges().forEach(function(e) {
-            var key = [e.data('source'), e.data('target')].sort().join('|');
-            if (!edgePairs[key]) edgePairs[key] = [];
-            edgePairs[key].push(e);
-        });
-        Object.keys(edgePairs).forEach(function(key) {
-            if (edgePairs[key].length > 1) {
-                edgePairs[key].forEach(function(e) { e.addClass('multi-edge'); });
-            }
-        });
 
         applyFilters();
         wireEvents(devices, vpnMap);
@@ -518,57 +504,59 @@
             if (peer && !peer.empty()) peer.style('display', 'none');
         }
 
-        // For cross-site split tunnels, sublanes span the full device-to-device path
-        var laneSrc = data.source;
-        var laneDst = data.target;
-        if (data.tunnelPeerId) {
+        // Determine if cross-site (sublanes must route through cloud)
+        var isCrossSite = !!data.tunnelPeerId;
+        var laneSrc = data.source; // dev-X or cloud
+        var laneDst = data.target; // cloud or dev-Y
+        var remoteDst = laneDst;
+        if (isCrossSite) {
             var peerEdge = cy.getElementById(data.tunnelPeerId);
             if (peerEdge && !peerEdge.empty()) {
-                laneDst = peerEdge.data('target'); // dev-X on the other side
+                remoteDst = peerEdge.data('target');
             }
         }
 
-        // Add pipe background edge
-        cy.add({ group: 'edges', data: {
-            id: tunnelId + '-pipe', source: laneSrc, target: laneDst,
-            edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId
-        }});
-
-        // Add carrier lane
-        var offsets = [];
-        var totalLanes = children.length + 1; // +1 for the carrier itself
-        for (var i = 0; i < totalLanes; i++) {
-            offsets.push(-15 + (30 / (totalLanes - 1 || 1)) * i);
+        // Helper: add a sublane (cross-site = two halves through cloud, same-site = direct)
+        function addSublane(laneId, connType, status, connObj, labelText, color) {
+            if (isCrossSite) {
+                // Source → Cloud half
+                cy.add({ group: 'edges', data: {
+                    id: laneId + '-a', source: laneSrc, target: 'cloud-internet',
+                    edgeType: 'sublane', connType: connType, status: status,
+                    connObj: connObj, parentTunnel: tunnelId, label: labelText
+                }});
+                cy.getElementById(laneId + '-a').style({ 'line-color': color });
+                // Cloud → Dest half
+                cy.add({ group: 'edges', data: {
+                    id: laneId + '-b', source: 'cloud-internet', target: remoteDst,
+                    edgeType: 'sublane', connType: connType, status: status,
+                    connObj: connObj, parentTunnel: tunnelId, label: ''
+                }});
+                cy.getElementById(laneId + '-b').style({ 'line-color': color });
+            } else {
+                cy.add({ group: 'edges', data: {
+                    id: laneId, source: laneSrc, target: laneDst,
+                    edgeType: 'sublane', connType: connType, status: status,
+                    connObj: connObj, parentTunnel: tunnelId, label: labelText
+                }});
+                cy.getElementById(laneId).style({ 'line-color': color });
+            }
         }
 
-        // Carrier sublane (the tunnel itself)
-        cy.add({ group: 'edges', data: {
-            id: tunnelId + '-carrier', source: laneSrc, target: laneDst,
-            edgeType: 'sublane', connType: data.connType, status: data.status,
-            connObj: data.connObj, parentTunnel: tunnelId,
-            label: data.connType.toUpperCase()
-        }});
-        cy.getElementById(tunnelId + '-carrier').style({
-            'control-point-distances': [offsets[0]],
-            'control-point-weights': [0.5],
-            'line-color': TYPE_COLORS[data.connType] || '#8b949e'
-        });
+        // Pipe background (for cross-site: two halves through cloud)
+        if (isCrossSite) {
+            cy.add({ group: 'edges', data: { id: tunnelId + '-pipe-a', source: laneSrc, target: 'cloud-internet', edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId }});
+            cy.add({ group: 'edges', data: { id: tunnelId + '-pipe-b', source: 'cloud-internet', target: remoteDst, edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId }});
+        } else {
+            cy.add({ group: 'edges', data: { id: tunnelId + '-pipe', source: laneSrc, target: laneDst, edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId }});
+        }
+
+        // Carrier sublane
+        addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, data.connType.toUpperCase(), TYPE_COLORS[data.connType] || '#8b949e');
 
         // Child overlay sublanes
-        children.forEach(function(child, idx) {
-            var laneId = tunnelId + '-lane-' + child.id;
-            var color = TYPE_COLORS[child.connection_type] || '#8b949e';
-            cy.add({ group: 'edges', data: {
-                id: laneId, source: laneSrc, target: laneDst,
-                edgeType: 'sublane', connType: child.connection_type, status: child.status,
-                connObj: child, parentTunnel: tunnelId,
-                label: child.connection_type.toUpperCase()
-            }});
-            cy.getElementById(laneId).style({
-                'control-point-distances': [offsets[idx + 1]],
-                'control-point-weights': [0.5],
-                'line-color': color
-            });
+        children.forEach(function(child) {
+            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, child.connection_type.toUpperCase(), TYPE_COLORS[child.connection_type] || '#8b949e');
         });
 
         // Restart particles to include new sublanes
@@ -878,6 +866,25 @@
         }
     }
 
+    // Update VPN badge counts on device nodes
+    function updateVPNBadges(vpnMap) {
+        if (!cy || !vpnMap) return;
+        Object.keys(vpnMap).forEach(function(devId) {
+            var node = cy.getElementById('dev-' + devId);
+            if (!node || node.empty()) return;
+            var info = vpnMap[devId];
+            var d = node.data('deviceObj');
+            if (!d) return;
+            var vpnLabel = '';
+            if (info && info.total > 0) {
+                vpnLabel = '\nVPN ' + info.up + '/' + info.total;
+            }
+            var newLabel = (d.name.length > 18 ? d.name.slice(0, 17) + '\u2026' : d.name) + '\n' + d.ip_address + vpnLabel;
+            node.data('label', newLabel);
+            node.data('vpnInfo', info);
+        });
+    }
+
     function animateFlash(edge, color, onComplete) {
         var origColor = edge.style('line-color');
         var step = 0;
@@ -904,7 +911,7 @@
     // ---- Public API ----
     window.FWDiagram = {
         init: init, render: render, cleanup: cleanup,
-        setCallbacks: setCallbacks, updateStatuses: updateStatuses,
+        setCallbacks: setCallbacks, updateStatuses: updateStatuses, updateVPNBadges: updateVPNBadges,
         Layout: { resetLayout: resetLayout },
         Particles: { start: startParticles, stop: stopParticles }
     };
