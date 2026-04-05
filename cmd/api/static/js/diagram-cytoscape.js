@@ -281,9 +281,9 @@
             { selector: 'edge[connType="lag"]', style: { 'line-color': '#d29922', 'width': 4 } },
             { selector: 'edge[connType="ethernet"]', style: { 'line-color': '#6e7681', 'width': 2 } },
             { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e' } },
-            // Sub-lane edges (expansion) — segments style, offsets applied per-lane in JS
+            // Sub-lane edges (expansion) — offset bezier for visual separation
             { selector: 'edge[edgeType="sublane"]', style: {
-                'width': 3, 'curve-style': 'segments',
+                'width': 3, 'curve-style': 'unbundled-bezier',
                 'label': 'data(label)', 'font-size': '9px', 'color': '#c9d1d9',
                 'text-rotation': 'autorotate', 'text-margin-y': -10,
                 'text-background-color': '#0d1117', 'text-background-opacity': 0.8,
@@ -291,10 +291,11 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges — thin dashed, visually distinct from tunnel edges
+            // Off-net edges — haystack so they don't overlap tunnel edges at the device node
             { selector: 'edge[edgeType="offnet"]', style: {
-                'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.5,
-                'line-style': 'dashed', 'line-dash-pattern': [3, 6]
+                'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
+                'line-style': 'dashed', 'line-dash-pattern': [3, 6],
+                'curve-style': 'haystack', 'haystack-radius': 0.5
             }},
             // DOWN edges — red X
             { selector: 'edge[status="down"]', style: {
@@ -533,19 +534,22 @@
             }
         }
 
-        // Calculate spacing: each lane offset perpendicular to the edge
+        // Calculate offsets for visual separation
         var totalLanes = children.length + 1;
-        var spacing = 20;
+        var spacing = 25;
         var baseOffset = -(totalLanes - 1) * spacing / 2;
 
-        // Helper: add a sublane with vertical offset via segments
+        // Helper: add a sublane with vertical offset
         function addSublane(laneId, connType, status, connObj, labelText, color, laneIdx) {
             var offset = baseOffset + laneIdx * spacing;
+            var cpDist = [offset];
+            var cpWeight = [0.5];
+
             function styleLane(id) {
                 cy.getElementById(id).style({
                     'line-color': color,
-                    'segment-distances': [offset],
-                    'segment-weights': [0.5]
+                    'control-point-distances': cpDist,
+                    'control-point-weights': cpWeight
                 });
             }
 
