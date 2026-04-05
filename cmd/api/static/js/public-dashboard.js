@@ -12,6 +12,8 @@
     var chartInstances = {};
     var displaySettings = {};
     var refreshTimer = null;
+    var uptimeTimers = {}; // deviceId -> { baseSeconds, startedAt }
+    var uptimeIntervalId = null;
     var bwView = 'rate';
     var bwRange = '1h';
     var cpuHours = 24;
@@ -69,10 +71,6 @@
     function buildWidgetDefs() {
         allWidgetDefs = [];
         var y = 0;
-
-        // Devices table
-        allWidgetDefs.push({ id: 'devices', title: 'Firewalls', type: 'table', x: 0, y: y, w: 12, h: 3 });
-        y += 3;
 
         // CPU/Memory charts per device
         var cpuX = 0;
@@ -192,7 +190,8 @@
         var w = savedPos ? savedPos.w : def.w;
         var h = savedPos ? savedPos.h : def.h;
 
-        var html = '<div class="widget-hdr"><h3>' + escapeHtml(def.title) + '</h3>' +
+        var uptimeHtml = def.type === 'cpumem' ? '<span class="uptime-live" id="uptime-' + def.id + '" style="font-size:0.7rem;color:#58a6ff;font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px;font-family:monospace;"></span>' : '';
+        var html = '<div class="widget-hdr"><h3>' + escapeHtml(def.title) + uptimeHtml + '</h3>' +
             '<button class="widget-close" data-wid="' + def.id + '">&times;</button></div>' +
             '<div class="widget-body" id="wb-' + def.id + '">' +
             (def.type === 'bandwidth' || def.type === 'cpumem' ? '<div class="widget-chart"><canvas id="wc-' + def.id + '"></canvas></div>' : '<div class="loading">Loading...</div>') +
@@ -270,48 +269,60 @@
     }
 
     function renderWidgetContent(def) {
-        if (def.type === 'table') renderDevicesTable();
-        else if (def.type === 'cpumem') renderCpuMemChart(def);
+        if (def.type === 'cpumem') renderCpuMemChart(def);
         else if (def.type === 'bandwidth') renderBandwidthChart(def);
         else if (def.type === 'vpn') renderVPN(def);
         else if (def.type === 'connmap') renderConnMap(def);
     }
 
-    // ---- Devices Table ----
-    function renderDevicesTable() {
-        var body = document.getElementById('wb-devices');
-        if (!body) return;
+    // ---- Uptime live counter ----
+    function formatUptimeSeconds(totalSec) {
+        if (!totalSec || totalSec <= 0) return '--';
+        var d = Math.floor(totalSec / 86400);
+        var h = Math.floor((totalSec % 86400) / 3600);
+        var m = Math.floor((totalSec % 3600) / 60);
+        var s = Math.floor(totalSec % 60);
+        var parts = [];
+        if (d > 0) parts.push(d + 'D');
+        parts.push(h + 'H');
+        parts.push(('0' + m).slice(-2) + 'M');
+        parts.push(('0' + s).slice(-2) + 'S');
+        return 'UPTIME ' + parts.join(' ');
+    }
 
-        var promises = allDevices.map(function(d) {
-            return apiFetch(API_BASE + '/public/dashboard?device_id=' + d.id).then(function(data) {
-                d.statusData = data || {};
-            })['catch'](function() { d.statusData = {}; });
-        });
+    function startUptimeCounter(wid, uptimeSeconds) {
+        uptimeTimers[wid] = { baseSeconds: uptimeSeconds, startedAt: Date.now() };
+        if (!uptimeIntervalId) {
+            uptimeIntervalId = setInterval(tickUptimes, 1000);
+        }
+        tickUptimes();
+    }
 
-        Promise.all(promises).then(function() {
-            if (allDevices.length === 0) {
-                body.innerHTML = '<div class="loading">No devices configured</div>';
-                return;
-            }
-            body.innerHTML = '<table class="dev-tbl"><thead><tr><th>Device</th><th>Status</th><th>Uptime</th><th>CPU</th><th>Memory</th><th>Sessions</th></tr></thead><tbody>' +
-                allDevices.map(function(d) {
-                    var s = d.statusData || {};
-                    var statusCls = s.hostname ? 'online' : 'offline';
-                    var cpu = s.cpu || 0;
-                    var mem = s.memory || 0;
-                    return '<tr><td>' + escapeHtml(d.name) + '</td>' +
-                        '<td><span class="dev-status ' + statusCls + '">' + statusCls.toUpperCase() + '</span></td>' +
-                        '<td>' + (s.uptime || '--') + '</td>' +
-                        '<td>' + (cpu ? cpu.toFixed(1) + '%' : '--') + '<div class="metric-bar"><div class="fill ' + progressClass(cpu) + '" style="width:' + Math.min(cpu, 100) + '%"></div></div></td>' +
-                        '<td>' + (mem ? mem.toFixed(1) + '%' : '--') + '<div class="metric-bar"><div class="fill ' + progressClass(mem) + '" style="width:' + Math.min(mem, 100) + '%"></div></div></td>' +
-                        '<td>' + formatNumber(s.sessions) + '</td></tr>';
-                }).join('') + '</tbody></table>';
+    function tickUptimes() {
+        var now = Date.now();
+        Object.keys(uptimeTimers).forEach(function(wid) {
+            var t = uptimeTimers[wid];
+            var elapsed = Math.floor((now - t.startedAt) / 1000);
+            var current = t.baseSeconds + elapsed;
+            var el = document.getElementById('uptime-' + wid);
+            if (el) el.textContent = formatUptimeSeconds(current);
         });
     }
 
     // ---- CPU/Memory Charts ----
     function renderCpuMemChart(def) {
         var wid = def.id;
+
+        // Fetch uptime for this device (uptime_raw is SNMP timeticks in hundredths of a second)
+        apiFetch(API_BASE + '/public/dashboard?device_id=' + def.deviceId).then(function(data) {
+            if (data && data.uptime_raw) {
+                startUptimeCounter(wid, Math.floor(data.uptime_raw / 100));
+            } else if (data && data.uptime) {
+                var el = document.getElementById('uptime-' + wid);
+                if (el) el.textContent = 'UPTIME ' + data.uptime;
+            }
+        })['catch'](function() {});
+
         apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + cpuHours).then(function(points) {
             if (!points || points.length === 0) return;
             var labels = points.map(function(p) { return new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); });
