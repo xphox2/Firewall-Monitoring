@@ -789,8 +789,33 @@
                 var tgt = p.edge.targetEndpoint();
                 if (!src || !tgt) return;
 
-                var mx = src.x + (tgt.x - src.x) * p.progress;
-                var my = src.y + (tgt.y - src.y) * p.progress;
+                var mx, my;
+                var curveStyle = p.edge.style('curve-style');
+
+                if (curveStyle === 'unbundled-bezier' || curveStyle === 'segments') {
+                    // Follow the curve: compute quadratic bezier through control point
+                    var cpd = p.edge.numericStyle('control-point-distances') || 0;
+                    var midX = (src.x + tgt.x) / 2;
+                    var midY = (src.y + tgt.y) / 2;
+                    // Perpendicular offset direction
+                    var dx = tgt.x - src.x;
+                    var dy = tgt.y - src.y;
+                    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+                    var nx = -dy / len; // perpendicular normal
+                    var ny = dx / len;
+                    var cpx = midX + nx * cpd;
+                    var cpy = midY + ny * cpd;
+                    // Quadratic bezier: B(t) = (1-t)^2*P0 + 2*(1-t)*t*P1 + t^2*P2
+                    var t = p.progress;
+                    var mt = 1 - t;
+                    mx = mt * mt * src.x + 2 * mt * t * cpx + t * t * tgt.x;
+                    my = mt * mt * src.y + 2 * mt * t * cpy + t * t * tgt.y;
+                } else {
+                    // Straight line interpolation
+                    mx = src.x + (tgt.x - src.x) * p.progress;
+                    my = src.y + (tgt.y - src.y) * p.progress;
+                }
+
                 var rx = mx * zoom + pan.x;
                 var ry = my * zoom + pan.y;
 
