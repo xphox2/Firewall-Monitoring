@@ -95,11 +95,30 @@
         });
         if (hasCloud) {
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
-            offnetDevices.forEach(function(info) {
+
+            // For each device with off-net tunnels, create an invisible waypoint node
+            // offset vertically so the off-net edge doesn't overlap the tunnel edge
+            var offnetSpacing = 60;
+            offnetDevices.forEach(function(info, idx) {
+                var yOffset = (idx % 2 === 0 ? 1 : -1) * offnetSpacing * (Math.floor(idx / 2) + 1);
+                var wpId = 'offnet-wp-' + info.deviceId;
+
+                // Invisible waypoint node
+                elements.push({ group: 'nodes', data: {
+                    id: wpId, nodeType: 'waypoint',
+                    offsetFromCloud: yOffset
+                }});
+
+                // Device → waypoint
                 elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
+                    id: 'offnet-' + info.deviceId + '-a', source: 'dev-' + info.deviceId, target: wpId,
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
                     label: info.count + ' unmatched'
+                }});
+                // Waypoint → cloud
+                elements.push({ group: 'edges', data: {
+                    id: 'offnet-' + info.deviceId + '-b', source: wpId, target: 'cloud-internet',
+                    edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet'
                 }});
             });
         }
@@ -265,6 +284,11 @@
                 'font-size': '64px', 'color': '#484f58',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
+            // Invisible waypoint nodes for off-net edge spacing
+            { selector: 'node[nodeType="waypoint"]', style: {
+                'width': 1, 'height': 1, 'background-opacity': 0, 'border-width': 0,
+                'label': '', 'events': 'no', 'overlay-opacity': 0
+            }},
             // Default edge — all straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
@@ -293,11 +317,10 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges — haystack so they don't overlap tunnel edges at the device node
+            // Off-net edges — straight, spaced via source-endpoint offset in JS
             { selector: 'edge[edgeType="offnet"]', style: {
                 'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
-                'line-style': 'dashed', 'line-dash-pattern': [3, 6],
-                'curve-style': 'haystack', 'haystack-radius': 0.5
+                'line-style': 'dashed', 'line-dash-pattern': [3, 6]
             }},
             // DOWN edges — red X
             { selector: 'edge[status="down"]', style: {
@@ -385,6 +408,20 @@
 
         // Cloud at center
         devicePositions['cloud-internet'] = { x: 0, y: 0 };
+
+        // Waypoint nodes: placed midway between device and cloud, offset vertically
+        elements.forEach(function(el) {
+            if (el.group === 'nodes' && el.data.nodeType === 'waypoint') {
+                var wpId = el.data.id;
+                // Find the device this waypoint belongs to
+                var devId = wpId.replace('offnet-wp-', '');
+                var devPos = devicePositions['dev-' + devId] || { x: 0, y: 0 };
+                var cloudPos = devicePositions['cloud-internet'];
+                var midX = (devPos.x + cloudPos.x) / 2;
+                var midY = (devPos.y + cloudPos.y) / 2;
+                devicePositions[wpId] = { x: midX, y: midY + (el.data.offsetFromCloud || 0) };
+            }
+        });
 
         return {
             name: 'preset',
@@ -680,6 +717,11 @@
         cy.edges('[edgeType="sublane"], [edgeType="pipe-bg"]').forEach(function(edge) {
             var parentId = edge.data('parentTunnel');
             edge.style('display', hiddenTunnelIds[parentId] ? 'none' : 'element');
+        });
+        // Hide waypoint nodes when offnet is filtered
+        var hideWaypoints = !!hiddenTypes['offnet'];
+        cy.nodes('[nodeType="waypoint"]').forEach(function(n) {
+            n.style('display', hideWaypoints ? 'none' : 'element');
         });
     }
 
