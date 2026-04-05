@@ -236,14 +236,16 @@
     // ---- 1b. Stylesheet ----
     function buildStylesheet() {
         return [
-            // Site compound nodes
+            // Site compound nodes — label above with dark background for visibility
             { selector: 'node[nodeType="site"]', style: {
                 'background-opacity': 0, 'border-width': 1.5, 'border-style': 'dashed',
                 'border-color': '#30363d', 'border-opacity': 0.7, 'label': 'data(label)',
-                'text-valign': 'top', 'text-halign': 'center', 'font-size': '12px',
-                'color': '#8b949e', 'font-weight': '500', 'text-margin-y': -8,
-                'padding': '30px', 'shape': 'roundrectangle', 'corner-radius': 12,
-                'min-width': '180px', 'min-height': '80px'
+                'text-valign': 'top', 'text-halign': 'center', 'font-size': '13px',
+                'color': '#e6edf3', 'font-weight': '600', 'text-margin-y': -12,
+                'text-background-color': '#0d1117', 'text-background-opacity': 0.9,
+                'text-background-padding': '4px', 'text-background-shape': 'roundrectangle',
+                'padding': '40px', 'shape': 'roundrectangle', 'corner-radius': 12,
+                'min-width': '200px', 'min-height': '90px', 'z-index': 1
             }},
             // Device nodes
             { selector: 'node[nodeType="device"]', style: {
@@ -314,6 +316,18 @@
     }
 
     // ---- 1c. Layout ----
+    // Fixed positions: cloud center, sites at cardinal directions (L, R, T, B, then corners)
+    var SITE_POSITIONS = [
+        { x: -400, y: 0 },    // left
+        { x: 400, y: 0 },     // right
+        { x: 0, y: -350 },    // top
+        { x: 0, y: 350 },     // bottom
+        { x: -350, y: -300 }, // top-left
+        { x: 350, y: -300 },  // top-right
+        { x: -350, y: 300 },  // bottom-left
+        { x: 350, y: 300 }    // bottom-right
+    ];
+
     function buildLayoutOptions(elements, siteMap) {
         var saved = loadPositions();
         var hasSaved = saved && Object.keys(saved).length > 0;
@@ -324,51 +338,62 @@
                 return undefined;
             }, fit: false };
         }
-        var useFcose = false;
-        try {
-            var testDiv = document.createElement('div');
-            testDiv.style.cssText = 'width:1px;height:1px;position:absolute;left:-9999px;';
-            document.body.appendChild(testDiv);
-            var testCy = cytoscape({ container: testDiv, elements: [{ data: { id: 'test' } }] });
-            try { testCy.layout({ name: 'fcose' }); useFcose = true; } catch (e2) {}
-            testCy.destroy(); document.body.removeChild(testDiv);
-        } catch (e) {}
 
-        // Build alignment constraints: same-site devices share the same Y (horizontal row)
-        var alignConstraints = [];
+        // Collect unique site IDs in order
+        var siteIds = [];
+        var seenSites = {};
+        elements.forEach(function(el) {
+            if (el.group === 'nodes' && el.data.nodeType === 'site') {
+                var sid = el.data.id.replace('site-', '');
+                if (!seenSites[sid]) { seenSites[sid] = true; siteIds.push(sid); }
+            }
+        });
+
+        // Map site → position
+        var sitePositions = {};
+        siteIds.forEach(function(sid, i) {
+            sitePositions[sid] = SITE_POSITIONS[i % SITE_POSITIONS.length];
+        });
+
+        // Map device → site → position (offset devices horizontally within site)
+        var devicePositions = {};
+        var siteBuckets = {};
         if (siteMap) {
-            var siteBuckets = {};
             Object.keys(siteMap).forEach(function(devId) {
                 var sid = siteMap[devId];
                 if (!sid) return;
                 if (!siteBuckets[sid]) siteBuckets[sid] = [];
-                siteBuckets[sid].push('dev-' + devId);
-            });
-            Object.keys(siteBuckets).forEach(function(sid) {
-                if (siteBuckets[sid].length > 1) {
-                    alignConstraints.push({ type: 'alignment', axis: 'y', offsets: siteBuckets[sid].map(function(id) { return { node: id, offset: 0 }; }) });
-                }
+                siteBuckets[sid].push(devId);
             });
         }
+        Object.keys(siteBuckets).forEach(function(sid) {
+            var devs = siteBuckets[sid];
+            var sitePos = sitePositions[sid] || { x: 0, y: 0 };
+            var devSpacing = 170;
+            var startX = sitePos.x - (devs.length - 1) * devSpacing / 2;
+            devs.forEach(function(devId, i) {
+                devicePositions['dev-' + devId] = { x: startX + i * devSpacing, y: sitePos.y };
+            });
+        });
 
-        var opts = {
-            name: useFcose ? 'fcose' : 'cose', animate: true, animationDuration: 500,
-            fit: true, padding: 60, nodeDimensionsIncludeLabels: true,
-            idealEdgeLength: function(edge) {
-                var src = edge.source(), tgt = edge.target();
-                if (src.data('parent') && src.data('parent') === tgt.data('parent')) return 100;
-                return 350;
-            }, nodeRepulsion: function() { return 15000; }, gravity: 0.15
+        // Devices without a site — place near center
+        elements.forEach(function(el) {
+            if (el.group === 'nodes' && el.data.nodeType === 'device' && !devicePositions[el.data.id]) {
+                devicePositions[el.data.id] = { x: -200 + Math.random() * 400, y: -150 + Math.random() * 300 };
+            }
+        });
+
+        // Cloud at center
+        devicePositions['cloud-internet'] = { x: 0, y: 0 };
+
+        return {
+            name: 'preset',
+            positions: function(node) {
+                return devicePositions[node.id()] || undefined;
+            },
+            fit: true,
+            padding: 60
         };
-        if (useFcose) {
-            opts.edgeElasticity = function() { return 0.05; };
-            opts.gravityRange = 3.0;
-            opts.quality = 'default';
-            opts.numIter = 5000;
-            opts.nodeSeparation = 200;
-            if (alignConstraints.length > 0) opts.alignmentConstraint = { horizontal: alignConstraints.map(function(c) { return c.offsets.map(function(o) { return o.node; }); }) };
-        }
-        return opts;
     }
 
     // ---- 1d. Init & Render ----
