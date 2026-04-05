@@ -94,7 +94,7 @@
             }
         });
         if (hasCloud) {
-            elements.push({ group: 'nodes', data: { id: 'cloud-internet', label: '\u2601 Internet', nodeType: 'cloud' }});
+            elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
             offnetDevices.forEach(function(info) {
                 elements.push({ group: 'edges', data: {
                     id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
@@ -140,7 +140,7 @@
 
         // Add cloud node if cross-site tunnels exist and cloud wasn't already added
         if (needCloud && !hasCloud) {
-            elements.push({ group: 'nodes', data: { id: 'cloud-internet', label: '\u2601 Internet', nodeType: 'cloud' }});
+            elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
             hasCloud = true;
         }
 
@@ -254,17 +254,22 @@
             }},
             { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#3fb950' } },
             { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f85149' } },
-            // Cloud node
+            // Cloud node — large cloud icon
             { selector: 'node[nodeType="cloud"]', style: {
-                'width': 120, 'height': 40, 'shape': 'roundrectangle', 'background-color': '#0d1117',
-                'border-width': 1.5, 'border-style': 'dashed', 'border-color': '#30363d',
-                'label': 'data(label)', 'text-valign': 'center', 'text-halign': 'center',
-                'font-size': '11px', 'color': '#8b949e', 'corner-radius': 20
+                'width': 80, 'height': 80, 'shape': 'ellipse',
+                'background-color': '#161b22', 'background-opacity': 0.6,
+                'border-width': 0,
+                'label': '\u2601', 'text-valign': 'center', 'text-halign': 'center',
+                'font-size': '48px', 'color': '#30363d'
             }},
-            // Default edge
+            // Default edge — straight lines, bezier only when multiple edges between same nodes
             { selector: 'edge', style: {
-                'curve-style': 'bezier', 'control-point-step-size': 30,
+                'curve-style': 'straight',
                 'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
+            }},
+            // Multiple edges between same nodes get bezier curves
+            { selector: 'edge.multi-edge', style: {
+                'curve-style': 'bezier', 'control-point-step-size': 40
             }},
             // Tunnel bundle edges — thicker pipe
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#484f58', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
@@ -322,16 +327,38 @@
             testCy.destroy(); document.body.removeChild(testDiv);
         } catch (e) {}
 
+        // Build alignment constraints: same-site devices share the same Y (horizontal row)
+        var alignConstraints = [];
+        if (siteMap) {
+            var siteBuckets = {};
+            Object.keys(siteMap).forEach(function(devId) {
+                var sid = siteMap[devId];
+                if (!sid) return;
+                if (!siteBuckets[sid]) siteBuckets[sid] = [];
+                siteBuckets[sid].push('dev-' + devId);
+            });
+            Object.keys(siteBuckets).forEach(function(sid) {
+                if (siteBuckets[sid].length > 1) {
+                    alignConstraints.push({ type: 'alignment', axis: 'y', offsets: siteBuckets[sid].map(function(id) { return { node: id, offset: 0 }; }) });
+                }
+            });
+        }
+
         var opts = {
             name: useFcose ? 'fcose' : 'cose', animate: true, animationDuration: 500,
             fit: true, padding: 40, nodeDimensionsIncludeLabels: true,
             idealEdgeLength: function(edge) {
                 var src = edge.source(), tgt = edge.target();
-                if (src.data('parent') && src.data('parent') === tgt.data('parent')) return 100;
-                return 200;
+                if (src.data('parent') && src.data('parent') === tgt.data('parent')) return 120;
+                return 250;
             }, nodeRepulsion: function() { return 8000; }, gravity: 0.3
         };
-        if (useFcose) { opts.edgeElasticity = function() { return 0.1; }; opts.gravityRange = 2.0; opts.quality = 'default'; }
+        if (useFcose) {
+            opts.edgeElasticity = function() { return 0.1; };
+            opts.gravityRange = 2.0;
+            opts.quality = 'default';
+            if (alignConstraints.length > 0) opts.alignmentConstraint = { horizontal: alignConstraints.map(function(c) { return c.offsets.map(function(o) { return o.node; }); }) };
+        }
         return opts;
     }
 
@@ -361,6 +388,19 @@
 
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
+
+        // Mark edges that share source/target pairs for bezier curves
+        var edgePairs = {};
+        cy.edges().forEach(function(e) {
+            var key = [e.data('source'), e.data('target')].sort().join('|');
+            if (!edgePairs[key]) edgePairs[key] = [];
+            edgePairs[key].push(e);
+        });
+        Object.keys(edgePairs).forEach(function(key) {
+            if (edgePairs[key].length > 1) {
+                edgePairs[key].forEach(function(e) { e.addClass('multi-edge'); });
+            }
+        });
 
         applyFilters();
         wireEvents(devices, vpnMap);
