@@ -360,7 +360,7 @@
         container.appendChild(cyDiv);
 
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
-            minZoom: 0.3, maxZoom: 3, wheelSensitivity: 1, boxSelectionEnabled: false });
+            minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
 
         applyFilters();
         wireEvents(devices, vpnMap);
@@ -755,6 +755,33 @@
     function resetLayout() { try { localStorage.removeItem(STORAGE_KEY); } catch (e) {} if (window.drawConnectionDiagram) window.drawConnectionDiagram(); }
     function fitGraph() { if (cy) cy.fit(undefined, 40); }
 
+    function toggleFullscreen() {
+        if (!container) return;
+        // Target the card wrapping the diagram (parent of connection-diagram)
+        var card = container.closest('.card') || container;
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else {
+            card.requestFullscreen().then(function() {
+                // Resize cytoscape to fill the fullscreen container
+                setTimeout(function() {
+                    if (cy) { cy.resize(); cy.fit(undefined, 40); }
+                    stopParticles(); startParticles();
+                }, 200);
+            })['catch'](function() {});
+        }
+    }
+
+    // Update button text and resize on fullscreen change
+    document.addEventListener('fullscreenchange', function() {
+        var btn = document.getElementById('btn-fullscreen');
+        if (btn) btn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
+        setTimeout(function() {
+            if (cy) { cy.resize(); cy.fit(undefined, 40); }
+            stopParticles(); startParticles();
+        }, 200);
+    });
+
     function setCallbacks(connClickFn, vpnClickFn) { onConnClick = connClickFn; onVPNClick = vpnClickFn; }
 
     // ---- 1k. Live Status Updates ----
@@ -831,6 +858,7 @@
         else if (action === 'dg-toggle-down') toggleDown();
         else if (action === 'dg-fit') fitGraph();
         else if (action === 'dg-reset-layout') resetLayout();
+        else if (action === 'dg-fullscreen') toggleFullscreen();
     });
 
     // ---- Public API ----

@@ -121,6 +121,10 @@
         .probe-card .probe-stat { text-align: center; }
         .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
         .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; }
+        .card:fullscreen { background: #0d1117; padding: 0; display: flex; flex-direction: column; }
+        .card:fullscreen .card-header { flex-shrink: 0; }
+        .card:fullscreen .connection-diagram { flex: 1; min-height: 0; }
+        .card:fullscreen #conn-detail-panel-container { max-height: 40vh; overflow-y: auto; }
 
         .connection-diagram { min-height: 500px; position: relative; background: #0d1117; border-radius: 8px; padding: 0; overflow: hidden; }
         .conn-detail-panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 12px; animation: slideUp 0.3s ease; }
@@ -399,6 +403,7 @@
                         <button class="btn secondary sm active" data-action="dg-toggle-down" id="btn-toggle-down">Hide DOWN</button>
                         <button class="btn secondary sm" data-action="dg-fit">Fit</button>
                         <button class="btn secondary sm" data-action="dg-reset-layout">Reset</button>
+                        <button class="btn secondary sm" data-action="dg-fullscreen" id="btn-fullscreen">Fullscreen</button>
                     </div>
                 </div>
                 <div class="connection-diagram" id="connection-diagram">
