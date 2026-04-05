@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.141] - 2026-04-04
+
+### Changed
+- **Public dashboard rebuilt with Gridstack.js**: Full rewrite using Gridstack.js v10 widget grid. All sections (devices, CPU/memory, bandwidth, VPN, connections) are draggable and resizable widgets. Layout fits viewport height with no scrolling — designed for NOC wall displays
+- **Widget persistence**: Layout (position, size) saved to localStorage automatically on drag/resize. Hidden widgets remembered across sessions. "Reset Layout" button restores defaults
+- **Widget visibility**: "Widgets" dropdown menu with checkboxes lets users show/hide any widget. Close button (×) on each widget header for quick hiding
+
+### Fixed
+- **Bandwidth "Transfer" chart**: Was showing cumulative growth (monotonically increasing line). Now shows per-interval byte deltas as bar chart — each bar represents bytes transferred in that measurement period
+- **Bandwidth "Combined" (Mix) chart**: Was rendering 4 overlapping lines. Now uses Chart.js mixed chart — rate as lines on left axis (Mbps) + transfer deltas as bars on right axis (Bytes)
+
 ## [0.10.140] - 2026-04-04
 
 ### Added

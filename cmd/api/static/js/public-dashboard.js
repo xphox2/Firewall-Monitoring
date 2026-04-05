@@ -1,774 +1,536 @@
-// public-dashboard.js — Public dashboard page logic
+// public-dashboard.js — Gridstack-based public dashboard with widget persistence
 (function() {
     'use strict';
 
     var API_BASE = '/api';
-    var refreshTimer;
-    var displaySettings = {};
+    var LAYOUT_KEY = 'fwmon-public-layout';
+    var HIDDEN_KEY = 'fwmon-hidden-widgets';
+    var grid = null;
     var allDevices = [];
-    var allInterfaces = {};
-    var publicInterfaces = {};
-    var currentIfaceKey = null;
-    var bandwidthCharts = {}; // Store chart instances per interface index
-    var chartOptions = { view: 'rate', range: '1h' };
+    var allWidgetDefs = []; // {id, title, type, w, h, x, y}
+    var hiddenWidgets = {};
+    var chartInstances = {};
+    var displaySettings = {};
+    var refreshTimer = null;
+    var bwView = 'rate';
+    var bwRange = '1h';
+    var cpuHours = 24;
 
     function escapeHtml(str) {
         if (!str) return '';
-        var s = String(str);
-        return s.replace(/[&<>"']/g, function(c) {
-            return {'&':'&amp;','<':'&gt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        return String(str).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
         });
-    }
-
-    function getTimezone() {
-        return displaySettings['display_timezone'] || 'America/New_York';
-    }
-
-    function formatDate(dateStr) {
-        if (!dateStr) return '-';
-        var d = new Date(dateStr);
-        if (isNaN(d.getTime())) return '-';
-        return d.toLocaleString('en-US', { timeZone: getTimezone(), year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-    }
-
-    document.getElementById('footer-year').textContent = new Date().getFullYear();
-
-    fetchDisplaySettings().then(function() {
-        loadAllData();
-    });
-
-    function fetchDisplaySettings() {
-        return fetch(API_BASE + '/public/display-settings')
-            .then(function(response) { if (!response.ok) return; return response.json(); })
-            .then(function(data) {
-                if (data && data.success && data.data) {
-                    displaySettings = data.data;
-                    try {
-                        publicInterfaces = JSON.parse(displaySettings['public_interfaces'] || '{}');
-                    } catch(e) { publicInterfaces = {}; }
-                    applyDisplaySettings();
-                }
-            })['catch'](function(e) { console.error('Error fetching display settings:', e); });
-    }
-
-    function applyDisplaySettings() {
-        var mapping = {
-            'public_show_hostname': 'card-devices',
-            'public_show_uptime': 'card-devices',
-            'public_show_cpu': 'card-devices',
-            'public_show_memory': 'card-devices',
-            'public_show_sessions': 'card-devices',
-            'public_show_interfaces': 'card-interfaces',
-            'public_show_bandwidth': 'card-bandwidth',
-            'public_show_vpn': 'card-vpn',
-            'public_show_connections': 'card-connections'
-        };
-
-        document.getElementById('card-devices').classList.remove('hidden');
-        
-        for (var key in mapping) {
-            var el = document.getElementById(mapping[key]);
-            if (el && displaySettings[key] === 'false') {
-                el.classList.add('hidden');
-            } else if (el) {
-                el.classList.remove('hidden');
-            }
-        }
-
-        var interval = parseInt(displaySettings['public_refresh_interval']) || 30;
-        if (refreshTimer) clearInterval(refreshTimer);
-        refreshTimer = setInterval(function() { 
-            loadAllData(); 
-        }, interval * 1000);
-
-        applyBandwidthLayout();
-        setupAdminControls();
-    }
-
-    function applyBandwidthLayout() {
-        var layout = displaySettings['public_bandwidth_layout'] || 'grid';
-        var height = parseInt(displaySettings['public_bandwidth_height']) || 400;
-        
-        var grid = document.getElementById('bandwidth-charts');
-        if (grid) {
-            grid.classList.remove('layout-grid', 'layout-full');
-            grid.classList.add('layout-' + layout);
-        }
-
-        var containers = document.querySelectorAll('.chart-container');
-        containers.forEach(function(c) {
-            c.style.height = height + 'px';
-        });
-    }
-
-    function setupAdminControls() {
-        var isAdmin = displaySettings['is_admin'] === true || displaySettings['is_admin'] === 'true';
-        var adminControls = document.getElementById('admin-bandwidth-controls');
-        
-        if (!isAdmin || !adminControls) return;
-
-        adminControls.classList.remove('hidden');
-
-        var layoutSelect = document.getElementById('admin-layout-select');
-        var heightSelect = document.getElementById('admin-height-select');
-        var saveBtn = document.getElementById('save-layout-btn');
-        var saveStatus = document.getElementById('layout-save-status');
-
-        if (layoutSelect) {
-            layoutSelect.value = displaySettings['public_bandwidth_layout'] || 'grid';
-        }
-        if (heightSelect) {
-            heightSelect.value = displaySettings['public_bandwidth_height'] || '400';
-        }
-
-        if (saveBtn) {
-            saveBtn.addEventListener('click', function() {
-                var newLayout = layoutSelect.value;
-                var newHeight = heightSelect.value;
-
-                fetch(API_BASE + '/api/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        settings: [
-                            { key: 'public_bandwidth_layout', value: newLayout, category: 'display', type: 'string' },
-                            { key: 'public_bandwidth_height', value: newHeight, category: 'display', type: 'string' }
-                        ]
-                    })
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data && data.success) {
-                        displaySettings['public_bandwidth_layout'] = newLayout;
-                        displaySettings['public_bandwidth_height'] = newHeight;
-                        applyBandwidthLayout();
-                        saveStatus.classList.remove('hidden');
-                        setTimeout(function() {
-                            saveStatus.classList.add('hidden');
-                        }, 2000);
-                    }
-                })['catch'](function(e) {
-                    console.error('Error saving layout:', e);
-                });
-            });
-        }
-    }
-
-    function loadAllData() {
-        fetchAllDevices().then(function() {
-            if (displaySettings['public_show_cpu'] !== 'false' || displaySettings['public_show_memory'] !== 'false') fetchCpuMemoryCharts(24);
-            if (displaySettings['public_show_interfaces'] !== 'false') fetchAllInterfaces();
-            if (displaySettings['public_show_bandwidth'] !== 'false') fetchBandwidth();
-            if (displaySettings['public_show_vpn'] !== 'false') fetchAllVPN();
-            if (displaySettings['public_show_connections'] !== 'false') fetchConnections();
-        });
-    }
-
-    function fetchAllDevices() {
-        return fetch(API_BASE + '/public/devices')
-            .then(function(response) { if (!response.ok) return []; return response.json(); })
-            .then(function(data) {
-                if (!data || !data.success || !data.data) return;
-                allDevices = data.data;
-                loadAllDeviceData();
-            })['catch'](function(e) { console.error('Error fetching devices:', e); });
-    }
-
-    function loadAllDeviceData() {
-        var promises = allDevices.map(function(device) {
-            return fetch(API_BASE + '/public/dashboard?device_id=' + device.id)
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    device.statusData = data.success ? data.data : null;
-                })['catch'](function() { device.statusData = null; });
-        });
-
-        Promise.all(promises).then(function() {
-            renderDevicesTable();
-        });
-    }
-
-    function renderDevicesTable() {
-        var tbody = document.getElementById('devices-body');
-        if (!tbody) return;
-        if (!allDevices.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="loading">No devices configured</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = allDevices.map(function(device) {
-            var d = device.statusData || {};
-            var statusClass = d.hostname ? 'online' : 'offline';
-            var uptime = d.uptime || '--';
-            var cpu = d.cpu || 0;
-            var memory = d.memory || 0;
-            var sessions = d.sessions != null ? formatNumber(d.sessions) : '--';
-
-            var cpuBar = getProgressBar(cpu);
-            var memBar = getProgressBar(memory);
-
-            return '<tr>' +
-                '<td><div class="device-name">' + escapeHtml(device.name) + '</div></td>' +
-                '<td><span class="device-status ' + statusClass + '">' + statusClass.toUpperCase() + '</span></td>' +
-                '<td><div class="metric-value" style="font-size:1rem;">' + uptime + '</div></td>' +
-                '<td><div class="metric-value">' + (cpu ? cpu.toFixed(1) : '--') + '%</div><div class="metric-bar"><div class="fill ' + cpuBar + '" style="width:' + Math.min(cpu, 100) + '%"></div></div></td>' +
-                '<td><div class="metric-value">' + (memory ? memory.toFixed(1) : '--') + '%</div><div class="metric-bar"><div class="fill ' + memBar + '" style="width:' + Math.min(memory, 100) + '%"></div></div></td>' +
-                '<td><div class="metric-value" style="font-size:1rem;">' + sessions + '</div></td>' +
-                '</tr>';
-        }).join('');
-    }
-
-    function getProgressBar(value) {
-        if (value >= 80) return 'high';
-        if (value >= 60) return 'medium';
-        return 'low';
-    }
-
-    function fetchAllInterfaces() {
-        var promises = allDevices.map(function(device) {
-            return fetch(API_BASE + '/public/interfaces?device_id=' + device.id)
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data && data.success && data.data) {
-                        allInterfaces[device.id] = data.data;
-                    }
-                })['catch'](function() {});
-        });
-
-        Promise.all(promises).then(function() {
-            renderPublicInterfaces();
-        });
-    }
-
-    function renderPublicInterfaces() {
-        var container = document.getElementById('interfaces');
-        if (!container) return;
-        var interfaces = [];
-
-        allDevices.forEach(function(device) {
-            var deviceIfaces = allInterfaces[device.id] || [];
-            var pubIfaces = publicInterfaces[device.id] || [];
-            
-            deviceIfaces.forEach(function(iface) {
-                if (pubIfaces.length === 0 || pubIfaces.indexOf(iface.name) !== -1) {
-                    interfaces.push({
-                        deviceId: device.id,
-                        deviceName: device.name,
-                        name: iface.name,
-                        status: iface.status,
-                        in_bytes: iface.in_bytes,
-                        out_bytes: iface.out_bytes,
-                        speed: iface.speed
-                    });
-                }
-            });
-        });
-
-        if (!interfaces.length) {
-            container.innerHTML = '<div class="loading">No public interfaces configured</div>';
-            return;
-        }
-
-        container.innerHTML = interfaces.map(function(iface) {
-            return '<div class="interface-card">' +
-                '<div class="header">' +
-                '<div class="name">' + escapeHtml(iface.name) + '</div>' +
-                '<span class="status ' + escapeHtml(iface.status) + '">' + escapeHtml(iface.status).toUpperCase() + '</span>' +
-                '</div>' +
-                '<div class="device">' + escapeHtml(iface.deviceName) + '</div>' +
-                '<div class="stats">' +
-                '<div>&darr; ' + formatBytes(iface.in_bytes) + '</div>' +
-                '<div>&uarr; ' + formatBytes(iface.out_bytes) + '</div>' +
-                '</div></div>';
-        }).join('');
-    }
-
-    function fetchBandwidth() {
-        var pubIfaces = [];
-        
-        allDevices.forEach(function(device) {
-            var ifaces = publicInterfaces[device.id] || [];
-            if (ifaces.length > 0) {
-                ifaces.forEach(function(name) {
-                    pubIfaces.push({ deviceId: device.id, deviceName: device.name, name: name });
-                });
-            }
-        });
-
-        if (pubIfaces.length === 0) {
-            var bc = document.getElementById('bandwidth-charts');
-            if (bc) bc.innerHTML = '<div class="loading">No public interfaces configured for bandwidth charts</div>';
-            return;
-        }
-
-        var viewSelect = document.getElementById('bandwidth-view-select');
-        if (viewSelect) {
-            viewSelect.onchange = function() {
-                destroyAllCharts();
-                bandwidthChartsInitialized = false;
-                chartOptions.view = this.value;
-                renderAllBandwidthCharts();
-            };
-        }
-
-        var rangeSelect = document.getElementById('bandwidth-range-select');
-        if (rangeSelect) {
-            rangeSelect.onchange = function() {
-                destroyAllCharts();
-                bandwidthChartsInitialized = false;
-                chartOptions.range = this.value;
-                renderAllBandwidthCharts();
-            };
-        }
-
-        renderAllBandwidthCharts(pubIfaces);
-    }
-
-    function destroyAllCharts() {
-        for (var key in bandwidthCharts) {
-            if (bandwidthCharts[key]) {
-                bandwidthCharts[key].destroy();
-            }
-        }
-        bandwidthCharts = {};
-    }
-
-    var bandwidthChartsInitialized = false;
-
-    function renderAllBandwidthCharts(pubIfaces) {
-        if (!pubIfaces) {
-            pubIfaces = [];
-            allDevices.forEach(function(device) {
-                var ifaces = publicInterfaces[device.id] || [];
-                ifaces.forEach(function(name) {
-                    pubIfaces.push({ deviceId: device.id, deviceName: device.name, name: name });
-                });
-            });
-        }
-
-        var container = document.getElementById('bandwidth-charts');
-        if (!container) return;
-
-        // Only create HTML once, not on every refresh
-        if (!bandwidthChartsInitialized) {
-            var chartHtml = pubIfaces.map(function(iface, idx) {
-                return '<div class="chart-card" id="chart-card-' + idx + '">' +
-                    '<div class="chart-header">' +
-                    '<h3>' + escapeHtml(iface.deviceName) + ' - ' + escapeHtml(iface.name) + '</h3>' +
-                    '<button class="collapse-btn" onclick="document.getElementById(\'chart-card-' + idx + '\').classList.toggle(\'collapsed\')">−</button>' +
-                    '</div>' +
-                    '<div class="current-stats" id="stats-' + idx + '"><span class="loading">Loading...</span></div>' +
-                    '<div class="chart-container"><canvas id="chart-canvas-' + idx + '"></canvas></div>' +
-                    '</div>';
-            }).join('');
-
-            container.innerHTML = chartHtml;
-            bandwidthChartsInitialized = true;
-        }
-
-        pubIfaces.forEach(function(iface, idx) {
-            loadBandwidthChartForIface(iface, idx);
-        });
-    }
-
-    function loadBandwidthChartForIface(iface, chartIdx) {
-        fetch(API_BASE + '/public/interfaces?device_id=' + iface.deviceId)
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (!data || !data.success) return;
-                var found = data.data.find(function(i) { return i.name === iface.name; });
-                if (found) {
-                    var url = API_BASE + '/public/interfaces/chart?device_id=' + iface.deviceId + '&index=' + found.index + '&view=' + chartOptions.view + '&range=' + chartOptions.range;
-                    fetch(url)
-                        .then(function(r) { return r.json(); })
-                        .then(function(chartData) {
-                            if (chartData && chartData.success) {
-                                renderSingleBandwidthChart(chartData.data, iface, chartIdx);
-                            }
-                        })['catch'](function() {});
-                }
-            })['catch'](function() {});
-    }
-
-    function renderSingleBandwidthChart(data, iface, chartIdx) {
-        // Ensure arrays exist and convert to numbers
-        var rxRateArr = Array.isArray(data.rx_rate) ? data.rx_rate.map(Number) : [];
-        var txRateArr = Array.isArray(data.tx_rate) ? data.tx_rate.map(Number) : [];
-        var rxTotalArr = Array.isArray(data.rx_total) ? data.rx_total.map(Number) : [];
-        var txTotalArr = Array.isArray(data.tx_total) ? data.tx_total.map(Number) : [];
-        
-        var latestRx = rxRateArr.length > 0 ? rxRateArr[rxRateArr.length - 1] : 0;
-        var latestTx = txRateArr.length > 0 ? txRateArr[txRateArr.length - 1] : 0;
-        
-        // Calculate totals (delta = last - first)
-        var totalDeltaRx = 0;
-        var totalDeltaTx = 0;
-        if (rxTotalArr.length > 1 && txTotalArr.length > 1) {
-            totalDeltaRx = rxTotalArr[rxTotalArr.length - 1] - rxTotalArr[0];
-            totalDeltaTx = txTotalArr[txTotalArr.length - 1] - txTotalArr[0];
-            if (totalDeltaRx < 0) totalDeltaRx = rxTotalArr[rxTotalArr.length - 1];
-            if (totalDeltaTx < 0) totalDeltaTx = txTotalArr[txTotalArr.length - 1];
-        }
-
-        // Convert to cumulative transferred for chart display
-        var cumulativeRx = rxTotalArr.map(function(v, i) { return Math.max(0, v - rxTotalArr[0]); });
-        var cumulativeTx = txTotalArr.map(function(v, i) { return Math.max(0, v - txTotalArr[0]); });
-
-        var device = allDevices.find(function(d) { return d.id === iface.deviceId; });
-        var wanSpeed = device && device.wan_speed_mbps ? device.wan_speed_mbps : 1000;
-        var usePercentage = wanSpeed > 0;
-
-        var statsEl = document.getElementById('stats-' + chartIdx);
-        if (statsEl) {
-            var rxPercent = usePercentage ? ((latestRx / wanSpeed) * 100).toFixed(1) : null;
-            var txPercent = usePercentage ? ((latestTx / wanSpeed) * 100).toFixed(1) : null;
-
-            // Use delta totals
-            var displayTotalRx = Number(totalDeltaRx) || 0;
-            var displayTotalTx = Number(totalDeltaTx) || 0;
-
-            if (chartOptions.view === 'rate') {
-                var html = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span>';
-                if (rxPercent) html += ' <span class="percent">(' + rxPercent + '%)</span>';
-                html += '</div><div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span>';
-                if (txPercent) html += ' <span class="percent">(' + txPercent + '%)</span>';
-                html += '</div>';
-                statsEl.innerHTML = html;
-            } else if (chartOptions.view === 'total') {
-                statsEl.innerHTML = '<div class="stat rx"><span>&darr; ' + formatBytes(displayTotalRx) + '</span></div>' +
-                    '<div class="stat tx"><span>&uarr; ' + formatBytes(displayTotalTx) + '</span></div>';
-            } else {
-                statsEl.innerHTML = '<div class="stat rx"><span>&darr; ' + (latestRx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(displayTotalRx) + ')' +
-                    (rxPercent ? ' <span class="percent">(' + rxPercent + '%)</span>' : '') + '</div>' +
-                    '<div class="stat tx"><span>&uarr; ' + (latestTx || 0).toFixed(2) + ' Mbps</span> (' + formatBytes(displayTotalTx) + ')' +
-                    (txPercent ? ' <span class="percent">(' + txPercent + '%)</span>' : '') + '</div>';
-            }
-        }
-
-        var canvasEl = document.getElementById('chart-canvas-' + chartIdx);
-        if (!canvasEl) return;
-        var ctx = canvasEl.getContext('2d');
-
-        var datasets = [];
-        
-        // Rate view and Mix view show throughput (Mbps)
-        if (chartOptions.view === 'rate' || chartOptions.view === 'mix') {
-            datasets.push({
-                label: 'RX (Mbps)',
-                data: rxRateArr,
-                borderColor: '#00ff88',
-                backgroundColor: 'rgba(0, 255, 136, 0.1)',
-                fill: true,
-                tension: 0.4,
-                pointRadius: 0,
-                yAxisID: 'y'
-            });
-            datasets.push({
-                label: 'TX (Mbps)',
-                data: txRateArr,
-                borderColor: '#ff9500',
-                backgroundColor: 'rgba(255, 149, 0, 0.1)',
-                fill: true,
-                tension: 0.4,
-                pointRadius: 0,
-                yAxisID: 'y'
-            });
-        }
-        
-        // Mix view also shows total bytes on secondary axis
-        if (chartOptions.view === 'mix') {
-            datasets.push({
-                label: 'RX Total (GB)',
-                data: cumulativeRx.map(function(v) { return v / 1024 / 1024 / 1024; }),
-                borderColor: '#00cc66',
-                backgroundColor: 'transparent',
-                borderDash: [5, 5],
-                fill: false,
-                tension: 0.4,
-                pointRadius: 0,
-                yAxisID: 'y1'
-            });
-            datasets.push({
-                label: 'TX Total (GB)',
-                data: cumulativeTx.map(function(v) { return v / 1024 / 1024 / 1024; }),
-                borderColor: '#cc7700',
-                backgroundColor: 'transparent',
-                borderDash: [5, 5],
-                fill: false,
-                tension: 0.4,
-                pointRadius: 0,
-                yAxisID: 'y1'
-            });
-        }
-        
-        // Total view - use same data as mix but on primary axis
-        if (chartOptions.view === 'total') {
-            datasets.push({
-                label: 'RX Total (Bytes)',
-                data: cumulativeRx,
-                borderColor: '#00ff88',
-                backgroundColor: 'rgba(0, 255, 136, 0.1)',
-                fill: true,
-                tension: 0.4,
-                pointRadius: 0
-            });
-            datasets.push({
-                label: 'TX Total (Bytes)',
-                data: cumulativeTx,
-                borderColor: '#ff9500',
-                backgroundColor: 'rgba(255, 149, 0, 0.1)',
-                fill: true,
-                tension: 0.4,
-                pointRadius: 0
-            });
-        }
-        
-        var chartKey = iface.deviceId + '-' + iface.name;
-        var existingChart = bandwidthCharts[chartKey];
-
-        if (existingChart) {
-            // Use slice() to create copies, not references
-            existingChart.data.labels = data.labels.slice();
-            existingChart.data.datasets = datasets.map(function(ds) {
-                return { ...ds, data: ds.data.slice() };
-            });
-            existingChart.update('none');
-        } else {
-            bandwidthCharts[chartKey] = new Chart(ctx, {
-                type: 'line',
-                data: { labels: data.labels, datasets: datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: { duration: 0 },
-                    interaction: { intersect: false, mode: 'index' },
-                    plugins: { legend: { display: chartOptions.view === 'mix' || chartOptions.view === 'total', labels: { color: '#fff' } } },
-                    scales: {
-                        x: { display: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: 'rgba(255,255,255,0.6)', maxTicksLimit: 8 } },
-                        y: { 
-                            display: chartOptions.view !== 'mix',
-                            position: 'left',
-                            grid: { color: 'rgba(255,255,255,0.1)' }, 
-                            ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
-                                if (chartOptions.view === 'total') return formatBytes(v);
-                                return v + ' Mbps'; 
-                            }},
-                            title: { display: chartOptions.view !== 'mix', text: chartOptions.view === 'total' ? 'Bytes' : 'Mbps', color: 'rgba(255,255,255,0.6)' }
-                        },
-                        y1: {
-                            display: chartOptions.view === 'mix',
-                            position: 'right',
-                            grid: { display: false },
-                            ticks: { color: 'rgba(255,255,255,0.6)', callback: function(v) { 
-                                return v.toFixed(2) + ' GB';
-                            }},
-                            title: { display: chartOptions.view === 'mix', text: 'Total GB', color: 'rgba(255,255,255,0.6)' }
-                        }
-                    }
-                }
-            });
-        }
-    }
-
-    function fetchAllVPN() {
-        var promises = allDevices.map(function(device) {
-            return fetch(API_BASE + '/public/vpn?device_id=' + device.id)
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data && data.success && data.data) {
-                        data.data.forEach(function(t) { t._deviceName = device.name; });
-                        return data.data;
-                    }
-                    return [];
-                })['catch'](function() { return []; });
-        });
-
-        Promise.all(promises).then(function(results) {
-            var tunnels = results.reduce(function(acc, arr) { return acc.concat(arr); }, []);
-            renderVPN(tunnels);
-        });
-    }
-
-    function renderVPN(tunnels) {
-        var container = document.getElementById('vpn-tunnels');
-        if (!container) return;
-        if (!tunnels || tunnels.length === 0) {
-            if (container) container.innerHTML = '<div class="loading">No VPN tunnels found</div>';
-            return;
-        }
-
-        container.innerHTML = tunnels.map(function(tunnel) {
-            return '<div class="vpn-card">' +
-                '<div class="tunnel-name">' + escapeHtml(tunnel.tunnel_name) + '</div>' +
-                '<div class="tunnel-info">' + escapeHtml(tunnel._deviceName) + '</div>' +
-                '<div class="tunnel-info">Type: ' + escapeHtml(tunnel.tunnel_type || 'IPSec') + '</div>' +
-                '<div class="tunnel-info">Remote: ' + escapeHtml(tunnel.remote_ip || 'N/A') + '</div>' +
-                '<span class="status ' + escapeHtml(tunnel.status) + '">' + escapeHtml(tunnel.status || 'unknown').toUpperCase() + '</span>' +
-                '</div>';
-        }).join('');
-    }
-
-    function fetchConnections() {
-        fetch(API_BASE + '/public/connections')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data && data.success) renderConnections(data.data);
-            })['catch'](function(e) { console.error('Connections error:', e); });
-    }
-
-    function renderConnections(connections) {
-        var container = document.getElementById('connections-map');
-        if (!container) return;
-        if (!connections || connections.length === 0) {
-            if (container) container.innerHTML = '<div class="loading">No connections configured</div>';
-            return;
-        }
-
-        var devices = {};
-        connections.forEach(function(c) {
-            if (c.source && !devices[c.source]) {
-                devices[c.source] = { x: Math.random() * 60 + 20, y: Math.random() * 60 + 20, name: c.source };
-            }
-            if (c.dest && !devices[c.dest]) {
-                devices[c.dest] = { x: Math.random() * 60 + 20, y: Math.random() * 60 + 20, name: c.dest };
-            }
-        });
-
-        var nodesHtml = Object.keys(devices).map(function(key) {
-            var d = devices[key];
-            return '<div class="connection-node" style="left: ' + d.x + '%; top: ' + d.y + '%;">' +
-                '<div class="node-name">' + escapeHtml(d.name) + '</div></div>';
-        }).join('');
-
-        var linesHtml = connections.map(function(c) {
-            var src = devices[c.source];
-            var dst = devices[c.dest];
-            if (!src || !dst) return '';
-            var length = Math.sqrt(Math.pow(dst.x - src.x, 2) + Math.pow(dst.y - src.y, 2));
-            var angle = Math.atan2(dst.y - src.y, dst.x - src.x) * 180 / Math.PI;
-            return '<div class="connection-line ' + escapeHtml(c.status || 'unknown') + '" ' +
-                'style="left: ' + src.x + '%; top: ' + src.y + '%; width: ' + length + '%; transform: rotate(' + angle + 'deg);"></div>';
-        }).join('');
-
-        container.innerHTML = linesHtml + nodesHtml;
-    }
-
-    function formatNumber(num) {
-        if (num === null || num === undefined) return '--';
-        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
 
     function formatBytes(bytes) {
         if (bytes == null || bytes === 0) return '0 B';
         var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-        var i = Math.floor(Math.log(bytes) / Math.log(1024));
-        return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+        var i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024));
+        if (i >= sizes.length) i = sizes.length - 1;
+        return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
 
-    // ---- CPU & Memory Charts ----
-    var cpuMemCharts = {};
+    function formatNumber(n) { return n != null ? Number(n).toLocaleString() : '--'; }
 
-    function fetchCpuMemoryCharts(hours) {
-        var container = document.getElementById('cpu-memory-charts');
-        if (!container || allDevices.length === 0) return;
+    function progressClass(v) { return v >= 80 ? 'high' : v >= 60 ? 'medium' : 'low'; }
 
-        // Destroy existing charts
-        Object.keys(cpuMemCharts).forEach(function(k) {
-            if (cpuMemCharts[k]) cpuMemCharts[k].destroy();
-        });
-        cpuMemCharts = {};
-
-        container.innerHTML = allDevices.map(function(d) {
-            return '<div class="cpu-mem-card"><h3>' + escapeHtml(d.name) + '</h3>' +
-                '<div style="position:relative;height:200px;"><canvas id="cpu-mem-chart-' + d.id + '"></canvas></div></div>';
-        }).join('');
-
-        allDevices.forEach(function(device) {
-            fetch(API_BASE + '/public/status-history?device_id=' + device.id + '&hours=' + hours)
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (!data || !data.success || !data.data) return;
-                    renderCpuMemChart(device, data.data);
-                })['catch'](function() {});
+    // ---- Fetch helpers ----
+    function apiFetch(url) {
+        return fetch(url).then(function(r) { return r.json(); }).then(function(d) {
+            return d && d.success ? d.data : null;
         });
     }
 
-    function renderCpuMemChart(device, points) {
-        var canvas = document.getElementById('cpu-mem-chart-' + device.id);
-        if (!canvas || points.length === 0) return;
+    // ---- Initialization ----
+    function init() {
+        apiFetch(API_BASE + '/public/display-settings').then(function(settings) {
+            displaySettings = settings || {};
+            return apiFetch(API_BASE + '/public/devices');
+        }).then(function(devices) {
+            allDevices = devices || [];
+            loadHiddenWidgets();
+            buildWidgetDefs();
+            initGrid();
+            renderAllWidgets();
+            startRefresh();
+        })['catch'](function(e) { console.error('Dashboard init failed:', e); });
+    }
 
-        var labels = points.map(function(p) {
-            var d = new Date(p.timestamp);
-            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    function loadHiddenWidgets() {
+        try { hiddenWidgets = JSON.parse(localStorage.getItem(HIDDEN_KEY)) || {}; } catch(e) { hiddenWidgets = {}; }
+    }
+
+    function saveHiddenWidgets() {
+        localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenWidgets));
+    }
+
+    // ---- Widget definitions ----
+    function buildWidgetDefs() {
+        allWidgetDefs = [];
+        var y = 0;
+
+        // Devices table
+        allWidgetDefs.push({ id: 'devices', title: 'Firewalls', type: 'table', x: 0, y: y, w: 12, h: 3 });
+        y += 3;
+
+        // CPU/Memory charts per device
+        var cpuX = 0;
+        allDevices.forEach(function(d) {
+            var w = allDevices.length === 1 ? 12 : 6;
+            allWidgetDefs.push({ id: 'cpu-' + d.id, title: d.name + ' CPU/Memory', type: 'cpumem', deviceId: d.id, x: cpuX, y: y, w: w, h: 5 });
+            cpuX += w;
+            if (cpuX >= 12) { cpuX = 0; y += 5; }
         });
+        if (cpuX > 0) y += 5;
 
-        cpuMemCharts[device.id] = new Chart(canvas.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: 'CPU %',
-                        data: points.map(function(p) { return p.cpu_usage; }),
-                        borderColor: '#58a6ff',
-                        backgroundColor: 'rgba(88,166,255,0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 0,
-                        borderWidth: 2
-                    },
-                    {
-                        label: 'Memory %',
-                        data: points.map(function(p) { return p.memory_usage; }),
-                        borderColor: '#3fb950',
-                        backgroundColor: 'rgba(63,185,80,0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 0,
-                        borderWidth: 2
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { labels: { color: '#8b949e', font: { size: 11 } } },
-                    tooltip: {
-                        backgroundColor: '#161b22',
-                        borderColor: '#30363d',
-                        borderWidth: 1,
-                        titleColor: '#e6edf3',
-                        bodyColor: '#8b949e',
-                        callbacks: {
-                            label: function(ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%'; }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        ticks: { color: '#484f58', maxRotation: 0, maxTicksLimit: 8 },
-                        grid: { color: '#21262d' }
-                    },
-                    y: {
-                        min: 0,
-                        max: 100,
-                        ticks: { color: '#484f58', callback: function(v) { return v + '%'; } },
-                        grid: { color: '#21262d' }
-                    }
+        // Bandwidth charts per public interface
+        fetchPublicInterfaces().then(function(ifaces) {
+            var bwX = 0;
+            var bwY = y;
+            ifaces.forEach(function(iface) {
+                var w = ifaces.length === 1 ? 12 : 6;
+                allWidgetDefs.push({ id: 'bw-' + iface.deviceId + '-' + iface.name, title: iface.deviceName + ' ' + iface.name, type: 'bandwidth', iface: iface, x: bwX, y: bwY, w: w, h: 5 });
+                bwX += w;
+                if (bwX >= 12) { bwX = 0; bwY += 5; }
+            });
+            if (bwX > 0) bwY += 5;
+
+            // VPN widget
+            if (displaySettings['public_show_vpn'] !== 'false') {
+                allWidgetDefs.push({ id: 'vpn', title: 'VPN Tunnels', type: 'vpn', x: 0, y: bwY, w: 12, h: 4 });
+                bwY += 4;
+            }
+
+            // Connection map widget
+            if (displaySettings['public_show_connections'] !== 'false') {
+                allWidgetDefs.push({ id: 'connmap', title: 'Connection Map', type: 'connmap', x: 0, y: bwY, w: 12, h: 5 });
+            }
+
+            // Add late widgets to grid
+            addLateWidgets();
+            updateWidgetMenu();
+        });
+    }
+
+    function fetchPublicInterfaces() {
+        var publicIfaces = {};
+        try { publicIfaces = JSON.parse(displaySettings['public_interfaces'] || '{}'); } catch(e) {}
+
+        var promises = allDevices.map(function(device) {
+            return apiFetch(API_BASE + '/public/interfaces?device_id=' + device.id).then(function(ifaces) {
+                if (!ifaces) return [];
+                var allowed = publicIfaces[String(device.id)] || [];
+                if (allowed.length > 0) {
+                    ifaces = ifaces.filter(function(i) { return allowed.indexOf(i.name) !== -1; });
                 }
+                return ifaces.map(function(i) {
+                    return { deviceId: device.id, deviceName: device.name, name: i.name, index: i.index, status: i.status };
+                });
+            })['catch'](function() { return []; });
+        });
+
+        return Promise.all(promises).then(function(results) {
+            var flat = [];
+            results.forEach(function(arr) { flat = flat.concat(arr); });
+            return flat;
+        });
+    }
+
+    // ---- Grid initialization ----
+    function initGrid() {
+        grid = GridStack.init({
+            column: 12,
+            float: false,
+            cellHeight: 50,
+            margin: 4,
+            animate: true,
+            handle: '.widget-hdr'
+        }, '#dashboard-grid');
+
+        // Save layout on drag/resize
+        grid.on('dragstop resizestop', saveLayout);
+
+        // Resize charts when widget resizes
+        grid.on('resizestop', function(event, el) {
+            var wid = el.getAttribute('gs-id');
+            if (chartInstances[wid]) {
+                setTimeout(function() { chartInstances[wid].resize(); }, 50);
             }
         });
+
+        // Add initial widgets (only those defined so far — late ones added by addLateWidgets)
+        var saved = loadLayout();
+        allWidgetDefs.forEach(function(def) {
+            if (hiddenWidgets[def.id]) return;
+            var pos = saved ? saved[def.id] : null;
+            addWidgetToGrid(def, pos);
+        });
+
+        updateWidgetMenu();
     }
 
-    // Range pill click handler
+    function addLateWidgets() {
+        if (!grid) return;
+        var saved = loadLayout();
+        allWidgetDefs.forEach(function(def) {
+            if (hiddenWidgets[def.id]) return;
+            var existing = grid.engine.nodes.find(function(n) { return n.id === def.id; });
+            if (existing) return;
+            var pos = saved ? saved[def.id] : null;
+            addWidgetToGrid(def, pos);
+            renderWidgetContent(def);
+        });
+    }
+
+    function addWidgetToGrid(def, savedPos) {
+        var x = savedPos ? savedPos.x : def.x;
+        var y = savedPos ? savedPos.y : def.y;
+        var w = savedPos ? savedPos.w : def.w;
+        var h = savedPos ? savedPos.h : def.h;
+
+        var html = '<div class="widget-hdr"><h3>' + escapeHtml(def.title) + '</h3>' +
+            '<button class="widget-close" data-wid="' + def.id + '">&times;</button></div>' +
+            '<div class="widget-body" id="wb-' + def.id + '">' +
+            (def.type === 'bandwidth' || def.type === 'cpumem' ? '<div class="widget-chart"><canvas id="wc-' + def.id + '"></canvas></div>' : '<div class="loading">Loading...</div>') +
+            '</div>';
+
+        grid.addWidget({ id: def.id, x: x, y: y, w: w, h: h, content: html });
+    }
+
+    // ---- Layout persistence ----
+    function saveLayout() {
+        if (!grid) return;
+        var layout = {};
+        grid.engine.nodes.forEach(function(n) {
+            layout[n.id] = { x: n.x, y: n.y, w: n.w, h: n.h };
+        });
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    }
+
+    function loadLayout() {
+        try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)); } catch(e) { return null; }
+    }
+
+    function resetLayout() {
+        localStorage.removeItem(LAYOUT_KEY);
+        localStorage.removeItem(HIDDEN_KEY);
+        location.reload();
+    }
+
+    // ---- Widget show/hide ----
+    function hideWidget(widgetId) {
+        var el = document.querySelector('[gs-id="' + widgetId + '"]');
+        if (el && grid) {
+            destroyWidgetChart(widgetId);
+            grid.removeWidget(el);
+        }
+        hiddenWidgets[widgetId] = true;
+        saveHiddenWidgets();
+        saveLayout();
+        updateWidgetMenu();
+    }
+
+    function showWidget(widgetId) {
+        delete hiddenWidgets[widgetId];
+        saveHiddenWidgets();
+        var def = allWidgetDefs.find(function(d) { return d.id === widgetId; });
+        if (def && grid) {
+            addWidgetToGrid(def, null);
+            renderWidgetContent(def);
+        }
+        updateWidgetMenu();
+    }
+
+    function updateWidgetMenu() {
+        var dropdown = document.getElementById('widget-dropdown');
+        if (!dropdown) return;
+        dropdown.innerHTML = allWidgetDefs.map(function(def) {
+            var checked = !hiddenWidgets[def.id] ? 'checked' : '';
+            return '<label><input type="checkbox" ' + checked + ' data-toggle-widget="' + def.id + '"> ' + escapeHtml(def.title) + '</label>';
+        }).join('');
+    }
+
+    function destroyWidgetChart(wid) {
+        if (chartInstances[wid]) {
+            chartInstances[wid].destroy();
+            delete chartInstances[wid];
+        }
+    }
+
+    // ---- Render widget contents ----
+    function renderAllWidgets() {
+        allWidgetDefs.forEach(function(def) {
+            if (hiddenWidgets[def.id]) return;
+            renderWidgetContent(def);
+        });
+    }
+
+    function renderWidgetContent(def) {
+        if (def.type === 'table') renderDevicesTable();
+        else if (def.type === 'cpumem') renderCpuMemChart(def);
+        else if (def.type === 'bandwidth') renderBandwidthChart(def);
+        else if (def.type === 'vpn') renderVPN(def);
+        else if (def.type === 'connmap') renderConnMap(def);
+    }
+
+    // ---- Devices Table ----
+    function renderDevicesTable() {
+        var body = document.getElementById('wb-devices');
+        if (!body) return;
+
+        var promises = allDevices.map(function(d) {
+            return apiFetch(API_BASE + '/public/dashboard?device_id=' + d.id).then(function(data) {
+                d.statusData = data || {};
+            })['catch'](function() { d.statusData = {}; });
+        });
+
+        Promise.all(promises).then(function() {
+            if (allDevices.length === 0) {
+                body.innerHTML = '<div class="loading">No devices configured</div>';
+                return;
+            }
+            body.innerHTML = '<table class="dev-tbl"><thead><tr><th>Device</th><th>Status</th><th>Uptime</th><th>CPU</th><th>Memory</th><th>Sessions</th></tr></thead><tbody>' +
+                allDevices.map(function(d) {
+                    var s = d.statusData || {};
+                    var statusCls = s.hostname ? 'online' : 'offline';
+                    var cpu = s.cpu || 0;
+                    var mem = s.memory || 0;
+                    return '<tr><td>' + escapeHtml(d.name) + '</td>' +
+                        '<td><span class="dev-status ' + statusCls + '">' + statusCls.toUpperCase() + '</span></td>' +
+                        '<td>' + (s.uptime || '--') + '</td>' +
+                        '<td>' + (cpu ? cpu.toFixed(1) + '%' : '--') + '<div class="metric-bar"><div class="fill ' + progressClass(cpu) + '" style="width:' + Math.min(cpu, 100) + '%"></div></div></td>' +
+                        '<td>' + (mem ? mem.toFixed(1) + '%' : '--') + '<div class="metric-bar"><div class="fill ' + progressClass(mem) + '" style="width:' + Math.min(mem, 100) + '%"></div></div></td>' +
+                        '<td>' + formatNumber(s.sessions) + '</td></tr>';
+                }).join('') + '</tbody></table>';
+        });
+    }
+
+    // ---- CPU/Memory Charts ----
+    function renderCpuMemChart(def) {
+        var wid = def.id;
+        apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + cpuHours).then(function(points) {
+            if (!points || points.length === 0) return;
+            var labels = points.map(function(p) { return new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); });
+
+            destroyWidgetChart(wid);
+            var canvas = document.getElementById('wc-' + wid);
+            if (!canvas) return;
+
+            chartInstances[wid] = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'CPU %', data: points.map(function(p) { return p.cpu_usage; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                        { label: 'Memory %', data: points.map(function(p) { return p.memory_usage; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                    ]
+                },
+                options: chartOpts({ y: { min: 0, max: 100, ticks: { callback: function(v) { return v + '%'; } } } })
+            });
+        });
+    }
+
+    // ---- Bandwidth Charts (with bug fixes) ----
+    function renderBandwidthChart(def) {
+        var iface = def.iface;
+        if (!iface) return;
+        var wid = def.id;
+        var url = API_BASE + '/public/interfaces/chart?device_id=' + iface.deviceId + '&index=' + iface.index + '&view=' + bwView + '&range=' + bwRange;
+
+        apiFetch(url).then(function(data) {
+            if (!data) return;
+
+            var rxRate = (data.rx_rate || []).map(Number);
+            var txRate = (data.tx_rate || []).map(Number);
+            var rxTotal = (data.rx_total || []).map(Number);
+            var txTotal = (data.tx_total || []).map(Number);
+
+            // Per-interval deltas (fixes cumulative bug)
+            var deltaRx = rxTotal.map(function(v, i) { if (i === 0) return 0; var d = v - rxTotal[i - 1]; return d > 0 ? d : 0; });
+            var deltaTx = txTotal.map(function(v, i) { if (i === 0) return 0; var d = v - txTotal[i - 1]; return d > 0 ? d : 0; });
+
+            var datasets = [];
+            var scales = {};
+
+            if (bwView === 'rate') {
+                datasets = [
+                    { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
+                ];
+                scales = { y: { ticks: { callback: function(v) { return v.toFixed(1) + ' Mbps'; } }, title: { display: true, text: 'Mbps', color: '#484f58' } } };
+            } else if (bwView === 'total') {
+                // Bar chart with per-interval deltas
+                datasets = [
+                    { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: '#3fb950', borderWidth: 1 },
+                    { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: '#ff9500', borderWidth: 1 }
+                ];
+                scales = { y: { ticks: { callback: function(v) { return formatBytes(v); } }, title: { display: true, text: 'Bytes/interval', color: '#484f58' } } };
+            } else {
+                // Mix: lines for rate (left axis) + bars for transfer delta (right axis)
+                datasets = [
+                    { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
+                    { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
+                    { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' },
+                    { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' }
+                ];
+                scales = {
+                    y: { position: 'left', ticks: { callback: function(v) { return v.toFixed(1); } }, title: { display: true, text: 'Mbps', color: '#484f58' } },
+                    y1: { position: 'right', grid: { display: false }, ticks: { callback: function(v) { return formatBytes(v); } }, title: { display: true, text: 'Bytes', color: '#484f58' } }
+                };
+            }
+
+            destroyWidgetChart(wid);
+            var canvas = document.getElementById('wc-' + wid);
+            if (!canvas) return;
+
+            chartInstances[wid] = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { labels: data.labels || [], datasets: datasets },
+                options: chartOpts(scales)
+            });
+        });
+    }
+
+    // ---- VPN Tunnels ----
+    function renderVPN(def) {
+        var body = document.getElementById('wb-' + def.id);
+        if (!body) return;
+        body.innerHTML = '<div class="loading">Loading VPN...</div>';
+
+        var promises = allDevices.map(function(d) {
+            return apiFetch(API_BASE + '/public/vpn?device_id=' + d.id).then(function(vpns) {
+                return (vpns || []).map(function(v) { v.deviceName = d.name; return v; });
+            })['catch'](function() { return []; });
+        });
+
+        Promise.all(promises).then(function(results) {
+            var all = [];
+            results.forEach(function(arr) { all = all.concat(arr); });
+            if (all.length === 0) { body.innerHTML = '<div class="loading">No VPN tunnels</div>'; return; }
+            body.innerHTML = '<div class="vpn-grid">' + all.map(function(v) {
+                return '<div class="vpn-card"><div class="vpn-name">' + escapeHtml(v.tunnel_name) + '</div>' +
+                    '<span class="vpn-status ' + (v.status || 'down') + '">' + (v.status || 'down').toUpperCase() + '</span> ' +
+                    '<span style="color:#484f58;font-size:0.6rem;">' + escapeHtml(v.deviceName) + '</span></div>';
+            }).join('') + '</div>';
+        });
+    }
+
+    // ---- Connection Map ----
+    function renderConnMap(def) {
+        var body = document.getElementById('wb-' + def.id);
+        if (!body) return;
+        body.innerHTML = '<div class="loading">Loading connections...</div>';
+
+        apiFetch(API_BASE + '/public/connections').then(function(conns) {
+            if (!conns || conns.length === 0) { body.innerHTML = '<div class="loading">No connections</div>'; return; }
+            body.innerHTML = '<div style="position:relative;width:100%;height:100%;min-height:150px;">' +
+                conns.map(function(c, i) {
+                    var x = 15 + (i % 4) * 20;
+                    var y = 15 + Math.floor(i / 4) * 30;
+                    return '<div style="position:absolute;left:' + x + '%;top:' + y + '%;font-size:0.7rem;background:#21262d;padding:4px 8px;border-radius:4px;border:1px solid #30363d;">' +
+                        '<span style="color:' + (c.status === 'up' ? '#3fb950' : '#f85149') + ';">●</span> ' +
+                        escapeHtml(c.name) + '</div>';
+                }).join('') + '</div>';
+        });
+    }
+
+    // ---- Chart.js common options ----
+    function chartOpts(scaleOverrides) {
+        var scales = { x: { ticks: { color: '#484f58', maxTicksLimit: 8, maxRotation: 0 }, grid: { color: '#21262d' } } };
+        for (var key in scaleOverrides) {
+            scales[key] = Object.assign({}, { ticks: { color: '#484f58' }, grid: { color: '#21262d' } }, scaleOverrides[key]);
+            if (scaleOverrides[key].ticks) scales[key].ticks = Object.assign({}, { color: '#484f58' }, scaleOverrides[key].ticks);
+            if (scaleOverrides[key].title) scales[key].title = Object.assign({}, scaleOverrides[key].title);
+        }
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 0 },
+            interaction: { intersect: false, mode: 'index' },
+            plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 } } } },
+            scales: scales
+        };
+    }
+
+    // ---- Auto-refresh ----
+    function startRefresh() {
+        var interval = parseInt(displaySettings['public_refresh_interval']) || 30;
+        refreshTimer = setInterval(function() {
+            allWidgetDefs.forEach(function(def) {
+                if (hiddenWidgets[def.id]) return;
+                renderWidgetContent(def);
+            });
+        }, interval * 1000);
+    }
+
+    // ---- Event handlers ----
     document.addEventListener('click', function(e) {
-        var pill = e.target.closest('#cpu-mem-range .range-pill');
-        if (!pill) return;
-        document.querySelectorAll('#cpu-mem-range .range-pill').forEach(function(p) { p.classList.remove('active'); });
-        pill.classList.add('active');
-        fetchCpuMemoryCharts(parseInt(pill.dataset.hours));
+        // Close widget
+        var closeBtn = e.target.closest('.widget-close');
+        if (closeBtn) {
+            hideWidget(closeBtn.dataset.wid);
+            return;
+        }
+
+        // Widget menu toggle
+        if (e.target.id === 'widget-menu-btn' || e.target.closest('#widget-menu-btn')) {
+            document.getElementById('widget-dropdown').classList.toggle('open');
+            return;
+        }
+
+        // Reset layout
+        if (e.target.id === 'btn-reset-layout' || e.target.closest('#btn-reset-layout')) {
+            resetLayout();
+            return;
+        }
+
+        // Close dropdown when clicking outside
+        var dropdown = document.getElementById('widget-dropdown');
+        if (dropdown && dropdown.classList.contains('open') && !dropdown.contains(e.target)) {
+            dropdown.classList.remove('open');
+        }
     });
+
+    // Widget toggle checkboxes
+    document.addEventListener('change', function(e) {
+        var toggle = e.target.dataset.toggleWidget;
+        if (toggle) {
+            if (e.target.checked) showWidget(toggle);
+            else hideWidget(toggle);
+        }
+    });
+
+    // View/range selects
+    document.addEventListener('change', function(e) {
+        if (e.target.id === 'bw-view') {
+            bwView = e.target.value;
+            refreshBandwidthCharts();
+        } else if (e.target.id === 'bw-range') {
+            bwRange = e.target.value;
+            refreshBandwidthCharts();
+        } else if (e.target.id === 'cpu-range') {
+            cpuHours = parseInt(e.target.value);
+            refreshCpuCharts();
+        }
+    });
+
+    function refreshBandwidthCharts() {
+        allWidgetDefs.forEach(function(def) {
+            if (def.type === 'bandwidth' && !hiddenWidgets[def.id]) renderBandwidthChart(def);
+        });
+    }
+
+    function refreshCpuCharts() {
+        allWidgetDefs.forEach(function(def) {
+            if (def.type === 'cpumem' && !hiddenWidgets[def.id]) renderCpuMemChart(def);
+        });
+    }
+
+    // ---- Start ----
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
