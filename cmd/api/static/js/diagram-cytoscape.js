@@ -740,7 +740,7 @@
                     }
                     if (particleEls.length < MAX_PARTICLES) {
                         particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00022 + Math.random() * 0.0001,
-                            direction: -1, color: carrierColor, radius: 2, alpha: 0.35 });
+                            direction: -1, color: carrierColor, radius: 3, alpha: 0.85 });
                         count++;
                     }
                 } else {
@@ -766,7 +766,7 @@
                     // Return dot (dimmer, smaller)
                     if (particleEls.length < MAX_PARTICLES) {
                         particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0002 + Math.random() * 0.0001,
-                            direction: -1, color: childColor, radius: 1.5, alpha: 0.3 });
+                            direction: -1, color: childColor, radius: 2.5, alpha: 0.9 });
                         count++;
                     }
                 });
@@ -782,7 +782,7 @@
                     }
                     if (particleEls.length < MAX_PARTICLES) {
                         particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00022 + Math.random() * 0.0001,
-                            direction: -1, color: color, radius: 2, alpha: 0.35 });
+                            direction: -1, color: color, radius: 3, alpha: 0.85 });
                         count++;
                     }
                 } else {
