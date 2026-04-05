@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"firewall-mon/internal/auth"
@@ -420,15 +419,6 @@ func (d *Database) GetUptimeRecords(limit int) ([]models.UptimeRecord, error) {
 	return records, err
 }
 
-func (d *Database) GetLatestUptime() (*models.UptimeRecord, error) {
-	var record models.UptimeRecord
-	err := d.db.Order("timestamp DESC").First(&record).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	return &record, err
-}
-
 func (d *Database) SaveLoginAttempt(attempt *models.LoginAttempt) error {
 	return d.db.Create(attempt).Error
 }
@@ -715,19 +705,6 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 		`).Scan(&statuses).Error
 	}
 	return statuses, err
-}
-
-// FindConnectionByDevicePair finds a connection between two devices regardless of direction.
-func (d *Database) FindConnectionByDevicePair(deviceA, deviceB uint) (*models.DeviceConnection, error) {
-	var conn models.DeviceConnection
-	err := d.db.Where(
-		"(source_device_id = ? AND dest_device_id = ?) OR (source_device_id = ? AND dest_device_id = ?)",
-		deviceA, deviceB, deviceB, deviceA,
-	).First(&conn).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	return &conn, err
 }
 
 // FindConnectionByDevicePairAndType finds a connection between two devices of a specific type.
@@ -1043,21 +1020,6 @@ func (d *Database) GetPendingProbes() ([]models.Probe, error) {
 	return probes, err
 }
 
-func (d *Database) GetAllProbeApprovals() ([]models.ProbeApproval, error) {
-	var approvals []models.ProbeApproval
-	err := d.db.Preload("Probe").Order("requested_at DESC").Find(&approvals).Error
-	return approvals, err
-}
-
-func (d *Database) GetProbeApproval(probeID uint) (*models.ProbeApproval, error) {
-	var approval models.ProbeApproval
-	err := d.db.Where("probe_id = ?", probeID).First(&approval).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	return &approval, err
-}
-
 func (d *Database) UpdateProbeHeartbeat(heartbeat *models.ProbeHeartbeat) error {
 	var existing models.ProbeHeartbeat
 	err := d.db.Where("probe_id = ?", heartbeat.ProbeID).First(&existing).Error
@@ -1097,15 +1059,6 @@ func (d *Database) GetPingResults(deviceID uint, limit int) ([]models.PingResult
 	var results []models.PingResult
 	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(limit).Find(&results).Error
 	return results, err
-}
-
-func (d *Database) GetLatestPingStats(deviceID uint, probeID uint) (*models.PingStats, error) {
-	var stats models.PingStats
-	err := d.db.Where("device_id = ? AND probe_id = ?", deviceID, probeID).First(&stats).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	return &stats, err
 }
 
 func (d *Database) SavePingStats(stats *models.PingStats) error {
@@ -1256,12 +1209,6 @@ func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) 
 	return messages, err
 }
 
-func (d *Database) GetSyslogMessagesByDevice(deviceID uint, limit int) ([]models.SyslogMessage, error) {
-	var messages []models.SyslogMessage
-	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(limit).Find(&messages).Error
-	return messages, err
-}
-
 func (d *Database) SaveFlowSamples(samples []models.FlowSample) error {
 	if len(samples) == 0 {
 		return nil
@@ -1349,8 +1296,8 @@ type KeyCount struct {
 	Count int64  `json:"count"`
 }
 
-// ProtoNames maps IP protocol numbers to human-readable names.
-var ProtoNames = map[uint8]string{
+// protoNames maps IP protocol numbers to human-readable names.
+var protoNames = map[uint8]string{
 	0: "HOPOPT", 1: "ICMP", 2: "IGMP", 4: "IPv4", 6: "TCP", 8: "EGP",
 	17: "UDP", 41: "IPv6", 43: "IPv6-Route", 44: "IPv6-Frag", 47: "GRE",
 	50: "ESP", 51: "AH", 58: "ICMPv6", 59: "IPv6-NoNxt", 60: "IPv6-Opts",
@@ -1359,7 +1306,7 @@ var ProtoNames = map[uint8]string{
 
 // protoName returns the human name for a protocol number, or "Proto N" as fallback.
 func protoName(p uint8) string {
-	if name, ok := ProtoNames[p]; ok {
+	if name, ok := protoNames[p]; ok {
 		return name
 	}
 	return fmt.Sprintf("Proto %d", p)
@@ -2023,349 +1970,6 @@ func (d *Database) GetDevicesByProbe(probeID uint) ([]models.Device, error) {
 	return devices, err
 }
 
-func (d *Database) CreateSiteDatabase(siteID uint, dbPath string, isRemote bool) (*models.SiteDatabase, error) {
-	siteDB := &models.SiteDatabase{
-		SiteID:       siteID,
-		DatabasePath: dbPath,
-		IsRemote:     isRemote,
-		Status:       "active",
-	}
-	err := d.db.Create(siteDB).Error
-	return siteDB, err
-}
-
-func (d *Database) GetSiteDatabase(siteID uint) (*models.SiteDatabase, error) {
-	var siteDB models.SiteDatabase
-	err := d.db.Where("site_id = ?", siteID).First(&siteDB).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	return &siteDB, err
-}
-
-func (d *Database) GetSiteDatabaseByID(id uint) (*models.SiteDatabase, error) {
-	var siteDB models.SiteDatabase
-	err := d.db.First(&siteDB, id).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, nil
-	}
-	return &siteDB, err
-}
-
-func (d *Database) UpdateSiteDatabaseSync(siteID uint) error {
-	now := time.Now()
-	return d.db.Model(&models.SiteDatabase{}).Where("site_id = ?", siteID).Updates(map[string]interface{}{
-		"last_sync": now,
-		"status":    "active",
-	}).Error
-}
-
-func (d *Database) SetSiteDatabaseStatus(siteID uint, status string) error {
-	return d.db.Model(&models.SiteDatabase{}).Where("site_id = ?", siteID).Update("status", status).Error
-}
-
-func (d *Database) DeleteSiteDatabase(siteID uint) error {
-	d.CloseSiteDB(siteID)
-	siteDB, err := d.GetSiteDatabase(siteID)
-	if err != nil {
-		return err
-	}
-	if siteDB != nil && siteDB.DatabasePath != "" {
-		if err := os.Remove(siteDB.DatabasePath); err != nil && !os.IsNotExist(err) {
-			log.Printf("Warning: failed to remove site database file: %v", err)
-		}
-	}
-	return d.db.Where("site_id = ?", siteID).Delete(&models.SiteDatabase{}).Error
-}
-
-func (d *Database) ListSiteDatabases() ([]models.SiteDatabase, error) {
-	var siteDBs []models.SiteDatabase
-	err := d.db.Preload("Site").Find(&siteDBs).Error
-	return siteDBs, err
-}
-
-func (d *Database) CreateSiteDatabaseFile(siteID uint, basePath string) (*models.SiteDatabase, error) {
-	if err := os.MkdirAll(basePath, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create database directory: %w", err)
-	}
-
-	dbPath := filepath.Join(basePath, fmt.Sprintf("site_%d.db", siteID))
-
-	exists, err := pathExists(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		siteDB, err := d.GetSiteDatabase(siteID)
-		if err != nil {
-			return nil, err
-		}
-		if siteDB != nil {
-			return siteDB, nil
-		}
-	}
-
-	siteDB, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create site database: %w", err)
-	}
-
-	siteDB.Exec("PRAGMA journal_mode=WAL")
-	siteDB.Exec("PRAGMA busy_timeout=5000")
-
-	sqlDB, err := siteDB.DB()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	sqlDB.SetConnMaxLifetime(0)
-
-	if err := siteDB.AutoMigrate(
-		&models.SiteDevice{},
-		&models.SiteSystemStatus{},
-		&models.SiteInterfaceStats{},
-		&models.SiteTrapEvent{},
-		&models.SiteAlert{},
-		&models.SitePingResult{},
-		&models.SitePingStats{},
-		&models.SiteSyslogMessage{},
-	); err != nil {
-		return nil, fmt.Errorf("failed to migrate site database: %w", err)
-	}
-
-	sqlDB.Close()
-
-	return d.CreateSiteDatabase(siteID, dbPath, false)
-}
-
-var (
-	siteDBConnections = make(map[uint]*gorm.DB)
-	siteDBMu          sync.RWMutex
-)
-
-func (d *Database) GetOrCreateSiteDB(siteID uint) (*gorm.DB, error) {
-	siteDBMu.RLock()
-	if db, ok := siteDBConnections[siteID]; ok {
-		sqlDB, err := db.DB()
-		if err == nil {
-			if err := sqlDB.Ping(); err == nil {
-				siteDBMu.RUnlock()
-				return db, nil
-			}
-		}
-	}
-	siteDBMu.RUnlock()
-
-	siteDB, err := d.GetSiteDatabase(siteID)
-	if err != nil {
-		return nil, err
-	}
-	if siteDB == nil {
-		return nil, fmt.Errorf("site database not found for site %d", siteID)
-	}
-
-	db, err := gorm.Open(sqlite.Open(siteDB.DatabasePath), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to site database: %w", err)
-	}
-
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
-
-	sqlDB, err := db.DB()
-	if err != nil {
-		// Close the gorm.DB we just opened to avoid leaking the connection
-		if innerDB, innerErr := db.DB(); innerErr == nil {
-			innerDB.Close()
-		}
-		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
-	}
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	sqlDB.SetConnMaxLifetime(0)
-
-	siteDBMu.Lock()
-	// Clean up stale entry if it exists
-	if old, ok := siteDBConnections[siteID]; ok {
-		if oldSQL, err := old.DB(); err == nil {
-			oldSQL.Close()
-		}
-	}
-	siteDBConnections[siteID] = db
-	siteDBMu.Unlock()
-
-	return db, nil
-}
-
-func (d *Database) CloseSiteDB(siteID uint) {
-	siteDBMu.Lock()
-	defer siteDBMu.Unlock()
-	if db, ok := siteDBConnections[siteID]; ok {
-		sqlDB, err := db.DB()
-		if err == nil {
-			sqlDB.Close()
-		}
-		delete(siteDBConnections, siteID)
-	}
-}
-
-func (d *Database) CloseAllSiteDBs() {
-	siteDBMu.Lock()
-	defer siteDBMu.Unlock()
-	for siteID, db := range siteDBConnections {
-		sqlDB, err := db.DB()
-		if err == nil {
-			sqlDB.Close()
-		}
-		delete(siteDBConnections, siteID)
-	}
-}
-
-func pathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
-}
-
-func (d *Database) SaveSiteDevice(siteID uint, device *models.SiteDevice) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(device).Error
-}
-
-func (d *Database) GetSiteDevices(siteID uint) ([]models.SiteDevice, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var devices []models.SiteDevice
-	err = db.Find(&devices).Error
-	return devices, err
-}
-
-func (d *Database) SaveSiteSystemStatus(siteID uint, status *models.SiteSystemStatus) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(status).Error
-}
-
-func (d *Database) GetSiteSystemStatus(siteID uint, limit int) ([]models.SiteSystemStatus, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var statuses []models.SiteSystemStatus
-	err = db.Order("timestamp DESC").Limit(limit).Find(&statuses).Error
-	return statuses, err
-}
-
-func (d *Database) SaveSiteInterfaceStats(siteID uint, stats []models.SiteInterfaceStats) error {
-	if len(stats) == 0 {
-		return nil
-	}
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(&stats).Error
-}
-
-func (d *Database) GetSiteInterfaceStats(siteID uint, limit int) ([]models.SiteInterfaceStats, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var stats []models.SiteInterfaceStats
-	err = db.Order("timestamp DESC").Limit(limit).Find(&stats).Error
-	return stats, err
-}
-
-func (d *Database) SaveSiteTrapEvent(siteID uint, trap *models.SiteTrapEvent) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(trap).Error
-}
-
-func (d *Database) GetSiteTrapEvents(siteID uint, limit int) ([]models.SiteTrapEvent, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var traps []models.SiteTrapEvent
-	err = db.Order("timestamp DESC").Limit(limit).Find(&traps).Error
-	return traps, err
-}
-
-func (d *Database) SaveSiteAlert(siteID uint, alert *models.SiteAlert) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(alert).Error
-}
-
-func (d *Database) GetSiteAlerts(siteID uint, limit int) ([]models.SiteAlert, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var alerts []models.SiteAlert
-	err = db.Order("timestamp DESC").Limit(limit).Find(&alerts).Error
-	return alerts, err
-}
-
-func (d *Database) SaveSitePingResult(siteID uint, result *models.SitePingResult) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(result).Error
-}
-
-func (d *Database) GetSitePingResults(siteID uint, deviceID uint, limit int) ([]models.SitePingResult, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var results []models.SitePingResult
-	err = db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(limit).Find(&results).Error
-	return results, err
-}
-
-func (d *Database) SaveSitePingStats(siteID uint, stats *models.SitePingStats) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Save(stats).Error
-}
-
-func (d *Database) GetSitePingStats(siteID uint, deviceID uint, probeID uint) ([]models.SitePingStats, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var stats []models.SitePingStats
-	err = db.Where("device_id = ? AND probe_id = ?", deviceID, probeID).Find(&stats).Error
-	return stats, err
-}
-
 // VPNChartBucket holds a single time-bucket for VPN tunnel chart data.
 type VPNChartBucket struct {
 	Bucket     string  `json:"bucket"`
@@ -3011,24 +2615,6 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	}
 
 	return result, nil
-}
-
-func (d *Database) SaveSiteSyslogMessage(siteID uint, msg *models.SiteSyslogMessage) error {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return err
-	}
-	return db.Create(msg).Error
-}
-
-func (d *Database) GetSiteSyslogMessages(siteID uint, limit int) ([]models.SiteSyslogMessage, error) {
-	db, err := d.GetOrCreateSiteDB(siteID)
-	if err != nil {
-		return nil, err
-	}
-	var messages []models.SiteSyslogMessage
-	err = db.Order("timestamp DESC").Limit(limit).Find(&messages).Error
-	return messages, err
 }
 
 // GetAlertsByDeviceAndHours returns alerts for a specific device within the given hours.

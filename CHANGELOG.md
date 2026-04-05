@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.148] - 2026-04-05
+
+### Removed
+- **436 lines of dead code** from database.go (3306→2870 lines):
+  - Entire site database subsystem (CreateSiteDatabase, GetSiteDatabase, ListSiteDatabases, DeleteSiteDatabase, SetSiteDatabaseStatus, UpdateSiteDatabaseSync, CreateSiteDatabaseFile, CloseAllSiteDBs, openSiteDB, GetOrCreateSiteDB) — scaffolded but never wired up
+  - All SaveSite*/GetSite* sync methods (16 functions for SiteDevice, SiteSystemStatus, SiteInterfaceStats, SiteTrapEvent, SiteAlert, SitePingResult, SitePingStats, SiteSyslogMessage)
+  - GetLatestUptime, FindConnectionByDevicePair, GetProbeApproval, GetAllProbeApprovals, GetLatestPingStats, GetSyslogMessagesByDevice — zero external callers
+  - Unexported ProtoNames → protoNames (only used internally)
+  - Removed unused `sync` import
+
 ## [0.10.147] - 2026-04-05
 
 ### Fixed
