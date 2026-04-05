@@ -579,7 +579,12 @@
                     edgeType: 'sublane', connType: connType, status: status,
                     connObj: connObj, parentTunnel: tunnelId, label: ''
                 }});
-                styleLane(laneId + '-b');
+                // Mirror the offset on the other side so lanes fan outward symmetrically
+                cy.getElementById(laneId + '-b').style({
+                    'line-color': color,
+                    'control-point-distances': [-offset],
+                    'control-point-weights': cpWeight
+                });
             } else {
                 cy.add({ group: 'edges', data: {
                     id: laneId, source: laneSrc, target: laneDst,
