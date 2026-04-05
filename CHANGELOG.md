@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.145] - 2026-04-04
+
+### Fixed
+- **Cross-site tunnels route through Internet**: IPSec/SSL connections between devices in different sites now draw as two edges through the Internet cloud node (Device→Cloud→Device) instead of a direct line. Particles flow through the cloud correctly. Same-site tunnels remain as direct edges.
+- **Cross-site expansion**: Clicking a cross-site tunnel expands sublanes spanning the full device-to-device path. Both half-edges (src and dst) are hidden during expansion and restored on collapse.
+- **Cross-site status updates**: Polling updates both halves of a split tunnel edge when status changes
+
 ## [0.10.144] - 2026-04-04
 
 ### Fixed

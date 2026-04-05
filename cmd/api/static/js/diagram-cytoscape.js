@@ -86,9 +86,21 @@
             });
         }
 
+        // Build device→site lookup for cross-site detection
+        var deviceSiteLocal = {};
+        devices.forEach(function(d) { deviceSiteLocal[d.id] = siteMap[d.id] || null; });
+        var isCrossSite = function(srcId, dstId) {
+            var s1 = deviceSiteLocal[srcId], s2 = deviceSiteLocal[dstId];
+            if (!s1 || !s2) return true; // no site = assume cross-site (WAN)
+            return s1 !== s2;
+        };
+
+        // Ensure Internet cloud exists for cross-site tunnels
+        var needCloud = false;
+
         // Group connections by device pair
         var pairKey = function(a, b) { return Math.min(a, b) + ':' + Math.max(a, b); };
-        var pairs = {}; // pairKey -> { tunnels: [], overlays: [], directs: [] }
+        var pairs = {};
 
         connections.forEach(function(c) {
             var srcExists = devices.some(function(d) { return d.id === c.source_device_id; });
@@ -96,10 +108,11 @@
             if (!srcExists || !dstExists) return;
 
             var key = pairKey(c.source_device_id, c.dest_device_id);
-            if (!pairs[key]) pairs[key] = { tunnels: [], overlays: [], directs: [] };
+            if (!pairs[key]) pairs[key] = { tunnels: [], overlays: [], directs: [], srcId: c.source_device_id, dstId: c.dest_device_id };
 
             if (TUNNEL_TYPES[c.connection_type]) {
                 pairs[key].tunnels.push(c);
+                if (isCrossSite(c.source_device_id, c.dest_device_id)) needCloud = true;
             } else if (OVERLAY_TYPES[c.connection_type]) {
                 pairs[key].overlays.push(c);
             } else {
@@ -107,30 +120,74 @@
             }
         });
 
+        // Add cloud node if cross-site tunnels exist and cloud wasn't already added
+        if (needCloud && !hasCloud) {
+            elements.push({ group: 'nodes', data: { id: 'cloud-internet', label: '\u2601 Internet', nodeType: 'cloud' }});
+            hasCloud = true;
+        }
+
         // Create edges per pair
         Object.keys(pairs).forEach(function(key) {
             var p = pairs[key];
+            var crossSite = p.tunnels.length > 0 && isCrossSite(p.srcId, p.dstId);
 
-            // Tunnel carriers — assign overlays to first tunnel only (avoid duplication)
+            // Tunnel carriers
             var overlaysAssigned = false;
             p.tunnels.forEach(function(tunnel) {
                 var childConns = (!overlaysAssigned && p.overlays.length > 0) ? p.overlays.slice() : [];
                 if (childConns.length > 0) overlaysAssigned = true;
-                elements.push({ group: 'edges', data: {
-                    id: 'conn-' + tunnel.id,
-                    source: 'dev-' + tunnel.source_device_id,
-                    target: 'dev-' + tunnel.dest_device_id,
-                    edgeType: 'tunnel-bundle',
-                    connType: tunnel.connection_type,
-                    status: tunnel.status || 'unknown',
-                    connObj: tunnel,
-                    childConns: childConns,
-                    expanded: false,
-                    label: tunnel.connection_type.toUpperCase() + (childConns.length > 0 ? ' +' + childConns.length : '')
-                }});
+                var labelText = tunnel.connection_type.toUpperCase() + (childConns.length > 0 ? ' +' + childConns.length : '');
+
+                if (crossSite && hasCloud) {
+                    // Cross-site: route through Internet cloud as two half-edges
+                    // Source device → Cloud
+                    elements.push({ group: 'edges', data: {
+                        id: 'conn-' + tunnel.id + '-src',
+                        source: 'dev-' + tunnel.source_device_id,
+                        target: 'cloud-internet',
+                        edgeType: 'tunnel-bundle',
+                        connType: tunnel.connection_type,
+                        status: tunnel.status || 'unknown',
+                        connObj: tunnel,
+                        childConns: childConns,
+                        expanded: false,
+                        tunnelHalf: 'src',
+                        tunnelPeerId: 'conn-' + tunnel.id + '-dst',
+                        label: labelText
+                    }});
+                    // Cloud → Dest device
+                    elements.push({ group: 'edges', data: {
+                        id: 'conn-' + tunnel.id + '-dst',
+                        source: 'cloud-internet',
+                        target: 'dev-' + tunnel.dest_device_id,
+                        edgeType: 'tunnel-bundle',
+                        connType: tunnel.connection_type,
+                        status: tunnel.status || 'unknown',
+                        connObj: tunnel,
+                        childConns: [],
+                        expanded: false,
+                        tunnelHalf: 'dst',
+                        tunnelPeerId: 'conn-' + tunnel.id + '-src',
+                        label: ''
+                    }});
+                } else {
+                    // Same-site or no cloud: direct edge
+                    elements.push({ group: 'edges', data: {
+                        id: 'conn-' + tunnel.id,
+                        source: 'dev-' + tunnel.source_device_id,
+                        target: 'dev-' + tunnel.dest_device_id,
+                        edgeType: 'tunnel-bundle',
+                        connType: tunnel.connection_type,
+                        status: tunnel.status || 'unknown',
+                        connObj: tunnel,
+                        childConns: childConns,
+                        expanded: false,
+                        label: labelText
+                    }});
+                }
             });
 
-            // Orphan overlays (no tunnel carrier found) — show with warning
+            // Orphan overlays (no tunnel carrier)
             if (p.tunnels.length === 0 && p.overlays.length > 0) {
                 p.overlays.forEach(function(c) {
                     elements.push({ group: 'edges', data: {
@@ -365,12 +422,26 @@
         var tunnelId = data.id;
         expandedTunnels[tunnelId] = true;
 
-        // Hide the parent tunnel edge
+        // Hide the parent tunnel edge (and peer half for cross-site)
         edge.style('display', 'none');
+        if (data.tunnelPeerId) {
+            var peer = cy.getElementById(data.tunnelPeerId);
+            if (peer && !peer.empty()) peer.style('display', 'none');
+        }
+
+        // For cross-site split tunnels, sublanes span the full device-to-device path
+        var laneSrc = data.source;
+        var laneDst = data.target;
+        if (data.tunnelPeerId) {
+            var peerEdge = cy.getElementById(data.tunnelPeerId);
+            if (peerEdge && !peerEdge.empty()) {
+                laneDst = peerEdge.data('target'); // dev-X on the other side
+            }
+        }
 
         // Add pipe background edge
         cy.add({ group: 'edges', data: {
-            id: tunnelId + '-pipe', source: data.source, target: data.target,
+            id: tunnelId + '-pipe', source: laneSrc, target: laneDst,
             edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId
         }});
 
@@ -383,7 +454,7 @@
 
         // Carrier sublane (the tunnel itself)
         cy.add({ group: 'edges', data: {
-            id: tunnelId + '-carrier', source: data.source, target: data.target,
+            id: tunnelId + '-carrier', source: laneSrc, target: laneDst,
             edgeType: 'sublane', connType: data.connType, status: data.status,
             connObj: data.connObj, parentTunnel: tunnelId,
             label: data.connType.toUpperCase()
@@ -399,7 +470,7 @@
             var laneId = tunnelId + '-lane-' + child.id;
             var color = TYPE_COLORS[child.connection_type] || '#8b949e';
             cy.add({ group: 'edges', data: {
-                id: laneId, source: data.source, target: data.target,
+                id: laneId, source: laneSrc, target: laneDst,
                 edgeType: 'sublane', connType: child.connection_type, status: child.status,
                 connObj: child, parentTunnel: tunnelId,
                 label: child.connection_type.toUpperCase()
@@ -423,10 +494,15 @@
         // Remove all sublane and pipe edges for this tunnel
         cy.edges('[parentTunnel="' + tunnelId + '"]').remove();
 
-        // Show the parent tunnel edge again
+        // Show the parent tunnel edge again (and peer half for cross-site)
         var parentEdge = cy.getElementById(tunnelId);
         if (parentEdge && !parentEdge.empty()) {
             parentEdge.style('display', 'element');
+            var peerId = parentEdge.data('tunnelPeerId');
+            if (peerId) {
+                var peer = cy.getElementById(peerId);
+                if (peer && !peer.empty()) peer.style('display', 'element');
+            }
         }
 
         stopParticles();
@@ -626,9 +702,11 @@
         if (!cy) return;
         if (connChanges && connChanges.length > 0) {
             connChanges.forEach(function(ch) {
+                // Try direct edge, then cross-site split edges (-src/-dst)
                 var edge = cy.getElementById('conn-' + ch.id);
+                if (!edge || edge.empty()) edge = cy.getElementById('conn-' + ch.id + '-src');
 
-                // If edge not found, it may be an overlay bundled inside a tunnel
+                // If still not found, it may be an overlay bundled inside a tunnel
                 if (!edge || edge.empty()) {
                     cy.edges('[edgeType="tunnel-bundle"]').forEach(function(tunnelEdge) {
                         var children = tunnelEdge.data('childConns') || [];
@@ -638,16 +716,28 @@
                     });
                     return;
                 }
+
+                // For cross-site split tunnels, also update the dst half
+                var peerEdge = edge.data('tunnelPeerId') ? cy.getElementById(edge.data('tunnelPeerId')) : null;
                 var oldStatus = edge.data('status');
                 if (oldStatus === ch.status) return;
                 if (ch.status === 'down') {
                     animateFlash(edge, '#f85149', function() {
                         edge.data('status', 'down');
-                        particleEls = particleEls.filter(function(p) { return p.edge !== edge; });
+                        if (peerEdge && !peerEdge.empty()) peerEdge.data('status', 'down');
+                        particleEls = particleEls.filter(function(p) { return p.edge !== edge && p.edge !== peerEdge; });
                     });
                 } else if (ch.status === 'up') {
-                    animateFlash(edge, '#3fb950', function() { edge.data('status', 'up'); addParticlePair(edge, TYPE_COLORS[edge.data('connType')] || '#8b949e'); });
-                } else { edge.data('status', ch.status); }
+                    animateFlash(edge, '#3fb950', function() {
+                        edge.data('status', 'up');
+                        if (peerEdge && !peerEdge.empty()) peerEdge.data('status', 'up');
+                        addParticlePair(edge, TYPE_COLORS[edge.data('connType')] || '#8b949e');
+                        if (peerEdge && !peerEdge.empty()) addParticlePair(peerEdge, TYPE_COLORS[edge.data('connType')] || '#8b949e');
+                    });
+                } else {
+                    edge.data('status', ch.status);
+                    if (peerEdge && !peerEdge.empty()) peerEdge.data('status', ch.status);
+                }
                 if (edge.data('connObj')) edge.data('connObj').status = ch.status;
             });
             applyFilters();
