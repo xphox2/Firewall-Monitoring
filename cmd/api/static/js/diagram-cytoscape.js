@@ -3,13 +3,11 @@
 (function() {
     'use strict';
 
-    var NS = 'http://www.w3.org/2000/svg';
     var STORAGE_KEY = 'fwmon-diagram-positions';
     var MAX_PARTICLES = 80;
 
     var cy = null;
     var container = null;
-    var svgOverlay = null;
     var onConnClick = null;
     var onVPNClick = null;
     var hiddenTypes = {};
@@ -17,6 +15,7 @@
     var particleAnimId = null;
     var particleEls = [];
     var expandedTunnels = {}; // tunnelEdgeId -> true
+    var keydownHandler = null;
 
     // Connection type classification
     var TUNNEL_TYPES = { ipsec: true, ssl: true, gre: true, tunnel: true };
@@ -112,9 +111,11 @@
         Object.keys(pairs).forEach(function(key) {
             var p = pairs[key];
 
-            // Tunnel carriers — bundle overlays inside
+            // Tunnel carriers — assign overlays to first tunnel only (avoid duplication)
+            var overlaysAssigned = false;
             p.tunnels.forEach(function(tunnel) {
-                var childConns = p.overlays.slice(); // all overlays ride this tunnel
+                var childConns = (!overlaysAssigned && p.overlays.length > 0) ? p.overlays.slice() : [];
+                if (childConns.length > 0) overlaysAssigned = true;
                 elements.push({ group: 'edges', data: {
                     id: 'conn-' + tunnel.id,
                     source: 'dev-' + tunnel.source_device_id,
@@ -295,8 +296,7 @@
     function cleanup() {
         stopParticles();
         expandedTunnels = {};
-        if (svgOverlay && svgOverlay.parentNode) svgOverlay.parentNode.removeChild(svgOverlay);
-        svgOverlay = null;
+        if (keydownHandler) { document.removeEventListener('keydown', keydownHandler); keydownHandler = null; }
         if (cy) { cy.destroy(); cy = null; }
     }
 
@@ -347,12 +347,12 @@
         cy.on('dragfree', 'node[nodeType="device"]', savePositions);
         cy.on('dragfree', 'node[nodeType="site"]', savePositions);
 
-        // Escape key collapses all expanded tunnels
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                Object.keys(expandedTunnels).forEach(collapseTunnel);
-            }
-        });
+        // Escape key collapses all expanded tunnels (store ref for cleanup)
+        if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
+        keydownHandler = function(e) {
+            if (e.key === 'Escape') Object.keys(expandedTunnels).forEach(collapseTunnel);
+        };
+        document.addEventListener('keydown', keydownHandler);
     }
 
     // ---- 1f. Tunnel Inline Expansion ----
@@ -436,14 +436,22 @@
     // ---- 1g. Layer Filtering & DOWN Toggle ----
     function applyFilters() {
         if (!cy) return;
+        // Track which tunnel types are hidden so sublanes inherit
+        var hiddenTunnelIds = {};
         cy.edges().forEach(function(edge) {
             var data = edge.data();
-            if (data.edgeType === 'sublane' || data.edgeType === 'pipe-bg') return; // managed by expansion
+            if (data.edgeType === 'sublane' || data.edgeType === 'pipe-bg') return; // handled below
             var hide = false;
             if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle') && hiddenTypes[data.connType]) hide = true;
             if (!showDown && data.status === 'down') hide = true;
-            if (expandedTunnels[data.id]) hide = true; // expanded tunnels are hidden, sublanes visible
+            if (expandedTunnels[data.id]) hide = true;
+            if (hide && data.edgeType === 'tunnel-bundle') hiddenTunnelIds[data.id] = true;
             edge.style('display', hide ? 'none' : 'element');
+        });
+        // Hide sublanes/pipe-bg of hidden or DOWN tunnels
+        cy.edges('[edgeType="sublane"], [edgeType="pipe-bg"]').forEach(function(edge) {
+            var parentId = edge.data('parentTunnel');
+            edge.style('display', hiddenTunnelIds[parentId] ? 'none' : 'element');
         });
     }
 
@@ -502,35 +510,30 @@
             if (data.edgeType === 'tunnel-bundle') {
                 // Bundled: carrier particle + one dot per child overlay
                 var carrierColor = TYPE_COLORS[data.connType] || '#8b949e';
-                addParticlePair(edge, carrierColor, count);
-                count += 2;
+                count += addParticlePair(edge, carrierColor);
 
                 var children = data.childConns || [];
                 children.forEach(function(child) {
-                    if (count >= MAX_PARTICLES) return;
+                    if (particleEls.length >= MAX_PARTICLES) return;
                     var childColor = TYPE_COLORS[child.connection_type] || '#8b949e';
-                    // Stagger overlay dots so they don't overlap
                     particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00025 + Math.random() * 0.0001,
                         direction: 1, color: childColor, radius: 2.5, alpha: 0.9 });
                     count++;
                 });
             } else if (data.edgeType === 'sublane') {
-                // Expanded sublane: own particles
                 var color = TYPE_COLORS[data.connType] || '#8b949e';
-                addParticlePair(edge, color, count);
-                count += 2;
+                count += addParticlePair(edge, color);
             } else if (data.edgeType === 'offnet') {
-                // Off-net: device→cloud only (no reverse)
-                particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.0002,
-                    direction: 1, color: '#3fb950', radius: 3, alpha: 0.85 });
-                count++;
+                if (particleEls.length < MAX_PARTICLES) {
+                    particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.0002,
+                        direction: 1, color: '#3fb950', radius: 3, alpha: 0.85 });
+                    count++;
+                }
             } else if (data.edgeType === 'pipe-bg') {
-                // No particles on pipe background
+                // No particles
             } else {
-                // Direct connection (ethernet, lag, l2vlan, etc.)
                 var directColor = TYPE_COLORS[data.connType] || '#8b949e';
-                addParticlePair(edge, directColor, count);
-                count += 2;
+                count += addParticlePair(edge, directColor);
             }
         });
 
@@ -583,16 +586,16 @@
         particleAnimId = requestAnimationFrame(animate);
     }
 
-    function addParticlePair(edge, color, currentCount) {
-        if (currentCount >= MAX_PARTICLES) return;
-        // Forward: source → target (outbound)
+    function addParticlePair(edge, color) {
+        if (particleEls.length >= MAX_PARTICLES) return 0;
         particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.00015,
             direction: 1, color: color, radius: 3, alpha: 0.85 });
-        if (currentCount + 1 < MAX_PARTICLES) {
-            // Reverse: target → source (return flow) — same color, dimmer, smaller
+        if (particleEls.length < MAX_PARTICLES) {
             particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00022 + Math.random() * 0.0001,
                 direction: -1, color: color, radius: 2, alpha: 0.4 });
+            return 2;
         }
+        return 1;
     }
 
     function stopParticles() {
@@ -616,22 +619,6 @@
     function resetLayout() { try { localStorage.removeItem(STORAGE_KEY); } catch (e) {} if (window.drawConnectionDiagram) window.drawConnectionDiagram(); }
     function fitGraph() { if (cy) cy.fit(undefined, 40); }
 
-    // ---- 1j. Compatibility Shims ----
-    function getSVG() {
-        if (svgOverlay) return svgOverlay;
-        if (!container) return null;
-        svgOverlay = document.createElementNS(NS, 'svg');
-        var rect = container.getBoundingClientRect();
-        var w = rect.width || 800; var h = Math.max(rect.height, 500);
-        svgOverlay.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-        svgOverlay.setAttribute('width', '100%'); svgOverlay.setAttribute('height', h);
-        svgOverlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:20;pointer-events:auto;';
-        container.appendChild(svgOverlay);
-        return svgOverlay;
-    }
-    function getDimensions() { var rect = container ? container.getBoundingClientRect() : { width: 800, height: 500 }; var w = rect.width || 800; var h = Math.max(rect.height, 500); return { W: w, H: h, cx: w / 2, cy: h / 2, R: Math.min(w / 2, h / 2) - 90 }; }
-    function createEl(tag) { return document.createElementNS(NS, tag); }
-    function svgPoint(clientX, clientY) { if (!svgOverlay) return { x: clientX, y: clientY }; var pt = svgOverlay.createSVGPoint(); pt.x = clientX; pt.y = clientY; var ctm = svgOverlay.getScreenCTM(); if (!ctm) return { x: clientX, y: clientY }; return pt.matrixTransform(ctm.inverse()); }
     function setCallbacks(connClickFn, vpnClickFn) { onConnClick = connClickFn; onVPNClick = vpnClickFn; }
 
     // ---- 1k. Live Status Updates ----
@@ -640,7 +627,17 @@
         if (connChanges && connChanges.length > 0) {
             connChanges.forEach(function(ch) {
                 var edge = cy.getElementById('conn-' + ch.id);
-                if (!edge || edge.empty()) return;
+
+                // If edge not found, it may be an overlay bundled inside a tunnel
+                if (!edge || edge.empty()) {
+                    cy.edges('[edgeType="tunnel-bundle"]').forEach(function(tunnelEdge) {
+                        var children = tunnelEdge.data('childConns') || [];
+                        children.forEach(function(child) {
+                            if (child.id === ch.id) child.status = ch.status;
+                        });
+                    });
+                    return;
+                }
                 var oldStatus = edge.data('status');
                 if (oldStatus === ch.status) return;
                 if (ch.status === 'down') {
@@ -649,7 +646,7 @@
                         particleEls = particleEls.filter(function(p) { return p.edge !== edge; });
                     });
                 } else if (ch.status === 'up') {
-                    animateFlash(edge, '#3fb950', function() { edge.data('status', 'up'); addParticlePair(edge, TYPE_COLORS[edge.data('connType')] || '#8b949e', particleEls.length); });
+                    animateFlash(edge, '#3fb950', function() { edge.data('status', 'up'); addParticlePair(edge, TYPE_COLORS[edge.data('connType')] || '#8b949e'); });
                 } else { edge.data('status', ch.status); }
                 if (edge.data('connObj')) edge.data('connObj').status = ch.status;
             });
@@ -668,7 +665,7 @@
         var origColor = edge.style('line-color');
         var step = 0;
         function flash() {
-            if (step >= 6) { if (onComplete) onComplete(); return; }
+            if (step >= 6 || !edge || edge.removed()) { if (onComplete) onComplete(); return; }
             edge.animate({ style: { 'line-color': step % 2 === 0 ? color : origColor, 'width': step % 2 === 0 ? 6 : 3, 'opacity': 1 } },
                 { duration: 200, complete: function() { step++; flash(); } });
         }
@@ -688,11 +685,9 @@
 
     // ---- Public API ----
     window.FWDiagram = {
-        NS: NS, init: init, render: render, cleanup: cleanup,
-        getSVG: getSVG, getDimensions: getDimensions, createEl: createEl, svgPoint: svgPoint,
+        init: init, render: render, cleanup: cleanup,
         setCallbacks: setCallbacks, updateStatuses: updateStatuses,
         Layout: { resetLayout: resetLayout },
-        Connections: { redrawPaths: function() {} },
         Particles: { start: startParticles, stop: stopParticles }
     };
 })();

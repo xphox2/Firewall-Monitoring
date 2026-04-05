@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.144] - 2026-04-04
+
+### Fixed
+- **Overlay duplication**: Overlays (vxlan, l3ipvlan) assigned to first tunnel carrier only, not duplicated across all tunnels for a device pair
+- **Escape key handler leak**: Keydown listener now stored and removed on cleanup, preventing accumulation across re-renders
+- **Overlay status polling**: `updateStatuses()` now searches tunnel-bundle `childConns` when overlay edges aren't found as direct edges, preventing silent status loss
+- **Sublane filter inheritance**: Expanded sublanes and pipe-bg edges now hidden when parent tunnel type is filtered out
+- **Flash animation crash**: `animateFlash()` guards against removed edges mid-animation chain
+- **Particle count overflow**: `addParticlePair()` now checks `particleEls.length` directly instead of caller-tracked count, preventing MAX_PARTICLES overflow
+- **VXLAN/L3IPVLAN filter buttons removed**: These overlay types are now bundled inside tunnel edges, so standalone filter buttons were inert. Removed from toolbar.
+- **Dead code cleanup**: Deleted `diagram-tunnel-zoom.js` (289 lines) and SVG compatibility shims (`getSVG`, `getDimensions`, `createEl`, `svgPoint`, `NS` constant) that were only used by the removed tunnel zoom overlay
+
 ## [0.10.143] - 2026-04-04
 
 ### Changed
