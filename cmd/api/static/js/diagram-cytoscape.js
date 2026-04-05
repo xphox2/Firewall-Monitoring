@@ -96,13 +96,9 @@
         if (hasCloud) {
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
 
-            offnetDevices.forEach(function(info, idx) {
-                var offset = (idx % 2 === 0 ? (idx / 2 + 1) : -(Math.ceil(idx / 2))) * 10;
-                var dstAnchor = 'offnet-dst-' + info.deviceId;
-                // Only cloud-end anchor shifted by Y offset. Source is the real device node.
-                elements.push({ group: 'nodes', data: { id: dstAnchor, nodeType: 'offnet-anchor', anchorCloud: true, yOffset: offset }});
+            offnetDevices.forEach(function(info) {
                 elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: dstAnchor,
+                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
                     label: info.count + ' unmatched'
                 }});
@@ -270,11 +266,6 @@
                 'font-size': '64px', 'color': '#484f58',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
-            // Invisible anchor nodes for off-net stacking
-            { selector: 'node[nodeType="offnet-anchor"]', style: {
-                'width': 1, 'height': 1, 'background-opacity': 0, 'border-width': 0,
-                'label': '', 'events': 'no', 'overlay-opacity': 0
-            }},
             // Default edge — all straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
@@ -390,12 +381,6 @@
         });
         unsited.forEach(function(id, i) { positions[id] = { x: -(unsited.length - 1) * 170 / 2 + i * 170, y: 450 }; });
 
-        // Off-net cloud-end anchors: cloud position + Y offset
-        elements.forEach(function(el) {
-            if (el.group === 'nodes' && el.data.nodeType === 'offnet-anchor') {
-                positions[el.data.id] = { x: 0, y: el.data.yOffset || 0 };
-            }
-        });
 
         return positions;
     }
@@ -686,11 +671,6 @@
         cy.edges('[edgeType="sublane"], [edgeType="pipe-bg"]').forEach(function(edge) {
             var parentId = edge.data('parentTunnel');
             edge.style('display', hiddenTunnelIds[parentId] ? 'none' : 'element');
-        });
-        // Hide off-net anchor nodes when offnet is filtered
-        var hideAnchors = !!hiddenTypes['offnet'];
-        cy.nodes('[nodeType="offnet-anchor"]').forEach(function(n) {
-            n.style('display', hideAnchors ? 'none' : 'element');
         });
     }
 
