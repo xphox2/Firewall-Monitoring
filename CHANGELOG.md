@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.142] - 2026-04-04
+
+### Fixed
+- **Settings page sync**: Remove dead settings (`public_bandwidth_layout`, `public_bandwidth_height`) that the Gridstack dashboard no longer uses. Fix bandwidth interface selector bug (was querying `input` instead of `select`). Update Public Dashboard description to reflect widget-based layout
+
+### Added
+- **Email Reports settings card**: UI for configuring daily/weekly report scheduling (enable, time, day, recipients, timezone)
+- **Traffic Spike Detection settings card**: UI for enabling spike alerts and configuring the standard deviation threshold
+
 ## [0.10.141] - 2026-04-04
 
 ### Changed

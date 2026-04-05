@@ -717,7 +717,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Public Dashboard Display</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Control which cards are visible on the public dashboard.</p>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Control default widget visibility on the public dashboard. Users can also hide/show widgets locally via the Widgets menu.</p>
                 <div id="display-settings">
                     <div class="toggle-row"><label>Show Hostname</label><input type="checkbox" name="public_show_hostname" checked></div>
                     <div class="toggle-row"><label>Show Uptime</label><input type="checkbox" name="public_show_uptime" checked></div>
@@ -778,6 +778,16 @@
                     <button class="btn secondary" data-action="test-webhook" data-type="webhook_url">Test Webhook</button>
                     <span id="test-webhook-result" style="margin-left: 12px; font-size: 0.82rem; align-self: center;"></span>
                 </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h2>Email Reports</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Schedule automated email reports with device status summaries.</p>
+                <div class="settings-grid" id="settings-reports"></div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h2>Traffic Spike Detection</h2></div>
+                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
+                <div class="settings-grid" id="settings-spike"></div>
             </div>
             <div class="card">
                 <button class="btn" data-action="save-settings">Save Settings</button>

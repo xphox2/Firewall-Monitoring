@@ -421,8 +421,6 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 		"public_show_interfaces":       "true",
 		"public_show_bandwidth":        "false",
 		"public_bandwidth_interfaces":  "",
-		"public_bandwidth_layout":      "grid",
-		"public_bandwidth_height":      "400",
 		"public_show_vpn":              "false",
 		"public_vpn_tunnels":           "",
 		"public_show_connections":      "false",

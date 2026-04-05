@@ -1194,6 +1194,36 @@
                 return '<div class="setting-item"><label>' + s.label + '</label><input type="' + s.type + '" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" placeholder="' + (s.placeholder || '') + '"></div>';
             }).join('');
 
+            // Report scheduling settings
+            document.getElementById('settings-reports').innerHTML = [
+                { key: 'report_daily_enabled', label: 'Enable Daily Report', type: 'checkbox' },
+                { key: 'report_daily_time', label: 'Daily Report Time (HH:MM)', type: 'text', placeholder: '08:00' },
+                { key: 'report_weekly_enabled', label: 'Enable Weekly Report', type: 'checkbox' },
+                { key: 'report_weekly_day', label: 'Weekly Report Day', type: 'text', placeholder: 'Monday' },
+                { key: 'report_recipients', label: 'Report Recipients (emails)', type: 'text', placeholder: 'admin@example.com' },
+                { key: 'report_timezone', label: 'Report Timezone', type: 'text', placeholder: 'America/New_York' }
+            ].map(function(s) {
+                var found = settings.find(function(x) { return x.key === s.key; });
+                var savedVal = found ? found.value : '';
+                if (s.type === 'checkbox') {
+                    return '<div class="setting-item"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + (savedVal === 'true' ? 'checked' : '') + '></div>';
+                }
+                return '<div class="setting-item"><label>' + s.label + '</label><input type="text" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" placeholder="' + (s.placeholder || '') + '"></div>';
+            }).join('');
+
+            // Spike detection settings
+            document.getElementById('settings-spike').innerHTML = [
+                { key: 'spike_alert_enabled', label: 'Enable Spike Alerts', type: 'checkbox' },
+                { key: 'spike_stddev_threshold', label: 'Standard Deviation Threshold (1.0-10.0)', type: 'number', value: '3.0' }
+            ].map(function(s) {
+                var found = settings.find(function(x) { return x.key === s.key; });
+                var savedVal = found ? found.value : (s.value || '');
+                if (s.type === 'checkbox') {
+                    return '<div class="setting-item"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + (savedVal === 'true' ? 'checked' : '') + '></div>';
+                }
+                return '<div class="setting-item"><label>' + s.label + '</label><input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" step="0.1" min="1" max="10"></div>';
+            }).join('');
+
             return apiFetch(API_BASE + '/display-settings');
         }).then(function(displayResult) {
             if (displayResult && displayResult.data) {
@@ -1256,7 +1286,7 @@
                         ifSelect.appendChild(groupLabel);
                     });
                     
-                    var savedIfaces = document.querySelector('#display-settings input[name="public_bandwidth_interfaces"]');
+                    var savedIfaces = document.querySelector('select[name="public_bandwidth_interfaces"]');
                     if (savedIfaces && savedIfaces.value) {
                         var selectedIfaces = savedIfaces.value.split(',');
                         Array.from(ifSelect.options).forEach(function(opt) {
