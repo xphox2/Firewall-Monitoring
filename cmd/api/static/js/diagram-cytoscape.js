@@ -98,13 +98,11 @@
 
             offnetDevices.forEach(function(info, idx) {
                 var offset = (idx % 2 === 0 ? (idx / 2 + 1) : -(Math.ceil(idx / 2))) * 10;
-                var srcAnchor = 'offnet-src-' + info.deviceId;
                 var dstAnchor = 'offnet-dst-' + info.deviceId;
-                // Anchor at device end and anchor at cloud end, both shifted by same Y
-                elements.push({ group: 'nodes', data: { id: srcAnchor, nodeType: 'offnet-anchor', anchorDeviceId: info.deviceId, yOffset: offset }});
+                // Only cloud-end anchor shifted by Y offset. Source is the real device node.
                 elements.push({ group: 'nodes', data: { id: dstAnchor, nodeType: 'offnet-anchor', anchorCloud: true, yOffset: offset }});
                 elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId, source: srcAnchor, target: dstAnchor,
+                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: dstAnchor,
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
                     label: info.count + ' unmatched'
                 }});
@@ -392,18 +390,10 @@
         });
         unsited.forEach(function(id, i) { positions[id] = { x: -(unsited.length - 1) * 170 / 2 + i * 170, y: 450 }; });
 
-        // Off-net anchor nodes: positioned at device or cloud + Y offset
+        // Off-net cloud-end anchors: cloud position + Y offset
         elements.forEach(function(el) {
             if (el.group === 'nodes' && el.data.nodeType === 'offnet-anchor') {
-                var yOff = el.data.yOffset || 0;
-                if (el.data.anchorCloud) {
-                    // Cloud-side anchor: cloud position + Y offset
-                    positions[el.data.id] = { x: 0, y: yOff };
-                } else if (el.data.anchorDeviceId) {
-                    // Device-side anchor: device position + same Y offset
-                    var devPos = positions['dev-' + el.data.anchorDeviceId] || { x: 0, y: 0 };
-                    positions[el.data.id] = { x: devPos.x, y: devPos.y + yOff };
-                }
+                positions[el.data.id] = { x: 0, y: el.data.yOffset || 0 };
             }
         });
 
