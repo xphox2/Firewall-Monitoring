@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.151] - 2026-04-05
+
+### Fixed
+- **Empty tunnel traffic charts**: `getConnectionTunnelNames()` now handles `tunnel_indirect` and `wan_inferred` match methods by relaxing IP matching (same logic as `GetConnectionDetail`). Previously these connections returned zero tunnel matches → empty charts.
+- **sFlow sampling rate correction**: All flow volume calculations now multiply bytes/packets by `sampling_rate`. Previously all sFlow data was underreported by the sampling ratio (typically 1000-4096x).
+- **sFlow rollup preserves sampling correction**: `aggregateFlowsToRollup` now stores `bytes * sampling_rate` in rollup `bytes_sum`.
+- **FortiGate CIDR subnets**: Collect subnet mask OIDs (.10/.13) and use `buildCIDR()` (was dead code) to convert Phase 2 selectors to proper CIDR notation (e.g., `10.0.1.0/24` instead of `10.0.1.0 - 10.0.1.255`). Falls back to IP range if mask unavailable.
+- **FortiGate SSL-VPN byte counters**: Collect OIDs `.4`/`.5` (InOctets/OutOctets) for SSL-VPN sessions — enables traffic charts for SSL-VPN tunnels.
+- **Empty chart placeholder**: Traffic charts now show "No traffic data available" message instead of blank canvas when API returns empty data.
+
 ## [0.10.150] - 2026-04-05
 
 ### Fixed

@@ -30,9 +30,11 @@ var (
 	// Phase 2 selectors - source (local) subnet
 	fgOIDVPNTunnelSrcBeginIP = ".1.3.6.1.4.1.12356.101.12.2.2.1.8"  // Source selector begin IP
 	fgOIDVPNTunnelSrcEndIP   = ".1.3.6.1.4.1.12356.101.12.2.2.1.9"  // Source selector end IP
+	fgOIDVPNTunnelSrcMask    = ".1.3.6.1.4.1.12356.101.12.2.2.1.10" // Source subnet mask
 	// Phase 2 selectors - destination (remote) subnet
 	fgOIDVPNTunnelDstBeginIP = ".1.3.6.1.4.1.12356.101.12.2.2.1.11" // Destination selector begin IP
 	fgOIDVPNTunnelDstEndIP   = ".1.3.6.1.4.1.12356.101.12.2.2.1.12" // Destination selector end IP
+	fgOIDVPNTunnelDstMask    = ".1.3.6.1.4.1.12356.101.12.2.2.1.13" // Destination subnet mask
 	fgOIDVPNTunnelInOctets   = ".1.3.6.1.4.1.12356.101.12.2.2.1.18"
 	fgOIDVPNTunnelOutOctets  = ".1.3.6.1.4.1.12356.101.12.2.2.1.19"
 	fgOIDVPNTunnelStatus     = ".1.3.6.1.4.1.12356.101.12.2.2.1.20"
@@ -52,6 +54,8 @@ var (
 
 	fgBaseOIDSSLVPN          = ".1.3.6.1.4.1.12356.101.12.3.1.1"
 	fgOIDSSLVPNLoginName     = ".1.3.6.1.4.1.12356.101.12.3.1.1.3"
+	fgOIDSSLVPNInOctets      = ".1.3.6.1.4.1.12356.101.12.3.1.1.4"
+	fgOIDSSLVPNOutOctets     = ".1.3.6.1.4.1.12356.101.12.3.1.1.5"
 	fgOIDSSLVPNLoginState    = ".1.3.6.1.4.1.12356.101.12.3.1.1.6"
 	fgOIDSSLVPNLoginDuration = ".1.3.6.1.4.1.12356.101.12.3.1.1.7"
 
@@ -457,6 +461,18 @@ func (f *FortiGateProfile) ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VP
 				t.Status = "down"
 				t.State = "inactive"
 			}
+		} else if strings.HasPrefix(name, fgOIDSSLVPNInOctets+".") {
+			idx := getIndexFromOID(name, fgOIDSSLVPNInOctets)
+			if idx >= 0 {
+				t := getOrCreateVPN(tunnelMap, idx)
+				t.BytesIn = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+			}
+		} else if strings.HasPrefix(name, fgOIDSSLVPNOutOctets+".") {
+			idx := getIndexFromOID(name, fgOIDSSLVPNOutOctets)
+			if idx >= 0 {
+				t := getOrCreateVPN(tunnelMap, idx)
+				t.BytesOut = uint64(gosnmp.ToBigInt(pdu.Value).Uint64())
+			}
 		} else if strings.HasPrefix(name, fgOIDSSLVPNLoginDuration+".") {
 			idx := getIndexFromOID(name, fgOIDSSLVPNLoginDuration)
 			if idx < 0 {
@@ -500,8 +516,10 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 	// Temporary storage for Phase 2 subnet selectors (source=destination=local, dest=remote)
 	srcBeginIPs := make(map[int]string)
 	srcEndIPs := make(map[int]string)
+	srcMasks := make(map[int]string)
 	dstBeginIPs := make(map[int]string)
 	dstEndIPs := make(map[int]string)
+	dstMasks := make(map[int]string)
 
 	for _, pdu := range pdus {
 		name := pdu.Name
@@ -536,6 +554,11 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 			if idx >= 0 {
 				srcEndIPs[idx] = safeString(pdu.Value)
 			}
+		} else if strings.HasPrefix(name, fgOIDVPNTunnelSrcMask+".") {
+			idx := getIndexFromOID(name, fgOIDVPNTunnelSrcMask)
+			if idx >= 0 {
+				srcMasks[idx] = safeString(pdu.Value)
+			}
 		} else if strings.HasPrefix(name, fgOIDVPNTunnelDstBeginIP+".") {
 			idx := getIndexFromOID(name, fgOIDVPNTunnelDstBeginIP)
 			if idx >= 0 {
@@ -545,6 +568,11 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 			idx := getIndexFromOID(name, fgOIDVPNTunnelDstEndIP)
 			if idx >= 0 {
 				dstEndIPs[idx] = safeString(pdu.Value)
+			}
+		} else if strings.HasPrefix(name, fgOIDVPNTunnelDstMask+".") {
+			idx := getIndexFromOID(name, fgOIDVPNTunnelDstMask)
+			if idx >= 0 {
+				dstMasks[idx] = safeString(pdu.Value)
 			}
 		} else if strings.HasPrefix(name, fgOIDVPNTunnelInOctets+".") {
 			idx := getIndexFromOID(name, fgOIDVPNTunnelInOctets)
@@ -588,21 +616,31 @@ func (f *FortiGateProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSta
 	result := make([]models.VPNStatus, 0, len(tunnelMap))
 	for idx, t := range tunnelMap {
 		t.Timestamp = now
-		// Build Local Subnet (Phase 2 source selector)
+		// Build Local Subnet (Phase 2 source selector) — CIDR if mask available
 		srcBegin := srcBeginIPs[idx]
-		srcEnd := srcEndIPs[idx]
-		if srcBegin != "" && srcEnd != "" && srcBegin != srcEnd {
-			t.LocalSubnet = srcBegin + " - " + srcEnd
+		srcMask := srcMasks[idx]
+		if cidr := buildCIDR(srcBegin, srcMask); cidr != "" {
+			t.LocalSubnet = cidr
 		} else if srcBegin != "" {
-			t.LocalSubnet = srcBegin
+			srcEnd := srcEndIPs[idx]
+			if srcEnd != "" && srcEnd != srcBegin {
+				t.LocalSubnet = srcBegin + " - " + srcEnd
+			} else {
+				t.LocalSubnet = srcBegin
+			}
 		}
-		// Build Remote Subnet (Phase 2 destination selector)
+		// Build Remote Subnet (Phase 2 destination selector) — CIDR if mask available
 		dstBegin := dstBeginIPs[idx]
-		dstEnd := dstEndIPs[idx]
-		if dstBegin != "" && dstEnd != "" && dstBegin != dstEnd {
-			t.RemoteSubnet = dstBegin + " - " + dstEnd
+		dstMask := dstMasks[idx]
+		if cidr := buildCIDR(dstBegin, dstMask); cidr != "" {
+			t.RemoteSubnet = cidr
 		} else if dstBegin != "" {
-			t.RemoteSubnet = dstBegin
+			dstEnd := dstEndIPs[idx]
+			if dstEnd != "" && dstEnd != dstBegin {
+				t.RemoteSubnet = dstBegin + " - " + dstEnd
+			} else {
+				t.RemoteSubnet = dstBegin
+			}
 		}
 		result = append(result, *t)
 	}

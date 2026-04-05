@@ -259,6 +259,10 @@
             const canvas = document.getElementById('panel-traffic-chart');
             if (!canvas) return;
             if (panelChartInstances['traffic']) panelChartInstances['traffic'].destroy();
+            if (!Array.isArray(data) || data.length === 0) {
+                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No traffic data available for this connection.</div>';
+                return;
+            }
             const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
             panelChartInstances['traffic'] = new Chart(canvas, {
                 type: 'line',

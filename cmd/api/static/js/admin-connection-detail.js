@@ -335,6 +335,11 @@
             var canvas = document.getElementById('traffic-chart');
             if (trafficChart) trafficChart.destroy();
 
+            if (!Array.isArray(data) || data.length === 0) {
+                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
+                return;
+            }
+
             var labels = data.map(function(d) { return d.bucket.split(' ').pop() || d.bucket; });
 
             // Throughput gauges — use server-computed bytes/sec, gauge max = 1 Gbps (125 MB/s)

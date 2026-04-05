@@ -1340,7 +1340,7 @@ func topAddrsByBytes(base func() *gorm.DB, addrCol string, limit int) []KeyCount
 		Total int64
 	}
 	var rows []row
-	base().Select(addrCol+" as addr, SUM(bytes) as total").Group(addrCol).
+	base().Select(addrCol+" as addr, SUM(bytes * CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE 1 END) as total").Group(addrCol).
 		Order("total DESC").Limit(limit).Scan(&rows)
 	out := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
@@ -1408,7 +1408,8 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		UniqueSources int64
 		UniqueDests   int64
 	}
-	if err := newRawBase().Select("COUNT(*) as total_flows, COALESCE(SUM(bytes),0) as total_bytes, " +
+	// Multiply bytes/packets by sampling_rate to estimate actual traffic volume
+	if err := newRawBase().Select("COUNT(*) as total_flows, COALESCE(SUM(bytes * CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE 1 END),0) as total_bytes, " +
 		"COUNT(DISTINCT src_addr) as unique_sources, COUNT(DISTINCT dst_addr) as unique_dests").
 		Scan(&rawAgg).Error; err != nil {
 		return nil, fmt.Errorf("flow stats raw aggregates: %w", err)
@@ -1744,7 +1745,7 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		if err := d.db.Model(&models.FlowSample{}).
 			Where("timestamp < ?", cutoff).
 			Select(bucketExpr+" as bucket, device_id, src_addr, dst_addr, dst_port, protocol, "+
-				"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, "+
+				"SUM(bytes * CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE 1 END) as bytes_sum, SUM(packets * CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE 1 END) as packets_sum, COUNT(*) as flow_count, "+
 				"AVG(sampling_rate) as sampling_rate_avg").
 			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
 			Limit(pageSize).Offset(offset).
@@ -2296,6 +2297,21 @@ func (d *Database) getConnectionTunnelNames(connID uint) (srcDeviceID, dstDevice
 	// Collect IPs for both devices
 	destIPs := d.collectDeviceIPs(conn.DestDeviceID, conn.DestDevice)
 	srcIPs := d.collectDeviceIPs(conn.SourceDeviceID, conn.SourceDevice)
+
+	// For indirectly matched connections (NAT'd hub-spoke), relax IP matching
+	// by adding the peer's tunnel remote IPs — same logic as GetConnectionDetail
+	if conn.MatchMethod == "tunnel_indirect" || conn.MatchMethod == "wan_inferred" {
+		for _, t := range dstTunnels {
+			if t.RemoteIP != "" {
+				srcIPs[t.RemoteIP] = true
+			}
+		}
+		for _, t := range srcTunnels {
+			if t.RemoteIP != "" {
+				destIPs[t.RemoteIP] = true
+			}
+		}
+	}
 
 	// Known tunnel names from auto-discovery
 	knownTunnels := make(map[string]bool)
