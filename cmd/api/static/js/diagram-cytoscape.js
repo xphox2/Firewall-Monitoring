@@ -156,7 +156,12 @@
                 var childConns = (!overlaysAssigned && p.overlays.length > 0) ? p.overlays.slice() : [];
                 if (childConns.length > 0) overlaysAssigned = true;
                 var isDialUp = tunnel.match_method === 'tunnel_indirect' || tunnel.match_method === 'wan_inferred';
-                var labelText = tunnel.connection_type.toUpperCase() + (childConns.length > 0 ? ' +' + childConns.length : '') + (isDialUp ? ' DIAL-UP' : '');
+                var p2Count = tunnel.tunnel_names ? tunnel.tunnel_names.split(',').filter(function(n) { return n.trim(); }).length : 0;
+                var labelParts = [tunnel.connection_type.toUpperCase()];
+                if (p2Count > 1) labelParts.push('(' + p2Count + ' P2)');
+                if (childConns.length > 0) labelParts.push('+' + childConns.length);
+                if (isDialUp) labelParts.push('DIAL-UP');
+                var labelText = labelParts.join(' ');
 
                 if (crossSite && hasCloud) {
                     // Cross-site: route through Internet cloud as two half-edges
@@ -748,7 +753,18 @@
                 });
             } else if (data.edgeType === 'sublane') {
                 var color = TYPE_COLORS[data.connType] || '#8b949e';
-                count += addParticlePair(edge, color);
+                var isSplitLane = data.id && (data.id.endsWith('-a') || data.id.endsWith('-b'));
+                if (isSplitLane) {
+                    // Cross-site sublane half: forward-only (both halves chain for end-to-end flow)
+                    if (particleEls.length < MAX_PARTICLES) {
+                        particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.00015,
+                            direction: 1, color: color, radius: 3, alpha: 0.85 });
+                        count++;
+                    }
+                } else {
+                    // Same-site sublane: normal bidirectional pair
+                    count += addParticlePair(edge, color);
+                }
             } else if (data.edgeType === 'offnet') {
                 if (particleEls.length < MAX_PARTICLES) {
                     particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.0002,

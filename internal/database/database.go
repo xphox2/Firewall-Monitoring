@@ -2115,6 +2115,12 @@ type Phase2Match struct {
 	RemoteSubnet  string `json:"remote_subnet"`
 	SourceStatus  string `json:"source_status"`
 	DestStatus    string `json:"dest_status"`
+	SrcBytesIn    uint64 `json:"src_bytes_in"`
+	SrcBytesOut   uint64 `json:"src_bytes_out"`
+	DstBytesIn    uint64 `json:"dst_bytes_in"`
+	DstBytesOut   uint64 `json:"dst_bytes_out"`
+	SrcUptime     uint64 `json:"src_uptime"`
+	DstUptime     uint64 `json:"dst_uptime"`
 }
 
 // ConnectionDetailResult holds full detail for a connection including matching tunnels.
@@ -2316,6 +2322,12 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 					RemoteSubnet: src.RemoteSubnet,
 					SourceStatus: src.Status,
 					DestStatus:   dst.Status,
+					SrcBytesIn:   src.BytesIn,
+					SrcBytesOut:  src.BytesOut,
+					DstBytesIn:   dst.BytesIn,
+					DstBytesOut:  dst.BytesOut,
+					SrcUptime:    src.TunnelUptime,
+					DstUptime:    dst.TunnelUptime,
 				})
 			}
 		}

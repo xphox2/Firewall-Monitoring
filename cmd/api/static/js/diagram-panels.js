@@ -432,11 +432,19 @@
             const bothUp = srcUp && dstUp;
             const pathColor = bothUp ? '#3fb950' : '#f85149';
             const statusClass = bothUp ? 'up' : 'down';
+            const fmtB = window.formatBytes || function(v) { return v + ' B'; };
+            const srcTotal = (m.src_bytes_in || 0) + (m.src_bytes_out || 0);
             html += `
             <div style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px;margin-bottom:8px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
                     <span style="font-size:0.8rem;font-weight:600;color:#e6edf3;">${window.escapeHtml(m.source_phase1 || m.source_tunnel)} &harr; ${window.escapeHtml(m.dest_phase1 || m.dest_tunnel)}</span>
                     <span class="badge ${statusClass}" style="font-size:0.65rem;">${bothUp ? 'ACTIVE' : 'DOWN'}</span>
+                </div>
+                <div style="display:flex;gap:12px;margin-bottom:6px;font-size:0.72rem;color:#8b949e;">
+                    <span>&darr; In: <strong style="color:#58a6ff;">${fmtB(m.src_bytes_in || 0)}</strong></span>
+                    <span>&uarr; Out: <strong style="color:#3fb950;">${fmtB(m.src_bytes_out || 0)}</strong></span>
+                    <span>Total: <strong style="color:#e6edf3;">${fmtB(srcTotal)}</strong></span>
+                    ${m.src_uptime ? `<span>Up: ${Math.floor(m.src_uptime / 3600)}h</span>` : ''}
                 </div>
                 <svg width="100%" height="60" viewBox="0 0 500 60" style="display:block;">
                     <rect x="0" y="10" width="130" height="40" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>

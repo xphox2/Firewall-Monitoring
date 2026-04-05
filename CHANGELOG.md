@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.154] - 2026-04-05
+
+### Fixed
+- **Sublane particle flow through cloud**: Cross-site expanded sublane halves (-a/-b) now use forward-only particles like the parent tunnel edges. Previously bidirectional particles on both halves collided at the cloud node.
+
+### Added
+- **Phase 2 count in tunnel labels**: Tunnel-bundle edges now show Phase 2 selector count (e.g., "IPSEC (3 P2) +2 DIAL-UP") when a tunnel has multiple Phase 2 entries
+- **Per-Phase2 throughput in detail panel**: Phase 2 tab now shows BytesIn, BytesOut, Total, and Uptime per Phase 2 selector match — not just up/down status
+- **Phase2Match byte counters**: Backend `Phase2Match` struct now includes `SrcBytesIn/Out`, `DstBytesIn/Out`, `SrcUptime`, `DstUptime` from the per-SA SNMP counters
+
 ## [0.10.153] - 2026-04-05
 
 ### Changed
