@@ -74,9 +74,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"public_show_interfaces":       true,
 		"public_refresh_interval":      true,
 		"public_show_bandwidth":        true,
-		"public_bandwidth_interfaces":  true,
 		"public_show_vpn":              true,
-		"public_vpn_tunnels":           true,
 		"public_show_connections":      true,
 		"public_interfaces":            true,
 		"public_vpn_tunnels_by_device": true,
@@ -173,7 +171,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid timezone value"))
 				return
 			}
-		case "public_interfaces", "public_vpn_tunnels", "public_vpn_tunnels_by_device", "public_bandwidth_interfaces":
+		case "public_interfaces", "public_vpn_tunnels_by_device":
 			// No validation needed for JSON string settings
 		case "smtp_password":
 			// Skip masked passwords
@@ -420,9 +418,7 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 		"public_show_sessions":         "true",
 		"public_show_interfaces":       "true",
 		"public_show_bandwidth":        "false",
-		"public_bandwidth_interfaces":  "",
 		"public_show_vpn":              "false",
-		"public_vpn_tunnels":           "",
 		"public_show_connections":      "false",
 		"public_refresh_interval":      "30",
 		"public_interfaces":            "{}", // JSON: {"1":["wan1"],"2":["dmz"]}
