@@ -258,11 +258,11 @@
             { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f85149' } },
             // Cloud node — large cloud icon centered
             { selector: 'node[nodeType="cloud"]', style: {
-                'width': 100, 'height': 100, 'shape': 'ellipse',
-                'background-color': '#0d1117', 'background-opacity': 0,
-                'border-width': 0,
+                'width': 10, 'height': 10, 'shape': 'ellipse',
+                'background-opacity': 0, 'border-width': 0,
+                'padding': 0,
                 'label': '\u2601\uFE0F', 'text-valign': 'center', 'text-halign': 'center',
-                'font-size': '64px', 'color': '#484f58',
+                'font-size': '80px', 'color': '#484f58',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
             // Default edge — all straight lines
