@@ -281,10 +281,16 @@
             { selector: 'edge[connType="lag"]', style: { 'line-color': '#d29922', 'width': 4 } },
             { selector: 'edge[connType="ethernet"]', style: { 'line-color': '#6e7681', 'width': 2 } },
             { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e' } },
-            // Sub-lane edges (expansion) — straight through cloud
-            { selector: 'edge[edgeType="sublane"]', style: { 'width': 2, 'label': 'data(label)', 'font-size': '8px', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -8 } },
+            // Sub-lane edges (expansion) — offset bezier for visual separation
+            { selector: 'edge[edgeType="sublane"]', style: {
+                'width': 3, 'curve-style': 'unbundled-bezier',
+                'label': 'data(label)', 'font-size': '9px', 'color': '#c9d1d9',
+                'text-rotation': 'autorotate', 'text-margin-y': -10,
+                'text-background-color': '#0d1117', 'text-background-opacity': 0.8,
+                'text-background-padding': '2px'
+            }},
             // Pipe background (expansion)
-            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 12, 'opacity': 0.15, 'line-color': '#58a6ff' } },
+            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
             // Off-net edges
             { selector: 'edge[edgeType="offnet"]', style: { 'line-color': '#3fb950', 'width': 2, 'line-style': 'dashed', 'line-dash-pattern': [2, 4, 8, 4] } },
             // DOWN edges — red X
@@ -444,11 +450,8 @@
                 return;
             }
 
-            // Pipe background: click to collapse
-            if (data.edgeType === 'pipe-bg' && data.parentTunnel) {
-                collapseTunnel(data.parentTunnel);
-                return;
-            }
+            // Pipe background: ignored (collapse via Escape or background tap)
+            if (data.edgeType === 'pipe-bg') return;
 
             // Regular connection or sublane: show detail panel
             if ((data.edgeType === 'connection' || data.edgeType === 'sublane') && data.connObj && onConnClick) {
@@ -479,10 +482,21 @@
         cy.on('dragfree', 'node[nodeType="device"]', savePositions);
         cy.on('dragfree', 'node[nodeType="site"]', savePositions);
 
+        // Background tap: collapse all expanded tunnels and fit view
+        cy.on('tap', function(evt) {
+            if (evt.target === cy && Object.keys(expandedTunnels).length > 0) {
+                Object.keys(expandedTunnels).forEach(collapseTunnel);
+                cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
+            }
+        });
+
         // Escape key collapses all expanded tunnels (store ref for cleanup)
         if (keydownHandler) document.removeEventListener('keydown', keydownHandler);
         keydownHandler = function(e) {
-            if (e.key === 'Escape') Object.keys(expandedTunnels).forEach(collapseTunnel);
+            if (e.key === 'Escape' && Object.keys(expandedTunnels).length > 0) {
+                Object.keys(expandedTunnels).forEach(collapseTunnel);
+                if (cy) cy.animate({ fit: { eles: cy.elements(), padding: 40 } }, { duration: 400 });
+            }
         };
         document.addEventListener('keydown', keydownHandler);
     }
@@ -516,30 +530,45 @@
             }
         }
 
-        // Helper: add a sublane (cross-site = two halves through cloud, same-site = direct)
-        function addSublane(laneId, connType, status, connObj, labelText, color) {
+        // Calculate offsets for visual separation
+        var totalLanes = children.length + 1;
+        var spacing = 25;
+        var baseOffset = -(totalLanes - 1) * spacing / 2;
+
+        // Helper: add a sublane with vertical offset
+        function addSublane(laneId, connType, status, connObj, labelText, color, laneIdx) {
+            var offset = baseOffset + laneIdx * spacing;
+            var cpDist = [offset];
+            var cpWeight = [0.5];
+
+            function styleLane(id) {
+                cy.getElementById(id).style({
+                    'line-color': color,
+                    'control-point-distances': cpDist,
+                    'control-point-weights': cpWeight
+                });
+            }
+
             if (isCrossSite) {
-                // Source → Cloud half
                 cy.add({ group: 'edges', data: {
                     id: laneId + '-a', source: laneSrc, target: 'cloud-internet',
                     edgeType: 'sublane', connType: connType, status: status,
                     connObj: connObj, parentTunnel: tunnelId, label: labelText
                 }});
-                cy.getElementById(laneId + '-a').style({ 'line-color': color });
-                // Cloud → Dest half
+                styleLane(laneId + '-a');
                 cy.add({ group: 'edges', data: {
                     id: laneId + '-b', source: 'cloud-internet', target: remoteDst,
                     edgeType: 'sublane', connType: connType, status: status,
                     connObj: connObj, parentTunnel: tunnelId, label: ''
                 }});
-                cy.getElementById(laneId + '-b').style({ 'line-color': color });
+                styleLane(laneId + '-b');
             } else {
                 cy.add({ group: 'edges', data: {
                     id: laneId, source: laneSrc, target: laneDst,
                     edgeType: 'sublane', connType: connType, status: status,
                     connObj: connObj, parentTunnel: tunnelId, label: labelText
                 }});
-                cy.getElementById(laneId).style({ 'line-color': color });
+                styleLane(laneId);
             }
         }
 
@@ -551,17 +580,34 @@
             cy.add({ group: 'edges', data: { id: tunnelId + '-pipe', source: laneSrc, target: laneDst, edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId }});
         }
 
-        // Carrier sublane
-        addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, data.connType.toUpperCase(), TYPE_COLORS[data.connType] || '#8b949e');
+        // Carrier sublane (index 0)
+        addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, data.connType.toUpperCase(), TYPE_COLORS[data.connType] || '#8b949e', 0);
 
-        // Child overlay sublanes
-        children.forEach(function(child) {
-            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, child.connection_type.toUpperCase(), TYPE_COLORS[child.connection_type] || '#8b949e');
+        // Child overlay sublanes (index 1, 2, ...)
+        children.forEach(function(child, idx) {
+            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, child.connection_type.toUpperCase(), TYPE_COLORS[child.connection_type] || '#8b949e', idx + 1);
         });
 
         // Restart particles to include new sublanes
         stopParticles();
         startParticles();
+
+        // Zoom to fit the expanded tunnel's source and destination nodes
+        var nodesToFit = cy.collection();
+        var srcNode = cy.getElementById(laneSrc);
+        if (srcNode && !srcNode.empty()) nodesToFit = nodesToFit.union(srcNode);
+        if (isCrossSite) {
+            var cloudNode = cy.getElementById('cloud-internet');
+            if (cloudNode && !cloudNode.empty()) nodesToFit = nodesToFit.union(cloudNode);
+            var dstNode = cy.getElementById(remoteDst);
+            if (dstNode && !dstNode.empty()) nodesToFit = nodesToFit.union(dstNode);
+        } else {
+            var dstNode2 = cy.getElementById(laneDst);
+            if (dstNode2 && !dstNode2.empty()) nodesToFit = nodesToFit.union(dstNode2);
+        }
+        if (nodesToFit.length > 0) {
+            cy.animate({ fit: { eles: nodesToFit, padding: 80 } }, { duration: 400 });
+        }
     }
 
     function collapseTunnel(tunnelId) {
