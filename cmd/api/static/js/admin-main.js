@@ -47,54 +47,11 @@
         return 'debug';
     }
 
-    // Connection type visual style mapping
-    function connStyle(type) {
-        var styles = {
-            ipsec:    { color: '#58a6ff', dash: null, width: 3 },
-            ssl:      { color: '#d29922', dash: null, width: 3 },
-            vxlan:    { color: '#8957e5', dash: '8,4', width: 3 },
-            l2vlan:   { color: '#39d4e0', dash: null, width: 3 },
-            l3ipvlan: { color: '#da7de8', dash: '12,4', width: 3 },
-            gre:      { color: '#b392f0', dash: null, width: 3 },
-            wan:      { color: '#f0883e', dash: null, width: 3 },
-            lag:      { color: '#d29922', dash: null, width: 4 },
-            ethernet: { color: '#6e7681', dash: null, width: 2 },
-            tunnel:   { color: '#8b949e', dash: null, width: 3 }
-        };
-        return styles[type] || styles.tunnel;
-    }
-    window.connStyle = connStyle;
-
-    function typeBadgeHtml(type) {
-        var labels = {ipsec:'IPSec',vxlan:'VXLAN',ssl:'SSL VPN',wan:'WAN',l2vlan:'L2VLAN',l3ipvlan:'L3IPVLAN',gre:'GRE',lag:'LAG',ethernet:'Ethernet',tunnel:'Tunnel'};
-        var cs = connStyle(type);
-        return '<span class="badge" style="background:' + cs.color + '22;color:' + cs.color + ';">' + escapeHtml(labels[type] || (type || 'tunnel').toUpperCase()) + '</span>';
-    }
-    window.typeBadgeHtml = typeBadgeHtml;
-
-    function matchMethodBadge(method, autoDetected) {
-        if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
-        var badges = {
-            'ip_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'interface_ip': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'subnet_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'wan_inferred': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'name_match': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'overlay_name': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>'
-        };
-        return badges[method] || badges['ip_match'];
-    }
-    window.matchMethodBadge = matchMethodBadge;
-
-    function formatBytes(bytes) {
-        if (!bytes || bytes === 0) return '0 B';
-        var units = ['B','KB','MB','GB','TB'];
-        var i = Math.floor(Math.log(bytes) / Math.log(1024));
-        return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-    }
-    window.formatBytes = formatBytes;
+    // Shared utilities imported from admin-common.js
+    var connStyle = AC.connStyle;
+    var matchMethodBadge = AC.matchMethodBadge;
+    var typeBadgeHtml = AC.typeBadgeHtml;
+    var formatBytes = AC.formatBytes;
 
     function formatBps(bps) {
         if (!bps || bps <= 0) return '0 bps';
@@ -106,8 +63,7 @@
         return (bps / Math.pow(1000, i)).toFixed(1) + ' ' + units[i];
     }
 
-    function formatNum(n) { return n != null ? Number(n).toLocaleString() : '0'; }
-    window.formatNum = formatNum;
+    var formatNum = AC.formatNum;
 
     function timeAgo(dateStr) {
         var d = new Date(dateStr);
@@ -1267,6 +1223,8 @@
             document.getElementById('device-location').value = d.location || '';
             document.getElementById('device-description').value = d.description || '';
             document.getElementById('device-wan-speed').value = d.wan_speed_mbps || 1000;
+            document.getElementById('device-enabled').checked = d.enabled !== false;
+            document.getElementById('device-public-visible').checked = d.public_visible !== false;
         } else {
             document.getElementById('device-form').reset();
             document.getElementById('device-id').value = '';
@@ -1348,7 +1306,8 @@
                 location: document.getElementById('device-location').value,
                 description: document.getElementById('device-description').value,
                 wan_speed_mbps: parseInt(document.getElementById('device-wan-speed').value),
-                enabled: true
+                enabled: document.getElementById('device-enabled').checked,
+                public_visible: document.getElementById('device-public-visible').checked
             };
             if (snmpVersion === '3') {
                 data.snmpv3_username = document.getElementById('device-v3-username').value;
@@ -1487,18 +1446,6 @@
         document.querySelectorAll('#display-settings input').forEach(function(input) {
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
-        
-        var bandwidthSelect = document.querySelector('select[name="public_bandwidth_interfaces"]');
-        if (bandwidthSelect) {
-            var selectedIfaces = Array.from(bandwidthSelect.selectedOptions).map(function(o) { return o.value; }).join(',');
-            settings.push({ key: 'public_bandwidth_interfaces', value: selectedIfaces, category: 'display', type: 'string' });
-        }
-        
-        var vpnSelect = document.querySelector('select[name="public_vpn_tunnels"]');
-        if (vpnSelect) {
-            var selectedVpns = Array.from(vpnSelect.selectedOptions).map(function(o) { return o.value; }).join(',');
-            settings.push({ key: 'public_vpn_tunnels', value: selectedVpns, category: 'display', type: 'string' });
-        }
         
         var tzSel = document.getElementById('display-timezone');
         if (tzSel && tzSel.value) {

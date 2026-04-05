@@ -35,7 +35,7 @@
             body: JSON.stringify(payload)
         }).then(function(resp) {
             if (resp.ok) {
-                console.log('Saved:', publicInterfaces);
+                // saved successfully
             } else {
                 console.error('Failed to save, status:', resp.status);
             }

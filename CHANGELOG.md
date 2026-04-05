@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.146] - 2026-04-05
+
+### Changed
+- **Consolidate shared utilities into admin-common.js**: `escapeHtml` (now includes `'` escaping), `formatBytes`, `formatNum`, `connStyle`, `matchMethodBadge`, `typeBadgeHtml` moved to admin-common.js. Removed 4x duplicate `escapeHtml`, 4x duplicate `formatBytes`, 3x duplicate `connStyle`, 2x duplicate `matchMethodBadge` from individual files
+
+### Fixed
+- **Device edit modal**: Added `Enabled` and `Public Visible` checkboxes. Previously `enabled` was hardcoded to `true` on every save, and `public_visible` was not included — editing a device could silently reset visibility
+- **Dead settings save code**: Removed leftover `public_bandwidth_interfaces` and `public_vpn_tunnels` save logic from settings submit (the select elements were already removed from the HTML)
+- **Debug log leak**: Removed `console.log('Saved:', publicInterfaces)` from admin-device-detail.js
+
 ## [0.10.145] - 2026-04-04
 
 ### Fixed

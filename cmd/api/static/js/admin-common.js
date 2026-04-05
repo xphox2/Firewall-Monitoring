@@ -49,7 +49,54 @@
 
     function escapeHtml(str) {
         if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function formatBytes(bytes) {
+        if (bytes == null || bytes === 0) return '0 B';
+        var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024));
+        if (i >= sizes.length) i = sizes.length - 1;
+        return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+    }
+
+    function formatNum(n) { return n != null ? Number(n).toLocaleString() : '0'; }
+
+    function connStyle(type) {
+        var styles = {
+            ipsec: { color: '#58a6ff', dash: null, width: 3 },
+            ssl: { color: '#d29922', dash: null, width: 3 },
+            vxlan: { color: '#8957e5', dash: '8,4', width: 3 },
+            l2vlan: { color: '#39d4e0', dash: null, width: 3 },
+            l3ipvlan: { color: '#da7de8', dash: '12,4', width: 3 },
+            gre: { color: '#b392f0', dash: null, width: 3 },
+            wan: { color: '#f0883e', dash: null, width: 3 },
+            lag: { color: '#d29922', dash: null, width: 4 },
+            ethernet: { color: '#6e7681', dash: null, width: 2 },
+            tunnel: { color: '#8b949e', dash: null, width: 3 }
+        };
+        return styles[type] || styles.tunnel;
+    }
+
+    function matchMethodBadge(method, autoDetected) {
+        if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
+        var badges = {
+            'ip_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'interface_ip': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'subnet_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
+            'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
+            'wan_inferred': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
+            'name_match': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
+            'overlay_name': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>'
+        };
+        return badges[method] || badges['ip_match'];
+    }
+
+    function typeBadgeHtml(type) {
+        var labels = {ipsec:'IPSec',vxlan:'VXLAN',ssl:'SSL VPN',wan:'WAN',l2vlan:'L2VLAN',l3ipvlan:'L3IPVLAN',gre:'GRE',lag:'LAG',ethernet:'Ethernet',tunnel:'Tunnel'};
+        var cs = connStyle(type);
+        return '<span class="badge" style="background:' + cs.color + ';font-size:0.65rem;padding:1px 5px;">' + (labels[type] || type || 'Unknown') + '</span>';
     }
 
     function showError(msg) {
@@ -123,6 +170,11 @@
         fetchCsrfToken: fetchCsrfToken,
         getCsrfToken: getCsrfToken,
         escapeHtml: escapeHtml,
+        formatBytes: formatBytes,
+        formatNum: formatNum,
+        connStyle: connStyle,
+        matchMethodBadge: matchMethodBadge,
+        typeBadgeHtml: typeBadgeHtml,
         showError: showError,
         showSuccess: showSuccess,
         apiFetch: apiFetch,
@@ -146,7 +198,12 @@
     }
     loadTimezoneFromServer();
 
-    // Set globals for diagram-panels.js interop
+    // Set globals for diagram-panels.js and other interop
     window.API_BASE = API_BASE;
     window.escapeHtml = escapeHtml;
+    window.formatBytes = formatBytes;
+    window.formatNum = formatNum;
+    window.connStyle = connStyle;
+    window.matchMethodBadge = matchMethodBadge;
+    window.typeBadgeHtml = typeBadgeHtml;
 })();
