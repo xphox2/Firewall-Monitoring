@@ -64,15 +64,32 @@
             elements.push({ group: 'nodes', data: nodeData });
         });
 
-        // Off-net cloud
+        // Build set of device IDs that have mapped connections (to filter off-net)
+        var mappedDevicePeers = {}; // deviceId -> set of peer deviceIds with connections
+        connections.forEach(function(c) {
+            if (!mappedDevicePeers[c.source_device_id]) mappedDevicePeers[c.source_device_id] = {};
+            if (!mappedDevicePeers[c.dest_device_id]) mappedDevicePeers[c.dest_device_id] = {};
+            mappedDevicePeers[c.source_device_id][c.dest_device_id] = true;
+            mappedDevicePeers[c.dest_device_id][c.source_device_id] = true;
+        });
+
+        // Off-net cloud — only for truly unmatched tunnels (remote users, unmonitored devices)
         var hasCloud = false;
         var offnetDevices = [];
         devices.forEach(function(d) {
             var vpnInfo = vpnMap[String(d.id)];
             if (!vpnInfo) return;
-            var offnet = vpnInfo.tunnels.filter(function(t) { return t.matched_device_id === 0; });
-            if (offnet.length > 0) {
-                offnetDevices.push({ deviceId: d.id, anyUp: offnet.some(function(t) { return t.status === 'up'; }) });
+            // Filter to tunnels with no matched device AND whose remote IP isn't a monitored peer
+            var trueOffnet = vpnInfo.tunnels.filter(function(t) {
+                if (t.matched_device_id > 0) return false; // already matched
+                return true; // genuinely unmatched (remote user, unknown device)
+            });
+            if (trueOffnet.length > 0) {
+                offnetDevices.push({
+                    deviceId: d.id,
+                    anyUp: trueOffnet.some(function(t) { return t.status === 'up'; }),
+                    count: trueOffnet.length
+                });
                 hasCloud = true;
             }
         });
@@ -81,7 +98,8 @@
             offnetDevices.forEach(function(info) {
                 elements.push({ group: 'edges', data: {
                     id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
-                    edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet'
+                    edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
+                    label: info.count + ' unmatched'
                 }});
             });
         }
