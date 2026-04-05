@@ -236,9 +236,9 @@
     // ---- 1b. Stylesheet ----
     function buildStylesheet() {
         return [
-            // Site compound nodes — subtle fill + label above with dark background
+            // Site compound nodes — label above with dark background for visibility
             { selector: 'node[nodeType="site"]', style: {
-                'background-color': '#161b22', 'background-opacity': 0.4, 'border-width': 1.5, 'border-style': 'dashed',
+                'background-opacity': 0, 'border-width': 1.5, 'border-style': 'dashed',
                 'border-color': '#30363d', 'border-opacity': 0.7, 'label': 'data(label)',
                 'text-valign': 'top', 'text-halign': 'center', 'font-size': '13px',
                 'color': '#e6edf3', 'font-weight': '600', 'text-margin-y': -12,
@@ -265,18 +265,13 @@
                 'font-size': '64px', 'color': '#484f58',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
-            // Default edge — straight lines
+            // Default edge — all straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
                 'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
             }},
-            // Tunnel bundle edges — thicker pipe with readable label
-            { selector: 'edge[edgeType="tunnel-bundle"]', style: {
-                'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#8b949e',
-                'text-rotation': 'autorotate', 'text-margin-y': -10,
-                'text-background-color': '#0d1117', 'text-background-opacity': 0.85,
-                'text-background-padding': '2px'
-            }},
+            // Tunnel bundle edges — thicker pipe
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#484f58', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
             // Connection type colors
             { selector: 'edge[connType="ipsec"]', style: { 'line-color': '#58a6ff' } },
             { selector: 'edge[connType="ssl"]', style: { 'line-color': '#d29922' } },
@@ -298,19 +293,21 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges — straight, stacked via endpoint offsets
+            // Off-net edges — haystack so they don't overlap tunnel edges at the device node
             { selector: 'edge[edgeType="offnet"]', style: {
                 'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
-                'line-style': 'dashed', 'line-dash-pattern': [3, 6]
+                'line-style': 'dashed', 'line-dash-pattern': [3, 6],
+                'curve-style': 'haystack', 'haystack-radius': 0.5
             }},
-            // DOWN edges — red X as source-label (preserves main label)
+            // DOWN edges — red X
             { selector: 'edge[status="down"]', style: {
                 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'opacity': 0.6,
-                'source-label': '\u2716', 'source-text-rotation': 'autorotate',
-                'source-text-offset': 40, 'font-size': '16px', 'color': '#f85149',
-                'source-text-margin-y': 0,
-                'text-background-color': '#0d1117', 'text-background-opacity': 0.9,
-                'text-background-padding': '3px', 'text-background-shape': 'roundrectangle'
+                'label': '\u2716', 'text-rotation': 'autorotate', 'font-size': '18px',
+                'color': '#f85149', 'text-background-color': '#0d1117',
+                'text-background-opacity': 0.9, 'text-background-padding': '4px',
+                'text-background-shape': 'roundrectangle', 'text-border-color': '#f85149',
+                'text-border-width': 1.5, 'text-border-opacity': 0.8,
+                'text-halign': 'center', 'text-valign': 'center'
             }},
             // Selected states
             { selector: 'node:selected', style: { 'border-color': '#58a6ff', 'border-width': 3 } },
@@ -332,48 +329,34 @@
     ];
 
     function buildLayoutOptions(elements, siteMap) {
-        // Compute fresh positions for all nodes
+        // Compute fresh positions first
         var positions = computePositions(elements, siteMap);
 
-        // If saved positions exist, overlay them (saved uses full node IDs)
+        // Overlay saved positions (keyed by full node ID)
         var saved = loadPositions();
         if (saved && Object.keys(saved).length > 0) {
-            Object.keys(saved).forEach(function(key) {
-                positions[key] = saved[key];
-            });
+            Object.keys(saved).forEach(function(key) { positions[key] = saved[key]; });
         }
 
-        return {
-            name: 'preset',
-            positions: function(node) { return positions[node.id()] || undefined; },
-            fit: true,
-            padding: 60
-        };
+        return { name: 'preset', positions: function(node) {
+            return positions[node.id()] || undefined;
+        }, fit: true, padding: 60 };
     }
 
     function computePositions(elements, siteMap) {
         var positions = {};
-
-        // Cloud at center
         positions['cloud-internet'] = { x: 0, y: 0 };
 
-        // Collect unique site IDs
-        var siteIds = [];
-        var seenSites = {};
+        var siteIds = [], seenSites = {};
         elements.forEach(function(el) {
             if (el.group === 'nodes' && el.data.nodeType === 'site') {
                 var sid = el.data.id.replace('site-', '');
                 if (!seenSites[sid]) { seenSites[sid] = true; siteIds.push(sid); }
             }
         });
-
-        // Map site → cardinal position
         var sitePositions = {};
-        siteIds.forEach(function(sid, i) {
-            sitePositions[sid] = SITE_POSITIONS[i % SITE_POSITIONS.length];
-        });
+        siteIds.forEach(function(sid, i) { sitePositions[sid] = SITE_POSITIONS[i % SITE_POSITIONS.length]; });
 
-        // Devices within sites — spaced horizontally
         var siteBuckets = {};
         if (siteMap) {
             Object.keys(siteMap).forEach(function(devId) {
@@ -385,27 +368,17 @@
         }
         Object.keys(siteBuckets).forEach(function(sid) {
             var devs = siteBuckets[sid];
-            var sitePos = sitePositions[sid] || { x: 0, y: 0 };
-            var devSpacing = 170;
-            var startX = sitePos.x - (devs.length - 1) * devSpacing / 2;
-            devs.forEach(function(devId, i) {
-                positions['dev-' + devId] = { x: startX + i * devSpacing, y: sitePos.y };
-            });
+            var sp = sitePositions[sid] || { x: 0, y: 0 };
+            var startX = sp.x - (devs.length - 1) * 170 / 2;
+            devs.forEach(function(devId, i) { positions['dev-' + devId] = { x: startX + i * 170, y: sp.y }; });
         });
 
-        // Unsited devices — below the cloud, spaced horizontally
+        // Unsited devices below cloud
         var unsited = [];
         elements.forEach(function(el) {
-            if (el.group === 'nodes' && el.data.nodeType === 'device' && !positions[el.data.id]) {
-                unsited.push(el.data.id);
-            }
+            if (el.group === 'nodes' && el.data.nodeType === 'device' && !positions[el.data.id]) unsited.push(el.data.id);
         });
-        if (unsited.length > 0) {
-            var startX = -(unsited.length - 1) * 170 / 2;
-            unsited.forEach(function(id, i) {
-                positions[id] = { x: startX + i * 170, y: 450 };
-            });
-        }
+        unsited.forEach(function(id, i) { positions[id] = { x: -(unsited.length - 1) * 170 / 2 + i * 170, y: 450 }; });
 
         return positions;
     }
@@ -437,38 +410,32 @@
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
 
-        spaceParallelEdges();
+        stackOffnetEdges();
         applyFilters();
         wireEvents(devices, vpnMap);
         cy.one('layoutstop', function() { startParticles(); });
         setTimeout(function() { startParticles(); }, 600);
     }
 
-    // Space out parallel edges between the same node pair using segments offsets
-    // Stack parallel edges by shifting their source/target endpoints on the node border
-    function spaceParallelEdges() {
+    // Stack off-net edges above/below the tunnel edges by 10px each
+    function stackOffnetEdges() {
         if (!cy) return;
-        var groups = {};
-        cy.edges().forEach(function(e) {
-            var d = e.data();
-            if (d.edgeType === 'sublane' || d.edgeType === 'pipe-bg') return;
-            var key = [d.source, d.target].sort().join('|');
-            if (!groups[key]) groups[key] = [];
-            groups[key].push(e);
+        // Group off-net edges by their source device
+        var byDevice = {};
+        cy.edges('[edgeType="offnet"]').forEach(function(e) {
+            var devId = e.data('source');
+            if (!byDevice[devId]) byDevice[devId] = [];
+            byDevice[devId].push(e);
         });
-        var spacing = 10; // pixels between stacked lines
-        Object.keys(groups).forEach(function(key) {
-            var edges = groups[key];
-            if (edges.length <= 1) return;
-            var n = edges.length;
+        Object.keys(byDevice).forEach(function(devId) {
+            var edges = byDevice[devId];
             edges.forEach(function(e, i) {
-                // Offset as percentage of node height: 0% = center, negative = up, positive = down
-                var pctOffset = ((i - (n - 1) / 2) * spacing);
-                var srcPct = '50% ' + (50 + pctOffset) + '%';
-                var tgtPct = '50% ' + (50 + pctOffset) + '%';
+                // 1st off-net: 10px above center, 2nd: 10px below, 3rd: 20px above, etc.
+                var offset = (i % 2 === 0 ? -(i / 2 + 1) : Math.ceil(i / 2)) * 10;
+                var pct = 50 + offset;
                 e.style({
-                    'source-endpoint': srcPct,
-                    'target-endpoint': tgtPct
+                    'source-endpoint': '50% ' + pct + '%',
+                    'target-endpoint': '50% ' + pct + '%'
                 });
             });
         });
