@@ -95,30 +95,11 @@
         });
         if (hasCloud) {
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
-
-            // For each device with off-net tunnels, create an invisible waypoint node
-            // offset vertically so the off-net edge doesn't overlap the tunnel edge
-            var offnetSpacing = 60;
-            offnetDevices.forEach(function(info, idx) {
-                var yOffset = (idx % 2 === 0 ? 1 : -1) * offnetSpacing * (Math.floor(idx / 2) + 1);
-                var wpId = 'offnet-wp-' + info.deviceId;
-
-                // Invisible waypoint node
-                elements.push({ group: 'nodes', data: {
-                    id: wpId, nodeType: 'waypoint',
-                    offsetFromCloud: yOffset
-                }});
-
-                // Device → waypoint
+            offnetDevices.forEach(function(info) {
                 elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId + '-a', source: 'dev-' + info.deviceId, target: wpId,
+                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
                     label: info.count + ' unmatched'
-                }});
-                // Waypoint → cloud
-                elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId + '-b', source: wpId, target: 'cloud-internet',
-                    edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet'
                 }});
             });
         }
@@ -255,9 +236,9 @@
     // ---- 1b. Stylesheet ----
     function buildStylesheet() {
         return [
-            // Site compound nodes — label above with dark background for visibility
+            // Site compound nodes — subtle fill + label above with dark background
             { selector: 'node[nodeType="site"]', style: {
-                'background-opacity': 0, 'border-width': 1.5, 'border-style': 'dashed',
+                'background-color': '#161b22', 'background-opacity': 0.4, 'border-width': 1.5, 'border-style': 'dashed',
                 'border-color': '#30363d', 'border-opacity': 0.7, 'label': 'data(label)',
                 'text-valign': 'top', 'text-halign': 'center', 'font-size': '13px',
                 'color': '#e6edf3', 'font-weight': '600', 'text-margin-y': -12,
@@ -284,18 +265,18 @@
                 'font-size': '64px', 'color': '#484f58',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
-            // Invisible waypoint nodes for off-net edge spacing
-            { selector: 'node[nodeType="waypoint"]', style: {
-                'width': 1, 'height': 1, 'background-opacity': 0, 'border-width': 0,
-                'label': '', 'events': 'no', 'overlay-opacity': 0
-            }},
-            // Default edge — all straight lines
+            // Default edge — straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
                 'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
             }},
-            // Tunnel bundle edges — thicker pipe
-            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#484f58', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            // Tunnel bundle edges — thicker pipe with readable label
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: {
+                'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#8b949e',
+                'text-rotation': 'autorotate', 'text-margin-y': -10,
+                'text-background-color': '#0d1117', 'text-background-opacity': 0.85,
+                'text-background-padding': '2px'
+            }},
             // Connection type colors
             { selector: 'edge[connType="ipsec"]', style: { 'line-color': '#58a6ff' } },
             { selector: 'edge[connType="ssl"]', style: { 'line-color': '#d29922' } },
@@ -317,20 +298,20 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges — straight, spaced via source-endpoint offset in JS
+            // Off-net edges — segments style, offsets applied in spaceParallelEdges()
             { selector: 'edge[edgeType="offnet"]', style: {
                 'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
-                'line-style': 'dashed', 'line-dash-pattern': [3, 6]
+                'line-style': 'dashed', 'line-dash-pattern': [3, 6],
+                'curve-style': 'segments', 'segment-weights': [0.5]
             }},
-            // DOWN edges — red X
+            // DOWN edges — red X as source-label (preserves main label)
             { selector: 'edge[status="down"]', style: {
                 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'opacity': 0.6,
-                'label': '\u2716', 'text-rotation': 'autorotate', 'font-size': '18px',
-                'color': '#f85149', 'text-background-color': '#0d1117',
-                'text-background-opacity': 0.9, 'text-background-padding': '4px',
-                'text-background-shape': 'roundrectangle', 'text-border-color': '#f85149',
-                'text-border-width': 1.5, 'text-border-opacity': 0.8,
-                'text-halign': 'center', 'text-valign': 'center'
+                'source-label': '\u2716', 'source-text-rotation': 'autorotate',
+                'source-text-offset': 40, 'font-size': '16px', 'color': '#f85149',
+                'source-text-margin-y': 0,
+                'text-background-color': '#0d1117', 'text-background-opacity': 0.9,
+                'text-background-padding': '3px', 'text-background-shape': 'roundrectangle'
             }},
             // Selected states
             { selector: 'node:selected', style: { 'border-color': '#58a6ff', 'border-width': 3 } },
@@ -352,17 +333,32 @@
     ];
 
     function buildLayoutOptions(elements, siteMap) {
+        // Compute fresh positions for all nodes
+        var positions = computePositions(elements, siteMap);
+
+        // If saved positions exist, overlay them (saved uses full node IDs)
         var saved = loadPositions();
-        var hasSaved = saved && Object.keys(saved).length > 0;
-        if (hasSaved) {
-            return { name: 'preset', positions: function(node) {
-                var key = node.id().replace('dev-', '');
-                if (saved[key]) return { x: saved[key].x, y: saved[key].y };
-                return undefined;
-            }, fit: false };
+        if (saved && Object.keys(saved).length > 0) {
+            Object.keys(saved).forEach(function(key) {
+                positions[key] = saved[key];
+            });
         }
 
-        // Collect unique site IDs in order
+        return {
+            name: 'preset',
+            positions: function(node) { return positions[node.id()] || undefined; },
+            fit: true,
+            padding: 60
+        };
+    }
+
+    function computePositions(elements, siteMap) {
+        var positions = {};
+
+        // Cloud at center
+        positions['cloud-internet'] = { x: 0, y: 0 };
+
+        // Collect unique site IDs
         var siteIds = [];
         var seenSites = {};
         elements.forEach(function(el) {
@@ -372,14 +368,13 @@
             }
         });
 
-        // Map site → position
+        // Map site → cardinal position
         var sitePositions = {};
         siteIds.forEach(function(sid, i) {
             sitePositions[sid] = SITE_POSITIONS[i % SITE_POSITIONS.length];
         });
 
-        // Map device → site → position (offset devices horizontally within site)
-        var devicePositions = {};
+        // Devices within sites — spaced horizontally
         var siteBuckets = {};
         if (siteMap) {
             Object.keys(siteMap).forEach(function(devId) {
@@ -395,42 +390,25 @@
             var devSpacing = 170;
             var startX = sitePos.x - (devs.length - 1) * devSpacing / 2;
             devs.forEach(function(devId, i) {
-                devicePositions['dev-' + devId] = { x: startX + i * devSpacing, y: sitePos.y };
+                positions['dev-' + devId] = { x: startX + i * devSpacing, y: sitePos.y };
             });
         });
 
-        // Devices without a site — place near center
+        // Unsited devices — below the cloud, spaced horizontally
+        var unsited = [];
         elements.forEach(function(el) {
-            if (el.group === 'nodes' && el.data.nodeType === 'device' && !devicePositions[el.data.id]) {
-                devicePositions[el.data.id] = { x: -200 + Math.random() * 400, y: -150 + Math.random() * 300 };
+            if (el.group === 'nodes' && el.data.nodeType === 'device' && !positions[el.data.id]) {
+                unsited.push(el.data.id);
             }
         });
+        if (unsited.length > 0) {
+            var startX = -(unsited.length - 1) * 170 / 2;
+            unsited.forEach(function(id, i) {
+                positions[id] = { x: startX + i * 170, y: 450 };
+            });
+        }
 
-        // Cloud at center
-        devicePositions['cloud-internet'] = { x: 0, y: 0 };
-
-        // Waypoint nodes: placed midway between device and cloud, offset vertically
-        elements.forEach(function(el) {
-            if (el.group === 'nodes' && el.data.nodeType === 'waypoint') {
-                var wpId = el.data.id;
-                // Find the device this waypoint belongs to
-                var devId = wpId.replace('offnet-wp-', '');
-                var devPos = devicePositions['dev-' + devId] || { x: 0, y: 0 };
-                var cloudPos = devicePositions['cloud-internet'];
-                var midX = (devPos.x + cloudPos.x) / 2;
-                var midY = (devPos.y + cloudPos.y) / 2;
-                devicePositions[wpId] = { x: midX, y: midY + (el.data.offsetFromCloud || 0) };
-            }
-        });
-
-        return {
-            name: 'preset',
-            positions: function(node) {
-                return devicePositions[node.id()] || undefined;
-            },
-            fit: true,
-            padding: 60
-        };
+        return positions;
     }
 
     // ---- 1d. Init & Render ----
@@ -460,10 +438,38 @@
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
 
+        spaceParallelEdges();
         applyFilters();
         wireEvents(devices, vpnMap);
         cy.one('layoutstop', function() { startParticles(); });
         setTimeout(function() { startParticles(); }, 600);
+    }
+
+    // Space out parallel edges between the same node pair using segments offsets
+    function spaceParallelEdges() {
+        if (!cy) return;
+        var groups = {};
+        cy.edges().forEach(function(e) {
+            var d = e.data();
+            if (d.edgeType === 'sublane' || d.edgeType === 'pipe-bg') return;
+            var key = [d.source, d.target].sort().join('|');
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(e);
+        });
+        var spacing = 8;
+        Object.keys(groups).forEach(function(key) {
+            var edges = groups[key];
+            if (edges.length <= 1) return; // single edge stays straight
+            var n = edges.length;
+            edges.forEach(function(e, i) {
+                var offset = (i - (n - 1) / 2) * spacing;
+                e.style({
+                    'curve-style': 'segments',
+                    'segment-distances': [offset],
+                    'segment-weights': [0.5]
+                });
+            });
+        });
     }
 
     function cleanup() {
@@ -718,11 +724,6 @@
             var parentId = edge.data('parentTunnel');
             edge.style('display', hiddenTunnelIds[parentId] ? 'none' : 'element');
         });
-        // Hide waypoint nodes when offnet is filtered
-        var hideWaypoints = !!hiddenTypes['offnet'];
-        cy.nodes('[nodeType="waypoint"]').forEach(function(n) {
-            n.style('display', hideWaypoints ? 'none' : 'element');
-        });
     }
 
     function toggleType(type) {
@@ -890,9 +891,9 @@
     function savePositions() {
         if (!cy) return;
         var data = {};
-        cy.nodes('[nodeType="device"]').forEach(function(node) {
+        cy.nodes().forEach(function(node) {
             var pos = node.position();
-            data[String(node.data('deviceId'))] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+            if (pos) data[node.id()] = { x: Math.round(pos.x), y: Math.round(pos.y) };
         });
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (e) {}
     }

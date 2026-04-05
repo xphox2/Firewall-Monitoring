@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.150] - 2026-04-05
+
+### Fixed
+- **Saved layout restored correctly**: All node positions (cloud, sites, devices) saved by full ID and restored on reload. Previously cloud/sites collapsed to (0,0) after any drag-save.
+- **Parallel edges spaced apart**: Edges sharing the same endpoints automatically get perpendicular offsets via `segments` curve-style (8px spacing). No curves — straight lines offset by a few pixels so each is visible and clickable.
+- **DOWN X marker preserves tunnel label**: Uses `source-label` instead of overriding the main edge label. "IPSEC +2" stays visible on down connections.
+- **Unsited devices placed below cloud**: No longer randomly overlapping the cloud at center. Spaced horizontally at y=450.
+- **Removed waypoint nodes**: Off-net edges now use direct device→cloud edges with `segments` offset applied by `spaceParallelEdges()`. Simpler, no phantom nodes.
+- **Site compounds have subtle fill**: 40% opacity dark background makes site boundaries visible behind edges.
+- **Tunnel-bundle labels readable**: Dark background pill on edge labels prevents text from being hidden by crossing edges.
+
 ## [0.10.149] - 2026-04-05
 
 ### Fixed
