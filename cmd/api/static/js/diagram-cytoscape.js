@@ -366,17 +366,48 @@
             var data = edge.data();
 
             // Tunnel bundle: toggle expand/collapse
-            if (data.edgeType === 'tunnel-bundle' && data.childConns && data.childConns.length > 0) {
-                if (expandedTunnels[data.id]) {
-                    collapseTunnel(data.id);
-                } else {
-                    expandTunnel(edge);
+            if (data.edgeType === 'tunnel-bundle') {
+                // Resolve to the -src half (which holds childConns) for cross-site pairs
+                var srcEdge = edge;
+                if (data.tunnelHalf === 'dst' && data.tunnelPeerId) {
+                    var peer = cy.getElementById(data.tunnelPeerId);
+                    if (peer && !peer.empty()) srcEdge = peer;
+                }
+                var srcData = srcEdge.data();
+
+                // Select both halves visually
+                cy.edges(':selected').unselect();
+                edge.select();
+                if (data.tunnelPeerId) {
+                    var peerSel = cy.getElementById(data.tunnelPeerId);
+                    if (peerSel && !peerSel.empty()) peerSel.select();
+                }
+
+                // Expand/collapse if has children
+                if (srcData.childConns && srcData.childConns.length > 0) {
+                    if (expandedTunnels[srcData.id]) {
+                        collapseTunnel(srcData.id);
+                    } else {
+                        expandTunnel(srcEdge);
+                    }
+                    return;
+                }
+
+                // No children — show detail panel
+                if (srcData.connObj && onConnClick) {
+                    onConnClick(srcData.connObj);
                 }
                 return;
             }
 
+            // Pipe background: click to collapse
+            if (data.edgeType === 'pipe-bg' && data.parentTunnel) {
+                collapseTunnel(data.parentTunnel);
+                return;
+            }
+
             // Regular connection or sublane: show detail panel
-            if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle' || data.edgeType === 'sublane') && data.connObj && onConnClick) {
+            if ((data.edgeType === 'connection' || data.edgeType === 'sublane') && data.connObj && onConnClick) {
                 onConnClick(data.connObj);
             } else if (data.edgeType === 'offnet' && data.deviceId && onVPNClick) {
                 onVPNClick(data.deviceId, true);
