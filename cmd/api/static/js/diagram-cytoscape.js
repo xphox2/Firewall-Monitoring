@@ -633,9 +633,20 @@
             var data = edge.data();
 
             if (data.edgeType === 'tunnel-bundle') {
-                // Bundled: carrier particle + one dot per child overlay
                 var carrierColor = TYPE_COLORS[data.connType] || '#8b949e';
-                count += addParticlePair(edge, carrierColor);
+                var isSplit = !!data.tunnelHalf;
+
+                if (isSplit) {
+                    // Cross-site split half: forward-only particles (both halves combine for end-to-end flow)
+                    if (particleEls.length < MAX_PARTICLES) {
+                        particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.00015,
+                            direction: 1, color: carrierColor, radius: 3, alpha: 0.85 });
+                        count++;
+                    }
+                } else {
+                    // Same-site: normal bidirectional pair
+                    count += addParticlePair(edge, carrierColor);
+                }
 
                 var children = data.childConns || [];
                 children.forEach(function(child) {
