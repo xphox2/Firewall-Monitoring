@@ -410,36 +410,12 @@
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
 
-        stackOffnetEdges();
         applyFilters();
         wireEvents(devices, vpnMap);
         cy.one('layoutstop', function() { startParticles(); });
         setTimeout(function() { startParticles(); }, 600);
     }
 
-    // Stack off-net edges above/below the tunnel edges by 10px each
-    function stackOffnetEdges() {
-        if (!cy) return;
-        // Group off-net edges by their source device
-        var byDevice = {};
-        cy.edges('[edgeType="offnet"]').forEach(function(e) {
-            var devId = e.data('source');
-            if (!byDevice[devId]) byDevice[devId] = [];
-            byDevice[devId].push(e);
-        });
-        Object.keys(byDevice).forEach(function(devId) {
-            var edges = byDevice[devId];
-            edges.forEach(function(e, i) {
-                // 1st off-net: 10px above center, 2nd: 10px below, 3rd: 20px above, etc.
-                var offset = (i % 2 === 0 ? -(i / 2 + 1) : Math.ceil(i / 2)) * 10;
-                var pct = 50 + offset;
-                e.style({
-                    'source-endpoint': '50% ' + pct + '%',
-                    'target-endpoint': '50% ' + pct + '%'
-                });
-            });
-        });
-    }
 
     function cleanup() {
         stopParticles();
