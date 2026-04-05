@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -687,13 +688,9 @@ func (d *Database) GetConnectionEvents(srcDeviceID, dstDeviceID uint, hours int)
 	}
 
 	// Sort by timestamp descending
-	for i := 0; i < len(events); i++ {
-		for j := i + 1; j < len(events); j++ {
-			if events[j].Timestamp.After(events[i].Timestamp) {
-				events[i], events[j] = events[j], events[i]
-			}
-		}
-	}
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Timestamp.After(events[j].Timestamp)
+	})
 
 	if len(events) > 100 {
 		events = events[:100]
@@ -1570,14 +1567,7 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 				Count    int64
 			}{proto, count})
 		}
-		// Sort by count descending
-		for i := 0; i < len(protocols); i++ {
-			for j := i + 1; j < len(protocols); j++ {
-				if protocols[j].Count > protocols[i].Count {
-					protocols[i], protocols[j] = protocols[j], protocols[i]
-				}
-			}
-		}
+		sort.Slice(protocols, func(i, j int) bool { return protocols[i].Count > protocols[j].Count })
 		if len(protocols) > 10 {
 			protocols = protocols[:10]
 		}
@@ -1678,13 +1668,7 @@ func mergeKeyCounts(a, b []KeyCount, limit int) []KeyCount {
 		merged = append(merged, KeyCount{Key: k, Count: c})
 	}
 	// Sort descending by count
-	for i := 0; i < len(merged); i++ {
-		for j := i + 1; j < len(merged); j++ {
-			if merged[j].Count > merged[i].Count {
-				merged[i], merged[j] = merged[j], merged[i]
-			}
-		}
-	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Count > merged[j].Count })
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}
@@ -1717,13 +1701,7 @@ func mergeTimeSeries(a, b []struct {
 			Total  int64
 		}{k, v})
 	}
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[j].Bucket < result[i].Bucket {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Bucket < result[j].Bucket })
 	return result
 }
 

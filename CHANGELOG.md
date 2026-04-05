@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.147] - 2026-04-05
+
+### Fixed
+- **IRC bot security**: `isAdmin()` no longer returns true for all users. Only the bot's own nick is treated as admin, preventing external users from executing admin-only IRC commands
+- **O(n^2) bubble sorts**: Replaced 4 manual bubble sorts in database.go with `sort.Slice` for proper O(n log n) performance on protocol distributions, merged KeyCounts, time series, and connection events
+
 ## [0.10.146] - 2026-04-05
 
 ### Changed

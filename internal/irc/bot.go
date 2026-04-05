@@ -491,10 +491,12 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 }
 
 func (b *Bot) isAdmin(nick string) bool {
-	// TODO: Implement proper admin verification via channel mode (op/voice)
-	// For now, all users can run admin-only commands
-	// To implement: check if nick has +o or +v mode in the channel
-	return true
+	// Only the bot's configured nick is treated as admin.
+	// External users cannot execute admin-only commands.
+	if b.Conn != nil && strings.EqualFold(nick, b.Conn.GetNick()) {
+		return true
+	}
+	return false
 }
 
 func (b *Bot) onJoin(e *irc.Event) {
