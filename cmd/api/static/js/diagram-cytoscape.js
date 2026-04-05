@@ -732,10 +732,15 @@
                 var isSplit = !!data.tunnelHalf;
 
                 if (isSplit) {
-                    // Cross-site split half: forward-only particles (both halves combine for end-to-end flow)
+                    // Cross-site split half: forward + dimmer return particle
                     if (particleEls.length < MAX_PARTICLES) {
                         particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.00015,
                             direction: 1, color: carrierColor, radius: 3, alpha: 0.85 });
+                        count++;
+                    }
+                    if (particleEls.length < MAX_PARTICLES) {
+                        particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00022 + Math.random() * 0.0001,
+                            direction: -1, color: carrierColor, radius: 2, alpha: 0.35 });
                         count++;
                     }
                 } else {
@@ -754,18 +759,30 @@
                 children.forEach(function(child) {
                     if (particleEls.length >= MAX_PARTICLES) return;
                     var childColor = TYPE_COLORS[child.connection_type] || '#8b949e';
+                    // Forward dot
                     particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00025 + Math.random() * 0.0001,
                         direction: 1, color: childColor, radius: 2.5, alpha: 0.9 });
                     count++;
+                    // Return dot (dimmer, smaller)
+                    if (particleEls.length < MAX_PARTICLES) {
+                        particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0002 + Math.random() * 0.0001,
+                            direction: -1, color: childColor, radius: 1.5, alpha: 0.3 });
+                        count++;
+                    }
                 });
             } else if (data.edgeType === 'sublane') {
                 var color = TYPE_COLORS[data.connType] || '#8b949e';
                 var isSplitLane = data.id && (data.id.endsWith('-a') || data.id.endsWith('-b'));
                 if (isSplitLane) {
-                    // Cross-site sublane half: forward-only (both halves chain for end-to-end flow)
+                    // Cross-site sublane half: forward + dimmer return
                     if (particleEls.length < MAX_PARTICLES) {
                         particleEls.push({ edge: edge, progress: Math.random(), speed: 0.0003 + Math.random() * 0.00015,
                             direction: 1, color: color, radius: 3, alpha: 0.85 });
+                        count++;
+                    }
+                    if (particleEls.length < MAX_PARTICLES) {
+                        particleEls.push({ edge: edge, progress: Math.random(), speed: 0.00022 + Math.random() * 0.0001,
+                            direction: -1, color: color, radius: 2, alpha: 0.35 });
                         count++;
                     }
                 } else {
