@@ -294,11 +294,12 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges — haystack so they don't overlap tunnel edges at the device node
+            // Off-net edges — gentle curve to separate from tunnel edges
             { selector: 'edge[edgeType="offnet"]', style: {
                 'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
                 'line-style': 'dashed', 'line-dash-pattern': [3, 6],
-                'curve-style': 'haystack', 'haystack-radius': 0.5
+                'curve-style': 'unbundled-bezier',
+                'control-point-distances': [20], 'control-point-weights': [0.5]
             }},
             // DOWN edges — red X
             { selector: 'edge[status="down"]', style: {
