@@ -708,9 +708,9 @@
     }
 
     var bytesTickCallback = function(value) { return formatBytes(value); };
-    var bytesTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y || ctx.parsed.x || 0); };
+    var bytesTooltipCallback = function(ctx) { var v = ctx.parsed.x != null ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBytes(v || 0); };
     var bpsTickCallback = function(value) { return formatBps(value); };
-    var bpsTooltipCallback = function(ctx) { return ctx.dataset.label + ': ' + formatBps(ctx.parsed.y || ctx.parsed.x || 0); };
+    var bpsTooltipCallback = function(ctx) { var v = ctx.parsed.x != null ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBps(v || 0); };
 
     // Shared options for horizontal bar charts
     var horizBarOpts = function(color) {
