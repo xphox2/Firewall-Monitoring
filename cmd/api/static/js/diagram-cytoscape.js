@@ -97,12 +97,14 @@
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
 
             offnetDevices.forEach(function(info, idx) {
-                // Each off-net gets its own invisible anchor node offset 10px from center
                 var offset = (idx % 2 === 0 ? (idx / 2 + 1) : -(Math.ceil(idx / 2))) * 10;
-                var anchorId = 'offnet-anchor-' + info.deviceId;
-                elements.push({ group: 'nodes', data: { id: anchorId, nodeType: 'offnet-anchor', yOffset: offset }});
+                var srcAnchor = 'offnet-src-' + info.deviceId;
+                var dstAnchor = 'offnet-dst-' + info.deviceId;
+                // Anchor at device end and anchor at cloud end, both shifted by same Y
+                elements.push({ group: 'nodes', data: { id: srcAnchor, nodeType: 'offnet-anchor', anchorDeviceId: info.deviceId, yOffset: offset }});
+                elements.push({ group: 'nodes', data: { id: dstAnchor, nodeType: 'offnet-anchor', anchorCloud: true, yOffset: offset }});
                 elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: anchorId,
+                    id: 'offnet-' + info.deviceId, source: srcAnchor, target: dstAnchor,
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
                     label: info.count + ' unmatched'
                 }});
@@ -390,10 +392,18 @@
         });
         unsited.forEach(function(id, i) { positions[id] = { x: -(unsited.length - 1) * 170 / 2 + i * 170, y: 450 }; });
 
-        // Off-net anchor nodes: same X as cloud, Y offset by 10px per anchor
+        // Off-net anchor nodes: positioned at device or cloud + Y offset
         elements.forEach(function(el) {
             if (el.group === 'nodes' && el.data.nodeType === 'offnet-anchor') {
-                positions[el.data.id] = { x: 0, y: el.data.yOffset || 0 };
+                var yOff = el.data.yOffset || 0;
+                if (el.data.anchorCloud) {
+                    // Cloud-side anchor: cloud position + Y offset
+                    positions[el.data.id] = { x: 0, y: yOff };
+                } else if (el.data.anchorDeviceId) {
+                    // Device-side anchor: device position + same Y offset
+                    var devPos = positions['dev-' + el.data.anchorDeviceId] || { x: 0, y: 0 };
+                    positions[el.data.id] = { x: devPos.x, y: devPos.y + yOff };
+                }
             }
         });
 
