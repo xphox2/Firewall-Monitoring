@@ -16,7 +16,7 @@
     var uptimeIntervalId = null;
     var bwView = 'rate';
     var bwRange = '1h';
-    var cpuHours = 24;
+    var cpuHours = 1;
 
     function escapeHtml(str) {
         if (!str) return '';
