@@ -95,14 +95,16 @@
         });
         if (hasCloud) {
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
+
             offnetDevices.forEach(function(info, idx) {
-                // Stack: 1st at +10px, 2nd at -10px, 3rd at +20px, 4th at -20px
+                // Each off-net gets its own invisible anchor node offset 10px from center
                 var offset = (idx % 2 === 0 ? (idx / 2 + 1) : -(Math.ceil(idx / 2))) * 10;
+                var anchorId = 'offnet-anchor-' + info.deviceId;
+                elements.push({ group: 'nodes', data: { id: anchorId, nodeType: 'offnet-anchor', yOffset: offset }});
                 elements.push({ group: 'edges', data: {
-                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
+                    id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: anchorId,
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
-                    label: info.count + ' unmatched',
-                    stackOffset: offset
+                    label: info.count + ' unmatched'
                 }});
             });
         }
@@ -268,6 +270,11 @@
                 'font-size': '64px', 'color': '#484f58',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
+            // Invisible anchor nodes for off-net stacking
+            { selector: 'node[nodeType="offnet-anchor"]', style: {
+                'width': 1, 'height': 1, 'background-opacity': 0, 'border-width': 0,
+                'label': '', 'events': 'no', 'overlay-opacity': 0
+            }},
             // Default edge — all straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
@@ -383,6 +390,13 @@
         });
         unsited.forEach(function(id, i) { positions[id] = { x: -(unsited.length - 1) * 170 / 2 + i * 170, y: 450 }; });
 
+        // Off-net anchor nodes: same X as cloud, Y offset by 10px per anchor
+        elements.forEach(function(el) {
+            if (el.group === 'nodes' && el.data.nodeType === 'offnet-anchor') {
+                positions[el.data.id] = { x: 0, y: el.data.yOffset || 0 };
+            }
+        });
+
         return positions;
     }
 
@@ -413,24 +427,6 @@
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
 
-        // Stack off-net edges above/below the tunnel by shifting Y on both endpoints
-        cy.edges('[edgeType="offnet"]').forEach(function(e) {
-            var off = e.data('stackOffset') || 0;
-            if (off !== 0) {
-                // Use outside-to-node-or-label with absolute Y shift
-                var srcNode = e.source();
-                var tgtNode = e.target();
-                var srcH = srcNode.height() || 64;
-                var tgtH = tgtNode.height() || 100;
-                // Convert absolute 10px offset to percentage of each node's height
-                var srcPct = 50 + (off / srcH) * 100;
-                var tgtPct = 50 + (off / tgtH) * 100;
-                e.style({
-                    'source-endpoint': '50% ' + srcPct + '%',
-                    'target-endpoint': '50% ' + tgtPct + '%'
-                });
-            }
-        });
 
         applyFilters();
         wireEvents(devices, vpnMap);
@@ -690,6 +686,11 @@
         cy.edges('[edgeType="sublane"], [edgeType="pipe-bg"]').forEach(function(edge) {
             var parentId = edge.data('parentTunnel');
             edge.style('display', hiddenTunnelIds[parentId] ? 'none' : 'element');
+        });
+        // Hide off-net anchor nodes when offnet is filtered
+        var hideAnchors = !!hiddenTypes['offnet'];
+        cy.nodes('[nodeType="offnet-anchor"]').forEach(function(n) {
+            n.style('display', hideAnchors ? 'none' : 'element');
         });
     }
 
