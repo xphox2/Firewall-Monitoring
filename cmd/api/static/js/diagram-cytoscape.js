@@ -532,12 +532,10 @@
         var tunnelId = data.id;
         expandedTunnels[tunnelId] = true;
 
-        // Hide the parent tunnel edge (and peer half for cross-site)
-        edge.style('display', 'none');
-        if (data.tunnelPeerId) {
-            var peer = cy.getElementById(data.tunnelPeerId);
-            if (peer && !peer.empty()) peer.style('display', 'none');
-        }
+        // Hide ALL other edges so only the expanded tunnel sublanes are visible
+        cy.edges().forEach(function(e) {
+            e.style('display', 'none');
+        });
 
         // Determine if cross-site (sublanes must route through cloud)
         var isCrossSite = !!data.tunnelPeerId;
@@ -635,19 +633,12 @@
         if (!cy) return;
         delete expandedTunnels[tunnelId];
 
-        // Remove all sublane and pipe edges for this tunnel
+        // Remove sublane and pipe edges for this tunnel
         cy.edges('[parentTunnel="' + tunnelId + '"]').remove();
 
-        // Show the parent tunnel edge again (and peer half for cross-site)
-        var parentEdge = cy.getElementById(tunnelId);
-        if (parentEdge && !parentEdge.empty()) {
-            parentEdge.style('display', 'element');
-            var peerId = parentEdge.data('tunnelPeerId');
-            if (peerId) {
-                var peer = cy.getElementById(peerId);
-                if (peer && !peer.empty()) peer.style('display', 'element');
-            }
-        }
+        // Show all edges again and re-apply filters
+        cy.edges().forEach(function(e) { e.style('display', 'element'); });
+        applyFilters();
 
         stopParticles();
         startParticles();
