@@ -1,14 +1,33 @@
 package sflow
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// ParsedFlow represents a decoded sFlow flow sample with extracted IP header fields.
+type ParsedFlow struct {
+	AgentIP       string
+	SamplingRate  uint32
+	InputIfIndex  uint32
+	OutputIfIndex uint32
+	SrcAddr       string
+	DstAddr       string
+	SrcPort       uint16
+	DstPort       uint16
+	Protocol      uint8
+	Bytes         uint64
+	Packets       uint64
+	TCPFlags      uint8
+	FrameLength   uint32
+}
 
 type FlowSample struct {
 	ID             uint64          `json:"id"`
@@ -41,14 +60,18 @@ type CounterSample struct {
 	IfOutErrors uint64    `json:"if_out_errors"`
 }
 
+// FlowHandler is called for each decoded flow sample.
+type FlowHandler func(*ParsedFlow)
+
 type SFlowReceiver struct {
-	ListenAddr string
-	Port       int
-	conn       *net.UDPConn
-	stopChan   chan struct{}
-	running    atomic.Bool
-	wg         sync.WaitGroup
-	allowedIPs map[string]bool
+	ListenAddr  string
+	Port        int
+	conn        *net.UDPConn
+	stopChan    chan struct{}
+	running     atomic.Bool
+	wg          sync.WaitGroup
+	allowedIPs  map[string]bool
+	flowHandler FlowHandler
 }
 
 func NewSFlowReceiver(listenAddr string, port int, allowedSources ...[]string) *SFlowReceiver {
@@ -72,6 +95,10 @@ func NewSFlowReceiver(listenAddr string, port int, allowedSources ...[]string) *
 		stopChan:   make(chan struct{}),
 		allowedIPs: allowed,
 	}
+}
+
+func (r *SFlowReceiver) SetFlowHandler(h FlowHandler) {
+	r.flowHandler = h
 }
 
 func (r *SFlowReceiver) Start() error {
@@ -134,54 +161,254 @@ func (r *SFlowReceiver) readLoop() {
 			}
 
 			if n > 0 {
-				// Drop packets from non-allowed source IPs when allowlist is configured
 				if len(r.allowedIPs) > 0 && !r.allowedIPs[addr.IP.String()] {
 					continue
 				}
-				_ = r.ParseSFlowDatagram(buf[:n])
+				r.parseDatagram(buf[:n])
 			}
 		}
 	}
 }
 
-func (r *SFlowReceiver) ParseSFlowDatagram(data []byte) error {
-	if len(data) < 24 {
-		return errors.New("sFlow datagram too short")
+// parseDatagram decodes an sFlow v5 datagram and dispatches flow samples to the handler.
+func (r *SFlowReceiver) parseDatagram(data []byte) {
+	if len(data) < 28 {
+		return
 	}
 
-	version := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	version := binary.BigEndian.Uint32(data[0:4])
 	if version != 5 {
-		return errors.New("unsupported sFlow version")
+		return
 	}
 
-	sequence := uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
+	addrType := binary.BigEndian.Uint32(data[4:8])
+	var agentIP string
+	var offset int
+	if addrType == 1 { // IPv4
+		if len(data) < 28 {
+			return
+		}
+		agentIP = net.IP(data[8:12]).String()
+		offset = 12
+	} else if addrType == 2 { // IPv6
+		if len(data) < 40 {
+			return
+		}
+		agentIP = net.IP(data[8:24]).String()
+		offset = 24
+	} else {
+		return
+	}
 
-	agentIP := net.IP(data[8:12])
-	_ = agentIP
+	// sub_agent_id(4) + sequence(4) + uptime(4) + num_samples(4)
+	if len(data) < offset+16 {
+		return
+	}
+	// _ = binary.BigEndian.Uint32(data[offset : offset+4]) // sub_agent_id
+	// _ = binary.BigEndian.Uint32(data[offset+4 : offset+8]) // sequence
+	// _ = binary.BigEndian.Uint32(data[offset+8 : offset+12]) // uptime
+	numSamples := binary.BigEndian.Uint32(data[offset+12 : offset+16])
+	offset += 16
 
-	sampleCount := uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
+	for i := uint32(0); i < numSamples && offset < len(data)-8; i++ {
+		if offset+8 > len(data) {
+			break
+		}
+		sampleTypeRaw := binary.BigEndian.Uint32(data[offset : offset+4])
+		sampleLen := binary.BigEndian.Uint32(data[offset+4 : offset+8])
+		offset += 8
 
-	_ = sequence
-	_ = sampleCount
+		if offset+int(sampleLen) > len(data) {
+			break
+		}
 
-	return nil
+		enterprise := sampleTypeRaw >> 12
+		format := sampleTypeRaw & 0xFFF
+
+		if enterprise == 0 && (format == 1 || format == 3) {
+			// Flow sample (1) or expanded flow sample (3)
+			r.parseFlowSample(data[offset:offset+int(sampleLen)], agentIP, format == 3)
+		}
+		// Skip counter samples and other types
+
+		offset += int(sampleLen)
+	}
 }
 
+// parseFlowSample decodes a single flow sample record.
+func (r *SFlowReceiver) parseFlowSample(data []byte, agentIP string, expanded bool) {
+	if r.flowHandler == nil {
+		return
+	}
+
+	var offset int
+	minLen := 32
+	if expanded {
+		minLen = 44
+	}
+	if len(data) < minLen {
+		return
+	}
+
+	// _ = binary.BigEndian.Uint32(data[0:4]) // sequence
+	var samplingRate, inputIf, outputIf uint32
+	var numRecords uint32
+
+	if expanded {
+		// Expanded flow sample: source_id_type(4) + source_id_index(4) + sampling_rate(4) + sample_pool(4) + drops(4) + input_if_format(4) + input_if(4) + output_if_format(4) + output_if(4) + num_records(4)
+		samplingRate = binary.BigEndian.Uint32(data[12:16])
+		inputIf = binary.BigEndian.Uint32(data[28:32])
+		outputIf = binary.BigEndian.Uint32(data[36:40])
+		numRecords = binary.BigEndian.Uint32(data[40:44])
+		offset = 44
+	} else {
+		// Standard flow sample: source_id(4) + sampling_rate(4) + sample_pool(4) + drops(4) + input(4) + output(4) + num_records(4)
+		samplingRate = binary.BigEndian.Uint32(data[8:12])
+		inputIf = binary.BigEndian.Uint32(data[20:24])
+		outputIf = binary.BigEndian.Uint32(data[24:28])
+		numRecords = binary.BigEndian.Uint32(data[28:32])
+		offset = 32
+	}
+
+	// Parse flow records looking for raw packet header
+	for j := uint32(0); j < numRecords && offset < len(data)-8; j++ {
+		if offset+8 > len(data) {
+			break
+		}
+		recTypeRaw := binary.BigEndian.Uint32(data[offset : offset+4])
+		recLen := binary.BigEndian.Uint32(data[offset+4 : offset+8])
+		offset += 8
+
+		if offset+int(recLen) > len(data) {
+			break
+		}
+
+		recEnterprise := recTypeRaw >> 12
+		recFormat := recTypeRaw & 0xFFF
+
+		if recEnterprise == 0 && recFormat == 1 {
+			// Raw packet header record
+			flow := r.parseRawPacketHeader(data[offset:offset+int(recLen)], agentIP, samplingRate, inputIf, outputIf)
+			if flow != nil {
+				r.flowHandler(flow)
+			}
+		}
+
+		offset += int(recLen)
+	}
+}
+
+// parseRawPacketHeader extracts IP/TCP/UDP fields from a sampled raw packet header.
+func (r *SFlowReceiver) parseRawPacketHeader(data []byte, agentIP string, samplingRate, inputIf, outputIf uint32) *ParsedFlow {
+	if len(data) < 16 {
+		return nil
+	}
+
+	headerProto := binary.BigEndian.Uint32(data[0:4])
+	frameLength := binary.BigEndian.Uint32(data[4:8])
+	// stripped := binary.BigEndian.Uint32(data[8:12])
+	headerLen := binary.BigEndian.Uint32(data[12:16])
+
+	if headerLen == 0 || 16+int(headerLen) > len(data) {
+		return nil
+	}
+
+	header := data[16 : 16+headerLen]
+
+	flow := &ParsedFlow{
+		AgentIP:       agentIP,
+		SamplingRate:  samplingRate,
+		InputIfIndex:  inputIf,
+		OutputIfIndex: outputIf,
+		FrameLength:   frameLength,
+		Bytes:         uint64(frameLength),
+		Packets:       1,
+	}
+
+	// Parse based on header protocol
+	switch headerProto {
+	case 1: // Ethernet
+		if len(header) < 14 {
+			return flow
+		}
+		etherType := binary.BigEndian.Uint16(header[12:14])
+		ipStart := 14
+
+		// Handle 802.1Q VLAN tag
+		if etherType == 0x8100 {
+			if len(header) < 18 {
+				return flow
+			}
+			etherType = binary.BigEndian.Uint16(header[16:18])
+			ipStart = 18
+		}
+
+		if etherType == 0x0800 { // IPv4
+			parseIPv4(header[ipStart:], flow)
+		}
+	case 11: // IPv4
+		parseIPv4(header, flow)
+	}
+
+	return flow
+}
+
+// parseIPv4 extracts src/dst IP, protocol, ports, and TCP flags from an IPv4 header.
+func parseIPv4(data []byte, flow *ParsedFlow) {
+	if len(data) < 20 {
+		return
+	}
+
+	ihl := int(data[0]&0x0F) * 4
+	if ihl < 20 || len(data) < ihl {
+		return
+	}
+
+	flow.Protocol = data[9]
+	flow.SrcAddr = net.IP(data[12:16]).String()
+	flow.DstAddr = net.IP(data[16:20]).String()
+
+	transport := data[ihl:]
+
+	switch flow.Protocol {
+	case 6: // TCP
+		if len(transport) >= 14 {
+			flow.SrcPort = binary.BigEndian.Uint16(transport[0:2])
+			flow.DstPort = binary.BigEndian.Uint16(transport[2:4])
+			flow.TCPFlags = transport[13]
+		}
+	case 17: // UDP
+		if len(transport) >= 4 {
+			flow.SrcPort = binary.BigEndian.Uint16(transport[0:2])
+			flow.DstPort = binary.BigEndian.Uint16(transport[2:4])
+		}
+	}
+}
+
+// ParseSFlowDatagram returns header fields for diagnostic purposes.
 func ParseSFlowDatagram(data []byte) (uint32, uint32, net.IP, uint32, error) {
-	if len(data) < 24 {
+	if len(data) < 28 {
 		return 0, 0, nil, 0, errors.New("sFlow datagram too short")
 	}
 
-	version := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	version := binary.BigEndian.Uint32(data[0:4])
 	if version != 5 {
 		return 0, 0, nil, 0, errors.New("unsupported sFlow version")
 	}
 
-	sequence := uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
+	addrType := binary.BigEndian.Uint32(data[4:8])
+	var agentIP net.IP
+	var seqOffset int
+	if addrType == 1 {
+		agentIP = net.IP(data[8:12])
+		seqOffset = 16
+	} else {
+		return 0, 0, nil, 0, errors.New("unsupported agent address type")
+	}
 
-	agentIP := net.IP(data[8:12])
-
-	sampleCount := uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
+	sequence := binary.BigEndian.Uint32(data[seqOffset : seqOffset+4])
+	sampleCount := binary.BigEndian.Uint32(data[seqOffset+8 : seqOffset+12])
+	_ = log.Printf // keep log import used
 
 	return version, sequence, agentIP, sampleCount, nil
 }

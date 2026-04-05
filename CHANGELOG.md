@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.152] - 2026-04-05
+
+### Added
+- **sFlow v5 parser**: Complete rewrite of the sFlow receiver — now fully decodes sFlow v5 datagrams, flow samples (standard + expanded), and raw packet headers. Extracts IP src/dst, ports, protocol, TCP flags, and frame length from sampled Ethernet/IPv4 packets
+- **sFlow relay wiring**: Probe now connects decoded sFlow samples to the relay pipeline via `SetFlowHandler()`. Flow data is queued and synced to the API server alongside SNMP/trap/syslog data
+
+### Fixed
+- **Connection flow stats query rollups**: `GetConnectionFlowStats` now supplements raw `flow_samples` with `flow_rollups` for historical periods >1hr (subnet strategy). Previously returned empty for any period after rollup consumption.
+- **cidrToLikePattern handles all formats**: Now supports IP ranges (`10.0.1.0 - 10.0.1.255`), bare IPs (exact match), /32 (exact), and /8-/31 CIDR. Previously returned empty for non-CIDR inputs and treated /28-/32 the same as /24.
+- **VPN cross-fill by remote IP**: Tunnel subnet cross-fill now matches by remote IP correlation instead of tunnel name (which never matched because names differ on each side of a tunnel)
+- **Sampling rate in connection flow stats**: `GetConnectionFlowStats` raw byte/packet totals now apply sampling rate correction
+
 ## [0.10.151] - 2026-04-05
 
 ### Fixed

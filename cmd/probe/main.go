@@ -228,6 +228,27 @@ func (p *Probe) Start() error {
 	sflowReceiver := sflow.NewSFlowReceiver(parts[0], port, parseCSVList(p.Config.SFlowAllowedSources))
 	p.SFlowReceiver = sflowReceiver
 
+	// Wire decoded sFlow samples to the relay pipeline
+	sflowReceiver.SetFlowHandler(func(f *sflow.ParsedFlow) {
+		if f == nil || f.SrcAddr == "" || f.DstAddr == "" {
+			return
+		}
+		p.RelayClient.SendFlowSample(&relay.FlowSample{
+			Timestamp:      time.Now(),
+			SamplerAddress: f.AgentIP,
+			SamplingRate:   f.SamplingRate,
+			SrcAddr:        f.SrcAddr,
+			DstAddr:        f.DstAddr,
+			SrcPort:        f.SrcPort,
+			DstPort:        f.DstPort,
+			Protocol:       f.Protocol,
+			Bytes:          f.Bytes,
+			Packets:        f.Packets,
+			InputIfIndex:   f.InputIfIndex,
+			OutputIfIndex:  f.OutputIfIndex,
+		})
+	})
+
 	if err := sflowReceiver.Start(); err != nil {
 		return fmt.Errorf("failed to start sFlow receiver: %w", err)
 	}

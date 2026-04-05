@@ -336,27 +336,56 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		}
 	}
 	
-	// Pre-fetch all peer tunnels by name
-	peerTunnelsByName := make(map[string]models.VPNStatus) // name -> latest tunnel with subnets
+	// Pre-fetch all peer tunnels indexed by remote IP (more reliable than name matching)
+	// A tunnel on device A with RemoteIP=X matched to device B means device B likely has
+	// a tunnel with RemoteIP pointing back to A. Match by IP, not name.
+	peerTunnelsByRemoteIP := make(map[string]models.VPNStatus) // remoteIP -> latest tunnel with subnets
 	for peerID := range peerIDs {
 		var peerVPNs []models.VPNStatus
 		d.db.Where("device_id = ?", peerID).Order("timestamp DESC").Find(&peerVPNs)
 		for _, pv := range peerVPNs {
 			if pv.LocalSubnet != "" || pv.RemoteSubnet != "" {
-				// Store if this has more data than we currently have
-				existing, exists := peerTunnelsByName[pv.TunnelName]
-				if !exists || (pv.LocalSubnet != "" && existing.LocalSubnet == "") || (pv.RemoteSubnet != "" && existing.RemoteSubnet == "") {
-					peerTunnelsByName[pv.TunnelName] = pv
+				if pv.RemoteIP != "" {
+					existing, exists := peerTunnelsByRemoteIP[pv.RemoteIP]
+					if !exists || (pv.LocalSubnet != "" && existing.LocalSubnet == "") {
+						peerTunnelsByRemoteIP[pv.RemoteIP] = pv
+					}
 				}
 			}
 		}
 	}
-	
-	// Now cross-fill using pre-fetched data
+
+	// Collect this device's known IPs for matching
+	deviceIPSet := make(map[uint]map[string]bool)
+	for _, s := range statuses {
+		if _, ok := deviceIPSet[s.DeviceID]; !ok {
+			deviceIPSet[s.DeviceID] = make(map[string]bool)
+			var dev models.Device
+			if err := d.db.Select("ip_address").First(&dev, s.DeviceID).Error; err == nil {
+				deviceIPSet[s.DeviceID][dev.IPAddress] = true
+			}
+		}
+	}
+
+	// Cross-fill: for each tunnel missing subnets, find a peer tunnel whose RemoteIP matches our device
 	for i := range statuses {
 		if statuses[i].LocalSubnet == "" || statuses[i].RemoteSubnet == "" {
-			peerTunnel, exists := peerTunnelsByName[statuses[i].TunnelName]
-			if exists {
+			// Try matching by our device's IPs against peer tunnels' RemoteIP
+			myIPs := deviceIPSet[statuses[i].DeviceID]
+			var peerTunnel *models.VPNStatus
+			for ip := range myIPs {
+				if pt, ok := peerTunnelsByRemoteIP[ip]; ok {
+					peerTunnel = &pt
+					break
+				}
+			}
+			// Also try matching by this tunnel's RemoteIP
+			if peerTunnel == nil && statuses[i].RemoteIP != "" {
+				if pt, ok := peerTunnelsByRemoteIP[statuses[i].RemoteIP]; ok {
+					peerTunnel = &pt
+				}
+			}
+			if peerTunnel != nil {
 				if statuses[i].LocalSubnet == "" && peerTunnel.LocalSubnet != "" {
 					statuses[i].LocalSubnet = peerTunnel.LocalSubnet
 				}
@@ -2462,25 +2491,49 @@ func cidrToLikePattern(cidr string) string {
 	if cidr == "" || cidr == "0.0.0.0/0" {
 		return ""
 	}
-	ip, ipNet, err := net.ParseCIDR(cidr)
+
+	// Handle non-CIDR formats: "10.0.1.0 - 10.0.1.255" or bare IPs
+	if !strings.Contains(cidr, "/") {
+		// IP range format
+		if strings.Contains(cidr, " - ") {
+			parts := strings.SplitN(cidr, " - ", 2)
+			beginIP := net.ParseIP(strings.TrimSpace(parts[0]))
+			if beginIP == nil {
+				return ""
+			}
+			b := beginIP.To4()
+			if b == nil {
+				return ""
+			}
+			return fmt.Sprintf("%d.%d.%d.%%", b[0], b[1], b[2])
+		}
+		// Single IP — exact match
+		if net.ParseIP(cidr) != nil {
+			return cidr
+		}
+		return ""
+	}
+
+	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return ""
 	}
-	ip4 := ip.To4()
+	ip4 := ipNet.IP.To4()
 	if ip4 == nil {
-		return "" // IPv6 not supported
+		return ""
 	}
 	ones, _ := ipNet.Mask.Size()
-	network := ipNet.IP.To4()
 	switch {
+	case ones == 32:
+		return fmt.Sprintf("%d.%d.%d.%d", ip4[0], ip4[1], ip4[2], ip4[3])
 	case ones >= 24:
-		return fmt.Sprintf("%d.%d.%d.%%", network[0], network[1], network[2])
+		return fmt.Sprintf("%d.%d.%d.%%", ip4[0], ip4[1], ip4[2])
 	case ones >= 16:
-		return fmt.Sprintf("%d.%d.%%", network[0], network[1])
+		return fmt.Sprintf("%d.%d.%%", ip4[0], ip4[1])
 	case ones >= 8:
-		return fmt.Sprintf("%d.%%", network[0])
+		return fmt.Sprintf("%d.%%", ip4[0])
 	default:
-		return "" // too broad
+		return ""
 	}
 }
 
@@ -2576,14 +2629,40 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		}
 	}
 
-	// Total counts
+	// Total counts from raw samples
 	newBase().Count(&result.TotalFlows)
 	var totalBytes struct{ Sum uint64 }
-	newBase().Select("COALESCE(SUM(bytes),0) as sum").Scan(&totalBytes)
+	newBase().Select("COALESCE(SUM(bytes * CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE 1 END),0) as sum").Scan(&totalBytes)
 	result.TotalBytes = totalBytes.Sum
 	var totalPackets struct{ Sum uint64 }
-	newBase().Select("COALESCE(SUM(packets),0) as sum").Scan(&totalPackets)
+	newBase().Select("COALESCE(SUM(packets * CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE 1 END),0) as sum").Scan(&totalPackets)
 	result.TotalPackets = totalPackets.Sum
+
+	// Supplement with rollup data for historical periods (subnet strategy only)
+	if hours > 1 && len(subnetConditions) > 0 {
+		rollupInterval := "5m"
+		if hours > 48 {
+			rollupInterval = "1h"
+		}
+		if hours > 720 {
+			rollupInterval = "1d"
+		}
+		subnetWhere := strings.Join(subnetConditions, " OR ")
+		rollupBase := func() *gorm.DB {
+			return d.db.Model(&models.FlowRollup{}).
+				Where("device_id IN ? AND timestamp > ? AND interval_type = ?", deviceIDs, cutoff, rollupInterval).
+				Where(subnetWhere, subnetArgs...)
+		}
+		var rollupAgg struct {
+			Flows  int64
+			Bytes  uint64
+			Pkts   uint64
+		}
+		rollupBase().Select("COALESCE(SUM(flow_count),0) as flows, COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as pkts").Scan(&rollupAgg)
+		result.TotalFlows += rollupAgg.Flows
+		result.TotalBytes += rollupAgg.Bytes
+		result.TotalPackets += rollupAgg.Pkts
+	}
 
 	// Protocol distribution
 	var protocols []struct {
