@@ -95,11 +95,14 @@
         });
         if (hasCloud) {
             elements.push({ group: 'nodes', data: { id: 'cloud-internet', nodeType: 'cloud' }});
-            offnetDevices.forEach(function(info) {
+            offnetDevices.forEach(function(info, idx) {
+                // Stack: 1st at +10px, 2nd at -10px, 3rd at +20px, 4th at -20px
+                var offset = (idx % 2 === 0 ? (idx / 2 + 1) : -(Math.ceil(idx / 2))) * 10;
                 elements.push({ group: 'edges', data: {
                     id: 'offnet-' + info.deviceId, source: 'dev-' + info.deviceId, target: 'cloud-internet',
                     edgeType: 'offnet', status: info.anyUp ? 'up' : 'down', deviceId: info.deviceId, connType: 'offnet',
-                    label: info.count + ' unmatched'
+                    label: info.count + ' unmatched',
+                    stackOffset: offset
                 }});
             });
         }
@@ -409,6 +412,15 @@
 
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
+
+        // Apply Y offset to off-net edges so they stack above/below the tunnel
+        cy.edges('[edgeType="offnet"]').forEach(function(e) {
+            var off = e.data('stackOffset') || 0;
+            if (off !== 0) {
+                var pct = 50 + off;
+                e.style({ 'source-endpoint': '50% ' + pct + '%', 'target-endpoint': '50% ' + pct + '%' });
+            }
+        });
 
         applyFilters();
         wireEvents(devices, vpnMap);
