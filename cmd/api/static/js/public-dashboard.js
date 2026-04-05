@@ -145,7 +145,10 @@
             cellHeight: 50,
             margin: 4,
             animate: true,
-            handle: '.widget-hdr'
+            handle: '.widget-hdr',
+            columnOpts: {
+                breakpoints: [{ w: 768, c: 1 }]
+            }
         }, '#dashboard-grid');
 
         // Save layout on drag/resize
