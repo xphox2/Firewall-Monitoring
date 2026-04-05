@@ -743,7 +743,14 @@
                     count += addParticlePair(edge, carrierColor);
                 }
 
+                // For overlay dots: use this half's childConns, or if empty (dst half), use peer's childConns
                 var children = data.childConns || [];
+                if (children.length === 0 && data.tunnelPeerId) {
+                    var peerEdge = cy.getElementById(data.tunnelPeerId);
+                    if (peerEdge && !peerEdge.empty()) {
+                        children = peerEdge.data('childConns') || [];
+                    }
+                }
                 children.forEach(function(child) {
                     if (particleEls.length >= MAX_PARTICLES) return;
                     var childColor = TYPE_COLORS[child.connection_type] || '#8b949e';
