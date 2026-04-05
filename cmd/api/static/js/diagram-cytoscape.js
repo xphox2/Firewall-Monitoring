@@ -298,11 +298,10 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges — segments style, offsets applied in spaceParallelEdges()
+            // Off-net edges — straight, stacked via endpoint offsets
             { selector: 'edge[edgeType="offnet"]', style: {
                 'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
-                'line-style': 'dashed', 'line-dash-pattern': [3, 6],
-                'curve-style': 'segments', 'segment-weights': [0.5]
+                'line-style': 'dashed', 'line-dash-pattern': [3, 6]
             }},
             // DOWN edges — red X as source-label (preserves main label)
             { selector: 'edge[status="down"]', style: {
@@ -446,6 +445,7 @@
     }
 
     // Space out parallel edges between the same node pair using segments offsets
+    // Stack parallel edges by shifting their source/target endpoints on the node border
     function spaceParallelEdges() {
         if (!cy) return;
         var groups = {};
@@ -456,17 +456,19 @@
             if (!groups[key]) groups[key] = [];
             groups[key].push(e);
         });
-        var spacing = 8;
+        var spacing = 10; // pixels between stacked lines
         Object.keys(groups).forEach(function(key) {
             var edges = groups[key];
-            if (edges.length <= 1) return; // single edge stays straight
+            if (edges.length <= 1) return;
             var n = edges.length;
             edges.forEach(function(e, i) {
-                var offset = (i - (n - 1) / 2) * spacing;
+                // Offset as percentage of node height: 0% = center, negative = up, positive = down
+                var pctOffset = ((i - (n - 1) / 2) * spacing);
+                var srcPct = '50% ' + (50 + pctOffset) + '%';
+                var tgtPct = '50% ' + (50 + pctOffset) + '%';
                 e.style({
-                    'curve-style': 'segments',
-                    'segment-distances': [offset],
-                    'segment-weights': [0.5]
+                    'source-endpoint': srcPct,
+                    'target-endpoint': tgtPct
                 });
             });
         });
