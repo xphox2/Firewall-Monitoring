@@ -281,9 +281,9 @@
             { selector: 'edge[connType="lag"]', style: { 'line-color': '#d29922', 'width': 4 } },
             { selector: 'edge[connType="ethernet"]', style: { 'line-color': '#6e7681', 'width': 2 } },
             { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e' } },
-            // Sub-lane edges (expansion) — offset bezier for visual separation
+            // Sub-lane edges (expansion) — segments style, offsets applied per-lane in JS
             { selector: 'edge[edgeType="sublane"]', style: {
-                'width': 3, 'curve-style': 'unbundled-bezier',
+                'width': 3, 'curve-style': 'segments',
                 'label': 'data(label)', 'font-size': '9px', 'color': '#c9d1d9',
                 'text-rotation': 'autorotate', 'text-margin-y': -10,
                 'text-background-color': '#0d1117', 'text-background-opacity': 0.8,
@@ -291,8 +291,11 @@
             }},
             // Pipe background (expansion)
             { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
-            // Off-net edges
-            { selector: 'edge[edgeType="offnet"]', style: { 'line-color': '#3fb950', 'width': 2, 'line-style': 'dashed', 'line-dash-pattern': [2, 4, 8, 4] } },
+            // Off-net edges — thin dashed, visually distinct from tunnel edges
+            { selector: 'edge[edgeType="offnet"]', style: {
+                'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.5,
+                'line-style': 'dashed', 'line-dash-pattern': [3, 6]
+            }},
             // DOWN edges — red X
             { selector: 'edge[status="down"]', style: {
                 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'opacity': 0.6,
@@ -530,22 +533,19 @@
             }
         }
 
-        // Calculate offsets for visual separation
+        // Calculate spacing: each lane offset perpendicular to the edge
         var totalLanes = children.length + 1;
-        var spacing = 25;
+        var spacing = 20;
         var baseOffset = -(totalLanes - 1) * spacing / 2;
 
-        // Helper: add a sublane with vertical offset
+        // Helper: add a sublane with vertical offset via segments
         function addSublane(laneId, connType, status, connObj, labelText, color, laneIdx) {
             var offset = baseOffset + laneIdx * spacing;
-            var cpDist = [offset];
-            var cpWeight = [0.5];
-
             function styleLane(id) {
                 cy.getElementById(id).style({
                     'line-color': color,
-                    'control-point-distances': cpDist,
-                    'control-point-weights': cpWeight
+                    'segment-distances': [offset],
+                    'segment-weights': [0.5]
                 });
             }
 
@@ -641,7 +641,7 @@
             var data = edge.data();
             if (data.edgeType === 'sublane' || data.edgeType === 'pipe-bg') return; // handled below
             var hide = false;
-            if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle') && hiddenTypes[data.connType]) hide = true;
+            if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle' || data.edgeType === 'offnet') && hiddenTypes[data.connType]) hide = true;
             if (!showDown && data.status === 'down') hide = true;
             if (expandedTunnels[data.id]) hide = true;
             if (hide && data.edgeType === 'tunnel-bundle') hiddenTunnelIds[data.id] = true;
