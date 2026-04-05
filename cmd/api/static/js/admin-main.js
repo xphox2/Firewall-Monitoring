@@ -708,16 +708,16 @@
     }
 
     var bytesTickCallback = function(value) { return formatBytes(value); };
-    var bytesTooltipCallback = function(ctx) { var v = ctx.parsed.x != null ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBytes(v || 0); };
+    var bytesTooltipCallback = function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBytes(v != null ? v : 0); };
     var bpsTickCallback = function(value) { return formatBps(value); };
-    var bpsTooltipCallback = function(ctx) { var v = ctx.parsed.x != null ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBps(v || 0); };
+    var bpsTooltipCallback = function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBps(v != null ? v : 0); };
 
     // Shared options for horizontal bar charts
     var horizBarOpts = function(color) {
         return {
             indexAxis:'y',
             scales: {
-                x: { ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
+                x: { beginAtZero: true, ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
                 y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
             },
             plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
