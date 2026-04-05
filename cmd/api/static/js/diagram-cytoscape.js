@@ -155,11 +155,11 @@
             p.tunnels.forEach(function(tunnel) {
                 var childConns = (!overlaysAssigned && p.overlays.length > 0) ? p.overlays.slice() : [];
                 if (childConns.length > 0) overlaysAssigned = true;
-                var labelText = tunnel.connection_type.toUpperCase() + (childConns.length > 0 ? ' +' + childConns.length : '');
+                var isDialUp = tunnel.match_method === 'tunnel_indirect' || tunnel.match_method === 'wan_inferred';
+                var labelText = tunnel.connection_type.toUpperCase() + (childConns.length > 0 ? ' +' + childConns.length : '') + (isDialUp ? ' DIAL-UP' : '');
 
                 if (crossSite && hasCloud) {
                     // Cross-site: route through Internet cloud as two half-edges
-                    // Source device → Cloud
                     elements.push({ group: 'edges', data: {
                         id: 'conn-' + tunnel.id + '-src',
                         source: 'dev-' + tunnel.source_device_id,
@@ -174,7 +174,6 @@
                         tunnelPeerId: 'conn-' + tunnel.id + '-dst',
                         label: labelText
                     }});
-                    // Cloud → Dest device
                     elements.push({ group: 'edges', data: {
                         id: 'conn-' + tunnel.id + '-dst',
                         source: 'cloud-internet',
@@ -187,7 +186,7 @@
                         expanded: false,
                         tunnelHalf: 'dst',
                         tunnelPeerId: 'conn-' + tunnel.id + '-src',
-                        label: ''
+                        label: labelText
                     }});
                 } else {
                     // Same-site or no cloud: direct edge
