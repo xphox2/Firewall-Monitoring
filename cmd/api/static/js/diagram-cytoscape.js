@@ -413,12 +413,22 @@
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
             minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.15, boxSelectionEnabled: false });
 
-        // Apply Y offset to off-net edges so they stack above/below the tunnel
+        // Stack off-net edges above/below the tunnel by shifting Y on both endpoints
         cy.edges('[edgeType="offnet"]').forEach(function(e) {
             var off = e.data('stackOffset') || 0;
             if (off !== 0) {
-                var pct = 50 + off;
-                e.style({ 'source-endpoint': '50% ' + pct + '%', 'target-endpoint': '50% ' + pct + '%' });
+                // Use outside-to-node-or-label with absolute Y shift
+                var srcNode = e.source();
+                var tgtNode = e.target();
+                var srcH = srcNode.height() || 64;
+                var tgtH = tgtNode.height() || 100;
+                // Convert absolute 10px offset to percentage of each node's height
+                var srcPct = 50 + (off / srcH) * 100;
+                var tgtPct = 50 + (off / tgtH) * 100;
+                e.style({
+                    'source-endpoint': '50% ' + srcPct + '%',
+                    'target-endpoint': '50% ' + tgtPct + '%'
+                });
             }
         });
 
