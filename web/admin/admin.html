@@ -115,12 +115,15 @@
 
         .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }
         .probe-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
+        .probe-card.clickable { cursor: pointer; transition: border-color 0.15s; }
+        .probe-card.clickable:hover { border-color: #58a6ff; }
         .probe-card .probe-name { font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
         .probe-card .probe-meta { font-size: 0.78rem; color: #8b949e; }
         .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
         .probe-card .probe-stat { text-align: center; }
         .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
         .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; }
+        .probe-card .probe-stat .lbl .last-hour { color: #3fb950; font-weight: 400; }
         .card:fullscreen { background: #0d1117; padding: 0; display: flex; flex-direction: column; }
         .card:fullscreen .card-header { flex-shrink: 0; }
         .card:fullscreen .connection-diagram { flex: 1; min-height: 0; }
@@ -1252,5 +1255,32 @@
             </form>
         </div>
     </div>
+
+    <!-- Probe Detail Modal -->
+    <div class="modal" id="probe-detail-modal">
+        <div class="modal-content" style="max-width:700px;max-height:85vh;overflow-y:auto">
+            <div class="modal-header">
+                <h2 id="probe-detail-name">Probe Stats</h2>
+                <button class="modal-close" data-action="close-probe-detail-modal">&times;</button>
+            </div>
+            <div id="probe-detail-body" class="probe-detail-body"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn secondary" data-action="close-probe-detail-modal">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .probe-detail-totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+        .detail-stat { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; text-align: center; }
+        .detail-stat .detail-val { font-size: 1.4rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .detail-stat .detail-lbl { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; margin-top: 4px; }
+        .detail-stat .detail-lbl .last-hour { color: #3fb950; display: block; text-transform: none; font-size: 0.75rem; margin-top: 2px; }
+        .detail-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        .detail-table th { padding: 6px 10px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 0.72rem; text-transform: uppercase; }
+        .detail-table td { padding: 6px 10px; border-bottom: 1px solid #21262d; font-size: 0.82rem; }
+        .detail-table tr:hover { background: #1c2128; }
+        .probe-detail-body { min-height: 100px; }
+    </style>
 </body>
 </html>

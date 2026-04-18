@@ -140,7 +140,7 @@
                 probeContainer.innerHTML = probes.map(function(p) {
                     var statusClass = p.status === 'online' ? 'online' : (p.status === 'offline' ? 'offline' : 'pending');
                     var lastSeen = p.last_seen ? timeAgo(p.last_seen) : 'Never';
-                    return '<div class="probe-card">' +
+                    return '<div class="probe-card clickable" data-probe-id="' + escapeHtml(p.id) + '" data-probe-name="' + escapeHtml(p.name) + '">' +
                         '<div class="probe-name"><span class="pulse-dot ' + statusClass + '"></span>' + escapeHtml(p.name) + '</div>' +
                         '<div class="probe-meta">' + escapeHtml(p.site ? p.site.name : 'No Site') + ' &middot; ' + escapeHtml(p.approval_status) + ' &middot; Last seen: ' + lastSeen + '</div>' +
                         '<div class="probe-stats" id="probe-stats-' + p.id + '">' +
@@ -158,15 +158,70 @@
                         var el = document.getElementById('probe-stats-' + p.id);
                         if (el) {
                             var d = r.data;
+                            var lh = d.last_hour || {};
                             el.innerHTML =
-                                '<div class="probe-stat"><div class="val">' + (d.syslog || 0) + '</div><div class="lbl">Syslog</div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.traps || 0) + '</div><div class="lbl">Traps</div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.flows || 0) + '</div><div class="lbl">Flows</div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.pings || 0) + '</div><div class="lbl">Pings</div></div>';
+                                '<div class="probe-stat"><div class="val">' + (d.syslog || 0) + '</div><div class="lbl">Syslog <span class="last-hour">(+' + (lh.syslog || 0) + ')</span></div></div>' +
+                                '<div class="probe-stat"><div class="val">' + (d.traps || 0) + '</div><div class="lbl">Traps <span class="last-hour">(+' + (lh.traps || 0) + ')</span></div></div>' +
+                                '<div class="probe-stat"><div class="val">' + (d.flows || 0) + '</div><div class="lbl">Flows <span class="last-hour">(+' + (lh.flows || 0) + ')</span></div></div>' +
+                                '<div class="probe-stat"><div class="val">' + (d.pings || 0) + '</div><div class="lbl">Pings <span class="last-hour">(+' + (lh.pings || 0) + ')</span></div></div>';
                         }
                     })['catch'](function() {});
                 });
+
+                // Click handler for probe cards to show detail modal
+                document.querySelectorAll('.probe-card.clickable').forEach(function(card) {
+                    card.addEventListener('click', function() {
+                        var probeId = parseInt(this.dataset.probeId);
+                        var probeName = this.dataset.probeName;
+                        showProbeDetailModal(probeId, probeName);
+                    });
+                });
             }
+
+            // Probe detail modal functions
+            window.showProbeDetailModal = function(probeId, probeName) {
+                var modal = document.getElementById('probe-detail-modal');
+                if (!modal) return;
+                document.getElementById('probe-detail-name').textContent = probeName;
+                document.getElementById('probe-detail-body').innerHTML = '<div class="loading">Loading...</div>';
+                modal.classList.add('active');
+
+                apiFetch(API_BASE + '/probes/' + probeId + '/stats').then(function(r) {
+                    if (!r || !r.data) {
+                        document.getElementById('probe-detail-body').innerHTML = '<div class="error">Failed to load stats</div>';
+                        return;
+                    }
+                    var d = r.data;
+                    var lh = d.last_hour || {};
+
+                    var html = '<div class="probe-detail-totals">' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.syslog || 0).toLocaleString() + '</div><div class="detail-lbl">Total Syslog <span class="last-hour">(+' + (lh.syslog || 0).toLocaleString() + ' last hr)</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.traps || 0).toLocaleString() + '</div><div class="detail-lbl">Total Traps <span class="last-hour">(+' + (lh.traps || 0).toLocaleString() + ' last hr)</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.flows || 0).toLocaleString() + '</div><div class="detail-lbl">Total Flows <span class="last-hour">(+' + (lh.flows || 0).toLocaleString() + ' last hr)</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.pings || 0).toLocaleString() + '</div><div class="detail-lbl">Total Pings <span class="last-hour">(+' + (lh.pings || 0).toLocaleString() + ' last hr)</span></div></div>' +
+                        '</div>';
+
+                    // Hourly breakdown table
+                    var breakdown = d.hourly_breakdown || [];
+                    if (breakdown.length > 0) {
+                        html += '<h4 style="margin: 16px 0 8px; color: #8b949e;">Hourly Breakdown (Last 24 Hours)</h4>' +
+                            '<table class="detail-table"><thead><tr><th>Hour</th><th>Syslog</th><th>Traps</th><th>Flows</th><th>Pings</th><th>Total</th></tr></thead><tbody>';
+                        breakdown.forEach(function(h) {
+                            html += '<tr><td>' + escapeHtml(h.hour || '') + '</td><td>' + (h.syslog || 0).toLocaleString() + '</td><td>' + (h.traps || 0).toLocaleString() + '</td><td>' + (h.flows || 0).toLocaleString() + '</td><td>' + (h.pings || 0).toLocaleString() + '</td><td><strong>' + (h.total || 0).toLocaleString() + '</strong></td></tr>';
+                        });
+                        html += '</tbody></table>';
+                    }
+
+                    document.getElementById('probe-detail-body').innerHTML = html;
+                })['catch'](function() {
+                    document.getElementById('probe-detail-body').innerHTML = '<div class="error">Failed to load stats</div>';
+                });
+            };
+
+            window.closeProbeDetailModal = function() {
+                var modal = document.getElementById('probe-detail-modal');
+                if (modal) modal.classList.remove('active');
+            };
 
             loadDashboardCharts();
         })['catch'](function(e) {
@@ -2233,6 +2288,7 @@
         'close-maint-modal': function() { closeMaintModal(); },
         'edit-maint': function(el) { showMaintModal(parseInt(el.dataset.id)); },
         'delete-maint': function(el) { deleteMaintWindow(parseInt(el.dataset.id)); },
+        'close-probe-detail-modal': function() { closeProbeDetailModal(); },
         'toggle-expand': function(el) { el.classList.toggle('expanded'); }
     });
 

@@ -621,6 +621,10 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 		return
 	}
 
+	now := time.Now().UTC()
+	hourAgo := now.Add(-1 * time.Hour)
+
+	// Total counts
 	var syslogCount, trapCount, flowCount, pingCount int64
 	if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", id).Count(&syslogCount).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count syslog messages"))
@@ -639,12 +643,69 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 		return
 	}
 
+	// Last hour counts
+	var syslogLastHour, trapLastHour, flowLastHour, pingLastHour int64
+	if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&syslogLastHour).Error; err != nil {
+		syslogLastHour = 0
+	}
+	if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&trapLastHour).Error; err != nil {
+		trapLastHour = 0
+	}
+	if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&flowLastHour).Error; err != nil {
+		flowLastHour = 0
+	}
+	if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&pingLastHour).Error; err != nil {
+		pingLastHour = 0
+	}
+
+	// Hourly breakdown for last 24 hours
+	hourlyBreakdown := make([]gin.H, 0, 24)
+	for i := 23; i >= 0; i-- {
+		hourStart := now.Add(-time.Duration(i) * time.Hour)
+		hourStart = time.Date(hourStart.Year(), hourStart.Month(), hourStart.Day(), hourStart.Hour(), 0, 0, 0, time.UTC)
+		hourEnd := hourStart.Add(time.Hour)
+
+		var hSyslog, hTrap, hFlow, hPing int64
+		if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hSyslog).Error; err != nil {
+			log.Printf("GetProbeStats: failed to count syslog for hour %s: %v", hourStart.Format("15:04"), err)
+			hSyslog = 0
+		}
+		if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hTrap).Error; err != nil {
+			log.Printf("GetProbeStats: failed to count traps for hour %s: %v", hourStart.Format("15:04"), err)
+			hTrap = 0
+		}
+		if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hFlow).Error; err != nil {
+			log.Printf("GetProbeStats: failed to count flows for hour %s: %v", hourStart.Format("15:04"), err)
+			hFlow = 0
+		}
+		if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hPing).Error; err != nil {
+			log.Printf("GetProbeStats: failed to count pings for hour %s: %v", hourStart.Format("15:04"), err)
+			hPing = 0
+		}
+
+		hourlyBreakdown = append(hourlyBreakdown, gin.H{
+			"hour":   hourStart.Format("15:04"),
+			"syslog": hSyslog,
+			"traps":  hTrap,
+			"flows":  hFlow,
+			"pings":  hPing,
+			"total":  hSyslog + hTrap + hFlow + hPing,
+		})
+	}
+
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"probe_id": id,
 		"syslog":   syslogCount,
 		"traps":    trapCount,
 		"flows":    flowCount,
 		"pings":    pingCount,
+		"last_hour": gin.H{
+			"syslog": syslogLastHour,
+			"traps":  trapLastHour,
+			"flows":  flowLastHour,
+			"pings":  pingLastHour,
+		},
+		"hourly_breakdown": hourlyBreakdown,
 	}))
 }
 

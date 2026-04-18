@@ -94,6 +94,12 @@
         .key-display { background: #0d1117; padding: 12px; border-radius: 6px; font-family: monospace; word-break: break-all; border: 1px solid #30363d; color: #58a6ff; font-size: 0.9rem; }
 
         .info-text { color: #8b949e; font-size: 0.85rem; margin-top: 4px; }
+
+        .probe-summary-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+        .probe-summary-stat { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 16px; text-align: center; }
+        .probe-summary-stat .stat-val { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .probe-summary-stat .stat-lbl { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; margin-top: 4px; }
+        .probe-summary-stat .stat-sub { font-size: 0.7rem; color: #3fb950; margin-top: 2px; }
     </style>
 </head>
 <body>
@@ -143,6 +149,15 @@
 
         <div class="error" id="error-msg" style="display: none;"></div>
         <div class="success" id="success-msg" style="display: none;"></div>
+
+        <div class="card" id="probe-summary-card">
+            <div class="section-header">
+                <h3>Data Totals (All Probes)</h3>
+            </div>
+            <div id="probe-summary-stats" class="probe-summary-stats">
+                <div class="loading">Loading stats...</div>
+            </div>
+        </div>
 
         <div class="card">
             <div class="section-header">

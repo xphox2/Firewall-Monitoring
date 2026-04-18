@@ -12,8 +12,60 @@
         AC.apiFetch(API_BASE + '/probes').then(function(result) {
             currentProbes = result.data || [];
             renderProbes(currentProbes);
+            loadProbeSummaryStats();
         })['catch'](function(err) {
             AC.showError('Failed to load probes: ' + err.message);
+        });
+    }
+
+    function loadProbeSummaryStats() {
+        var approvedProbes = currentProbes.filter(function(p) { return p.approval_status === 'approved'; });
+        if (approvedProbes.length === 0) {
+            document.getElementById('probe-summary-stats').innerHTML =
+                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Syslog</div></div>' +
+                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Traps</div></div>' +
+                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Flows</div></div>' +
+                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Pings</div></div>';
+            return;
+        }
+
+        var totalSyslog = 0, totalTraps = 0, totalFlows = 0, totalPings = 0;
+        var lastHourSyslog = 0, lastHourTraps = 0, lastHourFlows = 0, lastHourPings = 0;
+        var loaded = 0, failed = 0;
+
+        function renderSummary() {
+            var failedNote = failed > 0 ? ' (' + failed + ' probe(s) unavailable)' : '';
+            document.getElementById('probe-summary-stats').innerHTML =
+                '<div class="probe-summary-stat"><div class="stat-val">' + totalSyslog.toLocaleString() + '</div><div class="stat-lbl">Total Syslog' + failedNote + '</div><div class="stat-sub">+' + lastHourSyslog.toLocaleString() + ' last hr</div></div>' +
+                '<div class="probe-summary-stat"><div class="stat-val">' + totalTraps.toLocaleString() + '</div><div class="stat-lbl">Total Traps' + failedNote + '</div><div class="stat-sub">+' + lastHourTraps.toLocaleString() + ' last hr</div></div>' +
+                '<div class="probe-summary-stat"><div class="stat-val">' + totalFlows.toLocaleString() + '</div><div class="stat-lbl">Total Flows' + failedNote + '</div><div class="stat-sub">+' + lastHourFlows.toLocaleString() + ' last hr</div></div>' +
+                '<div class="probe-summary-stat"><div class="stat-val">' + totalPings.toLocaleString() + '</div><div class="stat-lbl">Total Pings' + failedNote + '</div><div class="stat-sub">+' + lastHourPings.toLocaleString() + ' last hr</div></div>';
+        }
+
+        approvedProbes.forEach(function(probe) {
+            AC.apiFetch(API_BASE + '/probes/' + probe.id + '/stats').then(function(r) {
+                if (r && r.data) {
+                    var d = r.data;
+                    var lh = d.last_hour || {};
+                    totalSyslog += d.syslog || 0;
+                    totalTraps += d.traps || 0;
+                    totalFlows += d.flows || 0;
+                    totalPings += d.pings || 0;
+                    lastHourSyslog += lh.syslog || 0;
+                    lastHourTraps += lh.traps || 0;
+                    lastHourFlows += lh.flows || 0;
+                    lastHourPings += lh.pings || 0;
+                }
+                loaded++;
+                if (loaded + failed === approvedProbes.length) {
+                    renderSummary();
+                }
+            })['catch'](function() {
+                failed++;
+                if (loaded + failed === approvedProbes.length) {
+                    renderSummary();
+                }
+            });
         });
     }
 

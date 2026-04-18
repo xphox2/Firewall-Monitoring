@@ -6,11 +6,14 @@
 - **Syslog aggregation system**: Informational syslog (severity 6-7) is now aggregated into hourly/daily summaries for long-term storage efficiency. Configurable via `RETENTION_SYSLOG_INFO_DAYS` (default: 7) and `RETENTION_SYSLOG_CRITICAL_DAYS` (default: 0 = forever).
 - **SyslogSummary model**: New `syslog_summaries` table stores aggregated syslog data with counts, sample messages, and normalized patterns.
 - **PostgreSQL partitioning support**: High-volume tables (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) now support monthly range partitions via `EnsurePartitions()` for efficient data management.
+- **Probe stats API**: `/api/probes/{id}/stats` now returns `last_hour` counts and `hourly_breakdown` (24 hours) for each data type.
+- **Probe detail modal**: Click any probe card on the dashboard to see full stats with hourly breakdown.
 
 ### Changed
 - **Syslog retention**: Critical syslog (severity 0-5) is now retained separately from informational syslog (severity 6-7). Use `RETENTION_SYSLOG_CRITICAL_DAYS=0` to keep critical syslog forever.
 - **Syslog aggregation cycle**: Runs every 5 minutes alongside flow rollup. Hourly summaries are promoted to daily summaries after 48 hours.
 - **`GetSyslogStats`**: Now combines raw syslog counts with summary counts for complete statistics.
+- **Probe summary on probes page**: Probes management page now shows total data counts across all approved probes with last hour activity.
 
 ## [0.10.155] - 2026-04-18
 
