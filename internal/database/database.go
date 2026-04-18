@@ -324,7 +324,7 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 	// Find connections involving this device
 	var connections []models.DeviceConnection
 	d.db.Where("source_device_id = ? OR dest_device_id = ?", deviceID, deviceID).Find(&connections)
-	
+
 	// Get all peer device IDs
 	peerIDs := make(map[uint]bool)
 	for _, conn := range connections {
@@ -335,7 +335,7 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 			peerIDs[conn.DestDeviceID] = true
 		}
 	}
-	
+
 	// Pre-fetch all peer tunnels indexed by remote IP (more reliable than name matching)
 	// A tunnel on device A with RemoteIP=X matched to device B means device B likely has
 	// a tunnel with RemoteIP pointing back to A. Match by IP, not name.
@@ -642,7 +642,7 @@ func (d *Database) GetDeviceStatuses() ([]map[string]interface{}, error) {
 // ConnectionEvent represents a unified event from alerts, traps, or syslog.
 type ConnectionEvent struct {
 	Timestamp time.Time `json:"timestamp"`
-	Source    string    `json:"source"`    // "alert", "trap", "syslog"
+	Source    string    `json:"source"` // "alert", "trap", "syslog"
 	DeviceID  uint      `json:"device_id"`
 	Severity  string    `json:"severity"`
 	Type      string    `json:"type"`
@@ -1049,6 +1049,12 @@ func (d *Database) GetPendingProbes() ([]models.Probe, error) {
 	return probes, err
 }
 
+func (d *Database) GetApprovedProbes() ([]models.Probe, error) {
+	var probes []models.Probe
+	err := d.db.Where("approval_status = ?", "approved").Find(&probes).Error
+	return probes, err
+}
+
 func (d *Database) UpdateProbeHeartbeat(heartbeat *models.ProbeHeartbeat) error {
 	var existing models.ProbeHeartbeat
 	err := d.db.Where("probe_id = ?", heartbeat.ProbeID).First(&existing).Error
@@ -1380,7 +1386,7 @@ func topAddrsByBytes(base func() *gorm.DB, addrCol string, limit int) []KeyCount
 		Total int64
 	}
 	var rows []row
-	base().Select(addrCol+" as addr, SUM(bytes) as total").Group(addrCol).
+	base().Select(addrCol + " as addr, SUM(bytes) as total").Group(addrCol).
 		Order("total DESC").Limit(limit).Scan(&rows)
 	out := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
@@ -1396,7 +1402,7 @@ func topAddrsByBytesRollup(base func() *gorm.DB, addrCol string, limit int) []Ke
 		Total int64
 	}
 	var rows []row
-	base().Select(addrCol+" as addr, SUM(bytes_sum) as total").Group(addrCol).
+	base().Select(addrCol + " as addr, SUM(bytes_sum) as total").Group(addrCol).
 		Order("total DESC").Limit(limit).Scan(&rows)
 	out := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
@@ -1814,8 +1820,8 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		var rows []rollupRow
 		if err := d.db.Model(&models.FlowSample{}).
 			Where("timestamp < ?", cutoff).
-			Select(bucketExpr+" as bucket, device_id, src_addr, dst_addr, dst_port, protocol, "+
-				"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, "+
+			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, " +
+				"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 				"AVG(sampling_rate) as sampling_rate_avg").
 			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
 			Limit(pageSize).Offset(offset).
@@ -1872,8 +1878,8 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	var rows []rollupRow
 	if err := d.db.Model(&models.FlowRollup{}).
 		Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-		Select(bucketExpr+" as bucket, device_id, src_addr, dst_addr, dst_port, protocol, "+
-			"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, "+
+		Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, " +
+			"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 			"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
 		Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
 		Scan(&rows).Error; err != nil {
@@ -1937,7 +1943,7 @@ func (d *Database) groupByString(model interface{}, cutoff time.Time, groupCol s
 	}
 	qCol := d.dialect.QuoteIdent(groupCol)
 	d.db.Model(model).Where("timestamp > ?", cutoff).
-		Select(qCol+" as key, COUNT(*) as count").Group(qCol).Order("count DESC").Scan(&rows)
+		Select(qCol + " as key, COUNT(*) as count").Group(qCol).Order("count DESC").Scan(&rows)
 	counts := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
 		counts = append(counts, KeyCount{Key: r.Key, Count: r.Count})
@@ -2107,20 +2113,20 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 
 // Phase2Match represents a matched pair of Phase 2 selectors between two devices.
 type Phase2Match struct {
-	SourceTunnel  string `json:"source_tunnel"`
-	DestTunnel    string `json:"dest_tunnel"`
-	SourcePhase1  string `json:"source_phase1"`
-	DestPhase1    string `json:"dest_phase1"`
-	LocalSubnet   string `json:"local_subnet"`
-	RemoteSubnet  string `json:"remote_subnet"`
-	SourceStatus  string `json:"source_status"`
-	DestStatus    string `json:"dest_status"`
-	SrcBytesIn    uint64 `json:"src_bytes_in"`
-	SrcBytesOut   uint64 `json:"src_bytes_out"`
-	DstBytesIn    uint64 `json:"dst_bytes_in"`
-	DstBytesOut   uint64 `json:"dst_bytes_out"`
-	SrcUptime     uint64 `json:"src_uptime"`
-	DstUptime     uint64 `json:"dst_uptime"`
+	SourceTunnel string `json:"source_tunnel"`
+	DestTunnel   string `json:"dest_tunnel"`
+	SourcePhase1 string `json:"source_phase1"`
+	DestPhase1   string `json:"dest_phase1"`
+	LocalSubnet  string `json:"local_subnet"`
+	RemoteSubnet string `json:"remote_subnet"`
+	SourceStatus string `json:"source_status"`
+	DestStatus   string `json:"dest_status"`
+	SrcBytesIn   uint64 `json:"src_bytes_in"`
+	SrcBytesOut  uint64 `json:"src_bytes_out"`
+	DstBytesIn   uint64 `json:"dst_bytes_in"`
+	DstBytesOut  uint64 `json:"dst_bytes_out"`
+	SrcUptime    uint64 `json:"src_uptime"`
+	DstUptime    uint64 `json:"dst_uptime"`
 }
 
 // ConnectionDetailResult holds full detail for a connection including matching tunnels.
@@ -2707,9 +2713,9 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 				Where(subnetWhere, subnetArgs...)
 		}
 		var rollupAgg struct {
-			Flows  int64
-			Bytes  uint64
-			Pkts   uint64
+			Flows int64
+			Bytes uint64
+			Pkts  uint64
 		}
 		rollupBase().Select("COALESCE(SUM(flow_count),0) as flows, COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as pkts").Scan(&rollupAgg)
 		result.TotalFlows += rollupAgg.Flows

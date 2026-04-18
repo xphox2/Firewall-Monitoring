@@ -176,9 +176,10 @@ func (p *Poller) pollAllDevices() {
 		log.Printf("Connection detection: all detectors found 0 connections, skipping stale cleanup to preserve existing data")
 	}
 
-	// Check for alert escalations
+	// Check for alert escalations and probe data flow monitoring
 	if p.alertManager != nil {
 		p.alertManager.CheckEscalations()
+		p.alertManager.CheckProbeDataFlow()
 	}
 }
 

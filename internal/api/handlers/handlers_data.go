@@ -21,8 +21,12 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
 		return
 	}
-	if len(messages) > 1000 {
+	originalLen := len(messages)
+	if originalLen > 1000 {
 		messages = messages[:1000]
+		if h.alertManager != nil && originalLen > 1200 {
+			h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, originalLen, 1000)
+		}
 	}
 	now := time.Now()
 	for i := range messages {
@@ -59,8 +63,12 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
 		return
 	}
-	if len(traps) > 1000 {
+	originalLen := len(traps)
+	if originalLen > 1000 {
 		traps = traps[:1000]
+		if h.alertManager != nil && originalLen > 1200 {
+			h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, originalLen, 1000)
+		}
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()

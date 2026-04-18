@@ -43,7 +43,6 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 	}
 }
 
-
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *uint) error {
 	type metricCheck struct {
 		alertType string
@@ -628,6 +627,110 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
 }
 
+// CheckProbeDataFlow checks all approved probes and alerts if any have not sent
+// data within the configured threshold (PROBE_DATA_LAG_ALERT_MINUTES).
+// This catches issues like queue full, network problems, or systematic data loss
+// that wouldn't be caught by heartbeat-based DEVICE_OFFLINE alerts.
+func (am *AlertManager) CheckProbeDataFlow() error {
+	if am.db == nil || am.config.Alerts.ProbeDataLagAlertMinutes <= 0 {
+		return nil
+	}
+
+	probes, err := am.db.GetApprovedProbes()
+	if err != nil {
+		return fmt.Errorf("failed to get approved probes: %w", err)
+	}
+
+	now := time.Now()
+	lagThreshold := time.Duration(am.config.Alerts.ProbeDataLagAlertMinutes) * time.Minute
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+
+	for _, probe := range probes {
+		if probe.LastDataReceived.IsZero() {
+			continue
+		}
+
+		lag := now.Sub(probe.LastDataReceived)
+		if lag < lagThreshold {
+			key := fmt.Sprintf("probe_data_lag_%d", probe.ID)
+			am.sendRecovery(key, "PROBE_DATA_LAG",
+				fmt.Sprintf("Probe %s is receiving data again (lag cleared)", probe.Name), 0)
+			continue
+		}
+
+		key := fmt.Sprintf("probe_data_lag_%d", probe.ID)
+		resolved := am.resolveAlertConfig(0, &probe.SiteID, "PROBE_DATA_LAG")
+		if !resolved.AlertEnabled {
+			continue
+		}
+
+		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+		if !am.canAlertWithCooldown(key, now, cooldown) {
+			continue
+		}
+
+		am.lastAlert[key] = now
+		am.activeAlerts[key] = true
+
+		alert := models.Alert{
+			Timestamp:  now,
+			AlertType:  "PROBE_DATA_LAG",
+			Severity:   resolved.Severity,
+			Message:    fmt.Sprintf("Probe %s has not received data for %v (threshold: %d min)", probe.Name, lag.Round(time.Minute), am.config.Alerts.ProbeDataLagAlertMinutes),
+			MetricName: "probe_data_flow",
+			PolicyID:   resolved.PolicyID,
+			Suppressed: resolved.InMaintenance,
+			ProbeID:    &probe.ID,
+		}
+
+		am.saveAlert(&alert)
+		if !alert.Suppressed {
+			nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+			if err := am.notifier.SendAlert(&alert, nc); err != nil {
+				log.Printf("Failed to send probe data lag alert: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// CheckProbeDataTruncation should be called when a data batch is truncated.
+// It flags the probe for monitoring - frequent truncation may indicate misconfiguration.
+func (am *AlertManager) RecordProbeDataTruncation(probeID uint, probeName string, totalItems, retainedItems int) {
+	if am.db == nil {
+		return
+	}
+
+	key := fmt.Sprintf("probe_truncation_%d", probeID)
+	now := time.Now()
+
+	am.mu.Lock()
+	lastTruncation := am.lastAlert[key]
+	am.mu.Unlock()
+
+	// Only alert if truncation happened recently (within 5 minutes) to avoid spam
+	if lastTruncation.IsZero() || now.Sub(lastTruncation) > 5*time.Minute {
+		return
+	}
+
+	nc := notifier.SnapshotConfig(&am.config.Alerts)
+
+	alert := models.Alert{
+		Timestamp:  now,
+		AlertType:  "PROBE_DATA_TRUNCATED",
+		Severity:   "warning",
+		Message:    fmt.Sprintf("Probe %s sent batch of %d items, kept %d (truncated %d) — possible misconfiguration", probeName, totalItems, retainedItems, totalItems-retainedItems),
+		MetricName: "probe_data_truncation",
+		ProbeID:    &probeID,
+	}
+
+	am.saveAlert(&alert)
+	if err := am.notifier.SendAlert(&alert, nc); err != nil {
+		log.Printf("Failed to send probe truncation alert: %v", err)
+	}
+}
+
 // CheckEscalations scans unacknowledged alerts and re-sends notifications
 // for those that have exceeded their escalation interval.
 func (am *AlertManager) CheckEscalations() {
@@ -689,11 +792,11 @@ func (am *AlertManager) CheckEscalations() {
 		}
 
 		nc := BuildNotifyConfigFromResolved(ResolvedAlertConfig{
-			PolicyID:      alert.PolicyID,
-			NotifyEmail:   policy.NotifyEmail,
-			NotifySlack:   policy.NotifySlack,
-			NotifyDiscord: policy.NotifyDiscord,
-			NotifyWebhook: policy.NotifyWebhook,
+			PolicyID:        alert.PolicyID,
+			NotifyEmail:     policy.NotifyEmail,
+			NotifySlack:     policy.NotifySlack,
+			NotifyDiscord:   policy.NotifyDiscord,
+			NotifyWebhook:   policy.NotifyWebhook,
 			EmailRecipients: policy.EmailRecipients,
 			SlackURL:        policy.SlackWebhookURL,
 			DiscordURL:      policy.DiscordWebhookURL,

@@ -179,6 +179,7 @@ type Alert struct {
 	ID              uint       `json:"id" gorm:"primaryKey"`
 	Timestamp       time.Time  `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2;index:idx_alert_unack,priority:3"`
 	DeviceID        uint       `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
+	ProbeID         *uint      `json:"probe_id" gorm:"index"`
 	AlertType       string     `json:"alert_type"`
 	Severity        string     `json:"severity"`
 	Message         string     `json:"message"`
@@ -415,28 +416,29 @@ type Site struct {
 }
 
 type Probe struct {
-	ID              uint       `json:"id" gorm:"primaryKey"`
-	Name            string     `json:"name" gorm:"uniqueIndex;not null"`
-	SiteID          uint       `json:"site_id" gorm:"index"`
-	Site            *Site      `json:"site,omitempty" gorm:"foreignKey:SiteID"`
-	RegistrationKey string     `json:"registration_key" gorm:"uniqueIndex"`
-	Enabled         bool       `json:"enabled" gorm:"default:true"`
-	Status          string     `json:"status" gorm:"default:pending"`
-	ApprovalStatus  string     `json:"approval_status" gorm:"default:pending;index:idx_probe_approval"`
-	ApprovedAt      *time.Time `json:"approved_at"`
-	ApprovedBy      *uint      `json:"approved_by"`
-	RejectedAt      *time.Time `json:"rejected_at"`
-	RejectedReason  string     `json:"rejected_reason"`
-	LastSeen        time.Time  `json:"last_seen"`
-	ListenAddress   string     `json:"listen_address"`
-	ListenPort      int        `json:"listen_port" gorm:"default:8089"`
-	TLSCertPath     string     `json:"tls_cert_path"`
-	TLSKeyPath      string     `json:"tls_key_path"`
-	ServerURL       string     `json:"server_url"`
-	ServerTLSCert   string     `json:"server_tls_cert"`
-	Description     string     `json:"description"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID               uint       `json:"id" gorm:"primaryKey"`
+	Name             string     `json:"name" gorm:"uniqueIndex;not null"`
+	SiteID           uint       `json:"site_id" gorm:"index"`
+	Site             *Site      `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	RegistrationKey  string     `json:"registration_key" gorm:"uniqueIndex"`
+	Enabled          bool       `json:"enabled" gorm:"default:true"`
+	Status           string     `json:"status" gorm:"default:pending"`
+	ApprovalStatus   string     `json:"approval_status" gorm:"default:pending;index:idx_probe_approval"`
+	ApprovedAt       *time.Time `json:"approved_at"`
+	ApprovedBy       *uint      `json:"approved_by"`
+	RejectedAt       *time.Time `json:"rejected_at"`
+	RejectedReason   string     `json:"rejected_reason"`
+	LastSeen         time.Time  `json:"last_seen"`
+	LastDataReceived time.Time  `json:"last_data_received" gorm:"index"`
+	ListenAddress    string     `json:"listen_address"`
+	ListenPort       int        `json:"listen_port" gorm:"default:8089"`
+	TLSCertPath      string     `json:"tls_cert_path"`
+	TLSKeyPath       string     `json:"tls_key_path"`
+	ServerURL        string     `json:"server_url"`
+	ServerTLSCert    string     `json:"server_tls_cert"`
+	Description      string     `json:"description"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 type ProbeSite struct {
@@ -785,7 +787,7 @@ type IRCCommand struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Command     string    `json:"command" gorm:"not null;uniqueIndex"` // e.g., "!status", "!help", "!stats"
 	Description string    `json:"description"`
-	Response    string    `json:"response"` // Response template or command to execute
+	Response    string    `json:"response"`                           // Response template or command to execute
 	CommandType string    `json:"command_type" gorm:"default:static"` // static, status, stats, custom
 	Enabled     bool      `json:"enabled" gorm:"default:true"`
 	AdminOnly   bool      `json:"admin_only" gorm:"default:false"`
@@ -796,13 +798,13 @@ type IRCCommand struct {
 func (IRCCommand) TableName() string { return "irc_commands" }
 
 type IRCMessageLog struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	ServerID  uint      `json:"server_id" gorm:"index"`
-	Channel   string    `json:"channel"`
-	Nick      string    `json:"nick"`
-	Message   string    `json:"message"`
-	MessageType string  `json:"message_type"` // message, action, notice, join, part, quit
-	Timestamp time.Time `json:"timestamp" gorm:"index"`
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	ServerID    uint      `json:"server_id" gorm:"index"`
+	Channel     string    `json:"channel"`
+	Nick        string    `json:"nick"`
+	Message     string    `json:"message"`
+	MessageType string    `json:"message_type"` // message, action, notice, join, part, quit
+	Timestamp   time.Time `json:"timestamp" gorm:"index"`
 }
 
 func (IRCMessageLog) TableName() string { return "irc_message_logs" }

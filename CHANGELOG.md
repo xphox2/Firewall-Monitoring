@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.155] - 2026-04-18
+
+### Added
+- **Probe data flow monitoring**: New `PROBE_DATA_LAG` alert fires when a probe has not received any data for `PROBE_DATA_LAG_ALERT_MINUTES` (default: 60). This catches queue-full, network, or misconfiguration issues that heartbeat-based `DEVICE_OFFLINE` alerts miss.
+- **Probe data truncation alerts**: New `PROBE_DATA_TRUNCATED` alert fires when a probe sends batches >1200 items (truncated to 1000) multiple times within 5 minutes — indicates possible misconfiguration.
+- **`LastDataReceived` timestamp**: Probe model now tracks last data receipt time via `last_data_received` column (indexed). Updated on all data ingestion endpoints.
+- **`ProbeID` on alerts**: Alert model now supports `probe_id` field for probe-specific alerts without an associated device.
+
+### Changed
+- **Probe data flow check**: `CheckProbeDataFlow()` now runs at end of each poll cycle alongside `CheckEscalations()`.
+
 ## [0.10.154] - 2026-04-05
 
 ### Fixed

@@ -589,8 +589,12 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 		return nil, false
 	}
 
-	// Update last_seen on any data submission
-	h.db.Gorm().Model(probe).Update("last_seen", time.Now())
+	// Update last_seen and last_data_received on any data submission
+	now := time.Now()
+	h.db.Gorm().Model(probe).Updates(map[string]interface{}{
+		"last_seen":          now,
+		"last_data_received": now,
+	})
 	return probe, true
 }
 
