@@ -133,6 +133,11 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// Ensure PostgreSQL partitions exist for high-volume tables
+	if err := d.EnsurePartitions(); err != nil {
+		log.Printf("Partition setup warning: %v", err)
+	}
+
 	// Ensure a default alert policy exists
 	d.EnsureDefaultPolicy()
 
@@ -169,6 +174,7 @@ func (d *Database) migrate() error {
 		&models.PingResult{},
 		&models.PingStats{},
 		&models.SyslogMessage{},
+		&models.SyslogSummary{},
 		&models.FlowSample{},
 		&models.FlowRollup{},
 		&models.SiteDatabase{},
@@ -213,6 +219,106 @@ func (d *Database) migrate() error {
 			if err := d.db.AutoMigrate(tbl); err != nil {
 				log.Printf("IRC migrate: recreate table: %v", err)
 			}
+		}
+	}
+
+	return nil
+}
+
+// EnsurePartitions creates monthly range partitions for high-volume tables on PostgreSQL.
+// Partitions are created for the current month + 6 months ahead.
+// This is safe for existing servers - it only creates new partitions, never modifies existing data.
+func (d *Database) EnsurePartitions() error {
+	if !d.dialect.IsPostgres() {
+		return nil // Partitioning is PostgreSQL-only
+	}
+
+	type partitionDef struct {
+		tableName string
+		column    string
+	}
+	tables := []partitionDef{
+		{"syslog_messages", "timestamp"},
+		{"syslog_summaries", "timestamp"},
+		{"trap_events", "timestamp"},
+		{"flow_samples", "timestamp"},
+	}
+
+	// Create partitions for current month + 6 months ahead
+	now := time.Now()
+	for i := 0; i <= 6; i++ {
+		year, month, _ := now.Date()
+		month = month + time.Month(i)
+		yearOffset := 0
+		for month > 12 {
+			month -= 12
+			yearOffset++
+		}
+		year += yearOffset
+		partitionStart := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
+		partitionEnd := partitionStart.AddDate(0, 1, 0)
+
+		startStr := partitionStart.Format("2006-01-02")
+		endStr := partitionEnd.Format("2006-01-02")
+
+		for _, def := range tables {
+			partitionName := fmt.Sprintf("%s_%d%02d", def.tableName, year, month)
+			// Check if partition already exists
+			var count int
+			d.db.Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", partitionName).Scan(&count)
+			if count > 0 {
+				continue // Partition exists
+			}
+
+			// Create the partition
+			sql := fmt.Sprintf(`
+				CREATE TABLE %s PARTITION OF %s
+				FOR VALUES FROM ('%s') TO ('%s')`,
+				partitionName, def.tableName, startStr, endStr)
+			if err := d.db.Exec(sql).Error; err != nil {
+				log.Printf("Partition creation warning for %s: %v", partitionName, err)
+				continue
+			}
+
+			// Create indexes on the partition for efficient queries
+			indexes := []struct {
+				name  string
+				cols  string
+				where string
+			}{
+				{fmt.Sprintf("idx_%s_device_ts", partitionName), fmt.Sprintf("(%s, %s)", "device_id", def.column), ""},
+				{fmt.Sprintf("idx_%s_timestamp", partitionName), fmt.Sprintf("(%s)", def.column), ""},
+			}
+
+			// Add severity index for syslog/trap tables
+			if def.tableName == "syslog_messages" {
+				indexes = append(indexes,
+					struct {
+						name  string
+						cols  string
+						where string
+					}{fmt.Sprintf("idx_%s_severity", partitionName), "(severity)", ""})
+			}
+			if def.tableName == "trap_events" {
+				indexes = append(indexes,
+					struct {
+						name  string
+						cols  string
+						where string
+					}{fmt.Sprintf("idx_%s_severity", partitionName), "(severity)", ""})
+			}
+
+			for _, idx := range indexes {
+				createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s %s", idx.name, partitionName, idx.cols)
+				if idx.where != "" {
+					createIdxSQL += " WHERE " + idx.where
+				}
+				if err := d.db.Exec(createIdxSQL).Error; err != nil {
+					log.Printf("Index creation warning on %s: %v", partitionName, err)
+				}
+			}
+
+			log.Printf("Created partition: %s", partitionName)
 		}
 	}
 
@@ -466,7 +572,6 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	}
 
 	statusDays := ret.Days(ret.StatusDays)
-	syslogDays := ret.Days(ret.SyslogDays)
 	flowDays := ret.Days(ret.FlowDays)
 	trapDays := ret.Days(ret.TrapDays)
 	pingDays := ret.Days(ret.PingDays)
@@ -480,7 +585,6 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.HardwareSensor{}, "hardware_sensors", statusDays},
 		{&models.TrapEvent{}, "trap_event", trapDays},
 		{&models.LoginAttempt{}, "login_attempt", defaultDays},
-		{&models.SyslogMessage{}, "syslog_message", syslogDays},
 		{&models.FlowSample{}, "flow_sample", flowDays},
 		{&models.InterfaceAddress{}, "interface_addresses", statusDays},
 		{&models.PingResult{}, "ping_result", pingDays},
@@ -490,6 +594,44 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		cutoff := time.Now().AddDate(0, 0, -e.days)
 		if err := d.db.Where("timestamp < ?", cutoff).Delete(e.model).Error; err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
+		}
+	}
+
+	// Syslog: handle critical (0-5) and informational (6-7) differently
+	// Critical syslog (severity 0-5): delete after SyslogCriticalDays (0 = never delete)
+	if ret.SyslogCriticalDays > 0 {
+		criticalCutoff := time.Now().AddDate(0, 0, -ret.SyslogCriticalDays)
+		if err := d.db.Where("timestamp < ? AND severity < 6", criticalCutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
+		}
+	}
+
+	// Informational syslog (severity 6-7): delete after SyslogInfoDays
+	// This catches any informational syslog that wasn't aggregated (aggregation runs every 5 min)
+	infoDays := ret.SyslogInfoDays
+	if infoDays <= 0 {
+		infoDays = 7 // default fallback
+	}
+	infoCutoff := time.Now().AddDate(0, 0, -infoDays)
+	if err := d.db.Where("timestamp < ? AND severity >= 6", infoCutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup informational syslog_message: %w", err)
+	}
+
+	// Syslog summaries: delete after SyslogInfoDays (they are derived from informational syslog)
+	summaryDays := ret.SyslogInfoDays
+	if summaryDays <= 0 {
+		summaryDays = 7 // default fallback
+	}
+	summaryCutoff := time.Now().AddDate(0, 0, -summaryDays)
+	if err := d.db.Where("timestamp < ?", summaryCutoff).Delete(&models.SyslogSummary{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup syslog_summary: %w", err)
+	}
+
+	// Legacy SyslogDays applies only when neither new config is set (backwards compat)
+	if ret.SyslogDays > 0 && ret.SyslogCriticalDays == 0 && ret.SyslogInfoDays == 0 {
+		cutoff := time.Now().AddDate(0, 0, -ret.SyslogDays)
+		if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
 		}
 	}
 
@@ -1911,6 +2053,207 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	return true
 }
 
+// RunSyslogAggregationCycle aggregates old informational syslog into summaries for scalability.
+// Called every 5 minutes by the poller:
+//  1. Raw informational (severity 6-7) older than SyslogInfoDays → hourly summaries
+//  2. Hourly summaries older than 48h → daily summaries
+func (d *Database) RunSyslogAggregationCycle(retention config.RetentionConfig) error {
+	infoDays := retention.SyslogInfoDays
+	if infoDays <= 0 {
+		infoDays = 7 // default: aggregate after 7 days
+	}
+
+	work := false
+	var lastErr error
+
+	// Step 1: raw informational syslog > infoDays old → hourly summaries
+	cutoffInfo := time.Now().AddDate(0, 0, -infoDays)
+	if done, err := d.aggregateSyslogToSummary(cutoffInfo, "1h"); err != nil {
+		lastErr = err
+		log.Printf("Syslog aggregation: step 1 error: %v", err)
+	} else if done {
+		work = true
+	}
+
+	// Step 2: hourly summaries > 48h old → daily summaries
+	cutoff48h := time.Now().Add(-48 * time.Hour)
+	if done, err := d.promoteSyslogSummaries("1h", "1d", cutoff48h); err != nil {
+		lastErr = err
+		log.Printf("Syslog aggregation: step 2 error: %v", err)
+	} else if done {
+		work = true
+	}
+
+	if !work && lastErr == nil {
+		log.Println("Syslog aggregation: cycle complete (no data to aggregate)")
+	}
+
+	return lastErr
+}
+
+// syslogSummaryRow holds aggregated data during syslog summary operations.
+type syslogSummaryRow struct {
+	Bucket         string
+	DeviceID       uint
+	Severity       int
+	Facility       int
+	AppName        string
+	MessagePattern string
+	Count          int64
+	SampleMessage  string
+}
+
+// aggregateSyslogToSummary groups raw informational syslog older than cutoff into hourly summaries.
+// Returns true if work was done, error if fatal.
+func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType string) (bool, error) {
+	bucketUnit := "hour"
+	bucketFmt := "2006-01-02 15:04"
+	if intervalType == "1d" {
+		bucketUnit = "day"
+		bucketFmt = "2006-01-02"
+	}
+	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
+
+	const pageSize = 10000
+	offset := 0
+	totalGroups := 0
+
+	for {
+		var rows []syslogSummaryRow
+		if err := d.db.Model(&models.SyslogMessage{}).
+			Where("timestamp < ? AND severity >= 6", cutoff). // only informational (6) and debug (7)
+			Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, " +
+				"COUNT(*) as count, MIN(message) as sample_message").
+			Group("bucket, device_id, severity, facility, app_name").
+			Limit(pageSize).Offset(offset).
+			Scan(&rows).Error; err != nil {
+			log.Printf("Syslog aggregation: error scanning raw messages: %v", err)
+			return totalGroups > 0, err
+		}
+
+		if len(rows) == 0 {
+			break
+		}
+
+		// Wrap insert+delete in a transaction for atomicity per page
+		// Note: This deletes ALL informational messages < cutoff for simplicity.
+		// If this page fails, messages will be re-aggregated on next cycle (potential duplicates, but safe).
+		if err := d.db.Transaction(func(tx *gorm.DB) error {
+			if err := batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt); err != nil {
+				return err
+			}
+			// Delete informational messages older than cutoff
+			if err := tx.Where("timestamp < ? AND severity >= 6", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+				return fmt.Errorf("delete raw syslog after aggregation: %w", err)
+			}
+			return nil
+		}); err != nil {
+			log.Printf("Syslog aggregation: transaction error: %v", err)
+			return totalGroups > 0, err
+		}
+
+		totalGroups += len(rows)
+		if len(rows) < pageSize {
+			break
+		}
+		offset += pageSize
+	}
+
+	if totalGroups == 0 {
+		return false, nil
+	}
+
+	log.Printf("Syslog aggregation: aggregated %d groups from raw syslog into %s summaries", totalGroups, intervalType)
+	return true, nil
+}
+
+// batchInsertSyslogSummaries inserts syslog summary rows in batches.
+func batchInsertSyslogSummaries(tx *gorm.DB, rows []syslogSummaryRow, intervalType, bucketFmt string) error {
+	const batchSize = 500
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := make([]models.SyslogSummary, 0, end-i)
+		for _, r := range rows[i:end] {
+			ts, _ := time.Parse(bucketFmt, r.Bucket)
+			batch = append(batch, models.SyslogSummary{
+				Timestamp:      ts,
+				DeviceID:       r.DeviceID,
+				IntervalType:   intervalType,
+				Severity:       r.Severity,
+				Facility:       r.Facility,
+				AppName:        r.AppName,
+				MessagePattern: r.MessagePattern,
+				Count:          r.Count,
+				SampleMessage:  r.SampleMessage,
+			})
+		}
+		if err := tx.Create(&batch).Error; err != nil {
+			return fmt.Errorf("batch insert syslog summaries: %w", err)
+		}
+	}
+	return nil
+}
+
+// promoteSyslogSummaries promotes summaries from srcInterval older than cutoff into dstInterval.
+// Returns true if work was done, error if fatal.
+func (d *Database) promoteSyslogSummaries(srcInterval, dstInterval string, cutoff time.Time) (bool, error) {
+	bucketUnit := "day"
+	bucketFmt := "2006-01-02"
+	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
+
+	const pageSize = 5000
+	offset := 0
+	totalGroups := 0
+
+	for {
+		var rows []syslogSummaryRow
+		if err := d.db.Model(&models.SyslogSummary{}).
+			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+			Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, message_pattern, " +
+				"SUM(count) as count, MIN(sample_message) as sample_message").
+			Group("bucket, device_id, severity, facility, app_name, message_pattern").
+			Limit(pageSize).Offset(offset).
+			Scan(&rows).Error; err != nil {
+			log.Printf("Syslog aggregation: error scanning %s summaries: %v", srcInterval, err)
+			return totalGroups > 0, err
+		}
+
+		if len(rows) == 0 {
+			break
+		}
+
+		if err := d.db.Transaction(func(tx *gorm.DB) error {
+			if err := batchInsertSyslogSummaries(tx, rows, dstInterval, bucketFmt); err != nil {
+				return err
+			}
+			if err := tx.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+				Delete(&models.SyslogSummary{}).Error; err != nil {
+				return fmt.Errorf("delete consumed %s syslog summaries: %w", srcInterval, err)
+			}
+			return nil
+		}); err != nil {
+			log.Printf("Syslog aggregation: transaction error promoting %s to %s: %v", srcInterval, dstInterval, err)
+			return totalGroups > 0, err
+		}
+
+		totalGroups += len(rows)
+		if len(rows) < pageSize {
+			break
+		}
+		offset += pageSize
+	}
+
+	if totalGroups == 0 {
+		return false, nil
+	}
+
+	log.Printf("Syslog aggregation: promoted %d groups from %s to %s summaries", totalGroups, srcInterval, dstInterval)
+	return true, nil
+}
+
 // EventStatsResult holds aggregated event statistics (alerts, traps, syslog)
 type EventStatsResult struct {
 	Total      int64        `json:"total"`
@@ -1977,12 +2320,22 @@ func (d *Database) GetTrapStats(hours int) (*EventStatsResult, error) {
 	return result, nil
 }
 
-// GetSyslogStats returns aggregated syslog statistics
+// GetSyslogStats returns aggregated syslog statistics (raw + summaries combined)
 func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &EventStatsResult{}
 
-	d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).Count(&result.Total)
+	// Total: raw syslog + summaries
+	var rawCount int64
+	if err := d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).Count(&rawCount).Error; err != nil {
+		return nil, fmt.Errorf("failed to count raw syslog: %w", err)
+	}
+	var summaryCount int64
+	if err := d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff).
+		Select("COALESCE(SUM(count), 0)").Scan(&summaryCount).Error; err != nil {
+		return nil, fmt.Errorf("failed to count syslog summaries: %w", err)
+	}
+	result.Total = rawCount + summaryCount
 
 	// Syslog severity is numeric, map to human-readable names
 	sevNames := map[int]string{0: "Emergency", 1: "Alert", 2: "Critical", 3: "Error", 4: "Warning", 5: "Notice", 6: "Info", 7: "Debug"}
@@ -1990,17 +2343,65 @@ func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 		Severity int
 		Count    int64
 	}
-	d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).
-		Select("severity, COUNT(*) as count").Group("severity").Order("count DESC").Scan(&bySev)
+	// Get severity counts from raw syslog
+	if err := d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).
+		Select("severity, COUNT(*) as count").Group("severity").Scan(&bySev).Error; err != nil {
+		return nil, fmt.Errorf("failed to get raw syslog severity counts: %w", err)
+	}
+	// Get severity counts from summaries
+	var summaryBySev []struct {
+		Severity int
+		Count    int64
+	}
+	if err := d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff).
+		Select("severity, SUM(count) as count").Group("severity").Scan(&summaryBySev).Error; err != nil {
+		return nil, fmt.Errorf("failed to get summary severity counts: %w", err)
+	}
+	// Merge summary counts into bySev
+	sevMap := make(map[int]int64)
 	for _, s := range bySev {
-		name := sevNames[s.Severity]
+		sevMap[s.Severity] += s.Count
+	}
+	for _, s := range summaryBySev {
+		sevMap[s.Severity] += s.Count
+	}
+	for sev, count := range sevMap {
+		name := sevNames[sev]
 		if name == "" {
-			name = fmt.Sprintf("Severity %d", s.Severity)
+			name = fmt.Sprintf("Severity %d", sev)
 		}
-		result.BySeverity = append(result.BySeverity, KeyCount{Key: name, Count: s.Count})
+		result.BySeverity = append(result.BySeverity, KeyCount{Key: name, Count: count})
 	}
 
-	result.OverTime = d.timeSeriesCount(&models.SyslogMessage{}, cutoff)
+	// OverTime: combine raw time series with summary counts
+	rawTimeSeries := d.timeSeriesCount(&models.SyslogMessage{}, cutoff)
+	// Get summary time series grouped by hour
+	var summaryTimeSeries []struct {
+		Bucket string
+		Count  int64
+	}
+	if err := d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff).
+		Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(count) as count").
+		Group("bucket").Order("bucket ASC").Scan(&summaryTimeSeries).Error; err != nil {
+		return nil, fmt.Errorf("failed to get summary time series: %w", err)
+	}
+	// Merge summary time series into raw time series
+	summaryMap := make(map[string]int64)
+	for _, r := range summaryTimeSeries {
+		summaryMap[r.Bucket] += r.Count
+	}
+	for _, r := range rawTimeSeries {
+		summaryMap[r.Bucket] += r.Count
+	}
+	// Sort by bucket for consistent ordering
+	buckets := make([]string, 0, len(summaryMap))
+	for bucket := range summaryMap {
+		buckets = append(buckets, bucket)
+	}
+	sort.Strings(buckets)
+	for _, bucket := range buckets {
+		result.OverTime = append(result.OverTime, TimeBucket{Bucket: bucket, Count: summaryMap[bucket]})
+	}
 
 	return result, nil
 }

@@ -80,6 +80,7 @@ func (p *Poller) Start() error {
 		case <-rollupTicker.C:
 			if p.db != nil {
 				p.db.RunFlowRollupCycle()
+				p.db.RunSyslogAggregationCycle(p.cfg.Retention)
 			}
 		case <-cleanupTicker.C:
 			if p.db != nil {
@@ -87,6 +88,10 @@ func (p *Poller) Start() error {
 					log.Printf("Data cleanup error: %v", err)
 				} else {
 					log.Println("Old data cleanup completed")
+				}
+				// Ensure future partitions exist (creates ahead partitions if needed)
+				if err := p.db.EnsurePartitions(); err != nil {
+					log.Printf("Partition check error: %v", err)
 				}
 			}
 			if p.alertManager != nil {

@@ -542,6 +542,21 @@ type SyslogMessage struct {
 
 func (SyslogMessage) TableName() string { return "syslog_messages" }
 
+type SyslogSummary struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_syslog_summary_device_ts,priority:2"` // standalone + composite
+	DeviceID       uint      `json:"device_id" gorm:"index:idx_syslog_summary_device_ts,priority:1"`
+	IntervalType   string    `json:"interval_type" gorm:"size:4;index:idx_syslog_summary_interval,priority:1"` // "1h", "1d"
+	Severity       int       `json:"severity" gorm:"index:idx_syslog_summary_severity"`                        // 6=Info, 7=Debug
+	Facility       int       `json:"facility"`
+	AppName        string    `json:"app_name"`        // first seen app name
+	MessagePattern string    `json:"message_pattern"` // normalized message template
+	Count          int64     `json:"count"`           // number of messages in this bucket
+	SampleMessage  string    `json:"sample_message"`  // one example message for debugging
+}
+
+func (SyslogSummary) TableName() string { return "syslog_summaries" }
+
 type FlowSample struct {
 	ID             uint      `json:"id" gorm:"primaryKey"`
 	Timestamp      time.Time `json:"timestamp" gorm:"index;index:idx_flow_device_ts,priority:2"`

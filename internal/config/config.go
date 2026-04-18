@@ -70,13 +70,15 @@ type DatabaseConfig struct {
 }
 
 type RetentionConfig struct {
-	DefaultDays int
-	SyslogDays  int
-	FlowDays    int
-	TrapDays    int
-	StatusDays  int
-	PingDays    int
-	AlertDays   int
+	DefaultDays        int
+	SyslogDays         int
+	SyslogInfoDays     int // days to keep raw informational syslog (severity 6-7) before aggregation (default 7)
+	SyslogCriticalDays int // days to keep raw critical syslog (severity 0-5), 0=forever (default 0)
+	FlowDays           int
+	TrapDays           int
+	StatusDays         int
+	PingDays           int
+	AlertDays          int
 }
 
 type AuthConfig struct {
@@ -192,13 +194,15 @@ func Load() *Config {
 			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
 		},
 		Retention: RetentionConfig{
-			DefaultDays: getIntEnv("RETENTION_DEFAULT_DAYS", 90),
-			SyslogDays:  getIntEnv("RETENTION_SYSLOG_DAYS", 0),
-			FlowDays:    getIntEnv("RETENTION_FLOW_DAYS", 365),
-			TrapDays:    getIntEnv("RETENTION_TRAP_DAYS", 0),
-			StatusDays:  getIntEnv("RETENTION_STATUS_DAYS", 0),
-			PingDays:    getIntEnv("RETENTION_PING_DAYS", 0),
-			AlertDays:   getIntEnv("RETENTION_ALERT_DAYS", 0),
+			DefaultDays:        getIntEnv("RETENTION_DEFAULT_DAYS", 90),
+			SyslogDays:         getIntEnv("RETENTION_SYSLOG_DAYS", 0),
+			SyslogInfoDays:     getIntEnv("RETENTION_SYSLOG_INFO_DAYS", 7),
+			SyslogCriticalDays: getIntEnv("RETENTION_SYSLOG_CRITICAL_DAYS", 0),
+			FlowDays:           getIntEnv("RETENTION_FLOW_DAYS", 365),
+			TrapDays:           getIntEnv("RETENTION_TRAP_DAYS", 0),
+			StatusDays:         getIntEnv("RETENTION_STATUS_DAYS", 0),
+			PingDays:           getIntEnv("RETENTION_PING_DAYS", 0),
+			AlertDays:          getIntEnv("RETENTION_ALERT_DAYS", 0),
 		},
 		Auth: AuthConfig{
 			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
