@@ -50,3 +50,4 @@ IRC-FORMAT.txt
 
 # Admin password file (written at runtime)
 .admin-password
+node_modules/
