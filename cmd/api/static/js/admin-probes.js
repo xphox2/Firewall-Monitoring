@@ -214,9 +214,14 @@
                 break;
             }
         }
-        if (!probe) return;
+        if (!probe) {
+            AC.showError('Probe not found');
+            return;
+        }
 
-        AC.apiFetch(API_BASE + '/probes/' + id).then(function(result) {
+        AC.fetchCsrfToken().then(function() {
+            return AC.apiFetch(API_BASE + '/probes/' + id);
+        }).then(function(result) {
             if (result && result.data) {
                 showDeployInfoForProbe(result.data);
             }

@@ -165,7 +165,9 @@
                                 '<div class="probe-stat"><div class="val">' + (d.flows || 0).toLocaleString() + '</div><div class="lbl">Flows<div class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</div></div></div>' +
                                 '<div class="probe-stat"><div class="val">' + (d.pings || 0).toLocaleString() + '</div><div class="lbl">Pings<div class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</div></div></div>';
                         }
-                    })['catch'](function() {});
+                    })['catch'](function(err) {
+                        console.error('Failed to load probe stats:', err);
+                    });
                 });
 
                 // Click handler for probe cards to show detail modal
@@ -221,8 +223,10 @@
                     }
 
                     document.getElementById('probe-detail-body').innerHTML = html;
-                })['catch'](function() {
+                })['catch'](function(err) {
+                    console.error('Failed to load probe detail:', err);
                     document.getElementById('probe-detail-body').innerHTML = '<div class="error">Failed to load stats</div>';
+                    AC.showError('Failed to load probe statistics');
                 });
             };
 
@@ -360,7 +364,9 @@
                     indicator.title = 'Custom alert config';
                 }
                 nameCell.parentNode.insertBefore(indicator, nameCell.nextSibling);
-            })['catch'](function() {});
+            })['catch'](function(err) {
+                console.error('Failed to load device alert indicators:', err);
+            });
         });
     }
 
@@ -397,7 +403,9 @@
                     sessEl.title = polledInfo;
                 }
             });
-        })['catch'](function() {});
+        })['catch'](function(err) {
+            console.error('Failed to load device enrichments:', err);
+        });
     }
 
     // ---- Interfaces ----
@@ -607,7 +615,9 @@
                     currentVpnMap = vpnRes.data;
                     FWDiagram.updateVPNBadges(currentVpnMap);
                 }
-            })['catch'](function() {});
+            })['catch'](function(err) {
+                console.error('Failed to refresh VPN badges:', err);
+            });
 
             if (connChanges.length > 0) {
                 // Re-render table for simplicity
@@ -632,7 +642,9 @@
                     }
                 }
             }
-        })['catch'](function() {}); // silent fail for polling
+        })['catch'](function(err) {
+            console.error('Failed to poll connection statuses:', err);
+        });
     }
 
     // ---- Syslog ----
@@ -1012,7 +1024,11 @@
         apiFetch(API_BASE + '/alerts/' + id + '/acknowledge', {method:'POST', body: body}).then(function() {
             closeAckModal();
             loadAlerts();
-        })['catch'](function(e) { console.error('Failed to acknowledge alert:', e); });
+            AC.showSuccess('Alert acknowledged');
+        })['catch'](function(e) {
+            console.error('Failed to acknowledge alert:', e);
+            AC.showError('Failed to acknowledge alert');
+        });
     }
 
     var ackForm = document.getElementById('ack-form');
@@ -1402,7 +1418,11 @@
             apiFetch(url, { method: method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(function() {
                 closeDeviceModal();
                 loadDevices();
-            })['catch'](function(err) { alert('Error saving device: ' + err.message); });
+                AC.showSuccess(id ? 'Device updated' : 'Device created');
+            })['catch'](function(err) {
+                console.error('Error saving device:', err);
+                AC.showError('Error saving device: ' + err.message);
+            });
         });
     }
 
@@ -1412,7 +1432,11 @@
         if (!confirm('Delete this device and all its data?')) return;
         apiFetch(API_BASE + '/devices/' + id, { method: 'DELETE' }).then(function() {
             loadDevices();
-        })['catch'](function(err) { alert('Error: ' + err.message); });
+            AC.showSuccess('Device deleted');
+        })['catch'](function(err) {
+            console.error('Error deleting device:', err);
+            AC.showError('Error deleting device: ' + err.message);
+        });
     }
 
     // ---- Connection Diagram ----
@@ -1471,7 +1495,11 @@
             apiFetch(API_BASE + '/connections', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(function() {
                 closeConnectionModal();
                 loadConnections();
-            })['catch'](function(err) { alert('Error: ' + err.message); });
+                AC.showSuccess('Connection created');
+            })['catch'](function(err) {
+                console.error('Error creating connection:', err);
+                AC.showError('Error creating connection: ' + err.message);
+            });
         });
     }
 
@@ -1479,7 +1507,11 @@
         if (!confirm('Delete this connection?')) return;
         apiFetch(API_BASE + '/connections/' + id, { method: 'DELETE' }).then(function() {
             loadConnections();
-        })['catch'](function(err) { alert('Error: ' + err.message); });
+            AC.showSuccess('Connection deleted');
+        })['catch'](function(err) {
+            console.error('Error deleting connection:', err);
+            AC.showError('Error deleting connection: ' + err.message);
+        });
     }
 
     // ---- Settings Actions ----
@@ -1781,21 +1813,33 @@
             }).then(function() {
                 closePolicyModal();
                 loadAlertPolicies();
-            })['catch'](function(err) { alert('Error saving policy: ' + (err.message || err)); });
+                AC.showSuccess(id ? 'Policy updated' : 'Policy created');
+            })['catch'](function(err) {
+                console.error('Error saving policy:', err);
+                AC.showError('Error saving policy: ' + (err.message || err));
+            });
         });
     }
 
     function clonePolicy(id) {
         apiFetch(API_BASE + '/alert-policies/' + id + '/clone', {method: 'POST'}).then(function() {
             loadAlertPolicies();
-        })['catch'](function(e) { alert('Clone failed: ' + e.message); });
+            AC.showSuccess('Policy cloned');
+        })['catch'](function(e) {
+            console.error('Clone failed:', e);
+            AC.showError('Clone failed: ' + e.message);
+        });
     }
 
     function deletePolicy(id) {
         if (!confirm('Delete this alert policy?')) return;
         apiFetch(API_BASE + '/alert-policies/' + id, {method: 'DELETE'}).then(function() {
             loadAlertPolicies();
-        })['catch'](function(e) { alert('Delete failed: ' + e.message); });
+            AC.showSuccess('Policy deleted');
+        })['catch'](function(e) {
+            console.error('Delete policy failed:', e);
+            AC.showError('Delete failed: ' + e.message);
+        });
     }
 
     // ---- Maintenance Windows ----
@@ -2017,7 +2061,11 @@
             apiFetch(url, {method: method, body: data}).then(function() {
                 closeMaintModal();
                 loadMaintenance();
-            })['catch'](function(err) { alert('Error: ' + (err.message || err)); });
+                AC.showSuccess(id ? 'Maintenance window updated' : 'Maintenance window created');
+            })['catch'](function(err) {
+                console.error('Error saving maintenance window:', err);
+                AC.showError('Error: ' + (err.message || err));
+            });
         });
     }
 
@@ -2025,7 +2073,11 @@
         if (!confirm('Delete this maintenance window?')) return;
         apiFetch(API_BASE + '/maintenance-windows/' + id, {method: 'DELETE'}).then(function() {
             loadMaintenance();
-        })['catch'](function(e) { alert('Delete failed: ' + e.message); });
+            AC.showSuccess('Maintenance window deleted');
+        })['catch'](function(e) {
+            console.error('Delete maintenance window failed:', e);
+            AC.showError('Delete failed: ' + e.message);
+        });
     }
 
     // ---- Device Alert Config Modal ----
@@ -2078,7 +2130,8 @@
 
             document.getElementById('device-alert-modal').classList.add('active');
         })['catch'](function(e) {
-            alert('Failed to load alert config: ' + e.message);
+            console.error('Failed to load alert config:', e);
+            AC.showError('Failed to load alert config: ' + e.message);
         });
     }
 
@@ -2093,7 +2146,11 @@
         apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config', { method: 'DELETE' }).then(function() {
             closeDeviceAlertModal();
             loadDevices();
-        })['catch'](function(e) { alert('Reset failed: ' + e.message); });
+            AC.showSuccess('Alert config reset to defaults');
+        })['catch'](function(e) {
+            console.error('Reset alert config failed:', e);
+            AC.showError('Reset failed: ' + e.message);
+        });
     }
 
     var deviceAlertForm = document.getElementById('device-alert-form');
@@ -2131,7 +2188,11 @@
             }).then(function() {
                 closeDeviceAlertModal();
                 loadDevices();
-            })['catch'](function(err) { alert('Error saving alert config: ' + err.message); });
+                AC.showSuccess('Alert config saved');
+            })['catch'](function(err) {
+                console.error('Error saving alert config:', err);
+                AC.showError('Error saving alert config: ' + err.message);
+            });
         });
     }
 
@@ -2172,7 +2233,12 @@
             apiFetch(API_BASE + '/devices/' + id, {
                 method: 'PUT',
                 body: { public_visible: checked }
-            })['catch'](function() { el.checked = !checked; });
+            }).then(function() {
+                AC.showSuccess('Public visibility updated');
+            })['catch'](function() {
+                el.checked = !checked;
+                AC.showError('Failed to update public visibility');
+            });
         },
         'delete-connection': function(el) { deleteConnection(parseInt(el.dataset.id)); },
         'show-ack-modal': function(el) { showAckModal(parseInt(el.dataset.id)); },

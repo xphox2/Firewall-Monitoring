@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Site Management - Firewall Monitor</title>
+    <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <style>
         .modal.active { display: flex; }
@@ -18,33 +19,33 @@
         <div class="flex-1 p-3 overflow-y-auto">
             <div class="mb-4">
                 <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">Monitoring</div>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin"><span class="w-[18px] text-center text-[0.9rem]">&#9632;</span> Dashboard</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/devices"><span class="w-[18px] text-center text-[0.9rem]">&#9881;</span> Devices</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/connections"><span class="w-[18px] text-center text-[0.9rem]">&#8644;</span> Connections</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/interfaces"><span class="w-[18px] text-center text-[0.9rem]">&#8646;</span> Interfaces</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin"><span class="w-[18px] text-center text-[0.9rem]">&#9632;</span> Dashboard</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/devices"><span class="w-[18px] text-center text-[0.9rem]">&#9881;</span> Devices</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/connections"><span class="w-[18px] text-center text-[0.9rem]">&#8644;</span> Connections</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/interfaces"><span class="w-[18px] text-center text-[0.9rem]">&#8646;</span> Interfaces</a>
             </div>
             <div class="mb-4">
                 <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">Data</div>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/syslog"><span class="w-[18px] text-center text-[0.9rem]">&#9993;</span> Syslog</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/flows"><span class="w-[18px] text-center text-[0.9rem]">&#8674;</span> Flows</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/alerts"><span class="w-[18px] text-center text-[0.9rem]">&#9888;</span> Alerts</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/traps"><span class="w-[18px] text-center text-[0.9rem]">&#9889;</span> Traps</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/syslog"><span class="w-[18px] text-center text-[0.9rem]">&#9993;</span> Syslog</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/flows"><span class="w-[18px] text-center text-[0.9rem]">&#8674;</span> Flows</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/alerts"><span class="w-[18px] text-center text-[0.9rem]">&#9888;</span> Alerts</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/traps"><span class="w-[18px] text-center text-[0.9rem]">&#9889;</span> Traps</a>
             </div>
             <div class="mb-4">
                 <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">Infrastructure</div>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probes"><span class="w-[18px] text-center text-[0.9rem]">&#9678;</span> Probes</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3] bg-[rgba(56,139,253,0.15)] text-[#58a6ff]" href="/admin/sites"><span class="w-[18px] text-center text-[0.9rem]">&#9962;</span> Sites</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/network"><span class="w-[18px] text-center text-[0.9rem]">&#9733;</span> Network</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probe-pending"><span class="w-[18px] text-center text-[0.9rem]">&#9200;</span> Pending</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probes"><span class="w-[18px] text-center text-[0.9rem]">&#9678;</span> Probes</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3] bg-[rgba(56,139,253,0.15)] text-[#58a6ff]" href="/admin/sites"><span class="w-[18px] text-center text-[0.9rem]">&#9962;</span> Sites</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/network"><span class="w-[18px] text-center text-[0.9rem]">&#9733;</span> Network</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probe-pending"><span class="w-[18px] text-center text-[0.9rem]">&#9200;</span> Pending</a>
             </div>
             <div class="mb-4">
                 <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">System</div>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/settings"><span class="w-[18px] text-center text-[0.9rem]">&#9881;</span> Settings</a>
-                <a class="flex items-center gap-[10px] p-[9px_12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/irc"><span class="w-[18px] text-center text-[0.9rem]">&#128172;</span> IRC</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/settings"><span class="w-[18px] text-center text-[0.9rem]">&#9881;</span> Settings</a>
+                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/irc"><span class="w-[18px] text-center text-[0.9rem]">&#128172;</span> IRC</a>
             </div>
         </div>
         <div class="p-3 border-t border-[#30363d]">
-            <a class="flex items-center gap-[10px] p-[9px_12px] text-[#f85149] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[rgba(248,81,73,0.1)]" href="#" data-action="logout"><span class="w-[18px] text-center text-[0.9rem]">&#10140;</span> Logout</a>
+            <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#f85149] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[rgba(248,81,73,0.1)]" href="#" data-action="logout"><span class="w-[18px] text-center text-[0.9rem]">&#10140;</span> Logout</a>
         </div>
     </div>
 

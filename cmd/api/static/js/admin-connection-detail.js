@@ -171,6 +171,7 @@
             document.getElementById('dst-tunnels-title').textContent = 'Destination Tunnels (' + dstName + ')';
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Error loading detail:', err);
+            AC.showError('Failed to load connection details');
         });
     }
 
@@ -312,6 +313,7 @@
             });
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Error loading tunnel chart:', err);
+            AC.showError('Failed to load tunnel chart');
         });
     }
 
@@ -366,6 +368,7 @@
             });
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Error loading traffic chart:', err);
+            AC.showError('Failed to load traffic chart');
         });
     }
 
@@ -480,6 +483,7 @@
             ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:#484f58;padding:20px;">No conversations found</td></tr>';
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Error loading flow stats:', err);
+            AC.showError('Failed to load flow statistics');
         });
     }
 
@@ -539,6 +543,7 @@
             }
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Init error:', err);
+            AC.showError('Failed to initialize connection detail view');
         });
     }
     init();
@@ -553,6 +558,7 @@
             }
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Refresh error:', err);
+            AC.showError('Failed to refresh connection data');
         });
     }, 30000);
 })();

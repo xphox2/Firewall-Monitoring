@@ -99,20 +99,41 @@
         return '<span class="badge" style="background:' + cs.color + ';font-size:0.65rem;padding:1px 5px;">' + (labels[type] || type || 'Unknown') + '</span>';
     }
 
-    function showError(msg) {
-        var el = document.getElementById('error-msg');
-        if (!el) return;
-        el.textContent = msg;
-        el.style.display = 'block';
-        setTimeout(function() { el.style.display = 'none'; }, 5000);
+    function showError(msg, duration) {
+        showToast(msg, 'error', duration);
     }
 
-    function showSuccess(msg) {
-        var el = document.getElementById('success-msg');
-        if (!el) return;
-        el.textContent = msg;
-        el.style.display = 'block';
-        setTimeout(function() { el.style.display = 'none'; }, 5000);
+    function showSuccess(msg, duration) {
+        showToast(msg, 'success', duration);
+    }
+
+    function showToast(msg, type, duration) {
+        duration = duration || 5000;
+        var existing = document.querySelector('.toast-container');
+        if (existing) existing.remove();
+        var container = document.createElement('div');
+        container.className = 'toast-container';
+        container.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;';
+        var toast = document.createElement('div');
+        toast.className = 'toast-message ' + (type || 'error');
+        toast.textContent = msg;
+        toast.style.cssText = 'padding:14px 24px;border-radius:8px;font-size:0.9rem;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.3);' +
+            (type === 'success' ? 'background:#3fb950;color:#fff;' : type === 'warning' ? 'background:#d2992a;color:#fff;' : 'background:#f85149;color:#fff;') +
+            'animation:toastSlideIn 0.3s ease';
+        container.appendChild(toast);
+        document.body.appendChild(container);
+        if (duration > 0) {
+            setTimeout(function() {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s';
+                setTimeout(function() { container.remove(); }, 300);
+            }, duration);
+        }
+    }
+
+    function clearToasts() {
+        var existing = document.querySelector('.toast-container');
+        if (existing) existing.remove();
     }
 
     function apiFetch(url, options) {
@@ -177,6 +198,8 @@
         typeBadgeHtml: typeBadgeHtml,
         showError: showError,
         showSuccess: showSuccess,
+        showToast: showToast,
+        clearToasts: clearToasts,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,
@@ -206,4 +229,8 @@
     window.connStyle = connStyle;
     window.matchMethodBadge = matchMethodBadge;
     window.typeBadgeHtml = typeBadgeHtml;
+    window.showToast = showToast;
+    window.showError = showError;
+    window.showSuccess = showSuccess;
+    window.clearToasts = clearToasts;
 })();
