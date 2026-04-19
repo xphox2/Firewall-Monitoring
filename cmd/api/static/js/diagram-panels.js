@@ -97,7 +97,11 @@
                 events.map(function(e) {
                     const icon = sourceIcons[e.source] || '';
                     const sevColor = sevColors[e.severity] || '#8b949e';
-                    const time = new Date(e.timestamp).toLocaleString();
+                    const time = (function(ts) {
+                        const d = new Date(ts);
+                        const tz = window.AdminCommon.getTimezone();
+                        return d.toLocaleString('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+                    })(e.timestamp);
                     return '<tr>' +
                         '<td style="white-space:nowrap;">' + window.escapeHtml(time) + '</td>' +
                         '<td>' + icon + ' ' + window.escapeHtml(e.source) + '</td>' +

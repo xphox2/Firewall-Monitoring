@@ -93,6 +93,10 @@ func (p *Poller) Start() error {
 				if err := p.db.EnsurePartitions(); err != nil {
 					log.Printf("Partition check error: %v", err)
 				}
+				// Ensure autovacuum is configured (no-op if already configured)
+				if err := p.db.ConfigureAutovacuum(); err != nil {
+					log.Printf("Autovacuum config error: %v", err)
+				}
 			}
 			if p.alertManager != nil {
 				p.alertManager.PruneExpiredCooldowns()

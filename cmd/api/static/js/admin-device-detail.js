@@ -187,7 +187,8 @@
 
                 var labels = sysData.map(function(s) {
                     var d = new Date(s.timestamp);
-                    return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                    var tz = AC.getTimezone();
+                    return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
                 });
                 var cpuData = sysData.map(function(s) { return s.cpu_usage; });
                 var memData = sysData.map(function(s) { return s.memory_usage; });

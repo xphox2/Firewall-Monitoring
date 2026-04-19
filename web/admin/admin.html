@@ -113,17 +113,17 @@
         .auto-refresh-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #8b949e; margin-left: auto; }
         .auto-refresh-toggle input { accent-color: #238636; }
 
-        .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }
-        .probe-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
-        .probe-card.clickable { cursor: pointer; transition: border-color 0.15s; }
-        .probe-card.clickable:hover { border-color: #58a6ff; }
-        .probe-card .probe-name { font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
-        .probe-card .probe-meta { font-size: 0.78rem; color: #8b949e; }
-        .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
-        .probe-card .probe-stat { text-align: center; }
-        .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
-        .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; }
-        .probe-card .probe-stat .lbl .last-hour { color: #3fb950; font-weight: 400; }
+        .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
+        .probe-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .probe-card.clickable { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+        .probe-card.clickable:hover { border-color: #58a6ff; transform: translateY(-2px); }
+        .probe-card .probe-name { font-weight: 600; color: #e6edf3; margin-bottom: 6px; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+        .probe-card .probe-meta { font-size: 0.78rem; color: #8b949e; margin-bottom: 12px; }
+        .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .probe-card .probe-stat { background: #0d1117; border-radius: 6px; padding: 10px 8px; text-align: center; }
+        .probe-card .probe-stat .val { font-size: 1.2rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; margin-top: 4px; }
+        .probe-card .probe-stat .lbl .last-hour { color: #3fb950; display: block; font-size: 0.7rem; margin-top: 2px; }
         .card:fullscreen { background: #0d1117; padding: 0; display: flex; flex-direction: column; }
         .card:fullscreen .card-header { flex-shrink: 0; }
         .card:fullscreen .connection-diagram { flex: 1; min-height: 0; }
@@ -480,13 +480,12 @@
                 <button class="btn secondary sm flow-range-btn" data-hours="720" data-action="set-flow-range">1m</button>
                 <button class="btn secondary sm flow-range-btn" data-hours="8760" data-action="set-flow-range">1y</button>
             </div>
-            <div class="stat-grid stat-grid-6" id="flows-stats-grid">
+            <div class="stat-grid stat-grid-5" id="flows-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Sampled Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
-                <div class="stat-card"><div class="stat-label">Est. Actual Bytes</div><div class="stat-value good" id="flows-est-bytes">--</div></div>
                 <div class="stat-card"><div class="stat-label">Avg Throughput</div><div class="stat-value" id="flows-throughput">--</div></div>
                 <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="flows-sources">--</div></div>
-                <div class="stat-card"><div class="stat-label">Unique Dests</div><div class="stat-value" id="flows-dests">--</div></div>
+                <div class="stat-card"><div class="stat-label">Unique Destinations</div><div class="stat-value" id="flows-dests">--</div></div>
                 <div class="stat-card"><div class="stat-label">Protocols</div><div class="stat-value" id="flows-protocols">--</div></div>
                 <div class="stat-card"><div class="stat-label">Sampling Rate</div><div class="stat-value" id="flows-sampling-rate">--</div></div>
                 <div class="stat-card"><div class="stat-label">Total Packets</div><div class="stat-value" id="flows-packets">--</div></div>
@@ -563,7 +562,7 @@
                 </div>
                 <div class="table-wrap" style="max-height: 600px;">
                     <table id="flows-table">
-                        <thead><tr><th>Time</th><th>Src IP:Port</th><th>&#8594;</th><th>Dst IP:Port</th><th>Protocol</th><th>Bytes</th><th>Est. Bytes</th><th>Packets</th><th>Rate</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th>&#8594;</th><th>Dst IP:Port</th><th>Protocol</th><th>Bytes</th><th>Packets</th><th>Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -1271,16 +1270,21 @@
     </div>
 
     <style>
-        .probe-detail-totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
-        .detail-stat { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; text-align: center; }
-        .detail-stat .detail-val { font-size: 1.4rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
-        .detail-stat .detail-lbl { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; margin-top: 4px; }
-        .detail-stat .detail-lbl .last-hour { color: #3fb950; display: block; text-transform: none; font-size: 0.75rem; margin-top: 2px; }
-        .detail-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        .detail-table th { padding: 6px 10px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 0.72rem; text-transform: uppercase; }
-        .detail-table td { padding: 6px 10px; border-bottom: 1px solid #21262d; font-size: 0.82rem; }
-        .detail-table tr:hover { background: #1c2128; }
-        .probe-detail-body { min-height: 100px; }
+        .probe-detail-totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .detail-stat { background: linear-gradient(135deg, #0d1117 0%, #161b22 100%); border: 1px solid #30363d; border-radius: 10px; padding: 20px 16px; text-align: center; }
+        .detail-stat .detail-val { font-size: 1.8rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .detail-stat .detail-lbl { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; margin-top: 8px; letter-spacing: 0.5px; }
+        .detail-stat .detail-lbl .last-hour { color: #3fb950; display: block; text-transform: none; font-size: 0.9rem; margin-top: 4px; font-weight: 500; }
+        .probe-detail-breakdown { margin-top: 20px; }
+        .probe-detail-breakdown h4 { color: #8b949e; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #30363d; }
+        .detail-table-wrap { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+        .detail-table { width: 100%; border-collapse: collapse; }
+        .detail-table th { padding: 12px 16px; text-align: left; background: #161b22; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+        .detail-table td { padding: 12px 16px; border-bottom: 1px solid #21262d; font-size: 0.88rem; color: #c9d1d9; }
+        .detail-table tr:last-child td { border-bottom: none; }
+        .detail-table tr:hover { background: rgba(88,166,255,0.05); }
+        .detail-table td:last-child { font-weight: 700; color: #e6edf3; }
+        .probe-detail-body { padding: 8px 0; }
     </style>
 </body>
 </html>

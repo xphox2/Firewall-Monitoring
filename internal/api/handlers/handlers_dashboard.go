@@ -295,6 +295,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	labels := make([]string, 0, len(sampled))
+	timestamps := make([]string, 0, len(sampled))
 	rxTotalVals := make([]float64, 0, len(sampled))
 	txTotalVals := make([]float64, 0, len(sampled))
 	rxRate := make([]float64, 0, len(sampled))
@@ -328,6 +329,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 			labelFormat = "15:04" // hour:minute for 1h, 6h, 24h
 		}
 		labels = append(labels, p.Timestamp.Format(labelFormat))
+		timestamps = append(timestamps, p.Timestamp.Format("2006-01-02T15:04:05Z"))
 		rxTotalVals = append(rxTotalVals, float64(p.InBytes))
 		txTotalVals = append(txTotalVals, float64(p.OutBytes))
 
@@ -350,15 +352,16 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
-		"labels":   labels,
-		"rx_total": rxTotalVals,
-		"tx_total": txTotalVals,
-		"rx_rate":  rxRate,
-		"tx_rate":  txRate,
-		"total_rx": float64(totalRx),
-		"total_tx": float64(totalTx),
-		"view":     viewType,
-		"range":    rangeStr,
+		"labels":     labels,
+		"rx_total":   rxTotalVals,
+		"tx_total":   txTotalVals,
+		"rx_rate":    rxRate,
+		"tx_rate":    txRate,
+		"total_rx":   float64(totalRx),
+		"total_tx":   float64(totalTx),
+		"view":       viewType,
+		"range":      rangeStr,
+		"timestamps": timestamps,
 	}))
 }
 

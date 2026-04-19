@@ -144,10 +144,10 @@
                         '<div class="probe-name"><span class="pulse-dot ' + statusClass + '"></span>' + escapeHtml(p.name) + '</div>' +
                         '<div class="probe-meta">' + escapeHtml(p.site ? p.site.name : 'No Site') + ' &middot; ' + escapeHtml(p.approval_status) + ' &middot; Last seen: ' + lastSeen + '</div>' +
                         '<div class="probe-stats" id="probe-stats-' + p.id + '">' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Syslog</div></div>' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Traps</div></div>' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Flows</div></div>' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Pings</div></div>' +
+                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Syslog<div class="last-hour">loading...</div></div></div>' +
+                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Traps<div class="last-hour">loading...</div></div></div>' +
+                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Flows<div class="last-hour">loading...</div></div></div>' +
+                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Pings<div class="last-hour">loading...</div></div></div>' +
                         '</div></div>';
                 }).join('');
 
@@ -160,10 +160,10 @@
                             var d = r.data;
                             var lh = d.last_hour || {};
                             el.innerHTML =
-                                '<div class="probe-stat"><div class="val">' + (d.syslog || 0) + '</div><div class="lbl">Syslog <span class="last-hour">(+' + (lh.syslog || 0) + ')</span></div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.traps || 0) + '</div><div class="lbl">Traps <span class="last-hour">(+' + (lh.traps || 0) + ')</span></div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.flows || 0) + '</div><div class="lbl">Flows <span class="last-hour">(+' + (lh.flows || 0) + ')</span></div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.pings || 0) + '</div><div class="lbl">Pings <span class="last-hour">(+' + (lh.pings || 0) + ')</span></div></div>';
+                                '<div class="probe-stat"><div class="val">' + (d.syslog || 0).toLocaleString() + '</div><div class="lbl">Syslog<div class="last-hour">+' + (lh.syslog || 0).toLocaleString() + ' / hr</div></div></div>' +
+                                '<div class="probe-stat"><div class="val">' + (d.traps || 0).toLocaleString() + '</div><div class="lbl">Traps<div class="last-hour">+' + (lh.traps || 0).toLocaleString() + ' / hr</div></div></div>' +
+                                '<div class="probe-stat"><div class="val">' + (d.flows || 0).toLocaleString() + '</div><div class="lbl">Flows<div class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</div></div></div>' +
+                                '<div class="probe-stat"><div class="val">' + (d.pings || 0).toLocaleString() + '</div><div class="lbl">Pings<div class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</div></div></div>';
                         }
                     })['catch'](function() {});
                 });
@@ -195,21 +195,29 @@
                     var lh = d.last_hour || {};
 
                     var html = '<div class="probe-detail-totals">' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.syslog || 0).toLocaleString() + '</div><div class="detail-lbl">Total Syslog <span class="last-hour">(+' + (lh.syslog || 0).toLocaleString() + ' last hr)</span></div></div>' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.traps || 0).toLocaleString() + '</div><div class="detail-lbl">Total Traps <span class="last-hour">(+' + (lh.traps || 0).toLocaleString() + ' last hr)</span></div></div>' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.flows || 0).toLocaleString() + '</div><div class="detail-lbl">Total Flows <span class="last-hour">(+' + (lh.flows || 0).toLocaleString() + ' last hr)</span></div></div>' +
-                        '<div class="detail-stat"><div class="detail-val">' + (d.pings || 0).toLocaleString() + '</div><div class="detail-lbl">Total Pings <span class="last-hour">(+' + (lh.pings || 0).toLocaleString() + ' last hr)</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.syslog || 0).toLocaleString() + '</div><div class="detail-lbl">Syslog Received<span class="last-hour">+' + (lh.syslog || 0).toLocaleString() + ' / hr</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.traps || 0).toLocaleString() + '</div><div class="detail-lbl">Traps Received<span class="last-hour">+' + (lh.traps || 0).toLocaleString() + ' / hr</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.flows || 0).toLocaleString() + '</div><div class="detail-lbl">Flows Sampled<span class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</span></div></div>' +
+                        '<div class="detail-stat"><div class="detail-val">' + (d.pings || 0).toLocaleString() + '</div><div class="detail-lbl">Pings Sent<span class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</span></div></div>' +
                         '</div>';
 
                     // Hourly breakdown table
                     var breakdown = d.hourly_breakdown || [];
                     if (breakdown.length > 0) {
-                        html += '<h4 style="margin: 16px 0 8px; color: #8b949e;">Hourly Breakdown (Last 24 Hours)</h4>' +
-                            '<table class="detail-table"><thead><tr><th>Hour</th><th>Syslog</th><th>Traps</th><th>Flows</th><th>Pings</th><th>Total</th></tr></thead><tbody>';
+                        html += '<div class="probe-detail-breakdown"><h4>Hourly Breakdown (Last 24 Hours)</h4>' +
+                            '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Hour</th><th>Syslog</th><th>Traps</th><th>Flows</th><th>Pings</th><th>Total</th></tr></thead><tbody>';
                         breakdown.forEach(function(h) {
-                            html += '<tr><td>' + escapeHtml(h.hour || '') + '</td><td>' + (h.syslog || 0).toLocaleString() + '</td><td>' + (h.traps || 0).toLocaleString() + '</td><td>' + (h.flows || 0).toLocaleString() + '</td><td>' + (h.pings || 0).toLocaleString() + '</td><td><strong>' + (h.total || 0).toLocaleString() + '</strong></td></tr>';
+                            var hourLabel = '';
+                            if (h.timestamp) {
+                                var d = new Date(h.timestamp);
+                                var tz = AC.getTimezone();
+                                hourLabel = d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+                            } else {
+                                hourLabel = h.hour || '';
+                            }
+                            html += '<tr><td>' + escapeHtml(hourLabel) + '</td><td>' + (h.syslog || 0).toLocaleString() + '</td><td>' + (h.traps || 0).toLocaleString() + '</td><td>' + (h.flows || 0).toLocaleString() + '</td><td>' + (h.pings || 0).toLocaleString() + '</td><td>' + (h.total || 0).toLocaleString() + '</td></tr>';
                         });
-                        html += '</tbody></table>';
+                        html += '</tbody></table></div></div>';
                     }
 
                     document.getElementById('probe-detail-body').innerHTML = html;
@@ -786,10 +794,9 @@
         apiFetch(statsUrl).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
-            // 6 stat cards
+            // 5 stat cards
             document.getElementById('flows-total').textContent = (d.total_flows || 0).toLocaleString();
             document.getElementById('flows-bytes').textContent = formatBytes(d.total_bytes || 0);
-            document.getElementById('flows-est-bytes').textContent = formatBytes(d.estimated_bytes || d.total_bytes || 0);
             document.getElementById('flows-throughput').textContent = formatBps(d.bits_per_second || 0);
             document.getElementById('flows-sources').textContent = (d.unique_sources || 0).toLocaleString();
             document.getElementById('flows-dests').textContent = (d.unique_dests || 0).toLocaleString();
@@ -882,7 +889,6 @@
     function renderFlowsTable(samples, append) {
         var tbody = document.querySelector('#flows-table tbody');
         var html = samples.map(function(f) {
-            var estBytes = f.sampling_rate ? f.bytes * f.sampling_rate : f.bytes;
             return '<tr>' +
                 '<td style="white-space:nowrap;">' + formatDate(f.timestamp) + '</td>' +
                 '<td class="mono">' + escapeHtml(f.src_addr) + ':' + f.src_port + '</td>' +
@@ -890,13 +896,12 @@
                 '<td class="mono">' + escapeHtml(f.dst_addr) + ':' + f.dst_port + '</td>' +
                 '<td>' + (PROTOCOL_NAMES[f.protocol] || f.protocol) + '</td>' +
                 '<td>' + formatBytes(f.bytes) + '</td>' +
-                '<td>' + formatBytes(estBytes) + '</td>' +
                 '<td>' + f.packets + '</td>' +
                 '<td>' + (f.sampling_rate ? '1:' + f.sampling_rate : '-') + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="9" class="empty-state">No flow samples</td></tr>';
+        else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples</td></tr>';
     }
 
     function loadMoreFlows() {
@@ -1513,6 +1518,12 @@
         });
         document.querySelectorAll('#display-settings input').forEach(function(input) {
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
+        });
+        document.querySelectorAll('#settings-reports input').forEach(function(input) {
+            settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'reports', type: input.type === 'checkbox' ? 'bool' : 'string' });
+        });
+        document.querySelectorAll('#settings-spike input').forEach(function(input) {
+            settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'spike', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
         
         var tzSel = document.getElementById('display-timezone');

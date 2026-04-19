@@ -684,12 +684,12 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 		}
 
 		hourlyBreakdown = append(hourlyBreakdown, gin.H{
-			"hour":   hourStart.Format("15:04"),
-			"syslog": hSyslog,
-			"traps":  hTrap,
-			"flows":  hFlow,
-			"pings":  hPing,
-			"total":  hSyslog + hTrap + hFlow + hPing,
+			"timestamp": hourStart.Format("2006-01-02T15:04:05Z"),
+			"syslog":    hSyslog,
+			"traps":     hTrap,
+			"flows":     hFlow,
+			"pings":     hPing,
+			"total":     hSyslog + hTrap + hFlow + hPing,
 		})
 	}
 

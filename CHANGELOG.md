@@ -6,6 +6,7 @@
 - **Syslog aggregation system**: Informational syslog (severity 6-7) is now aggregated into hourly/daily summaries for long-term storage efficiency. Configurable via `RETENTION_SYSLOG_INFO_DAYS` (default: 7) and `RETENTION_SYSLOG_CRITICAL_DAYS` (default: 0 = forever).
 - **SyslogSummary model**: New `syslog_summaries` table stores aggregated syslog data with counts, sample messages, and normalized patterns.
 - **PostgreSQL partitioning support**: High-volume tables (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) now support monthly range partitions via `EnsurePartitions()` for efficient data management.
+- **Aggressive autovacuum**: High-volume tables now have aggressive autovacuum settings (1% trigger, 10ms delay) to reduce bloat.
 - **Probe stats API**: `/api/probes/{id}/stats` now returns `last_hour` counts and `hourly_breakdown` (24 hours) for each data type.
 - **Probe detail modal**: Click any probe card on the dashboard to see full stats with hourly breakdown.
 
@@ -14,6 +15,10 @@
 - **Syslog aggregation cycle**: Runs every 5 minutes alongside flow rollup. Hourly summaries are promoted to daily summaries after 48 hours.
 - **`GetSyslogStats`**: Now combines raw syslog counts with summary counts for complete statistics.
 - **Probe summary on probes page**: Probes management page now shows total data counts across all approved probes with last hour activity.
+- **Timezone handling**: Public dashboard bandwidth and CPU charts now respect `display_timezone` setting. Backend returns ISO timestamps for proper client-side formatting.
+- **Flows display**: Removed misleading "Est. Actual Bytes" calculation. Table now shows only sampled bytes.
+- **Settings save**: Fixed bug where "Email Reports" and "Traffic Spike Detection" settings were not being saved.
+- **Probe card UI**: Improved CSS styling for probe cards with better layout, hover effects, and formatted numbers.
 
 ## [0.10.155] - 2026-04-18
 

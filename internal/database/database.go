@@ -138,6 +138,11 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		log.Printf("Partition setup warning: %v", err)
 	}
 
+	// Configure aggressive autovacuum for high-volume tables
+	if err := d.ConfigureAutovacuum(); err != nil {
+		log.Printf("Autovacuum config warning: %v", err)
+	}
+
 	// Ensure a default alert policy exists
 	d.EnsureDefaultPolicy()
 
@@ -320,6 +325,47 @@ func (d *Database) EnsurePartitions() error {
 
 			log.Printf("Created partition: %s", partitionName)
 		}
+	}
+
+	return nil
+}
+
+// ConfigureAutovacuum sets aggressive autovacuum parameters for high-volume tables.
+// This reduces table bloat and improves query performance on PostgreSQL.
+func (d *Database) ConfigureAutovacuum() error {
+	if !d.dialect.IsPostgres() {
+		return nil // Autovacuum is PostgreSQL-only
+	}
+
+	// High-volume tables that benefit from aggressive autovacuum
+	tables := []string{
+		"syslog_messages",
+		"syslog_summaries",
+		"trap_events",
+		"flow_samples",
+		"ping_results",
+		"alerts",
+	}
+
+	// Autovacuum settings for high-volume tables:
+	// - vacuum_scale_factor = 0.01 (1% vs default 20%) - vacuum more frequently
+	// - analyze_scale_factor = 0.05 (5% vs default 10%) - analyze more frequently
+	// - vacuum_cost_delay = 10ms (vs default 20ms) - vacuum more aggressively
+	// - vacuum_cost_limit = 2000 (vs default 200) - allow more work per vacuum
+	for _, table := range tables {
+		sql := fmt.Sprintf(`
+			ALTER TABLE %s SET (%
+				autovacuum_vacuum_scale_factor = 0.01,
+				autovacuum_analyze_scale_factor = 0.05,
+				autovacuum_vacuum_cost_delay = 10,
+				autovacuum_vacuum_cost_limit = 2000
+			)`, table)
+		if err := d.db.Exec(sql).Error; err != nil {
+			// Log but don't fail - table might not exist yet or be a partitioned table
+			log.Printf("Autovacuum config warning for %s: %v", table, err)
+			continue
+		}
+		log.Printf("Configured autovacuum for %s", table)
 	}
 
 	return nil

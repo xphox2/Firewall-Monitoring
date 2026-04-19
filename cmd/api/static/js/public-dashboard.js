@@ -18,6 +18,20 @@
     var bwRange = '1h';
     var cpuHours = 1;
 
+    // Timezone handling - use display_timezone from settings, fallback to browser local
+    function getTimezone() {
+        return (displaySettings && displaySettings.display_timezone) || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+
+    // Format a date string or timestamp using the configured timezone
+    function formatInTimezone(dateStr, options) {
+        if (!dateStr) return '-';
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '-';
+        var tz = getTimezone();
+        return d.toLocaleString('en-US', Object.assign({ timeZone: tz }, options));
+    }
+
     function escapeHtml(str) {
         if (!str) return '';
         return String(str).replace(/[&<>"']/g, function(c) {
@@ -325,7 +339,7 @@
 
         apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + cpuHours).then(function(points) {
             if (!points || points.length === 0) return;
-            var labels = points.map(function(p) { return new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); });
+            var labels = points.map(function(p) { return formatInTimezone(p.timestamp, { hour: '2-digit', minute: '2-digit' }); });
 
             destroyWidgetChart(wid);
             var canvas = document.getElementById('wc-' + wid);
@@ -364,6 +378,24 @@
             var deltaRx = rxTotal.map(function(v, i) { if (i === 0) return 0; var d = v - rxTotal[i - 1]; return d > 0 ? d : 0; });
             var deltaTx = txTotal.map(function(v, i) { if (i === 0) return 0; var d = v - txTotal[i - 1]; return d > 0 ? d : 0; });
 
+            // Format labels from timestamps for proper timezone handling
+            var chartLabels;
+            if (data.timestamps && data.timestamps.length > 0) {
+                chartLabels = data.timestamps.map(function(ts) {
+                    if (bwRange === '5m' || bwRange === '15m') {
+                        return formatInTimezone(ts, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    } else if (bwRange === '7d') {
+                        return formatInTimezone(ts, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    } else if (bwRange === '90d') {
+                        return formatInTimezone(ts, { month: '2-digit', day: '2-digit' });
+                    } else {
+                        return formatInTimezone(ts, { hour: '2-digit', minute: '2-digit' });
+                    }
+                });
+            } else {
+                chartLabels = data.labels || [];
+            }
+
             var datasets = [];
             var scales = {};
 
@@ -400,7 +432,7 @@
 
             chartInstances[wid] = new Chart(canvas.getContext('2d'), {
                 type: 'line',
-                data: { labels: data.labels || [], datasets: datasets },
+                data: { labels: chartLabels, datasets: datasets },
                 options: chartOpts(scales)
             });
         });
