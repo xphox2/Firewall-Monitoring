@@ -1373,7 +1373,10 @@
             } else {
                 alert('Failed: ' + (result && result.data ? result.data.message || 'Unknown error' : 'Unknown error'));
             }
-        })['catch'](function(err) { alert('Error: ' + err.message); })
+        })['catch'](function(err) {
+            console.error('Device connection test failed:', err);
+            AC.showError('Error: ' + err.message);
+        })
         .finally(function() { btn.textContent = orig; btn.disabled = false; });
     }
 
@@ -1532,7 +1535,10 @@
                 document.getElementById('new-password').value = '';
                 document.getElementById('confirm-password').value = '';
             } else { alert('Error: ' + (result && result.error ? result.error : 'Unknown error')); }
-        })['catch'](function(err) { alert('Error: ' + err.message); });
+        })['catch'](function(err) {
+            console.error('Password change failed:', err);
+            AC.showError('Error: ' + err.message);
+        });
     }
 
     function saveSettings() {
@@ -1564,8 +1570,11 @@
         }
 
         apiFetch(API_BASE + '/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }).then(function() {
-            alert('Settings saved!');
-        })['catch'](function(err) { alert('Error: ' + err.message); });
+            AC.showSuccess('Settings saved!');
+        })['catch'](function(err) {
+            console.error('Settings save failed:', err);
+            AC.showError('Error: ' + err.message);
+        });
     }
 
     function testEmail() {
