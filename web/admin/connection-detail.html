@@ -4,296 +4,175 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Connection Detail - Firewall Monitor</title>
+    <link rel="stylesheet" href="/static/css/tailwind.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
-
-        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
-        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
-        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
-        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
-        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
-        .nav-section { margin-bottom: 16px; }
-        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
-        .nav-item:hover { background: #21262d; color: #e6edf3; }
-        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
-        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
-        .nav-item.danger { color: #f85149; }
-        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
-        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
-
-        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
-
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-        .card h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 16px; }
-
-        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
-        .btn:hover { background: #2ea043; }
-        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
-        .btn.secondary:hover { background: #30363d; }
-        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
-
-        table { width: 100%; border-collapse: collapse; }
-        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
-        tr:hover { background: #1c2128; }
-
-        .loading { text-align: center; padding: 30px; color: #484f58; }
-        .error { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-
-        /* Header */
-        .conn-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-        .conn-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
-        .back-link { color: #58a6ff; text-decoration: none; font-size: 0.88rem; }
-        .back-link:hover { text-decoration: underline; }
-
-        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-        .badge.online, .badge.up { background: rgba(63,185,80,0.15); color: #3fb950; }
-        .badge.offline, .badge.down { background: rgba(248,81,73,0.15); color: #f85149; }
-        .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
-        .badge.ipsec { background: rgba(88,166,255,0.15); color: #58a6ff; }
-        .badge.vxlan { background: rgba(137,87,229,0.15); color: #8957e5; }
-        .badge.ssl { background: rgba(210,153,34,0.15); color: #d29922; }
-        .badge.wan { background: rgba(240,136,62,0.15); color: #f0883e; }
-        .badge.l2vlan { background: rgba(57,212,224,0.15); color: #39d4e0; }
-        .badge.l3ipvlan { background: rgba(218,125,232,0.15); color: #da7de8; }
-        .badge.gre { background: rgba(179,146,240,0.15); color: #b392f0; }
-        .badge.lag { background: rgba(210,153,34,0.15); color: #d29922; }
-        .badge.tunnel { background: rgba(139,148,158,0.15); color: #8b949e; }
-
-        /* Stat cards */
-        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
-        .stat-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; text-align: center; }
-        .stat-card .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: #484f58; margin-bottom: 8px; }
-        .stat-card .stat-value { font-size: 1.8rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
-        .stat-card .stat-unit { font-size: 0.75rem; color: #8b949e; }
-
-        /* Gauge */
-        .gauge { position: relative; width: 80px; height: 80px; margin: 0 auto 8px; }
-        .gauge svg { transform: rotate(-90deg); }
         .gauge-bg { fill: none; stroke: #21262d; stroke-width: 8; }
         .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.5s; }
-        .gauge-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1.1rem; font-weight: 700; color: #e6edf3; }
-
-        /* Tabs */
-        .section-tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; margin-bottom: 16px; }
-        .section-tab { padding: 10px 20px; cursor: pointer; color: #8b949e; font-size: 0.88rem; border-bottom: 2px solid transparent; transition: all 0.15s; }
-        .section-tab:hover { color: #e6edf3; }
-        .section-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        /* Range pills */
-        .range-pills { display: flex; gap: 4px; margin-bottom: 12px; }
-        .range-pill { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 5px 14px; border-radius: 20px; cursor: pointer; font-size: 0.78rem; transition: all 0.15s; }
-        .range-pill:hover { color: #e6edf3; border-color: #8b949e; }
-        .range-pill.active { background: #58a6ff; color: #fff; border-color: #58a6ff; }
-
-        /* Chart container */
-        .chart-container { height: 300px; margin-bottom: 16px; }
-        .chart-container canvas { width: 100% !important; height: 100% !important; }
-
-        /* Bridge animation */
-        .bridge-svg { display: block; margin: 0 auto 16px; }
-
-        /* Expandable tunnel rows */
-        .tunnel-row { cursor: pointer; }
-        .tunnel-row:hover { background: #1c2128; }
         .tunnel-expand { display: none; }
         .tunnel-expand.open { display: table-row; }
         .tunnel-expand td { padding: 0; border-bottom: 1px solid #30363d; }
-        .tunnel-chart-wrap { padding: 16px 24px; background: #0d1117; }
-        .tunnel-chart-wrap .chart-container { height: 200px; }
-        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; margin-right: 6px; color: #484f58; }
-        .chevron.open { transform: rotate(90deg); }
-
-        /* Flow charts grid */
-        .flow-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-        .flow-grid .chart-container { height: 250px; }
-        .flow-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
-        .flow-card h3 { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; font-weight: 500; }
-
-        .table-scroll { overflow-x: auto; }
-
-        .info-msg { background: rgba(56,139,253,0.08); border: 1px solid rgba(56,139,253,0.2); color: #58a6ff; padding: 14px; border-radius: 8px; font-size: 0.85rem; }
-
-        @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .main { margin-left: 0; }
-            .stat-grid { grid-template-columns: repeat(2, 1fr); }
-            .flow-grid { grid-template-columns: 1fr; }
-        }
     </style>
 </head>
 <body>
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h2>Firewall Monitor</h2>
-            <div class="subtitle">Admin Panel</div>
+    <div class="fixed left-0 top-0 w-[240px] h-screen bg-[#161b22] border-r border-[#30363d] flex flex-col z-[100]">
+        <div class="p-5 border-b border-[#30363d]">
+            <h2 class="text-[#58a6ff] text-sm tracking-tight">Firewall Monitor</h2>
+            <div class="text-[#484f58] text-xs mt-0.5">Admin Panel</div>
         </div>
-        <div class="sidebar-nav">
-            <div class="nav-section">
-                <div class="nav-section-title">Monitoring</div>
-                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
-                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
-                <a class="nav-item active" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
-                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
+        <div class="flex-1 p-3 overflow-y-auto">
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1">Monitoring</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin"><span class="w-4 text-center text-sm">&#9632;</span> Dashboard</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/devices"><span class="w-4 text-center text-sm">&#9881;</span> Devices</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm bg-[rgba(56,139,253,0.15)] text-[#58a6ff]" href="/admin/connections"><span class="w-4 text-center text-sm">&#8644;</span> Connections</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/interfaces"><span class="w-4 text-center text-sm">&#8646;</span> Interfaces</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Data</div>
-                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
-                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
-                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
-                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1">Data</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/syslog"><span class="w-4 text-center text-sm">&#9993;</span> Syslog</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/flows"><span class="w-4 text-center text-sm">&#8674;</span> Flows</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/alerts"><span class="w-4 text-center text-sm">&#9888;</span> Alerts</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/traps"><span class="w-4 text-center text-sm">&#9889;</span> Traps</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Infrastructure</div>
-                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
-                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
-                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
-                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1">Infrastructure</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probes"><span class="w-4 text-center text-sm">&#9678;</span> Probes</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/sites"><span class="w-4 text-center text-sm">&#9962;</span> Sites</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/network"><span class="w-4 text-center text-sm">&#9733;</span> Network</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probe-pending"><span class="w-4 text-center text-sm">&#9200;</span> Pending</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">System</div>
-                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
-                <a class="nav-item" href="/admin/irc"><span class="nav-icon">&#128172;</span> IRC</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1">System</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/settings"><span class="w-4 text-center text-sm">&#9881;</span> Settings</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/irc"><span class="w-4 text-center text-sm">&#128172;</span> IRC</a>
             </div>
         </div>
-        <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+        <div class="p-3 border-t border-[#30363d]">
+            <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#f85149] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[rgba(248,81,73,0.1)]" href="#" data-action="logout"><span class="w-4 text-center text-sm">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main">
-        <a class="back-link" href="/admin/connections">&larr; Back to Connections</a>
+    <div class="ml-[240px] p-6 min-h-screen">
+        <a class="text-[#58a6ff] no-underline text-sm hover:underline" href="/admin/connections">&larr; Back to Connections</a>
 
-        <!-- Bridge header -->
-        <div id="bridge-header" style="margin-top: 12px;"></div>
+        <div id="bridge-header" class="mt-3"></div>
 
-        <!-- Stat cards -->
-        <div class="stat-grid" id="stat-cards">
-            <div class="stat-card"><div class="stat-label">Total Bytes In</div><div class="stat-value" id="stat-bytes-in">-</div></div>
-            <div class="stat-card"><div class="stat-label">Total Bytes Out</div><div class="stat-value" id="stat-bytes-out">-</div></div>
-            <div class="stat-card"><div class="stat-label">Tunnels</div><div class="stat-value" id="stat-tunnel-count">-</div></div>
-            <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value" id="stat-status">-</div></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" id="stat-cards">
+            <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Total Bytes In</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="stat-bytes-in">-</div></div>
+            <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Total Bytes Out</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="stat-bytes-out">-</div></div>
+            <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Tunnels</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="stat-tunnel-count">-</div></div>
+            <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Status</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="stat-status">-</div></div>
         </div>
 
-        <!-- Tabs -->
-        <div class="section-tabs" id="section-tabs">
-            <div class="section-tab active" data-action="switch-tab" data-tab="overview">Overview</div>
-            <div class="section-tab" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
-            <div class="section-tab" data-action="switch-tab" data-tab="dst-tunnels">Dest Tunnels</div>
-            <div class="section-tab" id="tab-phase2" style="display:none;" data-action="switch-tab" data-tab="phase2">Phase 2 Selectors</div>
-            <div class="section-tab" id="tab-flows" style="display:none;" data-action="switch-tab" data-tab="flows">Traffic Analysis</div>
+        <div class="flex border-b border-[#30363d] mb-4" id="section-tabs">
+            <div class="px-5 py-2.5 cursor-pointer text-[#8b949e] text-sm border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3] text-[#58a6ff] border-b-[#58a6ff]" data-action="switch-tab" data-tab="overview">Overview</div>
+            <div class="px-5 py-2.5 cursor-pointer text-[#8b949e] text-sm border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
+            <div class="px-5 py-2.5 cursor-pointer text-[#8b949e] text-sm border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="dst-tunnels">Dest Tunnels</div>
+            <div class="px-5 py-2.5 cursor-pointer text-[#8b949e] text-sm border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3] hidden" id="tab-phase2" data-action="switch-tab" data-tab="phase2">Phase 2 Selectors</div>
+            <div class="px-5 py-2.5 cursor-pointer text-[#8b949e] text-sm border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3] hidden" id="tab-flows" data-action="switch-tab" data-tab="flows">Traffic Analysis</div>
         </div>
 
-        <!-- Overview Tab -->
-        <div class="tab-content active" id="tab-content-overview">
-            <div class="card">
-                <h2>Aggregate Bandwidth</h2>
-                <div class="range-pills" id="traffic-range">
-                    <div class="range-pill" data-action="set-traffic-range" data-range="1h">1h</div>
-                    <div class="range-pill active" data-action="set-traffic-range" data-range="24h">24h</div>
-                    <div class="range-pill" data-action="set-traffic-range" data-range="7d">7d</div>
-                    <div class="range-pill" data-action="set-traffic-range" data-range="30d">30d</div>
+        <div id="tab-content-overview">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4">Aggregate Bandwidth</h2>
+                <div class="flex gap-1 mb-3" id="traffic-range">
+                    <div class="bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-traffic-range" data-range="1h">1h</div>
+                    <div class="bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-traffic-range" data-range="24h">24h</div>
+                    <div class="bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-traffic-range" data-range="7d">7d</div>
+                    <div class="bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-traffic-range" data-range="30d">30d</div>
                 </div>
-                <div class="chart-container"><canvas id="traffic-chart"></canvas></div>
+                <div class="h-[300px] mb-4"><canvas id="traffic-chart"></canvas></div>
             </div>
-            <div class="card">
-                <h2>Live Throughput</h2>
-                <div style="display:flex;gap:24px;justify-content:center;">
-                    <div style="text-align:center;">
-                        <div class="gauge" id="gauge-in"></div>
-                        <div style="font-size:0.8rem;color:#8b949e;">Inbound</div>
-                        <div style="font-size:0.85rem;font-weight:600;color:#e6edf3;" id="gauge-in-val">-</div>
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4">Live Throughput</h2>
+                <div class="flex gap-6 justify-center">
+                    <div class="text-center">
+                        <div class="relative w-20 h-20 mx-auto mb-2" id="gauge-in"></div>
+                        <div class="text-[#8b949e] text-sm">Inbound</div>
+                        <div class="text-[#e6edf3] text-base font-semibold" id="gauge-in-val">-</div>
                     </div>
-                    <div style="text-align:center;">
-                        <div class="gauge" id="gauge-out"></div>
-                        <div style="font-size:0.8rem;color:#8b949e;">Outbound</div>
-                        <div style="font-size:0.85rem;font-weight:600;color:#e6edf3;" id="gauge-out-val">-</div>
+                    <div class="text-center">
+                        <div class="relative w-20 h-20 mx-auto mb-2" id="gauge-out"></div>
+                        <div class="text-[#8b949e] text-sm">Outbound</div>
+                        <div class="text-[#e6edf3] text-base font-semibold" id="gauge-out-val">-</div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Source Tunnels Tab -->
-        <div class="tab-content" id="tab-content-src-tunnels">
-            <div class="card">
-                <h2 id="src-tunnels-title">Source Tunnels</h2>
-                <div class="table-scroll">
-                    <table id="src-tunnels-table">
-                        <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
+        <div class="hidden" id="tab-content-src-tunnels">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4" id="src-tunnels-title">Source Tunnels</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse">
+                        <thead><tr><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider"></th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Phase 1</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Phase 2</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Type</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Status</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Remote GW</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Local Subnet</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Remote Subnet</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes In</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes Out</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
             </div>
         </div>
 
-        <!-- Dest Tunnels Tab -->
-        <div class="tab-content" id="tab-content-dst-tunnels">
-            <div class="card">
-                <h2 id="dst-tunnels-title">Destination Tunnels</h2>
-                <div class="table-scroll">
-                    <table id="dst-tunnels-table">
-                        <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
+        <div class="hidden" id="tab-content-dst-tunnels">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4" id="dst-tunnels-title">Destination Tunnels</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse">
+                        <thead><tr><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider"></th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Phase 1</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Phase 2</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Type</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Status</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Remote GW</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Local Subnet</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Remote Subnet</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes In</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes Out</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
             </div>
         </div>
 
-        <!-- Phase 2 Selectors Tab -->
-        <div class="tab-content" id="tab-content-phase2">
-            <div class="card">
-                <h2>IPSec Phase 2 Selector Matches</h2>
-                <p style="color:#8b949e;font-size:0.85rem;margin-bottom:16px;">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
+        <div class="hidden" id="tab-content-phase2">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4">IPSec Phase 2 Selector Matches</h2>
+                <p class="text-[#8b949e] text-sm mb-4">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
                 <div id="phase2-matches-container"></div>
             </div>
         </div>
 
-        <!-- Traffic Analysis Tab (sFlow) -->
-        <div class="tab-content" id="tab-content-flows">
-            <div class="card">
-                <h2>sFlow Traffic Analysis</h2>
-                <div class="range-pills" id="flow-range">
-                    <div class="range-pill" data-action="set-flow-range" data-range="1">1h</div>
-                    <div class="range-pill active" data-action="set-flow-range" data-range="24">24h</div>
-                    <div class="range-pill" data-action="set-flow-range" data-range="168">7d</div>
-                    <div class="range-pill" data-action="set-flow-range" data-range="720">30d</div>
+        <div class="hidden" id="tab-content-flows">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4">sFlow Traffic Analysis</h2>
+                <div class="flex gap-1 mb-3" id="flow-range">
+                    <div class="bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="1">1h</div>
+                    <div class="bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-flow-range" data-range="24">24h</div>
+                    <div class="bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="168">7d</div>
+                    <div class="bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="720">30d</div>
                 </div>
-                <div id="flow-empty" class="info-msg" style="display:none;">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
+                <div id="flow-empty" class="hidden bg-[rgba(56,139,253,0.08)] border border-[rgba(56,139,253,0.2)] text-[#58a6ff] p-3.5 rounded-lg text-sm">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
                 <div id="flow-content">
-                    <div class="stat-grid" style="margin-bottom:16px;">
-                        <div class="stat-card"><div class="stat-label">Total Bytes</div><div class="stat-value" id="flow-total-bytes">-</div></div>
-                        <div class="stat-card"><div class="stat-label">Total Packets</div><div class="stat-value" id="flow-total-packets">-</div></div>
-                        <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value" id="flow-total-flows">-</div></div>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Total Bytes</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-bytes">-</div></div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Total Packets</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-packets">-</div></div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#484f58] mb-2">Total Flows</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-flows">-</div></div>
                     </div>
-                    <div class="flow-grid">
-                        <div class="flow-card">
-                            <h3>Protocol Distribution</h3>
-                            <div class="chart-container" style="height:250px;"><canvas id="proto-chart"></canvas></div>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4">
+                            <h3 class="text-[#8b949e] text-sm mb-3 font-medium">Protocol Distribution</h3>
+                            <div class="h-[250px]"><canvas id="proto-chart"></canvas></div>
                         </div>
-                        <div class="flow-card">
-                            <h3>Bytes Over Time</h3>
-                            <div class="chart-container" style="height:250px;"><canvas id="flow-time-chart"></canvas></div>
-                        </div>
-                    </div>
-                    <div class="flow-grid">
-                        <div class="flow-card">
-                            <h3>Top Sources</h3>
-                            <div class="chart-container" style="height:250px;"><canvas id="top-src-chart"></canvas></div>
-                        </div>
-                        <div class="flow-card">
-                            <h3>Top Destinations</h3>
-                            <div class="chart-container" style="height:250px;"><canvas id="top-dst-chart"></canvas></div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4">
+                            <h3 class="text-[#8b949e] text-sm mb-3 font-medium">Bytes Over Time</h3>
+                            <div class="h-[250px]"><canvas id="flow-time-chart"></canvas></div>
                         </div>
                     </div>
-                    <div class="card" style="margin-top:0;">
-                        <h2>Top Conversations</h2>
-                        <div class="table-scroll">
-                            <table id="convos-table">
-                                <thead><tr><th>Source</th><th>Destination</th><th>Protocol</th><th>Bytes</th><th>Packets</th></tr></thead>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4">
+                            <h3 class="text-[#8b949e] text-sm mb-3 font-medium">Top Sources</h3>
+                            <div class="h-[250px]"><canvas id="top-src-chart"></canvas></div>
+                        </div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4">
+                            <h3 class="text-[#8b949e] text-sm mb-3 font-medium">Top Destinations</h3>
+                            <div class="h-[250px]"><canvas id="top-dst-chart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mt-0">
+                        <h2 class="text-base font-semibold text-[#e6edf3] mb-4">Top Conversations</h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full border-collapse">
+                                <thead><tr><th class="p-2.5 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Source</th><th class="p-2.5 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Destination</th><th class="p-2.5 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Protocol</th><th class="p-2.5 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes</th><th class="p-2.5 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Packets</th></tr></thead>
                                 <tbody></tbody>
                             </table>
                         </div>

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.157] - 2026-04-18
+
+### Added
+- **Tailwind CSS**: Integrated Tailwind CSS v3 with custom GitHub dark theme configuration. Common component classes now use Tailwind utilities for consistent styling.
+
+### Removed
+- **SQLite support**: Removed all SQLite-related code and dependencies. PostgreSQL is now the only supported database type.
+- **Migration UI**: Removed SQLite to PostgreSQL migration interface and related API endpoints.
+
+### Changed
+- **Default database**: Configuration now defaults to PostgreSQL (`DB_TYPE=postgres`) with separate host/port/user/password/name fields instead of SQLite's single file path.
+- **Config env example**: Updated `config.env.example` to reflect PostgreSQL configuration.
+- **Probe cards CSS**: Fixed overflow/bleed issue by adding `min-width: 0` and `overflow: hidden` to grid items.
+- **Responsive design**: Added mobile sidebar with hamburger menu toggle and responsive breakpoints for admin dashboard.
+
 ## [0.10.156] - 2026-04-18
 
 ### Added

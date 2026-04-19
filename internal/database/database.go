@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -14,7 +12,6 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 
-	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -57,56 +54,24 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		Logger: logger.Default.LogMode(logger.Silent),
 	}
 
-	switch cfg.Database.Type {
-	case "postgres":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			cfg.Database.Host, cfg.Database.Port,
-			pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),
-			pgQuote(cfg.Database.Name), cfg.Database.SSLMode)
-		db, err = gorm.Open(postgres.Open(dsn), gormCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-		}
-		sqlDB, dbErr := db.DB()
-		if dbErr != nil {
-			return nil, fmt.Errorf("failed to get underlying sql.DB: %w", dbErr)
-		}
-		sqlDB.SetMaxOpenConns(25)
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetConnMaxLifetime(5 * time.Minute)
-		sqlDB.SetConnMaxIdleTime(1 * time.Minute)
-		dial = postgresDialect{}
-		log.Printf("Database: connected to PostgreSQL at %s:%d/%s", cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
-
-	default: // "sqlite"
-		dbPath := cfg.Database.FilePath
-		if dbPath == "" {
-			dbPath = "/data/firewall-mon.db"
-		}
-		dir := filepath.Dir(dbPath)
-		if dir == "." {
-			dir = "/data"
-		}
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return nil, fmt.Errorf("failed to create database directory: %w", err)
-		}
-		db, err = gorm.Open(sqlite.Open(dbPath), gormCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to database: %w", err)
-		}
-		// Enable WAL mode for better concurrent read performance
-		db.Exec("PRAGMA journal_mode=WAL")
-		db.Exec("PRAGMA busy_timeout=5000")
-		sqlDB, dbErr := db.DB()
-		if dbErr != nil {
-			return nil, fmt.Errorf("failed to get underlying sql.DB: %w", dbErr)
-		}
-		// SQLite only supports one writer at a time; MaxOpenConns=1 prevents "database is locked" errors
-		sqlDB.SetMaxOpenConns(1)
-		sqlDB.SetMaxIdleConns(1)
-		sqlDB.SetConnMaxLifetime(0)
-		dial = sqliteDialect{}
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port,
+		pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),
+		pgQuote(cfg.Database.Name), cfg.Database.SSLMode)
+	db, err = gorm.Open(postgres.Open(dsn), gormCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
+	sqlDB, dbErr := db.DB()
+	if dbErr != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", dbErr)
+	}
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(1 * time.Minute)
+	dial = postgresDialect{}
+	log.Printf("Database: connected to PostgreSQL at %s:%d/%s", cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
 
 	var encKey []byte
 	if cfg.Server.EncryptionKey != "" {
@@ -199,8 +164,7 @@ func (d *Database) migrate() error {
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
-	// SQLite's limited ALTER TABLE support can cause GORM to attempt
-	// table recreation which may fail with "already exists" on upgrades.
+	// GORM may attempt table recreation which may fail with "already exists" on upgrades.
 	for _, model := range allModels {
 		if err := d.db.AutoMigrate(model); err != nil {
 			log.Printf("AutoMigrate warning for %T: %v", model, err)
@@ -912,15 +876,6 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 	// Subquery: max timestamp per device
 	sub := d.db.Model(&models.VPNStatus{}).Select("device_id, MAX(timestamp) as max_ts").Group("device_id")
 	err := d.db.Where("(device_id, timestamp) IN (?)", sub).Find(&statuses).Error
-	if err != nil {
-		// Fallback for SQLite which may not support row-value IN; use a join approach
-		statuses = nil
-		err = d.db.Raw(`
-			SELECT v.* FROM vpn_status v
-			INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM vpn_status GROUP BY device_id) latest
-			ON v.device_id = latest.device_id AND v.timestamp = latest.max_ts
-		`).Scan(&statuses).Error
-	}
 	return statuses, err
 }
 

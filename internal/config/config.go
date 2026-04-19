@@ -65,7 +65,6 @@ type DatabaseConfig struct {
 	Name     string
 	User     string
 	Password string
-	FilePath string
 	SSLMode  string
 }
 
@@ -184,13 +183,12 @@ func Load() *Config {
 			V3PrivPass:     getEnv("SNMP_V3_PRIV_PASS", ""),
 		},
 		Database: DatabaseConfig{
-			Type:     getEnv("DB_TYPE", "sqlite"),
+			Type:     getEnv("DB_TYPE", "postgres"),
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getIntEnv("DB_PORT", 5432),
 			Name:     getEnv("DB_NAME", "firewall_mon"),
 			User:     getEnv("DB_USER", "firewall_mon"),
 			Password: getEnv("DB_PASSWORD", ""),
-			FilePath: getEnv("DB_FILE_PATH", "/data/firewall-mon.db"),
 			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
 		},
 		Retention: RetentionConfig{

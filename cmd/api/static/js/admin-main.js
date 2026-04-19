@@ -1267,7 +1267,6 @@
             console.error('Failed to load settings:', e);
         });
 
-        loadMigrationPrecheck();
     }
 
     // ---- Device Modal ----
@@ -1604,117 +1603,6 @@
             return page;
         }
         return 'dashboard';
-    }
-
-    // ---- Migration Functions ----
-    var migrationPollTimer = null;
-
-    function loadMigrationPrecheck() {
-        var card = document.getElementById('migration-card');
-        if (!card) return;
-        apiFetch(API_BASE + '/migrate/precheck').then(function(result) {
-            if (!result || !result.data) return;
-            card.style.display = '';
-            var data = result.data;
-            if (!data.is_postgres) {
-                document.getElementById('migration-unavailable').style.display = '';
-                document.getElementById('migration-form').style.display = 'none';
-            } else {
-                document.getElementById('migration-unavailable').style.display = 'none';
-                document.getElementById('migration-form').style.display = '';
-                var pathInput = document.getElementById('migration-source-path');
-                if (pathInput && !pathInput.value) pathInput.value = data.default_sqlite_path || '';
-                // Check if a migration is already running
-                pollMigrationStatus();
-            }
-        })['catch'](function() {});
-    }
-
-    function startMigration() {
-        var pathInput = document.getElementById('migration-source-path');
-        var sourcePath = pathInput ? pathInput.value.trim() : '';
-        if (!sourcePath) { alert('Please enter the SQLite database path.'); return; }
-
-        apiFetch(API_BASE + '/migrate/start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({source_path: sourcePath})
-        }).then(function(result) {
-            if (!result) return;
-            document.getElementById('migration-form').style.display = 'none';
-            document.getElementById('migration-progress').style.display = '';
-            document.getElementById('migration-done').style.display = 'none';
-            document.getElementById('migration-error').style.display = 'none';
-            if (!migrationPollTimer) {
-                migrationPollTimer = setInterval(pollMigrationStatus, 2000);
-            }
-        })['catch'](function(e) {
-            alert('Failed to start migration: ' + (e.message || e));
-        });
-    }
-
-    function pollMigrationStatus() {
-        apiFetch(API_BASE + '/migrate/status').then(function(result) {
-            if (!result || !result.data) return;
-            var s = result.data;
-            // If never started, nothing to show
-            if (!s.started_at && !s.running) {
-                if (migrationPollTimer) { clearInterval(migrationPollTimer); migrationPollTimer = null; }
-                return;
-            }
-            // Show progress section
-            document.getElementById('migration-form').style.display = 'none';
-            var progressDiv = document.getElementById('migration-progress');
-            progressDiv.style.display = '';
-
-            var tables = s.tables || [];
-            var totalRows = 0, totalMigrated = 0;
-            tables.forEach(function(t) { totalRows += t.total_rows; totalMigrated += t.migrated; });
-            var pct = totalRows > 0 ? Math.round((totalMigrated / totalRows) * 100) : 0;
-
-            document.getElementById('migration-overall-pct').textContent = pct + '%';
-            document.getElementById('migration-overall-bar').style.width = pct + '%';
-
-            var tbody = document.getElementById('migration-table-body');
-            tbody.innerHTML = tables.map(function(t) {
-                var statusBadge = '<span style="color:' + migrationStatusColor(t.status) + ';">' + t.status + '</span>';
-                var rowPct = t.total_rows > 0 ? Math.round((t.migrated / t.total_rows) * 100) : 0;
-                var progressBar = '<div style="background:#21262d;border-radius:3px;height:6px;width:100px;display:inline-block;vertical-align:middle;">' +
-                    '<div style="background:' + migrationStatusColor(t.status) + ';height:100%;width:' + rowPct + '%;border-radius:3px;"></div></div>' +
-                    ' <span style="color:#8b949e;">' + rowPct + '%</span>';
-                var errorTip = t.error ? ' <span title="' + escapeHtml(t.error) + '" style="color:#f85149;cursor:help;">(!)</span>' : '';
-                return '<tr><td>' + escapeHtml(t.table_name) + '</td><td>' + statusBadge + errorTip + '</td><td>' +
-                    t.migrated + ' / ' + t.total_rows + '</td><td>' + progressBar + '</td></tr>';
-            }).join('');
-
-            // Start polling if running and not already polling
-            if (s.running && !migrationPollTimer) {
-                migrationPollTimer = setInterval(pollMigrationStatus, 2000);
-            }
-
-            // Handle completion
-            if (!s.running && s.finished_at) {
-                if (migrationPollTimer) { clearInterval(migrationPollTimer); migrationPollTimer = null; }
-                if (s.error) {
-                    var errDiv = document.getElementById('migration-error');
-                    errDiv.style.display = '';
-                    errDiv.textContent = 'Migration error: ' + s.error;
-                } else {
-                    document.getElementById('migration-done').style.display = '';
-                }
-                document.getElementById('migration-overall-bar').style.background = s.error ? '#f85149' : '#3fb950';
-            }
-        })['catch'](function() {});
-    }
-
-    function migrationStatusColor(status) {
-        switch (status) {
-            case 'done': return '#3fb950';
-            case 'running': return '#58a6ff';
-            case 'error': return '#f85149';
-            case 'skipped': return '#d29922';
-            default: return '#8b949e';
-        }
     }
 
     // ---- Alert Policies ----
@@ -2268,7 +2156,6 @@
         'load-more-traps': function() { loadMoreTraps(); },
         'change-password': function() { changePassword(); },
         'save-settings': function() { saveSettings(); },
-        'start-migration': function() { startMigration(); },
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },

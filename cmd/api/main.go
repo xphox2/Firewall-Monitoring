@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -51,20 +50,6 @@ func main() {
 	defer db.Close()
 	log.Println("Database initialized")
 
-	// Pre-import admin from SQLite so InitAdmin preserves the old password
-	var migrateState database.MigrationState
-	sqlitePath := cfg.Database.FilePath
-	if sqlitePath == "" {
-		sqlitePath = "/data/firewall-mon.db"
-	}
-	hasSQLiteFile := false
-	if db.IsPostgres() {
-		if _, err := os.Stat(sqlitePath); err == nil {
-			hasSQLiteFile = true
-			db.MigrateAdminsFromSQLite(sqlitePath)
-		}
-	}
-
 	authManager := auth.NewAuthManager(cfg, db)
 
 	// Initialize admin in database (skips if admin already exists from migration)
@@ -96,8 +81,8 @@ func main() {
 		log.Printf("Username: %s", cfg.Auth.AdminUsername)
 		log.Printf("Password: %s (set ADMIN_PASSWORD env var to override)", masked)
 		log.Println("========================================")
-		// Write full password to a file next to the database, readable only by the process owner
-		pwFile := filepath.Join(filepath.Dir(cfg.Database.FilePath), ".admin-password")
+		// Write full password to a file in data directory, readable only by the process owner
+		pwFile := "/data/.admin-password"
 		if err := os.WriteFile(pwFile, []byte(pw+"\n"), 0600); err == nil {
 			log.Printf("Full password written to %s", pwFile)
 		}
@@ -107,13 +92,6 @@ func main() {
 	cfg.Auth.AdminPassword = ""
 
 	handler := handlers.NewHandler(cfg, authManager, db)
-	handler.SetMigrateState(&migrateState)
-
-	// Full background migration (admins already imported above, will be skipped)
-	if hasSQLiteFile {
-		log.Printf("Starting background data migration from %s", sqlitePath)
-		go db.MigrateFromSQLite(sqlitePath, &migrateState)
-	}
 
 	// Create alert manager for data ingestion handlers (syslog alerts, etc.)
 	notif := notifier.NewNotifier(cfg)
@@ -470,10 +448,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/settings/test-email", handler.TestEmail)
 		admin.POST("/api/settings/test-webhook", handler.TestWebhook)
 		admin.GET("/api/display-settings", handler.GetPublicDisplaySettings)
-
-		admin.GET("/api/migrate/precheck", handler.GetMigrationPrecheck)
-		admin.POST("/api/migrate/start", handler.StartMigration)
-		admin.GET("/api/migrate/status", handler.GetMigrationStatus)
 
 		admin.GET("/irc", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "irc.html", nil)

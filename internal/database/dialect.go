@@ -2,7 +2,7 @@ package database
 
 import "fmt"
 
-// Dialect abstracts SQL differences between SQLite and PostgreSQL.
+// Dialect abstracts SQL differences between PostgreSQL and other databases.
 type Dialect interface {
 	// TimeBucket returns a SQL expression that truncates column to the given
 	// unit ("minute", "hour", or "day") and formats it as a string.
@@ -14,31 +14,6 @@ type Dialect interface {
 	// IsPostgres reports whether this dialect targets PostgreSQL.
 	IsPostgres() bool
 }
-
-// ---------- SQLite ----------
-
-type sqliteDialect struct{}
-
-func (sqliteDialect) TimeBucket(unit, column string) string {
-	switch unit {
-	case "minute":
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
-	case "5min":
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:', %s) || printf('%%02d', (CAST(strftime('%%M', %s) AS INTEGER) / 5) * 5)", column, column)
-	case "hour":
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
-	case "day":
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
-	default:
-		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column) // default to hour
-	}
-}
-
-func (sqliteDialect) QuoteIdent(name string) string {
-	return "`" + name + "`"
-}
-
-func (sqliteDialect) IsPostgres() bool { return false }
 
 // ---------- PostgreSQL ----------
 

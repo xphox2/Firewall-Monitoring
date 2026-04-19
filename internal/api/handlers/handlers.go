@@ -25,22 +25,16 @@ type Handler struct {
 	alertManager *alerts.AlertManager
 	ircManager   *irc.Manager
 	db           *database.Database
-	migrateState *database.MigrationState
 	mu           sync.RWMutex
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
 	return &Handler{
-		config:       cfg,
-		authManager:  authManager,
-		uptimeTrack:  uptime.NewUptimeTracker(cfg),
-		db:           db,
-		migrateState: &database.MigrationState{},
+		config:      cfg,
+		authManager: authManager,
+		uptimeTrack: uptime.NewUptimeTracker(cfg),
+		db:          db,
 	}
-}
-
-func (h *Handler) SetMigrateState(s *database.MigrationState) {
-	h.migrateState = s
 }
 
 func (h *Handler) SetIRCManager(mgr *irc.Manager) {
@@ -113,14 +107,14 @@ func isValidExternalIP(ipStr string) bool {
 }
 
 var validVendors = map[string]bool{
-	"fortigate":  true,
-	"paloalto":   true,
-	"cisco_asa":  true,
-	"sonicwall":  true,
-	"firewalla":  true,
-	"pfsense":    true,
-	"opnsense":   true,
-	"generic":    true,
+	"fortigate": true,
+	"paloalto":  true,
+	"cisco_asa": true,
+	"sonicwall": true,
+	"firewalla": true,
+	"pfsense":   true,
+	"opnsense":  true,
+	"generic":   true,
 }
 
 func isValidVendor(vendor string) bool {

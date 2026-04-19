@@ -1,0 +1,14 @@
+{
+  "name": "firewall-mon",
+  "version": "0.10.157",
+  "description": "Firewall monitoring system",
+  "scripts": {
+    "tailwind": "tailwindcss -i ./cmd/api/static/css/styles.css -o ./cmd/api/static/css/tailwind.css --minify",
+    "tailwind:watch": "tailwindcss -i ./cmd/api/static/css/styles.css -o ./cmd/api/static/css/tailwind.css --watch",
+    "build": "npm run tailwind",
+    "prebuild": "npm run tailwind"
+  },
+  "dependencies": {
+    "tailwindcss": "^3.4.19"
+  }
+}

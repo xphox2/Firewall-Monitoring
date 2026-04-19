@@ -4,135 +4,76 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pending Approvals - Firewall Monitor</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
-
-        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
-        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
-        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
-        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
-        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
-        .nav-section { margin-bottom: 16px; }
-        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
-        .nav-item:hover { background: #21262d; color: #e6edf3; }
-        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
-        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
-        .nav-item.danger { color: #f85149; }
-        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
-        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
-
-        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-        .card h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 16px; }
-        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
-        .btn:hover { background: #2ea043; }
-        .btn.danger { background: #da3633; }
-        .btn.danger:hover { background: #e5534b; }
-        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
-        .btn.secondary:hover { background: #30363d; }
-        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
-        table { width: 100%; border-collapse: collapse; }
-        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
-        tr:hover { background: #1c2128; }
-        .form-group { margin-bottom: 12px; }
-        .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
-        .form-group input, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
-        .form-group input:focus, .form-group textarea:focus { border-color: #58a6ff; outline: none; }
-        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; }
-        .modal.active { display: flex; }
-        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 520px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .modal-header h2 { font-size: 1.1rem; color: #e6edf3; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-        .loading { text-align: center; padding: 30px; color: #484f58; }
-        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-        .badge.pending { background: rgba(210,153,34,0.15); color: #d2992a; }
-        .badge.approved { background: rgba(63,185,80,0.15); color: #3fb950; }
-        .badge.rejected { background: rgba(248,81,73,0.15); color: #f85149; }
-        .probe-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 15px; }
-        .probe-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-        .probe-name { font-weight: 600; font-size: 1.1rem; color: #e6edf3; }
-        .probe-details { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.88rem; margin-bottom: 15px; }
-        .probe-details span { color: #8b949e; }
-        .probe-actions { display: flex; gap: 10px; }
-        .empty { text-align: center; padding: 40px; color: #8b949e; }
-    </style>
+    <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
-<body>
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h2>Firewall Monitor</h2>
-            <div class="subtitle">Admin Panel</div>
+<body class="bg-[#0d1117] text-[#c9d1d9]">
+    <div class="fixed left-0 top-0 w-60 h-screen bg-[#161b22] border-r border-[#30363d] flex flex-col z-[100]">
+        <div class="p-5 border-b border-[#30363d]">
+            <h2 class="text-[#58a6ff] text-sm tracking-tight">Firewall Monitor</h2>
+            <div class="text-[#484f58] text-xs mt-0.5">Admin Panel</div>
         </div>
-        <div class="sidebar-nav">
-            <div class="nav-section">
-                <div class="nav-section-title">Monitoring</div>
-                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
-                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
-                <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
-                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
+        <div class="flex-1 p-3 overflow-y-auto">
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-widest text-[#484f58] px-3 py-1 pb-1.5">Monitoring</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin"><span class="w-4.5 text-center text-sm">&#9632;</span> Dashboard</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/devices"><span class="w-4.5 text-center text-sm">&#9881;</span> Devices</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/connections"><span class="w-4.5 text-center text-sm">&#8644;</span> Connections</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/interfaces"><span class="w-4.5 text-center text-sm">&#8646;</span> Interfaces</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Data</div>
-                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
-                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
-                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
-                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-widest text-[#484f58] px-3 py-1 pb-1.5">Data</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/syslog"><span class="w-4.5 text-center text-sm">&#9993;</span> Syslog</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/flows"><span class="w-4.5 text-center text-sm">&#8674;</span> Flows</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/alerts"><span class="w-4.5 text-center text-sm">&#9888;</span> Alerts</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/traps"><span class="w-4.5 text-center text-sm">&#9889;</span> Traps</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Infrastructure</div>
-                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
-                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
-                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
-                <a class="nav-item active" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-widest text-[#484f58] px-3 py-1 pb-1.5">Infrastructure</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probes"><span class="w-4.5 text-center text-sm">&#9678;</span> Probes</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/sites"><span class="w-4.5 text-center text-sm">&#9962;</span> Sites</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/network"><span class="w-4.5 text-center text-sm">&#9733;</span> Network</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 bg-[rgba(56,139,253,0.15)] text-[#58a6ff] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/probe-pending"><span class="w-4.5 text-center text-sm">&#9200;</span> Pending</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">System</div>
-                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
-                <a class="nav-item" href="/admin/irc"><span class="nav-icon">&#128172;</span> IRC</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-widest text-[#484f58] px-3 py-1 pb-1.5">System</div>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/settings"><span class="w-4.5 text-center text-sm">&#9881;</span> Settings</a>
+                <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/irc"><span class="w-4.5 text-center text-sm">&#128172;</span> IRC</a>
             </div>
         </div>
-        <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+        <div class="p-3 border-t border-[#30363d]">
+            <a class="flex items-center gap-2.5 px-3 py-2.25 text-[#f85149] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm hover:bg-[rgba(248,81,73,0.1)]" href="#" data-action="logout"><span class="w-4.5 text-center text-sm">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main">
-        <div class="page-header">
-            <h1>Pending Probe Approvals</h1>
+    <div class="ml-60 p-6 min-h-screen">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-xl font-semibold text-[#e6edf3]">Pending Probe Approvals</h1>
         </div>
 
-        <div class="error" id="error-msg" style="display: none;"></div>
-        <div class="success" id="success-msg" style="display: none;"></div>
+        <div class="bg-[rgba(248,81,73,0.1)] border border-[rgba(248,81,73,0.3)] text-[#f85149] p-4 rounded-lg mb-5 hidden" id="error-msg"></div>
+        <div class="bg-[rgba(63,185,80,0.1)] border border-[rgba(63,185,80,0.3)] text-[#3fb150] p-4 rounded-lg mb-5 hidden" id="success-msg"></div>
 
         <div id="pending-container">
-            <div class="loading">Loading...</div>
+            <div class="text-center p-8 text-[#484f58]">Loading...</div>
         </div>
     </div>
 
     <!-- Reject Modal -->
-    <div class="modal" id="reject-modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Reject Probe</h2>
-                <span style="cursor:pointer" data-action="close-reject-modal">✕</span>
+    <div class="hidden fixed inset-0 bg-black/60 z-[200] flex items-center justify-center" id="reject-modal">
+        <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-6 w-[520px] max-w-[92vw] max-h-[85vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg text-[#e6edf3]">Reject Probe</h2>
+                <span class="cursor-pointer" data-action="close-reject-modal">✕</span>
             </div>
             <form id="reject-form">
                 <input type="hidden" id="reject-probe-id">
-                <div class="form-group">
-                    <label>Reason for rejection *</label>
-                    <textarea id="reject-reason" rows="4" required placeholder="Enter reason..."></textarea>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-sm font-medium">Reason for rejection *</label>
+                    <textarea id="reject-reason" rows="4" required placeholder="Enter reason..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn secondary" data-action="close-reject-modal">Cancel</button>
-                    <button type="submit" class="btn danger">Reject</button>
+                <div class="flex justify-end gap-2 mt-4">
+                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150 hover:bg-[#30363d]" data-action="close-reject-modal">Cancel</button>
+                    <button type="submit" class="bg-[#da3633] text-white border-none px-3.5 py-1.5 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150 hover:bg-[#e5534b]">Reject</button>
                 </div>
             </form>
         </div>

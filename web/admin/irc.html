@@ -4,427 +4,355 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IRC Management - Firewall Monitor</title>
+    <link rel="stylesheet" href="/static/css/tailwind.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; }
-
-        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
-        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
-        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
-        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
-        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
-        .nav-section { margin-bottom: 16px; }
-        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
         .nav-item:hover { background: #21262d; color: #e6edf3; }
         .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
-        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
-        .nav-item.danger { color: #f85149; }
         .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
-        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
-
-        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-        .card h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
-        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
         .btn:hover { background: #2ea043; }
-        .btn.danger { background: #da3633; }
         .btn.danger:hover { background: #e5534b; }
-        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
         .btn.secondary:hover { background: #30363d; }
-        .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        table { width: 100%; border-collapse: collapse; }
-        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
-        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
         tr:hover { background: #1c2128; }
-        .form-group { margin-bottom: 12px; }
-        .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
-        .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
-        .form-group input { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
-        .form-group input:focus, .form-group select:focus { border-color: #58a6ff; outline: none; }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-        .checkbox-label input { width: auto; }
-        .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; }
-        .modal.active { display: flex; }
-        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 520px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .modal-header h2 { font-size: 1.1rem; color: #e6edf3; }
-        .modal-close { cursor: pointer; font-size: 1.3rem; color: #8b949e; background: none; border: none; padding: 4px; }
-        .modal-close:hover { color: #e6edf3; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-        .loading { text-align: center; padding: 30px; color: #484f58; }
-        .error { background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); color: #f85149; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .success { background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3); color: #3fb150; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .empty { text-align: center; padding: 40px; color: #8b949e; }
-        .tab-nav { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #30363d; }
-        .tab-btn { background: none; border: none; color: #8b949e; padding: 10px 16px; cursor: pointer; font-size: 0.88rem; border-bottom: 2px solid transparent; margin-bottom: -1px; }
         .tab-btn:hover { color: #e6edf3; }
-        .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .status-badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
-        .status-connected { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
-        .status-disconnected { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-        .status-connecting { background: rgba(210, 153, 34, 0.15); color: #d29922; }
-        .status-error { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-        .status-joined { background: rgba(63, 185, 80, 0.15); color: #3fb150; }
-        .status-pending { background: rgba(210, 153, 34, 0.15); color: #d29922; }
-        .status-left { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
-        .server-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 15px; }
-        .server-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-        .server-card-header h3 { color: #58a6ff; }
-        .server-info { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; font-size: 0.85rem; }
-        .server-info span { color: #8b949e; }
-        .channel-list { margin-top: 12px; padding-top: 12px; border-top: 1px solid #21262d; }
-        .channel-tag { display: inline-block; background: #21262d; padding: 4px 10px; border-radius: 4px; margin-right: 8px; margin-bottom: 8px; font-size: 0.82rem; }
-        .actions { display: flex; gap: 6px; }
-        .message-area { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; min-height: 200px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; margin-bottom: 12px; }
-        .message-area .msg { margin-bottom: 4px; }
-        .message-area .msg .nick { color: #58a6ff; }
-        .message-area .msg .time { color: #484f58; margin-right: 8px; }
     </style>
 </head>
 <body>
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <h2>Firewall Monitor</h2>
-            <div class="subtitle">Admin Panel</div>
+    <div class="fixed left-0 top-0 w-60 h-screen bg-[#161b22] border-r border-[#30363d] flex flex-col z-[100]">
+        <div class="p-5 border-b border-[#30363d]">
+            <h2 class="text-[#58a6ff] text-base tracking-tight">Firewall Monitor</h2>
+            <div class="text-[#484f58] text-xs mt-0.5">Admin Panel</div>
         </div>
-        <div class="sidebar-nav">
-            <div class="nav-section">
-                <div class="nav-section-title">Monitoring</div>
-                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
-                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
-                <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
-                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
+        <div class="flex-1 p-3 overflow-y-auto">
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1 pb-1.5">Monitoring</div>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin"><span class="w-4.5 text-center text-sm">&#9632;</span> Dashboard</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/devices"><span class="w-4.5 text-center text-sm">&#9881;</span> Devices</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/connections"><span class="w-4.5 text-center text-sm">&#8644;</span> Connections</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/interfaces"><span class="w-4.5 text-center text-sm">&#8646;</span> Interfaces</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Data</div>
-                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
-                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
-                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
-                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1 pb-1.5">Data</div>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/syslog"><span class="w-4.5 text-center text-sm">&#9993;</span> Syslog</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/flows"><span class="w-4.5 text-center text-sm">&#8674;</span> Flows</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/alerts"><span class="w-4.5 text-center text-sm">&#9888;</span> Alerts</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/traps"><span class="w-4.5 text-center text-sm">&#9889;</span> Traps</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">Infrastructure</div>
-                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
-                <a class="nav-item" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
-                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
-                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1 pb-1.5">Infrastructure</div>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/probes"><span class="w-4.5 text-center text-sm">&#9678;</span> Probes</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/sites"><span class="w-4.5 text-center text-sm">&#9962;</span> Sites</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/network"><span class="w-4.5 text-center text-sm">&#9733;</span> Network</a>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/probe-pending"><span class="w-4.5 text-center text-sm">&#9200;</span> Pending</a>
             </div>
-            <div class="nav-section">
-                <div class="nav-section-title">System</div>
-                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
-                <a class="nav-item active" href="/admin/irc"><span class="nav-icon">&#128172;</span> IRC</a>
+            <div class="mb-4">
+                <div class="text-xs font-semibold uppercase tracking-wider text-[#484f58] px-3 py-1 pb-1.5">System</div>
+                <a class="nav-item flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/settings"><span class="w-4.5 text-center text-sm">&#9881;</span> Settings</a>
+                <a class="nav-item active flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="/admin/irc"><span class="w-4.5 text-center text-sm">&#128172;</span> IRC</a>
             </div>
         </div>
-        <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+        <div class="p-3 border-t border-[#30363d]">
+            <a class="nav-item danger flex items-center gap-2.5 px-3 py-2.25 text-[#8b949e] no-underline rounded-md mb-0.5 transition-all duration-150 cursor-pointer text-sm" href="#" data-action="logout"><span class="w-4.5 text-center text-sm">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main">
-        <div class="page-header">
-            <h1>IRC Management</h1>
-            <button class="btn" data-action="open-server-modal">Add Server</button>
+    <div class="ml-60 p-6 min-h-screen">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-xl font-semibold text-[#e6edf3]">IRC Management</h1>
+            <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="open-server-modal">Add Server</button>
         </div>
 
         <div id="alertMessage"></div>
 
-        <div class="tab-nav">
-            <button class="tab-btn active" data-tab="servers">Servers</button>
-            <button class="tab-btn" data-tab="channels">Channels</button>
-            <button class="tab-btn" data-tab="commands">Commands</button>
-            <button class="tab-btn" data-tab="send">Send Message</button>
+        <div class="flex gap-1 mb-5 border-b border-[#30363d]">
+            <button class="tab-btn active bg-none border-none text-[#58a6ff] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-[#58a6ff] mb-[-1px]" data-tab="servers">Servers</button>
+            <button class="tab-btn bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="channels">Channels</button>
+            <button class="tab-btn bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="commands">Commands</button>
+            <button class="tab-btn bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="send">Send Message</button>
         </div>
 
         <div id="tab-servers" class="tab-content active">
-            <div class="card">
-                <h2>IRC Servers</h2>
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">IRC Servers</h2>
                 <div id="serversList">
-                    <div class="loading">Loading servers...</div>
+                    <div class="text-center p-7.5 text-[#484f58]">Loading servers...</div>
                 </div>
             </div>
         </div>
 
-        <div id="tab-channels" class="tab-content">
-            <div class="card">
-                <h2>
+        <div id="tab-channels" class="tab-content hidden">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
                     Channels
-                    <button class="btn sm" data-action="open-channel-modal">Add Channel</button>
+                    <button class="bg-[#238636] text-white border-none px-2.5 py-1 rounded-md cursor-pointer text-xs font-medium transition-colors duration-150" data-action="open-channel-modal">Add Channel</button>
                 </h2>
                 <div id="channelsList">
-                    <div class="loading">Loading channels...</div>
+                    <div class="text-center p-10 text-[#8b949e]">Loading channels...</div>
                 </div>
             </div>
         </div>
 
-        <div id="tab-commands" class="tab-content">
-            <div class="card">
-                <h2>
+        <div id="tab-commands" class="tab-content hidden">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
                     Custom Commands
-                    <button class="btn sm" data-action="open-command-modal">Add Command</button>
+                    <button class="bg-[#238636] text-white border-none px-2.5 py-1 rounded-md cursor-pointer text-xs font-medium transition-colors duration-150" data-action="open-command-modal">Add Command</button>
                 </h2>
-                <table>
+                <table class="w-full border-collapse">
                     <thead>
                         <tr>
-                            <th>Command</th>
-                            <th>Description</th>
-                            <th>Type</th>
-                            <th>Admin Only</th>
-                            <th>Enabled</th>
-                            <th>Actions</th>
+                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Command</th>
+                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Description</th>
+                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Type</th>
+                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Admin Only</th>
+                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Enabled</th>
+                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="commandsList">
-                        <tr><td colspan="6" class="loading">Loading commands...</td></tr>
+                        <tr><td colspan="6" class="text-center p-7.5 text-[#484f58]">Loading commands...</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div id="tab-send" class="tab-content">
-            <div class="card">
-                <h2>Send IRC Message</h2>
-                <div class="form-group">
-                    <label>Server</label>
-                    <select id="sendServerSelect">
+        <div id="tab-send" class="tab-content hidden">
+            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Send IRC Message</h2>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
+                    <select id="sendServerSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Channel</label>
-                    <select id="sendChannelSelect">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Channel</label>
+                    <select id="sendChannelSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm">
                         <option value="">Select a channel...</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Message</label>
-                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..."></textarea>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Message</label>
+                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm"></textarea>
                 </div>
-                <button class="btn" data-action="send-message">Send Message</button>
+                <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="send-message">Send Message</button>
             </div>
         </div>
     </div>
 
-    <div id="serverModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="serverModalTitle">Add Server</h2>
-                <button class="modal-close" data-action="close-server-modal">&times;</button>
+    <div id="serverModal" class="fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] hidden items-center justify-center">
+        <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-6 w-[520px] max-w-[92vw] max-h-[85vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="serverModalTitle" class="text-lg text-[#e6edf3]">Add Server</h2>
+                <button class="cursor-pointer text-xl text-[#8b949e] bg-none border-none p-1" data-action="close-server-modal">&times;</button>
             </div>
             <form id="serverForm">
                 <input type="hidden" id="serverId">
-                <div class="form-group">
-                    <label>Server Name</label>
-                    <input type="text" id="serverName" required placeholder="e.g., My IRC Server">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Name</label>
+                    <input type="text" id="serverName" required placeholder="e.g., My IRC Server" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Server Host</label>
-                        <input type="text" id="serverHost" required placeholder="e.g., irc.example.com">
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Host</label>
+                        <input type="text" id="serverHost" required placeholder="e.g., irc.example.com" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
-                    <div class="form-group">
-                        <label>Server Port</label>
-                        <input type="number" id="serverPort" value="6667" min="1" max="65535">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Nick</label>
-                        <input type="text" id="serverNick" required placeholder="BotNick">
-                    </div>
-                    <div class="form-group">
-                        <label>Username</label>
-                        <input type="text" id="serverUsername" placeholder="username">
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Port</label>
+                        <input type="number" id="serverPort" value="6667" min="1" max="65535" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Real Name</label>
-                    <input type="text" id="serverRealName" placeholder="Real Name">
-                </div>
-                <div class="form-group">
-                    <label>Server Password (optional)</label>
-                    <input type="password" id="serverPassword" placeholder="Server password">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>NickServ Password (optional)</label>
-                        <input type="password" id="serverNickServPassword" placeholder="For IDENTIFY">
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Nick</label>
+                        <input type="text" id="serverNick" required placeholder="BotNick" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="serverNickServIdentify">
-                            Identify to NickServ
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Username</label>
+                        <input type="text" id="serverUsername" placeholder="username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Real Name</label>
+                    <input type="text" id="serverRealName" placeholder="Real Name" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                </div>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Password (optional)</label>
+                    <input type="password" id="serverPassword" placeholder="Server password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">NickServ Password (optional)</label>
+                        <input type="password" id="serverNickServPassword" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="serverNickServIdentify" class="w-auto">
+                            <span class="text-[#c9d1d9] text-sm">Identify to NickServ</span>
                         </label>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="serverUseTLS">
-                        Use TLS/SSL
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="serverUseTLS" class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Use TLS/SSL</span>
                     </label>
                 </div>
-                <div class="form-group">
-                    <label>SASL Authentication</label>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="serverSASLEnabled">
-                                Enable SASL
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Authentication</label>
+                    <div class="grid grid-cols-2 gap-3 mb-2">
+                        <div>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="serverSASLEnabled" class="w-auto">
+                                <span class="text-[#c9d1d9] text-sm">Enable SASL</span>
                             </label>
                         </div>
                     </div>
-                    <div id="saslFields" style="display:none;">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>SASL Username</label>
-                                <input type="text" id="serverSASLUsername" placeholder="SASL username">
+                    <div id="saslFields" class="hidden">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Username</label>
+                                <input type="text" id="serverSASLUsername" placeholder="SASL username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                             </div>
-                            <div class="form-group">
-                                <label>SASL Password</label>
-                                <input type="password" id="serverSASLPassword" placeholder="SASL password">
+                            <div>
+                                <label class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Password</label>
+                                <input type="password" id="serverSASLPassword" placeholder="SASL password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="serverEnabled" checked>
-                        Enabled
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="serverEnabled" checked class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Enabled</span>
                     </label>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="serverAutoReconnect" checked>
-                        Auto Reconnect
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="serverAutoReconnect" checked class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Auto Reconnect</span>
                     </label>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn secondary" data-action="close-server-modal">Cancel</button>
-                    <button type="button" class="btn secondary" data-action="test-server">Test</button>
-                    <button type="submit" class="btn">Save</button>
+                <div class="flex justify-end gap-2 mt-4">
+                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="close-server-modal">Cancel</button>
+                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="test-server">Test</button>
+                    <button type="submit" class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150">Save</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <div id="channelModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="channelModalTitle">Add Channel</h2>
-                <button class="modal-close" data-action="close-channel-modal">&times;</button>
+    <div id="channelModal" class="fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] hidden items-center justify-center">
+        <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-6 w-[520px] max-w-[92vw] max-h-[85vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="channelModalTitle" class="text-lg text-[#e6edf3]">Add Channel</h2>
+                <button class="cursor-pointer text-xl text-[#8b949e] bg-none border-none p-1" data-action="close-channel-modal">&times;</button>
             </div>
             <form id="channelForm">
                 <input type="hidden" id="channelId">
-                <div class="form-group">
-                    <label>Server</label>
-                    <select id="channelServerId" required>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
+                    <select id="channelServerId" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Channel Name</label>
-                    <input type="text" id="channelName" required placeholder="e.g., #mychannel">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Name</label>
+                    <input type="text" id="channelName" required placeholder="e.g., #mychannel" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
-                <div class="form-group">
-                    <label>Channel Key (optional)</label>
-                    <input type="password" id="channelKey" placeholder="Channel password">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Key (optional)</label>
+                    <input type="password" id="channelKey" placeholder="Channel password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>ChanServ Name (optional)</label>
-                        <input type="text" id="channelChanServName" placeholder="NickServ">
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Name (optional)</label>
+                        <input type="text" id="channelChanServName" placeholder="NickServ" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
-                    <div class="form-group">
-                        <label>ChanServ Password</label>
-                        <input type="password" id="channelChanServPass" placeholder="For IDENTIFY">
+                    <div>
+                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Password</label>
+                        <input type="password" id="channelChanServPass" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="channelAutoJoin" checked>
-                        Auto Join
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="channelAutoJoin" checked class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Auto Join</span>
                     </label>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="channelSendAlerts">
-                        Send Alerts to Channel
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="channelSendAlerts" class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Send Alerts to Channel</span>
                     </label>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="channelSendStatus">
-                        Auto-Post Status
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="channelSendStatus" class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Auto-Post Status</span>
                     </label>
                 </div>
-                <div class="form-group" id="statusIntervalGroup" style="display:none;">
-                    <label>Status Interval (minutes)</label>
-                    <input type="number" id="channelStatusInterval" min="1" max="1440" value="5" placeholder="Interval in minutes">
+                <div class="mb-3 hidden" id="statusIntervalGroup">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Status Interval (minutes)</label>
+                    <input type="number" id="channelStatusInterval" min="1" max="1440" value="5" placeholder="Interval in minutes" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="channelEnabled" checked>
-                        Enabled
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="channelEnabled" checked class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Enabled</span>
                     </label>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn secondary" data-action="close-channel-modal">Cancel</button>
-                    <button type="submit" class="btn">Save</button>
+                <div class="flex justify-end gap-2 mt-4">
+                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="close-channel-modal">Cancel</button>
+                    <button type="submit" class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150">Save</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <div id="commandModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="commandModalTitle">Add Command</h2>
-                <button class="modal-close" data-action="close-command-modal">&times;</button>
+    <div id="commandModal" class="fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] hidden items-center justify-center">
+        <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-6 w-[520px] max-w-[92vw] max-h-[85vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="commandModalTitle" class="text-lg text-[#e6edf3]">Add Command</h2>
+                <button class="cursor-pointer text-xl text-[#8b949e] bg-none border-none p-1" data-action="close-command-modal">&times;</button>
             </div>
             <form id="commandForm">
                 <input type="hidden" id="commandId">
-                <div class="form-group">
-                    <label>Command</label>
-                    <input type="text" id="commandCmd" required placeholder="e.g., !status">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Command</label>
+                    <input type="text" id="commandCmd" required placeholder="e.g., !status" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
-                <div class="form-group">
-                    <label>Description</label>
-                    <input type="text" id="commandDescription" placeholder="What this command does">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Description</label>
+                    <input type="text" id="commandDescription" placeholder="What this command does" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
-                <div class="form-group">
-                    <label>Command Type</label>
-                    <select id="commandType">
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Command Type</label>
+                    <select id="commandType" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="static">Static Response</option>
                         <option value="status">System Status</option>
                         <option value="stats">System Stats</option>
                         <option value="custom">Custom Script</option>
                     </select>
                 </div>
-                <div class="form-group" id="responseField">
-                    <label>Response</label>
-                    <textarea id="commandResponse" rows="4" placeholder="Response text or script..."></textarea>
+                <div class="mb-3" id="responseField">
+                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Response</label>
+                    <textarea id="commandResponse" rows="4" placeholder="Response text or script..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="commandAdminOnly">
-                        Admin Only
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="commandAdminOnly" class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Admin Only</span>
                     </label>
                 </div>
-                <div class="form-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="commandEnabled" checked>
-                        Enabled
+                <div class="mb-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="commandEnabled" checked class="w-auto">
+                        <span class="text-[#c9d1d9] text-sm">Enabled</span>
                     </label>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn secondary" data-action="close-command-modal">Cancel</button>
-                    <button type="submit" class="btn">Save</button>
+                <div class="flex justify-end gap-2 mt-4">
+                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="close-command-modal">Cancel</button>
+                    <button type="submit" class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150">Save</button>
                 </div>
             </form>
         </div>
