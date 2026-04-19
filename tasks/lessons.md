@@ -1,5 +1,37 @@
 # Lessons Learned
 
+## Issue: Force Push Caused Divergent Branch
+
+### Problem
+Force pushed after amending commit to fix go.mod. This rewrote remote history and caused team members' local branches to diverge from remote.
+
+### Root Cause
+1. I used `git push --force` to update a commit after fixing go.mod
+2. Force push overwrites remote history, invalidating anyone who had pulled the old history
+3. Team members' local machines had the old commit that was replaced
+
+### What Should Have Happened
+1. Instead of amending the commit, create a NEW commit with the go.mod fix:
+   ```bash
+   git add go.mod go.sum
+   git commit -m "fix: resolve go.mod dependency issue"
+   git push
+   ```
+2. Or NEVER force push to shared branches (master/main)
+
+### Lesson
+- **NEVER force push to shared/shared branches** (master, main, develop)
+- Force push should only be used on private feature branches
+- If you need to fix a commit, create a new commit instead of amending
+- Always `git fetch` before `git push` to check if remote history changed
+
+### Prevention
+- Add git alias or hook to warn when force pushing to master
+- Communicate with team before any history-rewriting operation
+- Use `git push --force-with-lease` instead of `--force` (still bad but safer)
+
+---
+
 ## Issue: IRC Server Save Fails - Missing Database Columns
 
 ### Problem
