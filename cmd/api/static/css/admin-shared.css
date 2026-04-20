@@ -1,7 +1,7 @@
 /* Shared Admin CSS - Common classes used by JavaScript across all admin pages */
 
 /* Loading and Empty States */
-.loading, .empty {
+.loading, .empty, .empty-state {
     text-align: center;
     padding: 30px;
     color: #484f58;
@@ -10,6 +10,67 @@
 .empty-icon {
     font-size: 2rem;
     margin-bottom: 8px;
+}
+
+/* Copy button */
+.copy-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #8b949e;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+
+.copy-btn:hover {
+    background: #30363d;
+    color: #e6edf3;
+}
+
+/* Probe card details */
+.probe-name {
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 6px;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.probe-meta {
+    font-size: 0.78rem;
+    color: #8b949e;
+    margin-bottom: 12px;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.last-hour {
+    color: #3fb950;
+    display: block;
+    font-size: 0.7rem;
+    margin-top: 2px;
+}
+
+/* Standalone error/success classes */
+.error {
+    background: rgba(248, 81, 73, 0.15);
+    color: #f85149;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 8px 0;
+}
+
+.success {
+    background: rgba(63, 185, 80, 0.15);
+    color: #3fb950;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 8px 0;
 }
 
 /* Buttons */
@@ -34,6 +95,100 @@
 .btn.secondary:hover { background: #30363d; }
 .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Detail item (interface details) */
+.detail-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+}
+
+.detail-item:last-child {
+    border-bottom: none;
+}
+
+.detail-item .label {
+    color: #8b949e;
+    font-size: 0.82rem;
+}
+
+.detail-item .value {
+    color: #e6edf3;
+    font-size: 0.82rem;
+    font-weight: 500;
+}
+
+/* Chart range buttons */
+.chart-range-btns {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.chart-range-btns .range-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #8b949e;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.chart-range-btns .range-btn:hover {
+    background: #30363d;
+    color: #e6edf3;
+}
+
+.chart-range-btns .range-btn.active {
+    background: #58a6ff;
+    border-color: #58a6ff;
+    color: #fff;
+}
+
+/* Interface chart container */
+.iface-chart-container {
+    height: 200px;
+    margin-top: 10px;
+}
+
+/* Expandable message row */
+.expandable-msg {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.expandable-msg:hover {
+    background: #21262d;
+}
+
+/* VPN detail table (diagram panels) */
+.vpn-detail-table {
+    font-size: 0.78rem;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.vpn-detail-table th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #30363d;
+    color: #8b949e;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+}
+
+.vpn-detail-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #21262d;
+    color: #c9d1d9;
+}
+
+.vpn-detail-table tr:hover td {
+    background: #1c2128;
+}
 
 /* Badges */
 .badge {
