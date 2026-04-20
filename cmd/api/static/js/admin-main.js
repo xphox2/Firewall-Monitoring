@@ -160,10 +160,10 @@
                             var d = r.data;
                             var lh = d.last_hour || {};
                             el.innerHTML =
-                                '<div class="probe-stat"><div class="val">' + (d.syslog || 0).toLocaleString() + '</div><div class="lbl">Syslog<div class="last-hour">+' + (lh.syslog || 0).toLocaleString() + ' / hr</div></div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.traps || 0).toLocaleString() + '</div><div class="lbl">Traps<div class="last-hour">+' + (lh.traps || 0).toLocaleString() + ' / hr</div></div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.flows || 0).toLocaleString() + '</div><div class="lbl">Flows<div class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</div></div></div>' +
-                                '<div class="probe-stat"><div class="val">' + (d.pings || 0).toLocaleString() + '</div><div class="lbl">Pings<div class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</div></div></div>';
+                                '<div class="probe-stat"><div class="lbl">Syslog<div class="last-hour">+' + (lh.syslog || 0).toLocaleString() + ' / hr</div></div></div>' +
+                                '<div class="probe-stat"><div class="lbl">Traps<div class="last-hour">+' + (lh.traps || 0).toLocaleString() + ' / hr</div></div></div>' +
+                                '<div class="probe-stat"><div class="lbl">Flows<div class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</div></div></div>' +
+                                '<div class="probe-stat"><div class="lbl">Pings<div class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</div></div></div>';
                         }
                     })['catch'](function(err) {
                         console.error('Failed to load probe stats:', err);
