@@ -7,6 +7,7 @@
 - **Settings page checkbox alignment**: Changed notification, reports, and spike checkboxes from `setting-item` to `toggle-row` for proper label/checkbox alignment.
 - **Report settings validation**: Made `report_daily_time` and `report_weekly_day` optional (empty allowed) to avoid validation errors when enabling reports without filling in all fields.
 - **Report time/day dropdowns**: Replaced text inputs for `report_daily_time` and `report_weekly_day` with proper select dropdowns (30-minute intervals for time, day-of-week for weekly day) to prevent format errors and improve UX.
+- **Report settings save**: Fixed save handler to include select elements so dropdown values are properly saved.
 
 ### Changed
 - **Settings page CSS**: Added dropdown arrow styling for select elements in settings forms.

@@ -1594,25 +1594,25 @@
         var reportsSection = document.getElementById('settings-reports');
         var dailyEnabled = reportsSection.querySelector('input[name="report_daily_enabled"]') && reportsSection.querySelector('input[name="report_daily_enabled"]').checked;
         var weeklyEnabled = reportsSection.querySelector('input[name="report_weekly_enabled"]') && reportsSection.querySelector('input[name="report_weekly_enabled"]').checked;
-        document.querySelectorAll('#settings-reports input').forEach(function(input) {
-            if (input.name === 'report_daily_time') {
-                if (dailyEnabled && input.value && !/^\d{2}:\d{2}$/.test(input.value)) {
+        document.querySelectorAll('#settings-reports input, #settings-reports select').forEach(function(el) {
+            if (el.tagName === 'INPUT' && el.name === 'report_daily_time') {
+                if (dailyEnabled && el.value && !/^\d{2}:\d{2}$/.test(el.value)) {
                     AC.showError('Daily report time must be in HH:MM format (e.g., 08:00)');
                     hasError = true;
                     return;
                 }
             }
-            if (input.name === 'report_weekly_day') {
-                if (weeklyEnabled && input.value) {
+            if (el.tagName === 'INPUT' && el.name === 'report_weekly_day') {
+                if (weeklyEnabled && el.value) {
                     var validDays = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
-                    if (validDays.indexOf(input.value.toLowerCase()) === -1) {
+                    if (validDays.indexOf(el.value.toLowerCase()) === -1) {
                         AC.showError('Weekly report day must be a day of the week (e.g., Monday)');
                         hasError = true;
                         return;
                     }
                 }
             }
-            settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'reports', type: input.type === 'checkbox' ? 'bool' : 'string' });
+            settings.push({ key: el.name, value: el.type === 'checkbox' ? String(el.checked) : el.value, category: 'reports', type: el.type === 'checkbox' ? 'bool' : 'string' });
         });
         if (hasError) return;
         document.querySelectorAll('#settings-spike input').forEach(function(input) {
