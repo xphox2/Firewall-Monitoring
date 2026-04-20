@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.160] - 2026-04-20
+
+### Fixed
+- **Network page**: Fixed missing `id="connections-table"` on table causing "Cannot set innerHTML of null" error.
+- **Settings page checkbox alignment**: Changed notification, reports, and spike checkboxes from `setting-item` to `toggle-row` for proper label/checkbox alignment.
+- **Report settings validation**: Made `report_daily_time` and `report_weekly_day` optional (empty allowed) to avoid validation errors when enabling reports without filling in all fields.
+- **Report time/day dropdowns**: Replaced text inputs for `report_daily_time` and `report_weekly_day` with proper select dropdowns (30-minute intervals for time, day-of-week for weekly day) to prevent format errors and improve UX.
+
+### Changed
+- **Settings page CSS**: Added dropdown arrow styling for select elements in settings forms.
+
 ## [0.10.159] - 2026-04-19
 
 ### Changed

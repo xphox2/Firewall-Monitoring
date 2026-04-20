@@ -125,15 +125,17 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				return
 			}
 		case "report_daily_time":
-			if len(s.Value) != 5 || s.Value[2] != ':' {
+			if len(s.Value) > 0 && (len(s.Value) != 5 || s.Value[2] != ':') {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_daily_time: must be HH:MM format"))
 				return
 			}
 		case "report_weekly_day":
-			validDays := map[string]bool{"monday": true, "tuesday": true, "wednesday": true, "thursday": true, "friday": true, "saturday": true, "sunday": true}
-			if !validDays[strings.ToLower(s.Value)] {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_weekly_day: must be a day of the week"))
-				return
+			if len(s.Value) > 0 {
+				validDays := map[string]bool{"monday": true, "tuesday": true, "wednesday": true, "thursday": true, "friday": true, "saturday": true, "sunday": true}
+				if !validDays[strings.ToLower(s.Value)] {
+					c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_weekly_day: must be a day of the week"))
+					return
+				}
 			}
 		case "report_timezone":
 			if len(s.Value) > 64 {

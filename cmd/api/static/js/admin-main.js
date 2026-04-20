@@ -499,12 +499,18 @@
         return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     }
 
-    function formatBucketTime(bucket) {
+    function formatBucketTime(bucket, hours) {
         if (!bucket) return '';
         var d = new Date(bucket);
         if (isNaN(d.getTime())) return bucket.substring(11,16) || bucket;
         var tz = AC.getTimezone();
-        return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+        if (!hours || hours <= 24) {
+            return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+        } else if (hours <= 168) {
+            return d.toLocaleString('en-US', { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        } else {
+            return d.toLocaleString('en-US', { timeZone: tz, month: '2-digit', day: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+        }
     }
 
     function populateProbeSelect(selectId) {
@@ -862,7 +868,7 @@
 
             // Bandwidth over time (bits/sec) — use server-provided bucket interval
             var intervalSec = d.bucket_seconds || 3600;
-            var timeLabels = (d.bytes_over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
+            var timeLabels = (d.bytes_over_time || []).map(function(b) { return formatBucketTime(b.bucket, flowStatsHours); });
             var timeBps = (d.bytes_over_time || []).map(function(b) {
                 return (b.count * 8) / intervalSec;
             });
@@ -1211,6 +1217,8 @@
 
             var alertSettings = settings.filter(function(s) { return s.category === 'alerts'; });
             var notifSettings = settings.filter(function(s) { return s.category === 'notifications'; });
+            var savedReportVals = {};
+            settings.filter(function(s) { return s.category === 'reports'; }).forEach(function(s) { savedReportVals[s.key] = s.value; });
 
             document.getElementById('settings-alerts').innerHTML = [
                 { key: 'cpu_threshold', label: 'CPU Threshold (%)', value: 80, type: 'number' },
@@ -1233,7 +1241,7 @@
                 var savedVal = found ? found.value : '';
                 if (s.type === 'checkbox') {
                     var checked = savedVal === 'true' ? 'checked' : '';
-                    return '<div class="setting-item"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + checked + '></div>';
+                    return '<div class="toggle-row"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + checked + '></div>';
                 }
                 return '<div class="setting-item"><label>' + s.label + '</label><input type="text" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" autocomplete="one-time-code"></div>';
             }).join('');
@@ -1252,21 +1260,34 @@
             }).join('');
 
             // Report scheduling settings
+            var reportTimeOptions = '';
+            for (var h = 0; h < 24; h++) {
+                for (var m = 0; m < 60; m += 30) {
+                    var t = ('0'+h).slice(-2) + ':' + ('0'+m).slice(-2);
+                    var sel = savedReportVals && savedReportVals['report_daily_time'] === t ? ' selected' : '';
+                    reportTimeOptions += '<option value="' + t + '"' + sel + '>' + t + '</option>';
+                }
+            }
+            var reportDayOptions = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map(function(d) {
+                var sel = savedReportVals && savedReportVals['report_weekly_day'] === d.toLowerCase() ? ' selected' : '';
+                return '<option value="' + d.toLowerCase() + '"' + sel + '>' + d + '</option>';
+            }).join('');
             document.getElementById('settings-reports').innerHTML = [
                 { key: 'report_daily_enabled', label: 'Enable Daily Report', type: 'checkbox' },
-                { key: 'report_daily_time', label: 'Daily Report Time (HH:MM)', type: 'text', placeholder: '08:00' },
                 { key: 'report_weekly_enabled', label: 'Enable Weekly Report', type: 'checkbox' },
-                { key: 'report_weekly_day', label: 'Weekly Report Day', type: 'text', placeholder: 'Monday' },
                 { key: 'report_recipients', label: 'Report Recipients (emails)', type: 'text', placeholder: 'admin@example.com' },
                 { key: 'report_timezone', label: 'Report Timezone', type: 'text', placeholder: 'America/New_York' }
             ].map(function(s) {
                 var found = settings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : '';
                 if (s.type === 'checkbox') {
-                    return '<div class="setting-item"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + (savedVal === 'true' ? 'checked' : '') + '></div>';
+                    var checked = savedVal === 'true' ? 'checked' : '';
+                    return '<div class="toggle-row"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + checked + '></div>';
                 }
                 return '<div class="setting-item"><label>' + s.label + '</label><input type="text" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" placeholder="' + (s.placeholder || '') + '"></div>';
-            }).join('');
+            }).join('') +
+            '<div class="setting-item"><label>Daily Report Time (HH:MM)</label><select name="report_daily_time" class="report-time-select">' + reportTimeOptions + '</select></div>' +
+            '<div class="setting-item"><label>Weekly Report Day</label><select name="report_weekly_day" class="report-day-select"><option value="">-- Select --</option>' + reportDayOptions + '</select></div>';
 
             // Spike detection settings
             document.getElementById('settings-spike').innerHTML = [
@@ -1276,7 +1297,7 @@
                 var found = settings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : (s.value || '');
                 if (s.type === 'checkbox') {
-                    return '<div class="setting-item"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + (savedVal === 'true' ? 'checked' : '') + '></div>';
+                    return '<div class="toggle-row"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + (savedVal === 'true' ? 'checked' : '') + '></div>';
                 }
                 return '<div class="setting-item"><label>' + s.label + '</label><input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" step="0.1" min="1" max="10"></div>';
             }).join('');
@@ -1570,11 +1591,26 @@
         document.querySelectorAll('#display-settings input').forEach(function(input) {
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
+        var reportsSection = document.getElementById('settings-reports');
+        var dailyEnabled = reportsSection.querySelector('input[name="report_daily_enabled"]') && reportsSection.querySelector('input[name="report_daily_enabled"]').checked;
+        var weeklyEnabled = reportsSection.querySelector('input[name="report_weekly_enabled"]') && reportsSection.querySelector('input[name="report_weekly_enabled"]').checked;
         document.querySelectorAll('#settings-reports input').forEach(function(input) {
-            if (input.name === 'report_daily_time' && input.value && !/^\d{2}:\d{2}$/.test(input.value)) {
-                AC.showError('Daily report time must be in HH:MM format (e.g., 08:00)');
-                hasError = true;
-                return;
+            if (input.name === 'report_daily_time') {
+                if (dailyEnabled && input.value && !/^\d{2}:\d{2}$/.test(input.value)) {
+                    AC.showError('Daily report time must be in HH:MM format (e.g., 08:00)');
+                    hasError = true;
+                    return;
+                }
+            }
+            if (input.name === 'report_weekly_day') {
+                if (weeklyEnabled && input.value) {
+                    var validDays = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+                    if (validDays.indexOf(input.value.toLowerCase()) === -1) {
+                        AC.showError('Weekly report day must be a day of the week (e.g., Monday)');
+                        hasError = true;
+                        return;
+                    }
+                }
             }
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'reports', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
