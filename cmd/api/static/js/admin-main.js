@@ -286,10 +286,12 @@
         if (chartInstances[canvasId]) { chartInstances[canvasId].destroy(); }
         var ctx = document.getElementById(canvasId);
         if (!ctx) return;
+        var isDoughnut = type === 'doughnut' || type === 'pie';
         var defaults = {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } } },
-            scales: type === 'doughnut' ? {} : {
+            responsive: true,
+            maintainAspectRatio: isDoughnut ? true : false,
+            plugins: { legend: { position: isDoughnut ? 'bottom' : 'top', labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } } },
+            scales: isDoughnut ? {} : {
                 x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
                 y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' }, beginAtZero: true }
             }
