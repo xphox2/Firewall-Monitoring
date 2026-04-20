@@ -450,7 +450,7 @@
 
   .probe-card .probe-stats {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(70px, 1fr));
     gap: 10px;
     min-width: 0;
   }
@@ -460,15 +460,18 @@
     border-radius: 6px;
     padding: 10px 8px;
     text-align: center;
-    min-width: 0;
-    overflow: hidden;
+    min-width: 70px;
+    flex-shrink: 0;
+    overflow: visible;
   }
 
   .probe-card .probe-stat .val {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     font-weight: 700;
     color: #e6edf3;
     font-variant-numeric: tabular-nums;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
 
   .probe-card .probe-stat .lbl {

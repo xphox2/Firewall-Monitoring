@@ -1563,6 +1563,15 @@
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'spike', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
         
+        var dailyTimeInput = document.querySelector('#settings-reports input[name="report_daily_time"]');
+        if (dailyTimeInput && dailyTimeInput.value) {
+            var timeVal = dailyTimeInput.value;
+            if (!/^\d{2}:\d{2}$/.test(timeVal) || timeVal[2] !== ':') {
+                AC.showError('Daily report time must be in HH:MM format (e.g., 08:00)');
+                return;
+            }
+        }
+        
         var tzSel = document.getElementById('display-timezone');
         if (tzSel && tzSel.value) {
             settings.push({ key: 'display_timezone', value: tzSel.value, category: 'display', type: 'string' });

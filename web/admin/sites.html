@@ -11,45 +11,45 @@
     </style>
 </head>
 <body class="bg-[#0d1117] text-[#c9d1d9]">
-    <div class="fixed left-0 top-0 w-[240px] h-screen bg-[#161b22] border-r border-[#30363d] flex flex-col z-[100]">
-        <div class="p-5 border-b border-[#30363d]">
-            <h2 class="text-[#58a6ff] text-[1.1rem] tracking-[-0.3px]">Firewall Monitor</h2>
-            <div class="text-[#484f58] text-[0.7rem] mt-[2px]">Admin Panel</div>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>Firewall Monitor</h2>
+            <div class="subtitle">Admin Panel</div>
         </div>
-        <div class="flex-1 p-3 overflow-y-auto">
-            <div class="mb-4">
-                <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">Monitoring</div>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin"><span class="w-[18px] text-center text-[0.9rem]">&#9632;</span> Dashboard</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/devices"><span class="w-[18px] text-center text-[0.9rem]">&#9881;</span> Devices</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/connections"><span class="w-[18px] text-center text-[0.9rem]">&#8644;</span> Connections</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/interfaces"><span class="w-[18px] text-center text-[0.9rem]">&#8646;</span> Interfaces</a>
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Monitoring</div>
+                <a class="nav-item" href="/admin"><span class="nav-icon">&#9632;</span> Dashboard</a>
+                <a class="nav-item" href="/admin/devices"><span class="nav-icon">&#9881;</span> Devices</a>
+                <a class="nav-item" href="/admin/connections"><span class="nav-icon">&#8644;</span> Connections</a>
+                <a class="nav-item" href="/admin/interfaces"><span class="nav-icon">&#8646;</span> Interfaces</a>
             </div>
-            <div class="mb-4">
-                <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">Data</div>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/syslog"><span class="w-[18px] text-center text-[0.9rem]">&#9993;</span> Syslog</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/flows"><span class="w-[18px] text-center text-[0.9rem]">&#8674;</span> Flows</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/alerts"><span class="w-[18px] text-center text-[0.9rem]">&#9888;</span> Alerts</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/traps"><span class="w-[18px] text-center text-[0.9rem]">&#9889;</span> Traps</a>
+            <div class="nav-section">
+                <div class="nav-section-title">Data</div>
+                <a class="nav-item" href="/admin/syslog"><span class="nav-icon">&#9993;</span> Syslog</a>
+                <a class="nav-item" href="/admin/flows"><span class="nav-icon">&#8674;</span> Flows</a>
+                <a class="nav-item" href="/admin/alerts"><span class="nav-icon">&#9888;</span> Alerts</a>
+                <a class="nav-item" href="/admin/traps"><span class="nav-icon">&#9889;</span> Traps</a>
             </div>
-            <div class="mb-4">
-                <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">Infrastructure</div>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probes"><span class="w-[18px] text-center text-[0.9rem]">&#9678;</span> Probes</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3] bg-[rgba(56,139,253,0.15)] text-[#58a6ff]" href="/admin/sites"><span class="w-[18px] text-center text-[0.9rem]">&#9962;</span> Sites</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/network"><span class="w-[18px] text-center text-[0.9rem]">&#9733;</span> Network</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/probe-pending"><span class="w-[18px] text-center text-[0.9rem]">&#9200;</span> Pending</a>
+            <div class="nav-section">
+                <div class="nav-section-title">Infrastructure</div>
+                <a class="nav-item" href="/admin/probes"><span class="nav-icon">&#9678;</span> Probes</a>
+                <a class="nav-item active" href="/admin/sites"><span class="nav-icon">&#9962;</span> Sites</a>
+                <a class="nav-item" href="/admin/network"><span class="nav-icon">&#9733;</span> Network</a>
+                <a class="nav-item" href="/admin/probe-pending"><span class="nav-icon">&#9200;</span> Pending</a>
             </div>
-            <div class="mb-4">
-                <div class="text-[0.65rem] font-semibold uppercase tracking-[0.8px] text-[#484f58] p-1 px-3 pb-1.5">System</div>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/settings"><span class="w-[18px] text-center text-[0.9rem]">&#9881;</span> Settings</a>
-                <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#8b949e] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[#21262d] hover:text-[#e6edf3]" href="/admin/irc"><span class="w-[18px] text-center text-[0.9rem]">&#128172;</span> IRC</a>
+            <div class="nav-section">
+                <div class="nav-section-title">System</div>
+                <a class="nav-item" href="/admin/settings"><span class="nav-icon">&#9881;</span> Settings</a>
+                <a class="nav-item" href="/admin/irc"><span class="nav-icon">&#128172;</span> IRC</a>
             </div>
         </div>
-        <div class="p-3 border-t border-[#30363d]">
-            <a class="flex items-center gap-[10px] py-[9px] px-[12px] text-[#f85149] no-underline rounded-md mb-[2px] transition-all duration-150 cursor-pointer text-[0.88rem] hover:bg-[rgba(248,81,73,0.1)]" href="#" data-action="logout"><span class="w-[18px] text-center text-[0.9rem]">&#10140;</span> Logout</a>
+        <div class="sidebar-footer">
+            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="ml-[240px] p-6 min-h-screen">
+    <div class="main-content p-6">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-2xl font-semibold text-[#e6edf3]">Site Management</h1>
             <button class="bg-[#238636] text-white border-none px-3 py-1.5 rounded cursor-pointer text-[0.82rem] font-medium hover:bg-[#2ea043] transition-colors duration-150" data-action="show-add-modal">+ Add Site</button>

@@ -548,17 +548,26 @@
     }
     init();
 
-    // Auto-refresh every 30s
+    // Auto-refresh every 30s with race condition prevention
+    var refreshTimeout = null;
+    var isRefreshing = false;
     setInterval(function() {
+        if (isRefreshing) return;
+        isRefreshing = true;
+        refreshTimeout = Date.now();
         loadConnectionDetail().then(function() {
+            if (Date.now() - refreshTimeout > 25000) return;
             return loadTrafficChart();
         }).then(function() {
             if (connDetail && connDetail.has_flow_data && document.getElementById('tab-content-flows').classList.contains('active')) {
-                loadFlowStats();
+                return loadFlowStats();
             }
         })['catch'](function(err) {
+            if (err.name === 'AbortError' || err.name === 'CancelError') return;
             console.error('[ConnectionDetail] Refresh error:', err);
             AC.showError('Failed to refresh connection data');
+        }).finally(function() {
+            isRefreshing = false;
         });
     }, 30000);
 })();

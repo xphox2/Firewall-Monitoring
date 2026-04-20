@@ -386,3 +386,210 @@ tr:hover {
         box-shadow: 0 0 0 4px rgba(63,185,80,0);
     }
 }
+
+/* Standardized Sidebar */
+.sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 240px;
+    height: 100vh;
+    background: #161b22;
+    border-right: 1px solid #30363d;
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+}
+
+.sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid #30363d;
+}
+
+.sidebar-header h2 {
+    color: #58a6ff;
+    font-size: 1.1rem;
+    letter-spacing: -0.3px;
+}
+
+.sidebar-header .subtitle {
+    color: #484f58;
+    font-size: 0.7rem;
+    margin-top: 2px;
+}
+
+.sidebar-nav {
+    flex: 1;
+    padding: 12px;
+    overflow-y: auto;
+}
+
+.nav-section {
+    margin-bottom: 16px;
+}
+
+.nav-section-title {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #484f58;
+    padding: 4px 12px 6px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    color: #8b949e;
+    text-decoration: none;
+    border-radius: 6px;
+    margin-bottom: 2px;
+    transition: all 0.15s;
+    cursor: pointer;
+    font-size: 0.88rem;
+}
+
+.nav-item:hover {
+    background: #21262d;
+    color: #e6edf3;
+}
+
+.nav-item.active {
+    background: rgba(56,139,253,0.15);
+    color: #58a6ff;
+}
+
+.nav-item .nav-icon {
+    width: 18px;
+    text-align: center;
+    font-size: 0.9rem;
+}
+
+.nav-item.danger {
+    color: #f85149;
+}
+
+.nav-item.danger:hover {
+    background: rgba(248,81,73,0.1);
+}
+
+.sidebar-footer {
+    padding: 12px;
+    border-top: 1px solid #30363d;
+}
+
+/* Main content area */
+.main-content {
+    margin-left: 240px;
+    padding: 24px 28px;
+    min-height: 100vh;
+}
+
+/* Settings page specific */
+.settings-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.setting-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.setting-item label {
+    color: #8b949e;
+    font-size: 0.82rem;
+    font-weight: 500;
+}
+
+.setting-item input[type="text"],
+.setting-item input[type="password"],
+.setting-item input[type="number"],
+.setting-item input[type="email"],
+.setting-item select,
+.setting-item textarea {
+    width: 100%;
+    padding: 8px 10px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #c9d1d9;
+    font-size: 0.88rem;
+    box-sizing: border-box;
+}
+
+.setting-item input:focus,
+.setting-item select:focus {
+    border-color: #58a6ff;
+    outline: none;
+}
+
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+}
+
+.toggle-row label {
+    color: #c9d1d9;
+    font-size: 0.88rem;
+    cursor: pointer;
+}
+
+.toggle-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #238636;
+}
+
+/* Gauge (device/connection status circles) */
+.Gauge {
+    position: relative;
+    padding: 10px;
+}
+
+.Gauge svg {
+    display: block;
+}
+
+.Gauge-bg {
+    fill: none;
+    stroke: #21262d;
+    stroke-width: 6;
+}
+
+.Gauge-fill {
+    fill: none;
+    stroke-width: 6;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.5s;
+}
+
+.Gauge-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #e6edf3;
+    text-align: center;
+}
+
+/* Chart containers need padding */
+.chart-card {
+    padding: 16px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+}
+
+.chart-card canvas {
+    max-height: 250px;
+}
