@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.159] - 2026-04-19
+
+### Changed
+- **Public dashboard time range**: Added 1m and 1y options to match admin flows page time ranges (1h/6h/24h/1w/1m/1y).
+
+## [0.10.158] - 2026-04-19
+
+### Fixed
+- **Deploy Probe registration key**: Removed redaction that was masking the registration key in the Deploy Probe modal, allowing the key to be properly displayed and copied.
+- **Device detail tabs**: Added missing CSS rules (`.hidden`, `.tab-content`, `.tab-content.active`) that were preventing tab switching on device detail page.
+- **Flows time range label**: Added `flow-range-label` span to display the selected time range on the admin flows page.
+- **Public dashboard time range**: Consolidated separate bandwidth and CPU time range dropdowns into a single unified time range selector (1h/6h/24h/7d) for simplicity.
+
 ## [0.10.157] - 2026-04-18
 
 ### Added
