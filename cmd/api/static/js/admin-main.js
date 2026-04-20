@@ -497,6 +497,14 @@
         return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     }
 
+    function formatBucketTime(bucket) {
+        if (!bucket) return '';
+        var d = new Date(bucket);
+        if (isNaN(d.getTime())) return bucket.substring(11,16) || bucket;
+        var tz = AC.getTimezone();
+        return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
     function populateProbeSelect(selectId) {
         var sel = document.getElementById(selectId);
         if (!sel) return;
@@ -689,7 +697,7 @@
             document.getElementById('syslog-warning').textContent = warn.toLocaleString();
             document.getElementById('syslog-info').textContent = info.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('syslog-trend-chart','bar',labels,[{label:'Messages',data:counts,backgroundColor:'#58a6ff',borderRadius:3}]);
 
@@ -850,7 +858,7 @@
 
             // Bandwidth over time (bits/sec) — use server-provided bucket interval
             var intervalSec = d.bucket_seconds || 3600;
-            var timeLabels = (d.bytes_over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
+            var timeLabels = (d.bytes_over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
             var timeBps = (d.bytes_over_time || []).map(function(b) {
                 return (b.count * 8) / intervalSec;
             });
@@ -1066,7 +1074,7 @@
             document.getElementById('alerts-warning').textContent = warn.toLocaleString();
             document.getElementById('alerts-info').textContent = inf.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}]);
 
@@ -1141,7 +1149,7 @@
             document.getElementById('traps-warning').textContent = warn.toLocaleString();
             document.getElementById('traps-info').textContent = inf.toLocaleString();
 
-            var labels = (d.over_time || []).map(function(b) { return b.bucket.substring(11,16) || b.bucket; });
+            var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
             createChart('traps-freq-chart','bar',labels,[{label:'Traps',data:counts,backgroundColor:'#d2992a',borderRadius:3}]);
 
