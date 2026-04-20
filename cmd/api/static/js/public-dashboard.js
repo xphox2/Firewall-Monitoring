@@ -363,7 +363,7 @@
         var iface = def.iface;
         if (!iface) return;
         var wid = def.id;
-        var url = API_BASE + '/public/interfaces/chart?device_id=' + iface.deviceId + '&index=' + iface.index + '&view=' + bwView + '&range=' + dashRange + 'h';
+        var url = API_BASE + '/public/interfaces/chart?device_id=' + iface.deviceId + '&index=' + iface.index + '&view=' + bwView + '&range=' + dashRange;
 
         apiFetch(url).then(function(data) {
             if (!data) return;

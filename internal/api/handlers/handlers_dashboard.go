@@ -234,9 +234,15 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	case "7d":
 		hours = 168
 		maxPoints = 168
+	case "1m":
+		hours = 720
+		maxPoints = 90
 	case "90d":
 		hours = 2160
 		maxPoints = 90
+	case "1y":
+		hours = 8760
+		maxPoints = 365
 	default: // 1h
 		hours = 1
 		maxPoints = 60
