@@ -456,7 +456,7 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 
 	hours := 24
 	if hStr := c.DefaultQuery("hours", "24"); hStr != "" {
-		if parsed, err := strconv.Atoi(hStr); err == nil && parsed > 0 && parsed <= 168 {
+		if parsed, err := strconv.Atoi(hStr); err == nil && parsed > 0 && parsed <= 8760 {
 			hours = parsed
 		}
 	}

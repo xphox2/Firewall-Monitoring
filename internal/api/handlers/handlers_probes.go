@@ -418,12 +418,15 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 
 	// Link the remote probe: set online, auto-approve (admin created it explicitly)
 	now := time.Now()
-	h.db.Gorm().Model(existingProbe).Updates(map[string]interface{}{
+	if err := h.db.Gorm().Model(existingProbe).Updates(map[string]interface{}{
 		"status":          "online",
 		"approval_status": "approved",
 		"approved_at":     now,
 		"last_seen":       now,
-	})
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update probe status"))
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
@@ -463,7 +466,10 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 	newKey := hex.EncodeToString(keyBytes)
 
 	// Update probe record
-	h.db.Gorm().Model(probe).Update("registration_key", newKey)
+	if err := h.db.Gorm().Model(probe).Update("registration_key", newKey).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to regenerate key"))
+		return
+	}
 
 	// Create new SystemSetting
 	setting := models.SystemSetting{

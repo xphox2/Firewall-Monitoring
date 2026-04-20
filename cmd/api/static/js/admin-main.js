@@ -760,6 +760,9 @@
                 renderSyslogTable(result.data, true);
                 syslogOffset += result.data.length;
             }
+        })['catch'](function(err) {
+            console.error('Failed to load more syslog:', err);
+            AC.showError('Failed to load more syslog');
         });
     }
 
@@ -941,6 +944,9 @@
                 renderFlowsTable(result.data, true);
                 flowsOffset += result.data.length;
             }
+        })['catch'](function(err) {
+            console.error('Failed to load more flows:', err);
+            AC.showError('Failed to load more flows');
         });
     }
 
@@ -1038,7 +1044,7 @@
     }
 
     function acknowledgeAlert(id, notes) {
-        var body = notes ? {notes: notes} : {};
+        var body = notes ? {acknowledged: true, notes: notes} : {acknowledged: true};
         apiFetch(API_BASE + '/alerts/' + id + '/acknowledge', {method:'POST', body: body}).then(function() {
             closeAckModal();
             loadAlerts();
@@ -1066,6 +1072,9 @@
                 renderAlertsTable(result.data, true);
                 alertsOffset += result.data.length;
             }
+        })['catch'](function(err) {
+            console.error('Failed to load more alerts:', err);
+            AC.showError('Failed to load more alerts');
         });
     }
 
@@ -1141,6 +1150,9 @@
                 renderTrapsTable(result.data, true);
                 trapsOffset += result.data.length;
             }
+        })['catch'](function(err) {
+            console.error('Failed to load more traps:', err);
+            AC.showError('Failed to load more traps');
         });
     }
 
@@ -1589,6 +1601,7 @@
             settings.push({ key: input.name, value: input.value, category: 'notifications', type: 'string', is_secret: input.type === 'password' });
         });
         document.querySelectorAll('#display-settings input').forEach(function(input) {
+            if (input.name === 'display_timezone') return; // skip, added explicitly below
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'display', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
         var reportsSection = document.getElementById('settings-reports');

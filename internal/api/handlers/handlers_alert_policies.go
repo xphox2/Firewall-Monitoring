@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -52,7 +53,7 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	if policy.Name == "" {
+	if strings.TrimSpace(policy.Name) == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Policy name is required"))
 		return
 	}

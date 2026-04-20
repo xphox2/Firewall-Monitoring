@@ -129,6 +129,10 @@
     grid-template-columns: repeat(6, 1fr);
   }
 
+  .stat-grid-5 {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
   .stat-card {
     background: #161b22;
     border: 1px solid #30363d;
