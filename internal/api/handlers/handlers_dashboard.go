@@ -234,18 +234,23 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	case "7d":
 		hours = 168
 		maxPoints = 168
-	case "1m":
+	case "720":
 		hours = 720
 		maxPoints = 90
+	case "8760":
+		hours = 8760
+		maxPoints = 365
 	case "90d":
 		hours = 2160
 		maxPoints = 90
-	case "1y":
-		hours = 8760
-		maxPoints = 365
-	default: // 1h
-		hours = 1
-		maxPoints = 60
+	default: // 1h or numeric fallback
+		if parsed, err := strconv.Atoi(rangeStr); err == nil && parsed > 0 {
+			hours = parsed
+			maxPoints = 180
+		} else {
+			hours = 1
+			maxPoints = 60
+		}
 	}
 
 	// Calculate cutoff time
