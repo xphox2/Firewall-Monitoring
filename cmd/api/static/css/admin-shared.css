@@ -706,12 +706,14 @@ tr:hover {
 /* Gauge (device/connection status circles) */
 .gauge {
     position: relative;
-    padding: 12px;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .gauge svg {
     display: block;
+    overflow: visible;
 }
 
 .gauge-bg {
