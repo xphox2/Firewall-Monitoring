@@ -51,8 +51,6 @@ func (h *Handler) GetProbe(c *gin.Context) {
 		return
 	}
 
-	httputil.RedactProbe(probe)
-
 	c.JSON(http.StatusOK, models.SuccessResponse(probe))
 }
 

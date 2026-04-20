@@ -436,6 +436,18 @@ tr:hover {
     display: flex;
 }
 
+.hidden {
+    display: none;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
 .modal-content {
     background: #161b22;
     border: 1px solid #30363d;

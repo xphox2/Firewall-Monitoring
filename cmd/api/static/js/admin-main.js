@@ -789,6 +789,8 @@
         document.querySelectorAll('.flow-range-btn').forEach(function(b) { b.classList.remove('active'); });
         var activeBtn = document.querySelector('.flow-range-btn[data-hours="' + hours + '"]');
         if (activeBtn) activeBtn.classList.add('active');
+        var label = document.getElementById('flow-range-label');
+        if (label) label.textContent = activeBtn ? activeBtn.textContent : hours + 'h';
         loadFlowCharts();
     }
 

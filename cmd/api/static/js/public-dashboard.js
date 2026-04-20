@@ -15,8 +15,7 @@
     var uptimeTimers = {}; // deviceId -> { baseSeconds, startedAt }
     var uptimeIntervalId = null;
     var bwView = 'rate';
-    var bwRange = '1h';
-    var cpuHours = 1;
+    var dashRange = 1;
 
     // Timezone handling - use display_timezone from settings, fallback to browser local
     function getTimezone() {
@@ -337,7 +336,7 @@
             }
         })['catch'](function() {});
 
-        apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + cpuHours).then(function(points) {
+        apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + dashRange).then(function(points) {
             if (!points || points.length === 0) return;
             var labels = points.map(function(p) { return formatInTimezone(p.timestamp, { hour: '2-digit', minute: '2-digit' }); });
 
@@ -364,7 +363,7 @@
         var iface = def.iface;
         if (!iface) return;
         var wid = def.id;
-        var url = API_BASE + '/public/interfaces/chart?device_id=' + iface.deviceId + '&index=' + iface.index + '&view=' + bwView + '&range=' + bwRange;
+        var url = API_BASE + '/public/interfaces/chart?device_id=' + iface.deviceId + '&index=' + iface.index + '&view=' + bwView + '&range=' + dashRange + 'h';
 
         apiFetch(url).then(function(data) {
             if (!data) return;
@@ -382,12 +381,8 @@
             var chartLabels;
             if (data.timestamps && data.timestamps.length > 0) {
                 chartLabels = data.timestamps.map(function(ts) {
-                    if (bwRange === '5m' || bwRange === '15m') {
-                        return formatInTimezone(ts, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                    } else if (bwRange === '7d') {
+                    if (dashRange >= 168) {
                         return formatInTimezone(ts, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                    } else if (bwRange === '90d') {
-                        return formatInTimezone(ts, { month: '2-digit', day: '2-digit' });
                     } else {
                         return formatInTimezone(ts, { hour: '2-digit', minute: '2-digit' });
                     }
@@ -552,11 +547,9 @@
         if (e.target.id === 'bw-view') {
             bwView = e.target.value;
             refreshBandwidthCharts();
-        } else if (e.target.id === 'bw-range') {
-            bwRange = e.target.value;
+        } else if (e.target.id === 'dash-range') {
+            dashRange = parseInt(e.target.value);
             refreshBandwidthCharts();
-        } else if (e.target.id === 'cpu-range') {
-            cpuHours = parseInt(e.target.value);
             refreshCpuCharts();
         }
     });
