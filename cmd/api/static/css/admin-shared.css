@@ -549,29 +549,30 @@ tr:hover {
 }
 
 /* Gauge (device/connection status circles) */
-.Gauge {
+.gauge {
     position: relative;
-    padding: 10px;
+    padding: 12px;
+    display: inline-block;
 }
 
-.Gauge svg {
+.gauge svg {
     display: block;
 }
 
-.Gauge-bg {
+.gauge-bg {
     fill: none;
     stroke: #21262d;
     stroke-width: 6;
 }
 
-.Gauge-fill {
+.gauge-fill {
     fill: none;
     stroke-width: 6;
     stroke-linecap: round;
     transition: stroke-dashoffset 0.5s;
 }
 
-.Gauge-text {
+.gauge-text {
     position: absolute;
     top: 50%;
     left: 50%;
