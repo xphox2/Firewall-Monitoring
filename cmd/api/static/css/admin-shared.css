@@ -493,9 +493,9 @@ tr:hover {
 
 /* Alert Policy Modal Enhancements */
 .policy-modal-content {
-    max-width: 1000px;
+    max-width: 1200px;
     width: 95vw;
-    max-height: 90vh;
+    max-height: 92vh;
     overflow-y: auto;
 }
 
@@ -585,17 +585,27 @@ tr:hover {
     font-weight: 400;
 }
 
+.policy-rules-section {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .policy-rules-body {
     padding: 0;
+    flex: 1;
+    overflow: auto;
 }
 
 .policy-rules-body .table-wrap {
-    max-height: 280px;
+    max-height: 400px;
     border-radius: 0 0 7px 7px;
 }
 
 .policy-rules-table {
     font-size: 0.8rem;
+    width: 100%;
 }
 
 .policy-rules-table th {
@@ -603,13 +613,20 @@ tr:hover {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.3px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     background: #161b22;
+    position: sticky;
+    top: 0;
+    z-index: 1;
 }
 
 .policy-rules-table td {
-    padding: 6px 8px;
+    padding: 8px 10px;
     vertical-align: middle;
+}
+
+.policy-rules-table tbody tr:hover {
+    background: #1c2128;
 }
 
 .policy-rules-table input[type="checkbox"] {
@@ -620,6 +637,19 @@ tr:hover {
 .policy-rules-table .sm {
     padding: 4px 6px;
     font-size: 0.75rem;
+}
+
+.policy-rules-table input[type="number"] {
+    width: 80px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+}
+
+.field-hint {
+    font-size: 0.7rem;
+    color: #6e7681;
+    margin-top: 4px;
+    line-height: 1.3;
 }
 
 .policy-escalation-row {
