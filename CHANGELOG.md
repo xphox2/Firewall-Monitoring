@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.162] - 2026-04-21
+
+### Fixed
+- **Admin sidebar**: Fixed `AdminCommon is not defined` error by removing `defer` from inline script calling `AdminCommon.renderSidebar()`.
+- **Probe health popup**: Fixed modal width alignment in admin.html (520px) with admin-shared.css (1000px) to prevent small popup.
+
 ## [0.10.161] - 2026-04-21
 
 ### Added

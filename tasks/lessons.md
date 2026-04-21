@@ -227,9 +227,9 @@ Edit modals (alert policies, etc.) are too small and cramped when opened directl
 
 /* AFTER (good default) */
 .modal-content {
-    width: 1100px;
-    max-width: 95vw;
-    max-height: 90vh;
+    width: 1000px;
+    max-width: 92vw;
+    max-height: 85vh;
 }
 ```
 
@@ -242,5 +242,5 @@ Edit modals (alert policies, etc.) are too small and cramped when opened directl
 
 **FOR ALL NEW MODALS:**
 1. Check if base `.modal-content` width is at least 1000px
-2. If modal needs to be wider than 1100px, add inline style `style="width:XXXXpx"`
+2. If modal needs to be wider than 1000px, add inline style `style="width:XXXXpx"`
 3. Use `width:XXXXpx` (not `max-width`) as first property for guaranteed override
