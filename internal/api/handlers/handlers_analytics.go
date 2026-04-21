@@ -44,6 +44,23 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(alerts))
 }
 
+func (h *Handler) GetAlert(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert not found"))
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	var alert models.Alert
+	if err := h.db.Gorm().First(&alert, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert not found"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(alert))
+}
+
 func (h *Handler) GetTraps(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.TrapEvent{}))

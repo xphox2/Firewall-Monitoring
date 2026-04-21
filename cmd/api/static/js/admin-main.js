@@ -1023,8 +1023,14 @@
     // ---- Alerts ----
     function loadAlerts() {
         alertsOffset = 0;
-        var params = buildAlertParams(100);
-        apiFetch(API_BASE + '/alerts?' + params).then(function(result) {
+        var p = Promise.resolve();
+        if (currentDevices.length === 0) {
+            p = apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
+        }
+        p.then(function() {
+            var params = buildAlertParams(100);
+            return apiFetch(API_BASE + '/alerts?' + params);
+        }).then(function(result) {
             if (!result) return;
             var alerts = result.data || [];
             renderAlertsTable(alerts, false);
@@ -1060,18 +1066,75 @@
             } else {
                 statusCol = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Ack</button>';
             }
-            return '<tr>' +
-                '<td>' + formatDate(a.timestamp) + '</td>' +
+            return '<tr class="alert-row" data-id="' + a.id + '">' +
+                '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + getDeviceName(a.device_id) + '</td>' +
-                '<td>' + escapeHtml(a.alert_type) + '</td>' +
+                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
-                '<td>' + escapeHtml(a.message) + '</td>' +
+                '<td class="expandable-msg" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(a.message) + '</td>' +
                 '<td>' + statusCol + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
         else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No alerts</td></tr>';
     }
+
+    function showAlertDetail(id) {
+        apiFetch(API_BASE + '/alerts/' + id).then(function(result) {
+            if (!result || !result.data) return;
+            var a = result.data;
+            var body = document.getElementById('alert-detail-body');
+            var sevClass = (a.severity || 'info').toLowerCase();
+            var statusHtml = '';
+            if (a.suppressed) {
+                statusHtml = '<span class="badge unknown">SUPPRESSED (MAINT)</span>';
+            } else if (a.acknowledged) {
+                statusHtml = '<span class="badge info">ACKNOWLEDGED</span>';
+                if (a.acknowledged_at || a.notes) {
+                    statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
+                    if (a.acknowledged_at) statusHtml += 'At: ' + formatDate(a.acknowledged_at);
+                    if (a.notes) statusHtml += '<br>Notes: ' + escapeHtml(a.notes);
+                    statusHtml += '</div>';
+                }
+            } else {
+                statusHtml = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Acknowledge</button>';
+            }
+            body.innerHTML =
+                '<div style="margin-bottom:16px;">' +
+                    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
+                        '<span class="badge ' + sevClass + '" style="font-size:0.9rem;padding:4px 12px;">' + (a.severity || 'UNKNOWN').toUpperCase() + '</span>' +
+                        '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml(a.alert_type || 'ALERT') + '</span>' +
+                    '</div>' +
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +
+                        '<div><span style="color:#8b949e;">Time:</span> ' + formatDate(a.timestamp) + '</div>' +
+                        '<div><span style="color:#8b949e;">Device:</span> ' + escapeHtml(getDeviceName(a.device_id)) + '</div>' +
+                        '<div><span style="color:#8b949e;">Policy:</span> ' + (a.policy_id ? 'ID ' + a.policy_id : 'N/A') + '</div>' +
+                    '</div>' +
+                '</div>';
+            if (a.metric_name || a.threshold || a.current_value) {
+                body.innerHTML +=
+                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Metric Info</div>' +
+                        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 16px;">' +
+                            (a.metric_name ? '<div><span style="color:#8b949e;">Metric:</span> <span style="font-family:monospace;">' + escapeHtml(a.metric_name) + '</span></div>' : '') +
+                            (a.threshold ? '<div><span style="color:#8b949e;">Threshold:</span> ' + a.threshold + '</div>' : '') +
+                            (a.current_value ? '<div><span style="color:#8b949e;">Current:</span> <span style="color:#f85149;font-weight:600;">' + a.current_value + '</span></div>' : '') +
+                        '</div>' +
+                    '</div>';
+            }
+            body.innerHTML +=
+                '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Message</div>' +
+                    '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
+                '</div>' +
+                '<div style="margin-top:12px;">' + statusHtml + '</div>';
+            document.getElementById('alert-detail-modal').classList.add('active');
+        })['catch'](function(err) {
+            console.error('Failed to load alert detail:', err);
+            AC.showError('Failed to load alert detail');
+        });
+    }
+    function closeAlertDetail() { document.getElementById('alert-detail-modal').classList.remove('active'); }
 
     function showAckModal(id) {
         document.getElementById('ack-alert-id').value = id;
@@ -2395,13 +2458,16 @@
         'delete-maint': function(el) { deleteMaintWindow(parseInt(el.dataset.id)); },
         'close-probe-detail-modal': function() { closeProbeDetailModal(); },
         'toggle-expand': function(el) { el.classList.toggle('expanded'); },
-        'close-syslog-detail': function() { closeSyslogDetail(); }
+        'close-syslog-detail': function() { closeSyslogDetail(); },
+        'close-alert-detail': function() { closeAlertDetail(); }
     });
 
     // Click on syslog row to show detail
     document.addEventListener('click', function(e) {
         var row = e.target.closest('.syslog-row');
         if (row) { showSyslogDetail(parseInt(row.dataset.id)); return; }
+        var row2 = e.target.closest('.alert-row');
+        if (row2) { showAlertDetail(parseInt(row2.dataset.id)); return; }
         var cell = e.target.closest('.expandable-msg');
         if (cell && cell.classList.contains('expanded')) { cell.classList.remove('expanded'); return; }
         if (cell) { cell.classList.add('expanded'); }

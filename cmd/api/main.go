@@ -403,6 +403,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.POST("/api/alerts/:id/notes", handler.UpdateAlertNotes)
+		admin.GET("/api/alerts/:id", handler.GetAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
 		admin.GET("/api/alerts/stats", handler.GetAlertStats)
 		admin.GET("/api/traps/stats", handler.GetTrapStats)
