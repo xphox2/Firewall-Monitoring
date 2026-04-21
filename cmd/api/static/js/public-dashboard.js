@@ -16,6 +16,10 @@
     var uptimeIntervalId = null;
     var bwView = 'rate';
     var dashRange = 1;
+    var modalChart = null;
+    var modalWidgetDef = null;
+    var modalDragStart = null;
+    var modalRequestId = 0;
 
     // Timezone handling - use display_timezone from settings, fallback to browser local
     function getTimezone() {
@@ -538,6 +542,50 @@
         }
     });
 
+    // Chart click to open modal - detect click vs GridStack drag
+    document.addEventListener('mousedown', function(e) {
+        var chartBody = e.target.closest('.widget-chart');
+        if (chartBody) {
+            modalDragStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+        }
+    });
+
+    document.addEventListener('mouseup', function(e) {
+        if (!modalDragStart) return;
+        var chartBody = e.target.closest('.widget-chart');
+        if (chartBody) {
+            var dx = e.clientX - modalDragStart.x;
+            var dy = e.clientY - modalDragStart.y;
+            var dist = Math.sqrt(dx*dx + dy*dy);
+            var duration = Date.now() - modalDragStart.time;
+            if (dist < 5 && duration < 200) {
+                var wid = chartBody.querySelector('canvas').id.replace('wc-', '');
+                var def = allWidgetDefs.find(function(d) { return d.id === wid; });
+                if (def) openChartModal(def);
+            }
+        }
+        modalDragStart = null;
+    });
+
+    // Modal controls
+    document.addEventListener('click', function(e) {
+        if (e.target.id === 'btn-close-modal' || e.target.closest('#btn-close-modal')) {
+            closeChartModal();
+            return;
+        }
+        if (e.target.id === 'btn-reset-zoom' || e.target.closest('#btn-reset-zoom')) {
+            if (modalChart) modalChart.resetZoom();
+            return;
+        }
+    });
+
+    // Close modal on ESC
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && document.getElementById('chart-modal').classList.contains('active')) {
+            closeChartModal();
+        }
+    });
+
     // Widget toggle checkboxes
     document.addEventListener('change', function(e) {
         var toggle = e.target.dataset.toggleWidget;
@@ -568,6 +616,162 @@
     function refreshCpuCharts() {
         allWidgetDefs.forEach(function(def) {
             if (def.type === 'cpumem' && !hiddenWidgets[def.id]) renderCpuMemChart(def);
+        });
+    }
+
+    // ---- Chart Modal ----
+    function openChartModal(def) {
+        modalWidgetDef = def;
+        modalRequestId++;
+        var myRequestId = modalRequestId;
+        document.getElementById('chart-modal-title').textContent = def.title;
+        document.getElementById('chart-modal').classList.add('active');
+
+        if (def.type === 'cpumem') {
+            var url = API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + dashRange;
+            renderModalCpuChart(url, myRequestId);
+        } else if (def.type === 'bandwidth') {
+            var url = API_BASE + '/public/interfaces/chart?device_id=' + def.iface.deviceId + '&index=' + def.iface.index + '&view=' + bwView + '&range=' + dashRange;
+            renderModalBandwidthChart(url, myRequestId);
+        }
+    }
+
+    function closeChartModal() {
+        if (modalChart) { modalChart.destroy(); modalChart = null; }
+        modalWidgetDef = null;
+        modalRequestId++;
+        document.getElementById('chart-modal').classList.remove('active');
+    }
+
+    function renderModalCpuChart(url, requestId) {
+        if (modalChart) { modalChart.destroy(); modalChart = null; }
+        if (requestId !== modalRequestId) return;
+        var canvas = document.getElementById('modal-chart-canvas');
+
+        apiFetch(url).then(function(points) {
+            if (requestId !== modalRequestId) return;
+            if (!points || points.length === 0) return;
+            var labels;
+            if (dashRange >= 168) {
+                labels = points.map(function(p) { return formatInTimezone(p.timestamp, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); });
+            } else {
+                labels = points.map(function(p) { return formatInTimezone(p.timestamp, { hour: '2-digit', minute: '2-digit' }); });
+            }
+
+            modalChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'CPU %', data: points.map(function(p) { return p.cpu_usage; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                        { label: 'Memory %', data: points.map(function(p) { return p.memory_usage; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 0 },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+                        zoom: {
+                            zoom: {
+                                wheel: { enabled: true },
+                                drag: { enabled: true },
+                                mode: 'x'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#21262d' } },
+                        y: { min: 0, max: 100, ticks: { color: '#484f58', callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
+                    }
+                }
+            });
+        });
+    }
+
+    function renderModalBandwidthChart(url, requestId) {
+        if (modalChart) { modalChart.destroy(); modalChart = null; }
+        if (requestId !== modalRequestId) return;
+        var canvas = document.getElementById('modal-chart-canvas');
+
+        apiFetch(url).then(function(data) {
+            if (requestId !== modalRequestId) return;
+            if (!data) return;
+
+            var chartLabels;
+            if (data.timestamps && data.timestamps.length > 0) {
+                chartLabels = data.timestamps.map(function(ts) {
+                    if (dashRange >= 168) {
+                        return formatInTimezone(ts, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    } else {
+                        return formatInTimezone(ts, { hour: '2-digit', minute: '2-digit' });
+                    }
+                });
+            } else {
+                chartLabels = data.labels || [];
+            }
+
+            if (chartLabels.length === 0) return;
+
+            var rxRate = (data.rx_rate || []).map(Number);
+            var txRate = (data.tx_rate || []).map(Number);
+            var rxTotal = (data.rx_total || []).map(Number);
+            var txTotal = (data.tx_total || []).map(Number);
+            var deltaRx = rxTotal.map(function(v, i) { if (i === 0) return 0; var d = v - rxTotal[i - 1]; return d > 0 ? d : 0; });
+            var deltaTx = txTotal.map(function(v, i) { if (i === 0) return 0; var d = v - txTotal[i - 1]; return d > 0 ? d : 0; });
+
+            var datasets, scales;
+            if (bwView === 'rate') {
+                datasets = [
+                    { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
+                ];
+                scales = { y: { ticks: { color: '#484f58', callback: function(v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: '#21262d' } } };
+            } else if (bwView === 'total') {
+                datasets = [
+                    { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: '#3fb950', borderWidth: 1 },
+                    { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: '#ff9500', borderWidth: 1 }
+                ];
+                scales = { y: { ticks: { color: '#484f58', callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } } };
+            } else {
+                datasets = [
+                    { label: 'RX (Mbps)', data: rxRate, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
+                    { label: 'TX (Mbps)', data: txRate, borderColor: '#ff9500', backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
+                    { type: 'bar', label: 'RX Transfer', data: deltaRx, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' },
+                    { type: 'bar', label: 'TX Transfer', data: deltaTx, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' }
+                ];
+                scales = {
+                    y: { position: 'left', ticks: { color: '#484f58', callback: function(v) { return v.toFixed(1); } }, grid: { color: '#21262d' } },
+                    y1: { position: 'right', grid: { display: false }, ticks: { color: '#484f58', callback: function(v) { return formatBytes(v); } } }
+                };
+            }
+
+            modalChart = new Chart(canvas.getContext('2d'), {
+                type: bwView === 'total' ? 'bar' : 'line',
+                data: { labels: chartLabels, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 0 },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+                        zoom: {
+                            zoom: {
+                                wheel: { enabled: true },
+                                drag: { enabled: true },
+                                mode: 'x'
+                            }
+                        }
+                    },
+                    scales: Object.assign(
+                        { x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#21262d' } } },
+                        scales
+                    )
+                }
+            });
         });
     }
 

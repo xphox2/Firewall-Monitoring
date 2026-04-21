@@ -2,6 +2,9 @@
 
 ## [0.10.161] - 2026-04-21
 
+### Added
+- **Public dashboard chart modal**: Added click-to-expand functionality on CPU/Memory and Bandwidth charts to open a fullscreen modal with zoom/selection capabilities. Features: scroll to zoom, drag to select region, Shift+drag to pan, Reset button, ESC/Close to dismiss.
+
 ### Fixed
 - **Public dashboard CPU chart labels**: Fixed CPU chart to use month/day/hour/minute format for time ranges >= 168 hours (1w/1m/1y), matching the bandwidth chart label formatting.
 
