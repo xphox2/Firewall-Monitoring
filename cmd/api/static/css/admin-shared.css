@@ -592,11 +592,11 @@ tr:hover {
 .policy-rules-body {
     padding: 0;
     flex: 1;
-    overflow: auto;
 }
 
 .policy-rules-body .table-wrap {
-    max-height: 400px;
+    max-height: none;
+    overflow: visible;
     border-radius: 0 0 7px 7px;
 }
 
