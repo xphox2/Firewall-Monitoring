@@ -326,7 +326,8 @@
         document.querySelectorAll('.filter-tab').forEach(function(t) {
             t.classList.remove('active');
         });
-        document.querySelector('.filter-tab[data-filter="' + filter + '"]').classList.add('active');
+        var tab = document.querySelector('.filter-tab[data-filter="' + filter + '"]');
+        if (tab) tab.classList.add('active');
         if (filter === 'all') {
             renderProbes(currentProbes);
         } else {
