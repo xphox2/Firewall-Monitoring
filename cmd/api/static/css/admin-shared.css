@@ -491,13 +491,9 @@ tr:hover {
     margin-top: 16px;
 }
 
-/* Alert Policy Modal Enhancements */
-#policy-modal .modal-content,
-#policy-modal.modal-content {
-    max-width: 1400px !important;
-    width: 98vw !important;
-    max-height: 95vh !important;
-    overflow-y: auto !important;
+/* Alert Policy Modal Styling */
+#policy-modal .modal-content {
+    width: 1400px;
 }
 
 .policy-section {
