@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.161] - 2026-04-21
+
+### Fixed
+- **Public dashboard CPU chart labels**: Fixed CPU chart to use month/day/hour/minute format for time ranges >= 168 hours (1w/1m/1y), matching the bandwidth chart label formatting.
+
 ## [0.10.160] - 2026-04-20
 
 ### Fixed

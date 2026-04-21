@@ -338,7 +338,12 @@
 
         apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + dashRange).then(function(points) {
             if (!points || points.length === 0) return;
-            var labels = points.map(function(p) { return formatInTimezone(p.timestamp, { hour: '2-digit', minute: '2-digit' }); });
+            var labels;
+            if (dashRange >= 168) {
+                labels = points.map(function(p) { return formatInTimezone(p.timestamp, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); });
+            } else {
+                labels = points.map(function(p) { return formatInTimezone(p.timestamp, { hour: '2-digit', minute: '2-digit' }); });
+            }
 
             destroyWidgetChart(wid);
             var canvas = document.getElementById('wc-' + wid);
