@@ -7,6 +7,7 @@
 
 ### Changed
 - **Public Dashboard Display settings**: Simplified settings page by removing unused toggles (Show Hostname, Show Uptime, Show CPU Usage, Show Memory Usage, Show Active Sessions, Show Network Interfaces, Show Bandwidth Graphs, VPN Tunnels per Device). Kept only VPN Tunnels, Connection Map, and Refresh Interval settings which are actively used. Unused settings are automatically cleaned from the database on next load.
+- **Alert Policies UI**: Redesigned the alert policy modal with improved visual hierarchy - grouped form fields into logical sections (Basic Info, Notification Channels, Alert Rules) with styled section headers, improved stat cards with icons on the policies page, and better compact table styling for alert rules.
 
 ### Fixed
 - **Public dashboard CPU chart labels**: Fixed CPU chart to use month/day/hour/minute format for time ranges >= 168 hours (1w/1m/1y), matching the bandwidth chart label formatting.

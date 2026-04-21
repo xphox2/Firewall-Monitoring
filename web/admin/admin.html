@@ -580,10 +580,28 @@
 
         <!-- Alert Policies Page -->
         <div class="page" id="page-alert-policies">
-            <div class="stat-grid">
-                <div class="stat-card"><div class="stat-label">Total Policies</div><div class="stat-value accent" id="ap-total">--</div></div>
-                <div class="stat-card"><div class="stat-label">Devices with Overrides</div><div class="stat-value" id="ap-device-overrides">--</div></div>
-                <div class="stat-card"><div class="stat-label">Sites with Overrides</div><div class="stat-value" id="ap-site-overrides">--</div></div>
+            <div class="stat-grid stat-grid-3">
+                <div class="stat-card stat-card-accent">
+                    <div class="stat-icon">📋</div>
+                    <div class="stat-content">
+                        <div class="stat-label">Total Policies</div>
+                        <div class="stat-value accent" id="ap-total">--</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔧</div>
+                    <div class="stat-content">
+                        <div class="stat-label">Devices with Overrides</div>
+                        <div class="stat-value" id="ap-device-overrides">--</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🌐</div>
+                    <div class="stat-content">
+                        <div class="stat-label">Sites with Overrides</div>
+                        <div class="stat-value" id="ap-site-overrides">--</div>
+                    </div>
+                </div>
             </div>
             <div class="card">
                 <div class="card-header">
@@ -1006,88 +1024,103 @@
 
     <!-- Alert Policy Modal -->
     <div class="modal" id="policy-modal">
-        <div class="modal-content" style="max-width:800px">
+        <div class="modal-content policy-modal-content">
             <div class="modal-header">
                 <h2 id="policy-modal-title">Create Alert Policy</h2>
                 <button class="modal-close" data-action="close-policy-modal">&times;</button>
             </div>
             <form id="policy-form">
                 <input type="hidden" id="policy-id">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Name *</label>
-                        <input type="text" id="policy-name" required autocomplete="one-time-code">
+                
+                <div class="policy-section">
+                    <div class="policy-section-header">
+                        <h3>Basic Info</h3>
                     </div>
-                    <div class="form-group">
-                        <label>Description</label>
-                        <input type="text" id="policy-description" autocomplete="one-time-code">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Cooldown (minutes)</label>
-                        <input type="number" id="policy-cooldown" value="5" min="1" max="1440">
-                    </div>
-                    <div class="form-group">
-                        <label>Default Policy</label>
-                        <select id="policy-is-default">
-                            <option value="false">No</option>
-                            <option value="true">Yes</option>
-                        </select>
-                    </div>
-                </div>
-
-                <h3 style="margin:16px 0 8px;color:#c9d1d9">Notification Channels</h3>
-                <div class="form-row">
-                    <div class="form-group"><label><input type="checkbox" id="policy-notify-email"> Email</label></div>
-                    <div class="form-group"><label><input type="checkbox" id="policy-notify-slack"> Slack</label></div>
-                    <div class="form-group"><label><input type="checkbox" id="policy-notify-discord"> Discord</label></div>
-                    <div class="form-group"><label><input type="checkbox" id="policy-notify-webhook"> Webhook</label></div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Email Recipients (override)</label>
-                        <input type="text" id="policy-email-recipients" placeholder="user@example.com" autocomplete="one-time-code">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Slack Webhook URL (override)</label>
-                        <input type="text" id="policy-slack-url" placeholder="https://hooks.slack.com/..." autocomplete="one-time-code">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Discord Webhook URL (override)</label>
-                        <input type="text" id="policy-discord-url" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Webhook URL (override)</label>
-                        <input type="text" id="policy-webhook-url" autocomplete="one-time-code">
+                    <div class="policy-section-body">
+                        <div class="form-row form-row-3">
+                            <div class="form-group">
+                                <label>Policy Name *</label>
+                                <input type="text" id="policy-name" required autocomplete="one-time-code" placeholder="e.g. Critical Alerts">
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <input type="text" id="policy-description" autocomplete="one-time-code" placeholder="Optional description">
+                            </div>
+                            <div class="form-group">
+                                <label>Default Policy</label>
+                                <select id="policy-is-default">
+                                    <option value="false">No</option>
+                                    <option value="true">Yes</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row form-row-3">
+                            <div class="form-group">
+                                <label>Cooldown (minutes)</label>
+                                <input type="number" id="policy-cooldown" value="5" min="1" max="1440">
+                            </div>
+                            <div class="form-group">
+                                <label>Escalation After (minutes)</label>
+                                <input type="number" id="policy-escalation-minutes" value="30" min="5" max="1440">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Escalation Repeats</label>
+                                <input type="number" id="policy-escalation-repeat" value="3" min="1" max="10">
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <h3 style="margin:16px 0 8px;color:#c9d1d9">Escalation</h3>
-                <div class="form-row">
-                    <div class="form-group"><label><input type="checkbox" id="policy-escalation-enabled"> Enable Escalation</label></div>
-                    <div class="form-group">
-                        <label>Escalation After (minutes)</label>
-                        <input type="number" id="policy-escalation-minutes" value="30" min="5" max="1440">
+                <div class="policy-section">
+                    <div class="policy-section-header">
+                        <h3>Notification Channels</h3>
+                        <div class="channel-toggles">
+                            <label class="channel-toggle"><input type="checkbox" id="policy-notify-email"> Email</label>
+                            <label class="channel-toggle"><input type="checkbox" id="policy-notify-slack"> Slack</label>
+                            <label class="channel-toggle"><input type="checkbox" id="policy-notify-discord"> Discord</label>
+                            <label class="channel-toggle"><input type="checkbox" id="policy-notify-webhook"> Webhook</label>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>Max Repeats</label>
-                        <input type="number" id="policy-escalation-repeat" value="3" min="1" max="10">
+                    <div class="policy-section-body">
+                        <div class="channel-overrides">
+                            <div class="form-group channel-override">
+                                <label>Email Recipients <span class="override-label">(override)</span></label>
+                                <input type="text" id="policy-email-recipients" placeholder="user@example.com, user2@example.com" autocomplete="one-time-code">
+                            </div>
+                            <div class="form-group channel-override">
+                                <label>Slack Webhook URL <span class="override-label">(override)</span></label>
+                                <input type="text" id="policy-slack-url" placeholder="https://hooks.slack.com/services/..." autocomplete="one-time-code">
+                            </div>
+                            <div class="form-group channel-override">
+                                <label>Discord Webhook URL <span class="override-label">(override)</span></label>
+                                <input type="text" id="policy-discord-url" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code">
+                            </div>
+                            <div class="form-group channel-override">
+                                <label>Webhook URL <span class="override-label">(override)</span></label>
+                                <input type="text" id="policy-webhook-url" placeholder="https://..." autocomplete="one-time-code">
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <h3 style="margin:16px 0 8px;color:#c9d1d9">Alert Rules</h3>
-                <div class="table-wrap" style="max-height:300px">
-                    <table id="policy-rules-table">
-                        <thead><tr><th>Alert Type</th><th>Enabled</th><th>Severity</th><th>Threshold</th><th>Email</th><th>Slack</th><th>Discord</th><th>Webhook</th><th>Cooldown</th></tr></thead>
-                        <tbody id="policy-rules-body"></tbody>
-                    </table>
+                <div class="policy-section">
+                    <div class="policy-section-header">
+                        <h3>Alert Rules</h3>
+                        <span class="section-hint">Configure per-alert-type settings</span>
+                    </div>
+                    <div class="policy-section-body policy-rules-body">
+                        <div class="table-wrap">
+                            <table id="policy-rules-table" class="policy-rules-table">
+                                <thead><tr><th>Alert Type</th><th>Enabled</th><th>Severity</th><th>Threshold</th><th>Email</th><th>Slack</th><th>Discord</th><th>Webhook</th><th>Cooldown</th></tr></thead>
+                                <tbody id="policy-rules-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="policy-escalation-row">
+                    <label class="escalation-checkbox"><input type="checkbox" id="policy-escalation-enabled"> Enable Escalation</label>
+                    <span class="escalation-hint">Automatically escalate alerts if not acknowledged within the escalation time</span>
                 </div>
 
                 <div class="modal-footer">

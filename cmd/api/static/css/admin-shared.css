@@ -491,6 +491,223 @@ tr:hover {
     margin-top: 16px;
 }
 
+/* Alert Policy Modal Enhancements */
+.policy-modal-content {
+    max-width: 1000px;
+    width: 95vw;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.policy-section {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.policy-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #30363d;
+    background: #161b22;
+    border-radius: 7px 7px 0 0;
+}
+
+.policy-section-header h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e6edf3;
+    margin: 0;
+}
+
+.policy-section-header .section-hint {
+    font-size: 0.75rem;
+    color: #8b949e;
+}
+
+.policy-section-body {
+    padding: 16px;
+}
+
+.policy-section-body .form-row {
+    margin-bottom: 12px;
+}
+
+.policy-section-body .form-row:last-child {
+    margin-bottom: 0;
+}
+
+.form-row-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+
+.channel-toggles {
+    display: flex;
+    gap: 16px;
+}
+
+.channel-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: #8b949e;
+    cursor: pointer;
+}
+
+.channel-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.channel-overrides {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.channel-override {
+    margin-bottom: 0;
+}
+
+.channel-override label {
+    font-size: 0.78rem;
+}
+
+.override-label {
+    color: #6e7681;
+    font-weight: 400;
+}
+
+.policy-rules-body {
+    padding: 0;
+}
+
+.policy-rules-body .table-wrap {
+    max-height: 280px;
+    border-radius: 0 0 7px 7px;
+}
+
+.policy-rules-table {
+    font-size: 0.8rem;
+}
+
+.policy-rules-table th {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 8px 10px;
+    background: #161b22;
+}
+
+.policy-rules-table td {
+    padding: 6px 8px;
+    vertical-align: middle;
+}
+
+.policy-rules-table input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+.policy-rules-table .sm {
+    padding: 4px 6px;
+    font-size: 0.75rem;
+}
+
+.policy-escalation-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.escalation-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.88rem;
+    color: #e6edf3;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.escalation-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+
+.escalation-hint {
+    font-size: 0.78rem;
+    color: #8b949e;
+}
+
+/* Enhanced Stat Cards */
+.stat-grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.stat-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 16px;
+    transition: border-color 0.15s;
+}
+
+.stat-card:hover {
+    border-color: #58a6ff;
+}
+
+.stat-card-accent {
+    border-color: #388bfd;
+    background: linear-gradient(135deg, #161b22 0%, #1c2128 100%);
+}
+
+.stat-icon {
+    font-size: 1.8rem;
+    line-height: 1;
+}
+
+.stat-content {
+    flex: 1;
+}
+
+.stat-card .stat-label {
+    font-size: 0.78rem;
+    color: #8b949e;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.stat-card .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #e6edf3;
+}
+
+.stat-card .stat-value.accent {
+    color: #58a6ff;
+}
+
 /* User-facing Error/Success Messages (toast-style) */
 .toast-message {
     position: fixed;
