@@ -1701,7 +1701,8 @@
         var lastSegment = segments[segments.length - 1];
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
             'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
-            'alert-policies':'alert-policies', 'maintenance':'maintenance' };
+            'alert-policies':'alert-policies', 'maintenance':'maintenance',
+            'probes':'probes', 'sites':'sites', 'network':'network', 'probe-pending':'probe-pending', 'irc':'irc' };
         var page = pageMap[lastSegment];
         if (page) {
             document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
