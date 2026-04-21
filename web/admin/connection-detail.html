@@ -41,11 +41,11 @@
         </div>
 
         <div class="flex border-b border-[#30363d] mb-4" id="section-tabs">
-            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 text-[#8b949e] border-transparent hover:text-[#e6edf3]" data-action="switch-tab" data-tab="overview">Overview</div>
-            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 text-[#8b949e] border-transparent hover:text-[#e6edf3]" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
-            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 text-[#8b949e] border-transparent hover:text-[#e6edf3]" data-action="switch-tab" data-tab="dst-tunnels">Destination Tunnels</div>
-            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 text-[#8b949e] border-transparent hover:text-[#e6edf3] hidden" id="tab-phase2" data-action="switch-tab" data-tab="phase2">Phase 2 Selectors</div>
-            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 text-[#8b949e] border-transparent hover:text-[#e6edf3] hidden" id="tab-flows" data-action="switch-tab" data-tab="flows">Traffic Analysis</div>
+            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 hover:text-[#e6edf3]" style="color:#58a6ff;border-bottom:2px solid #58a6ff;" data-action="switch-tab" data-tab="overview">Overview</div>
+            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 hover:text-[#e6edf3]" style="color:#8b949e;border-bottom:2px solid transparent;" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
+            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 hover:text-[#e6edf3]" style="color:#8b949e;border-bottom:2px solid transparent;" data-action="switch-tab" data-tab="dst-tunnels">Destination Tunnels</div>
+            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 hover:text-[#e6edf3] hidden" id="tab-phase2" style="color:#8b949e;border-bottom:2px solid transparent;" data-action="switch-tab" data-tab="phase2">Phase 2 Selectors</div>
+            <div class="section-tab px-5 py-2.5 cursor-pointer text-sm border-b-2 transition-all duration-150 hover:text-[#e6edf3] hidden" id="tab-flows" style="color:#8b949e;border-bottom:2px solid transparent;" data-action="switch-tab" data-tab="flows">Traffic Analysis</div>
         </div>
 
         <div id="tab-content-overview">
@@ -53,7 +53,7 @@
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4">Aggregate Bandwidth</h2>
                 <div class="flex gap-1 mb-3" id="traffic-range">
                     <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-traffic-range" data-range="1h">1h</div>
-                    <div class="range-pill bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-traffic-range" data-range="24h">24h</div>
+                    <div class="range-pill active bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-traffic-range" data-range="24h">24h</div>
                     <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-traffic-range" data-range="7d">7d</div>
                     <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-traffic-range" data-range="30d">30d</div>
                 </div>
@@ -113,7 +113,7 @@
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4">sFlow Traffic Analysis</h2>
                 <div class="flex gap-1 mb-3" id="flow-range">
                     <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="1">1h</div>
-                    <div class="range-pill bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-flow-range" data-range="24">24h</div>
+                    <div class="range-pill active bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-flow-range" data-range="24">24h</div>
                     <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="168">7d</div>
                     <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="720">30d</div>
                 </div>

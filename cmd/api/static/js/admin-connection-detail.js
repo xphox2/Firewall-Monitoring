@@ -499,21 +499,17 @@
     function switchTab(name, tabEl) {
         var tabs = document.querySelectorAll('.section-tab');
         for (var i = 0; i < tabs.length; i++) {
-            tabs[i].classList.remove('text-[#58a6ff]', 'border-b-[#58a6ff]');
-            tabs[i].classList.add('text-[#8b949e]', 'border-transparent');
-            tabs[i].style.color = '';
-            tabs[i].style.borderBottomColor = 'transparent';
+            tabs[i].style.color = '#8b949e';
+            tabs[i].style.borderBottom = '2px solid transparent';
         }
         var contents = document.querySelectorAll('.tab-content');
-        for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
+        for (var j = 0; j < contents.length; j++) { contents[j].classList.add('hidden'); contents[j].classList.remove('active'); }
         if (tabEl) {
-            tabEl.classList.add('text-[#58a6ff]', 'border-b-[#58a6ff]');
-            tabEl.classList.remove('text-[#8b949e]', 'border-transparent');
             tabEl.style.color = '#58a6ff';
-            tabEl.style.borderBottomColor = '#58a6ff';
+            tabEl.style.borderBottom = '2px solid #58a6ff';
         }
         var el = document.getElementById('tab-content-' + name);
-        if (el) el.classList.add('active');
+        if (el) { el.classList.remove('hidden'); el.classList.add('active'); }
     }
 
     // Delegate all click actions
