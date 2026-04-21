@@ -1099,7 +1099,14 @@
             } else {
                 statusHtml = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Acknowledge</button>';
             }
-            body.innerHTML =
+
+            var isSyslogAlert = a.metric_name === 'syslog';
+            var parsedMsg = null;
+            if (isSyslogAlert && a.message) {
+                parsedMsg = parseFortiGateLog(a.message);
+            }
+
+            var headerHtml =
                 '<div style="margin-bottom:16px;">' +
                     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
                         '<span class="badge ' + sevClass + '" style="font-size:0.9rem;padding:4px 12px;">' + (a.severity || 'UNKNOWN').toUpperCase() + '</span>' +
@@ -1111,8 +1118,10 @@
                         '<div><span style="color:#8b949e;">Policy:</span> ' + (a.policy_id ? 'ID ' + a.policy_id : 'N/A') + '</div>' +
                     '</div>' +
                 '</div>';
+
+            var metricHtml = '';
             if (a.metric_name || a.threshold || a.current_value) {
-                body.innerHTML +=
+                metricHtml =
                     '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
                         '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Metric Info</div>' +
                         '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 16px;">' +
@@ -1122,11 +1131,54 @@
                         '</div>' +
                     '</div>';
             }
-            body.innerHTML +=
-                '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Message</div>' +
-                    '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
-                '</div>' +
+
+            var msgHtml = '';
+            if (isSyslogAlert && parsedMsg && parsedMsg.type) {
+                var f = parsedMsg.fields;
+                var typeBadge = '<span class="badge ' + (parsedMsg.type === 'TRAFFIC' ? 'info' : (parsedMsg.type === 'IPS' ? 'error' : (parsedMsg.type === 'AV' ? 'critical' : 'warning'))) + '">' + escapeHtml(parsedMsg.type) + '</span>';
+                msgHtml =
+                    '<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Parsed Syslog Fields</div>' +
+                        '<div style="margin-bottom:8px;">' + typeBadge +
+                            (parsedMsg.subtype ? ' <span style="color:#8b949e;">/ ' + escapeHtml(parsedMsg.subtype) + '</span>' : '') +
+                        '</div>' +
+                        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 16px;">';
+                var keyFields = ['srcip', 'srcport', 'dstip', 'dstport', 'proto', 'action', 'sentbyte', 'rcvdbyte', 'duration', 'iface', 'policyid', 'vd', 'sessionid', 'srcintf', 'dstintf', 'hostname', 'logid', 'app', 'appid', 'apprisk', 'virus', 'file', 'sig_name', 'service', 'ha_role'];
+                var fieldLabels = {'srcip':'Src IP','srcport':'Src Port','dstip':'Dst IP','dstport':'Dst Port','proto':'Protocol','action':'Action','sentbyte':'Sent Bytes','rcvdbyte':'Rcvd Bytes','duration':'Duration (s)','iface':'Interface','policyid':'Policy ID','vd':'VDOM','sessionid':'Session ID','srcintf':'Src Intf','dstintf':'Dst Intf','hostname':'Hostname','logid':'Log ID','app':'Application','appid':'App ID','apprisk':'App Risk','virus':'Virus','file':'File','sig_name':'Signature','service':'Service','ha_role':'HA Role'};
+                keyFields.forEach(function(key) {
+                    if (f[key] !== undefined && f[key] !== '') {
+                        var label = fieldLabels[key] || key;
+                        var val = f[key];
+                        var valHtml = '';
+                        if (key === 'srcip' || key === 'dstip') {
+                            valHtml = '<span style="font-family:monospace;color:#58a6ff;">' + escapeHtml(val) + '</span>';
+                        } else if (key === 'action') {
+                            var actClass = val === 'accept' || val === 'pass' || val === 'detected' ? 'up' : (val === 'deny' || val === 'drop' || val === 'blocked' ? 'down' : 'warning');
+                            valHtml = '<span class="badge ' + actClass + '">' + escapeHtml(val.toUpperCase()) + '</span>';
+                        } else if (key === 'apprisk') {
+                            var riskClass = val === 'very-high' || val === 'high' ? 'down' : (val === 'medium' ? 'warning' : 'up');
+                            valHtml = '<span class="badge ' + riskClass + '">' + escapeHtml(val.toUpperCase()) + '</span>';
+                        } else {
+                            valHtml = escapeHtml(val);
+                        }
+                        msgHtml += '<div><span style="color:#8b949e;">' + escapeHtml(label) + ':</span> ' + valHtml + '</div>';
+                    }
+                });
+                msgHtml += '</div></div>';
+                msgHtml +=
+                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;">' +
+                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Raw Syslog Message</div>' +
+                        '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
+                    '</div>';
+            } else {
+                msgHtml =
+                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Message</div>' +
+                        '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
+                    '</div>';
+            }
+
+            body.innerHTML = headerHtml + metricHtml + msgHtml +
                 '<div style="margin-top:12px;">' + statusHtml + '</div>';
             document.getElementById('alert-detail-modal').classList.add('active');
         })['catch'](function(err) {
