@@ -391,6 +391,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/probes/:id/regenerate-key", handler.RegenerateProbeKey)
 
 		admin.GET("/api/syslog", handler.GetSyslogMessages)
+		admin.GET("/api/syslog/:id", handler.GetSyslogMessage)
 		admin.GET("/api/flows", handler.GetFlowSamples)
 		admin.GET("/api/probes/:id/stats", handler.GetProbeStats)
 

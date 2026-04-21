@@ -108,6 +108,23 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(messages))
 }
 
+func (h *Handler) GetSyslogMessage(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Syslog message not found"))
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	var msg models.SyslogMessage
+	if err := h.db.Gorm().First(&msg, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Syslog message not found"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(msg))
+}
+
 func (h *Handler) GetFlowSamples(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.FlowSample{}))
