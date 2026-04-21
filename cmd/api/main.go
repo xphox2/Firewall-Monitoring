@@ -339,6 +339,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/maintenance", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/traps", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
