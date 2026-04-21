@@ -498,18 +498,12 @@
 
     function switchTab(name, tabEl) {
         var tabs = document.querySelectorAll('.section-tab');
-        for (var i = 0; i < tabs.length; i++) {
-            tabs[i].style.color = '#8b949e';
-            tabs[i].style.borderBottom = '2px solid transparent';
-        }
+        for (var i = 0; i < tabs.length; i++) { tabs[i].classList.remove('active'); }
         var contents = document.querySelectorAll('.tab-content');
-        for (var j = 0; j < contents.length; j++) { contents[j].classList.add('hidden'); contents[j].classList.remove('active'); }
-        if (tabEl) {
-            tabEl.style.color = '#58a6ff';
-            tabEl.style.borderBottom = '2px solid #58a6ff';
-        }
+        for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
+        if (tabEl) tabEl.classList.add('active');
         var el = document.getElementById('tab-content-' + name);
-        if (el) { el.classList.remove('hidden'); el.classList.add('active'); }
+        if (el) el.classList.add('active');
     }
 
     // Delegate all click actions
