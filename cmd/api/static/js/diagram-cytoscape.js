@@ -415,7 +415,7 @@
         container.appendChild(cyDiv);
 
         cy = cytoscape({ container: cyDiv, elements: elements, style: stylesheet, layout: layoutOpts,
-            minZoom: 0.3, maxZoom: 3, boxSelectionEnabled: false });
+            minZoom: 0.3, maxZoom: 3, wheelSensitivity: 0.3, boxSelectionEnabled: false });
 
 
         applyFilters();
