@@ -206,8 +206,56 @@
         getTimezone: getTimezone,
         setTimezone: setTimezone,
         formatDate: formatDate,
-        formatDateShort: formatDateShort
+        formatDateShort: formatDateShort,
+        renderSidebar: renderSidebar
     };
+
+    function renderSidebar(currentPage) {
+        if (!currentPage) {
+            var path = window.location.pathname.replace(/\/$/, '');
+            var segments = path.split('/');
+            var lastSegment = segments[segments.length - 1];
+            var pageMap = { 'dashboard':'', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
+                'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
+                'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
+                'network':'network', 'probe-pending':'probe-pending', 'irc':'irc' };
+            currentPage = pageMap[lastSegment] || 'dashboard';
+        }
+
+        var pageIcons = {
+            'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;', 'interfaces': '&#8646;',
+            'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
+            'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;',
+            'probes': '&#9678;', 'sites': '&#9962;', 'network': '&#9733;', 'probe-pending': '&#9200;', 'irc': '&#128172;'
+        };
+        var navHtml = '<div class="nav-section"><div class="nav-section-title">Monitoring</div>' +
+            '<a class="nav-item' + (currentPage === 'dashboard' ? ' active' : '') + '" href="/admin"><span class="nav-icon">' + pageIcons['dashboard'] + '</span> Dashboard</a>' +
+            '<a class="nav-item' + (currentPage === 'devices' ? ' active' : '') + '" href="/admin/devices"><span class="nav-icon">' + pageIcons['devices'] + '</span> Devices</a>' +
+            '<a class="nav-item' + (currentPage === 'connections' ? ' active' : '') + '" href="/admin/connections"><span class="nav-icon">' + pageIcons['connections'] + '</span> Connections</a>' +
+            '<a class="nav-item' + (currentPage === 'interfaces' ? ' active' : '') + '" href="/admin/interfaces"><span class="nav-icon">' + pageIcons['interfaces'] + '</span> Interfaces</a>' +
+            '</div><div class="nav-section"><div class="nav-section-title">Data</div>' +
+            '<a class="nav-item' + (currentPage === 'syslog' ? ' active' : '') + '" href="/admin/syslog"><span class="nav-icon">' + pageIcons['syslog'] + '</span> Syslog</a>' +
+            '<a class="nav-item' + (currentPage === 'flows' ? ' active' : '') + '" href="/admin/flows"><span class="nav-icon">' + pageIcons['flows'] + '</span> Flows</a>' +
+            '<a class="nav-item' + (currentPage === 'alerts' ? ' active' : '') + '" href="/admin/alerts"><span class="nav-icon">' + pageIcons['alerts'] + '</span> Alerts</a>' +
+            '<a class="nav-item' + (currentPage === 'traps' ? ' active' : '') + '" href="/admin/traps"><span class="nav-icon">' + pageIcons['traps'] + '</span> Traps</a>' +
+            '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +
+            '<a class="nav-item' + (currentPage === 'probes' ? ' active' : '') + '" href="/admin/probes"><span class="nav-icon">' + pageIcons['probes'] + '</span> Probes</a>' +
+            '<a class="nav-item' + (currentPage === 'sites' ? ' active' : '') + '" href="/admin/sites"><span class="nav-icon">' + pageIcons['sites'] + '</span> Sites</a>' +
+            '<a class="nav-item' + (currentPage === 'network' ? ' active' : '') + '" href="/admin/network"><span class="nav-icon">' + pageIcons['network'] + '</span> Network</a>' +
+            '<a class="nav-item' + (currentPage === 'probe-pending' ? ' active' : '') + '" href="/admin/probe-pending"><span class="nav-icon">' + pageIcons['probe-pending'] + '</span> Pending</a>' +
+            '</div><div class="nav-section"><div class="nav-section-title">Configuration</div>' +
+            '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active' : '') + '" href="/admin/alert-policies"><span class="nav-icon">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
+            '<a class="nav-item' + (currentPage === 'maintenance' ? ' active' : '') + '" href="/admin/maintenance"><span class="nav-icon">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +
+            '</div><div class="nav-section"><div class="nav-section-title">System</div>' +
+            '<a class="nav-item' + (currentPage === 'settings' ? ' active' : '') + '" href="/admin/settings"><span class="nav-icon">' + pageIcons['settings'] + '</span> Settings</a>' +
+            '<a class="nav-item' + (currentPage === 'irc' ? ' active' : '') + '" href="/admin/irc"><span class="nav-icon">' + pageIcons['irc'] + '</span> IRC</a>' +
+            '</div>';
+
+        var sidebarNav = document.querySelector('.sidebar-nav');
+        if (sidebarNav) {
+            sidebarNav.innerHTML = navHtml;
+        }
+    }
 
     // Eagerly load timezone from server on page load
     function loadTimezoneFromServer() {
