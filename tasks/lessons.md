@@ -244,3 +244,53 @@ Edit modals (alert policies, etc.) are too small and cramped when opened directl
 1. Check if base `.modal-content` width is at least 1000px
 2. If modal needs to be wider than 1000px, add inline style `style="width:XXXXpx"`
 3. Use `width:XXXXpx` (not `max-width`) as first property for guaranteed override
+
+---
+
+## Issue: Duplicate CSS for Range Pills / Panel Components
+
+### Problem
+Range pill buttons (1h, 24h, 7d, 30d) worked in one place (Fullscreen mode) but not another (regular connections page). The `.range-pill` and `.panel-range-pill` classes were defined inline in `connection-detail.html` but not in `admin-shared.css`.
+
+### Root Cause
+**Code duplication across files:**
+- `connection-detail.html` had its own `.range-pill` CSS
+- `diagram-panels.js` used `.panel-range-pill` with no CSS definition anywhere
+- No shared CSS module for common UI components like range selectors
+
+### Fix Applied
+Added to `admin-shared.css`:
+```css
+.range-pill, .panel-range-pill {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: #21262d;
+    color: #8b949e;
+    border: 1px solid #30363d;
+}
+.range-pill:hover, .panel-range-pill:hover {
+    color: #e6edf3;
+    border-color: #8b949e;
+}
+.range-pill.active, .panel-range-pill.active {
+    background: #58a6ff;
+    color: #fff;
+    border-color: #58a6ff;
+}
+```
+
+### Prevention
+
+**RULE: All reusable UI components MUST be defined in admin-shared.css**
+- Range pills, badges, buttons, form elements — if used in multiple places, it goes in shared CSS
+- Never define component CSS inline in HTML or in JavaScript template strings
+- When adding a new component class, document where it should be used
+
+**BEFORE adding a new component:**
+1. Check admin-shared.css if a similar component exists
+2. If creating a new reusable pattern, add to admin-shared.css NOT inline styles
+3. Verify all usages of similar patterns reference the same CSS class
