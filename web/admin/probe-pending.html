@@ -56,7 +56,11 @@
     </div>
 
     <script defer src="/static/js/admin-common.js"></script>
-    <script defer>AdminCommon.renderSidebar();</script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        AdminCommon.renderSidebar();
+    });
+    </script>
     <script defer src="/static/js/admin-probe-pending.js"></script>
 </body>
 </html>

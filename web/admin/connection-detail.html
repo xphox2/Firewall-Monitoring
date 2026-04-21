@@ -160,7 +160,11 @@
 
     <script defer src="/static/js/chart.umd.min.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
-    <script defer>AdminCommon.renderSidebar();</script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        AdminCommon.renderSidebar();
+    });
+    </script>
     <script defer src="/static/js/admin-connection-detail.js"></script>
 </body>
 </html>

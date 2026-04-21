@@ -183,7 +183,11 @@
     <script defer src="/static/js/diagram-cytoscape.js"></script>
     <script defer src="/static/js/diagram-panels.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
-    <script>AdminCommon.renderSidebar();</script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        AdminCommon.renderSidebar();
+    });
+    </script>
     <script defer src="/static/js/admin-main.js"></script>
 </head>
 <body>
