@@ -52,41 +52,33 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	allowedKeys := map[string]bool{
-		"cpu_threshold":                true,
-		"memory_threshold":             true,
-		"disk_threshold":               true,
-		"session_threshold":            true,
-		"email_enabled":                true,
-		"smtp_host":                    true,
-		"smtp_port":                    true,
-		"smtp_username":                true,
-		"smtp_password":                true,
-		"smtp_from":                    true,
-		"smtp_to":                      true,
-		"slack_webhook":                true,
-		"discord_webhook":              true,
-		"webhook_url":                  true,
-		"public_show_hostname":         true,
-		"public_show_uptime":           true,
-		"public_show_cpu":              true,
-		"public_show_memory":           true,
-		"public_show_sessions":         true,
-		"public_show_interfaces":       true,
-		"public_refresh_interval":      true,
-		"public_show_bandwidth":        true,
-		"public_show_vpn":              true,
-		"public_show_connections":      true,
-		"public_interfaces":            true,
-		"public_vpn_tunnels_by_device": true,
-		"display_timezone":             true,
-		"report_daily_enabled":         true,
-		"report_daily_time":            true,
-		"report_weekly_enabled":        true,
-		"report_weekly_day":            true,
-		"report_recipients":            true,
-		"report_timezone":              true,
-		"spike_stddev_threshold":       true,
-		"spike_alert_enabled":          true,
+		"cpu_threshold":           true,
+		"memory_threshold":        true,
+		"disk_threshold":          true,
+		"session_threshold":       true,
+		"email_enabled":           true,
+		"smtp_host":               true,
+		"smtp_port":               true,
+		"smtp_username":           true,
+		"smtp_password":           true,
+		"smtp_from":               true,
+		"smtp_to":                 true,
+		"slack_webhook":           true,
+		"discord_webhook":         true,
+		"webhook_url":             true,
+		"public_refresh_interval": true,
+		"public_show_vpn":         true,
+		"public_show_connections": true,
+		"public_interfaces":       true,
+		"display_timezone":        true,
+		"report_daily_enabled":    true,
+		"report_daily_time":       true,
+		"report_weekly_enabled":   true,
+		"report_weekly_day":       true,
+		"report_recipients":       true,
+		"report_timezone":         true,
+		"spike_stddev_threshold":  true,
+		"spike_alert_enabled":     true,
 	}
 
 	secretKeys := map[string]bool{
@@ -148,9 +140,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				return
 			}
 		case "email_enabled", "report_daily_enabled", "report_weekly_enabled", "spike_alert_enabled",
-			"public_show_hostname", "public_show_uptime",
-			"public_show_cpu", "public_show_memory", "public_show_sessions", "public_show_interfaces",
-			"public_show_bandwidth", "public_show_vpn", "public_show_connections":
+			"public_show_vpn", "public_show_connections":
 			if s.Value != "true" && s.Value != "false" {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be true or false", s.Key)))
 				return
@@ -173,7 +163,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid timezone value"))
 				return
 			}
-		case "public_interfaces", "public_vpn_tunnels_by_device":
+		case "public_interfaces":
 			// No validation needed for JSON string settings
 		case "smtp_password":
 			// Skip masked passwords
@@ -413,25 +403,27 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	isAdmin := c.GetBool("is_admin")
 	defaults := map[string]string{
-		"public_show_hostname":         "true",
-		"public_show_uptime":           "true",
-		"public_show_cpu":              "true",
-		"public_show_memory":           "true",
-		"public_show_sessions":         "true",
-		"public_show_interfaces":       "true",
-		"public_show_bandwidth":        "false",
-		"public_show_vpn":              "false",
-		"public_show_connections":      "false",
-		"public_refresh_interval":      "30",
-		"public_interfaces":            "{}", // JSON: {"1":["wan1"],"2":["dmz"]}
-		"public_vpn_tunnels_by_device": "{}", // JSON: {"1":["tunnel1"],"2":["tunnel2"]}
-		"display_timezone":             "America/New_York",
+		"public_show_vpn":         "false",
+		"public_show_connections": "false",
+		"public_refresh_interval": "30",
+		"public_interfaces":       "{}", // JSON: {"1":["wan1"],"2":["dmz"]}
+		"display_timezone":        "America/New_York",
 	}
 
 	if h.db == nil {
 		resp := gin.H{"success": true, "data": defaults, "is_admin": isAdmin}
 		c.JSON(http.StatusOK, resp)
 		return
+	}
+
+	// One-time cleanup: remove unused public settings from database
+	unusedKeys := []string{
+		"public_show_hostname", "public_show_uptime", "public_show_cpu",
+		"public_show_memory", "public_show_sessions", "public_show_interfaces",
+		"public_show_bandwidth", "public_vpn_tunnels_by_device",
+	}
+	if err := h.db.Gorm().Where("\"key\" IN ?", unusedKeys).Delete(&models.SystemSetting{}).Error; err != nil {
+		log.Printf("Failed to cleanup unused public settings: %v", err)
 	}
 
 	var settings []models.SystemSetting
