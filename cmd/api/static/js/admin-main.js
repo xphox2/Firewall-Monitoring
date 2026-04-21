@@ -1700,7 +1700,8 @@
         var segments = path.split('/');
         var lastSegment = segments[segments.length - 1];
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
-            'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps' };
+            'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
+            'alert-policies':'alert-policies', 'maintenance':'maintenance' };
         var page = pageMap[lastSegment];
         if (page) {
             document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
