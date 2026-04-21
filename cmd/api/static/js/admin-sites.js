@@ -9,7 +9,9 @@
 
     function loadSites() {
         AC.apiFetch(API_BASE + '/sites').then(function(result) {
-            sites = result.data || [];
+            sites = (result.data || []).sort(function(a, b) {
+                return (a.name || '').localeCompare(b.name || '');
+            });
             renderSites();
         })['catch'](function(err) {
             console.error('[Sites] Error loading sites:', err);
