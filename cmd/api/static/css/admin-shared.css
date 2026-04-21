@@ -277,6 +277,28 @@
     color: #8b949e;
 }
 
+/* Range pills */
+.range-pill, .panel-range-pill {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: #21262d;
+    color: #8b949e;
+    border: 1px solid #30363d;
+}
+.range-pill:hover, .panel-range-pill:hover {
+    color: #e6edf3;
+    border-color: #8b949e;
+}
+.range-pill.active, .panel-range-pill.active {
+    background: #58a6ff;
+    color: #fff;
+    border-color: #58a6ff;
+}
+
 /* Cards */
 .card {
     background: #161b22;
