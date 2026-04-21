@@ -491,10 +491,7 @@ tr:hover {
     margin-top: 16px;
 }
 
-/* Alert Policy Modal Styling */
-#policy-modal .modal-content {
-    width: 1400px;
-}
+/* Alert Policy Modal Styling - uses base .modal-content class */
 
 .policy-section {
     background: #0d1117;
