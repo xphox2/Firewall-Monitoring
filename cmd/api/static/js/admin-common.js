@@ -256,6 +256,132 @@
         }
     }
 
+    // ---- FortiGate Log Parser ----
+    var FORTIGUARD_BASE = 'https://www.fortiguard.com';
+
+    var FORTIGUARD_LOOKUP = {
+        'virus': function(name) { return FORTIGUARD_BASE + '/encyclopedia?type=antivirus&query=' + encodeURIComponent(name); },
+        'ips': function(name) { return FORTIGUARD_BASE + '/search?type=ips&keyword=' + encodeURIComponent(name); },
+        'app': function(name) { return FORTIGUARD_BASE + '/appdb/?query=' + encodeURIComponent(name); },
+        'webfilter': function(name) { return FORTIGUARD_BASE + '/webfilter_rating/?lookup=' + encodeURIComponent(name); },
+        'default': function(name) { return 'https://www.fortiguard.com/search?q=' + encodeURIComponent(name); }
+    };
+
+    function getFortiGuardUrl(keyword) {
+        var k = keyword || '';
+        var lower = k.toLowerCase();
+        if (lower.includes('virus') || lower.includes('malware') || lower.includes('heuristic')) return FORTIGUARD_LOOKUP['virus'](keyword);
+        if (lower.includes('sig_name')) return FORTIGUARD_LOOKUP['ips'](keyword);
+        if (lower.includes('app=')) return FORTIGUARD_LOOKUP['app'](keyword);
+        return FORTIGUARD_LOOKUP['default'](keyword);
+    }
+
+    function parseFortiGateLog(msg) {
+        var parsed = { raw: msg, type: '', subtype: '', severity: '', fields: {} };
+        if (!msg || typeof msg !== 'string') return parsed;
+
+        var kvPairs = msg.match(/(\w+(?:_[a-zA-Z0-9])*)=(?:[^\s"]+|"[^"]*")/g) || [];
+        kvPairs.forEach(function(pair) {
+            var eqIdx = pair.indexOf('=');
+            if (eqIdx === -1) return;
+            var key = pair.substring(0, eqIdx);
+            var rawVal = pair.substring(eqIdx + 1);
+            var val = rawVal.replace(/^"|"$/g, '');
+            parsed.fields[key] = val;
+            if (key === 'type') parsed.type = val;
+            else if (key === 'subtype') parsed.subtype = val;
+            else if (key === 'severity') parsed.severity = val;
+        });
+        return parsed;
+    }
+
+    function getSeverityLabel(sev) {
+        var s = (sev || '').toLowerCase();
+        if (s === 'critical' || s === 'high' || s === 'alert' || s === 'emergency') return 'critical';
+        if (s === 'error' || s === 'major') return 'error';
+        if (s === 'warning' || s === 'medium') return 'warning';
+        if (s === 'notice') return 'notice';
+        return 'info';
+    }
+
+    function formatFortiGateLogHtml(msg) {
+        var p = parseFortiGateLog(msg);
+        var type = p.type || 'UNKNOWN';
+        var subtype = p.subtype || '';
+        var severity = p.severity || '';
+        var sevLabel = getSeverityLabel(severity);
+        var f = p.fields;
+
+        var html = '<div style="margin-bottom:16px;">';
+        html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">';
+        html += '<span class="badge ' + sevLabel + '" style="font-size:0.9rem;padding:4px 12px;">' + escapeHtml(severity.toUpperCase()) + '</span>';
+        html += '<span style="color:#58a6ff;font-weight:600;font-size:1rem;">' + escapeHtml(type) + '</span>';
+        if (subtype) html += '<span style="color:#8b949e;">/ ' + escapeHtml(subtype) + '</span>';
+        html += '</div>';
+
+        var fields = [];
+        var importantFields = ['srcip', 'srcport', 'dstip', 'dstport', 'proto', 'action', 'sentbyte', 'rcvdbyte', 'duration', 'iface', 'policyid', 'vd', 'sessionid', 'srcintf', 'dstintf', 'hostname', 'logid', 'app', 'appid', 'apprisk', 'virus', 'file', 'sig_name', 'signature', ' quarantined', 'url', 'method', 'user', 'srcuser', 'dstuser', 'ha_role', 'cluster_state', 'change_reason', 'service', 'transport', 'srcname', 'dstname'];
+        var fieldLabels = {
+            'srcip': 'Source IP', 'srcport': 'Src Port', 'dstip': 'Dest IP', 'dstport': 'Dst Port',
+            'proto': 'Protocol', 'action': 'Action', 'sentbyte': 'Sent Bytes', 'rcvdbyte': 'Rcvd Bytes',
+            'duration': 'Duration (s)', 'iface': 'Interface', 'policyid': 'Policy ID', 'vd': 'VDOM',
+            'sessionid': 'Session ID', 'srcintf': 'Src Interface', 'dstintf': 'Dst Interface',
+            'hostname': 'Hostname', 'logid': 'Log ID', 'app': 'Application', 'appid': 'App ID',
+            'apprisk': 'App Risk', 'virus': 'Virus', 'file': 'File', 'sig_name': 'Signature',
+            'signature': 'Signature ID', 'service': 'Service', 'transport': 'Transport',
+            'srcname': 'Src Name', 'dstname': 'Dst Name', 'ha_role': 'HA Role',
+            'cluster_state': 'Cluster State', 'change_reason': 'Change Reason',
+            'user': 'User', 'srcuser': 'Src User', 'dstuser': 'Dst User', 'method': 'Method', 'url': 'URL'
+        };
+
+        importantFields.forEach(function(key) {
+            if (f[key] !== undefined && f[key] !== '') {
+                var label = fieldLabels[key] || key;
+                var val = f[key];
+                var valHtml = '';
+                if (key === 'srcip' || key === 'dstip') {
+                    valHtml = '<span style="font-family:monospace;color:#58a6ff;">' + escapeHtml(val) + '</span>';
+                } else if (key === 'action') {
+                    var actClass = val === 'accept' || val === 'pass' || val === 'detected' ? 'up' : (val === 'deny' || val === 'drop' || val === 'blocked' ? 'down' : 'warning');
+                    valHtml = '<span class="badge ' + actClass + '">' + escapeHtml(val.toUpperCase()) + '</span>';
+                } else if (key === 'apprisk') {
+                    var riskClass = val === 'very-high' || val === 'high' ? 'down' : (val === 'medium' ? 'warning' : 'up');
+                    valHtml = '<span class="badge ' + riskClass + '">' + escapeHtml(val.toUpperCase()) + '</span>';
+                } else {
+                    valHtml = escapeHtml(val);
+                }
+                fields.push('<div style="display:flex;gap:8px;min-height:24px;"><span style="color:#8b949e;min-width:120px;">' + escapeHtml(label) + ':</span><span>' + valHtml + '</span></div>');
+            }
+        });
+
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 16px;">' + fields.join('') + '</div>';
+        html += '</div>';
+
+        var msgStart = msg.indexOf('msg=');
+        var rawMsg = '';
+        if (msgStart !== -1) {
+            rawMsg = msg.substring(msgStart);
+            var spaceIdx = rawMsg.indexOf(' ');
+            if (spaceIdx !== -1) rawMsg = rawMsg.substring(0, spaceIdx);
+            rawMsg = rawMsg.replace(/^msg=/, '');
+        }
+
+        html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:8px;">';
+        html += '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Raw Message</div>';
+        html += '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(msg) + '</div>';
+        html += '</div>';
+
+        var lookupKeyword = f.virus || f.sig_name || f.app || f.signature || '';
+        if (lookupKeyword) {
+            var lookupUrl = getFortiGuardUrl(lookupKeyword);
+            html += '<div style="margin-top:12px;text-align:center;">';
+            html += '<a href="' + lookupUrl + '" target="_blank" style="display:inline-block;padding:8px 16px;background:#58a6ff;color:#fff;border-radius:6px;text-decoration:none;font-size:0.85rem;">&#128269; Lookup on FortiGuard</a>';
+            html += '</div>';
+        }
+
+        return html;
+    }
+
     // Eagerly load timezone from server on page load
     function loadTimezoneFromServer() {
         fetch(API_BASE + '/display-settings', { credentials: 'same-origin' })
@@ -280,4 +406,7 @@
     window.showError = showError;
     window.showSuccess = showSuccess;
     window.clearToasts = clearToasts;
+    window.parseFortiGateLog = parseFortiGateLog;
+    window.formatFortiGateLogHtml = formatFortiGateLogHtml;
+    window.getFortiGuardUrl = getFortiGuardUrl;
 })();

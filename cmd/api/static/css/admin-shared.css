@@ -267,14 +267,39 @@
     color: #f85149;
 }
 
-.badge.notice {
+.badge.notice, .badge.notice {
     background: rgba(56,139,253,0.1);
     color: #58a6ff;
 }
 
-.badge.debug {
+.badge.debug, .badge.debug {
     background: rgba(139,148,158,0.1);
     color: #8b949e;
+}
+
+.badge.critical {
+    background: rgba(248,81,73,0.25);
+    color: #ff7b72;
+}
+
+.badge.error, .badge.error {
+    background: rgba(248,81,73,0.15);
+    color: #f85149;
+}
+
+.badge.notice, .badge.notice {
+    background: rgba(56,139,253,0.1);
+    color: #58a6ff;
+}
+
+.badge.info {
+    background: rgba(56,139,253,0.15);
+    color: #58a6ff;
+}
+
+.badge.notice {
+    background: rgba(56,139,253,0.1);
+    color: #58a6ff;
 }
 
 /* Range pills */

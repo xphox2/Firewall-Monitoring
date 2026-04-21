@@ -741,12 +741,21 @@
     function renderSyslogTable(messages, append) {
         var tbody = document.querySelector('#syslog-table tbody');
         var html = messages.map(function(m) {
+            var typeBadge = '';
+            if (m.message) {
+                var typeMatch = m.message.match(/type=(\w+)/);
+                var subMatch = m.message.match(/subtype=(\w+)/);
+                if (typeMatch) {
+                    var t = typeMatch[1];
+                    typeBadge = '<span class="badge ' + (t === 'TRAFFIC' ? 'info' : (t === 'IPS' ? 'error' : (t === 'AV' ? 'critical' : 'warning'))) + '">' + t + '</span>';
+                }
+            }
             return '<tr class="syslog-row" data-id="' + m.id + '">' +
                 '<td style="white-space:nowrap;">' + formatDate(m.timestamp) + '</td>' +
                 '<td class="mono">' + escapeHtml(m.source_ip) + '</td>' +
                 '<td>' + escapeHtml(m.hostname) + '</td>' +
                 '<td><span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></td>' +
-                '<td>' + escapeHtml(m.app_name) + '</td>' +
+                '<td>' + typeBadge + '</td>' +
                 '<td class="expandable-msg" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(m.message) + '</td>' +
             '</tr>';
         }).join('');
@@ -759,15 +768,21 @@
             if (!result || !result.data) return;
             var m = result.data;
             var body = document.getElementById('syslog-detail-body');
-            body.innerHTML =
-                '<div style="margin-bottom:16px;">' +
-                    '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Time:</span> ' + formatDate(m.timestamp) + '</div>' +
-                    '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Severity:</span> <span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></div>' +
-                    '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Source IP:</span> <span class="mono">' + escapeHtml(m.source_ip) + '</span></div>' +
-                    '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Hostname:</span> ' + escapeHtml(m.hostname) + '</div>' +
-                    '<div style="margin-bottom:8px;"><span style="color:#8b949e;">App Name:</span> ' + escapeHtml(m.app_name) + '</div>' +
-                '</div>' +
-                '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(m.message) + '</div>';
+            var parsedHtml = '';
+            if (typeof window.formatFortiGateLogHtml === 'function' && m.message) {
+                parsedHtml = window.formatFortiGateLogHtml(m.message);
+            } else {
+                parsedHtml =
+                    '<div style="margin-bottom:16px;">' +
+                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Time:</span> ' + formatDate(m.timestamp) + '</div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Severity:</span> <span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Source IP:</span> <span style="font-family:monospace;color:#58a6ff;">' + escapeHtml(m.source_ip) + '</span></div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Hostname:</span> ' + escapeHtml(m.hostname) + '</div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">App Name:</span> ' + escapeHtml(m.app_name) + '</div>' +
+                    '</div>' +
+                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(m.message) + '</div>';
+            }
+            body.innerHTML = parsedHtml;
             document.getElementById('syslog-detail-modal').classList.add('active');
         })['catch'](function(err) {
             console.error('Failed to load syslog detail:', err);
