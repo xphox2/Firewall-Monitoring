@@ -257,23 +257,8 @@
     }
 
     // ---- FortiGate Log Parser ----
-    var FORTIGUARD_BASE = 'https://www.fortiguard.com';
-
-    var FORTIGUARD_LOOKUP = {
-        'virus': function(name) { return FORTIGUARD_BASE + '/encyclopedia?type=antivirus&query=' + encodeURIComponent(name); },
-        'ips': function(name) { return FORTIGUARD_BASE + '/search?type=ips&keyword=' + encodeURIComponent(name); },
-        'app': function(name) { return FORTIGUARD_BASE + '/appdb/?query=' + encodeURIComponent(name); },
-        'webfilter': function(name) { return FORTIGUARD_BASE + '/webfilter_rating/?lookup=' + encodeURIComponent(name); },
-        'default': function(name) { return 'https://www.fortiguard.com/search?q=' + encodeURIComponent(name); }
-    };
-
     function getFortiGuardUrl(keyword) {
-        var k = keyword || '';
-        var lower = k.toLowerCase();
-        if (lower.includes('virus') || lower.includes('malware') || lower.includes('heuristic')) return FORTIGUARD_LOOKUP['virus'](keyword);
-        if (lower.includes('sig_name')) return FORTIGUARD_LOOKUP['ips'](keyword);
-        if (lower.includes('app=')) return FORTIGUARD_LOOKUP['app'](keyword);
-        return FORTIGUARD_LOOKUP['default'](keyword);
+        return 'https://www.fortiguard.com/search?q=' + encodeURIComponent(keyword || '');
     }
 
     function parseFortiGateLog(msg) {
@@ -371,14 +356,6 @@
         html += '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(msg) + '</div>';
         html += '</div>';
 
-        var lookupKeyword = f.virus || f.sig_name || f.app || f.signature || '';
-        if (lookupKeyword) {
-            var lookupUrl = getFortiGuardUrl(lookupKeyword);
-            html += '<div style="margin-top:12px;text-align:center;">';
-            html += '<a href="' + lookupUrl + '" target="_blank" style="display:inline-block;padding:8px 16px;background:#58a6ff;color:#fff;border-radius:6px;text-decoration:none;font-size:0.85rem;">&#128269; Lookup on FortiGuard</a>';
-            html += '</div>';
-        }
-
         return html;
     }
 
@@ -408,5 +385,4 @@
     window.clearToasts = clearToasts;
     window.parseFortiGateLog = parseFortiGateLog;
     window.formatFortiGateLogHtml = formatFortiGateLogHtml;
-    window.getFortiGuardUrl = getFortiGuardUrl;
 })();
