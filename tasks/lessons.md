@@ -202,3 +202,64 @@ func setCBg(fg, bg string) string { return "\x03" + fg + "," + bg }
 - Test with actual IRC clients, not just string-stripping tests
 - Don't change visual appearance when fixing alignment bugs — fix only what's broken
 - Don't make multiple unrelated changes in one pass (size + format + characters)
+
+---
+
+## Issue: Modal Popups Too Small / Narrow
+
+### Problem
+Edit modals (alert policies, etc.) are too small and cramped when opened directly via URL refresh. Content is squished and hard to read.
+
+### Root Causes Found
+
+1. **CSS specificity issue**
+   - Generic `.modal-content` class has `width: 520px; max-width: 92vw;` in base CSS
+   - Custom classes like `.policy-modal-content` get overridden because `.modal-content` has higher specificity
+   - The inline style fix `style="max-width:800px"` was too small
+
+2. **Always needing to increase modal size**
+   - User repeatedly had to ask for larger modals
+   - Same pattern: modal opens but content is cramped
+   - Repeated ~6 times for the same issue
+
+3. **Important CSS Rule:**
+   - When a generic class like `.modal-content` sets `width: 520px` (line 451 in admin-shared.css)
+   - A more specific selector like `.policy-modal-content` (line 495) does NOT override it due to specificity
+   - Need `!important` OR make selector more specific
+
+### Fix Applied
+```css
+/* BAD - doesn't override base width due to specificity */
+.policy-modal-content {
+    max-width: 1200px;
+    width: 95vw;
+}
+
+/* GOOD - uses ID + class for higher specificity with !important */
+#policy-modal .modal-content,
+#policy-modal.modal-content {
+    max-width: 1400px !important;
+    width: 98vw !important;
+    max-height: 95vh !important;
+    overflow-y: auto !important;
+}
+```
+
+### Prevention
+
+**FOR ALL NEW MODALS:**
+1. Use ID-based selector: `#modal-id .modal-content`
+2. Always add `!important` to width/height overrides
+3. Target minimum 1400px width for complex edit forms (1400px for 9-column tables, 1000px+ for forms)
+4. Use `98vw` width and `95vh` height for maximum screen usage
+5. Document in comments: `/* Modal should be 1400px wide to accommodate 9-column table */`
+
+**CSS specificity ladder (highest to lowest):**
+```
+#id .class1 .class2  (0,1,1,2)
+#id .class           (0,1,0,1)
+.class1 .class2      (0,0,1,2)
+.class               (0,0,0,1)
+```
+
+**When in doubt, add `!important`** to ensure override takes effect.

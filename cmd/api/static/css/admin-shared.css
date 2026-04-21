@@ -492,11 +492,12 @@ tr:hover {
 }
 
 /* Alert Policy Modal Enhancements */
-.policy-modal-content {
-    max-width: 1200px;
-    width: 95vw;
-    max-height: 92vh;
-    overflow-y: auto;
+#policy-modal .modal-content,
+#policy-modal.modal-content {
+    max-width: 1400px !important;
+    width: 98vw !important;
+    max-height: 95vh !important;
+    overflow-y: auto !important;
 }
 
 .policy-section {
