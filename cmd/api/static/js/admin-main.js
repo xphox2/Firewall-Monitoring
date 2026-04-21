@@ -558,8 +558,9 @@
             var tbody = document.querySelector('#connections-table tbody');
             tbody.innerHTML = currentConnections.map(function(c) {
                 var deleteBtn = c.auto_detected
-                    ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>'
+                    ? '<span style="color:#8b949e;font-size:0.75rem;">Auto-managed</span>'
                     : '<button class="btn danger sm" data-action="delete-connection" data-id="' + c.id + '">Delete</button>';
+                var editBtn = '<button class="btn secondary sm" data-action="edit-connection" data-id="' + c.id + '">Edit</button>';
                 return '<tr>' +
                     '<td>' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
                     '<td>' + (escapeHtml(c.source_device ? c.source_device.name : '') || c.source_device_id) + '</td>' +
@@ -568,7 +569,7 @@
                     '<td><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
                     '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
                     '<td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
-                    '<td><a href="/admin/connections/' + c.id + '" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>' + deleteBtn + '</td>' +
+                    '<td><a href="/admin/connections/' + c.id + '" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>' + editBtn + ' ' + deleteBtn + '</td>' +
                 '</tr>';
             }).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
 
@@ -1520,11 +1521,28 @@
         });
     }
 
-    function showConnectionModal() {
+    function showConnectionModal(id) {
         if (currentDevices.length < 2) { alert('You need at least 2 devices'); return; }
         document.getElementById('connection-modal').classList.add('active');
         document.getElementById('connection-form').reset();
+        document.getElementById('connection-id').value = id || '';
         populateDeviceSelects();
+        if (id) {
+            var conn = null;
+            for (var i = 0; i < currentConnections.length; i++) {
+                if (currentConnections[i].id === id) { conn = currentConnections[i]; break; }
+            }
+            if (conn) {
+                document.getElementById('connection-name').value = conn.name;
+                document.getElementById('connection-type').value = conn.connection_type || 'ipsec';
+                document.getElementById('connection-notes').value = conn.notes || '';
+                document.getElementById('connection-source').value = conn.source_device_id;
+                document.getElementById('connection-dest').value = conn.dest_device_id;
+                document.querySelector('#connection-modal h2').textContent = 'Edit Connection';
+            }
+        } else {
+            document.querySelector('#connection-modal h2').textContent = 'Add Connection';
+        }
     }
     function closeConnectionModal() { document.getElementById('connection-modal').classList.remove('active'); }
 
@@ -1533,6 +1551,7 @@
     if (connectionForm) {
         connectionForm.addEventListener('submit', function(e) {
             e.preventDefault();
+            var id = document.getElementById('connection-id').value;
             var data = {
                 name: document.getElementById('connection-name').value,
                 source_device_id: parseInt(document.getElementById('connection-source').value),
@@ -1540,13 +1559,15 @@
                 connection_type: document.getElementById('connection-type').value,
                 notes: document.getElementById('connection-notes').value
             };
-            apiFetch(API_BASE + '/connections', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(function() {
+            var method = id ? 'PUT' : 'POST';
+            var url = id ? API_BASE + '/connections/' + id : API_BASE + '/connections';
+            apiFetch(url, { method: method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(function() {
                 closeConnectionModal();
                 loadConnections();
-                AC.showSuccess('Connection created');
+                AC.showSuccess(id ? 'Connection updated' : 'Connection created');
             })['catch'](function(err) {
-                console.error('Error creating connection:', err);
-                AC.showError('Error creating connection: ' + err.message);
+                console.error('Error saving connection:', err);
+                AC.showError('Error saving connection: ' + err.message);
             });
         });
     }
@@ -2282,7 +2303,8 @@
         'load-interfaces': function() { loadInterfaces(); },
         'iface-prev-page': function() { ifacePrevPage(); },
         'iface-next-page': function() { ifaceNextPage(); },
-        'show-connection-modal': function() { showConnectionModal(); },
+        'show-connection-modal': function(el) { showConnectionModal(el && el.dataset.id ? parseInt(el.dataset.id) : null); },
+        'edit-connection': function(el) { showConnectionModal(parseInt(el.dataset.id)); },
         'load-syslog': function() { loadSyslog(); },
         'load-more-syslog': function() { loadMoreSyslog(); },
         'set-flow-range': function(el) {

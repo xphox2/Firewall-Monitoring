@@ -218,7 +218,7 @@
             var pageMap = { 'dashboard':'', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
                 'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
-                'network':'network', 'probe-pending':'probe-pending', 'irc':'irc' };
+                'probe-pending':'probe-pending', 'irc':'irc' };
             currentPage = pageMap[lastSegment] || 'dashboard';
         }
 
@@ -226,7 +226,7 @@
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;', 'interfaces': '&#8646;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;',
-            'probes': '&#9678;', 'sites': '&#9962;', 'network': '&#9733;', 'probe-pending': '&#9200;', 'irc': '&#128172;'
+            'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;'
         };
         var navHtml = '<div class="nav-section"><div class="nav-section-title">Monitoring</div>' +
             '<a class="nav-item' + (currentPage === 'dashboard' ? ' active' : '') + '" href="/admin"><span class="nav-icon">' + pageIcons['dashboard'] + '</span> Dashboard</a>' +
@@ -241,7 +241,6 @@
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +
             '<a class="nav-item' + (currentPage === 'probes' ? ' active' : '') + '" href="/admin/probes"><span class="nav-icon">' + pageIcons['probes'] + '</span> Probes</a>' +
             '<a class="nav-item' + (currentPage === 'sites' ? ' active' : '') + '" href="/admin/sites"><span class="nav-icon">' + pageIcons['sites'] + '</span> Sites</a>' +
-            '<a class="nav-item' + (currentPage === 'network' ? ' active' : '') + '" href="/admin/network"><span class="nav-icon">' + pageIcons['network'] + '</span> Network</a>' +
             '<a class="nav-item' + (currentPage === 'probe-pending' ? ' active' : '') + '" href="/admin/probe-pending"><span class="nav-icon">' + pageIcons['probe-pending'] + '</span> Pending</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Configuration</div>' +
             '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active' : '') + '" href="/admin/alert-policies"><span class="nav-icon">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
