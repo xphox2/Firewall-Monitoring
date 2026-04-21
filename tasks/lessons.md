@@ -210,56 +210,37 @@ func setCBg(fg, bg string) string { return "\x03" + fg + "," + bg }
 ### Problem
 Edit modals (alert policies, etc.) are too small and cramped when opened directly via URL refresh. Content is squished and hard to read.
 
-### Root Causes Found
-
-1. **CSS specificity issue**
-   - Generic `.modal-content` class has `width: 520px; max-width: 92vw;` in base CSS
-   - Custom classes like `.policy-modal-content` get overridden because `.modal-content` has higher specificity
-   - The inline style fix `style="max-width:800px"` was too small
-
-2. **Always needing to increase modal size**
-   - User repeatedly had to ask for larger modals
-   - Same pattern: modal opens but content is cramped
-   - Repeated ~6 times for the same issue
-
-3. **Important CSS Rule:**
-   - When a generic class like `.modal-content` sets `width: 520px` (line 451 in admin-shared.css)
-   - A more specific selector like `.policy-modal-content` (line 495) does NOT override it due to specificity
-   - Need `!important` OR make selector more specific
+### Root Cause
+**Changed the base `.modal-content` CSS from `width: 520px` to `width: 1100px`**
+- Generic `.modal-content` class had a tiny default width of 520px
+- Every new modal needed special overrides to be usable
+- User had to ask ~6 times to fix the same problem
 
 ### Fix Applied
 ```css
-/* BAD - doesn't override base width due to specificity */
-.policy-modal-content {
-    max-width: 1200px;
-    width: 95vw;
+/* BEFORE (too small) */
+.modal-content {
+    width: 520px;
+    max-width: 92vw;
+    max-height: 85vh;
 }
 
-/* GOOD - uses ID + class for higher specificity with !important */
-#policy-modal .modal-content,
-#policy-modal.modal-content {
-    max-width: 1400px !important;
-    width: 98vw !important;
-    max-height: 95vh !important;
-    overflow-y: auto !important;
+/* AFTER (good default) */
+.modal-content {
+    width: 1100px;
+    max-width: 95vw;
+    max-height: 90vh;
 }
 ```
 
 ### Prevention
 
+**RULE: If you create a new modal, check the base `.modal-content` width FIRST**
+- If it's under 1000px, it's wrong - increase the base class
+- Don't add overrides - fix the base class
+- The base class should handle 95% of use cases
+
 **FOR ALL NEW MODALS:**
-1. Use ID-based selector: `#modal-id .modal-content`
-2. Always add `!important` to width/height overrides
-3. Target minimum 1400px width for complex edit forms (1400px for 9-column tables, 1000px+ for forms)
-4. Use `98vw` width and `95vh` height for maximum screen usage
-5. Document in comments: `/* Modal should be 1400px wide to accommodate 9-column table */`
-
-**CSS specificity ladder (highest to lowest):**
-```
-#id .class1 .class2  (0,1,1,2)
-#id .class           (0,1,0,1)
-.class1 .class2      (0,0,1,2)
-.class               (0,0,0,1)
-```
-
-**When in doubt, add `!important`** to ensure override takes effect.
+1. Check if base `.modal-content` width is at least 1000px
+2. If modal needs to be wider than 1100px, add inline style `style="width:XXXXpx"`
+3. Use `width:XXXXpx` (not `max-width`) as first property for guaranteed override
