@@ -319,7 +319,17 @@
             'user': 'User', 'srcuser': 'Src User', 'dstuser': 'Dst User', 'method': 'Method', 'url': 'URL'
         };
 
+        var hasSrcName = f.srcname !== undefined && f.srcname !== '';
+        var hasDstName = f.dstname !== undefined && f.dstname !== '';
+        if (hasSrcName && hasDstName) {
+            fields.push('<div style="display:flex;gap:8px;min-height:24px;grid-column:1/-1;"><span style="color:#8b949e;min-width:120px;">Src Name:</span><span>' + escapeHtml(f.srcname) + '</span><span style="color:#8b949e;margin-left:24px;min-width:120px;">Dst Name:</span><span>' + escapeHtml(f.dstname) + '</span></div>');
+        }
+
         importantFields.forEach(function(key) {
+            if (key === 'srcname' || key === 'dstname') {
+                if ((key === 'srcname' && hasSrcName && hasDstName) || (key === 'dstname' && hasDstName && hasSrcName)) return;
+                if (f[key] === undefined || f[key] === '') return;
+            }
             if (f[key] !== undefined && f[key] !== '') {
                 var label = fieldLabels[key] || key;
                 var val = f[key];
