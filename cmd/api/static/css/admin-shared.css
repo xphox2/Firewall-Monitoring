@@ -1050,6 +1050,98 @@ tr:hover {
     accent-color: #238636;
 }
 
+/* Modern Tab System */
+.tabs-container {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 8px;
+    margin-bottom: 20px;
+    overflow: hidden;
+}
+
+.tabs-nav {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #30363d #161b22;
+    padding-bottom: 2px;
+}
+
+.tabs-nav::-webkit-scrollbar {
+    height: 6px;
+}
+
+.tabs-nav::-webkit-scrollbar-track {
+    background: #161b22;
+    border-radius: 3px;
+}
+
+.tabs-nav::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+}
+
+.tabs-nav::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+}
+
+.tab-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: #8b949e;
+    font-size: 0.82rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+    position: relative;
+}
+
+.tab-item:hover {
+    color: #e6edf3;
+    background: rgba(56, 139, 253, 0.08);
+}
+
+.tab-item.active {
+    color: #58a6ff;
+    background: rgba(56, 139, 253, 0.15);
+    border-color: rgba(56, 139, 253, 0.3);
+}
+
+.tab-item.active::before {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 24px;
+    height: 3px;
+    background: #58a6ff;
+    border-radius: 3px 3px 0 0;
+}
+
+.tab-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.tab-item:hover .tab-icon {
+    opacity: 0.9;
+}
+
+.tab-item.active .tab-icon {
+    opacity: 1;
+}
+
 /* Gauge (device/connection status circles) */
 .gauge {
     position: relative;

@@ -911,9 +911,9 @@
     }
 
     function switchTab(name) {
-        document.querySelectorAll('.section-tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.tab-item').forEach(function(t) { t.classList.remove('active'); });
         document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
-        var tab = document.querySelector('[data-tab="' + name + '"]');
+        var tab = document.querySelector('.tab-item[data-tab="' + name + '"]');
         if (tab) tab.classList.add('active');
         var content = document.getElementById('tab-' + name);
         if (content) content.classList.add('active');
