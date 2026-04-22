@@ -664,6 +664,7 @@ tr:hover {
 .policy-rules-table td {
     padding: 8px 10px;
     vertical-align: middle;
+    color: #c9d1d9;
 }
 
 .policy-rules-table tbody tr:hover {
