@@ -1100,3 +1100,32 @@ tr:hover {
 .chart-card canvas {
     max-height: 250px;
 }
+
+.panel-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.panel-kpi-card {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 12px;
+    text-align: center;
+}
+
+.panel-kpi-card .kpi-label {
+    font-size: 0.72rem;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-bottom: 4px;
+}
+
+.panel-kpi-card .kpi-value {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: #c9d1d9;
+}
