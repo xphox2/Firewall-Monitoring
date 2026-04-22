@@ -134,13 +134,16 @@
 
         document.getElementById('sessionCount').textContent = ss.session_count ? ss.session_count.toLocaleString() : '0';
         document.getElementById('uptimeValue').textContent = formatUptime(ss.uptime);
-        var fwEl = document.getElementById('firmwareValue');
-        fwEl.textContent = ss.version || '-';
-        fwEl.title = ss.version || '-';
 
         // Extended status cards
         var extGrid = document.getElementById('extendedStats');
         var showExt = false;
+
+        if (ss.version) {
+            document.getElementById('firmwareValue').textContent = ss.version;
+            document.getElementById('cardFirmware').style.display = '';
+            showExt = true;
+        }
 
         if (ss.session_rate_1 || ss.session_rate_10 || ss.session_rate_30 || ss.session_rate_60) {
             document.getElementById('cardSessionRate').style.display = '';

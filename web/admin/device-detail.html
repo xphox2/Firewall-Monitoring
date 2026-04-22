@@ -69,14 +69,14 @@
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Uptime</div>
                     <div class="stat-value text-[1.2rem] font-bold text-[#e6edf3]" id="uptimeValue">-</div>
                 </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Firmware</div>
-                    <div class="stat-value firmware-value text-[0.75rem] font-bold text-[#e6edf3] truncate" id="firmwareValue" title="-">-</div>
-                </div>
             </div>
 
             <!-- Extended System Status Cards (shown when data exists) -->
-            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4" id="extendedStats" style="display:none">
+            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 mb-4" id="extendedStats" style="display:none">
+                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardFirmware">
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Firmware</div>
+                    <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="firmwareValue">-</div>
+                </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardSessionRate" style="display:none">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Session Rate</div>
                     <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="sessionRateValue">-</div>

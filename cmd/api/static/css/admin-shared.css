@@ -1221,18 +1221,3 @@ tr:hover {
     font-weight: 600;
     color: #c9d1d9;
 }
-
-/* Firmware value truncation */
-.firmware-value {
-    display: block;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    word-break: break-all;
-}
-
-/* Stat card overflow handling */
-.stat-card {
-    overflow: hidden;
-}
