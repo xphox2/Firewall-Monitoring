@@ -935,20 +935,24 @@ type InterfaceErrors struct {
 
 type SensorDetail struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
-	Timestamp time.Time `json:"timestamp" gorm:"index:idx_sensor_device_ts,priority:2"`
-	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_sensor_device_ts,priority:1"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_hwsensor_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_hwsensor_device_ts,priority:1"`
 	Name      string    `json:"name"`
 	Value     float64   `json:"value"`
 	Unit      string    `json:"unit"`
 	Status    string    `json:"status"`
 }
 
+func (SensorDetail) TableName() string { return "hardware_sensors" }
+
 type LicenseDetail struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_license_device_ts,priority:2"`
 	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_license_device_ts,priority:1"`
-	LicenseType string    `json:"license_type"`
+	Description string    `json:"description"`
+	ExpiryDate  string    `json:"expiry_date"`
 	Status      string    `json:"status"`
-	Expires     string    `json:"expires"`
 	Details     string    `json:"details"`
 }
+
+func (LicenseDetail) TableName() string { return "license_info" }
