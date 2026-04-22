@@ -1742,7 +1742,7 @@
             var sshUsername = document.getElementById('device-ssh-username').value;
             var sshPassword = document.getElementById('device-ssh-password').value;
             if (sshUsername) data.ssh_username = sshUsername;
-            if (sshPassword) data.ssh_password = sshPassword;
+            if (sshPassword && !/^\*+$/.test(sshPassword)) data.ssh_password = sshPassword;
             data.ssh_port = parseInt(document.getElementById('device-ssh-port').value) || 22;
             data.ssh_poll_interval = parseInt(document.getElementById('device-ssh-poll-interval').value) || 900;
             data.ssh_poll_enabled = document.getElementById('device-ssh-poll-enabled').checked;
