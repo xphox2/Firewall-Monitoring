@@ -1629,6 +1629,11 @@
             document.getElementById('device-wan-speed').value = d.wan_speed_mbps || 1000;
             document.getElementById('device-enabled').checked = d.enabled !== false;
             document.getElementById('device-public-visible').checked = d.public_visible !== false;
+            document.getElementById('device-ssh-username').value = d.ssh_username || '';
+            document.getElementById('device-ssh-password').value = '';
+            document.getElementById('device-ssh-port').value = d.ssh_port || 22;
+            document.getElementById('device-ssh-poll-interval').value = d.ssh_poll_interval || 900;
+            document.getElementById('device-ssh-poll-enabled').checked = d.ssh_poll_enabled === true;
         } else {
             document.getElementById('device-form').reset();
             document.getElementById('device-id').value = '';
@@ -1636,6 +1641,8 @@
             document.getElementById('device-snmp-version').value = '2c';
             document.getElementById('device-community').value = 'public';
             document.getElementById('device-wan-speed').value = '1000';
+            document.getElementById('device-ssh-port').value = '22';
+            document.getElementById('device-ssh-poll-interval').value = '900';
         }
         toggleV3Fields();
     }
@@ -1731,6 +1738,14 @@
             else data.probe_id = null;
             if (siteVal) data.site_id = parseInt(siteVal);
             else data.site_id = null;
+
+            var sshUsername = document.getElementById('device-ssh-username').value;
+            var sshPassword = document.getElementById('device-ssh-password').value;
+            if (sshUsername) data.ssh_username = sshUsername;
+            if (sshPassword) data.ssh_password = sshPassword;
+            data.ssh_port = parseInt(document.getElementById('device-ssh-port').value) || 22;
+            data.ssh_poll_interval = parseInt(document.getElementById('device-ssh-poll-interval').value) || 900;
+            data.ssh_poll_enabled = document.getElementById('device-ssh-poll-enabled').checked;
 
             var method = id ? 'PUT' : 'POST';
             var url = id ? API_BASE + '/devices/' + id : API_BASE + '/devices';
