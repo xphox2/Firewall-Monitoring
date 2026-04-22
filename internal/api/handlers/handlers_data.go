@@ -714,3 +714,75 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
+
+func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var sensors []models.SensorDetail
+	if err := c.ShouldBindJSON(&sensors); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(sensors) > 500 {
+		sensors = sensors[:500]
+	}
+
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	now := time.Now()
+	filtered := sensors[:0]
+	for i := range sensors {
+		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
+			continue
+		}
+		if sensors[i].Timestamp.IsZero() {
+			sensors[i].Timestamp = now
+		}
+		filtered = append(filtered, sensors[i])
+	}
+
+	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
+		log.Printf("ReceiveSensorDetails: DB save error: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save sensor details"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+}
+
+func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var licenses []models.LicenseDetail
+	if err := c.ShouldBindJSON(&licenses); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(licenses) > 100 {
+		licenses = licenses[:100]
+	}
+
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	now := time.Now()
+	filtered := licenses[:0]
+	for i := range licenses {
+		if licenses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[licenses[i].DeviceID] {
+			continue
+		}
+		if licenses[i].Timestamp.IsZero() {
+			licenses[i].Timestamp = now
+		}
+		filtered = append(filtered, licenses[i])
+	}
+
+	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
+		log.Printf("ReceiveLicenseDetails: DB save error: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save license details"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+}

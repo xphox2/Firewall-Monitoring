@@ -932,3 +932,23 @@ type InterfaceErrors struct {
 	OutErrors   uint64    `json:"out_errors"`
 	OutDiscards uint64    `json:"out_discards"`
 }
+
+type SensorDetail struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_sensor_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_sensor_device_ts,priority:1"`
+	Name      string    `json:"name"`
+	Value     float64   `json:"value"`
+	Unit      string    `json:"unit"`
+	Status    string    `json:"status"`
+}
+
+type LicenseDetail struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_license_device_ts,priority:2"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_license_device_ts,priority:1"`
+	LicenseType string    `json:"license_type"`
+	Status      string    `json:"status"`
+	Expires     string    `json:"expires"`
+	Details     string    `json:"details"`
+}

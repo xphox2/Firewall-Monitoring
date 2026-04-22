@@ -225,19 +225,12 @@
             <!-- Hardware Sensors Tab -->
             <div class="tab-content hidden" id="tab-sensors">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Hardware Sensors</h2>
-                    <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Name</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Value</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Unit</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sensorBody"></tbody>
-                    </table>
-                    <div id="sensorEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting hardware sensor data from probe…</div>
+                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                        Hardware Sensors
+                        <span id="sensorSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                    </h2>
+                    <div id="sensorCards" class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));"></div>
+                    <div id="sensorEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting hardware sensor data. Enable SSH polling to collect sensor info.</div>
                 </div>
             </div>
 
@@ -347,17 +340,12 @@
             <!-- Licenses Tab -->
             <div class="tab-content hidden" id="tab-licenses">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">License Information</h2>
-                    <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Description</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Expiry Date</th>
-                            </tr>
-                        </thead>
-                        <tbody id="licenseBody"></tbody>
-                    </table>
-                    <div id="licenseEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No license data available. License info requires FortiGate REST API integration (not available via SNMP).</div>
+                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                        License Information
+                        <span id="licenseSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                    </h2>
+                    <div id="licenseCards" class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));"></div>
+                    <div id="licenseEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No license data available. Enable SSH polling to collect license info.</div>
                 </div>
             </div>
 

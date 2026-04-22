@@ -515,20 +515,51 @@
 
     function renderSensors() {
         var sensors = deviceData.hardware_sensors || [];
-        var body = document.getElementById('sensorBody');
+        var container = document.getElementById('sensorCards');
         var empty = document.getElementById('sensorEmpty');
+        var summary = document.getElementById('sensorSummary');
 
-        if (sensors.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        if (sensors.length === 0) { container.innerHTML = ''; empty.style.display = 'block'; return; }
         empty.style.display = 'none';
+        summary.textContent = sensors.length + ' sensors';
 
-        body.innerHTML = sensors.map(function(s) {
-            return '<tr>' +
-                '<td>' + esc(s.name) + '</td>' +
-                '<td><strong>' + s.value + '</strong></td>' +
-                '<td>' + esc(s.unit || '') + '</td>' +
-                '<td><span class="badge ' + (s.status === 'alarm' ? 'critical' : 'online') + '">' + s.status + '</span></td>' +
-            '</tr>';
+        container.innerHTML = sensors.map(function(s) {
+            var isAlarm = s.status && s.status.toLowerCase() === 'alarm';
+            var statusClass = isAlarm ? 'alarm' : 'normal';
+            var borderColor = isAlarm ? '#f85149' : '#30363d';
+            var icon = getSensorIcon(s.name, s.unit);
+
+            return '<div style="background:#0d1117;border:1px solid ' + borderColor + ';border-radius:8px;padding:14px;">' +
+                '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+                    '<div style="width:36px;height:36px;background:#161b22;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#8b949e;font-size:1.2rem;">' + icon + '</div>' +
+                    '<div style="flex:1;min-width:0;">' +
+                        '<div style="color:#e6edf3;font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(s.name) + '">' + esc(s.name) + '</div>' +
+                        '<div style="color:#8b949e;font-size:0.72rem;text-transform:uppercase;">' + esc(s.unit || '') + '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;align-items:flex-end;">' +
+                    '<div style="color:#e6edf3;font-size:1.4rem;font-weight:700;">' + s.value.toFixed(1) + '</div>' +
+                    '<div style="display:flex;align-items:center;gap:6px;">' +
+                        '<span style="width:8px;height:8px;border-radius:50%;background:' + (isAlarm ? '#f85149' : '#3fb950') + ';"></span>' +
+                        '<span style="color:' + (isAlarm ? '#f85149' : '#8b949e') + ';font-size:0.75rem;text-transform:uppercase;">' + esc(s.status || 'unknown') + '</span>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
         }).join('');
+    }
+
+    function getSensorIcon(name, unit) {
+        if (!name) return '?';
+        var n = name.toLowerCase();
+        var u = (unit || '').toLowerCase();
+
+        if (u === 'c' || n.includes('temp') || n.includes('temperature')) return '🌡';
+        if (n.includes('fan') || n.includes('speed')) return '🌀';
+        if (u === 'v' || n.includes('volt') || n.includes('voltage')) return '⚡';
+        if (u === 'rpm') return '🔄';
+        if (n.includes('power') || n.includes('psu')) return '🔌';
+        if (n.includes('current') || u === 'a') return '📊';
+        return '📋';
     }
 
     function renderProcessors() {
@@ -702,32 +733,70 @@
 
     function renderLicenses() {
         var lics = deviceData.license_info || [];
-        var body = document.getElementById('licenseBody');
+        var container = document.getElementById('licenseCards');
         var empty = document.getElementById('licenseEmpty');
+        var summary = document.getElementById('licenseSummary');
 
-        if (!lics.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+        if (!lics.length) { container.innerHTML = ''; empty.style.display = 'block'; return; }
         empty.style.display = 'none';
+        summary.textContent = lics.length + ' licenses';
 
-        body.innerHTML = lics.map(function(l) {
-            var expiryStyle = '';
+        container.innerHTML = lics.map(function(l) {
+            var statusColor = '#8b949e';
+            var statusBg = 'rgba(139,148,158,0.15)';
+            var isLicensed = l.status && (l.status.toLowerCase() === 'licensed' || l.status.toLowerCase() === 'registered');
+            if (isLicensed) { statusColor = '#3fb950'; statusBg = 'rgba(63,185,80,0.15)'; }
+            else if (l.status && l.status.toLowerCase() === 'expired') { statusColor = '#f85149'; statusBg = 'rgba(248,81,73,0.15)'; }
+            else if (l.status && l.status.toLowerCase() === 'no_license') { statusColor = '#d29922'; statusBg = 'rgba(210,153,34,0.15)'; }
+
+            var expiryInfo = '';
             if (l.expiry_date && l.expiry_date !== 'N/A' && l.expiry_date !== '') {
                 var exp = new Date(l.expiry_date);
                 if (!isNaN(exp.getTime())) {
                     var now = new Date();
-                    var daysLeft = (exp - now) / 86400000;
-                    if (daysLeft < 0) expiryStyle = 'color:#f85149;font-weight:600';
-                    else if (daysLeft < 30) expiryStyle = 'color:#d29922;font-weight:600';
-                    else expiryStyle = 'color:#3fb950';
+                    var daysLeft = Math.ceil((exp - now) / 86400000);
+                    var expiryColor = '#8b949e';
+                    if (daysLeft < 0) { expiryColor = '#f85149'; expiryInfo = 'Expired ' + Math.abs(daysLeft) + ' days ago'; }
+                    else if (daysLeft < 30) { expiryColor = '#d29922'; expiryInfo = 'Expires in ' + daysLeft + ' days'; }
+                    else { expiryColor = '#3fb950'; expiryInfo = 'Expires ' + l.expiry_date; }
+                    expiryInfo = '<div style="color:' + expiryColor + ';font-size:0.75rem;margin-top:4px;">' + expiryInfo + '</div>';
+                } else {
+                    expiryInfo = '<div style="color:#8b949e;font-size:0.75rem;margin-top:4px;">Expires: ' + esc(l.expiry_date) + '</div>';
                 }
             }
-            return '<tr>' +
-                '<td>' + esc(l.description) + '</td>' +
-                '<td style="' + expiryStyle + '">' + esc(l.expiry_date || 'N/A') + '</td>' +
-            '</tr>';
+
+            var icon = getLicenseIcon(l.description);
+
+            return '<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;">' +
+                '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">' +
+                    '<div style="width:40px;height:40px;background:' + statusBg + ';border-radius:8px;display:flex;align-items:center;justify-content:center;color:' + statusColor + ';font-size:1.3rem;">' + icon + '</div>' +
+                    '<div style="flex:1;min-width:0;">' +
+                        '<div style="color:#e6edf3;font-size:0.9rem;font-weight:600;margin-bottom:2px;">' + esc(l.description || 'Unknown') + '</div>' +
+                        '<div style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;text-transform:uppercase;background:' + statusBg + ';color:' + statusColor + ';">' + esc(l.status || 'unknown') + '</div>' +
+                    '</div>' +
+                '</div>' +
+                expiryInfo +
+                (l.details ? '<div style="color:#8b949e;font-size:0.72rem;margin-top:6px;line-height:1.4;">' + esc(l.details) + '</div>' : '') +
+            '</div>';
         }).join('');
 
         var licTab = document.querySelector('[data-tab="licenses"]');
         if (licTab) licTab.textContent = 'Licenses (' + lics.length + ')';
+    }
+
+    function getLicenseIcon(description) {
+        if (!description) return '📋';
+        var d = description.toLowerCase();
+        if (d.includes('antivirus') || d.includes('av')) return '🦠';
+        if (d.includes('ips') || d.includes('intrusion')) return '🛡';
+        if (d.includes('web')) return '🌐';
+        if (d.includes('email') || d.includes('mail')) return '📧';
+        if (d.includes('forticare') || d.includes('support')) return '🎧';
+        if (d.includes('fortiguard')) return '🛡';
+        if (d.includes('cloud')) return '☁️';
+        if (d.includes('sd-wan')) return '🌍';
+        if (d.includes('vdom')) return '📦';
+        return '📋';
     }
 
     function renderConfigHistory() {
