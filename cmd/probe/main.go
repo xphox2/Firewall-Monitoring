@@ -204,6 +204,19 @@ func (p *Probe) Start() error {
 	p.SyslogTCPServer = syslog.NewSyslogReceiver(syslogCfg, nil)
 	p.SyslogUDPServer = syslog.NewUDPSyslogReceiver(syslogCfg, nil)
 
+	p.SyslogTCPServer.SetHandler(func(msg *models.SyslogMessage) {
+		relayMsg := relay.ConvertModelSyslogMessage(msg)
+		if err := p.RelayClient.SendSyslogMessage(relayMsg); err != nil {
+			log.Printf("Failed to relay TCP syslog: %v", err)
+		}
+	})
+	p.SyslogUDPServer.SetHandler(func(msg *models.SyslogMessage) {
+		relayMsg := relay.ConvertModelSyslogMessage(msg)
+		if err := p.RelayClient.SendSyslogMessage(relayMsg); err != nil {
+			log.Printf("Failed to relay UDP syslog: %v", err)
+		}
+	})
+
 	if err := p.SyslogTCPServer.Start(); err != nil {
 		log.Printf("Warning: TCP syslog server failed to start: %v", err)
 	} else {

@@ -34,6 +34,11 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		if messages[i].Timestamp.IsZero() {
 			messages[i].Timestamp = now
 		}
+		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" && h.db != nil {
+			if devID := h.db.ResolveDeviceByIP(messages[i].SourceIP); devID > 0 {
+				messages[i].DeviceID = devID
+			}
+		}
 	}
 	if err := h.db.SaveSyslogMessages(messages); err != nil {
 		log.Printf("Failed to batch save syslog messages: %v", err)

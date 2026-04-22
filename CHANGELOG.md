@@ -1,9 +1,11 @@
 # Changelog
 
-## [0.10.163] - 2026-04-21
+## [0.10.164] - 2026-04-21
 
 ### Fixed
-- **Range pills CSS**: Added `.range-pill` and `.panel-range-pill` CSS to admin-shared.css to fix styling of 1h/24h/7d/30d buttons in diagram panels.
+- **Syslog DeviceID resolution**: Probe now relays syslog messages to API, and API resolves DeviceID from SourceIP using ResolveDeviceByIP (same logic as flow samples). Added SetHandler callback to TCP/UDP syslog receivers.
+
+## [0.10.163] - 2026-04-21
 
 ## [0.10.162] - 2026-04-21
 

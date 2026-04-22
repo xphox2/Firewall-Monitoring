@@ -39,6 +39,7 @@ type SyslogReceiver struct {
 	stopCh     chan struct{}
 	connWg     sync.WaitGroup
 	allowedIPs map[string]bool
+	handler    func(*models.SyslogMessage)
 }
 
 func NewSyslogReceiver(cfg *Config, db *database.Database) *SyslogReceiver {
@@ -54,6 +55,10 @@ func NewSyslogReceiver(cfg *Config, db *database.Database) *SyslogReceiver {
 		stopCh:     make(chan struct{}),
 		allowedIPs: allowed,
 	}
+}
+
+func (s *SyslogReceiver) SetHandler(h func(*models.SyslogMessage)) {
+	s.handler = h
 }
 
 func (s *SyslogReceiver) Start() error {
@@ -178,8 +183,13 @@ func (s *SyslogReceiver) handleConnection(conn net.Conn) {
 					msg.SourceIP = conn.RemoteAddr().String()
 				}
 
-				if err := s.DB.SaveSyslogMessage(msg); err != nil {
-					log.Printf("Failed to save syslog message: %v", err)
+				if s.handler != nil {
+					s.handler(msg)
+				}
+				if s.DB != nil {
+					if err := s.DB.SaveSyslogMessage(msg); err != nil {
+						log.Printf("Failed to save syslog message: %v", err)
+					}
 				}
 			}
 		}
@@ -386,6 +396,7 @@ type UDPSyslogReceiver struct {
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
 	allowedIPs map[string]bool
+	handler    func(*models.SyslogMessage)
 }
 
 func NewUDPSyslogReceiver(cfg *Config, db *database.Database) *UDPSyslogReceiver {
@@ -401,6 +412,10 @@ func NewUDPSyslogReceiver(cfg *Config, db *database.Database) *UDPSyslogReceiver
 		stopCh:     make(chan struct{}),
 		allowedIPs: allowed,
 	}
+}
+
+func (u *UDPSyslogReceiver) SetHandler(h func(*models.SyslogMessage)) {
+	u.handler = h
 }
 
 func (u *UDPSyslogReceiver) Start() error {
@@ -478,8 +493,13 @@ func (u *UDPSyslogReceiver) readLoop() {
 
 		if msg != nil {
 			msg.SourceIP = clientAddr.IP.String()
-			if err := u.DB.SaveSyslogMessage(msg); err != nil {
-				log.Printf("Failed to save UDP syslog message: %v", err)
+			if u.handler != nil {
+				u.handler(msg)
+			}
+			if u.DB != nil {
+				if err := u.DB.SaveSyslogMessage(msg); err != nil {
+					log.Printf("Failed to save UDP syslog message: %v", err)
+				}
 			}
 		}
 	}
