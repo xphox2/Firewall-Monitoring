@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.165] - 2026-04-21
+
+### Added
+- **SSH polling for FortiGate devices**: Added SSH-based monitoring via read-only admin account. Devices can now be configured with SSH credentials (username, password, port, poll interval) to enable config backup, change detection, process monitoring, and interface error tracking via SSH.
+- **Config history**: New "Config History" tab on device detail page shows stored configuration revisions with checksums, timestamps, and download buttons.
+- **Process Monitor**: New "Process Monitor" tab displays historical process CPU usage from `diagnose sys top` command.
+- **Interface Errors**: New "Interface Errors" tab displays historical interface error counts from `diagnose netlink interface list`.
+- **Config change alerts**: CONFIG_CHANGE alert type fires when device config checksum changes.
+
+### Fixed
+- **SSH password encryption consistency**: Fixed CreateDevice and UpdateDevice to use `db.EncryptField()` instead of separate `crypto.Encrypt()`. This ensures SSH passwords are encrypted with the same algorithm (AES-256-GCM + base64 + `{enc}` prefix) that `DecryptDeviceSecrets()` expects, fixing incompatibility where passwords encrypted by CreateDevice could not be decrypted by GetDevicesByProbe.
+- **Config revision dedup**: Server now skips storing config revisions with duplicate checksums (same as previous), and enforces "last 5 revisions per device" retention policy.
+
 ## [0.10.164] - 2026-04-21
 
 ### Fixed

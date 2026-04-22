@@ -15,6 +15,7 @@ import (
 	"firewall-mon/internal/relay"
 	"firewall-mon/internal/sflow"
 	"firewall-mon/internal/snmp"
+	"firewall-mon/internal/ssh"
 	"firewall-mon/internal/syslog"
 )
 
@@ -275,6 +276,7 @@ func (p *Probe) Start() error {
 
 	go p.startHeartbeat()
 	go p.startSNMPPolling()
+	go p.startSSHPolling()
 
 	fmt.Println("========================================")
 	fmt.Println("  Probe is running")
@@ -428,6 +430,112 @@ func (p *Probe) cleanup() {
 
 	if p.RelayClient != nil {
 		p.RelayClient.Stop()
+	}
+}
+
+func (p *Probe) startSSHPolling() {
+	wait := time.NewTicker(5 * time.Minute)
+	defer wait.Stop()
+
+	for {
+		select {
+		case <-p.stopChan:
+			return
+		case <-wait.C:
+			devices, err := p.RelayClient.FetchDevices()
+			if err != nil {
+				log.Printf("SSH device fetch failed: %v", err)
+				continue
+			}
+			for _, dev := range devices {
+				if !dev.Enabled || !dev.SSHPollEnabled || dev.SSHUsername == "" || dev.SSHPassword == "" {
+					continue
+				}
+				go p.sshPollDevice(dev)
+			}
+		}
+	}
+}
+
+func (p *Probe) sshPollDevice(dev relay.DeviceInfo) {
+	sshClient := ssh.NewFortiGateClient(dev.IPAddress, dev.SSHPort, dev.SSHUsername, dev.SSHPassword)
+	if err := sshClient.Connect(); err != nil {
+		log.Printf("SSH connect failed for %s (%s): %v", dev.Name, dev.IPAddress, err)
+		return
+	}
+	defer sshClient.Close()
+
+	checksum, err := sshClient.GetConfigChecksum()
+	if err != nil {
+		log.Printf("SSH config checksum failed for %s: %v", dev.Name, err)
+	} else {
+		p.checkAndSendConfigRevision(dev, checksum, sshClient)
+	}
+
+	processOutput, err := sshClient.GetProcessTop()
+	if err == nil {
+		p.sendProcessSnapshot(dev, processOutput)
+	}
+
+	interfaceOutput, err := sshClient.GetInterfaceList()
+	if err == nil {
+		p.sendInterfaceErrors(dev, interfaceOutput)
+	}
+}
+
+func (p *Probe) checkAndSendConfigRevision(dev relay.DeviceInfo, checksum string, client *ssh.FortiGateClient) {
+	config, err := client.GetConfig()
+	if err != nil {
+		log.Printf("SSH get config failed for %s: %v", dev.Name, err)
+		return
+	}
+
+	rev := relay.ConfigRevision{
+		DeviceID:   dev.ID,
+		Timestamp:  time.Now(),
+		Checksum:   checksum,
+		ConfigText: config,
+		Length:     len(config),
+	}
+	if err := p.RelayClient.SendConfigRevision(&rev); err != nil {
+		log.Printf("Failed to send config revision for %s: %v", dev.Name, err)
+	}
+}
+
+func (p *Probe) sendProcessSnapshot(dev relay.DeviceInfo, output string) {
+	processes := ssh.ParseProcessTop(output)
+	if len(processes) == 0 {
+		return
+	}
+	snap := relay.ProcessSnapshot{
+		DeviceID:  dev.ID,
+		Timestamp: time.Now(),
+		Processes: processes,
+	}
+	if err := p.RelayClient.SendProcessSnapshot(&snap); err != nil {
+		log.Printf("Failed to send process snapshot for %s: %v", dev.Name, err)
+	}
+}
+
+func (p *Probe) sendInterfaceErrors(dev relay.DeviceInfo, output string) {
+	interfaces := ssh.ParseInterfaceList(output)
+	if len(interfaces) == 0 {
+		return
+	}
+	now := time.Now()
+	for _, iface := range interfaces {
+		snap := relay.InterfaceErrorSnapshot{
+			DeviceID:    dev.ID,
+			Timestamp:   now,
+			Interface:   iface.Name,
+			InErrors:    iface.InErrors,
+			InDiscards:  iface.InDiscards,
+			OutErrors:   iface.OutErrors,
+			OutDiscards: iface.OutDiscards,
+		}
+		if err := p.RelayClient.SendInterfaceErrorSnapshot(&snap); err != nil {
+			log.Printf("Failed to send interface errors for %s/%s: %v", dev.Name, iface.Name, err)
+		}
 	}
 }
 

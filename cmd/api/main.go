@@ -278,6 +278,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.POST("/probes/:id/sdwan-health", middleware.ProbeRateLimiter(), handler.ReceiveSDWANHealth)
 		api.POST("/probes/:id/license-info", middleware.ProbeRateLimiter(), handler.ReceiveLicenseInfo)
 		api.POST("/probes/:id/interface-addresses", middleware.ProbeRateLimiter(), handler.ReceiveInterfaceAddresses)
+		api.POST("/probes/:id/config-revision", middleware.ProbeRateLimiter(), handler.ReceiveConfigRevision)
+		api.POST("/probes/:id/process-snapshot", middleware.ProbeRateLimiter(), handler.ReceiveProcessSnapshot)
+		api.POST("/probes/:id/interface-errors", middleware.ProbeRateLimiter(), handler.ReceiveInterfaceErrors)
 
 		// Probe fetches its assigned devices
 		api.GET("/probes/:id/devices", middleware.ProbeRateLimiter(), handler.GetProbeDevices)
@@ -425,6 +428,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/devices/:id/security-stats", handler.GetDeviceSecurityStats)
 		admin.GET("/api/devices/:id/sdwan-health", handler.GetDeviceSDWANHealth)
 		admin.GET("/api/devices/:id/ha-status", handler.GetDeviceHAStatus)
+		admin.GET("/api/devices/:id/config-history", handler.GetDeviceConfigHistory)
+		admin.GET("/api/devices/:id/config-history/:revId", handler.GetDeviceConfigRevisionDownload)
+		admin.GET("/api/devices/:id/process-history", handler.GetDeviceProcessHistory)
+		admin.GET("/api/devices/:id/interface-errors", handler.GetDeviceInterfaceErrors)
+		admin.GET("/api/devices/:id/interface-errors-latest", handler.GetDeviceInterfaceErrorsLatest)
 
 		// Alert policies
 		admin.GET("/api/alert-policies", handler.ListAlertPolicies)

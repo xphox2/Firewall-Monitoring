@@ -45,15 +45,15 @@ type RelayClient struct {
 }
 
 type TrapEvent struct {
-	ID          uint      `json:"id"`
-	Timestamp   time.Time `json:"timestamp"`
-	DeviceID    uint      `json:"device_id"`
-	ProbeID     uint      `json:"probe_id"`
-	SourceIP    string    `json:"source_ip"`
-	TrapOID     string    `json:"trap_oid"`
-	TrapType    string    `json:"trap_type"`
-	Severity    string    `json:"severity"`
-	Message     string    `json:"message"`
+	ID        uint      `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	DeviceID  uint      `json:"device_id"`
+	ProbeID   uint      `json:"probe_id"`
+	SourceIP  string    `json:"source_ip"`
+	TrapOID   string    `json:"trap_oid"`
+	TrapType  string    `json:"trap_type"`
+	Severity  string    `json:"severity"`
+	Message   string    `json:"message"`
 }
 
 type PingResult struct {
@@ -508,14 +508,14 @@ type HeartbeatRequest struct {
 
 func ConvertModelTrapEvent(m *models.TrapEvent) *TrapEvent {
 	return &TrapEvent{
-		ID:          m.ID,
-		Timestamp:   m.Timestamp,
-		DeviceID:    m.DeviceID,
-		SourceIP:    m.SourceIP,
-		TrapOID:     m.TrapOID,
-		TrapType:    m.TrapType,
-		Severity:    m.Severity,
-		Message:     m.Message,
+		ID:        m.ID,
+		Timestamp: m.Timestamp,
+		DeviceID:  m.DeviceID,
+		SourceIP:  m.SourceIP,
+		TrapOID:   m.TrapOID,
+		TrapType:  m.TrapType,
+		Severity:  m.Severity,
+		Message:   m.Message,
 	}
 }
 
@@ -539,19 +539,24 @@ func (r *RelayClient) GetProbeID() uint {
 }
 
 type DeviceInfo struct {
-	ID             uint   `json:"id"`
-	Name           string `json:"name"`
-	IPAddress      string `json:"ip_address"`
-	SNMPPort       int    `json:"snmp_port"`
-	SNMPCommunity  string `json:"snmp_community"`
-	SNMPVersion    string `json:"snmp_version"`
-	SNMPV3Username string `json:"snmpv3_username"`
-	SNMPV3AuthType string `json:"snmpv3_auth_type"`
-	SNMPV3AuthPass string `json:"snmpv3_auth_pass"`
-	SNMPV3PrivType string `json:"snmpv3_priv_type"`
-	SNMPV3PrivPass string `json:"snmpv3_priv_pass"`
-	Enabled        bool   `json:"enabled"`
-	Vendor         string `json:"vendor"`
+	ID              uint   `json:"id"`
+	Name            string `json:"name"`
+	IPAddress       string `json:"ip_address"`
+	SNMPPort        int    `json:"snmp_port"`
+	SNMPCommunity   string `json:"snmp_community"`
+	SNMPVersion     string `json:"snmp_version"`
+	SNMPV3Username  string `json:"snmpv3_username"`
+	SNMPV3AuthType  string `json:"snmpv3_auth_type"`
+	SNMPV3AuthPass  string `json:"snmpv3_auth_pass"`
+	SNMPV3PrivType  string `json:"snmpv3_priv_type"`
+	SNMPV3PrivPass  string `json:"snmpv3_priv_pass"`
+	Enabled         bool   `json:"enabled"`
+	Vendor          string `json:"vendor"`
+	SSHUsername     string `json:"ssh_username"`
+	SSHPassword     string `json:"ssh_password"`
+	SSHPort         int    `json:"ssh_port"`
+	SSHPollEnabled  bool   `json:"ssh_poll_enabled"`
+	SSHPollInterval int    `json:"ssh_poll_interval"`
 }
 
 type DevicesResponse struct {
@@ -650,6 +655,102 @@ func (r *RelayClient) SendVPNStatuses(statuses []models.VPNStatus) error {
 		return nil
 	}
 	return fmt.Errorf("send VPN statuses returned status %d", resp.StatusCode)
+}
+
+type ConfigRevision struct {
+	ID         uint      `json:"id"`
+	DeviceID   uint      `json:"device_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	Checksum   string    `json:"checksum"`
+	ConfigText string    `json:"config_text"`
+	Length     int       `json:"length"`
+}
+
+func (r *RelayClient) SendConfigRevision(rev *ConfigRevision) error {
+	if !r.approved.Load() {
+		return fmt.Errorf("probe not approved")
+	}
+
+	jsonData, err := json.Marshal(rev)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config revision: %w", err)
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/config-revision"
+	resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send config revision: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("send config revision returned status %d", resp.StatusCode)
+}
+
+type ProcessSnapshot struct {
+	ID        uint                 `json:"id"`
+	DeviceID  uint                 `json:"device_id"`
+	Timestamp time.Time            `json:"timestamp"`
+	Processes []models.ProcessInfo `json:"processes"`
+}
+
+func (r *RelayClient) SendProcessSnapshot(snap *ProcessSnapshot) error {
+	if !r.approved.Load() {
+		return fmt.Errorf("probe not approved")
+	}
+
+	jsonData, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal process snapshot: %w", err)
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/process-snapshot"
+	resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send process snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("send process snapshot returned status %d", resp.StatusCode)
+}
+
+type InterfaceErrorSnapshot struct {
+	ID          uint      `json:"id"`
+	DeviceID    uint      `json:"device_id"`
+	Timestamp   time.Time `json:"timestamp"`
+	Interface   string    `json:"interface"`
+	InErrors    uint64    `json:"in_errors"`
+	InDiscards  uint64    `json:"in_discards"`
+	OutErrors   uint64    `json:"out_errors"`
+	OutDiscards uint64    `json:"out_discards"`
+}
+
+func (r *RelayClient) SendInterfaceErrorSnapshot(snap *InterfaceErrorSnapshot) error {
+	if !r.approved.Load() {
+		return fmt.Errorf("probe not approved")
+	}
+
+	jsonData, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal interface error snapshot: %w", err)
+	}
+
+	url := r.Config.ServerURL + "/api/probes/" + fmt.Sprint(r.probeID) + "/interface-errors"
+	resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send interface error snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("send interface error snapshot returned status %d", resp.StatusCode)
 }
 
 func ConvertModelSyslogMessage(m *models.SyslogMessage) *SyslogMessage {
