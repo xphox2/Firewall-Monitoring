@@ -678,16 +678,72 @@
         }).then(function() {
             populateFilterProbes('syslog-filter-probe');
             populateFilterDevices('syslog-filter-device');
-            var params = buildSyslogParams(100);
+            var params = buildSyslogParams(10);
             return apiFetch(API_BASE + '/syslog?' + params);
         }).then(function(result) {
             if (!result) return;
-            var messages = result.data || [];
+            var messages = (result.data && result.data.messages) ? result.data.messages : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
             renderSyslogTable(messages, false);
             syslogOffset = messages.length;
+            updateSyslogPagination(messages.length, total);
             loadSyslogCharts();
         })['catch'](function(e) {
             console.error('Failed to load syslog:', e);
+        });
+    }
+
+    var syslogTotalCount = 0;
+
+    function updateSyslogPagination(count, total) {
+        syslogTotalCount = total;
+        var container = document.getElementById('syslog-pagination');
+        if (!container) return;
+        if (total === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        var from = syslogOffset - count + 1;
+        var to = syslogOffset;
+        var totalPages = Math.ceil(total / 10);
+        var currentPage = Math.ceil(syslogOffset / 10);
+        container.innerHTML =
+            '<span style="color:#8b949e;">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
+            '<button class="btn secondary sm" data-action="prev-syslog"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
+            '<span style="color:#8b949e;">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
+            '<button class="btn secondary sm" data-action="next-syslog"' + (syslogOffset >= total ? ' disabled' : '') + '>Next</button>';
+    }
+
+    function prevSyslog() {
+        if (syslogOffset <= 10) return;
+        syslogOffset -= 20;
+        if (syslogOffset < 0) syslogOffset = 0;
+        var params = buildSyslogParams(10);
+        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
+            if (!result) return;
+            var messages = (result.data && result.data.messages) ? result.data.messages : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            renderSyslogTable(messages, false);
+            syslogOffset += messages.length;
+            updateSyslogPagination(messages.length, total);
+        })['catch'](function(e) {
+            console.error('Failed to load prev syslog:', e);
+        });
+    }
+
+    function nextSyslog() {
+        var params = buildSyslogParams(10);
+        apiFetch(API_BASE + '/syslog?' + params + '&offset=' + syslogOffset).then(function(result) {
+            if (!result) return;
+            var messages = (result.data && result.data.messages) ? result.data.messages : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (messages.length > 0) {
+                renderSyslogTable(messages, false);
+                syslogOffset += messages.length;
+                updateSyslogPagination(messages.length, total);
+            }
+        })['catch'](function(e) {
+            console.error('Failed to load next syslog:', e);
         });
     }
 
@@ -1028,7 +1084,7 @@
             p = apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
         }
         p.then(function() {
-            var params = buildAlertParams(100);
+            var params = buildAlertParams(10);
             return apiFetch(API_BASE + '/alerts?' + params);
         }).then(function(result) {
             if (!result) return;
@@ -1055,8 +1111,8 @@
         }
         var from = alertsOffset - count + 1;
         var to = alertsOffset;
-        var totalPages = Math.ceil(total / 100);
-        var currentPage = Math.ceil(alertsOffset / 100);
+        var totalPages = Math.ceil(total / 10);
+        var currentPage = Math.ceil(alertsOffset / 10);
         container.innerHTML =
             '<span style="color:#8b949e;">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
             '<button class="btn secondary sm" data-action="prev-alerts"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
@@ -1065,10 +1121,10 @@
     }
 
     function prevAlerts() {
-        if (alertsOffset <= 100) return;
-        alertsOffset -= 200;
+        if (alertsOffset <= 10) return;
+        alertsOffset -= 20;
         if (alertsOffset < 0) alertsOffset = 0;
-        var params = buildAlertParams(100);
+        var params = buildAlertParams(10);
         apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
             if (!result) return;
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
@@ -1082,7 +1138,7 @@
     }
 
     function nextAlerts() {
-        var params = buildAlertParams(100);
+        var params = buildAlertParams(10);
         apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
             if (!result) return;
             var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
@@ -1099,8 +1155,12 @@
 
     function buildAlertParams(limit) {
         var parts = ['limit=' + limit];
+        var dev = document.getElementById('alerts-filter-device');
+        var type = document.getElementById('alerts-filter-type');
         var sev = document.getElementById('alerts-filter-severity');
         var ack = document.getElementById('alerts-filter-ack');
+        if (dev && dev.value) parts.push('device_id=' + dev.value);
+        if (type && type.value) parts.push('alert_type=' + encodeURIComponent(type.value));
         if (sev && sev.value) parts.push('severity=' + sev.value);
         if (ack && ack.value) parts.push('acknowledged=' + ack.value);
         return parts.join('&');
@@ -2529,6 +2589,8 @@
         'next-alerts': function() { nextAlerts(); },
         'load-traps': function() { loadTraps(); },
         'load-more-traps': function() { loadMoreTraps(); },
+        'prev-syslog': function() { prevSyslog(); },
+        'next-syslog': function() { nextSyslog(); },
         'change-password': function() { changePassword(); },
         'save-settings': function() { saveSettings(); },
         'test-email': function() { testEmail(); },

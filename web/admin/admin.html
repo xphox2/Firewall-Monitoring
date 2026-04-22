@@ -398,9 +398,7 @@
                         <tbody></tbody>
                     </table>
                 </div>
-                <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn secondary" id="syslog-load-more" data-action="load-more-syslog">Load More</button>
-                </div>
+                <div id="syslog-pagination" style="margin-top: 12px; text-align: center;"></div>
             </div>
         </div>
 
@@ -528,6 +526,8 @@
             <div class="card">
                 <div class="card-header"><h2>Alert History</h2></div>
                 <div class="filter-bar">
+                    <select id="alerts-filter-device"><option value="">All Devices</option></select>
+                    <select id="alerts-filter-type"><option value="">All Types</option></select>
                     <select id="alerts-filter-severity">
                         <option value="">All Severities</option>
                         <option value="critical">Critical</option>

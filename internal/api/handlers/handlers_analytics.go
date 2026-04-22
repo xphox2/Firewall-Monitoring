@@ -108,13 +108,13 @@ func (h *Handler) GetTraps(c *gin.Context) {
 
 func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.SyslogMessage{}))
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"messages": []models.SyslogMessage{}, "total": 0}))
 		return
 	}
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
+	query := h.db.Gorm().Order("timestamp DESC")
 
 	if probeID := c.Query("probe_id"); probeID != "" {
 		query = query.Where("probe_id = ?", probeID)
@@ -134,11 +134,32 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	}
 
 	var messages []models.SyslogMessage
-	if err := query.Find(&messages).Error; err != nil {
+	if err := query.Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get syslog messages"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(messages))
+
+	var total int64
+	countQuery := h.db.Gorm().Model(&models.SyslogMessage{})
+	if probeID := c.Query("probe_id"); probeID != "" {
+		countQuery = countQuery.Where("probe_id = ?", probeID)
+	}
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		countQuery = countQuery.Where("device_id = ?", deviceID)
+	}
+	if severity := c.Query("severity"); severity != "" {
+		if s, err := strconv.Atoi(severity); err == nil {
+			countQuery = countQuery.Where("severity <= ?", s)
+		}
+	}
+	if search := c.Query("search"); search != "" {
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(search)
+		like := "%" + escaped + "%"
+		countQuery = countQuery.Where("message LIKE ? ESCAPE '\\' OR hostname LIKE ? ESCAPE '\\' OR app_name LIKE ? ESCAPE '\\'", like, like, like)
+	}
+	countQuery.Count(&total)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"messages": messages, "total": total}))
 }
 
 func (h *Handler) GetSyslogMessage(c *gin.Context) {
