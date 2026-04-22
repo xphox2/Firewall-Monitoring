@@ -641,11 +641,18 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 	if !am.canAlertWithCooldown(key, time.Now(), cooldown) {
 		return
 	}
+	oldShort, newShort := oldChecksum, newChecksum
+	if len(oldChecksum) >= 8 {
+		oldShort = oldChecksum[:8]
+	}
+	if len(newChecksum) >= 8 {
+		newShort = newChecksum[:8]
+	}
 	am.saveAlert(&models.Alert{
 		DeviceID:  deviceID,
 		AlertType: "CONFIG_CHANGE",
 		Severity:  "warning",
-		Message:   fmt.Sprintf("Config change detected on %s: checksum changed from %s to %s", device.Name, oldChecksum[:8], newChecksum[:8]),
+		Message:   fmt.Sprintf("Config change detected on %s: checksum changed from %s to %s", device.Name, oldShort, newShort),
 		Timestamp: time.Now(),
 	})
 }

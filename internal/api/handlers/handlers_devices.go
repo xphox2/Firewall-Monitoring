@@ -85,10 +85,6 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
-	if device.SSHPassword != "" {
-		device.SSHPassword = h.db.EncryptField(device.SSHPassword)
-	}
-
 	device.ID = 0
 	device.Status = "unknown"
 	device.CreatedAt = time.Time{}

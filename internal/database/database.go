@@ -594,7 +594,7 @@ func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
 			Limit(int(deleteCount)).
 			Pluck("id", &toDelete)
 		if len(toDelete) > 0 {
-			tx.Where("id IN ?", toDelete).Delete(&models.DeviceConfigRevision{})
+			tx.Where("device_id = ? AND id IN ?", rev.DeviceID, toDelete).Delete(&models.DeviceConfigRevision{})
 		}
 	}
 	return tx.Commit().Error
