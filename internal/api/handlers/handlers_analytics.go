@@ -14,7 +14,7 @@ import (
 
 func (h *Handler) GetAlerts(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.Alert{}))
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": []models.Alert{}, "total": 0}))
 		return
 	}
 
@@ -41,7 +41,23 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(alerts))
+	var total int64
+	countQuery := h.db.Gorm().Model(&models.Alert{})
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		countQuery = countQuery.Where("device_id = ?", deviceID)
+	}
+	if severity := c.Query("severity"); severity != "" {
+		countQuery = countQuery.Where("severity = ?", severity)
+	}
+	if alertType := c.Query("alert_type"); alertType != "" {
+		countQuery = countQuery.Where("alert_type = ?", alertType)
+	}
+	if ack := c.Query("acknowledged"); ack != "" {
+		countQuery = countQuery.Where("acknowledged = ?", ack == "true")
+	}
+	countQuery.Count(&total)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": alerts, "total": total}))
 }
 
 func (h *Handler) GetAlert(c *gin.Context) {

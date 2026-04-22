@@ -1032,12 +1032,68 @@
             return apiFetch(API_BASE + '/alerts?' + params);
         }).then(function(result) {
             if (!result) return;
-            var alerts = result.data || [];
+            var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
             renderAlertsTable(alerts, false);
             alertsOffset = alerts.length;
+            updateAlertPagination(alerts.length, total);
             loadAlertCharts();
         })['catch'](function(e) {
             console.error('Failed to load alerts:', e);
+        });
+    }
+
+    var alertTotalCount = 0;
+
+    function updateAlertPagination(count, total) {
+        alertTotalCount = total;
+        var container = document.getElementById('alerts-pagination');
+        if (!container) return;
+        if (total === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        var from = alertsOffset - count + 1;
+        var to = alertsOffset;
+        var totalPages = Math.ceil(total / 100);
+        var currentPage = Math.ceil(alertsOffset / 100);
+        container.innerHTML =
+            '<span style="color:#8b949e;">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
+            '<button class="btn secondary sm" data-action="prev-alerts"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
+            '<span style="color:#8b949e;">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
+            '<button class="btn secondary sm" data-action="next-alerts"' + (alertsOffset >= total ? ' disabled' : '') + '>Next</button>';
+    }
+
+    function prevAlerts() {
+        if (alertsOffset <= 100) return;
+        alertsOffset -= 200;
+        if (alertsOffset < 0) alertsOffset = 0;
+        var params = buildAlertParams(100);
+        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
+            if (!result) return;
+            var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            renderAlertsTable(alerts, false);
+            alertsOffset += alerts.length;
+            updateAlertPagination(alerts.length, total);
+        })['catch'](function(e) {
+            console.error('Failed to load prev alerts:', e);
+        });
+    }
+
+    function nextAlerts() {
+        var params = buildAlertParams(100);
+        apiFetch(API_BASE + '/alerts?' + params + '&offset=' + alertsOffset).then(function(result) {
+            if (!result) return;
+            var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (alerts.length > 0) {
+                renderAlertsTable(alerts, false);
+                alertsOffset += alerts.length;
+                updateAlertPagination(alerts.length, total);
+            }
+        })['catch'](function(e) {
+            console.error('Failed to load next alerts:', e);
         });
     }
 
@@ -2469,6 +2525,8 @@
         'load-more-flows': function() { loadMoreFlows(); },
         'load-alerts': function() { loadAlerts(); },
         'load-more-alerts': function() { loadMoreAlerts(); },
+        'prev-alerts': function() { prevAlerts(); },
+        'next-alerts': function() { nextAlerts(); },
         'load-traps': function() { loadTraps(); },
         'load-more-traps': function() { loadMoreTraps(); },
         'change-password': function() { changePassword(); },
