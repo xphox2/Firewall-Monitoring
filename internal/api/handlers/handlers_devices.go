@@ -85,6 +85,10 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
+	if device.SSHPassword != "" {
+		device.SSHPassword = h.db.EncryptField(device.SSHPassword)
+	}
+
 	device.ID = 0
 	device.Status = "unknown"
 	device.CreatedAt = time.Time{}
@@ -116,24 +120,29 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	}
 
 	allowedFields := map[string]bool{
-		"name":             true,
-		"hostname":         true,
-		"ip_address":       true,
-		"snmp_port":        true,
-		"snmp_community":   true,
-		"snmp_version":     true,
-		"snmpv3_username":  true,
-		"snmpv3_auth_type": true,
-		"snmpv3_auth_pass": true,
-		"snmpv3_priv_type": true,
-		"snmpv3_priv_pass": true,
-		"location":         true,
-		"description":      true,
-		"enabled":          true,
-		"public_visible":   true,
-		"site_id":          true,
-		"probe_id":         true,
-		"vendor":           true,
+		"name":              true,
+		"hostname":          true,
+		"ip_address":        true,
+		"snmp_port":         true,
+		"snmp_community":    true,
+		"snmp_version":      true,
+		"snmpv3_username":   true,
+		"snmpv3_auth_type":  true,
+		"snmpv3_auth_pass":  true,
+		"snmpv3_priv_type":  true,
+		"snmpv3_priv_pass":  true,
+		"location":          true,
+		"description":       true,
+		"enabled":           true,
+		"public_visible":    true,
+		"site_id":           true,
+		"probe_id":          true,
+		"vendor":            true,
+		"ssh_username":      true,
+		"ssh_password":      true,
+		"ssh_port":          true,
+		"ssh_poll_enabled":  true,
+		"ssh_poll_interval": true,
 	}
 
 	var updates map[string]interface{}
@@ -205,6 +214,13 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 			if str, isStr := val.(string); isStr && str != "" {
 				filteredUpdates[field] = h.db.EncryptField(str)
 			}
+		}
+	}
+
+	// Encrypt SSH password if present
+	if sshPw, ok := filteredUpdates["ssh_password"]; ok {
+		if str, isStr := sshPw.(string); isStr && str != "" {
+			filteredUpdates["ssh_password"] = h.db.EncryptField(str)
 		}
 	}
 
@@ -699,4 +715,130 @@ func (h *Handler) GetDeviceHAStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"ha_status": ha}))
+}
+
+func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	var revisions []models.DeviceConfigRevision
+	if err := h.db.Gorm().Where("device_id = ?", uint(id)).Order("timestamp DESC").Limit(10).Find(&revisions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get config history"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"revisions": revisions}))
+}
+
+func (h *Handler) GetDeviceConfigRevisionDownload(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+	revID, err := strconv.ParseUint(c.Param("revId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid revision ID"))
+		return
+	}
+
+	var rev models.DeviceConfigRevision
+	if err := h.db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).First(&rev).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Config revision not found"))
+		return
+	}
+
+	c.Header("Content-Type", "text/plain")
+	c.Header("Content-Disposition", "attachment; filename=config_"+strconv.FormatUint(uint64(rev.DeviceID), 10)+"_"+strconv.FormatUint(uint64(rev.ID), 10)+".txt")
+	c.String(http.StatusOK, rev.ConfigText)
+}
+
+func (h *Handler) GetDeviceProcessHistory(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	from := c.Query("from")
+	to := c.Query("to")
+	limit := 100
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 500 {
+		limit = l
+	}
+
+	query := h.db.Gorm().Where("device_id = ?", uint(id)).Order("timestamp DESC").Limit(limit)
+	if from != "" {
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			query = query.Where("timestamp >= ?", t)
+		}
+	}
+	if to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			query = query.Where("timestamp <= ?", t)
+		}
+	}
+
+	var stats []models.ProcessStats
+	if err := query.Find(&stats).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get process history"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"process_stats": stats}))
+}
+
+func (h *Handler) GetDeviceInterfaceErrors(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+
+	iface := c.Query("interface")
+	from := c.Query("from")
+	to := c.Query("to")
+	limit := 100
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 500 {
+		limit = l
+	}
+
+	query := h.db.Gorm().Where("device_id = ?", uint(id)).Order("timestamp DESC").Limit(limit)
+	if iface != "" {
+		query = query.Where("interface = ?", iface)
+	}
+	if from != "" {
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			query = query.Where("timestamp >= ?", t)
+		}
+	}
+	if to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			query = query.Where("timestamp <= ?", t)
+		}
+	}
+
+	var errs []models.InterfaceErrors
+	if err := query.Find(&errs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface errors"))
+		return
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"interface_errors": errs}))
 }

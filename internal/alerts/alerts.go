@@ -627,6 +627,29 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
 }
 
+// CheckConfigRevision creates a CONFIG_CHANGE alert when the config checksum differs from the previous.
+func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newChecksum string) {
+	if am.db == nil {
+		return
+	}
+	device, err := am.db.GetDevice(deviceID)
+	if err != nil {
+		return
+	}
+	key := fmt.Sprintf("config_change_%d", deviceID)
+	cooldown := 60 * time.Minute
+	if !am.canAlertWithCooldown(key, time.Now(), cooldown) {
+		return
+	}
+	am.saveAlert(&models.Alert{
+		DeviceID:  deviceID,
+		AlertType: "CONFIG_CHANGE",
+		Severity:  "warning",
+		Message:   fmt.Sprintf("Config change detected on %s: checksum changed from %s to %s", device.Name, oldChecksum[:8], newChecksum[:8]),
+		Timestamp: time.Now(),
+	})
+}
+
 // CheckProbeDataFlow checks all approved probes and alerts if any have not sent
 // data within the configured threshold (PROBE_DATA_LAG_ALERT_MINUTES).
 // This catches issues like queue full, network problems, or systematic data loss

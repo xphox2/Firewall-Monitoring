@@ -161,6 +161,9 @@ func (d *Database) migrate() error {
 		&models.DeviceAlertConfig{},
 		&models.SiteAlertConfig{},
 		&models.MaintenanceWindow{},
+		&models.DeviceConfigRevision{},
+		&models.ProcessStats{},
+		&models.InterfaceErrors{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -572,6 +575,40 @@ func (d *Database) GetLoginAttempts(since time.Time, limit int) ([]models.LoginA
 	var attempts []models.LoginAttempt
 	err := d.db.Where("timestamp > ?", since).Order("timestamp DESC").Limit(limit).Find(&attempts).Error
 	return attempts, err
+}
+
+func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
+	tx := d.db.Begin()
+	if err := tx.Create(rev).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	var count int64
+	tx.Model(&models.DeviceConfigRevision{}).Where("device_id = ?", rev.DeviceID).Count(&count)
+	if count > 5 {
+		deleteCount := count - 5
+		var toDelete []uint
+		tx.Model(&models.DeviceConfigRevision{}).
+			Where("device_id = ?", rev.DeviceID).
+			Order("timestamp ASC").
+			Limit(int(deleteCount)).
+			Pluck("id", &toDelete)
+		if len(toDelete) > 0 {
+			tx.Where("id IN ?", toDelete).Delete(&models.DeviceConfigRevision{})
+		}
+	}
+	return tx.Commit().Error
+}
+
+func (d *Database) SaveProcessStats(stats *models.ProcessStats) error {
+	return d.db.Create(stats).Error
+}
+
+func (d *Database) SaveInterfaceErrors(errs []models.InterfaceErrors) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	return d.db.Create(&errs).Error
 }
 
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {

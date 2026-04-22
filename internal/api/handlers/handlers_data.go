@@ -592,3 +592,125 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
+
+func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var rev models.DeviceConfigRevision
+	if err := c.ShouldBindJSON(&rev); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	if allowedDevices != nil && !allowedDevices[rev.DeviceID] {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
+		return
+	}
+
+	if rev.Timestamp.IsZero() {
+		rev.Timestamp = time.Now()
+	}
+
+	var prevChecksum string
+	var prevRev models.DeviceConfigRevision
+	if err := h.db.Gorm().Where("device_id = ?", rev.DeviceID).Order("timestamp DESC").First(&prevRev).Error; err == nil {
+		prevChecksum = prevRev.Checksum
+	}
+
+	if prevChecksum != "" && prevChecksum == rev.Checksum {
+		h.db.Gorm().Model(&models.Device{}).Where("id = ?", rev.DeviceID).Updates(map[string]interface{}{
+			"status":      "online",
+			"last_polled": time.Now(),
+		})
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": 0, "deduped": true}))
+		return
+	}
+
+	if err := h.db.SaveConfigRevision(&rev); err != nil {
+		log.Printf("ReceiveConfigRevision: DB save error: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save config revision"))
+		return
+	}
+
+	if prevChecksum != "" && prevChecksum != rev.Checksum {
+		if h.alertManager != nil {
+			h.alertManager.CheckConfigRevision(rev.DeviceID, prevChecksum, rev.Checksum)
+		}
+	}
+
+	h.db.Gorm().Model(&models.Device{}).Where("id = ?", rev.DeviceID).Updates(map[string]interface{}{
+		"status":      "online",
+		"last_polled": time.Now(),
+	})
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": rev.ID}))
+}
+
+func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var snap models.ProcessStats
+	if err := c.ShouldBindJSON(&snap); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	if allowedDevices != nil && !allowedDevices[snap.DeviceID] {
+		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
+		return
+	}
+
+	if snap.Timestamp.IsZero() {
+		snap.Timestamp = time.Now()
+	}
+
+	if err := h.db.Gorm().Create(&snap).Error; err != nil {
+		log.Printf("ReceiveProcessSnapshot: DB save error: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save process snapshot"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": snap.ID}))
+}
+
+func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var errs []models.InterfaceErrors
+	if err := c.ShouldBindJSON(&errs); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(errs) > 500 {
+		errs = errs[:500]
+	}
+
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	now := time.Now()
+	filtered := errs[:0]
+	for i := range errs {
+		if errs[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[errs[i].DeviceID] {
+			continue
+		}
+		if errs[i].Timestamp.IsZero() {
+			errs[i].Timestamp = now
+		}
+		filtered = append(filtered, errs[i])
+	}
+
+	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
+		log.Printf("ReceiveInterfaceErrors: DB save error: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface errors"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+}
