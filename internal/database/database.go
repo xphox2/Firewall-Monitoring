@@ -584,17 +584,26 @@ func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
 		return err
 	}
 	var count int64
-	tx.Model(&models.DeviceConfigRevision{}).Where("device_id = ?", rev.DeviceID).Count(&count)
+	if err := tx.Model(&models.DeviceConfigRevision{}).Where("device_id = ?", rev.DeviceID).Count(&count).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 	if count > 5 {
 		deleteCount := count - 5
 		var toDelete []uint
-		tx.Model(&models.DeviceConfigRevision{}).
+		if err := tx.Model(&models.DeviceConfigRevision{}).
 			Where("device_id = ?", rev.DeviceID).
 			Order("timestamp ASC").
 			Limit(int(deleteCount)).
-			Pluck("id", &toDelete)
+			Pluck("id", &toDelete).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
 		if len(toDelete) > 0 {
-			tx.Where("device_id = ? AND id IN ?", rev.DeviceID, toDelete).Delete(&models.DeviceConfigRevision{})
+			if err := tx.Where("device_id = ? AND id IN ?", rev.DeviceID, toDelete).Delete(&models.DeviceConfigRevision{}).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 	}
 	return tx.Commit().Error

@@ -638,9 +638,19 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 	}
 	key := fmt.Sprintf("config_change_%d", deviceID)
 	cooldown := 60 * time.Minute
-	if !am.canAlertWithCooldown(key, time.Now(), cooldown) {
+
+	am.mu.Lock()
+	now := time.Now()
+	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	if canSend {
+		am.lastAlert[key] = now
+	}
+	am.mu.Unlock()
+
+	if !canSend {
 		return
 	}
+
 	oldShort, newShort := oldChecksum, newChecksum
 	if len(oldChecksum) >= 8 {
 		oldShort = oldChecksum[:8]
