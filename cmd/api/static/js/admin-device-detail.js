@@ -124,22 +124,19 @@
         }
 
         createGauge('cpuGauge', ss.cpu_usage, getGaugeColor(ss.cpu_usage));
-        document.getElementById('cpuValue').textContent = ss.cpu_usage.toFixed(1) + '%';
-
         createGauge('memGauge', ss.memory_usage, getGaugeColor(ss.memory_usage));
-        document.getElementById('memValue').textContent = ss.memory_usage.toFixed(1) + '%';
 
         if (ss.disk_usage === 0 && ss.disk_total === 0) {
             createGauge('diskGauge', 0, '#484f58');
-            document.getElementById('diskValue').textContent = 'N/A';
         } else {
             createGauge('diskGauge', ss.disk_usage, getGaugeColor(ss.disk_usage));
-            document.getElementById('diskValue').textContent = ss.disk_usage.toFixed(1) + '%';
         }
 
         document.getElementById('sessionCount').textContent = ss.session_count ? ss.session_count.toLocaleString() : '0';
         document.getElementById('uptimeValue').textContent = formatUptime(ss.uptime);
-        document.getElementById('firmwareValue').textContent = ss.version || '-';
+        var fwEl = document.getElementById('firmwareValue');
+        fwEl.textContent = ss.version || '-';
+        fwEl.title = ss.version || '-';
 
         // Extended status cards
         var extGrid = document.getElementById('extendedStats');

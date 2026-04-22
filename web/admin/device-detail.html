@@ -51,18 +51,15 @@
             <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4" id="systemStats">
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">CPU Usage</div>
-                    <div class="gauge relative w-20 h-20 mx-auto mb-2" id="cpuGauge"></div>
-                    <div class="stat-unit text-[0.75rem] text-[#8b949e]" id="cpuValue">-</div>
+                    <div class="gauge relative w-20 h-20 mx-auto" id="cpuGauge"></div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Memory Usage</div>
-                    <div class="gauge relative w-20 h-20 mx-auto mb-2" id="memGauge"></div>
-                    <div class="stat-unit text-[0.75rem] text-[#8b949e]" id="memValue">-</div>
+                    <div class="gauge relative w-20 h-20 mx-auto" id="memGauge"></div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Disk Usage</div>
-                    <div class="gauge relative w-20 h-20 mx-auto mb-2" id="diskGauge"></div>
-                    <div class="stat-unit text-[0.75rem] text-[#8b949e]" id="diskValue">-</div>
+                    <div class="gauge relative w-20 h-20 mx-auto" id="diskGauge"></div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Sessions</div>
@@ -74,7 +71,7 @@
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#484f58] mb-2">Firmware</div>
-                    <div class="stat-value text-[0.9rem] font-bold text-[#e6edf3]" id="firmwareValue">-</div>
+                    <div class="stat-value firmware-value text-[0.75rem] font-bold text-[#e6edf3] truncate" id="firmwareValue" title="-">-</div>
                 </div>
             </div>
 
