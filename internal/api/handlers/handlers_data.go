@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -386,6 +387,11 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		}
 		if stats[i].Timestamp.IsZero() {
 			stats[i].Timestamp = time.Now()
+		}
+		if stats[i].TypeName == "" && stats[i].Type > 0 {
+			if name, ok := snmp.IfTypeNames[stats[i].Type]; ok {
+				stats[i].TypeName = name
+			}
 		}
 		if stats[i].DeviceID > 0 {
 			deviceIDs[stats[i].DeviceID] = true
