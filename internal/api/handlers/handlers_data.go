@@ -720,7 +720,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var sensors []models.SensorDetail
+	var sensors []models.HardwareSensor
 	if err := c.ShouldBindJSON(&sensors); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
 		return
@@ -756,7 +756,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var licenses []models.LicenseDetail
+	var licenses []models.LicenseInfo
 	if err := c.ShouldBindJSON(&licenses); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
 		return
