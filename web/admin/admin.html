@@ -870,32 +870,6 @@
                     <div class="form-group"><label><input type="checkbox" id="device-enabled" checked> Enabled (poll this device)</label></div>
                     <div class="form-group"><label><input type="checkbox" id="device-public-visible" checked> Public Visible (show on public dashboard)</label></div>
                 </div>
-                <div id="ssh-fields" style="margin-top:12px;padding-top:12px;border-top:1px solid #30363d">
-                    <h4 style="color:#8b949e;font-size:0.82rem;margin:0 0 10px 0;text-transform:uppercase;letter-spacing:0.5px">SSH Configuration (FortiGate)</h4>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>SSH Username</label>
-                            <input type="text" id="device-ssh-username" autocomplete="one-time-code">
-                        </div>
-                        <div class="form-group">
-                            <label>SSH Password</label>
-                            <input type="password" id="device-ssh-password" autocomplete="new-password">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>SSH Port</label>
-                            <input type="number" id="device-ssh-port" value="22" min="1" max="65535">
-                        </div>
-                        <div class="form-group">
-                            <label>Poll Interval (seconds)</label>
-                            <input type="number" id="device-ssh-poll-interval" value="900" min="60" max="86400">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label><input type="checkbox" id="device-ssh-poll-enabled"> Enable SSH Polling (fetch config & diagnostics via SSH)</label>
-                    </div>
-                </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" data-action="test-device-connection">Test Connection</button>
                     <button type="button" class="btn secondary" data-action="close-device-modal">Cancel</button>

@@ -308,39 +308,34 @@ type LoginAttempt struct {
 }
 
 type Device struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	Name            string    `json:"name" gorm:"uniqueIndex;not null"`
-	Hostname        string    `json:"hostname"`
-	IPAddress       string    `json:"ip_address" gorm:"not null"`
-	SNMPPort        int       `json:"snmp_port" gorm:"default:161"`
-	SNMPCommunity   string    `json:"snmp_community"`
-	SNMPVersion     string    `json:"snmp_version" gorm:"default:2c"`
-	SNMPV3Username  string    `json:"snmpv3_username"`
-	SNMPV3AuthType  string    `json:"snmpv3_auth_type"`
-	SNMPV3AuthPass  string    `json:"snmpv3_auth_pass"`
-	SNMPV3PrivType  string    `json:"snmpv3_priv_type"`
-	SNMPV3PrivPass  string    `json:"snmpv3_priv_pass"`
-	Enabled         bool      `json:"enabled" gorm:"default:true"`
-	PublicVisible   bool      `json:"public_visible" gorm:"default:true"`
-	Vendor          string    `json:"vendor" gorm:"default:fortigate"`
-	SiteID          *uint     `json:"site_id" gorm:"index"`
-	Site            *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
-	ProbeID         *uint     `json:"probe_id" gorm:"index"`
-	Probe           *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
-	Location        string    `json:"location"`
-	Description     string    `json:"description"`
-	WanSpeedMbps    int       `json:"wan_speed_mbps" gorm:"default:1000"` // WAN link speed in Mbps (default 1Gbps)
-	SSLVPNUsers     int       `json:"sslvpn_users" gorm:"default:0"`
-	SSLVPNTunnels   int       `json:"sslvpn_tunnels" gorm:"default:0"`
-	SSHUsername     string    `json:"ssh_username"`
-	SSHPassword     string    `json:"ssh_password"` // AES-256-GCM encrypted
-	SSHPort         int       `json:"ssh_port" gorm:"default:22"`
-	SSHPollEnabled  bool      `json:"ssh_poll_enabled" gorm:"default:false"`
-	SSHPollInterval int       `json:"ssh_poll_interval" gorm:"default:900"` // seconds, default 15 min
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	LastPolled      time.Time `json:"last_polled"`
-	Status          string    `json:"status" gorm:"default:unknown"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Name           string    `json:"name" gorm:"uniqueIndex;not null"`
+	Hostname       string    `json:"hostname"`
+	IPAddress      string    `json:"ip_address" gorm:"not null"`
+	SNMPPort       int       `json:"snmp_port" gorm:"default:161"`
+	SNMPCommunity  string    `json:"snmp_community"`
+	SNMPVersion    string    `json:"snmp_version" gorm:"default:2c"`
+	SNMPV3Username string    `json:"snmpv3_username"`
+	SNMPV3AuthType string    `json:"snmpv3_auth_type"`
+	SNMPV3AuthPass string    `json:"snmpv3_auth_pass"`
+	SNMPV3PrivType string    `json:"snmpv3_priv_type"`
+	SNMPV3PrivPass string    `json:"snmpv3_priv_pass"`
+	Enabled        bool      `json:"enabled" gorm:"default:true"`
+	PublicVisible  bool      `json:"public_visible" gorm:"default:true"`
+	Vendor         string    `json:"vendor" gorm:"default:fortigate"`
+	SiteID         *uint     `json:"site_id" gorm:"index"`
+	Site           *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	ProbeID        *uint     `json:"probe_id" gorm:"index"`
+	Probe          *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
+	Location       string    `json:"location"`
+	Description    string    `json:"description"`
+	WanSpeedMbps   int       `json:"wan_speed_mbps" gorm:"default:1000"` // WAN link speed in Mbps (default 1Gbps)
+	SSLVPNUsers    int       `json:"sslvpn_users" gorm:"default:0"`
+	SSLVPNTunnels  int       `json:"sslvpn_tunnels" gorm:"default:0"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	LastPolled     time.Time `json:"last_polled"`
+	Status         string    `json:"status" gorm:"default:unknown"`
 }
 
 type DeviceTunnel struct {
@@ -876,48 +871,6 @@ type APIResponse struct {
 	Error   string      `json:"error,omitempty"`
 	Message string      `json:"message,omitempty"`
 }
-
-type DeviceConfigRevision struct {
-	ID         uint      `json:"id" gorm:"primaryKey"`
-	DeviceID   uint      `json:"device_id" gorm:"not null;index"`
-	Timestamp  time.Time `json:"timestamp" gorm:"not null"`
-	Checksum   string    `json:"checksum"`
-	ConfigText string    `json:"config_text"` // full config, plain text
-	Length     int       `json:"length"`
-	IsCurrent  bool      `json:"is_current"`
-}
-
-func (DeviceConfigRevision) TableName() string { return "device_config_revisions" }
-
-type ProcessInfo struct {
-	Name    string  `json:"name"`
-	PID     int     `json:"pid"`
-	CPU     float64 `json:"cpu"` // percentage
-	Memory  float64 `json:"mem"` // percentage
-	Command string  `json:"command"`
-}
-
-type ProcessStats struct {
-	ID        uint          `json:"id" gorm:"primaryKey"`
-	Timestamp time.Time     `json:"timestamp" gorm:"index:idx_procstats_device_ts,priority:2"`
-	DeviceID  uint          `json:"device_id" gorm:"index;index:idx_procstats_device_ts,priority:1"`
-	Processes []ProcessInfo `json:"processes" gorm:"serializer:json"`
-}
-
-func (ProcessStats) TableName() string { return "process_stats" }
-
-type InterfaceErrors struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_ifaceerr_device_ts,priority:2"`
-	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_ifaceerr_device_ts,priority:1"`
-	Interface   string    `json:"interface"`
-	InErrors    uint64    `json:"in_errors"`
-	InDiscards  uint64    `json:"in_discards"`
-	OutErrors   uint64    `json:"out_errors"`
-	OutDiscards uint64    `json:"out_discards"`
-}
-
-func (InterfaceErrors) TableName() string { return "interface_errors" }
 
 func SuccessResponse(data interface{}) APIResponse {
 	return APIResponse{

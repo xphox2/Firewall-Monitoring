@@ -627,54 +627,6 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
 }
 
-func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newChecksum string) error {
-	am.mu.Lock()
-	defer am.mu.Unlock()
-
-	now := time.Now()
-	key := fmt.Sprintf("config_change_%d", deviceID)
-	resolved := am.resolveAlertConfig(deviceID, nil, "CONFIG_CHANGE")
-	if !resolved.AlertEnabled {
-		return nil
-	}
-
-	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	if !am.canAlertWithCooldown(key, now, cooldown) {
-		return nil
-	}
-
-	var deviceName string
-	if am.db != nil {
-		var device models.Device
-		if err := am.db.Gorm().Where("id = ?", deviceID).First(&device).Error; err == nil {
-			deviceName = device.Name
-		}
-	}
-
-	am.lastAlert[key] = now
-	am.activeAlerts[key] = true
-
-	alert := models.Alert{
-		Timestamp:  now,
-		DeviceID:   deviceID,
-		AlertType:  "CONFIG_CHANGE",
-		Severity:   resolved.Severity,
-		Message:    fmt.Sprintf("Configuration changed on %s (old: %.8s, new: %.8s)", deviceName, oldChecksum, newChecksum),
-		MetricName: "config_revision",
-		PolicyID:   resolved.PolicyID,
-	}
-	am.saveAlert(&alert)
-	if !alert.Suppressed {
-		nc := BuildNotifyConfigFromResolved(resolved, notifier.SnapshotConfig(&am.config.Alerts))
-		if err := am.notifier.SendAlert(&alert, nc); err != nil {
-			log.Printf("Failed to send config change alert: %v", err)
-		}
-	}
-	am.sendRecovery(key, "CONFIG_CHANGE",
-		fmt.Sprintf("Configuration on %s has been changed again", deviceName), deviceID)
-	return nil
-}
-
 // CheckProbeDataFlow checks all approved probes and alerts if any have not sent
 // data within the configured threshold (PROBE_DATA_LAG_ALERT_MINUTES).
 // This catches issues like queue full, network problems, or systematic data loss

@@ -120,9 +120,6 @@
                 <div class="section-tab px-5 py-[10px] cursor-pointer text-[#8b949e] text-[0.88rem] border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="security">Security</div>
                 <div class="section-tab px-5 py-[10px] cursor-pointer text-[#8b949e] text-[0.88rem] border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="sdwan">SD-WAN</div>
                 <div class="section-tab px-5 py-[10px] cursor-pointer text-[#8b949e] text-[0.88rem] border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="licenses">Licenses</div>
-                <div class="section-tab px-5 py-[10px] cursor-pointer text-[#8b949e] text-[0.88rem] border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="config">Config History</div>
-                <div class="section-tab px-5 py-[10px] cursor-pointer text-[#8b949e] text-[0.88rem] border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="processes-ssh">Process Monitor</div>
-                <div class="section-tab px-5 py-[10px] cursor-pointer text-[#8b949e] text-[0.88rem] border-b-2 border-transparent transition-all duration-150 hover:text-[#e6edf3]" data-action="switch-tab" data-tab="iface-err">Interface Errors</div>
             </div>
 
             <!-- Interfaces Tab -->
@@ -320,74 +317,6 @@
                         <tbody id="licenseBody"></tbody>
                     </table>
                     <div id="licenseEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No license data available. License info requires FortiGate REST API integration (not available via SNMP).</div>
-                </div>
-            </div>
-
-            <!-- Config History Tab -->
-            <div class="tab-content hidden" id="tab-config">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Configuration History
-                        <span id="configSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Timestamp</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Checksum</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Size</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="configBody"></tbody>
-                    </table>
-                    <div id="configEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No config history available. SSH polling must be enabled on this device.</div>
-                </div>
-            </div>
-
-            <!-- Process Monitor Tab (SSH) -->
-            <div class="tab-content hidden" id="tab-processes-ssh">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Process Monitor
-                        <span id="procSshSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div class="mb-3">
-                        <label class="text-[0.82rem] text-[#8b949e] mr-2">Time Range:</label>
-                        <select id="proc-ssh-range" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="1">Last 1 hour</option>
-                            <option value="6">Last 6 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
-                            <option value="168">Last 7 days</option>
-                        </select>
-                    </div>
-                    <canvas id="proc-ssh-chart" style="height:300px"></canvas>
-                    <div id="procSshEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No process data available. SSH polling must be enabled on this device.</div>
-                </div>
-            </div>
-
-            <!-- Interface Errors Tab (SSH) -->
-            <div class="tab-content hidden" id="tab-iface-err">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Interface Errors
-                        <span id="ifaceErrSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div class="mb-3">
-                        <label class="text-[0.82rem] text-[#8b949e] mr-2">Interface:</label>
-                        <select id="iface-err-interface" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="">All Interfaces</option>
-                        </select>
-                        <label class="text-[0.82rem] text-[#8b949e] ml-4 mr-2">Time Range:</label>
-                        <select id="iface-err-range" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="1">Last 1 hour</option>
-                            <option value="6">Last 6 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
-                            <option value="168">Last 7 days</option>
-                        </select>
-                    </div>
-                    <canvas id="iface-err-chart" style="height:300px"></canvas>
-                    <div id="ifaceErrEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No interface error data available. SSH polling must be enabled on this device.</div>
                 </div>
             </div>
 

@@ -103,7 +103,6 @@ func (d *Database) EncryptDeviceSecrets(dev *models.Device) {
 	dev.SNMPCommunity = encryptField(dev.SNMPCommunity, d.encKey)
 	dev.SNMPV3AuthPass = encryptField(dev.SNMPV3AuthPass, d.encKey)
 	dev.SNMPV3PrivPass = encryptField(dev.SNMPV3PrivPass, d.encKey)
-	dev.SSHPassword = encryptField(dev.SSHPassword, d.encKey)
 }
 
 // DecryptDeviceSecrets decrypts SNMP credential fields on a device.
@@ -111,7 +110,6 @@ func (d *Database) DecryptDeviceSecrets(dev *models.Device) {
 	dev.SNMPCommunity = decryptField(dev.SNMPCommunity, d.encKey)
 	dev.SNMPV3AuthPass = decryptField(dev.SNMPV3AuthPass, d.encKey)
 	dev.SNMPV3PrivPass = decryptField(dev.SNMPV3PrivPass, d.encKey)
-	dev.SSHPassword = decryptField(dev.SSHPassword, d.encKey)
 }
 
 // DecryptField decrypts a single string value from database storage.
@@ -199,9 +197,9 @@ func (d *Database) migrateEncryptSecrets() {
 		}
 		if changed {
 			d.db.Model(&srv).Updates(map[string]interface{}{
-				"server_password":   srv.ServerPassword,
+				"server_password":  srv.ServerPassword,
 				"nickserv_password": srv.NickServPassword,
-				"sasl_password":     srv.SASLPassword,
+				"sasl_password":    srv.SASLPassword,
 			})
 		}
 	}
@@ -227,7 +225,7 @@ func (d *Database) migrateEncryptSecrets() {
 			d.db.Model(&ch).Updates(map[string]interface{}{
 				"chanserv_password": ch.ChanServPass,
 				"chan_oper_pass":    ch.ChanOperPass,
-				"channel_key":       ch.ChannelKey,
+				"channel_key":      ch.ChannelKey,
 			})
 		}
 	}
