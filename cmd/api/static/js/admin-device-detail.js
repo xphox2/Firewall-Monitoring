@@ -110,6 +110,9 @@
         renderSecurity();
         renderSDWAN();
         renderLicenses();
+        renderConfigHistory();
+        renderProcessMonitor();
+        renderInterfaceErrors();
     }
 
     function renderSystemStatus() {
@@ -725,6 +728,186 @@
 
         var licTab = document.querySelector('[data-tab="licenses"]');
         if (licTab) licTab.textContent = 'Licenses (' + lics.length + ')';
+    }
+
+    function renderConfigHistory() {
+        fetch('/admin/api/devices/' + deviceId + '/config-history', { credentials: 'same-origin' })
+            .then(function(resp) { return resp.json(); })
+            .then(function(result) {
+                var revs = (result.success && result.data && result.data.revisions) ? result.data.revisions : [];
+                var body = document.getElementById('configBody');
+                var empty = document.getElementById('configEmpty');
+                var summary = document.getElementById('configSummary');
+
+                if (!revs.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
+                empty.style.display = 'none';
+                summary.textContent = revs.length + ' revision(s)';
+
+                body.innerHTML = revs.map(function(r, i) {
+                    var isCurrent = i === 0 ? ' <span class="badge" style="background:#238636;padding:2px 6px;border-radius:4px;font-size:0.7rem">Current</span>' : '';
+                    return '<tr>' +
+                        '<td style="white-space:nowrap">' + formatTime(r.timestamp) + '</td>' +
+                        '<td><code style="color:#58a6ff;font-size:0.78rem">' + esc(r.checksum || '-') + '</code></td>' +
+                        '<td>' + formatBytes(r.length) + '</td>' +
+                        '<td><button class="btn secondary text-[0.78rem]" onclick="downloadConfigRevision(' + r.id + ')">Download</button>' + isCurrent + '</td>' +
+                    '</tr>';
+                }).join('');
+            })['catch'](function(e) { console.error('Failed to load config history:', e); });
+    }
+
+    window.downloadConfigRevision = function(revId) {
+        fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId, { credentials: 'same-origin' })
+            .then(function(resp) { return resp.json(); })
+            .then(function(result) {
+                if (!result.success || !result.data) return;
+                var blob = new Blob([result.data.config_text || ''], { type: 'text/plain' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'config_' + deviceId + '_' + revId + '.txt';
+                a.click();
+                URL.revokeObjectURL(url);
+            })['catch'](function(e) { console.error('Failed to download config:', e); });
+    };
+
+    var procSshChart = null;
+    function renderProcessMonitor() {
+        var rangeSelect = document.getElementById('proc-ssh-range');
+        if (!rangeSelect) return;
+
+        rangeSelect.addEventListener('change', function() {
+            loadProcessMonitorData(this.value);
+        });
+        loadProcessMonitorData(rangeSelect.value);
+    }
+
+    function loadProcessMonitorData(hours) {
+        fetch('/admin/api/devices/' + deviceId + '/process-history?hours=' + hours + '&limit=500', { credentials: 'same-origin' })
+            .then(function(resp) { return resp.json(); })
+            .then(function(result) {
+                if (!result.success || !result.data || !result.data.process_stats || !result.data.process_stats.length) {
+                    document.getElementById('procSshEmpty').style.display = 'block';
+                    document.getElementById('proc-ssh-chart').style.display = 'none';
+                    return;
+                }
+                document.getElementById('procSshEmpty').style.display = 'none';
+                document.getElementById('proc-ssh-chart').style.display = 'block';
+                document.getElementById('procSshSummary').textContent = result.data.process_stats.length + ' snapshots';
+
+                var stats = result.data.process_stats;
+                var topProcs = {};
+                stats.forEach(function(snap) {
+                    (snap.processes || []).slice(0, 5).forEach(function(p) {
+                        if (!topProcs[p.name]) topProcs[p.name] = [];
+                        topProcs[p.name].push({ ts: snap.timestamp, cpu: p.cpu });
+                    });
+                });
+
+                var procNames = Object.keys(topProcs).slice(0, 6);
+                if (!procNames.length) return;
+
+                var colors = ['#58a6ff', '#3fb950', '#f85149', '#d29922', '#bc8cff', '#ff7b72'];
+                var datasets = procNames.map(function(name, idx) {
+                    return {
+                        label: name,
+                        data: topProcs[name].map(function(d) { return d.cpu; }),
+                        borderColor: colors[idx % colors.length],
+                        backgroundColor: colors[idx % colors.length] + '22',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 0
+                    };
+                });
+
+                var labels = topProcs[procNames[0]].map(function(d) {
+                    return new Date(d.ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                });
+
+                var canvas = document.getElementById('proc-ssh-chart');
+                if (procSshChart) procSshChart.destroy();
+                procSshChart = new Chart(canvas, {
+                    type: 'line',
+                    data: { labels: labels, datasets: datasets },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
+                        scales: {
+                            x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                            y: { min: 0, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
+                        }
+                    }
+                });
+            })['catch'](function(e) { console.error('Failed to load process monitor:', e); });
+    }
+
+    var ifaceErrChart = null;
+    function renderInterfaceErrors() {
+        var ifaceSelect = document.getElementById('iface-err-interface');
+        var rangeSelect = document.getElementById('iface-err-range');
+        if (!ifaceSelect || !rangeSelect) return;
+
+        ifaceSelect.addEventListener('change', function() { loadInterfaceErrorsData(rangeSelect.value, this.value); });
+        rangeSelect.addEventListener('change', function() { loadInterfaceErrorsData(this.value, ifaceSelect.value); });
+        loadInterfaceErrorsData(rangeSelect.value, ifaceSelect.value);
+    }
+
+    function loadInterfaceErrorsData(hours, ifaceFilter) {
+        var url = '/admin/api/devices/' + deviceId + '/interface-errors?hours=' + hours + '&limit=500';
+        if (ifaceFilter) url += '&interface=' + encodeURIComponent(ifaceFilter);
+
+        fetch(url, { credentials: 'same-origin' })
+            .then(function(resp) { return resp.json(); })
+            .then(function(result) {
+                if (!result.success || !result.data || !result.data.interface_errors || !result.data.interface_errors.length) {
+                    document.getElementById('ifaceErrEmpty').style.display = 'block';
+                    document.getElementById('iface-err-chart').style.display = 'none';
+                    return;
+                }
+                document.getElementById('ifaceErrEmpty').style.display = 'none';
+                document.getElementById('iface-err-chart').style.display = 'block';
+                document.getElementById('ifaceErrSummary').textContent = result.data.interface_errors.length + ' data points';
+
+                var errs = result.data.interface_errors;
+                var byIface = {};
+                errs.forEach(function(e) {
+                    if (!byIface[e.interface]) byIface[e.interface] = [];
+                    byIface[e.interface].push(e);
+                });
+
+                var ifaceNames = Object.keys(byIface);
+                var colors = ['#58a6ff', '#3fb950', '#f85149', '#d29922', '#bc8cff', '#ff7b72'];
+                var datasets = ifaceNames.map(function(name, idx) {
+                    var color = colors[idx % colors.length];
+                    return {
+                        label: name + ' In',
+                        data: byIface[name].map(function(e) { return e.in_errors; }),
+                        borderColor: color,
+                        backgroundColor: color + '22',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 0
+                    };
+                });
+
+                var labels = byIface[ifaceNames[0]].map(function(e) {
+                    return new Date(e.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                });
+
+                var canvas = document.getElementById('iface-err-chart');
+                if (ifaceErrChart) ifaceErrChart.destroy();
+                ifaceErrChart = new Chart(canvas, {
+                    type: 'line',
+                    data: { labels: labels, datasets: datasets },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
+                        scales: {
+                            x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                            y: { min: 0, ticks: { color: '#484f58', font: { size: 9 } }, grid: { color: '#21262d' } }
+                        }
+                    }
+                });
+            })['catch'](function(e) { console.error('Failed to load interface errors:', e); });
     }
 
     function switchTab(name) {
