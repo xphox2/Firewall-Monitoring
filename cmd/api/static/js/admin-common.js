@@ -347,7 +347,7 @@
         });
 
         if (hasSrcName && hasDstName) {
-            fields.push('<div style="display:flex;gap:8px;min-height:24px;grid-column:1/-1;"><span style="color:#8b949e;min-width:120px;">Src Name:</span><span>' + escapeHtml(f.srcname) + '</span><span style="color:#8b949e;margin-left:24px;min-width:120px;">Dst Name:</span><span>' + escapeHtml(f.dstname) + '</span></div>');
+            fields.push('<div style="display:grid;grid-template-columns:120px 1fr 120px 1fr;gap:4px 16px;min-height:24px;"><span style="color:#8b949e;">Src Name:</span><span>' + escapeHtml(f.srcname) + '</span><span style="color:#8b949e;">Dst Name:</span><span>' + escapeHtml(f.dstname) + '</span></div>');
         }
 
         html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 16px;">' + fields.join('') + '</div>';
