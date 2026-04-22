@@ -70,10 +70,12 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		return
 	}
 
-	// Validate IP to prevent SSRF
-	if !isValidExternalIP(device.IPAddress) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
-		return
+	// Validate IP to prevent SSRF - skip for probe-managed devices (they use private IPs)
+	if device.ProbeID == nil || *device.ProbeID == 0 {
+		if !isValidExternalIP(device.IPAddress) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+			return
+		}
 	}
 
 	// Default and validate SNMP port
@@ -178,12 +180,15 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
-	// Validate ip_address if present
+	// Validate ip_address if present - skip for probe-managed devices (they use private IPs)
 	if ipVal, ok := filteredUpdates["ip_address"]; ok {
-		ipStr, isStr := ipVal.(string)
-		if !isStr || !isValidExternalIP(ipStr) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
-			return
+		if device.ProbeID != nil && *device.ProbeID > 0 {
+		} else {
+			ipStr, isStr := ipVal.(string)
+			if !isStr || !isValidExternalIP(ipStr) {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+				return
+			}
 		}
 	}
 
