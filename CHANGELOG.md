@@ -1,4 +1,9 @@
 # Changelog
+## [0.10.171] - 2026-04-23
+
+### Fixed
+- **FlowRollup SamplingRateAvg type**: Changed from uint32 to float64 to handle AVG() and weighted calculation results that return decimal values (e.g., "1024.0000000000000000")
+
 ## [0.10.170] - 2026-04-23
 
 ### Added

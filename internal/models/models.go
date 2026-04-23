@@ -615,7 +615,7 @@ type FlowRollup struct {
 	BytesSum        uint64    `json:"bytes_sum"`
 	PacketsSum      uint64    `json:"packets_sum"`
 	FlowCount       int64     `json:"flow_count"`
-	SamplingRateAvg uint32    `json:"sampling_rate_avg"`
+	SamplingRateAvg float64   `json:"sampling_rate_avg"`
 }
 
 func (FlowRollup) TableName() string { return "flow_rollups" }

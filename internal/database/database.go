@@ -1984,7 +1984,7 @@ type rollupRow struct {
 	BytesSum        uint64
 	PacketsSum      uint64
 	FlowCount       int64
-	SamplingRateAvg uint32
+	SamplingRateAvg float64
 }
 
 // batchInsertRollups inserts rollup rows in batches within the given transaction.
