@@ -307,6 +307,11 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 	var sensors []models.HardwareSensor
 	if err := latestSnapshotQuery("hardware_sensors").Find(&sensors).Error; err != nil {
 		log.Printf("Device %d: failed to get hardware sensors: %v", id, err)
+	} else {
+		log.Printf("Device %d: got %d hardware sensors", id, len(sensors))
+		for i, s := range sensors {
+			log.Printf("Device %d: sensor[%d] name=%q value=%.1f unit=%q status=%q", id, i, s.Name, s.Value, s.Unit, s.Status)
+		}
 	}
 
 	// Latest processor stats
