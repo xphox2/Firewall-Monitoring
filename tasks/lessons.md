@@ -294,3 +294,28 @@ Added to `admin-shared.css`:
 1. Check admin-shared.css if a similar component exists
 2. If creating a new reusable pattern, add to admin-shared.css NOT inline styles
 3. Verify all usages of similar patterns reference the same CSS class
+
+---
+
+## CRITICAL: This project has TWO separate repositories
+
+### The Two Repos
+1. **Firewall-Mon** (this repo) - Central server that receives data from collectors, runs on stats.technicallabs.org
+2. **Firewall-Collector** (separate repo) - Remote collector that SSHes into firewalls and sends data to this server
+
+### Why This Matters
+- When user mentions "the collector", "SSH into firewall", or testing SSH commands → work is in the **Collector repo**
+- This server repo only receives and stores data that collectors send to it
+- Hardware sensors, interface stats, VPN status, etc. are collected by the **Collector** via SSH, then sent here via relay protocol
+
+### What to Do
+1. When user asks about SSH-based collection → check the **Collector repo** (E:\Golang\OpenCode\Firewall-Collector)
+2. When user mentions something isn't working in "the collector" → look in the Collector repo
+3. This server repo handles: API endpoints, database storage, web UI, receiving data from collectors
+
+### Collector Repo Location
+`E:\Golang\OpenCode\Firewall-Collector`
+
+### Collector Binary Names
+- **collector.exe** - Main collector binary (resides on remote probe machines)
+- **ssh-test.exe** - SSH testing utility

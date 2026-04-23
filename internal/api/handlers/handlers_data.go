@@ -725,6 +725,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
 		return
 	}
+	log.Printf("ReceiveSensorDetails: probe=%d received %d sensors", probe.ID, len(sensors))
 	if len(sensors) > 500 {
 		sensors = sensors[:500]
 	}
@@ -741,6 +742,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 		}
 		filtered = append(filtered, sensors[i])
 	}
+	log.Printf("ReceiveSensorDetails: probe=%d filtered to %d sensors", probe.ID, len(filtered))
 
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveSensorDetails: DB save error: %v", err)

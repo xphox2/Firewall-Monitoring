@@ -764,6 +764,69 @@ func (h *Handler) GetDeviceConfigRevisionDownload(c *gin.Context) {
 	c.String(http.StatusOK, rev.ConfigText)
 }
 
+func (h *Handler) GetDeviceConfigRevision(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+	revID, err := strconv.ParseUint(c.Param("revId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid revision ID"))
+		return
+	}
+
+	var rev models.DeviceConfigRevision
+	if err := h.db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).First(&rev).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Config revision not found"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"revision": gin.H{
+			"id":          rev.ID,
+			"device_id":   rev.DeviceID,
+			"timestamp":   rev.Timestamp,
+			"checksum":    rev.Checksum,
+			"config_text": rev.ConfigText,
+			"length":      rev.Length,
+		},
+	}))
+}
+
+func (h *Handler) DeleteDeviceConfigRevision(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+	revID, err := strconv.ParseUint(c.Param("revId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid revision ID"))
+		return
+	}
+
+	result := h.db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).Delete(&models.DeviceConfigRevision{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete config revision"))
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("Config revision not found"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"deleted": true}))
+}
+
 func (h *Handler) GetDeviceProcessHistory(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))

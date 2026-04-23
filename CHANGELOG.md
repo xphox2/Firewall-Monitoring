@@ -1,4 +1,22 @@
 # Changelog
+## [0.10.169] - 2026-04-22
+
+### Added
+- **Debug logging for sensor details**: Added logging to ReceiveSensorDetails handler to debug sensor data flow
+
+## [0.10.168] - 2026-04-22
+
+### Added
+- **Config History: View in modal**: Added "View" button to configuration history table to display configuration in a popup modal with syntax formatting
+- **Config History: Diff view**: Added "Compare" button to show diff between two configurations in a popup modal with color-coded additions/removals
+- **Config History: Delete revision**: Added "Delete" button to remove individual configuration revisions from the UI
+
+### Fixed
+- **Config History: Download broken**: Fixed download button that was failing because the endpoint returns raw text but JS was expecting JSON. Now correctly fetches raw text directly.
+
+### Changed
+- **Config History table**: Now shows View, Download, Compare, and Delete action buttons for each revision
+
 ## [0.10.167] - 2026-04-22
 
 ### Fixed

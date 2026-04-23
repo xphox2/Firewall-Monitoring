@@ -915,11 +915,14 @@
         return '📋';
     }
 
+    var configRevisions = [];
+
     function renderConfigHistory() {
         fetch('/admin/api/devices/' + deviceId + '/config-history', { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
                 var revs = (result.success && result.data && result.data.revisions) ? result.data.revisions : [];
+                configRevisions = revs;
                 var body = document.getElementById('configBody');
                 var empty = document.getElementById('configEmpty');
                 var summary = document.getElementById('configSummary');
@@ -934,18 +937,113 @@
                         '<td style="white-space:nowrap">' + formatTime(r.timestamp) + '</td>' +
                         '<td><code style="color:#58a6ff;font-size:0.78rem">' + esc(r.checksum || '-') + '</code></td>' +
                         '<td>' + formatBytes(r.length) + '</td>' +
-                        '<td><button class="btn secondary text-[0.78rem]" onclick="downloadConfigRevision(' + r.id + ')">Download</button>' + isCurrent + '</td>' +
+                        '<td>' +
+                        '<button class="btn secondary text-[0.78rem] mr-1" onclick="viewConfigRevision(' + r.id + ')">View</button>' +
+                        '<button class="btn secondary text-[0.78rem] mr-1" onclick="downloadConfigRevision(' + r.id + ')">Download</button>' +
+                        (revs.length > 1 ? '<button class="btn secondary text-[0.78rem] mr-1" onclick="diffConfigRevisions(' + revs[1].id + ',' + r.id + ')">Compare</button>' : '') +
+                        '<button class="btn secondary text-[0.78rem]" onclick="deleteConfigRevision(' + r.id + ')" style="color:#f85149">Delete</button>' +
+                        isCurrent + '</td>' +
                     '</tr>';
                 }).join('');
             })['catch'](function(e) { console.error('Failed to load config history:', e); });
     }
 
-    window.downloadConfigRevision = function(revId) {
-        fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId, { credentials: 'same-origin' })
+    window.viewConfigRevision = function(revId) {
+        fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId + '/view', { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
-                if (!result.success || !result.data) return;
-                var blob = new Blob([result.data.config_text || ''], { type: 'text/plain' });
+                if (!result.success || !result.data || !result.data.revision) return;
+                var rev = result.data.revision;
+                showConfigModal('Configuration Revision', rev.config_text, rev.timestamp, rev.checksum);
+            })['catch'](function(e) { console.error('Failed to view config:', e); });
+    };
+
+    window.diffConfigRevisions = function(revId1, revId2) {
+        Promise.all([
+            fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId1 + '/view', { credentials: 'same-origin' }).then(function(r) { return r.json(); }),
+            fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId2 + '/view', { credentials: 'same-origin' }).then(function(r) { return r.json(); })
+        ]).then(function(results) {
+            if (!results[0].success || !results[0].data || !results[1].success || !results[1].data) return;
+            var rev1 = results[0].data.revision;
+            var rev2 = results[1].data.revision;
+            showDiffModal('Configuration Diff', rev1.config_text, rev2.config_text, rev1.timestamp, rev2.timestamp);
+        })['catch'](function(e) { console.error('Failed to load diff:', e); });
+    };
+
+    function showConfigModal(title, configText, timestamp, checksum) {
+        var modal = document.getElementById('config-modal') || createConfigModal();
+        modal.querySelector('.modal-header h2').textContent = title;
+        var content = modal.querySelector('.config-modal-body');
+        content.innerHTML = '<div class="config-meta mb-3 text-[0.82rem] text-[#8b949e]">' +
+            '<span>Timestamp: ' + formatTime(timestamp) + '</span>' +
+            '<span class="ml-4">Checksum: ' + esc(checksum || '-') + '</span></div>' +
+            '<pre class="config-text bg-[#0d1117] border border-[#30363d] rounded p-4 overflow-auto" style="max-height:60vh;white-space:pre-wrap;font-size:0.8rem">' + esc(configText || '') + '</pre>';
+        modal.classList.add('active');
+    }
+
+    function showDiffModal(title, text1, text2, ts1, ts2) {
+        var modal = document.getElementById('config-modal') || createConfigModal();
+        modal.querySelector('.modal-header h2').textContent = title;
+        var content = modal.querySelector('.config-modal-body');
+        var diffHtml = computeDiff(text1 || '', text2 || '');
+        content.innerHTML = '<div class="config-meta mb-3 text-[0.82rem] text-[#8b949e] flex justify-between">' +
+            '<div><span class="text-[#f85149]">Older:</span> ' + formatTime(ts1) + '</div>' +
+            '<div><span class="text-[#3fb950]">Newer:</span> ' + formatTime(ts2) + '</div></div>' +
+            '<div class="diff-container bg-[#0d1117] border border-[#30363d] rounded p-4 overflow-auto" style="max-height:60vh;white-space:pre-wrap;font-size:0.8rem">' + diffHtml + '</div>';
+        modal.classList.add('active');
+    }
+
+    function computeDiff(text1, text2) {
+        var lines1 = text1.split('\n');
+        var lines2 = text2.split('\n');
+        var result = [];
+        var maxLen = Math.max(lines1.length, lines2.length);
+        for (var i = 0; i < maxLen; i++) {
+            var l1 = lines1[i] || '';
+            var l2 = lines2[i] || '';
+            if (l1 === l2) {
+                result.push({ type: 'unchanged', text: l1 });
+            } else {
+                result.push({ type: 'removed', text: l1 });
+                result.push({ type: 'added', text: l2 });
+            }
+        }
+        var html = '';
+        result.forEach(function(line) {
+            var cls = '';
+            var prefix = ' ';
+            if (line.type === 'removed') { cls = 'diff-removed'; prefix = '-'; }
+            else if (line.type === 'added') { cls = 'diff-added'; prefix = '+'; }
+            html += '<div class="' + cls + '" style="padding:2px 8px;">' + prefix + ' ' + esc(line.text) + '</div>';
+        });
+        return html || '<div class="text-[#8b949e] p-4">No differences found</div>';
+    }
+
+    function createConfigModal() {
+        var modal = document.createElement('div');
+        modal.id = 'config-modal';
+        modal.className = 'modal';
+        modal.innerHTML = '<div class="modal-content" style="width:95vw;max-width:1400px;">' +
+            '<div class="modal-header">' +
+            '<h2>Configuration</h2>' +
+            '<button class="modal-close" onclick="this.closest(\'.modal\').classList.remove(\'active\')">&times;</button>' +
+            '</div>' +
+            '<div class="config-modal-body" style="max-height:75vh;overflow-y:auto;"></div>' +
+            '<div class="modal-footer">' +
+            '<button type="button" class="btn secondary" onclick="this.closest(\'.modal\').classList.remove(\'active\')">Close</button>' +
+            '</div></div>';
+        document.body.appendChild(modal);
+        var style = document.createElement('style');
+        style.textContent = '.diff-removed{background:rgba(248,81,73,0.15);color:#ff7b72;}.diff-added{background:rgba(63,185,80,0.15);color:#3fb950;}';
+        document.head.appendChild(style);
+        return modal;
+    }
+
+    window.downloadConfigRevision = function(revId) {
+        fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId, { credentials: 'same-origin' })
+            .then(function(resp) { return resp.text(); })
+            .then(function(text) {
+                var blob = new Blob([text], { type: 'text/plain' });
                 var url = URL.createObjectURL(blob);
                 var a = document.createElement('a');
                 a.href = url;
@@ -953,6 +1051,19 @@
                 a.click();
                 URL.revokeObjectURL(url);
             })['catch'](function(e) { console.error('Failed to download config:', e); });
+    };
+
+    window.deleteConfigRevision = function(revId) {
+        if (!confirm('Delete this configuration revision?')) return;
+        fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: { 'X-CSRF-Token': AC.getCsrfToken() }
+        }).then(function(resp) { return resp.json(); })
+        .then(function(result) {
+            if (result.success) renderConfigHistory();
+            else alert('Failed to delete: ' + (result.error || 'Unknown error'));
+        })['catch'](function(e) { console.error('Failed to delete config:', e); });
     };
 
     var procSshChart = null;
