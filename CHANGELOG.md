@@ -1,4 +1,9 @@
 # Changelog
+## [0.10.170] - 2026-04-23
+
+### Added
+- **Verbose debug logging for sensor data**: Added per-sensor logging in ReceiveSensorDetails to debug why sensors aren't being saved
+
 ## [0.10.169] - 2026-04-22
 
 ### Added

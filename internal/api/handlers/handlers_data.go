@@ -731,10 +731,13 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	}
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
+	log.Printf("ReceiveSensorDetails: probe=%d allowed devices=%v", probe.ID, allowedDevices)
 	now := time.Now()
 	filtered := sensors[:0]
 	for i := range sensors {
+		log.Printf("ReceiveSensorDetails: sensor[%d] device_id=%d name=%q", i, sensors[i].DeviceID, sensors[i].Name)
 		if sensors[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[sensors[i].DeviceID] {
+			log.Printf("ReceiveSensorDetails: filtering out device_id=%d (not in allowed list)", sensors[i].DeviceID)
 			continue
 		}
 		if sensors[i].Timestamp.IsZero() {
