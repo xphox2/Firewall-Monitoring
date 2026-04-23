@@ -180,16 +180,71 @@ func (d *Database) migrate() error {
 	if m.HasTable(&models.IRCServer{}) && !m.HasColumn(&models.IRCServer{}, "ServerPassword") {
 		log.Println("IRC migrate: detected old schema, recreating IRC tables")
 		ircTables := []interface{}{&models.IRCMessageLog{}, &models.IRCCommand{}, &models.IRCChannel{}, &models.IRCServer{}}
-		for _, tbl := range ircTables {
-			if m.HasTable(tbl) {
-				if err := m.DropTable(tbl); err != nil {
-					log.Printf("IRC migrate: drop table: %v", err)
+		err := d.db.Transaction(func(tx *gorm.DB) error {
+			for _, tbl := range ircTables {
+				if m.HasTable(tbl) {
+					if err := m.DropTable(tbl); err != nil {
+						return fmt.Errorf("IRC migrate: drop table %T: %w", tbl, err)
+					}
+				}
+			}
+			for _, tbl := range ircTables {
+				if err := tx.AutoMigrate(tbl); err != nil {
+					return fmt.Errorf("IRC migrate: recreate table %T: %w", tbl, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			log.Printf("%v", err)
+		}
+	}
+
+	// Add missing columns for SystemStatus extended fields (SSH performance data)
+	if m.HasTable(&models.SystemStatus{}) {
+		systemStatusCols := []struct {
+			name string
+			col  string
+		}{
+			{"NetworkInKbps", "network_in_kbps"},
+			{"NetworkOutKbps", "network_out_kbps"},
+			{"CPUUser", "cpu_user"},
+			{"CPUSystem", "cpu_system"},
+			{"CPUNice", "cpu_nice"},
+			{"CPUIdle", "cpu_idle"},
+			{"CPUIowait", "cpu_iowait"},
+			{"CPUIrq", "cpu_irq"},
+			{"CPUSoftirq", "cpu_softirq"},
+			{"MemoryFree", "memory_free"},
+			{"MemoryFreeable", "memory_freeable"},
+		}
+		for _, f := range systemStatusCols {
+			if !m.HasColumn(&models.SystemStatus{}, f.col) {
+				if err := m.AddColumn(&models.SystemStatus{}, f.col); err != nil {
+					log.Printf("migrate: add SystemStatus.%s: %v", f.name, err)
+				} else {
+					log.Printf("migrate: added SystemStatus.%s", f.name)
 				}
 			}
 		}
-		for _, tbl := range ircTables {
-			if err := d.db.AutoMigrate(tbl); err != nil {
-				log.Printf("IRC migrate: recreate table: %v", err)
+	}
+
+	// Add missing columns for VPNStatus extended fields (interface name and mode)
+	if m.HasTable(&models.VPNStatus{}) {
+		vpnStatusCols := []struct {
+			name string
+			col  string
+		}{
+			{"InterfaceName", "interface_name"},
+			{"Mode", "mode"},
+		}
+		for _, f := range vpnStatusCols {
+			if !m.HasColumn(&models.VPNStatus{}, f.col) {
+				if err := m.AddColumn(&models.VPNStatus{}, f.col); err != nil {
+					log.Printf("migrate: add VPNStatus.%s: %v", f.name, err)
+				} else {
+					log.Printf("migrate: added VPNStatus.%s", f.name)
+				}
 			}
 		}
 	}
@@ -429,7 +484,7 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 	var latest models.VPNStatus
 	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latest).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, nil
+			return []models.VPNStatus{}, nil
 		}
 		return nil, err
 	}

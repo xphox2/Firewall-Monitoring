@@ -30,6 +30,20 @@ type SystemStatus struct {
 	IPSVersion    string `json:"ips_version"`
 	SSLVPNUsers   int    `json:"sslvpn_users"`
 	SSLVPNTunnels int    `json:"sslvpn_tunnels"`
+	// Network throughput (kbps) from SSH performance status
+	NetworkInKbps  float64 `json:"network_in_kbps"`
+	NetworkOutKbps float64 `json:"network_out_kbps"`
+	// CPU breakdown from SSH performance status
+	CPUUser    float64 `json:"cpu_user"`
+	CPUSystem  float64 `json:"cpu_system"`
+	CPUNice    float64 `json:"cpu_nice"`
+	CPUIdle    float64 `json:"cpu_idle"`
+	CPUIowait  float64 `json:"cpu_iowait"`
+	CPUIrq     float64 `json:"cpu_irq"`
+	CPUSoftirq float64 `json:"cpu_softirq"`
+	// Memory breakdown
+	MemoryFree     uint64 `json:"memory_free"`
+	MemoryFreeable uint64 `json:"memory_freeable"`
 }
 
 type InterfaceStats struct {
@@ -60,22 +74,24 @@ type InterfaceStats struct {
 }
 
 type VPNStatus struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	Timestamp    time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
-	DeviceID     uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
-	TunnelName   string    `json:"tunnel_name"`
-	TunnelType   string    `json:"tunnel_type"`
-	RemoteIP     string    `json:"remote_ip"`
-	Status       string    `json:"status"`
-	BytesIn      uint64    `json:"bytes_in"`
-	BytesOut     uint64    `json:"bytes_out"`
-	PacketsIn    uint64    `json:"packets_in"`
-	PacketsOut   uint64    `json:"packets_out"`
-	State        string    `json:"state"`
-	Phase1Name   string    `json:"phase1_name"`
-	LocalSubnet  string    `json:"local_subnet"`
-	RemoteSubnet string    `json:"remote_subnet"`
-	TunnelUptime uint64    `json:"tunnel_uptime"`
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	Timestamp     time.Time `json:"timestamp" gorm:"index:idx_vpn_device_ts,priority:2"`
+	DeviceID      uint      `json:"device_id" gorm:"index;index:idx_vpn_device_ts,priority:1"`
+	TunnelName    string    `json:"tunnel_name"`
+	TunnelType    string    `json:"tunnel_type"`
+	RemoteIP      string    `json:"remote_ip"`
+	Status        string    `json:"status"`
+	BytesIn       uint64    `json:"bytes_in"`
+	BytesOut      uint64    `json:"bytes_out"`
+	PacketsIn     uint64    `json:"packets_in"`
+	PacketsOut    uint64    `json:"packets_out"`
+	State         string    `json:"state"`
+	Phase1Name    string    `json:"phase1_name"`
+	LocalSubnet   string    `json:"local_subnet"`
+	RemoteSubnet  string    `json:"remote_subnet"`
+	TunnelUptime  uint64    `json:"tunnel_uptime"`
+	InterfaceName string    `json:"interface_name"`
+	Mode          string    `json:"mode"`
 }
 
 type HAStatus struct {

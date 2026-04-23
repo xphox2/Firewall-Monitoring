@@ -174,56 +174,58 @@
         if (showExt) extGrid.style.display = '';
 
         loadStatusHistoryChart();
+        loadNetworkThroughputChart();
+        loadCPUBreakdownChart();
     }
 
     function loadStatusHistoryChart() {
-        fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
-            credentials: 'include'
-        })
-            .then(function(resp) { return resp.json(); })
-            .then(function(result) {
-                if (!result.success) return;
+        if (!statusHistoryPromise) {
+            statusHistoryPromise = fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
+                credentials: 'include'
+            }).then(function(resp) { return resp.json(); });
+        }
+        statusHistoryPromise.then(function(result) {
+            if (!result.success) return;
 
-                var sysData = (result.data && result.data.system_status) || [];
-                var pingData = (result.data && result.data.ping_history) || [];
-                if (!sysData.length && !pingData.length) return;
+            var sysData = (result.data && result.data.system_status) || [];
+            var pingData = (result.data && result.data.ping_history) || [];
+            if (!sysData.length && !pingData.length) return;
 
-                var labels = sysData.map(function(s) {
-                    var d = new Date(s.timestamp);
-                    var tz = AC.getTimezone();
-                    return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
-                });
-                var cpuData = sysData.map(function(s) { return s.cpu_usage; });
-                var memData = sysData.map(function(s) { return s.memory_usage; });
-                var diskData = sysData.map(function(s) { return s.disk_usage; });
+            var labels = sysData.map(function(s) {
+                var d = new Date(s.timestamp);
+                var tz = AC.getTimezone();
+                return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+            });
+            var cpuData = sysData.map(function(s) { return s.cpu_usage; });
+            var memData = sysData.map(function(s) { return s.memory_usage; });
+            var diskData = sysData.map(function(s) { return s.disk_usage; });
 
-                // Build latency dataset aligned to system_status timestamps
-                var latencyData = [];
-                if (pingData.length && sysData.length) {
-                    var pi = 0;
-                    for (var si = 0; si < sysData.length; si++) {
-                        var sysTime = new Date(sysData[si].timestamp).getTime();
-                        var bestIdx = -1, bestDist = Infinity;
-                        while (pi < pingData.length && new Date(pingData[pi].timestamp).getTime() <= sysTime + 120000) {
-                            var dist = Math.abs(new Date(pingData[pi].timestamp).getTime() - sysTime);
-                            if (dist < bestDist) { bestDist = dist; bestIdx = pi; }
-                            pi++;
-                        }
-                        if (bestIdx >= 0) pi = bestIdx;
-                        latencyData.push(bestIdx >= 0 && bestDist < 120000 && pingData[bestIdx].success ? pingData[bestIdx].latency : null);
+            var latencyData = [];
+            if (pingData.length && sysData.length) {
+                var pi = 0;
+                for (var si = 0; si < sysData.length; si++) {
+                    var sysTime = new Date(sysData[si].timestamp).getTime();
+                    var bestIdx = -1, bestDist = Infinity;
+                    while (pi < pingData.length && new Date(pingData[pi].timestamp).getTime() <= sysTime + 120000) {
+                        var dist = Math.abs(new Date(pingData[pi].timestamp).getTime() - sysTime);
+                        if (dist < bestDist) { bestDist = dist; bestIdx = pi; }
+                        pi++;
                     }
+                    if (bestIdx >= 0) pi = bestIdx;
+                    latencyData.push(bestIdx >= 0 && bestDist < 120000 && pingData[bestIdx].success ? pingData[bestIdx].latency : null);
                 }
+            }
 
-                var datasets = [
-                    { label: 'CPU %', data: cpuData, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
-                    { label: 'Memory %', data: memData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
-                    { label: 'Disk %', data: diskData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' }
-                ];
+            var datasets = [
+                { label: 'CPU %', data: cpuData, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Memory %', data: memData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Disk %', data: diskData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' }
+            ];
 
-                var scales = {
-                    x: { ticks: { color: '#484f58', font: { size: 10 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                    y: { position: 'left', min: 0, max: 100, ticks: { color: '#484f58', font: { size: 10 } }, grid: { color: '#21262d' } }
-                };
+            var scales = {
+                x: { ticks: { color: '#484f58', font: { size: 10 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                y: { position: 'left', min: 0, max: 100, ticks: { color: '#484f58', font: { size: 10 } }, grid: { color: '#21262d' } }
+            };
 
                 if (latencyData.some(function(v) { return v !== null; })) {
                     datasets.push({
@@ -258,8 +260,119 @@
                         scales: scales
                     }
                 });
-            })
-            ['catch'](function(e) { console.error('Failed to load status history chart:', e); });
+            })['catch'](function(e) { console.error('Failed to load status history chart:', e); });
+    }
+
+    var networkThroughputChart = null;
+    var statusHistoryPromise = null;
+    function loadNetworkThroughputChart() {
+        if (!statusHistoryPromise) {
+            statusHistoryPromise = fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
+                credentials: 'include'
+            }).then(function(resp) { return resp.json(); });
+        }
+        statusHistoryPromise.then(function(result) {
+            if (!result.success) return;
+            var sysData = (result.data && result.data.system_status) || [];
+            if (!sysData.length) return;
+
+            var hasNetworkData = sysData.some(function(s) { return s.network_in_kbps > 0 || s.network_out_kbps > 0; });
+            var section = document.getElementById('network-throughput-section');
+            if (!section) return;
+
+            if (!hasNetworkData) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+
+            var labels = sysData.map(function(s) {
+                var d = new Date(s.timestamp);
+                var tz = AC.getTimezone();
+                return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+            });
+            var netInData = sysData.map(function(s) { return s.network_in_kbps || 0; });
+            var netOutData = sysData.map(function(s) { return s.network_out_kbps || 0; });
+
+            var ctx = document.getElementById('network-throughput-chart');
+            if (!ctx) return;
+            if (networkThroughputChart) networkThroughputChart.destroy();
+            networkThroughputChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'In (kbps)', data: netInData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                        { label: 'Out (kbps)', data: netOutData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
+                    scales: {
+                        x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                        y: { min: 0, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: '#21262d' } }
+                    }
+                }
+            });
+        })['catch'](function(e) { console.error('Failed to load network throughput chart:', e); });
+    }
+
+    var cpuBreakdownChart = null;
+    function loadCPUBreakdownChart() {
+        if (!statusHistoryPromise) {
+            statusHistoryPromise = fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
+                credentials: 'include'
+            }).then(function(resp) { return resp.json(); });
+        }
+        statusHistoryPromise.then(function(result) {
+            if (!result.success) return;
+            var sysData = (result.data && result.data.system_status) || [];
+            if (!sysData.length) return;
+
+            var hasBreakdown = sysData.some(function(s) { return s.cpu_user > 0 || s.cpu_system > 0 || s.cpu_idle > 0; });
+            var section = document.getElementById('cpu-breakdown-section');
+            if (!section) return;
+
+            if (!hasBreakdown) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+
+            var labels = sysData.map(function(s) {
+                var d = new Date(s.timestamp);
+                var tz = AC.getTimezone();
+                return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+            });
+
+            var ctx = document.getElementById('cpu-breakdown-chart');
+            if (!ctx) return;
+            if (cpuBreakdownChart) cpuBreakdownChart.destroy();
+            cpuBreakdownChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'User', data: sysData.map(function(s) { return s.cpu_user || 0; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
+                        { label: 'System', data: sysData.map(function(s) { return s.cpu_system || 0; }), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
+                        { label: 'Nice', data: sysData.map(function(s) { return s.cpu_nice || 0; }), borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
+                        { label: 'IOWait', data: sysData.map(function(s) { return s.cpu_iowait || 0; }), borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
+                        { label: 'IRQ', data: sysData.map(function(s) { return s.cpu_irq || 0; }), borderColor: '#ff7b72', backgroundColor: 'rgba(255,123,114,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
+                        { label: 'SoftIRQ', data: sysData.map(function(s) { return s.cpu_softirq || 0; }), borderColor: '#39d4e0', backgroundColor: 'rgba(57,212,224,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
+                        { label: 'Idle', data: sysData.map(function(s) { return s.cpu_idle || 0; }), borderColor: '#484f58', backgroundColor: 'rgba(72,79,88,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
+                    scales: {
+                        x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                        y: { min: 0, max: 100, stacked: false, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
+                    }
+                }
+            });
+        })['catch'](function(e) { console.error('Failed to load CPU breakdown chart:', e); });
     }
 
     function createGauge(containerId, value, color) {
@@ -431,6 +544,7 @@
             .then(function(result) {
                 if (!result.success || !result.data || result.data.length < 2) {
                     var ctx2 = canvas.getContext('2d');
+                    ctx2.clearRect(0, 0, canvas.width, canvas.height);
                     ctx2.fillStyle = '#484f58';
                     ctx2.font = '11px sans-serif';
                     ctx2.fillText('Not enough history data', 10, 30);
@@ -495,7 +609,9 @@
                 '<td>' + esc(v.phase1_name || v.tunnel_name) + '</td>' +
                 '<td><strong>' + esc(v.tunnel_name) + '</strong></td>' +
                 '<td>' + getTunnelTypeBadge(v.tunnel_type) + '</td>' +
+                '<td style="color:#8b949e;font-size:0.8rem;">' + esc(v.interface_name || '-') + '</td>' +
                 '<td>' + esc(v.remote_ip) + '</td>' +
+                '<td style="color:#8b949e;font-size:0.78rem;">' + esc(v.mode || '-') + '</td>' +
                 '<td><span class="badge ' + v.status + '">' + v.status + '</span></td>' +
                 '<td><span class="badge ' + stateClass + '">' + stateLabel + '</span></td>' +
                 '<td><code style="color:#58a6ff;font-size:0.8rem;">' + esc(v.local_subnet || '-') + '</code></td>' +

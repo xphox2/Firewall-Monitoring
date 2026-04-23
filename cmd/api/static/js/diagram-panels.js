@@ -486,7 +486,7 @@
         const offnet = tunnels.filter(t => t.matched_device_id === 0);
 
         function renderVPNTunnelRows(prefix, rows, devId) {
-            if (!rows.length) return '<tr><td colspan="7" style="text-align:center;color:#484f58;padding:12px;">None</td></tr>';
+            if (!rows.length) return '<tr><td colspan="9" style="text-align:center;color:#484f58;padding:12px;">None</td></tr>';
             return rows.map((t, i) => {
                 const rowId = `${prefix}-${i}`;
                 const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:#58a6ff;text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:#d29922;font-size:0.78rem;">Off-Net</span>';
@@ -496,13 +496,15 @@
                         <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
                         <td>${window.escapeHtml(t.tunnel_name)}</td>
                         <td>${window.escapeHtml((t.tunnel_type || 'ipsec').toUpperCase())}</td>
+                        <td style="color:#8b949e;font-size:0.78rem;">${window.escapeHtml(t.interface_name || '-')}</td>
+                        <td style="color:#8b949e;font-size:0.78rem;">${window.escapeHtml(t.mode || '-')}</td>
                         <td>${statusBadge}</td>
                         <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(t.remote_ip || '-')}</td>
                         <td>${dest}</td>
                         <td>${t.status === 'up' ? formatPanelUptime(t.tunnel_uptime) : '-'}</td>
                     </tr>
                     <tr class="panel-tunnel-expand" id="${rowId}">
-                        <td colspan="7">
+                        <td colspan="9">
                             <div class="panel-range-pills" style="margin-bottom:6px;">
                                 <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="1h">1h</div>
                                 <div class="panel-range-pill active" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="24h">24h</div>
@@ -519,13 +521,13 @@
         if (!offnetOnly && matched.length > 0) {
             sectionsHtml += `
                 <h5 style="font-size:0.82rem;color:#e6edf3;margin:12px 0 6px 0;">Matched Tunnels (${matched.length})</h5>
-                <table class="vpn-detail-table"><thead><tr><th></th><th>Tunnel</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
+                <table class="vpn-detail-table"><thead><tr><th></th><th>Tunnel</th><th>Type</th><th>Interface</th><th>Mode</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
                 <tbody>${renderVPNTunnelRows('vpn-m', matched, deviceId)}</tbody></table>`;
         }
         if (offnet.length > 0) {
             sectionsHtml += `
                 <h5 style="font-size:0.82rem;color:#d29922;margin:12px 0 6px 0;">Off-Net Tunnels (${offnet.length})</h5>
-                <table class="vpn-detail-table"><thead><tr><th></th><th>Tunnel</th><th>Type</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
+                <table class="vpn-detail-table"><thead><tr><th></th><th>Tunnel</th><th>Type</th><th>Interface</th><th>Mode</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
                 <tbody>${renderVPNTunnelRows('vpn-o', offnet, deviceId)}</tbody></table>`;
         }
         if (!offnetOnly && matched.length === 0 && offnet.length === 0) {

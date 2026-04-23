@@ -385,18 +385,20 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 	}
 
 	type tunnelInfo struct {
-		TunnelName     string `json:"tunnel_name"`
-		TunnelType     string `json:"tunnel_type"`
-		Status         string `json:"status"`
-		RemoteIP       string `json:"remote_ip"`
-		MatchedDevID   uint   `json:"matched_device_id"`
-		MatchedName    string `json:"matched_name"`
-		Phase1Name     string `json:"phase1_name"`
-		LocalSubnet    string `json:"local_subnet"`
-		RemoteSubnet   string `json:"remote_subnet"`
-		TunnelUptime   uint64 `json:"tunnel_uptime"`
-		BytesIn        uint64 `json:"bytes_in"`
-		BytesOut       uint64 `json:"bytes_out"`
+		TunnelName    string `json:"tunnel_name"`
+		TunnelType    string `json:"tunnel_type"`
+		Status        string `json:"status"`
+		RemoteIP      string `json:"remote_ip"`
+		MatchedDevID  uint   `json:"matched_device_id"`
+		MatchedName   string `json:"matched_name"`
+		Phase1Name    string `json:"phase1_name"`
+		LocalSubnet   string `json:"local_subnet"`
+		RemoteSubnet  string `json:"remote_subnet"`
+		TunnelUptime  uint64 `json:"tunnel_uptime"`
+		BytesIn       uint64 `json:"bytes_in"`
+		BytesOut      uint64 `json:"bytes_out"`
+		InterfaceName string `json:"interface_name"`
+		Mode          string `json:"mode"`
 	}
 	type deviceVPN struct {
 		Total   int          `json:"total"`
@@ -429,18 +431,20 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 			dv.Down++
 		}
 		dv.Tunnels = append(dv.Tunnels, tunnelInfo{
-			TunnelName:   vpn.TunnelName,
-			TunnelType:   vpn.TunnelType,
-			Status:       vpn.Status,
-			RemoteIP:     vpn.RemoteIP,
-			MatchedDevID: matchID,
-			MatchedName:  matchName,
-			Phase1Name:   vpn.Phase1Name,
-			LocalSubnet:  vpn.LocalSubnet,
-			RemoteSubnet: vpn.RemoteSubnet,
-			TunnelUptime: vpn.TunnelUptime,
-			BytesIn:      vpn.BytesIn,
-			BytesOut:     vpn.BytesOut,
+			TunnelName:    vpn.TunnelName,
+			TunnelType:    vpn.TunnelType,
+			Status:        vpn.Status,
+			RemoteIP:      vpn.RemoteIP,
+			MatchedDevID:  matchID,
+			MatchedName:   matchName,
+			Phase1Name:    vpn.Phase1Name,
+			LocalSubnet:   vpn.LocalSubnet,
+			RemoteSubnet:  vpn.RemoteSubnet,
+			TunnelUptime:  vpn.TunnelUptime,
+			BytesIn:       vpn.BytesIn,
+			BytesOut:      vpn.BytesOut,
+			InterfaceName: vpn.InterfaceName,
+			Mode:          vpn.Mode,
 		})
 	}
 

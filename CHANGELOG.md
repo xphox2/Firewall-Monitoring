@@ -1,4 +1,31 @@
 # Changelog
+## [0.10.167] - 2026-04-22
+
+### Fixed
+- **Database: IRC migration transactional**: Wrapped IRC table recreation in transaction to prevent partial schema on failure
+- **Database: GetLatestVPNStatuses nil slice**: Changed to return empty slice `[]models.VPNStatus{}` instead of nil on no records, prevents JSON `null` being sent to frontend
+- **Chart: Triple API fetch optimization**: Refactored loadStatusHistoryChart/loadNetworkThroughputChart/loadCPUBreakdownChart to share a single fetch promise instead of 3 separate requests for identical data
+- **Chart: Stale canvas text**: Added `clearRect()` before drawing "Not enough history data" text to prevent ghost rendering
+- **JS cleanup: Duplicate connStyleLookup removed**: Removed local copy from admin-connection-detail.js; now uses canonical `connStyle()` from admin-common.js
+
+## [0.10.166] - 2026-04-22
+
+### Fixed
+- **Database migration for new columns**: Added HasColumn/AddColumn migration helpers for SystemStatus (network throughput, CPU breakdown, memory breakdown fields) and VPNStatus (InterfaceName, Mode) fields. Existing databases will now automatically get the new columns on upgrade.
+
+## [0.10.165] - 2026-04-22
+
+### Added
+- **Network Throughput Chart**: Added new chart section on device detail page showing network throughput (in/out kbps) from SSH performance data. Automatically hidden when no data available.
+- **CPU Breakdown Chart**: Added new chart section on device detail page showing CPU breakdown (user/system/nice/idle/iowait/irq/softirq) as stacked area chart. Automatically hidden when no data available.
+- **Enhanced SystemStatus Model**: Added network throughput fields (NetworkInKbps, NetworkOutKbps), CPU breakdown fields (CPUUser, CPUSystem, CPUNice, CPUIdle, CPUIowait, CPUIrq, CPUSoftirq), and memory breakdown fields (MemoryFree, MemoryFreeable).
+- **Enhanced VPNStatus Model**: Added InterfaceName and Mode fields from SSH phase1 configuration.
+- **VPN Tab Enhancement**: Added Interface and Mode columns to the VPN tunnels table on device detail page.
+- **Connection Map Enhancement**: Added Interface and Mode columns to VPN tunnel detail panel in the connection map popup.
+
+### Changed
+- **Device Detail Page**: Network throughput and CPU breakdown charts are now displayed below the standard System Status History chart.
+
 
 ## [0.10.164] - 2026-04-21
 

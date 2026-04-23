@@ -75,25 +75,9 @@
     }
 
     // Connection type visual style mapping
-    function connStyleLookup(type) {
-        var styles = {
-            ipsec:    { color: '#58a6ff', dash: '', width: 3 },
-            ssl:      { color: '#d29922', dash: '', width: 3 },
-            vxlan:    { color: '#8957e5', dash: 'stroke-dasharray="8,4"', width: 3 },
-            l2vlan:   { color: '#39d4e0', dash: '', width: 3 },
-            l3ipvlan: { color: '#da7de8', dash: 'stroke-dasharray="12,4"', width: 3 },
-            gre:      { color: '#b392f0', dash: '', width: 3 },
-            wan:      { color: '#f0883e', dash: '', width: 3 },
-            lag:      { color: '#d29922', dash: '', width: 4 },
-            ethernet: { color: '#6e7681', dash: '', width: 2 },
-            tunnel:   { color: '#8b949e', dash: '', width: 3 }
-        };
-        return styles[type] || styles.tunnel;
-    }
-
     function renderBridge(srcName, dstName, status, connType) {
         var statusColor = status === 'up' ? '#3fb950' : (status === 'down' ? '#f85149' : '#484f58');
-        var cs = connStyleLookup(connType);
+        var cs = connStyle(connType);
         var pathColor = cs.color;
         var particles = '';
         if (status === 'up') {
