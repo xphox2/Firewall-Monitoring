@@ -107,7 +107,15 @@
 
             <!-- Network Throughput Chart -->
             <div class="chart-card mb-4" id="network-throughput-section">
-                <h3 class="text-[0.85rem] text-[#8b949e] mb-3 font-medium">Network Throughput (24h)</h3>
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3>
+                    <div class="chart-range-btns" id="network-throughput-range-btns">
+                        <button class="chart-range-btn" data-action="load-network-throughput" data-range="1h">1h</button>
+                        <button class="chart-range-btn active" data-action="load-network-throughput" data-range="24h">24h</button>
+                        <button class="chart-range-btn" data-action="load-network-throughput" data-range="7d">7d</button>
+                        <button class="chart-range-btn" data-action="load-network-throughput" data-range="30d">30d</button>
+                    </div>
+                </div>
                 <canvas id="network-throughput-chart"></canvas>
             </div>
 

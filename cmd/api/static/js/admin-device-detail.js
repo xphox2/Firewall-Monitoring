@@ -264,58 +264,92 @@
     }
 
     var networkThroughputChart = null;
-    var statusHistoryPromise = null;
-    function loadNetworkThroughputChart() {
-        if (!statusHistoryPromise) {
-            statusHistoryPromise = fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
-                credentials: 'include'
-            }).then(function(resp) { return resp.json(); });
+    var currentNetworkThroughputRange = '24h';
+    var statusHistoryCache = {};
+    function loadNetworkThroughputChart(range) {
+        if (!range) range = currentNetworkThroughputRange;
+        currentNetworkThroughputRange = range;
+
+        // Update active button
+        document.querySelectorAll('#network-throughput-range-btns .chart-range-btn').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.range === range);
+        });
+
+        // Convert range to hours for API
+        var hoursMap = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 };
+        var hours = hoursMap[range] || 24;
+
+        // Check cache first
+        var cacheKey = range;
+        var section = document.getElementById('network-throughput-section');
+        if (!section) return;
+
+        if (statusHistoryCache[cacheKey]) {
+            renderNetworkThroughputChart(statusHistoryCache[cacheKey], range);
+            return;
         }
-        statusHistoryPromise.then(function(result) {
+
+        section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><div class="chart-range-btns" id="network-throughput-range-btns"><button class="chart-range-btn' + (range === '1h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="1h">1h</button><button class="chart-range-btn' + (range === '24h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="24h">24h</button><button class="chart-range-btn' + (range === '7d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="7d">7d</button><button class="chart-range-btn' + (range === '30d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="30d">30d</button></div></div><canvas id="network-throughput-chart"></canvas><div class="loading">Loading...</div>';
+
+        fetch('/admin/api/devices/' + deviceId + '/status-history?hours=' + hours, {
+            credentials: 'include'
+        }).then(function(resp) { return resp.json(); })
+        .then(function(result) {
             if (!result.success) return;
             var sysData = (result.data && result.data.system_status) || [];
-            if (!sysData.length) return;
-
-            var hasNetworkData = sysData.some(function(s) { return s.network_in_kbps > 0 || s.network_out_kbps > 0; });
-            var section = document.getElementById('network-throughput-section');
-            if (!section) return;
-
-            if (!hasNetworkData) {
-                section.style.display = 'none';
-                return;
-            }
-            section.style.display = 'block';
-
-            var labels = sysData.map(function(s) {
-                var d = new Date(s.timestamp);
-                var tz = AC.getTimezone();
-                return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
-            });
-            var netInData = sysData.map(function(s) { return s.network_in_kbps || 0; });
-            var netOutData = sysData.map(function(s) { return s.network_out_kbps || 0; });
-
-            var ctx = document.getElementById('network-throughput-chart');
-            if (!ctx) return;
-            if (networkThroughputChart) networkThroughputChart.destroy();
-            networkThroughputChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'In (kbps)', data: netInData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Out (kbps)', data: netOutData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
-                    scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                        y: { min: 0, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: '#21262d' } }
-                    }
-                }
-            });
+            statusHistoryCache[cacheKey] = sysData;
+            renderNetworkThroughputChart(sysData, range);
         })['catch'](function(e) { console.error('Failed to load network throughput chart:', e); });
+    }
+
+    function renderNetworkThroughputChart(sysData, range) {
+        if (!sysData || !sysData.length) return;
+
+        var hasNetworkData = sysData.some(function(s) { return s.network_in_kbps > 0 || s.network_out_kbps > 0; });
+        var section = document.getElementById('network-throughput-section');
+        if (!section) return;
+
+        if (!hasNetworkData) {
+            section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><div class="chart-range-btns" id="network-throughput-range-btns"><button class="chart-range-btn' + (range === '1h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="1h">1h</button><button class="chart-range-btn' + (range === '24h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="24h">24h</button><button class="chart-range-btn' + (range === '7d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="7d">7d</button><button class="chart-range-btn' + (range === '30d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="30d">30d</button></div></div><div class="text-[#8b949e] text-center p-4">No network throughput data available</div>';
+            return;
+        }
+
+        var showDate = range === '7d' || range === '30d';
+        var labels = sysData.map(function(s) {
+            var d = new Date(s.timestamp);
+            var tz = AC.getTimezone();
+            if (showDate) {
+                return d.toLocaleString('en-US', { timeZone: tz, month: 'short', day: 'numeric' });
+            }
+            return d.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+        });
+        var netInData = sysData.map(function(s) { return s.network_in_kbps || 0; });
+        var netOutData = sysData.map(function(s) { return s.network_out_kbps || 0; });
+
+        section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><div class="chart-range-btns" id="network-throughput-range-btns"><button class="chart-range-btn' + (range === '1h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="1h">1h</button><button class="chart-range-btn' + (range === '24h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="24h">24h</button><button class="chart-range-btn' + (range === '7d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="7d">7d</button><button class="chart-range-btn' + (range === '30d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="30d">30d</button></div></div><canvas id="network-throughput-chart"></canvas>';
+
+        var ctx = document.getElementById('network-throughput-chart');
+        if (!ctx) return;
+        if (networkThroughputChart) networkThroughputChart.destroy();
+        networkThroughputChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'In (kbps)', data: netInData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'Out (kbps)', data: netOutData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                animation: { duration: 0 },
+                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
+                scales: {
+                    x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                    y: { min: 0, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: '#21262d' } }
+                }
+            }
+        });
     }
 
     var cpuBreakdownChart = null;
@@ -1296,6 +1330,10 @@
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
             loadInterfaceChart(parseInt(el.dataset.index, 10), el.dataset.range);
+        },
+        'load-network-throughput': function(el, e) {
+            e.stopPropagation();
+            loadNetworkThroughputChart(el.dataset.range);
         }
     });
 

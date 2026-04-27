@@ -1,7 +1,8 @@
 # Changelog
-## [0.10.174] - 2026-04-27
+## [0.10.175] - 2026-04-27
 
 ### Fixed
+- **Network Throughput chart**: Added adjustable time range selector (1h, 24h, 7d, 30d) like the public dashboard graphs - previously hardcoded to 24h only
 - **Network Connection Map VXLAN detection**: Fixed bug where vxlan-prefixed interfaces (e.g., vxlan700) on FortiGate were not properly detected as overlays - now correctly identifies them as l2vlan (Software Switch) or vxlan (if verified in config)
 - **Frontend/backend type consistency**: Moved bridge/Software Switch back to DIRECT_TYPES (same-site local switching) while keeping vxlan/l3ipvlan in OVERLAY_TYPES (IPSec tunnel children)
 
