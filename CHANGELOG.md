@@ -1,4 +1,12 @@
 # Changelog
+## [0.10.182] - 2026-04-27
+
+### Fixed
+- **ConfigText truncation bug**: Server-side warning now logs when received config Length mismatch is detected. Root cause was in Firewall-Collector (Firewall-Mon#repo) where cleanOutput was incorrectly filtering config lines containing `$` character.
+
+### Added
+- **TFTP config fetch support**: Server ready to receive configs via TFTP from Firewall-Collector probes.
+
 ## [0.10.181] - 2026-04-27
 
 ### Fixed
