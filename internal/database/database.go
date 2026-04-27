@@ -376,7 +376,7 @@ func (d *Database) ConfigureAutovacuum() error {
 	// - vacuum_cost_limit = 2000 (vs default 200) - allow more work per vacuum
 	for _, table := range tables {
 		sql := fmt.Sprintf(`
-			ALTER TABLE %s SET (%
+			ALTER TABLE %s SET (
 				autovacuum_vacuum_scale_factor = 0.01,
 				autovacuum_analyze_scale_factor = 0.05,
 				autovacuum_vacuum_cost_delay = 10,
