@@ -297,6 +297,7 @@
         section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><canvas id="network-throughput-chart"></canvas><div class="loading">Loading...</div>';
         var sel = document.getElementById('network-throughput-range');
         sel.value = range;
+        sel.removeEventListener('change', networkThroughputRangeChangeHandler);
         sel.addEventListener('change', networkThroughputRangeChangeHandler);
 
         fetch('/admin/api/devices/' + deviceId + '/status-history?hours=' + hours, {
@@ -321,6 +322,7 @@
             section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><div class="text-[#8b949e] text-center p-4">No network throughput data available</div>';
             var sel = document.getElementById('network-throughput-range');
             sel.value = range;
+            sel.removeEventListener('change', networkThroughputRangeChangeHandler);
             sel.addEventListener('change', networkThroughputRangeChangeHandler);
             return;
         }
@@ -340,6 +342,7 @@
         section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><canvas id="network-throughput-chart"></canvas>';
         var sel = document.getElementById('network-throughput-range');
         sel.value = range;
+        sel.removeEventListener('change', networkThroughputRangeChangeHandler);
         sel.addEventListener('change', networkThroughputRangeChangeHandler);
 
         var ctx = document.getElementById('network-throughput-chart');
