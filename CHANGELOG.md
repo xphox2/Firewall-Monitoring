@@ -1,5 +1,12 @@
 # Changelog
-## [0.10.179] - 2026-04-27
+## [0.10.181] - 2026-04-27
+
+### Fixed
+- **admin.html chart CSS**: Updated embedded .chart-card styles to match admin-shared.css (padding:20px, height:340px, canvas max-height:280px)
+- **device-detail.html canvas heights**: Updated inline canvas heights from 300px to 340px for consistency
+- **connection-detail.html container height**: Updated container div from 300px to 340px
+
+## [0.10.180] - 2026-04-27
 
 ### Fixed
 - **Chart font sizes**: Increased from 9px to 11px across all charts for better readability
