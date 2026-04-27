@@ -600,17 +600,24 @@ const (
 func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
+		log.Printf("ReceiveConfigRevision: validateProbe failed")
 		return
 	}
+	log.Printf("ReceiveConfigRevision: probe %d (%s) receiving config", probe.ID, probe.Name)
+
 	var rev models.DeviceConfigRevision
 	if err := c.ShouldBindJSON(&rev); err != nil {
+		log.Printf("ReceiveConfigRevision: Invalid JSON: %v", err)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
 		return
 	}
+	log.Printf("ReceiveConfigRevision: received DeviceID=%d, Length=%d, ConfigText len=%d", rev.DeviceID, rev.Length, len(rev.ConfigText))
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
+	log.Printf("ReceiveConfigRevision: probe %d has %d devices assigned", probe.ID, len(allowedDevices))
+
 	if allowedDevices != nil && !allowedDevices[rev.DeviceID] {
-		log.Printf("ReceiveConfigRevision: Rejected - device %d not assigned to probe %d (probe name: %s)", rev.DeviceID, probe.ID, probe.Name)
+		log.Printf("ReceiveConfigRevision: REJECTED - device %d not in probe %d's device list (probe name: %s)", rev.DeviceID, probe.ID, probe.Name)
 		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
 		return
 	}
@@ -633,6 +640,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	}
 
 	if prevChecksum != "" && prevChecksum == rev.Checksum {
+		log.Printf("ReceiveConfigRevision: DEDUPED - device %d checksum unchanged (%s)", rev.DeviceID, prevChecksum)
 		h.db.Gorm().Model(&models.Device{}).Where("id = ?", rev.DeviceID).Updates(map[string]interface{}{
 			"status":      "online",
 			"last_polled": time.Now(),
@@ -642,7 +650,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	}
 
 	if err := h.db.SaveConfigRevision(&rev); err != nil {
-		log.Printf("ReceiveConfigRevision: DB save error: %v", err)
+		log.Printf("ReceiveConfigRevision: DB save error for device %d: %v", rev.DeviceID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save config revision"))
 		return
 	}
@@ -651,7 +659,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	if rev.Length != actualLen {
 		log.Printf("WARNING: ReceiveConfigRevision: device %d Length mismatch - reported=%d actual=%d", rev.DeviceID, rev.Length, actualLen)
 	}
-	log.Printf("ReceiveConfigRevision: saved config for device %d (len=%d)", rev.DeviceID, actualLen)
+	log.Printf("ReceiveConfigRevision: SAVED config for device %d (rev.ID=%d, len=%d, checksum=%s)", rev.DeviceID, rev.ID, actualLen, rev.Checksum)
 
 	if prevChecksum != "" && prevChecksum != rev.Checksum {
 		if h.alertManager != nil {
