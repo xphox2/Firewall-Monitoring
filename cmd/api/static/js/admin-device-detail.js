@@ -358,8 +358,8 @@
                 animation: { duration: 0 },
                 plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
                 scales: {
-                    x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                    y: { min: 0, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: '#21262d' } }
+                    x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                    y: { min: 0, ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: '#21262d' } }
                 }
             }
         });
@@ -414,8 +414,8 @@
                     responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
                     scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                        y: { min: 0, max: 100, stacked: false, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
+                        x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                        y: { min: 0, max: 100, stacked: false, ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
                     }
                 }
             });
@@ -619,8 +619,8 @@
                         responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
                         scales: {
-                            x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                            y: { ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } }
+                            x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                            y: { ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } }
                         }
                     }
                 });
@@ -1175,8 +1175,8 @@
                         responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
                         scales: {
-                            x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                            y: { min: 0, ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
+                            x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                            y: { min: 0, ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
                         }
                     }
                 });
@@ -1245,8 +1245,8 @@
                         responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
                         scales: {
-                            x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                            y: { min: 0, ticks: { color: '#484f58', font: { size: 9 } }, grid: { color: '#21262d' } }
+                            x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                            y: { min: 0, ticks: { color: '#484f58', font: { size: 11 } }, grid: { color: '#21262d' } }
                         }
                     }
                 });

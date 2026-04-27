@@ -1,4 +1,10 @@
 # Changelog
+## [0.10.179] - 2026-04-27
+
+### Fixed
+- **Chart font sizes**: Increased from 9px to 11px across all charts for better readability
+- **Doughnut chart aspect ratio**: Fixed maintainAspectRatio setting that prevented proper container filling
+
 ## [0.10.176] - 2026-04-27
 
 ### Fixed

@@ -18,8 +18,8 @@
                 tooltip: { callbacks: { label: function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + window.formatBytes(v != null ? v : 0); } } }
             },
             scales: {
-                x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 9 }, callback: yCallback || (v => window.formatBytes(v)) }, grid: { color: '#21262d' } }
+                x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: yCallback || (v => window.formatBytes(v)) }, grid: { color: '#21262d' } }
             }
         };
     }
@@ -311,7 +311,7 @@
             panelChartInstances['proto'] = new Chart(document.getElementById('panel-proto-chart'), {
                 type: 'doughnut',
                 data: { labels: protoData.map(p => p.key), datasets: [{ data: protoData.map(p => p.count), backgroundColor: protoData.map(p => protoColors[p.key] || '#484f58'), borderWidth: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#8b949e', padding: 6, font: { size: 9 } } } } }
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#8b949e', padding: 6, font: { size: 11 } } } } }
             });
 
             if (panelChartInstances['flowTime']) panelChartInstances['flowTime'].destroy();
@@ -327,7 +327,7 @@
             panelChartInstances['topSrc'] = new Chart(document.getElementById('panel-top-src-chart'), {
                 type: 'bar',
                 data: { labels: srcData.map(s => s.key), datasets: [{ label: 'Bytes', data: srcData.map(s => s.count), backgroundColor: 'rgba(88,166,255,0.6)', borderRadius: 4 }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 9 }, callback: v => window.formatBytes(v) }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { display: false } } } }
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: v => window.formatBytes(v) }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { display: false } } } }
             });
 
             if (panelChartInstances['topDst']) panelChartInstances['topDst'].destroy();
@@ -335,7 +335,7 @@
             panelChartInstances['topDst'] = new Chart(document.getElementById('panel-top-dst-chart'), {
                 type: 'bar',
                 data: { labels: dstData.map(s => s.key), datasets: [{ label: 'Bytes', data: dstData.map(s => s.count), backgroundColor: 'rgba(63,185,80,0.6)', borderRadius: 4 }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 9 }, callback: v => window.formatBytes(v) }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { display: false } } } }
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: v => window.formatBytes(v) }, grid: { color: '#21262d' } }, y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { display: false } } } }
             });
 
             const convos = data.top_conversations || [];

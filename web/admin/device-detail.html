@@ -458,31 +458,6 @@
             </div>
 
             <!-- Interface Detail Expand Panel (injected dynamically) -->
-            <div class="tab-content hidden" id="tab-iface-err">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Interface Errors
-                        <span id="ifaceErrSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div class="mb-3">
-                        <label class="text-[0.82rem] text-[#8b949e] mr-2">Interface:</label>
-                        <select id="iface-err-interface" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="">All Interfaces</option>
-                        </select>
-                        <label class="text-[0.82rem] text-[#8b949e] ml-4 mr-2">Time Range:</label>
-                        <select id="iface-err-range" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="1">Last 1 hour</option>
-                            <option value="6">Last 6 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
-                            <option value="168">Last 7 days</option>
-                        </select>
-                    </div>
-                    <canvas id="iface-err-chart" style="height:300px"></canvas>
-                    <div id="ifaceErrEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No interface error data available. Enable SSH polling to collect error stats.</div>
-                </div>
-            </div>
-
-            <!-- Interface Detail Expand Panel (injected dynamically) -->
         </div>
     </div>
 

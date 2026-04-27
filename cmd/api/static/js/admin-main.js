@@ -289,11 +289,11 @@
         var isDoughnut = type === 'doughnut' || type === 'pie';
         var defaults = {
             responsive: true,
-            maintainAspectRatio: isDoughnut ? true : false,
+            maintainAspectRatio: false,
             plugins: { legend: { position: isDoughnut ? 'bottom' : 'top', labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } } },
             scales: isDoughnut ? {} : {
-                x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
-                y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' }, beginAtZero: true }
+                x: { ticks: { color: '#484f58', font:{size:11}, maxRotation: 0, maxTicksLimit: 8 }, grid: { color: '#21262d' } },
+                y: { ticks: { color: '#484f58', font:{size:11}, maxTicksLimit: 8 }, grid: { color: '#21262d' }, beginAtZero: true }
             }
         };
         var mergedOpts = Object.assign({}, defaults, opts || {});

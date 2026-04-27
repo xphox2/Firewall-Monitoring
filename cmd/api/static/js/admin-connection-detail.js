@@ -309,8 +309,8 @@
                 tooltip: { callbacks: { label: function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBytes(v != null ? v : 0); } } }
             },
             scales: {
-                x: { ticks: { color: '#484f58', font: { size: 9 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 9 }, callback: yCallback || function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } }
+                x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
+                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: yCallback || function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } }
             }
         };
     }
@@ -426,8 +426,8 @@
                     indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
                     scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } },
-                        y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { display: false } }
+                        x: { ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } },
+                        y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { display: false } }
                     }
                 }
             });
@@ -445,8 +445,8 @@
                     indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
                     scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 9 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } },
-                        y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { display: false } }
+                        x: { ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } },
+                        y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { display: false } }
                     }
                 }
             });
