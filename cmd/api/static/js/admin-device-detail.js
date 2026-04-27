@@ -263,10 +263,14 @@
             })['catch'](function(e) { console.error('Failed to load status history chart:', e); });
     }
 
-    var statusHistoryPromise = null;
     var networkThroughputChart = null;
     var currentNetworkThroughputRange = '24h';
     var statusHistoryCache = {};
+
+    var networkThroughputRangeChangeHandler = function() {
+        loadNetworkThroughputChart(this.value);
+    };
+
     function loadNetworkThroughputChart(range) {
         if (!range) range = currentNetworkThroughputRange;
         currentNetworkThroughputRange = range;
@@ -290,8 +294,9 @@
         }
 
         section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><canvas id="network-throughput-chart"></canvas><div class="loading">Loading...</div>';
-        document.getElementById('network-throughput-range').value = range;
-        document.getElementById('network-throughput-range').addEventListener('change', function() { loadNetworkThroughputChart(this.value); });
+        var sel = document.getElementById('network-throughput-range');
+        sel.value = range;
+        sel.addEventListener('change', networkThroughputRangeChangeHandler);
 
         fetch('/admin/api/devices/' + deviceId + '/status-history?hours=' + hours, {
             credentials: 'include'
@@ -313,8 +318,9 @@
 
         if (!hasNetworkData) {
             section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><div class="text-[#8b949e] text-center p-4">No network throughput data available</div>';
-            document.getElementById('network-throughput-range').value = range;
-            document.getElementById('network-throughput-range').addEventListener('change', function() { loadNetworkThroughputChart(this.value); });
+            var sel = document.getElementById('network-throughput-range');
+            sel.value = range;
+            sel.addEventListener('change', networkThroughputRangeChangeHandler);
             return;
         }
 
@@ -331,8 +337,9 @@
         var netOutData = sysData.map(function(s) { return s.network_out_kbps || 0; });
 
         section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><canvas id="network-throughput-chart"></canvas>';
-        document.getElementById('network-throughput-range').value = range;
-        document.getElementById('network-throughput-range').addEventListener('change', function() { loadNetworkThroughputChart(this.value); });
+        var sel = document.getElementById('network-throughput-range');
+        sel.value = range;
+        sel.addEventListener('change', networkThroughputRangeChangeHandler);
 
         var ctx = document.getElementById('network-throughput-chart');
         if (!ctx) return;

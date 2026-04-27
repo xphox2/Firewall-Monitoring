@@ -593,6 +593,10 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
 }
 
+const (
+	maxConfigTextSize = 50 * 1024 * 1024 // 50MB max config size to prevent DoS
+)
+
 func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
@@ -607,6 +611,13 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	if allowedDevices != nil && !allowedDevices[rev.DeviceID] {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
+		return
+	}
+
+	// Validate ConfigText size to prevent DoS
+	if len(rev.ConfigText) > maxConfigTextSize {
+		log.Printf("ReceiveConfigRevision: Rejected config for device %d - size %d exceeds limit %d", rev.DeviceID, len(rev.ConfigText), maxConfigTextSize)
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Config too large"))
 		return
 	}
 
