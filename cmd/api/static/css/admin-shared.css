@@ -1215,16 +1215,16 @@ tr:hover {
 
 /* Chart containers need padding */
 .chart-card {
-    padding: 16px;
+    padding: 20px;
     background: #161b22;
     border: 1px solid #30363d;
     border-radius: 8px;
-    height: 300px;
+    height: 340px;
     overflow: hidden;
 }
 
 .chart-card canvas {
-    max-height: 250px;
+    max-height: 280px;
 }
 
 .panel-kpi-grid {
