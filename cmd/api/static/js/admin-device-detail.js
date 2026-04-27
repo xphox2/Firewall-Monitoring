@@ -11,6 +11,7 @@
     var ifaceCharts = {};
     var currentChartRange = '24h';
     var statusHistoryChart = null;
+    var statusHistoryPromise = null;
     var publicInterfaces = {}; // {"iface1":true,"iface2":true}
 
     var deviceId = window.location.pathname.split('/').pop();
