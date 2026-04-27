@@ -610,6 +610,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	if allowedDevices != nil && !allowedDevices[rev.DeviceID] {
+		log.Printf("ReceiveConfigRevision: Rejected - device %d not assigned to probe %d (probe name: %s)", rev.DeviceID, probe.ID, probe.Name)
 		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
 		return
 	}
