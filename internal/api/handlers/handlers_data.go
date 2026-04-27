@@ -635,7 +635,11 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		return
 	}
 
-	log.Printf("ReceiveConfigRevision: saved config for device %d (len=%d)", rev.DeviceID, rev.Length)
+	actualLen := len(rev.ConfigText)
+	if rev.Length != actualLen {
+		log.Printf("WARNING: ReceiveConfigRevision: device %d Length mismatch - reported=%d actual=%d", rev.DeviceID, rev.Length, actualLen)
+	}
+	log.Printf("ReceiveConfigRevision: saved config for device %d (len=%d)", rev.DeviceID, actualLen)
 
 	if prevChecksum != "" && prevChecksum != rev.Checksum {
 		if h.alertManager != nil {

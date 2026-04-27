@@ -1,5 +1,20 @@
 # Lessons Learned
 
+## Issue: ConfigText Length Validation
+
+### Problem
+SSH config collection may receive incomplete configs. The probe sends a `Length` metadata field that should match `len(ConfigText)`.
+
+### What To Check
+1. Server logs show `ReceiveConfigRevision: saved config for device X (len=Y)`
+2. If `WARNING: Length mismatch` appears, the probe is sending wrong metadata
+3. Check actual config in UI vs what device shows via SSH
+
+### Lesson
+- Always validate that metadata Length matches actual content length
+- Log both reported and actual lengths for debugging
+- Probe-side issues (Firewall-Collector repo) may cause incomplete SSH config collection
+
 ## Issue: Force Push Caused Divergent Branch
 
 ### Problem
