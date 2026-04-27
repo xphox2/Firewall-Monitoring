@@ -15,7 +15,7 @@
         .hdr-btn { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
         .hdr-btn:hover { border-color: #58a6ff; color: #e6edf3; }
         .hdr-btn.active { background: #388bfd22; border-color: #58a6ff; color: #58a6ff; }
-        .hdr-select { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; }
+        .hdr-select { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 5px 28px 5px 10px; border-radius: 6px; font-size: 0.75rem; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b949e' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; cursor: pointer; }
         .widget-menu { position: relative; }
         .widget-dropdown { display: none; position: absolute; top: 100%; right: 0; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 0; min-width: 200px; z-index: 1000; max-height: 400px; overflow-y: auto; }
         .widget-dropdown.open { display: block; }
@@ -75,11 +75,15 @@
                 <option value="mix">Combined</option>
             </select>
             <select class="hdr-select" id="dash-range">
+                <option value="0.25">15m</option>
+                <option value="0.5">30m</option>
                 <option value="1" selected>1h</option>
                 <option value="6">6h</option>
+                <option value="12">12h</option>
                 <option value="24">24h</option>
                 <option value="168">1w</option>
                 <option value="720">1m</option>
+                <option value="2160">3m</option>
                 <option value="8760">1y</option>
             </select>
             <div class="widget-menu">

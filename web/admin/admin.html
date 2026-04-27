@@ -406,14 +406,20 @@
 
         <!-- Flows Page -->
         <div class="page" id="page-flows">
-            <div class="filter-bar" style="margin-bottom:12px">
-                <span style="color:#8b949e;font-size:0.85rem;margin-right:8px">Time Range: <span id="flow-range-label" style="color:#e6edf3;font-weight:500">24h</span></span>
-                <button class="btn secondary sm flow-range-btn" data-hours="1" data-action="set-flow-range">1h</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="6" data-action="set-flow-range">6h</button>
-                <button class="btn secondary sm flow-range-btn active" data-hours="24" data-action="set-flow-range">24h</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="168" data-action="set-flow-range">1w</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="720" data-action="set-flow-range">1m</button>
-                <button class="btn secondary sm flow-range-btn" data-hours="8760" data-action="set-flow-range">1y</button>
+            <div class="filter-bar" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
+                <label style="color:#8b949e;font-size:0.78rem;white-space:nowrap;">Time Range:</label>
+                <select class="chart-range-select" id="flow-range-select">
+                    <option value="0.25">15m</option>
+                    <option value="0.5">30m</option>
+                    <option value="1">1h</option>
+                    <option value="6">6h</option>
+                    <option value="12">12h</option>
+                    <option value="24" selected>24h</option>
+                    <option value="168">1w</option>
+                    <option value="720">1m</option>
+                    <option value="2160">3m</option>
+                    <option value="8760">1y</option>
+                </select>
             </div>
             <div class="stat-grid stat-grid-5" id="flows-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>

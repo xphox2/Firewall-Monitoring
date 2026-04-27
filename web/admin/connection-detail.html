@@ -67,11 +67,20 @@
         <div id="tab-content-overview" class="tab-content active">
             <div class="card mb-4">
                 <h2 class="text-base font-semibold mb-4">Aggregate Bandwidth</h2>
-                <div class="flex gap-1 mb-3" id="traffic-range">
-                    <div class="range-pill" data-action="set-traffic-range" data-range="1h">1h</div>
-                    <div class="range-pill active" data-action="set-traffic-range" data-range="24h">24h</div>
-                    <div class="range-pill" data-action="set-traffic-range" data-range="7d">7d</div>
-                    <div class="range-pill" data-action="set-traffic-range" data-range="30d">30d</div>
+                <div class="flex gap-3 mb-3 items-center">
+                    <label class="text-[0.78rem] text-[#8b949e]">Time Range:</label>
+                    <select class="chart-range-select" id="traffic-range-select">
+                        <option value="0.25">15m</option>
+                        <option value="0.5">30m</option>
+                        <option value="1">1h</option>
+                        <option value="6">6h</option>
+                        <option value="12">12h</option>
+                        <option value="24" selected>24h</option>
+                        <option value="168">1w</option>
+                        <option value="720">1m</option>
+                        <option value="2160">3m</option>
+                        <option value="8760">1y</option>
+                    </select>
                 </div>
                 <div style="height:300px;margin-bottom:16px;"><canvas id="traffic-chart"></canvas></div>
             </div>
@@ -127,16 +136,23 @@
         <div class="hidden tab-content" id="tab-content-flows">
             <div class="card mb-4">
                 <h2 class="text-base font-semibold mb-4">sFlow Traffic Analysis</h2>
-                <div class="flex gap-1 mb-3" id="flow-range">
-                    <div class="range-pill" data-action="set-flow-range" data-range="1">1h</div>
-                    <div class="range-pill active" data-action="set-flow-range" data-range="24">24h</div>
-                    <div class="range-pill" data-action="set-flow-range" data-range="168">7d</div>
-                    <div class="range-pill" data-action="set-flow-range" data-range="720">30d</div>
+                <div class="flex gap-3 mb-3 items-center">
+                    <label class="text-[0.78rem] text-[#8b949e]">Time Range:</label>
+                    <select class="chart-range-select" id="flow-range-select">
+                        <option value="0.25">15m</option>
+                        <option value="0.5">30m</option>
+                        <option value="1">1h</option>
+                        <option value="6">6h</option>
+                        <option value="12">12h</option>
+                        <option value="24" selected>24h</option>
+                        <option value="168">1w</option>
+                        <option value="720">1m</option>
+                        <option value="2160">3m</option>
+                        <option value="8760">1y</option>
+                    </select>
                 </div>
                 <div id="flow-empty" class="hidden" style="background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);color:#58a6ff;padding:14px;border-radius:8px;font-size:0.875rem;margin-bottom:16px;">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
                 <div id="flow-content"></div>
-            </div>
-        </div>
             </div>
         </div>
 
@@ -163,11 +179,20 @@
         <div class="hidden" id="tab-content-flows">
             <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4">sFlow Traffic Analysis</h2>
-                <div class="flex gap-1 mb-3" id="flow-range">
-                    <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="1">1h</div>
-                    <div class="range-pill active bg-[#58a6ff] text-white px-3.5 py-1.5 rounded-full cursor-pointer text-sm border border-[#58a6ff]" data-action="set-flow-range" data-range="24">24h</div>
-                    <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="168">7d</div>
-                    <div class="range-pill bg-[#21262d] border border-[#30363d] text-[#8b949e] px-3.5 py-1.5 rounded-full cursor-pointer text-sm transition-all duration-150 hover:text-[#e6edf3] hover:border-[#8b949e]" data-action="set-flow-range" data-range="720">30d</div>
+                <div class="flex gap-3 mb-3 items-center">
+                    <label class="text-[0.78rem] text-[#8b949e]">Time Range:</label>
+                    <select class="chart-range-select" id="flow-range-select">
+                        <option value="0.25">15m</option>
+                        <option value="0.5">30m</option>
+                        <option value="1">1h</option>
+                        <option value="6">6h</option>
+                        <option value="12">12h</option>
+                        <option value="24" selected>24h</option>
+                        <option value="168">1w</option>
+                        <option value="720">1m</option>
+                        <option value="2160">3m</option>
+                        <option value="8760">1y</option>
+                    </select>
                 </div>
                 <div id="flow-empty" class="hidden bg-[rgba(56,139,253,0.08)] border border-[rgba(56,139,253,0.2)] text-[#58a6ff] p-3.5 rounded-lg text-sm">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
                 <div id="flow-content">

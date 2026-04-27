@@ -894,7 +894,17 @@
         if (activeBtn) activeBtn.classList.add('active');
         var label = document.getElementById('flow-range-label');
         if (label) label.textContent = activeBtn ? activeBtn.textContent : hours + 'h';
+        var select = document.getElementById('flow-range-select');
+        if (select) select.value = hours;
         loadFlowCharts();
+    }
+
+    // Initialize flows range select dropdown
+    var flowRangeSelect = document.getElementById('flow-range-select');
+    if (flowRangeSelect) {
+        flowRangeSelect.addEventListener('change', function() {
+            setFlowRange(parseFloat(this.value));
+        });
     }
 
     var bytesTickCallback = function(value) { return formatBytes(value); };

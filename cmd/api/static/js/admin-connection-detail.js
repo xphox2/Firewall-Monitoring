@@ -362,6 +362,8 @@
         for (var i = 0; i < pills.length; i++) {
             pills[i].classList.toggle('active', pills[i].dataset.range === range);
         }
+        var select = document.getElementById('traffic-range-select');
+        if (select) select.value = range;
         loadTrafficChart();
     }
 
@@ -477,6 +479,8 @@
         for (var i = 0; i < pills.length; i++) {
             pills[i].classList.toggle('active', parseInt(pills[i].dataset.range, 10) === hours);
         }
+        var select = document.getElementById('flow-range-select');
+        if (select) select.value = hours;
         loadFlowStats();
     }
 
@@ -514,6 +518,22 @@
             loadTunnelChart(el.dataset.rowId, parseInt(el.dataset.deviceId, 10), el.dataset.tunnelName, el.dataset.range, el);
         }
     });
+
+    // Traffic range select dropdown
+    var trafficSelect = document.getElementById('traffic-range-select');
+    if (trafficSelect) {
+        trafficSelect.addEventListener('change', function() {
+            setTrafficRange(this.value);
+        });
+    }
+
+    // Flow range select dropdown
+    var flowSelect = document.getElementById('flow-range-select');
+    if (flowSelect) {
+        flowSelect.addEventListener('change', function() {
+            setFlowRange(parseFloat(this.value));
+        });
+    }
 
     // Init
     function init() {

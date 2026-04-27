@@ -270,13 +270,12 @@
         if (!range) range = currentNetworkThroughputRange;
         currentNetworkThroughputRange = range;
 
-        // Update active button
-        document.querySelectorAll('#network-throughput-range-btns .chart-range-btn').forEach(function(btn) {
-            btn.classList.toggle('active', btn.dataset.range === range);
-        });
+        // Update select dropdown
+        var ntSelect = document.getElementById('network-throughput-range');
+        if (ntSelect) ntSelect.value = range;
 
         // Convert range to hours for API
-        var hoursMap = { '1h': 1, '24h': 24, '7d': 168, '30d': 720 };
+        var hoursMap = { '0.25': 0.25, '0.5': 0.5, '1': 1, '6': 6, '12': 12, '24': 24, '168': 168, '720': 720, '2160': 2160, '8760': 8760 };
         var hours = hoursMap[range] || 24;
 
         // Check cache first
@@ -289,7 +288,9 @@
             return;
         }
 
-        section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><div class="chart-range-btns" id="network-throughput-range-btns"><button class="chart-range-btn' + (range === '1h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="1h">1h</button><button class="chart-range-btn' + (range === '24h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="24h">24h</button><button class="chart-range-btn' + (range === '7d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="7d">7d</button><button class="chart-range-btn' + (range === '30d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="30d">30d</button></div></div><canvas id="network-throughput-chart"></canvas><div class="loading">Loading...</div>';
+        section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><canvas id="network-throughput-chart"></canvas><div class="loading">Loading...</div>';
+        document.getElementById('network-throughput-range').value = range;
+        document.getElementById('network-throughput-range').addEventListener('change', function() { loadNetworkThroughputChart(this.value); });
 
         fetch('/admin/api/devices/' + deviceId + '/status-history?hours=' + hours, {
             credentials: 'include'
@@ -310,11 +311,13 @@
         if (!section) return;
 
         if (!hasNetworkData) {
-            section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><div class="chart-range-btns" id="network-throughput-range-btns"><button class="chart-range-btn' + (range === '1h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="1h">1h</button><button class="chart-range-btn' + (range === '24h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="24h">24h</button><button class="chart-range-btn' + (range === '7d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="7d">7d</button><button class="chart-range-btn' + (range === '30d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="30d">30d</button></div></div><div class="text-[#8b949e] text-center p-4">No network throughput data available</div>';
+            section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><div class="text-[#8b949e] text-center p-4">No network throughput data available</div>';
+            document.getElementById('network-throughput-range').value = range;
+            document.getElementById('network-throughput-range').addEventListener('change', function() { loadNetworkThroughputChart(this.value); });
             return;
         }
 
-        var showDate = range === '7d' || range === '30d';
+        var showDate = range === '168' || range === '720' || range === '2160';
         var labels = sysData.map(function(s) {
             var d = new Date(s.timestamp);
             var tz = AC.getTimezone();
@@ -326,7 +329,9 @@
         var netInData = sysData.map(function(s) { return s.network_in_kbps || 0; });
         var netOutData = sysData.map(function(s) { return s.network_out_kbps || 0; });
 
-        section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><div class="chart-range-btns" id="network-throughput-range-btns"><button class="chart-range-btn' + (range === '1h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="1h">1h</button><button class="chart-range-btn' + (range === '24h' ? ' active' : '') + '" data-action="load-network-throughput" data-range="24h">24h</button><button class="chart-range-btn' + (range === '7d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="7d">7d</button><button class="chart-range-btn' + (range === '30d' ? ' active' : '') + '" data-action="load-network-throughput" data-range="30d">30d</button></div></div><canvas id="network-throughput-chart"></canvas>';
+        section.innerHTML = '<div class="flex justify-between items-center mb-3"><h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3><select class="chart-range-select" id="network-throughput-range"><option value="0.25">15m</option><option value="0.5">30m</option><option value="1">1h</option><option value="6">6h</option><option value="12">12h</option><option value="24" selected>24h</option><option value="168">1w</option><option value="720">1m</option><option value="2160">3m</option><option value="8760">1y</option></select></div><canvas id="network-throughput-chart"></canvas>';
+        document.getElementById('network-throughput-range').value = range;
+        document.getElementById('network-throughput-range').addEventListener('change', function() { loadNetworkThroughputChart(this.value); });
 
         var ctx = document.getElementById('network-throughput-chart');
         if (!ctx) return;
@@ -1336,6 +1341,14 @@
             loadNetworkThroughputChart(el.dataset.range);
         }
     });
+
+    // Network throughput range select dropdown
+    var ntRangeSelect = document.getElementById('network-throughput-range');
+    if (ntRangeSelect) {
+        ntRangeSelect.addEventListener('change', function() {
+            loadNetworkThroughputChart(this.value);
+        });
+    }
 
     // Auto-refresh every 60 seconds
     setInterval(loadDevice, 60000);

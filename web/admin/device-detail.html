@@ -109,12 +109,18 @@
             <div class="chart-card mb-4" id="network-throughput-section">
                 <div class="flex justify-between items-center mb-3">
                     <h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3>
-                    <div class="chart-range-btns" id="network-throughput-range-btns">
-                        <button class="chart-range-btn" data-action="load-network-throughput" data-range="1h">1h</button>
-                        <button class="chart-range-btn active" data-action="load-network-throughput" data-range="24h">24h</button>
-                        <button class="chart-range-btn" data-action="load-network-throughput" data-range="7d">7d</button>
-                        <button class="chart-range-btn" data-action="load-network-throughput" data-range="30d">30d</button>
-                    </div>
+                    <select class="chart-range-select" id="network-throughput-range">
+                        <option value="0.25">15m</option>
+                        <option value="0.5">30m</option>
+                        <option value="1">1h</option>
+                        <option value="6">6h</option>
+                        <option value="12">12h</option>
+                        <option value="24" selected>24h</option>
+                        <option value="168">1w</option>
+                        <option value="720">1m</option>
+                        <option value="2160">3m</option>
+                        <option value="8760">1y</option>
+                    </select>
                 </div>
                 <canvas id="network-throughput-chart"></canvas>
             </div>
@@ -394,7 +400,7 @@
             </div>
 
             <!-- Process Monitor Tab (SSH) -->
-            <div class="tab-content hidden" id="tab-processes-ssh">
+            <div class="tab-content hidden" id="tab-processors-ssh">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
                         Process Monitor
@@ -402,13 +408,54 @@
                     </h2>
                     <div class="mb-3">
                         <label class="text-[0.82rem] text-[#8b949e] mr-2">Time Range:</label>
-                        <select id="proc-ssh-range" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="1">Last 1 hour</option>
-                            <option value="6">Last 6 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
-                            <option value="168">Last 7 days</option>
+                        <select id="proc-ssh-range" class="chart-range-select">
+                            <option value="0.25">15m</option>
+                            <option value="0.5">30m</option>
+                            <option value="1">1h</option>
+                            <option value="6">6h</option>
+                            <option value="12">12h</option>
+                            <option value="24" selected>24h</option>
+                            <option value="168">1w</option>
+                            <option value="720">1m</option>
+                            <option value="2160">3m</option>
+                            <option value="8760">1y</option>
                         </select>
                     </div>
+                    <canvas id="proc-ssh-chart" style="height:300px"></canvas>
+                    <div id="procSshEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No process data available. Enable SSH polling to collect process info.</div>
+                </div>
+            </div>
+
+            <!-- Interface Errors Tab (SSH) -->
+            <div class="tab-content hidden" id="tab-iface-err">
+                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
+                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                        Interface Errors
+                        <span id="ifaceErrSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                    </h2>
+                    <div class="mb-3">
+                        <label class="text-[0.82rem] text-[#8b949e] mr-2">Interface:</label>
+                        <select id="iface-err-interface" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
+                            <option value="">All Interfaces</option>
+                        </select>
+                        <label class="text-[0.82rem] text-[#8b949e] ml-4 mr-2">Time Range:</label>
+                        <select id="iface-err-range" class="chart-range-select">
+                            <option value="0.25">15m</option>
+                            <option value="0.5">30m</option>
+                            <option value="1">1h</option>
+                            <option value="6">6h</option>
+                            <option value="12">12h</option>
+                            <option value="24" selected>24h</option>
+                            <option value="168">1w</option>
+                            <option value="720">1m</option>
+                            <option value="2160">3m</option>
+                            <option value="8760">1y</option>
+                        </select>
+                    </div>
+                    <canvas id="iface-err-chart" style="height:300px"></canvas>
+                    <div id="ifaceErrEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No interface error data available. Enable SSH polling to collect error stats.</div>
+                </div>
+            </div>
                     <canvas id="proc-ssh-chart" style="height:300px"></canvas>
                     <div id="procSshEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No process data available. Enable SSH polling to collect process info.</div>
                 </div>
