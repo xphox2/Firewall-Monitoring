@@ -1747,6 +1747,21 @@
             data.ssh_poll_interval = parseInt(document.getElementById('device-ssh-poll-interval').value) || 900;
             data.ssh_poll_enabled = document.getElementById('device-ssh-poll-enabled').checked;
 
+            // Validate SSH polling requires credentials
+            if (data.ssh_poll_enabled) {
+                var existingPw = document.getElementById('device-ssh-password').value;
+                var isMasked = /^\*+$/.test(existingPw);
+                // Need either new password entered OR existing username (implies password already set)
+                if (!sshUsername) {
+                    alert('SSH Username is required when SSH polling is enabled');
+                    return;
+                }
+                if (!sshPassword && !isMasked && id) {
+                    alert('SSH Password is required when SSH polling is enabled');
+                    return;
+                }
+            }
+
             var method = id ? 'PUT' : 'POST';
             var url = id ? API_BASE + '/devices/' + id : API_BASE + '/devices';
             apiFetch(url, { method: method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }).then(function() {

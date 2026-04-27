@@ -635,6 +635,8 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		return
 	}
 
+	log.Printf("ReceiveConfigRevision: saved config for device %d (len=%d)", rev.DeviceID, rev.Length)
+
 	if prevChecksum != "" && prevChecksum != rev.Checksum {
 		if h.alertManager != nil {
 			h.alertManager.CheckConfigRevision(rev.DeviceID, prevChecksum, rev.Checksum)

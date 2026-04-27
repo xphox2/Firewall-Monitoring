@@ -3,6 +3,7 @@ package snmp
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ var (
 	fgOIDSystemVersion   = ".1.3.6.1.4.1.12356.101.4.1.1.0"
 	fgOIDSystemHostname  = ".1.3.6.1.4.1.12356.101.4.1.2.0"
 
-	fgBaseOIDVPNTunnel        = ".1.3.6.1.4.1.12356.101.12.2.2.1"
+	fgBaseOIDVPNTunnel       = ".1.3.6.1.4.1.12356.101.12.2.2.1"
 	fgOIDVPNTunnelPhase1Name = ".1.3.6.1.4.1.12356.101.12.2.2.1.2"
 	fgOIDVPNTunnelName       = ".1.3.6.1.4.1.12356.101.12.2.2.1.3"
 	fgOIDVPNTunnelRemoteGW   = ".1.3.6.1.4.1.12356.101.12.2.2.1.4"
@@ -202,13 +203,13 @@ func (f *FortiGateProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, 
 
 func (f *FortiGateProfile) ParseGRETunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
 	interfaces := make(map[int]map[string]interface{})
-	
+
 	for _, pdu := range pdus {
 		if !isValidPDU(pdu) {
 			continue
 		}
 		name := pdu.Name
-		
+
 		if strings.HasPrefix(name, OIDIfDescr+".") {
 			idx := getIndexFromOID(name, OIDIfDescr)
 			if idx < 0 {
@@ -293,7 +294,7 @@ func (f *FortiGateProfile) ParseGRETunnels(pdus []gosnmp.SnmpPDU) []models.VPNSt
 			if status == "up" {
 				state = "active"
 			}
-			
+
 			var bytesIn, bytesOut uint64
 			if b, ok := iface["bytes_in"].(uint64); ok {
 				bytesIn = b
@@ -301,7 +302,7 @@ func (f *FortiGateProfile) ParseGRETunnels(pdus []gosnmp.SnmpPDU) []models.VPNSt
 			if b, ok := iface["bytes_out"].(uint64); ok {
 				bytesOut = b
 			}
-			
+
 			vpn := models.VPNStatus{
 				Timestamp:  now,
 				TunnelName: name,
@@ -761,4 +762,90 @@ func (f *FortiGateProfile) TrapOIDs() map[string]TrapDef {
 		fgTrapAVVirus:       {Type: "AV_VIRUS", Severity: "critical"},
 		fgTrapAVOversize:    {Type: "AV_OVERSIZE", Severity: "info"},
 	}
+}
+
+type FortiGateVxlan struct {
+	Name            string
+	Interface       string
+	VXLANID         int
+	DestinationPort int
+}
+
+func ParseFortiGateVxlanConfig(configText string) []FortiGateVxlan {
+	var vxlans []FortiGateVxlan
+	if configText == "" {
+		return vxlans
+	}
+
+	var currentEdit string
+	var currentVxlan FortiGateVxlan
+	inVxlanBlock := false
+	inVxlanEdit := false
+
+	lines := strings.Split(configText, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		if strings.HasPrefix(line, "config system vxlan") {
+			inVxlanBlock = true
+			continue
+		}
+
+		if inVxlanBlock && strings.HasPrefix(line, "end") {
+			if inVxlanEdit && currentEdit != "" {
+				vxlans = append(vxlans, currentVxlan)
+			}
+			break
+		}
+
+		if inVxlanBlock {
+			if strings.HasPrefix(line, "edit ") {
+				if inVxlanEdit && currentEdit != "" {
+					vxlans = append(vxlans, currentVxlan)
+				}
+				currentEdit = strings.Trim(strings.TrimPrefix(line, "edit "), "\"")
+				currentVxlan = FortiGateVxlan{Name: currentEdit}
+				inVxlanEdit = true
+				continue
+			}
+
+			if inVxlanEdit {
+				if strings.HasPrefix(line, "set interface ") {
+					currentVxlan.Interface = strings.Trim(strings.TrimPrefix(line, "set interface "), "\"")
+					continue
+				}
+				if strings.HasPrefix(line, "set vxlan-id ") {
+					if vxlanID, err := strconv.Atoi(strings.TrimPrefix(line, "set vxlan-id ")); err == nil {
+						currentVxlan.VXLANID = vxlanID
+					}
+					continue
+				}
+				if strings.HasPrefix(line, "set destination-port ") {
+					if port, err := strconv.Atoi(strings.TrimPrefix(line, "set destination-port ")); err == nil {
+						currentVxlan.DestinationPort = port
+					}
+					continue
+				}
+				if strings.HasPrefix(line, "next") {
+					vxlans = append(vxlans, currentVxlan)
+					currentEdit = ""
+					currentVxlan = FortiGateVxlan{}
+					inVxlanEdit = false
+					continue
+				}
+			}
+		}
+	}
+
+	return vxlans
+}
+
+func IsFortiGateVxlanInterface(configText string, ifaceName string) bool {
+	vxlans := ParseFortiGateVxlanConfig(configText)
+	for _, v := range vxlans {
+		if v.Name == ifaceName {
+			return true
+		}
+	}
+	return false
 }

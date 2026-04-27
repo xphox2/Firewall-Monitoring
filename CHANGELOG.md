@@ -1,4 +1,20 @@
 # Changelog
+## [0.10.174] - 2026-04-27
+
+### Fixed
+- **Network Connection Map VXLAN detection**: Fixed bug where vxlan-prefixed interfaces (e.g., vxlan700) on FortiGate were not properly detected as overlays - now correctly identifies them as l2vlan (Software Switch) or vxlan (if verified in config)
+- **Frontend/backend type consistency**: Moved bridge/Software Switch back to DIRECT_TYPES (same-site local switching) while keeping vxlan/l3ipvlan in OVERLAY_TYPES (IPSec tunnel children)
+
+### Added
+- **FortiGate config text parsing**: Added ParseFortiGateVxlanConfig() to parse VXLAN definitions from FortiGate configuration text and identify true VXLAN interfaces vs Software Switch L2VLAN extensions
+- **SSH poll validation**: Added client-side validation to prevent enabling SSH polling without SSH credentials
+- **Connection Map filter buttons**: Added VXLAN and Bridge filter buttons to Connection Map toolbar
+- **Friendly type labels**: Connection Map now shows "Software Switch" instead of "bridge" for bridge-type connections
+- **Debug logging**: Added logging when config revisions are received and saved
+
+### Changed
+- **detectOverlayConnections**: Now fetches FortiGate config text to distinguish true VXLAN tunnels (which ride inside IPSec) from Software Switch L2VLAN extensions (same-site only)
+
 ## [0.10.171] - 2026-04-23
 
 ### Fixed

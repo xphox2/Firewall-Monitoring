@@ -18,6 +18,8 @@
     var keydownHandler = null;
 
     // Connection type classification
+    // OVERLAY_TYPES (vxlan, l3ipvlan) ride inside IPSec tunnels - shown when expanding tunnel
+    // DIRECT_TYPES (l2vlan, bridge/Software Switch) are same-site local connections - shown as direct
     var TUNNEL_TYPES = { ipsec: true, ssl: true, gre: true, tunnel: true };
     var OVERLAY_TYPES = { l3ipvlan: true, vxlan: true };
     var DIRECT_TYPES = { ethernet: true, lag: true, l2vlan: true, bridge: true };
@@ -27,6 +29,16 @@
         vxlan: '#8957e5', l2vlan: '#39d4e0', l3ipvlan: '#da7de8', bridge: '#39d4e0',
         wan: '#f0883e', lag: '#d29922', ethernet: '#6e7681', offnet: '#3fb950'
     };
+
+    var TYPE_LABELS = {
+        ipsec: 'IPSec', ssl: 'SSL-VPN', gre: 'GRE', tunnel: 'Tunnel',
+        vxlan: 'VXLAN', l2vlan: 'L2VLAN', l3ipvlan: 'L3VLAN', bridge: 'Software Switch',
+        wan: 'WAN', lag: 'LAG', ethernet: 'Ethernet', offnet: 'Off-Net'
+    };
+
+    function getTypeLabel(type) {
+        return TYPE_LABELS[type] || type;
+    }
 
     // ---- 1a. Data Transformation (tunnel-bundled) ----
     function buildElements(devices, connections, siteMap, vpnMap, siteNames) {
@@ -157,7 +169,7 @@
                 if (childConns.length > 0) overlaysAssigned = true;
                 var isDialUp = tunnel.match_method === 'tunnel_indirect' || tunnel.match_method === 'wan_inferred';
                 var p2Count = tunnel.tunnel_names ? tunnel.tunnel_names.split(',').filter(function(n) { return n.trim(); }).length : 0;
-                var labelParts = [tunnel.connection_type.toUpperCase()];
+                var labelParts = [getTypeLabel(tunnel.connection_type)];
                 if (p2Count > 1) labelParts.push('(' + p2Count + ' P2)');
                 if (childConns.length > 0) labelParts.push('+' + childConns.length);
                 if (isDialUp) labelParts.push('DIAL-UP');
@@ -218,7 +230,7 @@
                         source: 'dev-' + c.source_device_id, target: 'dev-' + c.dest_device_id,
                         edgeType: 'connection', connType: c.connection_type,
                         status: c.status || 'unknown', connObj: c,
-                        label: c.connection_type.toUpperCase() + ' (no tunnel)'
+                        label: getTypeLabel(c.connection_type) + ' (no tunnel)'
                     }});
                 });
             }
@@ -230,7 +242,7 @@
                     source: 'dev-' + c.source_device_id, target: 'dev-' + c.dest_device_id,
                     edgeType: 'connection', connType: c.connection_type,
                     status: c.status || 'unknown', connObj: c,
-                    label: c.connection_type.toUpperCase()
+                    label: getTypeLabel(c.connection_type)
                 }});
             });
         });
@@ -609,11 +621,11 @@
         }
 
         // Carrier sublane (index 0)
-        addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, data.connType.toUpperCase(), TYPE_COLORS[data.connType] || '#8b949e', 0);
+        addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, getTypeLabel(data.connType), TYPE_COLORS[data.connType] || '#8b949e', 0);
 
         // Child overlay sublanes (index 1, 2, ...)
         children.forEach(function(child, idx) {
-            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, child.connection_type.toUpperCase(), TYPE_COLORS[child.connection_type] || '#8b949e', idx + 1);
+            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, getTypeLabel(child.connection_type), TYPE_COLORS[child.connection_type] || '#8b949e', idx + 1);
         });
 
         // Restart particles to include new sublanes

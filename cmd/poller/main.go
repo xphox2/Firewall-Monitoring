@@ -809,6 +809,23 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 		deviceByID[devices[i].ID] = &devices[i]
 	}
 
+	deviceVxlanInterfaces := make(map[uint]map[string]bool)
+	for _, dev := range devices {
+		if strings.ToLower(dev.Vendor) == "fortigate" {
+			rev, err := p.db.GetLatestConfigRevision(dev.ID)
+			if err == nil && rev != nil && rev.ConfigText != "" {
+				vxlans := snmp.ParseFortiGateVxlanConfig(rev.ConfigText)
+				if len(vxlans) > 0 {
+					ifaceMap := make(map[string]bool)
+					for _, v := range vxlans {
+						ifaceMap[v.Name] = true
+					}
+					deviceVxlanInterfaces[dev.ID] = ifaceMap
+				}
+			}
+		}
+	}
+
 	sameSite := func(devA, devB uint) bool {
 		da, oa := deviceByID[devA]
 		db, ob := deviceByID[devB]
@@ -927,12 +944,18 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 		if skipNames[normalized] || isSystemIface(normalized) {
 			continue
 		}
-		// If accepted by name prefix but TypeName isn't an overlay type,
-		// force effective type to "vxlan" to prevent defaulting to "ipsec"
 		effectiveType := iface.TypeName
-		if !isOverlayType && isVxlanName {
+
+		// Check if this is a verified VXLAN interface from config
+		if vxlanMap, ok := deviceVxlanInterfaces[iface.DeviceID]; ok && vxlanMap[iface.Name] {
+			// This interface is defined as a true VXLAN in FortiGate config
 			effectiveType = "vxlan"
+		} else if isVxlanName {
+			// vxlan-prefixed name but not verified as true VXLAN from config
+			// FortiGate reports these as "bridge" (ifType 209) - treat as L2VLAN extension
+			effectiveType = "l2vlan"
 		}
+
 		nameGroups[normalized] = append(nameGroups[normalized], ifEntry{
 			deviceID: iface.DeviceID,
 			name:     iface.Name,

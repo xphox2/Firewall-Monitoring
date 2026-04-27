@@ -664,6 +664,15 @@ func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
 	return tx.Commit().Error
 }
 
+func (d *Database) GetLatestConfigRevision(deviceID uint) (*models.DeviceConfigRevision, error) {
+	var rev models.DeviceConfigRevision
+	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&rev).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &rev, err
+}
+
 func (d *Database) SaveProcessStats(stats *models.ProcessStats) error {
 	return d.db.Create(stats).Error
 }
