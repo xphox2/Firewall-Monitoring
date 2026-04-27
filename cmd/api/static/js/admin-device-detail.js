@@ -263,6 +263,7 @@
             })['catch'](function(e) { console.error('Failed to load status history chart:', e); });
     }
 
+    var statusHistoryPromise = null;
     var networkThroughputChart = null;
     var currentNetworkThroughputRange = '24h';
     var statusHistoryCache = {};
