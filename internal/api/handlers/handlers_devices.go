@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
@@ -735,11 +736,77 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 	}
 
 	var revisions []models.DeviceConfigRevision
-	if err := h.db.Gorm().Where("device_id = ?", uint(id)).Order("timestamp DESC").Limit(10).Find(&revisions).Error; err != nil {
+	if err := h.db.Gorm().Where("device_id = ?", uint(id)).Order("timestamp DESC").Limit(50).Find(&revisions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get config history"))
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"revisions": revisions}))
+}
+
+// GetDeviceConfigDiff returns the raw config text for two revisions plus the
+// list of volatile-line patterns the UI should mask. Diff is computed
+// client-side (jsdiff in admin-device-detail.js) so the server stays simple.
+func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
+	if h.db == nil {
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		return
+	}
+	fromID, err := strconv.ParseUint(c.Query("from"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid 'from' revision ID"))
+		return
+	}
+	toID, err := strconv.ParseUint(c.Query("to"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid 'to' revision ID"))
+		return
+	}
+
+	var fromRev, toRev models.DeviceConfigRevision
+	if err := h.db.Gorm().Where("id = ? AND device_id = ?", uint(fromID), uint(id)).First(&fromRev).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("'from' revision not found"))
+		return
+	}
+	if err := h.db.Gorm().Where("id = ? AND device_id = ?", uint(toID), uint(id)).First(&toRev).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse("'to' revision not found"))
+		return
+	}
+
+	// Look up the device's vendor so we know which volatile patterns the UI
+	// should highlight as "(volatile — IV churn)" rather than red/green deltas.
+	vendor := ""
+	if dev, err := h.db.GetDevice(uint(id)); err == nil && dev != nil {
+		vendor = dev.Vendor
+	}
+	patterns := configdiff.VolatilePatternsFor(vendor)
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"from": gin.H{
+			"id":                  fromRev.ID,
+			"timestamp":           fromRev.Timestamp,
+			"checksum":            fromRev.Checksum,
+			"normalized_checksum": fromRev.NormalizedChecksum,
+			"trigger_source":      fromRev.TriggerSource,
+			"backup_quality":      fromRev.BackupQuality,
+			"config_text":         fromRev.ConfigText,
+		},
+		"to": gin.H{
+			"id":                  toRev.ID,
+			"timestamp":           toRev.Timestamp,
+			"checksum":            toRev.Checksum,
+			"normalized_checksum": toRev.NormalizedChecksum,
+			"trigger_source":      toRev.TriggerSource,
+			"backup_quality":      toRev.BackupQuality,
+			"config_text":         toRev.ConfigText,
+		},
+		"vendor":            vendor,
+		"volatile_patterns": patterns,
+	}))
 }
 
 func (h *Handler) GetDeviceConfigRevisionDownload(c *gin.Context) {

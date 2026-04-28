@@ -89,6 +89,11 @@ func (p *Poller) Start() error {
 				} else {
 					log.Println("Old data cleanup completed")
 				}
+				if err := p.db.CleanupConfigRevisions(); err != nil {
+					log.Printf("Config revision cleanup error: %v", err)
+				} else {
+					log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
+				}
 				// Ensure future partitions exist (creates ahead partitions if needed)
 				if err := p.db.EnsurePartitions(); err != nil {
 					log.Printf("Partition check error: %v", err)

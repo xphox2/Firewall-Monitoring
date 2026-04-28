@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"log"
 	"math"
 	"net/http"
 	"time"
 
+	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
 
@@ -633,22 +636,42 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		rev.Timestamp = time.Now()
 	}
 
-	var prevChecksum string
+	// Compute the vendor-aware normalized checksum. This is what change-detection
+	// alerts compare against — raw checksums drift on every backup for FortiOS
+	// devices because of random-IV ENC ciphertext, so they're useless for "did
+	// the operator actually change something?".
+	vendor := ""
+	if dev, err := h.db.GetDevice(rev.DeviceID); err == nil && dev != nil {
+		vendor = dev.Vendor
+	}
+	normalized, quality := configdiff.Normalize(vendor, []byte(rev.ConfigText))
+	normalizedSum := md5.Sum(normalized)
+	rev.NormalizedChecksum = hex.EncodeToString(normalizedSum[:])
+
+	// Honor a TriggerSource the collector explicitly set (e.g. "syslog"). If it
+	// didn't, default to "poll" — this is the safety-net floor cadence.
+	if rev.TriggerSource == "" {
+		rev.TriggerSource = "poll"
+	}
+
+	// Honor a BackupQuality the collector explicitly set; otherwise use what the
+	// normalizer detected (e.g. FortiOS 7.2.1+ password masking).
+	if rev.BackupQuality == "" {
+		rev.BackupQuality = quality
+	}
+
+	// Look up the previous revision for change-detection. We compare normalized
+	// checksums, not raw — see plan.
+	var prevNormalized string
 	var prevRev models.DeviceConfigRevision
 	if err := h.db.Gorm().Where("device_id = ?", rev.DeviceID).Order("timestamp DESC").First(&prevRev).Error; err == nil {
-		prevChecksum = prevRev.Checksum
+		prevNormalized = prevRev.NormalizedChecksum
 	}
 
-	if prevChecksum != "" && prevChecksum == rev.Checksum {
-		log.Printf("ReceiveConfigRevision: DEDUPED - device %d checksum unchanged (%s)", rev.DeviceID, prevChecksum)
-		h.db.Gorm().Model(&models.Device{}).Where("id = ?", rev.DeviceID).Updates(map[string]interface{}{
-			"status":      "online",
-			"last_polled": time.Now(),
-		})
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": 0, "deduped": true}))
-		return
-	}
-
+	// Always store. With random-IV ciphertext drift the raw bytes always differ,
+	// and dedup at write-time would break restorability (latest stored row would
+	// silently lag real password changes). Retention runs a separate collapse
+	// pass on identical-NormalizedChecksum runs older than the 50-row floor.
 	if err := h.db.SaveConfigRevision(&rev); err != nil {
 		log.Printf("ReceiveConfigRevision: DB save error for device %d: %v", rev.DeviceID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save config revision"))
@@ -659,11 +682,15 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	if rev.Length != actualLen {
 		log.Printf("WARNING: ReceiveConfigRevision: device %d Length mismatch - reported=%d actual=%d", rev.DeviceID, rev.Length, actualLen)
 	}
-	log.Printf("ReceiveConfigRevision: SAVED config for device %d (rev.ID=%d, len=%d, checksum=%s)", rev.DeviceID, rev.ID, actualLen, rev.Checksum)
+	log.Printf("ReceiveConfigRevision: SAVED config for device %d (rev.ID=%d, len=%d, raw=%s norm=%s trigger=%s quality=%s)",
+		rev.DeviceID, rev.ID, actualLen, rev.Checksum, rev.NormalizedChecksum, rev.TriggerSource, rev.BackupQuality)
 
-	if prevChecksum != "" && prevChecksum != rev.Checksum {
+	// Alert only when the normalized hash actually changed — meaning the operator
+	// changed something we can detect (everything except password-only rotation,
+	// which is invisible by design after stripping ENC blobs).
+	if prevNormalized != "" && prevNormalized != rev.NormalizedChecksum {
 		if h.alertManager != nil {
-			h.alertManager.CheckConfigRevision(rev.DeviceID, prevChecksum, rev.Checksum)
+			h.alertManager.CheckConfigRevision(rev.DeviceID, prevNormalized, rev.NormalizedChecksum)
 		}
 	}
 
@@ -672,7 +699,12 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		"last_polled": time.Now(),
 	})
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": rev.ID}))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"saved":               rev.ID,
+		"normalized_checksum": rev.NormalizedChecksum,
+		"trigger_source":      rev.TriggerSource,
+		"backup_quality":      rev.BackupQuality,
+	}))
 }
 
 func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {

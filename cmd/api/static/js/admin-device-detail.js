@@ -967,6 +967,7 @@
     }
 
     var configRevisions = [];
+    var configCompareSelection = { from: null, to: null };
 
     function renderConfigHistory() {
         fetch('/admin/api/devices/' + deviceId + '/config-history', { credentials: 'same-origin' })
@@ -982,21 +983,176 @@
                 empty.style.display = 'none';
                 summary.textContent = revs.length + ' revision(s)';
 
+                // Default radio selection: from = second-newest, to = newest (what users want most often).
+                if (configCompareSelection.from === null && revs.length >= 2) {
+                    configCompareSelection.from = revs[1].id;
+                    configCompareSelection.to = revs[0].id;
+                }
+
                 body.innerHTML = revs.map(function(r, i) {
-                    var isCurrent = i === 0 ? ' <span class="badge" style="background:#238636;padding:2px 6px;border-radius:4px;font-size:0.7rem">Current</span>' : '';
+                    var isCurrent = i === 0 ? ' <span class="badge" style="background:#238636;padding:2px 6px;border-radius:4px;font-size:0.7rem;margin-left:6px">Current</span>' : '';
+                    var fromChecked = configCompareSelection.from === r.id ? ' checked' : '';
+                    var toChecked = configCompareSelection.to === r.id ? ' checked' : '';
+                    var trigger = r.trigger_source || 'poll';
+                    var triggerColor = trigger === 'syslog' ? '#3fb950' : (trigger === 'manual' ? '#d29922' : '#58a6ff');
+                    var quality = r.backup_quality || 'full';
+                    var qualityColor = quality === 'masked' ? '#f85149' : (quality === 'unknown' ? '#8b949e' : '#3fb950');
+                    var normHash = r.normalized_checksum || '-';
+                    if (normHash !== '-' && normHash.length > 12) normHash = normHash.substring(0, 12) + '…';
                     return '<tr>' +
-                        '<td style="white-space:nowrap">' + formatTime(r.timestamp) + '</td>' +
-                        '<td><code style="color:#58a6ff;font-size:0.78rem">' + esc(r.checksum || '-') + '</code></td>' +
+                        '<td><input type="radio" name="cfgFrom" value="' + r.id + '" data-action="cfg-compare-from"' + fromChecked + '></td>' +
+                        '<td><input type="radio" name="cfgTo"   value="' + r.id + '" data-action="cfg-compare-to"' + toChecked + '></td>' +
+                        '<td style="white-space:nowrap">' + formatTime(r.timestamp) + isCurrent + '</td>' +
+                        '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + triggerColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(trigger) + '</span></td>' +
+                        '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + qualityColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(quality) + '</span></td>' +
+                        '<td><code style="color:#58a6ff;font-size:0.75rem" title="' + esc(r.normalized_checksum || '') + '">' + esc(normHash) + '</code></td>' +
                         '<td>' + formatBytes(r.length) + '</td>' +
                         '<td>' +
                         '<button class="btn secondary text-[0.78rem] mr-1" onclick="viewConfigRevision(' + r.id + ')">View</button>' +
                         '<button class="btn secondary text-[0.78rem] mr-1" onclick="downloadConfigRevision(' + r.id + ')">Download</button>' +
-                        (revs.length > 1 ? '<button class="btn secondary text-[0.78rem] mr-1" onclick="diffConfigRevisions(' + revs[1].id + ',' + r.id + ')">Compare</button>' : '') +
                         '<button class="btn secondary text-[0.78rem]" onclick="deleteConfigRevision(' + r.id + ')" style="color:#f85149">Delete</button>' +
-                        isCurrent + '</td>' +
+                        '</td>' +
                     '</tr>';
                 }).join('');
+
+                updateConfigCompareButton();
             })['catch'](function(e) { console.error('Failed to load config history:', e); });
+    }
+
+    function updateConfigCompareButton() {
+        var btn = document.getElementById('configCompareBtn');
+        var hint = document.getElementById('configCompareHint');
+        if (!btn) return;
+        var ok = configCompareSelection.from !== null
+              && configCompareSelection.to !== null
+              && configCompareSelection.from !== configCompareSelection.to;
+        btn.disabled = !ok;
+        if (ok) {
+            hint.textContent = 'Comparing rev #' + configCompareSelection.from + ' → rev #' + configCompareSelection.to;
+        } else if (configCompareSelection.from !== null && configCompareSelection.from === configCompareSelection.to) {
+            hint.textContent = 'From and To are the same — pick different revisions.';
+        } else {
+            hint.textContent = 'Pick two revisions to compare (radio columns).';
+        }
+    }
+
+    document.addEventListener('change', function(e) {
+        var t = e.target;
+        if (!t || !t.dataset) return;
+        if (t.dataset.action === 'cfg-compare-from') {
+            configCompareSelection.from = parseInt(t.value, 10);
+            updateConfigCompareButton();
+        } else if (t.dataset.action === 'cfg-compare-to') {
+            configCompareSelection.to = parseInt(t.value, 10);
+            updateConfigCompareButton();
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        var t = e.target;
+        if (!t) return;
+        if (t.id === 'configCompareBtn' && !t.disabled) {
+            openConfigDiff(configCompareSelection.from, configCompareSelection.to);
+        }
+        if (t.dataset && t.dataset.action === 'close-config-diff') {
+            var modal = document.getElementById('config-diff-modal');
+            if (modal) modal.classList.remove('active');
+        }
+    });
+
+    function openConfigDiff(fromID, toID) {
+        var url = '/admin/api/devices/' + deviceId + '/config-history/diff?from=' + fromID + '&to=' + toID;
+        fetch(url, { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(result) {
+                if (!result.success || !result.data) {
+                    alert('Diff failed: ' + (result.error || 'unknown'));
+                    return;
+                }
+                renderConfigDiff(result.data);
+            })['catch'](function(e) { console.error('config diff failed:', e); });
+    }
+
+    function renderConfigDiff(data) {
+        var modal = document.getElementById('config-diff-modal');
+        var meta  = document.getElementById('config-diff-meta');
+        var body  = document.getElementById('config-diff-body');
+        if (!modal || !meta || !body) return;
+
+        meta.innerHTML = '<span style="color:#f85149">From #' + data.from.id + '</span> ' + formatTime(data.from.timestamp) +
+            ' (' + esc(data.from.trigger_source || 'poll') + ', ' + esc(data.from.backup_quality || 'full') + ')' +
+            ' &nbsp;→&nbsp; <span style="color:#3fb950">To #' + data.to.id + '</span> ' + formatTime(data.to.timestamp) +
+            ' (' + esc(data.to.trigger_source || 'poll') + ', ' + esc(data.to.backup_quality || 'full') + ')';
+
+        // Compile volatile-line patterns sent from the server (vendor-aware).
+        var patterns = (data.volatile_patterns || []).map(function(p) {
+            try {
+                var flags = p.regex.indexOf('(?s)') === 0 ? '' : '';
+                // RE2 flags like (?m), (?s) — JS regex supports m and s. Strip the inline flag prefix
+                // and translate to JS flag string.
+                var src = p.regex;
+                var jsFlags = '';
+                var flagMatch = src.match(/^\(\?([a-z]+)\)/);
+                if (flagMatch) {
+                    if (flagMatch[1].indexOf('m') !== -1) jsFlags += 'm';
+                    if (flagMatch[1].indexOf('s') !== -1) jsFlags += 's';
+                    src = src.substring(flagMatch[0].length);
+                }
+                return { name: p.name, regex: new RegExp(src, jsFlags) };
+            } catch (e) {
+                console.warn('skipping invalid volatile pattern', p, e);
+                return null;
+            }
+        }).filter(function(x) { return x; });
+
+        // Tag every volatile match in both texts with a placeholder line so jsdiff
+        // doesn't see them as "changes". Renderer below shows them in grey with a
+        // (volatile) label instead of red/green.
+        var maskedFrom = maskVolatile(data.from.config_text || '', patterns);
+        var maskedTo = maskVolatile(data.to.config_text || '', patterns);
+
+        body.innerHTML = computeMaskedDiff(maskedFrom, maskedTo);
+        modal.classList.add('active');
+    }
+
+    function maskVolatile(text, patterns) {
+        var masked = text;
+        patterns.forEach(function(p) {
+            // Replace each match with a stable marker so diff sees no change.
+            // The marker carries the pattern name so the renderer can color it.
+            masked = masked.replace(p.regex, function(m) {
+                return '__VOLATILE__' + p.name + '__' + Math.floor(m.length) + '__';
+            });
+        });
+        return masked;
+    }
+
+    function computeMaskedDiff(from, to) {
+        var fromLines = from.split('\n');
+        var toLines = to.split('\n');
+        var maxLen = Math.max(fromLines.length, toLines.length);
+        var html = '';
+        for (var i = 0; i < maxLen; i++) {
+            var l1 = fromLines[i] === undefined ? null : fromLines[i];
+            var l2 = toLines[i]   === undefined ? null : toLines[i];
+
+            if (l1 !== null && l1.indexOf('__VOLATILE__') !== -1) {
+                var name = (l1.match(/__VOLATILE__([^_]+)__/) || [null,'?'])[1];
+                html += '<div style="background:#21262d;color:#8b949e;padding:1px 8px"> &nbsp; <em>(volatile: ' + esc(name) + ')</em></div>';
+                continue;
+            }
+            if (l1 === l2) {
+                html += '<div style="padding:1px 8px;color:#c9d1d9">' + esc(l1 || '') + '</div>';
+            } else {
+                if (l1 !== null) {
+                    html += '<div style="background:rgba(248,81,73,0.15);color:#ff7b72;padding:1px 8px">- ' + esc(l1) + '</div>';
+                }
+                if (l2 !== null) {
+                    html += '<div style="background:rgba(63,185,80,0.15);color:#3fb950;padding:1px 8px">+ ' + esc(l2) + '</div>';
+                }
+            }
+        }
+        return html || '<div class="text-[#8b949e] p-4">No differences found</div>';
     }
 
     window.viewConfigRevision = function(revId) {

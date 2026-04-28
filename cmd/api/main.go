@@ -431,6 +431,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/devices/:id/sdwan-health", handler.GetDeviceSDWANHealth)
 		admin.GET("/api/devices/:id/ha-status", handler.GetDeviceHAStatus)
 		admin.GET("/api/devices/:id/config-history", handler.GetDeviceConfigHistory)
+		admin.GET("/api/devices/:id/config-history/diff", handler.GetDeviceConfigDiff)
 		admin.GET("/api/devices/:id/config-history/:revId", handler.GetDeviceConfigRevisionDownload)
 		admin.GET("/api/devices/:id/config-history/:revId/view", handler.GetDeviceConfigRevision)
 		admin.DELETE("/api/devices/:id/config-history/:revId", handler.DeleteDeviceConfigRevision)

@@ -238,6 +238,28 @@ func (d *Database) migrate() error {
 		}
 	}
 
+	// Add normalized_checksum / backup_quality / trigger_source on DeviceConfigRevision.
+	// Drives FortiOS-aware change detection and per-row provenance/quality flagging.
+	if m.HasTable(&models.DeviceConfigRevision{}) {
+		revisionCols := []struct {
+			name string
+			col  string
+		}{
+			{"NormalizedChecksum", "normalized_checksum"},
+			{"BackupQuality", "backup_quality"},
+			{"TriggerSource", "trigger_source"},
+		}
+		for _, f := range revisionCols {
+			if !m.HasColumn(&models.DeviceConfigRevision{}, f.col) {
+				if err := m.AddColumn(&models.DeviceConfigRevision{}, f.name); err != nil {
+					log.Printf("migrate: add DeviceConfigRevision.%s: %v", f.name, err)
+				} else {
+					log.Printf("migrate: added DeviceConfigRevision.%s", f.name)
+				}
+			}
+		}
+	}
+
 	// Add missing columns for VPNStatus extended fields (interface name and mode)
 	if m.HasTable(&models.VPNStatus{}) {
 		vpnStatusCols := []struct {
@@ -768,6 +790,91 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	alertCutoff := time.Now().AddDate(0, 0, -alertDays)
 	if err := d.db.Where("acknowledged = true AND timestamp < ?", alertCutoff).Delete(&models.Alert{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup alert: %w", err)
+	}
+
+	return nil
+}
+
+// CleanupConfigRevisions enforces retention on device_config_revisions.
+// Per device:
+//   1. Always keep the 50 most-recent rows (regardless of age) — restorability.
+//   2. Within the older-than-top-50 portion of the last 90 days, keep one row
+//      per distinct NormalizedChecksum (the most recent of each run) —
+//      audit history without storing IV-churn duplicates.
+//   3. Delete anything older than 90 days outside the top-50.
+func (d *Database) CleanupConfigRevisions() error {
+	const keepCount = 50
+	const keepDays = 90
+
+	timeCutoff := time.Now().AddDate(0, 0, -keepDays)
+
+	var deviceIDs []uint
+	if err := d.db.Model(&models.DeviceConfigRevision{}).
+		Distinct("device_id").Pluck("device_id", &deviceIDs).Error; err != nil {
+		return fmt.Errorf("list device IDs for revision cleanup: %w", err)
+	}
+
+	for _, devID := range deviceIDs {
+		// Find the timestamp of the 50th most-recent row. Older rows are
+		// candidates for the deeper retention pass.
+		var floorRev models.DeviceConfigRevision
+		err := d.db.Where("device_id = ?", devID).
+			Order("timestamp DESC").Offset(keepCount - 1).Limit(1).First(&floorRev).Error
+
+		if err != nil {
+			// Fewer than keepCount rows for this device — nothing to collapse,
+			// only apply the 90-day rule.
+			if delErr := d.db.Where("device_id = ? AND timestamp < ?", devID, timeCutoff).
+				Delete(&models.DeviceConfigRevision{}).Error; delErr != nil {
+				return fmt.Errorf("device %d <%d-row 90d cleanup: %w", devID, keepCount, delErr)
+			}
+			continue
+		}
+		top50Cutoff := floorRev.Timestamp
+
+		// Step 1: hard-delete rows older than 90 days *and* outside the top 50.
+		// (Top 50 are kept regardless of age.)
+		if delErr := d.db.Where(
+			"device_id = ? AND timestamp < ? AND timestamp < ?",
+			devID, timeCutoff, top50Cutoff,
+		).Delete(&models.DeviceConfigRevision{}).Error; delErr != nil {
+			return fmt.Errorf("device %d 90-day cleanup: %w", devID, delErr)
+		}
+
+		// Step 2: collapse identical-NormalizedChecksum rows in the
+		// (older-than-top-50, within-90-days) window. Keep one row per
+		// NormalizedChecksum — the most-recent of that run.
+		var rows []models.DeviceConfigRevision
+		if err := d.db.Select("id, normalized_checksum, timestamp").
+			Where("device_id = ? AND timestamp < ? AND timestamp >= ?",
+				devID, top50Cutoff, timeCutoff).
+			Find(&rows).Error; err != nil {
+			return fmt.Errorf("device %d collapse-query: %w", devID, err)
+		}
+
+		keepID := make(map[string]uint)        // normalized_checksum -> id of latest
+		keepTime := make(map[string]time.Time) // normalized_checksum -> latest timestamp seen
+		for _, r := range rows {
+			if t, ok := keepTime[r.NormalizedChecksum]; !ok || r.Timestamp.After(t) {
+				keepID[r.NormalizedChecksum] = r.ID
+				keepTime[r.NormalizedChecksum] = r.Timestamp
+			}
+		}
+
+		if len(keepID) == 0 {
+			continue
+		}
+		keepIDs := make([]uint, 0, len(keepID))
+		for _, id := range keepID {
+			keepIDs = append(keepIDs, id)
+		}
+
+		if delErr := d.db.Where(
+			"device_id = ? AND timestamp < ? AND timestamp >= ? AND id NOT IN ?",
+			devID, top50Cutoff, timeCutoff, keepIDs,
+		).Delete(&models.DeviceConfigRevision{}).Error; delErr != nil {
+			return fmt.Errorf("device %d collapse-delete: %w", devID, delErr)
+		}
 	}
 
 	return nil

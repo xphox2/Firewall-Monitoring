@@ -918,12 +918,15 @@ func MessageResponse(msg string) APIResponse {
 }
 
 type DeviceConfigRevision struct {
-	ID         uint      `json:"id" gorm:"primaryKey"`
-	DeviceID   uint      `json:"device_id" gorm:"not null;index"`
-	Timestamp  time.Time `json:"timestamp" gorm:"not null"`
-	Checksum   string    `json:"checksum"`
-	ConfigText string    `json:"config_text"`
-	Length     int       `json:"length"`
+	ID                 uint      `json:"id" gorm:"primaryKey"`
+	DeviceID           uint      `json:"device_id" gorm:"not null;index"`
+	Timestamp          time.Time `json:"timestamp" gorm:"not null"`
+	Checksum           string    `json:"checksum"`
+	NormalizedChecksum string    `json:"normalized_checksum" gorm:"index"`
+	ConfigText         string    `json:"config_text"`
+	Length             int       `json:"length"`
+	BackupQuality      string    `json:"backup_quality"`            // full | masked | unknown
+	TriggerSource      string    `json:"trigger_source" gorm:"index"` // syslog | poll | manual
 }
 
 type ProcessStats struct {

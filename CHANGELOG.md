@@ -1,4 +1,23 @@
 # Changelog
+## [0.10.187] - 2026-04-28
+
+### Fixed
+- **FortiGate config-change alert false positives**: Every backup of an unchanged FortiGate produced a new MD5 (and a new alert) because every `set <field> ENC <blob>` line uses a fresh random 4-byte IV per emission (verified against `gquere/CVE-2019-6693`, `saladandonionrings/cve-2019-6693`, Oxidized issue #1199). Same plaintext password → different ciphertext on every backup. Server now hashes a vendor-normalized copy of the config (FortiGate strips ENC blobs, `BEGIN ENCRYPTED PRIVATE KEY` blocks, `#config-version=`, `#conf_file_ver=`, `#private-encryption-key=`, `set last-login`, `!System time:`) for the change-detection comparison. Alerts only fire when the normalized hash actually changes. Raw `ConfigText` is preserved unchanged for restore + diff display. Vendor-scoped: identity normalizer for non-FortiGate vendors so behavior is unchanged for them.
+
+### Changed
+- **`ReceiveConfigRevision` always stores every received backup** (drops the previous dedup-by-raw-checksum branch). With random-IV ciphertext drift the raw bytes always differ, and dedup at write time would silently lose the latest restorable bytes after a real password rotation. Retention runs a separate collapse pass for older history.
+- **`GetDeviceConfigHistory` limit** raised from 10 → 50 revisions.
+
+### Added
+- **`internal/configdiff` package**: `Normalizer` interface, vendor registry (`fortigate`, `paloalto`, `cisco_asa`, `generic`), MD5 hash convenience, plus VolatilePatterns published per vendor for the diff UI to mask. Full unit-test coverage with synthetic fixtures (two unchanged snapshots, real-change snapshots, password-only snapshot, masking detection, vendor lookup case-insensitivity).
+- **`DeviceConfigRevision` schema**: `NormalizedChecksum`, `BackupQuality` (`full`/`masked`/`unknown`), `TriggerSource` (`syslog`/`poll`/`manual`). AddColumn-if-missing migration following the `tftp_server_ip` pattern.
+- **`GET /api/devices/:id/config-history/diff?from=&to=`**: Returns both raw `ConfigText` blobs + the vendor's `volatile_patterns` so the UI can mask IV-churning lines as `(volatile)` rather than red/green deltas.
+- **Config History tab UI**: radio compare picker (From / To), trigger-source + backup-quality + normalized-hash columns, side-by-side modal diff with volatile-line masking. Diff uses raw text so operators see real values for non-secret changes.
+- **Retention job for config revisions**: daily, keep last 50 revisions per device + last 90 days, whichever is greater. Within the older-than-top-50 portion of the 90-day window, collapse identical-`NormalizedChecksum` runs to one representative row each (most recent of each run kept).
+
+### Why
+The drift is FortiOS-specific behavior — by design — and the canonical industry workaround (Oxidized, RANCID for ~15 years) is regex-strip-then-hash. Vendor isolation ensures Palo Alto / Cisco / generic devices stay on the existing raw-checksum behavior until evidence of a similar drift class shows up.
+
 ## [0.10.186] - 2026-04-27
 
 ### Added

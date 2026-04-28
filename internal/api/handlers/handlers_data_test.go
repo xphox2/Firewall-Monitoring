@@ -87,7 +87,10 @@ func TestReceiveConfigRevision_FirstRevision_Saved(t *testing.T) {
 	}
 }
 
-func TestReceiveConfigRevision_SameChecksum_Deduped_NotSaved(t *testing.T) {
+func TestReceiveConfigRevision_SameChecksum_StoredButNotAlerted(t *testing.T) {
+	// Behavior changed in v0.10.187: with random-IV ENC ciphertext drift on
+	// FortiOS, raw-checksum dedup at write time would silently lose the latest
+	// restorable bytes. We always store; alerting compares NormalizedChecksum.
 	h, db := setupTestHandler(t)
 	probe, device := setupProbeAndDevice(t, db)
 
@@ -104,17 +107,24 @@ func TestReceiveConfigRevision_SameChecksum_Deduped_NotSaved(t *testing.T) {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
 
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	data, _ := resp["data"].(map[string]interface{})
-	if data["deduped"] != true {
-		t.Errorf("expected deduped=true in response, got: %v", w.Body.String())
-	}
-
 	var count int64
 	db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", device.ID).Count(&count)
-	if count != 1 {
-		t.Errorf("deduped: expected 1 revision in DB, got %d", count)
+	if count != 2 {
+		t.Errorf("always-store: expected 2 revisions in DB, got %d", count)
+	}
+
+	// Both rows must share the same NormalizedChecksum since input was identical.
+	var revs []models.DeviceConfigRevision
+	db.Gorm().Where("device_id = ?", device.ID).Order("id ASC").Find(&revs)
+	if len(revs) != 2 {
+		t.Fatalf("expected 2 stored revisions, got %d", len(revs))
+	}
+	if revs[0].NormalizedChecksum == "" {
+		t.Error("normalized_checksum must be populated on save")
+	}
+	if revs[0].NormalizedChecksum != revs[1].NormalizedChecksum {
+		t.Errorf("identical input must produce identical normalized_checksum: a=%q b=%q",
+			revs[0].NormalizedChecksum, revs[1].NormalizedChecksum)
 	}
 }
 
