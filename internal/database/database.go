@@ -3640,6 +3640,29 @@ func (d *Database) AcknowledgeAlertEnhanced(id uint, notes string) error {
 	}).Error
 }
 
+// AcknowledgeAlertsBulk flips acknowledged=true for all rows whose ID is in ids,
+// in a single UPDATE statement. Returns the number of rows actually changed
+// (already-acked rows are still in the IN list — the UPDATE just rewrites the
+// flag, so RowsAffected reflects the WHERE match count, which may exceed the
+// number of *transitions*).
+//
+// Caller is responsible for capping len(ids); a sensible upper bound (e.g. 500)
+// is enforced by the handler so we don't send unbounded SQL parameter lists.
+func (d *Database) AcknowledgeAlertsBulk(ids []uint, notes string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	now := time.Now()
+	res := d.db.Model(&models.Alert{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{
+			"acknowledged":    true,
+			"acknowledged_at": now,
+			"notes":           notes,
+		})
+	return res.RowsAffected, res.Error
+}
+
 func (d *Database) UpdateAlertNotes(id uint, notes string) error {
 	return d.db.Model(&models.Alert{}).Where("id = ?", id).Update("notes", notes).Error
 }

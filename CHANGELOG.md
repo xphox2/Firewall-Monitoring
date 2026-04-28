@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.188] - 2026-04-28
+
+### Added
+- **Bulk-acknowledge alerts**: per-row checkboxes plus a "Select all on page" header checkbox. Toolbar above the alerts table shows the selected count and an "Acknowledge selected" button that opens a notes modal applying the same notes to every selected alert in one API call. Works on both small and large selections (capped at 500 IDs per request).
+- **`POST /api/alerts/bulk-acknowledge`**: accepts `{ids: [...], notes: "..."}` and runs a single SQL `UPDATE ... WHERE id IN (...)`. Returns `{acknowledged: N, requested: M}`. Validates non-empty array and per-request cap.
+
+### Changed
+- **Acknowledging an alert no longer bounces the user back to page 1.** Both single-alert ack (existing button) and the new bulk-ack now refresh in place at the user's current page. If the page would become empty (e.g. when filtering "Unacknowledged" and acking everything visible), the UI walks back one page until it finds content or hits page 1.
+- **Alert row click vs. checkbox click**: row-click → "show alert detail" handler now ignores clicks on form controls and `data-action` elements, so checkbox clicks no longer trigger the detail modal.
+
 ## [0.10.187] - 2026-04-28
 
 ### Fixed

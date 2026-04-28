@@ -1087,14 +1087,18 @@
     }
 
     // ---- Alerts ----
+    var ALERTS_PAGE_SIZE = 10;
+    var alertSelection = {}; // map id (string) -> true for currently-selected rows on the current page
+
     function loadAlerts() {
         alertsOffset = 0;
+        clearAlertSelection();
         var p = Promise.resolve();
         if (currentDevices.length === 0) {
             p = apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
         }
         p.then(function() {
-            var params = buildAlertParams(10);
+            var params = buildAlertParams(ALERTS_PAGE_SIZE);
             return apiFetch(API_BASE + '/alerts?' + params);
         }).then(function(result) {
             if (!result) return;
@@ -1106,6 +1110,95 @@
             loadAlertCharts();
         })['catch'](function(e) {
             console.error('Failed to load alerts:', e);
+        });
+    }
+
+    // refreshAlertsAtCurrentPage re-fetches the same page the user is currently
+    // viewing. Used after single-ack and bulk-ack so the user doesn't get
+    // bounced back to page 1. If the current page would be empty after the
+    // refresh (because every visible row got acked and the filter is "unack"),
+    // step back one page until we find content or hit page 1.
+    function refreshAlertsAtCurrentPage() {
+        var pageSize = ALERTS_PAGE_SIZE;
+        var pageEnd = alertsOffset; // current offset == end of current page
+        var pageStart = Math.max(0, pageEnd - pageSize);
+
+        function tryLoad(offset) {
+            var params = buildAlertParams(pageSize);
+            return apiFetch(API_BASE + '/alerts?' + params + '&offset=' + offset).then(function(result) {
+                if (!result) return;
+                var alerts = (result.data && result.data.alerts) ? result.data.alerts : [];
+                var total = (result.data && result.data.total) ? result.data.total : 0;
+                if (alerts.length === 0 && offset > 0) {
+                    // Page got empty (all rows acked). Try the previous page.
+                    return tryLoad(Math.max(0, offset - pageSize));
+                }
+                renderAlertsTable(alerts, false);
+                alertsOffset = offset + alerts.length;
+                updateAlertPagination(alerts.length, total);
+                loadAlertCharts();
+            });
+        }
+        tryLoad(pageStart)['catch'](function(e) {
+            console.error('Failed to refresh alerts at current page:', e);
+        });
+    }
+
+    function clearAlertSelection() {
+        alertSelection = {};
+        updateAlertBulkToolbar();
+    }
+
+    function updateAlertBulkToolbar() {
+        var ids = Object.keys(alertSelection).filter(function(k) { return alertSelection[k]; });
+        var count = ids.length;
+        var summary = document.getElementById('alerts-bulk-summary');
+        var ackBtn = document.getElementById('alerts-bulk-ack-btn');
+        var clearBtn = document.getElementById('alerts-bulk-clear-btn');
+        var pageBox = document.getElementById('alerts-select-page');
+        if (summary) summary.textContent = count === 0 ? 'No alerts selected' : (count + ' alert' + (count === 1 ? '' : 's') + ' selected');
+        if (ackBtn) ackBtn.disabled = count === 0;
+        if (clearBtn) clearBtn.disabled = count === 0;
+        // Sync the page-select checkbox state with row checkboxes on this page.
+        if (pageBox) {
+            var rowBoxes = document.querySelectorAll('#alerts-full-table tbody input[data-action="toggle-alert-selection"]');
+            var checkedCount = 0;
+            rowBoxes.forEach(function(b) { if (b.checked) checkedCount++; });
+            pageBox.checked = rowBoxes.length > 0 && checkedCount === rowBoxes.length;
+            pageBox.indeterminate = checkedCount > 0 && checkedCount < rowBoxes.length;
+        }
+    }
+
+    function bulkAckSelected() {
+        var ids = Object.keys(alertSelection).filter(function(k) { return alertSelection[k]; }).map(function(k) { return parseInt(k, 10); });
+        if (ids.length === 0) return;
+        var modal = document.getElementById('alerts-bulk-ack-modal');
+        document.getElementById('alerts-bulk-ack-count').textContent = 'Acknowledging ' + ids.length + ' alert' + (ids.length === 1 ? '' : 's');
+        document.getElementById('alerts-bulk-ack-notes').value = '';
+        if (modal) modal.classList.add('active');
+    }
+
+    function confirmBulkAck() {
+        var ids = Object.keys(alertSelection).filter(function(k) { return alertSelection[k]; }).map(function(k) { return parseInt(k, 10); });
+        if (ids.length === 0) return;
+        var notes = document.getElementById('alerts-bulk-ack-notes').value || '';
+        var btn = document.getElementById('alerts-bulk-ack-confirm');
+        if (btn) btn.disabled = true;
+        apiFetch(API_BASE + '/alerts/bulk-acknowledge', {
+            method: 'POST',
+            body: { ids: ids, notes: notes }
+        }).then(function(result) {
+            var modal = document.getElementById('alerts-bulk-ack-modal');
+            if (modal) modal.classList.remove('active');
+            clearAlertSelection();
+            var n = (result && result.data && result.data.acknowledged) || ids.length;
+            AC.showSuccess(n + ' alert' + (n === 1 ? '' : 's') + ' acknowledged');
+            refreshAlertsAtCurrentPage();
+        })['catch'](function(e) {
+            console.error('Bulk ack failed:', e);
+            AC.showError('Bulk acknowledge failed');
+        })['finally'](function() {
+            if (btn) btn.disabled = false;
         });
     }
 
@@ -1183,8 +1276,15 @@
 
     function renderAlertsTable(alerts, append) {
         var tbody = document.querySelector('#alerts-full-table tbody');
+        if (!append) clearAlertSelection();
         var html = alerts.map(function(a) {
             var statusCol = '';
+            // Already-acked rows can't be re-selected from the bulk toolbar (but
+            // appear in the page so the user can still see notes/timestamps).
+            var canSelect = !a.acknowledged && !a.suppressed;
+            var checkboxCell = canSelect
+                ? '<td><input type="checkbox" data-action="toggle-alert-selection" data-id="' + a.id + '"></td>'
+                : '<td></td>';
             if (a.suppressed) {
                 statusCol = '<span class="badge unknown">MAINT</span>';
             } else if (a.acknowledged) {
@@ -1193,6 +1293,7 @@
                 statusCol = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Ack</button>';
             }
             return '<tr class="alert-row" data-id="' + a.id + '">' +
+                checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + getDeviceName(a.device_id) + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + '</span></td>' +
@@ -1328,7 +1429,8 @@
         var body = notes ? {acknowledged: true, notes: notes} : {acknowledged: true};
         apiFetch(API_BASE + '/alerts/' + id + '/acknowledge', {method:'POST', body: body}).then(function() {
             closeAckModal();
-            loadAlerts();
+            // Stay on the user's current page rather than bouncing to page 1.
+            refreshAlertsAtCurrentPage();
             AC.showSuccess('Alert acknowledged');
         })['catch'](function(e) {
             console.error('Failed to acknowledge alert:', e);
@@ -2671,11 +2773,37 @@
         'close-probe-detail-modal': function() { closeProbeDetailModal(); },
         'toggle-expand': function(el) { el.classList.toggle('expanded'); },
         'close-syslog-detail': function() { closeSyslogDetail(); },
-        'close-alert-detail': function() { closeAlertDetail(); }
+        'close-alert-detail': function() { closeAlertDetail(); },
+        'toggle-alert-selection': function(el) {
+            var id = el.dataset.id;
+            if (el.checked) alertSelection[id] = true;
+            else delete alertSelection[id];
+            updateAlertBulkToolbar();
+        },
+        'toggle-page-selection': function(el) {
+            var rowBoxes = document.querySelectorAll('#alerts-full-table tbody input[data-action="toggle-alert-selection"]');
+            rowBoxes.forEach(function(b) {
+                b.checked = el.checked;
+                if (el.checked) alertSelection[b.dataset.id] = true;
+                else delete alertSelection[b.dataset.id];
+            });
+            updateAlertBulkToolbar();
+        },
+        'clear-alert-selection': function() {
+            var rowBoxes = document.querySelectorAll('#alerts-full-table tbody input[data-action="toggle-alert-selection"]');
+            rowBoxes.forEach(function(b) { b.checked = false; });
+            clearAlertSelection();
+        },
+        'bulk-ack-alerts': function() { bulkAckSelected(); },
+        'close-bulk-ack': function() { var m = document.getElementById('alerts-bulk-ack-modal'); if (m) m.classList.remove('active'); },
+        'confirm-bulk-ack': function() { confirmBulkAck(); }
     });
 
     // Click on syslog row to show detail
     document.addEventListener('click', function(e) {
+        // Ignore clicks on form controls or data-action elements — they have
+        // their own handlers (selection checkboxes, ack button, etc.).
+        if (e.target.closest('input, button, select, textarea, [data-action]')) return;
         var row = e.target.closest('.syslog-row');
         if (row) { showSyslogDetail(parseInt(row.dataset.id)); return; }
         var row2 = e.target.closest('.alert-row');

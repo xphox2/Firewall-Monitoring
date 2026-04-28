@@ -549,13 +549,35 @@
                     </select>
                     <button class="btn secondary sm" data-action="load-alerts">Apply</button>
                 </div>
+                <div id="alerts-bulk-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
+                    <span id="alerts-bulk-summary" style="color:#8b949e;font-size:0.82rem;">No alerts selected</span>
+                    <button class="btn sm" id="alerts-bulk-ack-btn" disabled data-action="bulk-ack-alerts" style="margin-left:auto;">Acknowledge selected</button>
+                    <button class="btn sm secondary" id="alerts-bulk-clear-btn" disabled data-action="clear-alert-selection">Clear</button>
+                </div>
                 <div class="table-wrap">
                     <table id="alerts-full-table">
-                        <thead><tr><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th><th>Actions</th></tr></thead>
+                        <thead><tr><th style="width:32px"><input type="checkbox" id="alerts-select-page" data-action="toggle-page-selection" title="Select all on this page"></th><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th><th>Actions</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
                 <div id="alerts-pagination" style="margin-top: 12px; text-align: center;"></div>
+
+                <!-- Bulk-ack notes modal -->
+                <div class="modal hidden fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center" id="alerts-bulk-ack-modal">
+                    <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-5 w-[480px] max-w-[92vw]">
+                        <div class="flex justify-between items-center mb-3">
+                            <h2 class="text-lg text-[#e6edf3]">Acknowledge alerts</h2>
+                            <span data-action="close-bulk-ack" class="cursor-pointer text-2xl text-[#8b949e] hover:text-white">&times;</span>
+                        </div>
+                        <div class="text-[0.82rem] text-[#8b949e] mb-3" id="alerts-bulk-ack-count">Acknowledging N alerts</div>
+                        <label class="block mb-1 text-[#8b949e] text-sm">Notes (optional)</label>
+                        <textarea id="alerts-bulk-ack-notes" rows="3" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none" placeholder="Same notes will be applied to all selected alerts"></textarea>
+                        <div class="flex justify-end gap-2 mt-4">
+                            <button type="button" class="btn secondary sm" data-action="close-bulk-ack">Cancel</button>
+                            <button type="button" class="btn sm" id="alerts-bulk-ack-confirm" data-action="confirm-bulk-ack">Acknowledge</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -309,6 +310,47 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.MessageResponse("Alert acknowledged"))
+}
+
+// maxBulkAckIDs caps how many alerts can be acked in a single bulk request.
+// Picked to keep SQL parameter lists comfortable across SQLite and Postgres.
+const maxBulkAckIDs = 500
+
+// BulkAcknowledgeAlerts acks every alert whose ID is in the request body, in a
+// single SQL UPDATE. Used by the admin UI's "Acknowledge selected" toolbar so
+// the user doesn't have to ack alerts one at a time.
+func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	var body struct {
+		IDs   []uint `json:"ids"`
+		Notes string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		return
+	}
+	if len(body.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("ids must be a non-empty array"))
+		return
+	}
+	if len(body.IDs) > maxBulkAckIDs {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("too many ids (max %d per request)", maxBulkAckIDs)))
+		return
+	}
+
+	affected, err := h.db.AcknowledgeAlertsBulk(body.IDs, body.Notes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alerts"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"acknowledged": affected,
+		"requested":    len(body.IDs),
+	}))
 }
 
 func (h *Handler) UpdateAlertNotes(c *gin.Context) {
