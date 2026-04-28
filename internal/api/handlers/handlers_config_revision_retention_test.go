@@ -1,11 +1,16 @@
 package handlers
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
 
 // seedRevisions inserts n revisions for deviceID, each timestamped at the given
@@ -146,6 +151,185 @@ func TestCleanupConfigRevisions_FewerThan50_DeletesOlderThan90Days(t *testing.T)
 	h.db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", device.ID).Count(&total)
 	if total != 5 {
 		t.Errorf("expected 5 rows after 90d-rule cleanup (recent only), got %d", total)
+	}
+}
+
+// doDeviceQueryRequest is a routing helper for handlers that take :id and
+// optional query strings (GetDeviceConfigHistory).
+func doDeviceQueryRequest(t *testing.T, h func(*gin.Context), method, path, query string, deviceID uint) *httptest.ResponseRecorder {
+	t.Helper()
+	router := gin.New()
+	router.Handle(method, "/api/devices/:id"+path, h)
+	url := "/api/devices/" + strconv.FormatUint(uint64(deviceID), 10) + path
+	if query != "" {
+		url = url + "?" + query
+	}
+	req := httptest.NewRequest(method, url, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+type historyResp struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Revisions     []models.DeviceConfigRevision `json:"revisions"`
+		Distinct      bool                          `json:"distinct"`
+		TotalAll      int                           `json:"total_all"`
+		TotalDistinct int                           `json:"total_distinct"`
+		TotalShown    int                           `json:"total_shown"`
+	} `json:"data"`
+}
+
+func TestGetDeviceConfigHistory_DistinctMode_CollapsesRuns(t *testing.T) {
+	// Scenario: 20 revisions, hashes alternate as A, A, A, A, A, B, B, B, B, B,
+	// A, A, A, A, A, C, C, C, C, C (oldest → newest). That's 4 distinct runs:
+	// A → B → A → C. Distinct mode should return exactly those 4 representative
+	// rows, ordered newest-first.
+	h, _, device := setupFortiGateProbeDevice(t)
+	now := time.Now()
+	hashes := []string{
+		"A", "A", "A", "A", "A",
+		"B", "B", "B", "B", "B",
+		"A", "A", "A", "A", "A",
+		"C", "C", "C", "C", "C",
+	}
+	for i, hash := range hashes {
+		rev := &models.DeviceConfigRevision{
+			DeviceID:           device.ID,
+			Timestamp:          now.Add(time.Duration(i) * time.Minute), // oldest first
+			Checksum:           "raw-" + strconv.Itoa(i),
+			NormalizedChecksum: hash,
+			ConfigText:         "c" + strconv.Itoa(i),
+			Length:             1,
+		}
+		if err := h.db.Gorm().Create(rev).Error; err != nil {
+			t.Fatalf("create rev %d: %v", i, err)
+		}
+	}
+
+	w := doDeviceQueryRequest(t, h.GetDeviceConfigHistory, "GET", "/config-history", "distinct=true", device.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var resp historyResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+
+	if !resp.Data.Distinct {
+		t.Errorf("response should mark distinct=true")
+	}
+	if resp.Data.TotalAll != 20 {
+		t.Errorf("total_all = %d, want 20", resp.Data.TotalAll)
+	}
+	if resp.Data.TotalDistinct != 4 {
+		t.Errorf("total_distinct = %d, want 4 (A→B→A→C)", resp.Data.TotalDistinct)
+	}
+	if len(resp.Data.Revisions) != 4 {
+		t.Fatalf("revisions = %d, want 4", len(resp.Data.Revisions))
+	}
+
+	// Newest-first; the most recent run is C, then the earlier A, then B,
+	// then the very first A. Each kept row is the EARLIEST of its run
+	// (when that state began).
+	wantHashes := []string{"C", "A", "B", "A"}
+	wantRawIdx := []int{15, 10, 5, 0} // earliest of each run, 0-indexed
+	for i, r := range resp.Data.Revisions {
+		if r.NormalizedChecksum != wantHashes[i] {
+			t.Errorf("rev %d: normalized = %q, want %q", i, r.NormalizedChecksum, wantHashes[i])
+		}
+		if r.Checksum != "raw-"+strconv.Itoa(wantRawIdx[i]) {
+			t.Errorf("rev %d: raw checksum = %q, want raw-%d (the EARLIEST of its run)",
+				i, r.Checksum, wantRawIdx[i])
+		}
+	}
+}
+
+func TestGetDeviceConfigHistory_NonDistinctReturnsEverything(t *testing.T) {
+	// Same fixture, no ?distinct flag → all rows returned (capped at 50).
+	h, _, device := setupFortiGateProbeDevice(t)
+	now := time.Now()
+	for i := 0; i < 30; i++ {
+		hash := "A"
+		if i >= 15 {
+			hash = "B"
+		}
+		rev := &models.DeviceConfigRevision{
+			DeviceID:           device.ID,
+			Timestamp:          now.Add(time.Duration(i) * time.Minute),
+			Checksum:           "raw-" + strconv.Itoa(i),
+			NormalizedChecksum: hash,
+			ConfigText:         "c",
+			Length:             1,
+		}
+		if err := h.db.Gorm().Create(rev).Error; err != nil {
+			t.Fatalf("create rev %d: %v", i, err)
+		}
+	}
+
+	w := doDeviceQueryRequest(t, h.GetDeviceConfigHistory, "GET", "/config-history", "", device.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var resp historyResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Data.Distinct {
+		t.Errorf("default mode should not be distinct")
+	}
+	if resp.Data.TotalAll != 30 {
+		t.Errorf("total_all = %d, want 30", resp.Data.TotalAll)
+	}
+	if len(resp.Data.Revisions) != 30 {
+		t.Errorf("revisions = %d, want 30 (all rows under the 50-cap)", len(resp.Data.Revisions))
+	}
+}
+
+func TestGetDeviceConfigHistory_DistinctMode_AllSameHash(t *testing.T) {
+	// Worst case for the user complaint: 100 revisions, all share the same
+	// normalized hash (no real changes for hours). Distinct mode returns
+	// exactly 1 row instead of 50 noisy duplicates.
+	h, _, device := setupFortiGateProbeDevice(t)
+	now := time.Now()
+	for i := 0; i < 100; i++ {
+		rev := &models.DeviceConfigRevision{
+			DeviceID:           device.ID,
+			Timestamp:          now.Add(time.Duration(i) * time.Minute),
+			Checksum:           "raw-" + strconv.Itoa(i),
+			NormalizedChecksum: "same-hash",
+			ConfigText:         "c",
+			Length:             1,
+		}
+		if err := h.db.Gorm().Create(rev).Error; err != nil {
+			t.Fatalf("create rev %d: %v", i, err)
+		}
+	}
+
+	w := doDeviceQueryRequest(t, h.GetDeviceConfigHistory, "GET", "/config-history", "distinct=true", device.ID)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var resp historyResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Data.TotalAll != 100 {
+		t.Errorf("total_all = %d, want 100", resp.Data.TotalAll)
+	}
+	if resp.Data.TotalDistinct != 1 {
+		t.Errorf("total_distinct = %d, want 1 (one logical state across 100 backups)", resp.Data.TotalDistinct)
+	}
+	if len(resp.Data.Revisions) != 1 {
+		t.Fatalf("revisions = %d, want 1", len(resp.Data.Revisions))
+	}
+	// The kept row should be the EARLIEST occurrence — raw-0.
+	if resp.Data.Revisions[0].Checksum != "raw-0" {
+		t.Errorf("kept row should be the earliest; got raw=%q", resp.Data.Revisions[0].Checksum)
 	}
 }
 

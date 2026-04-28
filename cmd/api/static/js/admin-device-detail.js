@@ -968,20 +968,43 @@
 
     var configRevisions = [];
     var configCompareSelection = { from: null, to: null };
+    // Default the Config History tab to "only show real changes" — collapses
+    // runs of IV-drifted-but-logically-identical backups to a single row each.
+    var configHistoryDistinct = true;
 
     function renderConfigHistory() {
-        fetch('/admin/api/devices/' + deviceId + '/config-history', { credentials: 'same-origin' })
+        var url = '/admin/api/devices/' + deviceId + '/config-history' +
+                  (configHistoryDistinct ? '?distinct=true' : '');
+        fetch(url, { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
                 var revs = (result.success && result.data && result.data.revisions) ? result.data.revisions : [];
+                var data = (result.success && result.data) || {};
+                var totalAll = data.total_all || 0;
+                var totalDistinct = data.total_distinct || 0;
                 configRevisions = revs;
                 var body = document.getElementById('configBody');
                 var empty = document.getElementById('configEmpty');
                 var summary = document.getElementById('configSummary');
 
-                if (!revs.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
-                empty.style.display = 'none';
-                summary.textContent = revs.length + ' revision(s)';
+                if (!revs.length) { body.innerHTML = ''; empty.style.display = 'block'; }
+                else { empty.style.display = 'none'; }
+
+                // Summary line + toggle. The toggle is the user's escape hatch
+                // when they want to see every individual backup (e.g. for
+                // forensics or restore-target picking).
+                if (configHistoryDistinct) {
+                    summary.innerHTML =
+                        revs.length + ' distinct ' + (revs.length === 1 ? 'state' : 'states') +
+                        ' from ' + totalAll.toLocaleString() + ' total backups &nbsp;|&nbsp; ' +
+                        '<a href="#" data-action="toggle-config-history-mode" style="color:#58a6ff">' +
+                        'Show all ' + totalAll.toLocaleString() + ' backups</a>';
+                } else {
+                    summary.innerHTML =
+                        revs.length + ' of ' + totalAll.toLocaleString() + ' backups &nbsp;|&nbsp; ' +
+                        '<a href="#" data-action="toggle-config-history-mode" style="color:#58a6ff">' +
+                        'Show only changes</a>';
+                }
 
                 // Default radio selection: from = second-newest, to = newest (what users want most often).
                 if (configCompareSelection.from === null && revs.length >= 2) {
@@ -1068,6 +1091,14 @@
         if (t.dataset && t.dataset.action === 'close-config-diff') {
             var modal = document.getElementById('config-diff-modal');
             if (modal) modal.classList.remove('active');
+        }
+        if (t.dataset && t.dataset.action === 'toggle-config-history-mode') {
+            e.preventDefault();
+            configHistoryDistinct = !configHistoryDistinct;
+            // Reset compare selection when the visible list changes — IDs the
+            // user picked may not be in the new view.
+            configCompareSelection = { from: null, to: null };
+            renderConfigHistory();
         }
     });
 

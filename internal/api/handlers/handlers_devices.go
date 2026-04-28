@@ -735,12 +735,73 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 		return
 	}
 
-	var revisions []models.DeviceConfigRevision
-	if err := h.db.Gorm().Where("device_id = ?", uint(id)).Order("timestamp DESC").Limit(50).Find(&revisions).Error; err != nil {
+	const displayLimit = 50
+	distinct := c.Query("distinct") == "true"
+
+	// Always count the total number of stored revisions so the UI can show
+	// "X of Y backups" and offer the "Show all" toggle when distinct mode is
+	// hiding a lot of duplicates.
+	var totalAll int64
+	h.db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", uint(id)).Count(&totalAll)
+
+	if !distinct {
+		var revisions []models.DeviceConfigRevision
+		if err := h.db.Gorm().Where("device_id = ?", uint(id)).
+			Order("timestamp DESC").Limit(displayLimit).Find(&revisions).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get config history"))
+			return
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"revisions":   revisions,
+			"distinct":    false,
+			"total_all":   totalAll,
+			"total_shown": len(revisions),
+		}))
+		return
+	}
+
+	// Distinct mode: collapse runs of identical NormalizedChecksum to one row
+	// each — the EARLIEST occurrence of each run, which represents "when this
+	// state began." Walk ASC, keep when hash changes from prev, reverse for
+	// DESC display. Bounded by displayLimit at the END so we always show the
+	// most-recent N change events, even if there were thousands of backups.
+	//
+	// We scan up to a generous fetch limit so we have enough data to find
+	// distinct runs; retention caps storage so this is bounded.
+	const scanLimit = 5000
+	var allRevs []models.DeviceConfigRevision
+	if err := h.db.Gorm().Where("device_id = ?", uint(id)).
+		Order("timestamp ASC").Limit(scanLimit).Find(&allRevs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get config history"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"revisions": revisions}))
+
+	distinctRevs := make([]models.DeviceConfigRevision, 0, 32)
+	prevHash := ""
+	for _, r := range allRevs {
+		if r.NormalizedChecksum != prevHash {
+			distinctRevs = append(distinctRevs, r)
+			prevHash = r.NormalizedChecksum
+		}
+	}
+
+	// Reverse so newest-first matches the existing UI ordering.
+	for i, j := 0, len(distinctRevs)-1; i < j; i, j = i+1, j-1 {
+		distinctRevs[i], distinctRevs[j] = distinctRevs[j], distinctRevs[i]
+	}
+
+	totalDistinct := len(distinctRevs)
+	if totalDistinct > displayLimit {
+		distinctRevs = distinctRevs[:displayLimit]
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"revisions":      distinctRevs,
+		"distinct":       true,
+		"total_all":      totalAll,
+		"total_distinct": totalDistinct,
+		"total_shown":    len(distinctRevs),
+	}))
 }
 
 // GetDeviceConfigDiff returns the raw config text for two revisions plus the

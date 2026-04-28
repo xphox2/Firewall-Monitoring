@@ -1,4 +1,17 @@
 # Changelog
+## [0.10.193] - 2026-04-28
+
+### Added
+- **Config History tab now defaults to "show only real changes"**. With the always-store policy storing 96 backups per device per day, the History tab was 50 rows of identical-looking IV-drift noise. Now the tab collapses runs of identical `NormalizedChecksum` to one representative row each — the *earliest* of each run (representing "when this state began"). 100 IV-drifted backups → 1 row. A real edit produces a new row.
+- **Toggle in the summary line**: *"3 distinct states from 287 total backups | Show all 287 backups"* / *"287 of 287 backups | Show only changes"*. One click swaps modes; compare selections reset because the visible IDs change.
+- **Server**: `GET /api/devices/:id/config-history?distinct=true` is the new opt-in. Without the param the endpoint returns every stored revision (backward compatible). Response now also includes `total_all`, `total_distinct`, `total_shown` so the UI can render the summary line.
+
+### Tests
+- 3 new tests in `handlers_config_revision_retention_test.go`:
+  - `TestGetDeviceConfigHistory_DistinctMode_CollapsesRuns` — A→B→A→C across 20 rows collapses to exactly 4 representative rows (newest-first, each the earliest of its run).
+  - `TestGetDeviceConfigHistory_NonDistinctReturnsEverything` — without `?distinct`, every row up to the 50-cap is returned.
+  - `TestGetDeviceConfigHistory_DistinctMode_AllSameHash` — the user-described worst case: 100 IV-drifted backups all with the same normalized hash collapse to exactly 1 row.
+
 ## [0.10.192] - 2026-04-28
 
 ### Fixed
