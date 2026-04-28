@@ -1,4 +1,13 @@
 # Changelog
+## [0.10.185] - 2026-04-27
+
+### Added
+- **Server test suite** (Phase 4–5 of test plan):
+  - `internal/database/testing.go`: `NewDatabaseForTesting` using in-memory SQLite via `github.com/glebarez/sqlite`; `sqliteDialect` added to `dialect.go` implementing `TimeBucket`/`QuoteIdent`/`IsPostgres` for test compatibility
+  - `internal/api/handlers/testhelper_test.go`: shared `setupTestHandler`, `setupProbeAndDevice`, `doTestRequest` helpers
+  - `internal/api/handlers/handlers_data_test.go`: 12 handler tests covering `validateProbe` (missing auth, wrong token, pending), `ReceiveConfigRevision` (save, dedup, second checksum, cross-probe 403, oversized 400), `ReceiveSystemStatuses` (save, cross-probe filtering, 100-record truncation, no-auth)
+  - Critical security test: cross-probe data injection is rejected at both config revision and system status endpoints
+
 ## [0.10.182] - 2026-04-27
 
 ### Fixed

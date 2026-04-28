@@ -39,3 +39,25 @@ func (postgresDialect) QuoteIdent(name string) string {
 }
 
 func (postgresDialect) IsPostgres() bool { return true }
+
+// ---------- SQLite (test only) ----------
+
+type sqliteDialect struct{}
+
+func (sqliteDialect) TimeBucket(unit, column string) string {
+	switch unit {
+	case "minute":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
+	case "5min":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
+	case "hour":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
+	case "day":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)
+	default:
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
+	}
+}
+
+func (sqliteDialect) QuoteIdent(name string) string { return `"` + name + `"` }
+func (sqliteDialect) IsPostgres() bool              { return false }

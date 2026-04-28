@@ -1,0 +1,60 @@
+//go:build !production
+
+package database
+
+import (
+	"firewall-mon/internal/models"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.
+// The returned Database has no batch inserters (syslogBatch etc. are nil) since
+// handlers use db.Gorm().Create() directly for single-record writes.
+func NewDatabaseForTesting(t interface {
+	Helper()
+	Fatal(...interface{})
+}) *Database {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal("NewDatabaseForTesting: open SQLite:", err)
+	}
+
+	testModels := []interface{}{
+		&models.Probe{},
+		&models.ProbeApproval{},
+		&models.ProbeHeartbeat{},
+		&models.Device{},
+		&models.Site{},
+		&models.SystemStatus{},
+		&models.InterfaceStats{},
+		&models.VPNStatus{},
+		&models.HAStatus{},
+		&models.HardwareSensor{},
+		&models.ProcessorStats{},
+		&models.DeviceConfigRevision{},
+		&models.TrapEvent{},
+		&models.SyslogMessage{},
+		&models.FlowSample{},
+		&models.Alert{},
+		&models.AlertPolicy{},
+		&models.AlertRule{},
+		&models.DeviceAlertConfig{},
+		&models.SiteAlertConfig{},
+		&models.MaintenanceWindow{},
+		&models.PingResult{},
+	}
+
+	for _, m := range testModels {
+		if err := db.AutoMigrate(m); err != nil {
+			t.Fatal("NewDatabaseForTesting: AutoMigrate:", err)
+		}
+	}
+
+	return &Database{db: db, dialect: sqliteDialect{}}
+}
