@@ -1,4 +1,17 @@
 # Changelog
+## [0.10.190] - 2026-04-28
+
+### Fixed
+- **Header "select all" checkbox carried over its checked state when navigating to next/prev page**, even though none of the new page's row checkboxes were actually selected. Caused by the render order in `renderAlertsTable` reading checkbox state before the new tbody was rendered. Now the header checkbox + indeterminate state + selection state + select-all-matching mode are explicitly reset before the new HTML is swapped in.
+
+### Added
+- **"Select all N matching the filter" flow on the alerts page**. The header checkbox still selects only the visible page (page-scoped selection is the safe default), but when the page is fully selected and there are more matching rows than fit on this page, an inline banner appears: *"10 selected on this page. Select all 247 matching the current filter."* Clicking the link puts the UI in a "select all matching" mode — visible chip in the toolbar — and the next "Acknowledge selected" call uses the new filter endpoint instead of an ID list. This is the GitHub / GMail pattern; safer than a single-click "ack everything" button. Banner clears on filter change, page change, manual Clear, or after the bulk-ack completes.
+- **`POST /api/alerts/bulk-acknowledge-filter`**: accepts the same query params as `GET /api/alerts` (`device_id`, `alert_type`, `severity`, `acknowledged`) plus an optional `{notes}` body. Single SQL `UPDATE WHERE <filter>` — bounded only by the filter, not by client-side ID lists, so it scales past the 500-ID cap on the existing endpoint. **At least one filter is required**; an empty filter returns 400 to prevent accidental "ack everything in the database" calls.
+- **`Database.AlertFilter` struct + `AcknowledgeAlertsByFilter`**: typed filter object, nil `Acknowledged` means "any". Same pattern works for any future filter-based bulk operations.
+
+### Tests
+- 4 new tests in `handlers_alerts_bulk_test.go`: ack by `severity=warning`, ack by `acknowledged=false` (the common "ack all unacked" use case), 400 when no filter is provided, combined `device_id+alert_type+acknowledged=false` correctly excludes other devices and pre-acked rows. Total bulk-ack coverage now 9 tests.
+
 ## [0.10.189] - 2026-04-28
 
 ### Tests

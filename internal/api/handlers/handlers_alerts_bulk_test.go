@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -147,6 +148,169 @@ func TestBulkAcknowledgeAlerts_TooManyIDsReturns400(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 for over-limit ids", w.Code)
+	}
+}
+
+// doAdminQueryRequest is a variant of doAdminTestRequest that supports query
+// strings — needed for BulkAcknowledgeAlertsByFilter which reads filters from
+// c.Query.
+func doAdminQueryRequest(t *testing.T, h func(*gin.Context), method, path, query string, body interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	router := gin.New()
+	router.Handle(method, path, h)
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal body: %v", err)
+		}
+	}
+	url := path
+	if query != "" {
+		url = path + "?" + query
+	}
+	req := httptest.NewRequest(method, url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+func seedAlertsWithMix(t *testing.T, h *Handler, deviceID uint) {
+	t.Helper()
+	mix := []struct {
+		alertType string
+		severity  string
+		acked     bool
+	}{
+		{"DEVICE_OFFLINE", "critical", false},
+		{"DEVICE_OFFLINE", "critical", false},
+		{"DEVICE_OFFLINE", "critical", true},
+		{"CPU_HIGH", "warning", false},
+		{"CPU_HIGH", "warning", false},
+		{"CONFIG_CHANGE", "info", false},
+	}
+	for i, m := range mix {
+		a := &models.Alert{
+			DeviceID:     deviceID,
+			AlertType:    m.alertType,
+			Severity:     m.severity,
+			Message:      "seeded alert",
+			Timestamp:    time.Now(),
+			Acknowledged: m.acked,
+		}
+		if err := h.db.Gorm().Create(a).Error; err != nil {
+			t.Fatalf("create alert %d: %v", i, err)
+		}
+	}
+}
+
+func TestBulkAcknowledgeByFilter_BySeverity(t *testing.T) {
+	h, db := setupTestHandler(t)
+	_, device := setupProbeAndDevice(t, db)
+	seedAlertsWithMix(t, h, device.ID)
+
+	w := doAdminQueryRequest(t, h.BulkAcknowledgeAlertsByFilter,
+		"POST", "/api/alerts/bulk-acknowledge-filter", "severity=warning",
+		map[string]interface{}{"notes": "filter test"})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var ackedWarn, ackedCrit int64
+	db.Gorm().Model(&models.Alert{}).Where("severity = ? AND acknowledged = true", "warning").Count(&ackedWarn)
+	db.Gorm().Model(&models.Alert{}).Where("severity = ? AND acknowledged = true", "critical").Count(&ackedCrit)
+	if ackedWarn != 2 {
+		t.Errorf("warning rows acked: got %d, want 2", ackedWarn)
+	}
+	if ackedCrit != 1 {
+		t.Errorf("critical rows acked should be unchanged at 1 (was pre-acked); got %d", ackedCrit)
+	}
+}
+
+func TestBulkAcknowledgeByFilter_AcknowledgedFalseFilter(t *testing.T) {
+	// The most common UI scenario: user filters to "Unacknowledged" and clicks
+	// "Select all matching" → "Acknowledge". Should ack only the unacked rows.
+	h, db := setupTestHandler(t)
+	_, device := setupProbeAndDevice(t, db)
+	seedAlertsWithMix(t, h, device.ID)
+
+	w := doAdminQueryRequest(t, h.BulkAcknowledgeAlertsByFilter,
+		"POST", "/api/alerts/bulk-acknowledge-filter", "acknowledged=false",
+		map[string]interface{}{"notes": "all unacked"})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var unacked int64
+	db.Gorm().Model(&models.Alert{}).Where("acknowledged = false").Count(&unacked)
+	if unacked != 0 {
+		t.Errorf("after ack-all-unacked, unacked count should be 0; got %d", unacked)
+	}
+}
+
+func TestBulkAcknowledgeByFilter_NoFilterReturns400(t *testing.T) {
+	// Without ANY filter the endpoint would silently ack every alert in the
+	// database, which is too dangerous. Must require at least one filter.
+	h, db := setupTestHandler(t)
+	_, device := setupProbeAndDevice(t, db)
+	seedAlertsWithMix(t, h, device.ID)
+
+	w := doAdminQueryRequest(t, h.BulkAcknowledgeAlertsByFilter,
+		"POST", "/api/alerts/bulk-acknowledge-filter", "", nil)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 with no filter", w.Code)
+	}
+
+	var unacked int64
+	db.Gorm().Model(&models.Alert{}).Where("acknowledged = false").Count(&unacked)
+	if unacked != 5 {
+		t.Errorf("nothing should have been acked; unacked count = %d, want 5", unacked)
+	}
+}
+
+func TestBulkAcknowledgeByFilter_CombinedFilters(t *testing.T) {
+	// device_id + alert_type + acknowledged=false → very narrow match.
+	h, db := setupTestHandler(t)
+	_, device := setupProbeAndDevice(t, db)
+	seedAlertsWithMix(t, h, device.ID)
+	// Also seed an unrelated device with a matching alert type to confirm the
+	// device_id filter excludes it.
+	otherDev := &models.Device{Name: "other-fw", IPAddress: "10.10.10.10"}
+	if err := db.Gorm().Create(otherDev).Error; err != nil {
+		t.Fatalf("create otherDev: %v", err)
+	}
+	if err := db.Gorm().Create(&models.Alert{
+		DeviceID: otherDev.ID, AlertType: "DEVICE_OFFLINE", Severity: "critical",
+		Message: "x", Timestamp: time.Now(), Acknowledged: false,
+	}).Error; err != nil {
+		t.Fatalf("create other alert: %v", err)
+	}
+
+	q := fmt.Sprintf("device_id=%d&alert_type=DEVICE_OFFLINE&acknowledged=false", device.ID)
+	w := doAdminQueryRequest(t, h.BulkAcknowledgeAlertsByFilter,
+		"POST", "/api/alerts/bulk-acknowledge-filter", q,
+		map[string]interface{}{"notes": ""})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// The two unacked DEVICE_OFFLINE rows on `device` should be acked.
+	// The pre-acked DEVICE_OFFLINE row on `device` is excluded by acknowledged=false.
+	// The DEVICE_OFFLINE row on `otherDev` is excluded by device_id.
+	var ackedOnDev, totalAckedDeviceOffline int64
+	db.Gorm().Model(&models.Alert{}).Where("device_id = ? AND alert_type = ? AND acknowledged = true", device.ID, "DEVICE_OFFLINE").Count(&ackedOnDev)
+	db.Gorm().Model(&models.Alert{}).Where("alert_type = ? AND acknowledged = true", "DEVICE_OFFLINE").Count(&totalAckedDeviceOffline)
+	if ackedOnDev != 3 {
+		t.Errorf("device DEVICE_OFFLINE acked = %d, want 3 (2 newly + 1 pre-acked)", ackedOnDev)
+	}
+	if totalAckedDeviceOffline != 3 {
+		t.Errorf("DEVICE_OFFLINE acked across all devices = %d, want 3 (otherDev's row should remain unacked)", totalAckedDeviceOffline)
 	}
 }
 

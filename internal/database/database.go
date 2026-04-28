@@ -3663,6 +3663,46 @@ func (d *Database) AcknowledgeAlertsBulk(ids []uint, notes string) (int64, error
 	return res.RowsAffected, res.Error
 }
 
+// AlertFilter narrows an alert query for bulk ack-by-filter. Empty / zero
+// fields are not added to the WHERE clause. Mirrors the query parameters
+// accepted by GetAlerts so the client can ack exactly the rows it sees.
+type AlertFilter struct {
+	DeviceID     uint   // 0 = any
+	AlertType    string // "" = any
+	Severity     string // "" = any
+	Acknowledged *bool  // nil = any (typically the caller passes false to ack only unacked rows)
+}
+
+// AcknowledgeAlertsByFilter flips acknowledged=true for all rows matching the
+// filter. Used by the admin UI's "Select all N matching" → "Acknowledge"
+// flow when the result set is too large to ship as an ID list. Single
+// UPDATE; bounded only by the filter, not by client-side IDs.
+//
+// Returns RowsAffected. Note that already-acked rows in the match set will
+// have their notes rewritten by this call.
+func (d *Database) AcknowledgeAlertsByFilter(f AlertFilter, notes string) (int64, error) {
+	now := time.Now()
+	q := d.db.Model(&models.Alert{})
+	if f.DeviceID > 0 {
+		q = q.Where("device_id = ?", f.DeviceID)
+	}
+	if f.AlertType != "" {
+		q = q.Where("alert_type = ?", f.AlertType)
+	}
+	if f.Severity != "" {
+		q = q.Where("severity = ?", f.Severity)
+	}
+	if f.Acknowledged != nil {
+		q = q.Where("acknowledged = ?", *f.Acknowledged)
+	}
+	res := q.Updates(map[string]interface{}{
+		"acknowledged":    true,
+		"acknowledged_at": now,
+		"notes":           notes,
+	})
+	return res.RowsAffected, res.Error
+}
+
 func (d *Database) UpdateAlertNotes(id uint, notes string) error {
 	return d.db.Model(&models.Alert{}).Where("id = ?", id).Update("notes", notes).Error
 }

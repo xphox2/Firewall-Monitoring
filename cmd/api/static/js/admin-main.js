@@ -1089,6 +1089,7 @@
     // ---- Alerts ----
     var ALERTS_PAGE_SIZE = 10;
     var alertSelection = {}; // map id (string) -> true for currently-selected rows on the current page
+    var selectAllMatchingMode = false; // true when user clicked "Select all N matching" — bulk-ack uses filter, not IDs
 
     function loadAlerts() {
         alertsOffset = 0;
@@ -1156,9 +1157,15 @@
         var ackBtn = document.getElementById('alerts-bulk-ack-btn');
         var clearBtn = document.getElementById('alerts-bulk-clear-btn');
         var pageBox = document.getElementById('alerts-select-page');
-        if (summary) summary.textContent = count === 0 ? 'No alerts selected' : (count + ' alert' + (count === 1 ? '' : 's') + ' selected');
-        if (ackBtn) ackBtn.disabled = count === 0;
-        if (clearBtn) clearBtn.disabled = count === 0;
+        if (summary) {
+            if (selectAllMatchingMode) {
+                summary.textContent = 'All ' + alertTotalCount.toLocaleString() + ' matching alerts selected';
+            } else {
+                summary.textContent = count === 0 ? 'No alerts selected' : (count + ' alert' + (count === 1 ? '' : 's') + ' selected');
+            }
+        }
+        if (ackBtn) ackBtn.disabled = count === 0 && !selectAllMatchingMode;
+        if (clearBtn) clearBtn.disabled = count === 0 && !selectAllMatchingMode;
         // Sync the page-select checkbox state with row checkboxes on this page.
         if (pageBox) {
             var rowBoxes = document.querySelectorAll('#alerts-full-table tbody input[data-action="toggle-alert-selection"]');
@@ -1167,31 +1174,95 @@
             pageBox.checked = rowBoxes.length > 0 && checkedCount === rowBoxes.length;
             pageBox.indeterminate = checkedCount > 0 && checkedCount < rowBoxes.length;
         }
+        updateSelectAllMatchingBanner();
+    }
+
+    // updateSelectAllMatchingBanner shows the GitHub-style "Select all N matching"
+    // prompt when the page-select checkbox is fully checked AND there are more
+    // matching rows than fit on this page. Hides when no longer applicable.
+    function updateSelectAllMatchingBanner() {
+        var banner = document.getElementById('alerts-select-all-matching');
+        if (!banner) return;
+        var pageBox = document.getElementById('alerts-select-page');
+        var pageFullySelected = pageBox && pageBox.checked && !pageBox.indeterminate;
+        var hasMoreMatching = alertTotalCount > ALERTS_PAGE_SIZE;
+
+        if (selectAllMatchingMode) {
+            banner.style.display = '';
+            banner.innerHTML =
+                'All <strong>' + alertTotalCount.toLocaleString() + '</strong> matching alerts are selected. ' +
+                '<a href="#" data-action="cancel-select-all-matching" style="color:#58a6ff;text-decoration:underline">Clear selection</a>';
+            return;
+        }
+        if (pageFullySelected && hasMoreMatching) {
+            banner.style.display = '';
+            banner.innerHTML =
+                Object.keys(alertSelection).length + ' selected on this page. ' +
+                '<a href="#" data-action="select-all-matching" style="color:#58a6ff;text-decoration:underline">' +
+                'Select all ' + alertTotalCount.toLocaleString() + ' matching the current filter</a>';
+            return;
+        }
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+    }
+
+    function enableSelectAllMatching() {
+        selectAllMatchingMode = true;
+        updateAlertBulkToolbar();
+    }
+
+    function cancelSelectAllMatching() {
+        selectAllMatchingMode = false;
+        // Also clear the per-row selection so the user starts fresh.
+        var rowBoxes = document.querySelectorAll('#alerts-full-table tbody input[data-action="toggle-alert-selection"]');
+        rowBoxes.forEach(function(b) { b.checked = false; });
+        clearAlertSelection();
     }
 
     function bulkAckSelected() {
         var ids = Object.keys(alertSelection).filter(function(k) { return alertSelection[k]; }).map(function(k) { return parseInt(k, 10); });
-        if (ids.length === 0) return;
+        var count = selectAllMatchingMode ? alertTotalCount : ids.length;
+        if (count === 0) return;
         var modal = document.getElementById('alerts-bulk-ack-modal');
-        document.getElementById('alerts-bulk-ack-count').textContent = 'Acknowledging ' + ids.length + ' alert' + (ids.length === 1 ? '' : 's');
+        var label = 'Acknowledging ' + count.toLocaleString() + ' alert' + (count === 1 ? '' : 's');
+        if (selectAllMatchingMode) label += ' (all matching the current filter)';
+        document.getElementById('alerts-bulk-ack-count').textContent = label;
         document.getElementById('alerts-bulk-ack-notes').value = '';
         if (modal) modal.classList.add('active');
     }
 
     function confirmBulkAck() {
-        var ids = Object.keys(alertSelection).filter(function(k) { return alertSelection[k]; }).map(function(k) { return parseInt(k, 10); });
-        if (ids.length === 0) return;
         var notes = document.getElementById('alerts-bulk-ack-notes').value || '';
         var btn = document.getElementById('alerts-bulk-ack-confirm');
         if (btn) btn.disabled = true;
-        apiFetch(API_BASE + '/alerts/bulk-acknowledge', {
-            method: 'POST',
-            body: { ids: ids, notes: notes }
-        }).then(function(result) {
+
+        var promise;
+        if (selectAllMatchingMode) {
+            // Filter-based ack: server walks every row matching the current filter
+            // (potentially thousands), so we don't have to ship IDs.
+            var params = buildAlertParams(0); // limit/offset are irrelevant for the UPDATE
+            promise = apiFetch(API_BASE + '/alerts/bulk-acknowledge-filter?' + params, {
+                method: 'POST',
+                body: { notes: notes }
+            });
+        } else {
+            var ids = Object.keys(alertSelection).filter(function(k) { return alertSelection[k]; }).map(function(k) { return parseInt(k, 10); });
+            if (ids.length === 0) {
+                if (btn) btn.disabled = false;
+                return;
+            }
+            promise = apiFetch(API_BASE + '/alerts/bulk-acknowledge', {
+                method: 'POST',
+                body: { ids: ids, notes: notes }
+            });
+        }
+
+        promise.then(function(result) {
             var modal = document.getElementById('alerts-bulk-ack-modal');
             if (modal) modal.classList.remove('active');
+            selectAllMatchingMode = false;
             clearAlertSelection();
-            var n = (result && result.data && result.data.acknowledged) || ids.length;
+            var n = (result && result.data && result.data.acknowledged) || 0;
             AC.showSuccess(n + ' alert' + (n === 1 ? '' : 's') + ' acknowledged');
             refreshAlertsAtCurrentPage();
         })['catch'](function(e) {
@@ -1276,7 +1347,19 @@
 
     function renderAlertsTable(alerts, append) {
         var tbody = document.querySelector('#alerts-full-table tbody');
-        if (!append) clearAlertSelection();
+        // Reset selection state and the header checkbox state. Do this BEFORE
+        // setting innerHTML so the header `pageBox` doesn't carry its previous
+        // checked state across page navigations (which is visually wrong —
+        // none of the *new* row checkboxes are checked).
+        if (!append) {
+            alertSelection = {};
+            // Don't try to read row boxes here — they're about to be replaced.
+            // Just force the header to a known state.
+            var pageBox = document.getElementById('alerts-select-page');
+            if (pageBox) { pageBox.checked = false; pageBox.indeterminate = false; }
+            selectAllMatchingMode = false;
+            updateSelectAllMatchingBanner();
+        }
         var html = alerts.map(function(a) {
             var statusCol = '';
             // Already-acked rows can't be re-selected from the bulk toolbar (but
@@ -2796,7 +2879,15 @@
         },
         'bulk-ack-alerts': function() { bulkAckSelected(); },
         'close-bulk-ack': function() { var m = document.getElementById('alerts-bulk-ack-modal'); if (m) m.classList.remove('active'); },
-        'confirm-bulk-ack': function() { confirmBulkAck(); }
+        'confirm-bulk-ack': function() { confirmBulkAck(); },
+        'select-all-matching': function(el, e) {
+            if (e && e.preventDefault) e.preventDefault();
+            enableSelectAllMatching();
+        },
+        'cancel-select-all-matching': function(el, e) {
+            if (e && e.preventDefault) e.preventDefault();
+            cancelSelectAllMatching();
+        }
     });
 
     // Click on syslog row to show detail

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -350,6 +351,62 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"acknowledged": affected,
 		"requested":    len(body.IDs),
+	}))
+}
+
+// BulkAcknowledgeAlertsByFilter acks every alert matching the filter (same
+// query parameters as GET /api/alerts: device_id, alert_type, severity,
+// acknowledged). Body carries the optional notes. Used by the admin UI's
+// "Select all N matching" flow when the result set exceeds maxBulkAckIDs and
+// can't be shipped as an ID list.
+//
+// At least one filter must be specified to prevent accidental "ack everything
+// in the database" calls.
+func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	var body struct {
+		Notes string `json:"notes"`
+	}
+	c.ShouldBindJSON(&body) // body is optional
+
+	filter := database.AlertFilter{}
+	hasAnyFilter := false
+	if v := c.Query("device_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 32); err == nil && id > 0 {
+			filter.DeviceID = uint(id)
+			hasAnyFilter = true
+		}
+	}
+	if v := c.Query("alert_type"); v != "" {
+		filter.AlertType = v
+		hasAnyFilter = true
+	}
+	if v := c.Query("severity"); v != "" {
+		filter.Severity = v
+		hasAnyFilter = true
+	}
+	if v := c.Query("acknowledged"); v != "" {
+		ack := v == "true"
+		filter.Acknowledged = &ack
+		hasAnyFilter = true
+	}
+
+	if !hasAnyFilter {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
+		return
+	}
+
+	affected, err := h.db.AcknowledgeAlertsByFilter(filter, body.Notes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alerts"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"acknowledged": affected,
 	}))
 }
 
