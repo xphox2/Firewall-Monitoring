@@ -1028,7 +1028,18 @@
               && configCompareSelection.from !== configCompareSelection.to;
         btn.disabled = !ok;
         if (ok) {
-            hint.textContent = 'Comparing rev #' + configCompareSelection.from + ' → rev #' + configCompareSelection.to;
+            // Look up the selected revisions and warn (don't block) if both
+            // share a normalized_checksum — clicking Compare will be honest
+            // about it ("no real changes") but at least the user knows up-front.
+            var fromRev = null, toRev = null;
+            for (var i = 0; i < configRevisions.length; i++) {
+                if (configRevisions[i].id === configCompareSelection.from) fromRev = configRevisions[i];
+                if (configRevisions[i].id === configCompareSelection.to)   toRev   = configRevisions[i];
+            }
+            var sameNormalized = fromRev && toRev && fromRev.normalized_checksum
+                && fromRev.normalized_checksum === toRev.normalized_checksum;
+            hint.textContent = 'Comparing rev #' + configCompareSelection.from + ' → rev #' + configCompareSelection.to +
+                (sameNormalized ? '  (same normalized hash — no real config changes between these)' : '');
         } else if (configCompareSelection.from !== null && configCompareSelection.from === configCompareSelection.to) {
             hint.textContent = 'From and To are the same — pick different revisions.';
         } else {
@@ -1061,16 +1072,43 @@
     });
 
     function openConfigDiff(fromID, toID) {
+        console.log('[diff] opening compare from=' + fromID + ' to=' + toID + ' device=' + deviceId);
         var url = '/admin/api/devices/' + deviceId + '/config-history/diff?from=' + fromID + '&to=' + toID;
         fetch(url, { credentials: 'same-origin' })
-            .then(function(r) { return r.json(); })
+            .then(function(r) {
+                console.log('[diff] HTTP ' + r.status + ' ' + r.statusText);
+                return r.json();
+            })
             .then(function(result) {
+                console.log('[diff] response:', result);
                 if (!result.success || !result.data) {
-                    alert('Diff failed: ' + (result.error || 'unknown'));
+                    var modal = document.getElementById('config-diff-modal');
+                    var body  = document.getElementById('config-diff-body');
+                    if (modal && body) {
+                        body.innerHTML = '<div style="color:#f85149;padding:20px">' +
+                            '<strong>Server returned an error.</strong><br>' +
+                            esc(String((result && result.error) || 'unknown')) +
+                            '</div>';
+                        modal.classList.remove('hidden');
+                        modal.classList.add('active');
+                    }
                     return;
                 }
                 renderConfigDiff(result.data);
-            })['catch'](function(e) { console.error('config diff failed:', e); });
+            })['catch'](function(e) {
+                console.error('[diff] fetch failed:', e);
+                var modal = document.getElementById('config-diff-modal');
+                var body  = document.getElementById('config-diff-body');
+                if (modal && body) {
+                    body.innerHTML = '<div style="color:#f85149;padding:20px">' +
+                        '<strong>Failed to load diff.</strong><br>' +
+                        esc(String(e && e.message || e)) + '<br><br>' +
+                        '<span style="color:#8b949e;font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
+                        '</div>';
+                    modal.classList.remove('hidden');
+                    modal.classList.add('active');
+                }
+            });
     }
 
     function renderConfigDiff(data) {
@@ -1096,6 +1134,23 @@
                 ' (' + esc(fromRev.trigger_source || 'poll') + ', ' + esc(fromRev.backup_quality || 'full') + ')' +
                 ' &nbsp;→&nbsp; <span style="color:#3fb950">To #' + esc(String(toRev.id || '?')) + '</span> ' + formatTime(toRev.timestamp) +
                 ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')';
+
+            // Fast path: matching normalized checksums means there were NO real
+            // configuration changes between these two backups — only FortiGate's
+            // per-emission IV-churn noise. Show a clear banner instead of a wall
+            // of grey "unchanged" lines.
+            if (fromRev.normalized_checksum &&
+                fromRev.normalized_checksum === toRev.normalized_checksum) {
+                body.innerHTML =
+                    '<div style="background:rgba(63,185,80,0.1);border:1px solid #3fb950;color:#3fb950;padding:16px;margin:16px;border-radius:8px;font-family:sans-serif">' +
+                        '<strong>No real configuration changes between these two backups.</strong><br>' +
+                        '<span style="color:#c9d1d9;font-size:0.88rem;">' +
+                            'Both revisions normalize to the same checksum (<code style="color:#58a6ff">' + esc(fromRev.normalized_checksum.slice(0, 12)) + '…</code>). ' +
+                            'The raw bytes differ only because FortiOS regenerates a fresh AES IV salt for every <code>ENC</code> blob and rewrites a few header lines on every emission.' +
+                        '</span>' +
+                    '</div>';
+                return;
+            }
 
             // Compile vendor-aware volatile-line patterns (server sends them
             // as RE2 strings; we translate to JS RegExp). Crucially we add

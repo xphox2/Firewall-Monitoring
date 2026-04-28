@@ -1,4 +1,16 @@
 # Changelog
+## [0.10.192] - 2026-04-28
+
+### Fixed
+- **Config diff modal: "blank body" when comparing two backups with no real differences**. With the v0.10.187 IV-drift fix, every poll cycle stores a new revision even when nothing changed, so two consecutive revisions of the same FortiGate normalize to the same hash. Picking those two revisions in the Compare picker correctly produced an empty diff (everything is volatile / unchanged) — but the modal showed an empty body, which looked like a bug. Now:
+  - When `from.normalized_checksum === to.normalized_checksum`, the modal shows a clear green banner: *"No real configuration changes between these two backups. Both revisions normalize to the same checksum. The raw bytes differ only because FortiOS regenerates a fresh AES IV salt for every ENC blob on every emission."*
+  - The Compare-button hint now warns up-front when the two selected revisions share a normalized checksum, so the user knows what to expect before clicking.
+- **Network / server errors during diff load** (HTTP non-200, JSON parse failure, fetch reject) now render a clear error message in the modal body instead of leaving it blank. Modal opens immediately on click with a "Computing diff…" placeholder so something is always visible.
+- **Diagnostic console logging** added to the diff load path: HTTP status, response body, and any thrown error get logged with `[diff]` prefix so future debugging needs only browser dev tools, not server logs.
+
+### Note
+The v0.10.191 fixes (regex `g` flag, error boundary, O(n) HTML build) are still required — but they only take effect after the **server binary is redeployed** (browser refresh alone re-fetches the JS only from whatever the server serves; if the server still runs an older version, the browser still loads the old JS). To ship: `git pull` the server, restart the binary, then hard-refresh (Ctrl+Shift+R).
+
 ## [0.10.191] - 2026-04-28
 
 ### Fixed
