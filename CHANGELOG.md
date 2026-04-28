@@ -1,4 +1,11 @@
 # Changelog
+## [0.10.189] - 2026-04-28
+
+### Tests
+- **Marquee end-to-end test for the FortiGate hash-drift fix** (`handlers_config_revision_fortigate_test.go`): with `Device.Vendor="fortigate"`, two IV-drifted FortiOS-shaped configs round-tripped through `ReceiveConfigRevision` produce identical `NormalizedChecksum` despite different raw checksums (the actual on-the-wire scenario). Companion test asserts a real change (added firewall policy) produces a *different* normalized checksum. Plus tests for `TriggerSource`/`BackupQuality` round-trip + response shape.
+- **Retention cleanup tests** (`handlers_config_revision_retention_test.go`): `CleanupConfigRevisions` exercise — keep top 50 regardless of age, delete beyond 90 days when outside top 50, leave fewer-than-50 untouched within the 90-day window, delete >90-day rows even when total < 50, collapse identical-`NormalizedChecksum` runs in older window keeping the most-recent row of each run (precise survivor identity verified by raw checksum).
+- No production behavior change in this release — purely test coverage on the v0.10.187 code paths that were previously only unit-tested in isolation.
+
 ## [0.10.188] - 2026-04-28
 
 ### Added
