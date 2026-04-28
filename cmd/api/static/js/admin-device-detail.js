@@ -1077,49 +1077,69 @@
         var modal = document.getElementById('config-diff-modal');
         var meta  = document.getElementById('config-diff-meta');
         var body  = document.getElementById('config-diff-body');
-        if (!modal || !meta || !body) return;
+        if (!modal || !meta || !body) {
+            console.error('config-diff-modal: required DOM elements missing', { modal: !!modal, meta: !!meta, body: !!body });
+            return;
+        }
 
-        meta.innerHTML = '<span style="color:#f85149">From #' + data.from.id + '</span> ' + formatTime(data.from.timestamp) +
-            ' (' + esc(data.from.trigger_source || 'poll') + ', ' + esc(data.from.backup_quality || 'full') + ')' +
-            ' &nbsp;→&nbsp; <span style="color:#3fb950">To #' + data.to.id + '</span> ' + formatTime(data.to.timestamp) +
-            ' (' + esc(data.to.trigger_source || 'poll') + ', ' + esc(data.to.backup_quality || 'full') + ')';
-
-        // Compile volatile-line patterns sent from the server (vendor-aware).
-        var patterns = (data.volatile_patterns || []).map(function(p) {
-            try {
-                var flags = p.regex.indexOf('(?s)') === 0 ? '' : '';
-                // RE2 flags like (?m), (?s) — JS regex supports m and s. Strip the inline flag prefix
-                // and translate to JS flag string.
-                var src = p.regex;
-                var jsFlags = '';
-                var flagMatch = src.match(/^\(\?([a-z]+)\)/);
-                if (flagMatch) {
-                    if (flagMatch[1].indexOf('m') !== -1) jsFlags += 'm';
-                    if (flagMatch[1].indexOf('s') !== -1) jsFlags += 's';
-                    src = src.substring(flagMatch[0].length);
-                }
-                return { name: p.name, regex: new RegExp(src, jsFlags) };
-            } catch (e) {
-                console.warn('skipping invalid volatile pattern', p, e);
-                return null;
-            }
-        }).filter(function(x) { return x; });
-
-        // Tag every volatile match in both texts with a placeholder line so jsdiff
-        // doesn't see them as "changes". Renderer below shows them in grey with a
-        // (volatile) label instead of red/green.
-        var maskedFrom = maskVolatile(data.from.config_text || '', patterns);
-        var maskedTo = maskVolatile(data.to.config_text || '', patterns);
-
-        body.innerHTML = computeMaskedDiff(maskedFrom, maskedTo);
+        // Show the modal FIRST. If diff rendering throws, the user at least
+        // sees an error in the modal body instead of a frozen-looking page.
+        modal.classList.remove('hidden');
         modal.classList.add('active');
+        body.innerHTML = '<div style="padding:20px;color:#8b949e">Computing diff…</div>';
+
+        try {
+            var fromRev = data && data.from || {};
+            var toRev   = data && data.to   || {};
+
+            meta.innerHTML = '<span style="color:#f85149">From #' + esc(String(fromRev.id || '?')) + '</span> ' + formatTime(fromRev.timestamp) +
+                ' (' + esc(fromRev.trigger_source || 'poll') + ', ' + esc(fromRev.backup_quality || 'full') + ')' +
+                ' &nbsp;→&nbsp; <span style="color:#3fb950">To #' + esc(String(toRev.id || '?')) + '</span> ' + formatTime(toRev.timestamp) +
+                ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')';
+
+            // Compile vendor-aware volatile-line patterns (server sends them
+            // as RE2 strings; we translate to JS RegExp). Crucially we add
+            // the `g` flag so .replace() catches every match, not just the
+            // first — without it only one ENC line per pattern got masked
+            // and the rest leaked into the diff as "changes".
+            var patterns = (data && data.volatile_patterns || []).map(function(p) {
+                try {
+                    var src = p.regex || '';
+                    var jsFlags = 'g';
+                    var flagMatch = src.match(/^\(\?([a-z]+)\)/);
+                    if (flagMatch) {
+                        if (flagMatch[1].indexOf('m') !== -1) jsFlags += 'm';
+                        if (flagMatch[1].indexOf('s') !== -1) jsFlags += 's';
+                        src = src.substring(flagMatch[0].length);
+                    }
+                    return { name: p.name || '?', regex: new RegExp(src, jsFlags) };
+                } catch (e) {
+                    console.warn('skipping invalid volatile pattern', p, e);
+                    return null;
+                }
+            }).filter(function(x) { return x; });
+
+            var fromText = fromRev.config_text || '';
+            var toText   = toRev.config_text   || '';
+
+            var maskedFrom = maskVolatile(fromText, patterns);
+            var maskedTo   = maskVolatile(toText,   patterns);
+
+            body.innerHTML = computeMaskedDiff(maskedFrom, maskedTo);
+        } catch (err) {
+            console.error('Diff render failed:', err, 'data:', data);
+            body.innerHTML = '<div style="color:#f85149;padding:20px;font-family:sans-serif">' +
+                '<strong>Failed to render diff.</strong><br>' +
+                esc(String(err && err.message || err)) + '<br><br>' +
+                '<span style="color:#8b949e;font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
+                '</div>';
+        }
     }
 
     function maskVolatile(text, patterns) {
         var masked = text;
         patterns.forEach(function(p) {
-            // Replace each match with a stable marker so diff sees no change.
-            // The marker carries the pattern name so the renderer can color it.
+            // p.regex carries the `g` flag so replace() catches every match.
             masked = masked.replace(p.regex, function(m) {
                 return '__VOLATILE__' + p.name + '__' + Math.floor(m.length) + '__';
             });
@@ -1129,30 +1149,55 @@
 
     function computeMaskedDiff(from, to) {
         var fromLines = from.split('\n');
-        var toLines = to.split('\n');
+        var toLines   = to.split('\n');
         var maxLen = Math.max(fromLines.length, toLines.length);
-        var html = '';
-        for (var i = 0; i < maxLen; i++) {
-            var l1 = fromLines[i] === undefined ? null : fromLines[i];
-            var l2 = toLines[i]   === undefined ? null : toLines[i];
 
-            if (l1 !== null && l1.indexOf('__VOLATILE__') !== -1) {
-                var name = (l1.match(/__VOLATILE__([^_]+)__/) || [null,'?'])[1];
-                html += '<div style="background:#21262d;color:#8b949e;padding:1px 8px"> &nbsp; <em>(volatile: ' + esc(name) + ')</em></div>';
+        // Hard cap to avoid hanging the browser on pathologically large
+        // configs. 10 000 lines = ~50–80 KB rendered HTML, plenty for any
+        // real FortiGate config.
+        var MAX_LINES = 10000;
+        var truncated = maxLen > MAX_LINES;
+        if (truncated) maxLen = MAX_LINES;
+
+        // Build via an array + join (O(n)) rather than `+=` (O(n²) on some
+        // engines). Matters for 5 000+ line diffs.
+        var parts = [];
+
+        for (var i = 0; i < maxLen; i++) {
+            var l1 = i < fromLines.length ? fromLines[i] : null;
+            var l2 = i < toLines.length   ? toLines[i]   : null;
+
+            var l1Volatile = l1 !== null && l1.indexOf('__VOLATILE__') !== -1;
+            var l2Volatile = l2 !== null && l2.indexOf('__VOLATILE__') !== -1;
+
+            // If either side has a volatile marker on this line, render one
+            // grey "(volatile: name)" row and skip the red/green emit. The
+            // two sides should be aligned because we masked both texts with
+            // the same patterns.
+            if (l1Volatile || l2Volatile) {
+                var marker = l1Volatile ? l1 : l2;
+                var nm = marker.match(/__VOLATILE__([^_]+)__/);
+                var name = nm ? nm[1] : '?';
+                parts.push('<div style="background:#21262d;color:#8b949e;padding:1px 8px"> &nbsp; <em>(volatile: ' + esc(name) + ')</em></div>');
                 continue;
             }
             if (l1 === l2) {
-                html += '<div style="padding:1px 8px;color:#c9d1d9">' + esc(l1 || '') + '</div>';
+                parts.push('<div style="padding:1px 8px;color:#c9d1d9">' + esc(l1 || '') + '</div>');
             } else {
                 if (l1 !== null) {
-                    html += '<div style="background:rgba(248,81,73,0.15);color:#ff7b72;padding:1px 8px">- ' + esc(l1) + '</div>';
+                    parts.push('<div style="background:rgba(248,81,73,0.15);color:#ff7b72;padding:1px 8px">- ' + esc(l1) + '</div>');
                 }
                 if (l2 !== null) {
-                    html += '<div style="background:rgba(63,185,80,0.15);color:#3fb950;padding:1px 8px">+ ' + esc(l2) + '</div>';
+                    parts.push('<div style="background:rgba(63,185,80,0.15);color:#3fb950;padding:1px 8px">+ ' + esc(l2) + '</div>');
                 }
             }
         }
-        return html || '<div class="text-[#8b949e] p-4">No differences found</div>';
+        if (truncated) {
+            parts.push('<div style="background:#21262d;color:#d2992a;padding:8px;text-align:center">' +
+                '… diff truncated at ' + MAX_LINES + ' lines for browser performance. Download both revisions to compare offline.</div>');
+        }
+        if (parts.length === 0) return '<div style="color:#8b949e;padding:20px">No differences found</div>';
+        return parts.join('');
     }
 
     window.viewConfigRevision = function(revId) {

@@ -1,4 +1,15 @@
 # Changelog
+## [0.10.191] - 2026-04-28
+
+### Fixed
+- **Config diff modal: blank screen bug**. Multiple issues in the diff renderer for two FortiGate config revisions:
+  1. **Volatile-pattern regexes had no `g` flag** — `.replace(regex, …)` only replaced the *first* match per pattern, so on a config with 30+ ENC lines only the first got masked. The other 29 leaked into the diff as red/green deltas, swamping any real change. Now all compiled patterns get the `g` flag.
+  2. **HTML built via `+=` string concatenation** — O(n²) on some browser engines. For 5 000-line configs this could hang the browser visibly. Now builds via `array.push(...)` + `parts.join('')` (O(n)).
+  3. **No error boundary around the render** — any JS exception silently aborted, leaving the modal body empty (looked blank). Now wrapped in try/catch with a user-visible error message and `console.error` for diagnostics.
+  4. **Modal opened only after rendering completed** — for slow renders the user clicked "Compare" and saw nothing for a moment. Now the modal opens immediately with a "Computing diff…" placeholder, then swaps in the rendered HTML.
+  5. **Hard cap at 10 000 diff lines** — protects the browser from pathologically large configs. Truncation banner appears at the bottom with a hint to download both revisions for offline comparison.
+  6. **Defensive null-checks** on `data.from`, `data.to`, and `data.volatile_patterns` in case the server response shape ever drifts.
+
 ## [0.10.190] - 2026-04-28
 
 ### Fixed
