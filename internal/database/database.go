@@ -229,6 +229,15 @@ func (d *Database) migrate() error {
 		}
 	}
 
+	// Add tftp_server_ip column on Probe (admin-set IP firewalls reach the collector at)
+	if m.HasTable(&models.Probe{}) && !m.HasColumn(&models.Probe{}, "tftp_server_ip") {
+		if err := m.AddColumn(&models.Probe{}, "TFTPServerIP"); err != nil {
+			log.Printf("migrate: add Probe.TFTPServerIP: %v", err)
+		} else {
+			log.Printf("migrate: added Probe.TFTPServerIP")
+		}
+	}
+
 	// Add missing columns for VPNStatus extended fields (interface name and mode)
 	if m.HasTable(&models.VPNStatus{}) {
 		vpnStatusCols := []struct {

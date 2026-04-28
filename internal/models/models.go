@@ -460,6 +460,7 @@ type Probe struct {
 	ServerURL        string     `json:"server_url"`
 	ServerTLSCert    string     `json:"server_tls_cert"`
 	Description      string     `json:"description"`
+	TFTPServerIP     string     `json:"tftp_server_ip"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }

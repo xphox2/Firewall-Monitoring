@@ -93,6 +93,11 @@
                     <label class="block mb-1 text-[#8b949e] text-sm font-medium">Description</label>
                     <textarea id="probe-description" rows="3" placeholder="Optional description of this probe's purpose" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
+                <div class="mb-3">
+                    <label class="block mb-1 text-[#8b949e] text-sm font-medium">TFTP Server IP</label>
+                    <input type="text" id="probe-tftp-server-ip" placeholder="e.g. 192.168.1.10 (IP firewalls use to reach this collector)" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <p class="text-xs text-[#8b949e] mt-1">Used as the TFTP server argument when triggering FortiGate config backups. Leave blank to fall back to per-device auto-detection.</p>
+                </div>
                 <div class="flex justify-end gap-2 mt-4">
                     <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] py-1.5 px-3.5 rounded-md cursor-pointer text-sm hover:bg-[#30363d]" data-action="close-probe-modal">Cancel</button>
                     <button type="submit" class="bg-[#238636] text-white border-none py-1.5 px-3.5 rounded-md cursor-pointer text-sm font-medium hover:bg-[#2ea043]">Save</button>

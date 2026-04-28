@@ -1,4 +1,17 @@
 # Changelog
+## [0.10.186] - 2026-04-27
+
+### Added
+- **Per-probe `TFTP Server IP` setting**: Admin can now enter, on each probe's edit form, the IP address that firewalls in that probe's network use to reach the collector. The probe pulls this value via `GET /api/probes/:id/devices` (added alongside the device list as `tftp_server_ip`) and uses it as the destination IP in `execute backup config tftp <file> <ip>`. This replaces the collector's previous attempts to auto-detect the right outbound IP from inside Docker (which is unreliable when `PROBE_LISTEN_ADDR=0.0.0.0`). Field is optional — if left blank, the collector falls back to per-device auto-detection.
+
+### Database
+- New `probes.tftp_server_ip TEXT` column. Migration follows the existing AddColumn-if-missing pattern; existing rows get an empty string.
+
+### API
+- `Probe` model gains `TFTPServerIP string` (`json:"tftp_server_ip"`).
+- `PUT /api/probes/:id` accepts `tftp_server_ip` in the update body (allowlisted).
+- `GET /api/probes/:id/devices` response now includes `"tftp_server_ip"` alongside the existing `success` + `data` fields. Backward-compatible with collectors that ignore unknown fields.
+
 ## [0.10.185] - 2026-04-27
 
 ### Added

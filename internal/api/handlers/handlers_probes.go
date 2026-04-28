@@ -149,13 +149,14 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 	}
 
 	allowedFields := map[string]bool{
-		"name":           true,
-		"site_id":        true,
-		"listen_address": true,
-		"listen_port":    true,
-		"enabled":        true,
-		"server_url":     true,
-		"description":    true,
+		"name":            true,
+		"site_id":         true,
+		"listen_address":  true,
+		"listen_port":     true,
+		"enabled":         true,
+		"server_url":      true,
+		"description":     true,
+		"tftp_server_ip":  true,
 	}
 
 	var updates map[string]interface{}
@@ -723,5 +724,9 @@ func (h *Handler) GetProbeDevices(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(devices))
+	c.JSON(http.StatusOK, gin.H{
+		"success":        true,
+		"data":           devices,
+		"tftp_server_ip": probe.TFTPServerIP,
+	})
 }

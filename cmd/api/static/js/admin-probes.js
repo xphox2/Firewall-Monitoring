@@ -150,6 +150,7 @@
             document.getElementById('probe-name').value = probe.name;
             document.getElementById('probe-site').value = probe.site_id || '';
             document.getElementById('probe-description').value = probe.description || '';
+            document.getElementById('probe-tftp-server-ip').value = probe.tftp_server_ip || '';
         });
     }
 
@@ -160,6 +161,7 @@
             name: document.getElementById('probe-name').value,
             site_id: parseInt(document.getElementById('probe-site').value),
             description: document.getElementById('probe-description').value,
+            tftp_server_ip: document.getElementById('probe-tftp-server-ip').value.trim(),
             enabled: true
         };
 
