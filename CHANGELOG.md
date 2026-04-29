@@ -1,4 +1,19 @@
 # Changelog
+## [0.10.197] - 2026-04-28
+
+### Tests
+- Hostile QA pass on the diff modal flow after the user reported it was still blank in v0.10.195 (their deployed version). Two parallel research streams converged on a single answer: **the v0.10.195 HTML on disk still has the broken Tailwind-soup modal markup**; v0.10.196 fixed it; the user just hasn't deployed v0.10.196 yet. Five guard tests added to make sure no regression slips in:
+  - **`device_detail_html_test.go`**: reads `web/admin/device-detail.html` from disk (the same file `LoadHTMLGlob` reads at startup) and asserts the `#config-diff-modal` element has class **exactly** `"modal"` — no `hidden`, no `fixed`, no `top-0`, no `bg-black/60`, no Tailwind utility classes that fight with the legacy `.modal.active` rule. Also asserts `.modal-content`, `#config-diff-meta`, `#config-diff-body`, and the close-button `data-action` are all present.
+  - **`handlers_config_diff_test.go`**: 4 tests on the diff endpoint —
+    1. Response shape matches every field the JS reads (`from.id`, `from.config_text`, `from.normalized_checksum`, `from.trigger_source`, `from.backup_quality`, `to.*`, `vendor`, `volatile_patterns[].name`, `volatile_patterns[].regex`).
+    2. Bad revision IDs return 404 (JS renders the visible error).
+    3. Missing query params return 400.
+    4. Non-FortiGate vendors get an empty `volatile_patterns` (identity normalizer).
+- Also confirmed Gin route registration is correct — `/api/devices/:id/config-history/diff` (literal) is matched ahead of `/api/devices/:id/config-history/:revId` (param) regardless of registration order. Verified via the Gin tree implementation (gin@v1.11/tree.go:438-464) and a tree_test.go fixture covering the exact pattern.
+
+### Fixed
+- Bumped server / Dockerfile version label.
+
 ## [0.10.196] - 2026-04-28
 
 ### Fixed
