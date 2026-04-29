@@ -1,4 +1,12 @@
 # Changelog
+## [0.10.196] - 2026-04-28
+
+### Fixed
+- **Config diff modal renders blank — root cause: CSS class collision**. My modal markup mixed Tailwind utility classes (`hidden fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center`) with the legacy `.modal` / `.modal.active` pattern from `admin-shared.css`. The legacy CSS already provides complete full-screen fixed positioning + dark overlay + centered flex layout for `.modal` — but the Tailwind `.hidden` class was applying `display: none` and even though `.modal.active` should win on specificity in theory, the resulting markup just didn't render correctly. Every other modal on the device-detail page uses the simple `class="modal"` pattern via `createConfigModal()` in `admin-device-detail.js` and works fine. Replaced my over-engineered markup with the proven legacy pattern using `.modal` + `.modal-content` and inline styles for the size override. No more class fight.
+
+### Why this matters
+The marquee Config History feature (vendor-aware diff with volatile-line masking, banner for "no real changes", side-by-side comparison) has been functionally complete since v0.10.187 — but the diff modal itself never displayed for the user because of this CSS issue layered on top. The repeated v0.10.191/192/195 fixes addressed *real* bugs in the renderer (regex `g` flag, error boundaries, disk-vs-embed serving) but couldn't surface anything because the modal container itself was effectively invisible. This patch fixes the actual containment.
+
 ## [0.10.195] - 2026-04-28
 
 ### Fixed

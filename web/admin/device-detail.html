@@ -407,19 +407,23 @@
                 </div>
             </div>
 
-            <!-- Config Diff Modal -->
-            <div class="modal hidden fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center" id="config-diff-modal">
-                <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-5 w-[1400px] max-w-[96vw] max-h-[90vh] flex flex-col">
-                    <div class="flex justify-between items-center mb-3">
+            <!-- Config Diff Modal — uses the legacy `.modal` / `.modal.active`
+                 CSS pattern (admin-shared.css) which already provides full-screen
+                 fixed positioning, dark overlay, and centered flex layout.
+                 Don't add Tailwind utility classes here — they fight with the
+                 legacy rules on specificity and the modal renders blank. -->
+            <div class="modal" id="config-diff-modal">
+                <div class="modal-content" style="width:1400px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;">
+                    <div class="modal-header">
                         <div>
-                            <h2 class="text-lg text-[#e6edf3]">Configuration Diff</h2>
-                            <div class="text-[0.78rem] text-[#8b949e]" id="config-diff-meta">&nbsp;</div>
+                            <h2>Configuration Diff</h2>
+                            <div style="font-size:0.78rem;color:#8b949e" id="config-diff-meta">&nbsp;</div>
                         </div>
-                        <span data-action="close-config-diff" class="cursor-pointer text-2xl text-[#8b949e] hover:text-white">&times;</span>
+                        <button class="modal-close" data-action="close-config-diff">&times;</button>
                     </div>
-                    <div class="flex-1 overflow-auto bg-[#0d1117] border border-[#30363d] rounded-md font-mono text-[0.8rem] leading-snug" id="config-diff-body" style="white-space: pre;"></div>
-                    <div class="text-[0.78rem] text-[#8b949e] mt-3">
-                        Lines marked <span class="px-1 rounded" style="background:#30363d;color:#8b949e">(volatile)</span> change every backup due to FortiOS encryption-IV churn — they are not real config changes.
+                    <div id="config-diff-body" style="flex:1;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;font-family:SFMono-Regular,Consolas,Liberation Mono,Menlo,monospace;font-size:0.8rem;line-height:1.4;white-space:pre;min-height:300px;"></div>
+                    <div style="font-size:0.78rem;color:#8b949e;margin-top:12px;">
+                        Lines marked <span style="background:#30363d;color:#8b949e;padding:2px 6px;border-radius:4px">(volatile)</span> change every backup due to FortiOS encryption-IV churn — they are not real config changes.
                     </div>
                 </div>
             </div>
