@@ -1,4 +1,20 @@
 # Changelog
+## [0.10.194] - 2026-04-28
+
+### Added
+- **`GET /api/version`** — returns `{"version":"0.10.194"}`. Public, no auth required so the admin UI can hit it on every page load. Source of truth is the new `ServerVersion` constant in `cmd/api/main.go`.
+- **Admin console version log** — `admin-common.js` now fetches `/api/version` on every admin page load and prints `Firewall-Mon vX.Y.Z` to the browser console in blue. Operators can open dev tools → Console to instantly verify whether their last redeploy actually shipped. **If the printed version doesn't match the latest CHANGELOG entry, the binary or docker image was not rebuilt** — `git pull` alone is insufficient because static JS/CSS are `//go:embed`'d into the Go binary and HTML files are baked into the docker image at build time.
+
+### Fixed
+- Dockerfile `org.opencontainers.image.version` label was stuck at `0.10.125`. Bumped to current.
+
+### Operator note (read this if "I redeployed but nothing changed")
+Static admin assets (JS, CSS) are compiled into the `fwmon-api` binary via `//go:embed`. HTML templates are read from `./web/admin/` which the Dockerfile bakes into the container image. To pick up frontend changes:
+- **Bare-metal**: `git pull && go build -o fwmon-api ./cmd/api && systemctl restart fwmon-api` (or your service name).
+- **Docker compose**: `git pull && docker compose build && docker compose up -d` (the `build` step is required — `docker compose pull` only updates *external* images).
+- **Docker prebuilt image**: `docker pull <your-image-tag> && docker compose up -d`.
+After redeploy, hard-refresh the browser (Ctrl+Shift+R) and check dev-tools console — `Firewall-Mon v0.10.194` (or newer) should appear.
+
 ## [0.10.193] - 2026-04-28
 
 ### Added

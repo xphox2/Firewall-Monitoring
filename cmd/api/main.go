@@ -25,6 +25,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ServerVersion is the build-baked server version. Bumped in CHANGELOG
+// and exposed via GET /api/version so the admin UI can console-log it
+// on every page load — that lets operators instantly verify whether
+// their redeploy actually shipped (a browser refresh alone won't update
+// embedded JS/HTML, since they're compiled into this binary).
+const ServerVersion = "0.10.194"
+
 func main() {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
@@ -227,6 +234,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", nil)
+	})
+
+	// Public version endpoint — no auth required so the admin UI can
+	// console-log it on page load to confirm what's deployed.
+	router.GET("/api/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"version": ServerVersion})
 	})
 
 	// Minimal SVG favicon to prevent 404

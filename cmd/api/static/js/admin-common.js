@@ -185,6 +185,17 @@
         });
     }
 
+    // Log running server version once on every admin page load. Lets the
+    // operator instantly verify whether their last redeploy actually shipped:
+    // open dev tools → Console → look for "Firewall-Mon vX.Y.Z". If the
+    // version doesn't match the CHANGELOG, the binary or docker image was
+    // not rebuilt after the source pull.
+    fetch('/api/version').then(function(r) { return r.json(); }).then(function(v) {
+        if (v && v.version) {
+            console.log('%cFirewall-Mon v' + v.version, 'color:#58a6ff;font-weight:bold');
+        }
+    })['catch'](function() { /* version endpoint not exposed — old build */ });
+
     // Export to window for use by other scripts and diagram modules
     window.AdminCommon = {
         API_BASE: API_BASE,
