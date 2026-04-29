@@ -1,4 +1,10 @@
 # Changelog
+## [0.10.195] - 2026-04-28
+
+### Fixed
+- **Static admin assets (JS/CSS) now hot-update from `git pull` + service restart, no binary rebuild required**. Previously `cmd/api/static/` was *only* served from the embedded FS (`//go:embed`), so JS-only changes were invisible to operators who pulled-and-restarted. Now the server checks for `./cmd/api/static` on disk at startup: if present, it serves from disk; if not (e.g. in a Docker container that ships only the binary), it falls back to the embedded FS. **Bare-metal deploys: `git pull && systemctl restart fwmon-api` now suffices for any frontend change**, the same way it always has for HTML changes (`./web/admin/*.html` was already loaded from disk via `LoadHTMLGlob`). Logged at startup as `Static assets: serving from ./cmd/api/static (disk)` or `... (embedded FS)`.
+- **Docker workflow unchanged**: the runtime image doesn't ship the source `cmd/api/static/` dir, so the embedded fallback kicks in. Docker users still rebuild the image to pick up frontend changes (no regression vs. v0.10.194 behavior).
+
 ## [0.10.194] - 2026-04-28
 
 ### Added

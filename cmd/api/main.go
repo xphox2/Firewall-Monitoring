@@ -30,7 +30,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.194"
+const ServerVersion = "0.10.195"
 
 func main() {
 	cfg := config.Load()
@@ -228,8 +228,20 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	// Rate limiter applied per-group below instead of globally so authenticated
 	// admin users don't share buckets with unauthenticated requests.
 
-	subFS, _ := fs.Sub(staticFiles, "static")
-	router.StaticFS("/static", http.FS(subFS))
+	// Static assets: serve from ./cmd/api/static on disk if it exists (so a
+	// git pull + service restart picks up JS/CSS changes the same way it
+	// picks up HTML changes — no binary rebuild needed). Fall back to the
+	// embedded FS when the source dir isn't present (Docker runtime, single-
+	// binary deploys without source). Source-on-disk is intentionally
+	// preferred so operators can hot-fix without recompiling.
+	if info, err := os.Stat("./cmd/api/static"); err == nil && info.IsDir() {
+		router.Static("/static", "./cmd/api/static")
+		log.Println("Static assets: serving from ./cmd/api/static (disk)")
+	} else {
+		subFS, _ := fs.Sub(staticFiles, "static")
+		router.StaticFS("/static", http.FS(subFS))
+		log.Println("Static assets: serving from embedded FS (disk dir not found)")
+	}
 	router.LoadHTMLGlob("./web/**/*.html")
 
 	router.GET("/", func(c *gin.Context) {
