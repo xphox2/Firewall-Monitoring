@@ -108,6 +108,15 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		log.Printf("Autovacuum config warning: %v", err)
 	}
 
+	// One-time migration: collapse legacy IV-drift duplicate revisions left
+	// over from v0.10.187 → v0.10.197 (always-store era). Idempotent — safe
+	// to run on every startup but does real work only when duplicates exist.
+	if deleted, err := d.CollapseLegacyConfigRevisionDuplicates(); err != nil {
+		log.Printf("Legacy config-revision collapse warning: %v", err)
+	} else if deleted > 0 {
+		log.Printf("Legacy config-revision collapse: removed %d duplicate revisions", deleted)
+	}
+
 	// Ensure a default alert policy exists
 	d.EnsureDefaultPolicy()
 
@@ -240,6 +249,8 @@ func (d *Database) migrate() error {
 
 	// Add normalized_checksum / backup_quality / trigger_source on DeviceConfigRevision.
 	// Drives FortiOS-aware change detection and per-row provenance/quality flagging.
+	// Also adds first_seen_at / last_verified_at / verify_count for the
+	// merge-into-latest storage model (v0.10.198+).
 	if m.HasTable(&models.DeviceConfigRevision{}) {
 		revisionCols := []struct {
 			name string
@@ -248,6 +259,9 @@ func (d *Database) migrate() error {
 			{"NormalizedChecksum", "normalized_checksum"},
 			{"BackupQuality", "backup_quality"},
 			{"TriggerSource", "trigger_source"},
+			{"FirstSeenAt", "first_seen_at"},
+			{"LastVerifiedAt", "last_verified_at"},
+			{"VerifyCount", "verify_count"},
 		}
 		for _, f := range revisionCols {
 			if !m.HasColumn(&models.DeviceConfigRevision{}, f.col) {
@@ -796,88 +810,143 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 }
 
 // CleanupConfigRevisions enforces retention on device_config_revisions.
-// Per device:
-//   1. Always keep the 50 most-recent rows (regardless of age) — restorability.
-//   2. Within the older-than-top-50 portion of the last 90 days, keep one row
-//      per distinct NormalizedChecksum (the most recent of each run) —
-//      audit history without storing IV-churn duplicates.
-//   3. Delete anything older than 90 days outside the top-50.
+// Simple in v0.10.198+ thanks to the merge-into-latest storage model: the
+// `device_config_revisions` table now contains one row per *distinct* config
+// state, so there are no IV-drift duplicates to collapse. Just two rules:
+//
+//  1. Hard-delete rows older than 365 days. Plenty for compliance audit and
+//     bounds long-tail storage growth on devices that change frequently.
+//  2. Per-device cap: 500 distinct states. Devices that genuinely change 500
+//     times in a year are rare; if a deployment has them, raise the cap.
 func (d *Database) CleanupConfigRevisions() error {
-	const keepCount = 50
-	const keepDays = 90
+	const keepDays = 365
+	const perDeviceCap = 500
 
 	timeCutoff := time.Now().AddDate(0, 0, -keepDays)
 
-	var deviceIDs []uint
-	if err := d.db.Model(&models.DeviceConfigRevision{}).
-		Distinct("device_id").Pluck("device_id", &deviceIDs).Error; err != nil {
-		return fmt.Errorf("list device IDs for revision cleanup: %w", err)
+	// Step 1: time-based cleanup is one query across all devices.
+	if err := d.db.Where("timestamp < ?", timeCutoff).
+		Delete(&models.DeviceConfigRevision{}).Error; err != nil {
+		return fmt.Errorf("cleanup config_revisions by age: %w", err)
 	}
 
-	for _, devID := range deviceIDs {
-		// Find the timestamp of the 50th most-recent row. Older rows are
-		// candidates for the deeper retention pass.
-		var floorRev models.DeviceConfigRevision
-		err := d.db.Where("device_id = ?", devID).
-			Order("timestamp DESC").Offset(keepCount - 1).Limit(1).First(&floorRev).Error
+	// Step 2: per-device cap — only walk devices that actually have > cap rows.
+	// Most deployments will have devices well under 500 distinct states, so
+	// this loop is empty in the common case.
+	type devCount struct {
+		DeviceID uint
+		Cnt      int64
+	}
+	var hot []devCount
+	if err := d.db.Model(&models.DeviceConfigRevision{}).
+		Select("device_id, COUNT(*) as cnt").
+		Group("device_id").
+		Having("COUNT(*) > ?", perDeviceCap).
+		Scan(&hot).Error; err != nil {
+		return fmt.Errorf("cleanup config_revisions: count over-cap devices: %w", err)
+	}
 
-		if err != nil {
-			// Fewer than keepCount rows for this device — nothing to collapse,
-			// only apply the 90-day rule.
-			if delErr := d.db.Where("device_id = ? AND timestamp < ?", devID, timeCutoff).
-				Delete(&models.DeviceConfigRevision{}).Error; delErr != nil {
-				return fmt.Errorf("device %d <%d-row 90d cleanup: %w", devID, keepCount, delErr)
-			}
+	for _, dc := range hot {
+		// Find the cutoff timestamp: the timestamp of the (perDeviceCap)th
+		// most recent row. Anything older than that is dropped.
+		var floor models.DeviceConfigRevision
+		if err := d.db.Where("device_id = ?", dc.DeviceID).
+			Order("timestamp DESC").Offset(perDeviceCap - 1).Limit(1).
+			First(&floor).Error; err != nil {
 			continue
 		}
-		top50Cutoff := floorRev.Timestamp
-
-		// Step 1: hard-delete rows older than 90 days *and* outside the top 50.
-		// (Top 50 are kept regardless of age.)
-		if delErr := d.db.Where(
-			"device_id = ? AND timestamp < ? AND timestamp < ?",
-			devID, timeCutoff, top50Cutoff,
-		).Delete(&models.DeviceConfigRevision{}).Error; delErr != nil {
-			return fmt.Errorf("device %d 90-day cleanup: %w", devID, delErr)
-		}
-
-		// Step 2: collapse identical-NormalizedChecksum rows in the
-		// (older-than-top-50, within-90-days) window. Keep one row per
-		// NormalizedChecksum — the most-recent of that run.
-		var rows []models.DeviceConfigRevision
-		if err := d.db.Select("id, normalized_checksum, timestamp").
-			Where("device_id = ? AND timestamp < ? AND timestamp >= ?",
-				devID, top50Cutoff, timeCutoff).
-			Find(&rows).Error; err != nil {
-			return fmt.Errorf("device %d collapse-query: %w", devID, err)
-		}
-
-		keepID := make(map[string]uint)        // normalized_checksum -> id of latest
-		keepTime := make(map[string]time.Time) // normalized_checksum -> latest timestamp seen
-		for _, r := range rows {
-			if t, ok := keepTime[r.NormalizedChecksum]; !ok || r.Timestamp.After(t) {
-				keepID[r.NormalizedChecksum] = r.ID
-				keepTime[r.NormalizedChecksum] = r.Timestamp
-			}
-		}
-
-		if len(keepID) == 0 {
-			continue
-		}
-		keepIDs := make([]uint, 0, len(keepID))
-		for _, id := range keepID {
-			keepIDs = append(keepIDs, id)
-		}
-
-		if delErr := d.db.Where(
-			"device_id = ? AND timestamp < ? AND timestamp >= ? AND id NOT IN ?",
-			devID, top50Cutoff, timeCutoff, keepIDs,
-		).Delete(&models.DeviceConfigRevision{}).Error; delErr != nil {
-			return fmt.Errorf("device %d collapse-delete: %w", devID, delErr)
+		if err := d.db.Where("device_id = ? AND timestamp < ?", dc.DeviceID, floor.Timestamp).
+			Delete(&models.DeviceConfigRevision{}).Error; err != nil {
+			return fmt.Errorf("cleanup config_revisions device %d cap: %w", dc.DeviceID, err)
 		}
 	}
 
 	return nil
+}
+
+// CollapseLegacyConfigRevisionDuplicates is a one-time migration helper for
+// deployments that ran v0.10.187 → v0.10.197 (the always-store era). It walks
+// each device's history and collapses runs of identical NormalizedChecksum
+// rows down to a single representative row per run — the most recent of the
+// run keeps the bytes, the older rows of the run are deleted, and the
+// representative row's VerifyCount is set to the count of merged rows so the
+// audit trail is preserved.
+//
+// Idempotent. Safe to call multiple times. Returns the number of rows deleted.
+func (d *Database) CollapseLegacyConfigRevisionDuplicates() (int64, error) {
+	var deviceIDs []uint
+	if err := d.db.Model(&models.DeviceConfigRevision{}).
+		Distinct("device_id").Pluck("device_id", &deviceIDs).Error; err != nil {
+		return 0, fmt.Errorf("list device ids: %w", err)
+	}
+
+	var totalDeleted int64
+	for _, devID := range deviceIDs {
+		var revs []models.DeviceConfigRevision
+		if err := d.db.Where("device_id = ?", devID).
+			Order("timestamp ASC, id ASC").Find(&revs).Error; err != nil {
+			return totalDeleted, fmt.Errorf("device %d: list: %w", devID, err)
+		}
+		if len(revs) == 0 {
+			continue
+		}
+
+		// Walk in order. Each run of identical NormalizedChecksum gets
+		// collapsed: we update the LAST row in the run to carry the run's
+		// VerifyCount and FirstSeenAt, then delete the earlier rows in the run.
+		i := 0
+		for i < len(revs) {
+			j := i + 1
+			for j < len(revs) && revs[j].NormalizedChecksum == revs[i].NormalizedChecksum {
+				j++
+			}
+			runLen := j - i
+			if runLen > 1 {
+				keep := &revs[j-1]
+				// Update keep row with the run's metadata.
+				updates := map[string]interface{}{
+					"first_seen_at":    revs[i].Timestamp,
+					"last_verified_at": keep.Timestamp,
+					"verify_count":     runLen,
+				}
+				if err := d.db.Model(&models.DeviceConfigRevision{}).
+					Where("id = ?", keep.ID).Updates(updates).Error; err != nil {
+					return totalDeleted, fmt.Errorf("device %d collapse update: %w", devID, err)
+				}
+				// Delete older rows in the run.
+				deleteIDs := make([]uint, 0, runLen-1)
+				for k := i; k < j-1; k++ {
+					deleteIDs = append(deleteIDs, revs[k].ID)
+				}
+				res := d.db.Where("id IN ?", deleteIDs).Delete(&models.DeviceConfigRevision{})
+				if res.Error != nil {
+					return totalDeleted, fmt.Errorf("device %d collapse delete: %w", devID, res.Error)
+				}
+				totalDeleted += res.RowsAffected
+			} else {
+				// Single-row run — backfill new fields if they're zero (legacy).
+				keep := &revs[i]
+				if keep.FirstSeenAt.IsZero() || keep.LastVerifiedAt.IsZero() || keep.VerifyCount == 0 {
+					updates := map[string]interface{}{}
+					if keep.FirstSeenAt.IsZero() {
+						updates["first_seen_at"] = keep.Timestamp
+					}
+					if keep.LastVerifiedAt.IsZero() {
+						updates["last_verified_at"] = keep.Timestamp
+					}
+					if keep.VerifyCount == 0 {
+						updates["verify_count"] = 1
+					}
+					if len(updates) > 0 {
+						d.db.Model(&models.DeviceConfigRevision{}).
+							Where("id = ?", keep.ID).Updates(updates)
+					}
+				}
+			}
+			i = j
+		}
+	}
+	return totalDeleted, nil
 }
 
 func (d *Database) Close() error {

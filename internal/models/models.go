@@ -925,8 +925,17 @@ type DeviceConfigRevision struct {
 	NormalizedChecksum string    `json:"normalized_checksum" gorm:"index"`
 	ConfigText         string    `json:"config_text"`
 	Length             int       `json:"length"`
-	BackupQuality      string    `json:"backup_quality"`            // full | masked | unknown
+	BackupQuality      string    `json:"backup_quality"`              // full | masked | suspect | unknown
 	TriggerSource      string    `json:"trigger_source" gorm:"index"` // syslog | poll | manual
+
+	// Merge-into-latest model (v0.10.198+): one row per logical config state.
+	// FirstSeenAt is when this state was first observed; LastVerifiedAt is the
+	// most recent backup that confirmed the state still holds; VerifyCount is
+	// how many refreshes have confirmed it. Operators see "this state has been
+	// current for X, last verified Y, confirmed Z times."
+	FirstSeenAt    time.Time `json:"first_seen_at"`
+	LastVerifiedAt time.Time `json:"last_verified_at"`
+	VerifyCount    int       `json:"verify_count"`
 }
 
 type ProcessStats struct {

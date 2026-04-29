@@ -968,20 +968,28 @@
 
     var configRevisions = [];
     var configCompareSelection = { from: null, to: null };
-    // Default the Config History tab to "only show real changes" — collapses
-    // runs of IV-drifted-but-logically-identical backups to a single row each.
-    var configHistoryDistinct = true;
+
+    // formatRelative converts an ISO timestamp into "2m ago" / "3h ago" /
+    // "yesterday" — used for the "Last verified" column where the absolute
+    // time is in the title attribute. Falls back to formatTime if very old.
+    function formatRelative(ts) {
+        if (!ts) return '-';
+        var t = new Date(ts).getTime();
+        if (isNaN(t)) return '-';
+        var s = Math.floor((Date.now() - t) / 1000);
+        if (s < 0) return 'just now';
+        if (s < 60) return s + 's ago';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        if (s < 86400 * 7) return Math.floor(s / 86400) + 'd ago';
+        return formatTime(ts);
+    }
 
     function renderConfigHistory() {
-        var url = '/admin/api/devices/' + deviceId + '/config-history' +
-                  (configHistoryDistinct ? '?distinct=true' : '');
-        fetch(url, { credentials: 'same-origin' })
+        fetch('/admin/api/devices/' + deviceId + '/config-history', { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
                 var revs = (result.success && result.data && result.data.revisions) ? result.data.revisions : [];
-                var data = (result.success && result.data) || {};
-                var totalAll = data.total_all || 0;
-                var totalDistinct = data.total_distinct || 0;
                 configRevisions = revs;
                 var body = document.getElementById('configBody');
                 var empty = document.getElementById('configEmpty');
@@ -990,23 +998,13 @@
                 if (!revs.length) { body.innerHTML = ''; empty.style.display = 'block'; }
                 else { empty.style.display = 'none'; }
 
-                // Summary line + toggle. The toggle is the user's escape hatch
-                // when they want to see every individual backup (e.g. for
-                // forensics or restore-target picking).
-                if (configHistoryDistinct) {
-                    summary.innerHTML =
-                        revs.length + ' distinct ' + (revs.length === 1 ? 'state' : 'states') +
-                        ' from ' + totalAll.toLocaleString() + ' total backups &nbsp;|&nbsp; ' +
-                        '<a href="#" data-action="toggle-config-history-mode" style="color:#58a6ff">' +
-                        'Show all ' + totalAll.toLocaleString() + ' backups</a>';
-                } else {
-                    summary.innerHTML =
-                        revs.length + ' of ' + totalAll.toLocaleString() + ' backups &nbsp;|&nbsp; ' +
-                        '<a href="#" data-action="toggle-config-history-mode" style="color:#58a6ff">' +
-                        'Show only changes</a>';
-                }
+                // Summary line: each row IS a real change (one row per
+                // logical config state — see merge-into-latest in v0.10.198+).
+                summary.textContent =
+                    revs.length + ' configuration ' + (revs.length === 1 ? 'state' : 'states') +
+                    ' on record';
 
-                // Default radio selection: from = second-newest, to = newest (what users want most often).
+                // Default radio selection: from = second-newest, to = newest.
                 if (configCompareSelection.from === null && revs.length >= 2) {
                     configCompareSelection.from = revs[1].id;
                     configCompareSelection.to = revs[0].id;
@@ -1019,16 +1017,22 @@
                     var trigger = r.trigger_source || 'poll';
                     var triggerColor = trigger === 'syslog' ? '#3fb950' : (trigger === 'manual' ? '#d29922' : '#58a6ff');
                     var quality = r.backup_quality || 'full';
-                    var qualityColor = quality === 'masked' ? '#f85149' : (quality === 'unknown' ? '#8b949e' : '#3fb950');
-                    var normHash = r.normalized_checksum || '-';
-                    if (normHash !== '-' && normHash.length > 12) normHash = normHash.substring(0, 12) + '…';
+                    var qualityColor = quality === 'masked' ? '#f85149'
+                                     : quality === 'suspect' ? '#f85149'
+                                     : quality === 'unknown' ? '#8b949e' : '#3fb950';
+                    var verifyCount = r.verify_count || 1;
+
+                    var firstSeen = r.first_seen_at || r.timestamp;
+                    var lastVerified = r.last_verified_at || r.timestamp;
+
                     return '<tr>' +
                         '<td><input type="radio" name="cfgFrom" value="' + r.id + '" data-action="cfg-compare-from"' + fromChecked + '></td>' +
                         '<td><input type="radio" name="cfgTo"   value="' + r.id + '" data-action="cfg-compare-to"' + toChecked + '></td>' +
-                        '<td style="white-space:nowrap">' + formatTime(r.timestamp) + isCurrent + '</td>' +
+                        '<td style="white-space:nowrap" title="' + esc(formatTime(firstSeen)) + '">' + formatTime(firstSeen) + isCurrent + '</td>' +
+                        '<td style="white-space:nowrap;color:#8b949e" title="' + esc(formatTime(lastVerified)) + '">' + esc(formatRelative(lastVerified)) + '</td>' +
+                        '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:#c9d1d9;padding:2px 6px;border-radius:4px;font-size:0.72rem" title="Number of polls that confirmed this state">' + verifyCount + '×</span></td>' +
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + triggerColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(trigger) + '</span></td>' +
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + qualityColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(quality) + '</span></td>' +
-                        '<td><code style="color:#58a6ff;font-size:0.75rem" title="' + esc(r.normalized_checksum || '') + '">' + esc(normHash) + '</code></td>' +
                         '<td>' + formatBytes(r.length) + '</td>' +
                         '<td>' +
                         '<button class="btn secondary text-[0.78rem] mr-1" onclick="viewConfigRevision(' + r.id + ')">View</button>' +
@@ -1091,14 +1095,6 @@
         if (t.dataset && t.dataset.action === 'close-config-diff') {
             var modal = document.getElementById('config-diff-modal');
             if (modal) modal.classList.remove('active');
-        }
-        if (t.dataset && t.dataset.action === 'toggle-config-history-mode') {
-            e.preventDefault();
-            configHistoryDistinct = !configHistoryDistinct;
-            // Reset compare selection when the visible list changes — IDs the
-            // user picked may not be in the new view.
-            configCompareSelection = { from: null, to: null };
-            renderConfigHistory();
         }
     });
 

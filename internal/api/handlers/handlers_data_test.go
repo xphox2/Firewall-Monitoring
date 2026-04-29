@@ -87,18 +87,23 @@ func TestReceiveConfigRevision_FirstRevision_Saved(t *testing.T) {
 	}
 }
 
-func TestReceiveConfigRevision_SameChecksum_StoredButNotAlerted(t *testing.T) {
-	// Behavior changed in v0.10.187: with random-IV ENC ciphertext drift on
-	// FortiOS, raw-checksum dedup at write time would silently lose the latest
-	// restorable bytes. We always store; alerting compares NormalizedChecksum.
+func TestReceiveConfigRevision_SameChecksum_MergesIntoLatest(t *testing.T) {
+	// Behavior in v0.10.198+: when a backup arrives with the same vendor-
+	// normalized checksum as the device's most-recent revision, we UPDATE
+	// that row in place — refreshing ConfigText (so latest restore-target
+	// has fresh ENC ciphertext), bumping LastVerifiedAt, and incrementing
+	// VerifyCount. No new row, no alert.
+	//
+	// Uses the padded FortiGate fixture so validation passes; setupProbeAndDevice
+	// creates a device with vendor=fortigate (the gorm default).
 	h, db := setupTestHandler(t)
 	probe, device := setupProbeAndDevice(t, db)
 
 	body := map[string]interface{}{
 		"device_id":   device.ID,
-		"config_text": "config unchanged",
+		"config_text": fortigateRawA,
 		"checksum":    "dedupme",
-		"length":      16,
+		"length":      len(fortigateRawA),
 	}
 	doTestRequest(t, h.ReceiveConfigRevision, "POST", "/config-revision", probe.ID, probe.RegistrationKey, body)
 	w := doTestRequest(t, h.ReceiveConfigRevision, "POST", "/config-revision", probe.ID, probe.RegistrationKey, body)
@@ -109,22 +114,29 @@ func TestReceiveConfigRevision_SameChecksum_StoredButNotAlerted(t *testing.T) {
 
 	var count int64
 	db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", device.ID).Count(&count)
-	if count != 2 {
-		t.Errorf("always-store: expected 2 revisions in DB, got %d", count)
+	if count != 1 {
+		t.Errorf("merge-into-latest: expected 1 revision in DB, got %d", count)
 	}
 
-	// Both rows must share the same NormalizedChecksum since input was identical.
 	var revs []models.DeviceConfigRevision
 	db.Gorm().Where("device_id = ?", device.ID).Order("id ASC").Find(&revs)
-	if len(revs) != 2 {
-		t.Fatalf("expected 2 stored revisions, got %d", len(revs))
+	if len(revs) != 1 {
+		t.Fatalf("expected 1 stored revision, got %d", len(revs))
 	}
 	if revs[0].NormalizedChecksum == "" {
 		t.Error("normalized_checksum must be populated on save")
 	}
-	if revs[0].NormalizedChecksum != revs[1].NormalizedChecksum {
-		t.Errorf("identical input must produce identical normalized_checksum: a=%q b=%q",
-			revs[0].NormalizedChecksum, revs[1].NormalizedChecksum)
+	if revs[0].VerifyCount != 2 {
+		t.Errorf("VerifyCount = %d, want 2 (one insert + one merge)", revs[0].VerifyCount)
+	}
+	if revs[0].FirstSeenAt.IsZero() {
+		t.Error("FirstSeenAt should be set on insert")
+	}
+	if revs[0].LastVerifiedAt.IsZero() {
+		t.Error("LastVerifiedAt should be set on every refresh")
+	}
+	if !revs[0].LastVerifiedAt.Equal(revs[0].FirstSeenAt) && revs[0].LastVerifiedAt.Before(revs[0].FirstSeenAt) {
+		t.Errorf("LastVerifiedAt (%v) must be >= FirstSeenAt (%v)", revs[0].LastVerifiedAt, revs[0].FirstSeenAt)
 	}
 }
 

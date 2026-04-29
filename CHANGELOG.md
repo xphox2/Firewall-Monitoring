@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.198] - 2026-04-28
+
+### Changed — major UX cleanup of config-backup history
+- **Storage model is now merge-into-latest.** When a backup arrives with the same vendor-normalized checksum as the device's most-recent stored revision, the existing row is **updated in place**: `ConfigText` is refreshed (so the latest restore-target carries fresh ENC ciphertext), `LastVerifiedAt` is bumped, `VerifyCount` is incremented. No new row, no alert. Different normalized checksum → new row + alert as before. Result: the Config History tab shows **one row per logical configuration state** instead of dozens of IV-drift duplicates.
+- **Config History UI** simplified accordingly: dropped the distinct/all toggle (every row is already distinct). New columns:
+  - **First seen** — when this config state was first observed.
+  - **Last verified** — relative time of the most recent confirmation ("verified 2m ago"); absolute time on hover.
+  - **Verified** — small `N×` badge showing how many polls/syslog events confirmed this state. Lets operators see the system is actively monitoring even when no changes happen.
+- **Diff modal**: when two stored revisions are picked for compare, they always represent real config differences (the same-normalized-hash case can't arise after merge-into-latest). The "no real changes between these backups" green-banner safety net is kept for legacy rows.
+
+### Added — data safety
+- **Suspect-bytes path.** Every incoming FortiGate backup is structurally validated (header present, size ≥ 1KB, ≥5 `config X` blocks, balanced `config/end`, ≤1% non-printable bytes, valid UTF-8). If validation fails, the bytes are stored as a **new row tagged `BackupQuality="suspect"`** rather than overwriting the prior good copy. Operator can see exactly which backup was suspect, and the previous good revision remains intact for restore.
+- **Transactional merge decision.** The lookup-decide-update sequence runs in a single GORM transaction with `FOR UPDATE` on the latest row, so concurrent backups for the same device serialize correctly.
+
+### Schema
+- New columns on `device_config_revisions`: `FirstSeenAt`, `LastVerifiedAt`, `VerifyCount`. AddColumn-if-missing migration extends the existing pattern (mirrors `normalized_checksum` / `tftp_server_ip`).
+
+### Migration of legacy data
+- One-time `CollapseLegacyConfigRevisionDuplicates()` runs at server startup. It walks each device's history, finds runs of identical `NormalizedChecksum`, keeps the most-recent row of each run (preserving its bytes for restore) and sets `FirstSeenAt` / `VerifyCount` to capture the run's metadata. Idempotent; safe to run repeatedly. Deletes the duplicate rows. Logged at startup with the deleted-count.
+
+### Retention simplified
+- Old policy: "keep last 50 + 90 days, collapse runs older than 50."
+- New policy: **delete older than 365 days, cap at 500 distinct states per device**. The collapse logic is gone (no IV-drift duplicates accumulate any more). Most devices will sit well under both limits.
+
+### Validator
+- New `internal/configdiff/validate.go` with `ValidateFortiGateBackup()`. 9 unit tests covering empty / truncated / missing-header / missing-system-global / too-few-blocks / unbalanced-blocks / binary-corruption / sparse-non-printable / real-config-passes.
+
+### Tests
+- New `TestReceiveConfigRevision_FortiGateIVDrift_MergesIntoLatest` — exact merge semantics asserted (1 row, VerifyCount=2, latest bytes win).
+- New `TestReceiveConfigRevision_SuspectBytes_DoNotOverwriteGood` — proves the data-loss safety net.
+- New `TestCleanupConfigRevisions_DeletesBeyond365Days` / `_CapsAt500PerDevice` / `_UnderCapAndUnder365_PreservesEverything`.
+- New `TestCollapseLegacyConfigRevisionDuplicates` (with idempotency assertion).
+- Existing `TestReceiveConfigRevision_TriggerSourceAndQualityRoundTrip` updated to merge-into-latest expectations.
+- Three obsolete distinct-mode tests replaced with one consolidated `TestGetDeviceConfigHistory_ReturnsRowsNewestFirst`.
+
+### Why this matters
+The user-stated problems with v0.10.187 → v0.10.197 were: "we're backing up too much default junk" (still true at the FortiOS layer; that's a separate iteration) and "we keep configs that only differ in ENC passwords." This release fully closes the second one — the duplicate rows simply don't exist any more. Every row in History is something you can compare meaningfully against any other row.
+
 ## [0.10.197] - 2026-04-28
 
 ### Tests

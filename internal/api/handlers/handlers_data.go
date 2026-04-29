@@ -13,6 +13,7 @@ import (
 	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
@@ -660,35 +661,124 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		rev.BackupQuality = quality
 	}
 
-	// Look up the previous revision for change-detection. We compare normalized
-	// checksums, not raw — see plan.
-	var prevNormalized string
-	var prevRev models.DeviceConfigRevision
-	if err := h.db.Gorm().Where("device_id = ?", rev.DeviceID).Order("timestamp DESC").First(&prevRev).Error; err == nil {
-		prevNormalized = prevRev.NormalizedChecksum
+	// Validate the bytes look like a real FortiOS backup BEFORE we consider
+	// merging into the prior row. If validation fails we will still INSERT
+	// (so we don't lose the data), but we won't OVERWRITE good prior bytes
+	// with bad ones — the row will be tagged "suspect" and treated as a new
+	// state so it gets visibility instead of silently replacing good data.
+	suspect := false
+	if vendor == "fortigate" {
+		if err := configdiff.ValidateFortiGateBackup([]byte(rev.ConfigText)); err != nil {
+			log.Printf("ReceiveConfigRevision: validation failed for device %d, treating as suspect: %v",
+				rev.DeviceID, err)
+			suspect = true
+			rev.BackupQuality = "suspect"
+		}
 	}
 
-	// Always store. With random-IV ciphertext drift the raw bytes always differ,
-	// and dedup at write-time would break restorability (latest stored row would
-	// silently lag real password changes). Retention runs a separate collapse
-	// pass on identical-NormalizedChecksum runs older than the 50-row floor.
-	if err := h.db.SaveConfigRevision(&rev); err != nil {
-		log.Printf("ReceiveConfigRevision: DB save error for device %d: %v", rev.DeviceID, err)
+	// Merge-into-latest model (v0.10.198+):
+	//   - Same NormalizedChecksum as prior revision → UPDATE in place,
+	//     refresh ConfigText (latest ENC ciphertext for restore), bump
+	//     LastVerifiedAt, increment VerifyCount. No alert.
+	//   - Different NormalizedChecksum, OR no prior revision, OR suspect →
+	//     INSERT a new row, alert if a prior row existed.
+	//
+	// All wrapped in a transaction with a SELECT ... FOR UPDATE to serialize
+	// concurrent backups for the same device.
+	now := time.Now()
+	var (
+		mergedID      uint
+		mergedAction  string // "merge" | "insert-first" | "insert-change" | "insert-suspect"
+		prevNormalized string
+	)
+
+	txErr := h.db.Gorm().Transaction(func(tx *gorm.DB) error {
+		var prevRev models.DeviceConfigRevision
+		// Lock the latest row for this device. On Postgres this is a real row
+		// lock; on SQLite the entire DB is serialized under transactions, so
+		// the same correctness property holds.
+		err := tx.Set("gorm:query_option", "FOR UPDATE").
+			Where("device_id = ?", rev.DeviceID).
+			Order("id DESC").Limit(1).
+			First(&prevRev).Error
+
+		hasPrev := err == nil
+		if hasPrev {
+			prevNormalized = prevRev.NormalizedChecksum
+		}
+
+		// MERGE path: same vendor-normalized state, validation OK.
+		if hasPrev && !suspect && prevRev.NormalizedChecksum == rev.NormalizedChecksum && rev.NormalizedChecksum != "" {
+			updates := map[string]interface{}{
+				"checksum":         rev.Checksum,
+				"config_text":     rev.ConfigText,
+				"length":           len(rev.ConfigText),
+				"last_verified_at": now,
+				"verify_count":     prevRev.VerifyCount + 1,
+				"trigger_source":   rev.TriggerSource,
+			}
+			// Backup quality can shift (e.g. FortiOS 7.2.1+ password masking
+			// was just enabled). Keep the latest value.
+			if rev.BackupQuality != "" {
+				updates["backup_quality"] = rev.BackupQuality
+			}
+			if err := tx.Model(&models.DeviceConfigRevision{}).
+				Where("id = ?", prevRev.ID).
+				Updates(updates).Error; err != nil {
+				return err
+			}
+			mergedID = prevRev.ID
+			mergedAction = "merge"
+			return nil
+		}
+
+		// INSERT path: new state (or first-ever, or suspect bytes).
+		if rev.FirstSeenAt.IsZero() {
+			rev.FirstSeenAt = now
+		}
+		if rev.LastVerifiedAt.IsZero() {
+			rev.LastVerifiedAt = now
+		}
+		if rev.VerifyCount == 0 {
+			rev.VerifyCount = 1
+		}
+		if rev.Timestamp.IsZero() {
+			rev.Timestamp = now
+		}
+		if err := tx.Create(&rev).Error; err != nil {
+			return err
+		}
+		mergedID = rev.ID
+		switch {
+		case suspect:
+			mergedAction = "insert-suspect"
+		case !hasPrev:
+			mergedAction = "insert-first"
+		default:
+			mergedAction = "insert-change"
+		}
+		return nil
+	})
+	if txErr != nil {
+		log.Printf("ReceiveConfigRevision: tx error for device %d: %v", rev.DeviceID, txErr)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save config revision"))
 		return
 	}
 
 	actualLen := len(rev.ConfigText)
 	if rev.Length != actualLen {
-		log.Printf("WARNING: ReceiveConfigRevision: device %d Length mismatch - reported=%d actual=%d", rev.DeviceID, rev.Length, actualLen)
+		log.Printf("WARNING: ReceiveConfigRevision: device %d Length mismatch - reported=%d actual=%d",
+			rev.DeviceID, rev.Length, actualLen)
 	}
-	log.Printf("ReceiveConfigRevision: SAVED config for device %d (rev.ID=%d, len=%d, raw=%s norm=%s trigger=%s quality=%s)",
-		rev.DeviceID, rev.ID, actualLen, rev.Checksum, rev.NormalizedChecksum, rev.TriggerSource, rev.BackupQuality)
+	log.Printf("ReceiveConfigRevision: %s for device %d (rev.ID=%d, len=%d, raw=%s norm=%s trigger=%s quality=%s)",
+		mergedAction, rev.DeviceID, mergedID, actualLen,
+		rev.Checksum, rev.NormalizedChecksum, rev.TriggerSource, rev.BackupQuality)
 
-	// Alert only when the normalized hash actually changed — meaning the operator
-	// changed something we can detect (everything except password-only rotation,
-	// which is invisible by design after stripping ENC blobs).
-	if prevNormalized != "" && prevNormalized != rev.NormalizedChecksum {
+	// Alert only on real INSERT-change (not merge, not first-ever, not suspect).
+	// Suspect insertions are visible in the History UI as "suspect" rows; a
+	// CONFIG_CHANGE alert there would be misleading because we can't actually
+	// confirm what changed.
+	if mergedAction == "insert-change" {
 		if h.alertManager != nil {
 			h.alertManager.CheckConfigRevision(rev.DeviceID, prevNormalized, rev.NormalizedChecksum)
 		}
@@ -700,7 +790,8 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"saved":               rev.ID,
+		"saved":               mergedID,
+		"action":              mergedAction,
 		"normalized_checksum": rev.NormalizedChecksum,
 		"trigger_source":      rev.TriggerSource,
 		"backup_quality":      rev.BackupQuality,
