@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.199] - 2026-05-11
+
+### Fixed — `syslog_messages` could grow unbounded in default deploys
+- **`docker-compose.yml` now ships with `RETENTION_SYSLOG_CRITICAL_DAYS=30`**, bounding severity 0-5 syslog (notice / warning / error / critical / alert) to 30 days. The app already supported this env var via `RetentionConfig.SyslogCriticalDays` (`internal/config/config.go:75`), but the in-code default of `0 = never delete` combined with firewall traffic logs typically arriving at severity 5 (notice) caused `syslog_messages` to accumulate indefinitely. Severity 6-7 (info/debug) was already bounded by `SyslogInfoDays` + the 5-minute aggregation cycle; the gap was severity 0-5.
+- **Production-incident context (rust-01, 2026-05-11):** `syslog_messages` reached 17 GB / 18.9 M rows, of which 18.6 M (98.6%) were severity 5 with no retention. The table filled the 57 GB root volume and Postgres crashed mid-WAL recovery (`SQLSTATE 57P03`). Recovery sequence: freed root space (Docker image prune + relocate unrelated files), took a `pg_dump`, migrated PGDATA to a dedicated 100 GB partition, set the env var, one-shot-deleted ~4 M rows older than 30 days where severity < 6, `VACUUM FULL ANALYZE syslog_messages` reclaimed ~5 GB of heap. Ongoing retention now flows through `Database.CleanupOldData` (`internal/database/database.go:732`).
+- **No code change to in-code default.** Deployers explicitly relying on unbounded retention should set `RETENTION_SYSLOG_CRITICAL_DAYS=0` in their own compose; new deploys using this repo's compose file now get the safer 30-day default out of the box.
+
+### Fixed
+- Bumped server / Dockerfile version label.
+
 ## [0.10.198] - 2026-04-28
 
 ### Changed — major UX cleanup of config-backup history
