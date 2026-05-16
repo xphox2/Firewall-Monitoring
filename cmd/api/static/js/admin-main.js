@@ -1239,8 +1239,17 @@
         var promise;
         if (selectAllMatchingMode) {
             // Filter-based ack: server walks every row matching the current filter
-            // (potentially thousands), so we don't have to ship IDs.
+            // (potentially thousands), so we don't have to ship IDs. The server
+            // requires at least one filter as a safety guard against accidental
+            // "ack everything in the DB" calls. When the user is bulk-acking from
+            // the unfiltered view, default to acknowledged=false — the natural
+            // meaning of "clear all alerts" is "ack the unacknowledged ones."
+            // Re-acking already-acked rows would overwrite their existing notes,
+            // which is rarely what an operator wants.
             var params = buildAlertParams(0); // limit/offset are irrelevant for the UPDATE
+            if (params.indexOf('acknowledged=') === -1) {
+                params += '&acknowledged=false';
+            }
             promise = apiFetch(API_BASE + '/alerts/bulk-acknowledge-filter?' + params, {
                 method: 'POST',
                 body: { notes: notes }
@@ -1267,7 +1276,11 @@
             refreshAlertsAtCurrentPage();
         })['catch'](function(e) {
             console.error('Bulk ack failed:', e);
-            AC.showError('Bulk acknowledge failed');
+            // Surface the server's error message if apiFetch attached one to
+            // the rejection (e.g. "at least one filter is required"). Falls
+            // back to the generic toast for opaque network errors.
+            var detail = (e && (e.message || e.error)) || '';
+            AC.showError(detail ? 'Bulk acknowledge failed: ' + detail : 'Bulk acknowledge failed');
         })['finally'](function() {
             if (btn) btn.disabled = false;
         });

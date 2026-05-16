@@ -1,4 +1,15 @@
 # Changelog
+## [0.10.204] - 2026-05-16
+
+### Fixed — "Bulk acknowledge failed" when clearing all alerts from the unfiltered view
+- The Alerts → "Select all matching" → "Acknowledge" flow was hitting `POST /api/alerts/bulk-acknowledge-filter` with no filter query params (because `buildAlertParams` only emits dropdowns that have non-empty values). The server's filter handler rejects no-filter requests with `400: "at least one filter is required"` — an intentional safety guard against accidental "ack everything in the DB" calls. The JS caught the 400 and showed the generic "Bulk acknowledge failed" toast.
+- **Fix in `confirmBulkAck()` (`cmd/api/static/js/admin-main.js:1240-1258`):** when entering `selectAllMatchingMode` with no `acknowledged=` param already present, the JS now appends `acknowledged=false`. This makes the operator's intent explicit ("ack all unacknowledged alerts" — which is what "clear all alerts" naturally means) and satisfies the server's safety guard.
+- **Bonus correctness improvement:** the underlying `AcknowledgeAlertsByFilter` SQL rewrites the `notes` field on every matched row, including already-acked ones. Defaulting to `acknowledged=false` means existing ack notes on acked rows are preserved, not overwritten with whatever (often empty) notes the operator typed for the bulk action.
+- **Error message clarity:** the catch handler now surfaces the server's actual error text in the toast (e.g. "Bulk acknowledge failed: at least one filter is required") instead of always showing the generic fallback. Opaque network errors still fall back to the generic message.
+
+### Why this matters
+The unfiltered Alerts tab is the most common entry point for "clear all alerts" — the exact path that was broken. Operators saw an unexplained "Bulk acknowledge failed" with no further context. The fix preserves the server's safety guard while making the common case work, and the better error toast means future similar issues are diagnosable from the UI alone.
+
 ## [0.10.203] - 2026-05-16
 
 ### Fixed — duplicate startup log output from racing processes
