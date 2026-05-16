@@ -384,6 +384,24 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 		return
 	}
 
+	// New mode (v0.10.205+): if the client passes ?range=, return server-side
+	// bucketed data shaped for uPlot — one row per bucket with AVG-aggregated
+	// metrics. This is what the device-detail page uses now. The legacy
+	// "?hours=N → raw rows" mode is kept for backward compatibility with any
+	// external caller that still relies on it.
+	if rangeStr := c.Query("range"); rangeStr != "" {
+		buckets, err := h.db.GetSystemStatusBuckets(id, rangeStr)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get status history"))
+			return
+		}
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+			"buckets": buckets,
+			"range":   rangeStr,
+		}))
+		return
+	}
+
 	hours := httputil.ParseHours(c)
 
 	statuses, err := h.db.GetSystemStatusHistory(id, hours)

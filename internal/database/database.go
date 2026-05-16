@@ -1885,6 +1885,152 @@ func (d *Database) GetSystemStatusHistory(deviceID uint, hours int) ([]models.Sy
 	return statuses, err
 }
 
+// SystemStatusBucket holds a single time-bucket for system-status charting.
+// Mirrors InterfaceChartBucket but for the per-device system metrics
+// surfaced on the device-detail page (CPU, memory, disk, sessions, network
+// throughput). All numeric fields are AVG over the bucket window.
+type SystemStatusBucket struct {
+	Bucket         string  `json:"bucket"`
+	BucketMillis   int64   `json:"bucket_ms"` // epoch ms, derived for the chart x-axis
+	CPUUsage       float64 `json:"cpu_usage"`
+	MemoryUsage    float64 `json:"memory_usage"`
+	DiskUsage      float64 `json:"disk_usage"`
+	SessionCount   float64 `json:"session_count"`
+	NetworkInKbps  float64 `json:"network_in_kbps"`
+	NetworkOutKbps float64 `json:"network_out_kbps"`
+	CPUUser        float64 `json:"cpu_user"`
+	CPUSystem      float64 `json:"cpu_system"`
+	CPUIdle        float64 `json:"cpu_idle"`
+	CPUIOWait      float64 `json:"cpu_iowait"`
+	CPUIRQ         float64 `json:"cpu_irq"`
+	CPUSoftIRQ     float64 `json:"cpu_softirq"`
+	CPUNice        float64 `json:"cpu_nice"`
+}
+
+// GetSystemStatusBuckets returns server-side-bucketed system status data for
+// the device-detail page charts. Mirrors GetInterfaceChartData's pattern:
+// pick a bucket size based on the requested range, AVG raw poll samples into
+// fixed bins, return one row per bin. Replaces the previous "ship raw
+// poll-cadence rows" behavior, which capped at 2000 points and looked spiky
+// because every poll outlier was rendered as-is.
+//
+// rangeStr accepts: 1h, 6h, 12h, 24h, 7d, 30d, 90d, 365d. Unknown values
+// fall back to 24h. Bucket sizes are tuned so each range produces between
+// ~60 and ~720 buckets — enough resolution to see real movement, few enough
+// to draw cleanly without LTTB downsampling on the client.
+func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error) {
+	var hours int
+	var bucketExpr string
+	switch rangeStr {
+	case "1h":
+		hours = 1
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+	case "6h":
+		hours = 6
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+	case "12h":
+		hours = 12
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+	case "7d":
+		hours = 168
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
+	case "30d":
+		hours = 720
+		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
+	case "90d":
+		hours = 2160
+		bucketExpr = d.dialect.TimeBucket("day", "timestamp")
+	case "365d":
+		hours = 8760
+		bucketExpr = d.dialect.TimeBucket("day", "timestamp")
+	default: // 24h
+		hours = 24
+		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+	}
+
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	type row struct {
+		Bucket         string
+		CPUUsage       float64
+		MemoryUsage    float64
+		DiskUsage      float64
+		SessionCount   float64
+		NetworkInKbps  float64
+		NetworkOutKbps float64
+		CPUUser        float64
+		CPUSystem      float64
+		CPUIdle        float64
+		CPUIOWait      float64
+		CPUIRQ         float64
+		CPUSoftIRQ     float64
+		CPUNice        float64
+	}
+	var rows []row
+	err := d.db.Model(&models.SystemStatus{}).
+		Where("device_id = ? AND timestamp > ?", deviceID, cutoff).
+		Select(fmt.Sprintf(`%s as bucket,
+			AVG(cpu_usage) as cpu_usage,
+			AVG(memory_usage) as memory_usage,
+			AVG(disk_usage) as disk_usage,
+			AVG(session_count) as session_count,
+			AVG(network_in_kbps) as network_in_kbps,
+			AVG(network_out_kbps) as network_out_kbps,
+			AVG(cpu_user) as cpu_user,
+			AVG(cpu_system) as cpu_system,
+			AVG(cpu_idle) as cpu_idle,
+			AVG(cpu_iowait) as cpu_iowait,
+			AVG(cpu_irq) as cpu_irq,
+			AVG(cpu_softirq) as cpu_softirq,
+			AVG(cpu_nice) as cpu_nice`, bucketExpr)).
+		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]SystemStatusBucket, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SystemStatusBucket{
+			Bucket:         r.Bucket,
+			BucketMillis:   parseBucketToMillis(r.Bucket),
+			CPUUsage:       r.CPUUsage,
+			MemoryUsage:    r.MemoryUsage,
+			DiskUsage:      r.DiskUsage,
+			SessionCount:   r.SessionCount,
+			NetworkInKbps:  r.NetworkInKbps,
+			NetworkOutKbps: r.NetworkOutKbps,
+			CPUUser:        r.CPUUser,
+			CPUSystem:      r.CPUSystem,
+			CPUIdle:        r.CPUIdle,
+			CPUIOWait:      r.CPUIOWait,
+			CPUIRQ:         r.CPUIRQ,
+			CPUSoftIRQ:     r.CPUSoftIRQ,
+			CPUNice:        r.CPUNice,
+		})
+	}
+	return out, nil
+}
+
+// parseBucketToMillis converts the dialect's TimeBucket() string output to
+// epoch milliseconds for the chart x-axis. Postgres date_trunc returns ISO
+// timestamps; SQLite strftime returns "2006-01-02 15:04" or "2006-01-02"
+// depending on the bucket size. Both forms are parsed here.
+func parseBucketToMillis(bucket string) int64 {
+	formats := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, bucket); err == nil {
+			return t.UnixMilli()
+		}
+	}
+	return 0
+}
+
 // GetPingResultHistory returns time-series ping results for a device
 func (d *Database) GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error) {
 	var results []models.PingResult

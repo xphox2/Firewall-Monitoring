@@ -6,6 +6,13 @@
     <title>Device Detail - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
+    <!-- v0.10.205: refreshed typography pairing (Inter UI + JetBrains Mono numerics)
+         and uPlot for the three operator-grade time-series charts above the tab strip. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+    <link rel="stylesheet" href="/static/css/admin-device-detail.css">
     <style>
         @media (max-width: 768px) {
             .sidebar { display: none; }
@@ -99,37 +106,15 @@
                 </div>
             </div>
 
-            <!-- Status History Chart -->
-            <div class="chart-card mb-4" id="status-history-section">
-                <h3 class="text-[0.85rem] text-[#8b949e] mb-3 font-medium">System Status History (24h)</h3>
-                <canvas id="status-history-chart"></canvas>
-            </div>
-
-            <!-- Network Throughput Chart -->
-            <div class="chart-card mb-4" id="network-throughput-section">
-                <div class="flex justify-between items-center mb-3">
-                    <h3 class="text-[0.85rem] text-[#8b949e] font-medium">Network Throughput</h3>
-                    <select class="chart-range-select" id="network-throughput-range">
-                        <option value="0.25">15m</option>
-                        <option value="0.5">30m</option>
-                        <option value="1">1h</option>
-                        <option value="6">6h</option>
-                        <option value="12">12h</option>
-                        <option value="24" selected>24h</option>
-                        <option value="168">1w</option>
-                        <option value="720">1m</option>
-                        <option value="2160">3m</option>
-                        <option value="8760">1y</option>
-                    </select>
-                </div>
-                <canvas id="network-throughput-chart"></canvas>
-            </div>
-
-            <!-- CPU Breakdown Chart -->
-            <div class="chart-card mb-4" id="cpu-breakdown-section">
-                <h3 class="text-[0.85rem] text-[#8b949e] mb-3 font-medium">CPU Breakdown (24h)</h3>
-                <canvas id="cpu-breakdown-chart"></canvas>
-            </div>
+            <!-- v0.10.205: three above-the-fold charts rendered by uPlot
+                 (admin-device-detail-charts.js → window.FwmonDeviceCharts).
+                 The module replaces each section's innerHTML on init —
+                 these wrappers are just mount points. A shared range pill
+                 bar lives in the Overview header and drives all three; the
+                 panels share a uPlot.sync cursor so brush-zoom is linked. -->
+            <div id="status-history-section"></div>
+            <div id="network-throughput-section"></div>
+            <div id="cpu-breakdown-section"></div>
 
             <!-- Section Tabs -->
             <div class="tabs-container">
@@ -492,7 +477,9 @@
     </div>
 
     <script defer src="/static/js/chart.umd.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
+    <script defer src="/static/js/admin-device-detail-charts.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();

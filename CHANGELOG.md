@@ -1,4 +1,48 @@
 # Changelog
+## [0.10.205] - 2026-05-16
+
+### Changed — device-detail page chart redesign (operator-grade)
+The three "above the fold" charts on `/admin/devices/:id` (Status Overview, Network Throughput, CPU Breakdown) are rebuilt from the ground up. The previous implementation rendered raw 60-second poll samples through Chart.js with Catmull-Rom spline interpolation, which (a) looked like jagged noise on any range >1h and (b) had no zoom — operators were stuck with whatever range the dropdown picked. The redesign solves both, plus the typography overflow the user called out.
+
+#### Charting library
+- **uPlot 1.6.31** (canvas-based, ~45 KB gzipped, MIT, loaded from jsDelivr) replaces Chart.js for the three above-the-fold panels. uPlot is the same library Grafana uses for its default time-series panels.
+- **Synchronized cursor + brush-zoom** across all three panels via `uPlot.sync('fwmon-device-detail')`. Drag horizontally on any panel → all three zoom to the same window. Double-click → reset. A dedicated `reset` button next to the range pills is also wired up.
+- **No spline interpolation.** Splines invent values between samples — fine for stock prices, dishonest for sampled telemetry where the bucket value is the only thing we know. Straight-line segments tell the operator the truth: "between these two points, we don't know."
+
+#### Server-side bucketing for system-status
+- New `GET /api/devices/:id/status-history?range=1h|6h|12h|24h|7d|30d|90d|365d` returns server-bucketed data (AVG per minute/hour/day depending on range) — mirrors the existing `GetInterfaceChartData` pattern. The legacy `?hours=N` raw-rows mode is preserved for any external caller.
+- New `SystemStatusBucket` struct + `GetSystemStatusBuckets()` method in `internal/database/database.go` with a `parseBucketToMillis()` helper that converts the dialect's TimeBucket output (both Postgres and SQLite formats covered) to epoch milliseconds for the chart x-axis.
+- One round-trip per range change feeds all three charts — previous behavior fired three concurrent requests for the same data.
+
+#### Typography + overflow fix
+- **Inter** (UI) + **JetBrains Mono** (numerics) loaded via Google Fonts. Tabular numerals (`font-feature-settings: "tnum" 1`) on every numeric value so columns align.
+- **`min-width: 0` + `text-overflow: ellipsis`** on stat-card labels and values fixes the "font overflows boxes" complaint — long firmware/signature strings now truncate cleanly. A `.stat-long` modifier rounds out display for ones that benefit from word-break instead of truncation.
+- New scoped stylesheet `cmd/api/static/css/admin-device-detail.css` keeps the changes off other admin pages.
+
+#### Palette
+- Tuned Okabe-Ito-adjacent series colors against the existing `#0d1117` base. CPU = sky, memory = violet, disk = green, network in/out = sky/amber. Colorblind-safe; 8 distinct hues for the CPU-breakdown stack.
+
+#### Range pill bar
+- The previous per-chart `<select>` dropdown (network only) is replaced by a unified pill bar in the Overview header that drives all three charts in lockstep. Values: 1h / 6h / 12h / 24h / 7d / 30d / 90d. Default 24h.
+
+#### Files
+- New: `cmd/api/static/js/admin-device-detail-charts.js` — `window.FwmonDeviceCharts` module (init / destroy / setRange).
+- New: `cmd/api/static/css/admin-device-detail.css` — scoped typography + uPlot dark theme.
+- Modified: `web/admin/device-detail.html` — Google Fonts + uPlot CDN in head, dead-canvas wrappers replaced with mount-point divs.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — three legacy chart functions renamed `*Legacy` (kept as fallback), new dispatch through `FwmonDeviceCharts.init()`.
+- Modified: `internal/api/handlers/handlers_devices.go` — `GetDeviceStatusHistory` branches on `?range=`.
+- Modified: `internal/database/database.go` — `GetSystemStatusBuckets()` + `parseBucketToMillis()`.
+
+#### Validation
+Spawned a dedicated sub-agent to cross-check 13 contract points between the new frontend and backend (URL paths, json tag matches on all 13 fields, response envelope shape, mount-point ID match, event delegation, embed-vs-disk static serving, uPlot CDN integrity, time-unit conversion). 12 PASS, 1 WARN (CSS rule overlap with `admin-shared.css` `.chart-card`, currently safe by load order — flagged for a future scoping pass).
+
+#### Out of scope (deferred)
+- The per-interface chart inside the Interfaces tab uses Chart.js with bucketed backend data — it doesn't exhibit the "spiky raw telemetry" issue. Visual consistency port to uPlot is a v0.10.206+ candidate.
+- Process Monitor, Interface Errors, and gauge dials still on Chart.js / SVG. Same rationale: scope discipline.
+
+### Why this matters
+The device-detail page is the primary operational surface for diagnosing a single firewall. The previous charts were unreadable on anything past a 1-hour window and forced a hard refresh to change time scale. Operators now get Grafana-class zoom, smooth bucketed data at every range, and typography that doesn't fall out of its containers.
+
 ## [0.10.204] - 2026-05-16
 
 ### Fixed — "Bulk acknowledge failed" when clearing all alerts from the unfiltered view

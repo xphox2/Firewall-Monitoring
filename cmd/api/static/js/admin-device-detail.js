@@ -174,12 +174,30 @@
         }
         if (showExt) extGrid.style.display = '';
 
-        loadStatusHistoryChart();
-        loadNetworkThroughputChart();
-        loadCPUBreakdownChart();
+        // v0.10.205: the three above-the-fold charts are now uPlot, fetched
+        // from a single bucketed endpoint, with synced brush-zoom across
+        // panels. The shell DOM and renderers live in
+        // admin-device-detail-charts.js (window.FwmonDeviceCharts). Initialize
+        // once per page load; subsequent calls to loadDevice() are no-ops on
+        // the chart side since the module owns its own auto-refresh on range
+        // change. If the module isn't loaded for some reason, fall back to
+        // the legacy renderers below.
+        if (window.FwmonDeviceCharts) {
+            if (!window.__fwmonChartsInited) {
+                window.__fwmonChartsInited = true;
+                window.FwmonDeviceCharts.init(deviceId);
+            }
+        } else {
+            loadStatusHistoryChartLegacy();
+            loadNetworkThroughputChartLegacy();
+            loadCPUBreakdownChartLegacy();
+        }
     }
 
-    function loadStatusHistoryChart() {
+    // Legacy Chart.js renderers — kept only as a fallback path if the uPlot
+    // module fails to load. Production rendering goes through
+    // FwmonDeviceCharts (admin-device-detail-charts.js).
+    function loadStatusHistoryChartLegacy() {
         if (!statusHistoryPromise) {
             statusHistoryPromise = fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
                 credentials: 'include'
@@ -269,10 +287,10 @@
     var statusHistoryCache = {};
 
     var networkThroughputRangeChangeHandler = function() {
-        loadNetworkThroughputChart(this.value);
+        loadNetworkThroughputChartLegacy(this.value);
     };
 
-    function loadNetworkThroughputChart(range) {
+    function loadNetworkThroughputChartLegacy(range) {
         if (!range) range = currentNetworkThroughputRange;
         currentNetworkThroughputRange = range;
 
@@ -370,7 +388,7 @@
     }
 
     var cpuBreakdownChart = null;
-    function loadCPUBreakdownChart() {
+    function loadCPUBreakdownChartLegacy() {
         if (!statusHistoryPromise) {
             statusHistoryPromise = fetch('/admin/api/devices/' + deviceId + '/status-history?hours=24', {
                 credentials: 'include'
@@ -1633,17 +1651,22 @@
         },
         'load-network-throughput': function(el, e) {
             e.stopPropagation();
-            loadNetworkThroughputChart(el.dataset.range);
+            // v0.10.205: route deep-links from elsewhere on the page (e.g.
+            // an interface-row "drill-down" button) through the new
+            // FwmonDeviceCharts.setRange API. The range pill values match
+            // ("1h", "6h", "12h", "24h", "7d", "30d", "90d").
+            if (window.FwmonDeviceCharts) {
+                window.FwmonDeviceCharts.setRange(el.dataset.range);
+            } else {
+                loadNetworkThroughputChartLegacy(el.dataset.range);
+            }
         }
     });
 
-    // Network throughput range select dropdown
-    var ntRangeSelect = document.getElementById('network-throughput-range');
-    if (ntRangeSelect) {
-        ntRangeSelect.addEventListener('change', function() {
-            loadNetworkThroughputChart(this.value);
-        });
-    }
+    // v0.10.205: the legacy <select id="network-throughput-range"> dropdown
+    // is replaced by the range pill bar rendered by FwmonDeviceCharts. The
+    // old listener block was removed because the dropdown element no longer
+    // exists in the rendered DOM.
 
     // Auto-refresh every 60 seconds
     setInterval(loadDevice, 60000);
