@@ -1,4 +1,22 @@
 # Changelog
+## [0.10.210] - 2026-05-16
+
+### Changed — interface filter pills restyled
+The filter row above the Interfaces table on the device-detail page (`All / Up / Down / Ethernet / Tunnel / VLAN / ...`) had no CSS at all — the `.filter-btn` class was used by JS but never defined in any stylesheet. Buttons rendered as browser-default `<button>` elements: tiny, gray, no visible hover or active state. Operators had to guess which pill was clickable and which was selected.
+
+#### Visual changes (`cmd/api/static/css/admin-device-detail.css`)
+- **Border at rest**, not just on hover. The "this is a clickable pill" affordance is the visible border + matching radius — no more guessing where the hit target is.
+- **Hover**: brighter border, lifted background, text reads in primary color. 100ms transitions so the response feels snappy without flashing.
+- **Active**: sky-300 fill + matching border tint + soft outer glow. Matches the existing chart-range-pill aesthetic so the page's two "tabs of pills" elements look like one coherent system.
+- **Focus-visible ring** for keyboard navigation — accessibility win that came free with the redesign.
+- **Active-press effect**: 1px translate on `:active` for tactile feedback.
+
+#### Count typography (`cmd/api/static/js/admin-device-detail.js`)
+- Counts are now rendered inside their own `<span class="filter-count">` so they pick up the new mono / dim styling. The label stays sans-serif and primary-colored; the count reads as monospaced metadata. Operators scan those counts to decide which filter is worth clicking, so the type hierarchy actually matters.
+
+#### Net effect
+The filter row now reads as a row of obviously-clickable pills with a clearly highlighted current selection. The count next to each label uses JetBrains Mono so "Ethernet 42" reads at a glance against "VLAN 8" — same column position, same digit width.
+
 ## [0.10.209] - 2026-05-16
 
 ### Changed — smarter y-axis + larger server-side buckets on device-detail charts

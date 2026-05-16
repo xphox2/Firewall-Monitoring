@@ -482,15 +482,29 @@
             typeCounts[tn] = (typeCounts[tn] || 0) + 1;
         });
 
-        var btns = '<button class="filter-btn' + (currentFilter === 'all' ? ' active' : '') + '" data-action="filter-ifaces" data-filter="all">All (' + allInterfaces.length + ')</button>';
-        btns += '<button class="filter-btn' + (currentFilter === 'up' ? ' active' : '') + '" data-action="filter-ifaces" data-filter="up">Up (' + upCount + ')</button>';
-        btns += '<button class="filter-btn' + (currentFilter === 'down' ? ' active' : '') + '" data-action="filter-ifaces" data-filter="down">Down (' + downCount + ')</button>';
+        // Render each pill as `<label> <count-span>` so the count picks up
+        // the .filter-count typography (mono, dimmer) defined in
+        // admin-device-detail.css. Operators scan the counts to decide which
+        // filter is worth clicking, so the type hierarchy matters.
+        function pill(filterValue, label, count) {
+            var activeClass = currentFilter === filterValue ? ' active' : '';
+            return '<button class="filter-btn' + activeClass +
+                '" data-action="filter-ifaces" data-filter="' + esc(filterValue) + '">' +
+                esc(label) +
+                '<span class="filter-count">' + count + '</span>' +
+                '</button>';
+        }
+
+        var btns = '';
+        btns += pill('all',  'All',  allInterfaces.length);
+        btns += pill('up',   'Up',   upCount);
+        btns += pill('down', 'Down', downCount);
 
         var sortedTypes = Object.keys(typeCounts).sort();
         for (var ti = 0; ti < sortedTypes.length; ti++) {
             var tn = sortedTypes[ti];
             var label = tn.charAt(0).toUpperCase() + tn.slice(1);
-            btns += '<button class="filter-btn' + (currentFilter === tn ? ' active' : '') + '" data-action="filter-ifaces" data-filter="' + esc(tn) + '">' + esc(label) + ' (' + typeCounts[tn] + ')</button>';
+            btns += pill(tn, label, typeCounts[tn]);
         }
         filtersDiv.innerHTML = btns;
 
