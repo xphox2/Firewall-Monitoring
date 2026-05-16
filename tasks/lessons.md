@@ -1,5 +1,26 @@
 # Lessons Learned
 
+## Frontend asset loading: check the CSP before reaching for a CDN
+
+**Date:** 2026-05-16 (v0.10.205 → v0.10.206)
+
+**Problem:** Redesigned the device-detail charts to use uPlot loaded from `cdn.jsdelivr.net`, plus Google Fonts for typography. Shipped, user rebuilt, charts came up blank. Console: `uPlot not loaded; charts cannot render`.
+
+**Root cause:** The server's CSP at `internal/api/middleware/middleware.go:257` is `script-src 'self'` / `style-src 'self'` / `font-src 'self'`. The browser silently dropped every external asset. The validation sub-agent I spawned even verified the CDN URL resolved — but didn't check whether the BROWSER would be allowed to load it. The CDN works; the policy was the blocker.
+
+**What I'm doing about it:**
+- **Before adding any external asset URL (`<script src="https://...">`, `<link href="https://fonts...">`), grep for `Content-Security-Policy` first.** If the CSP restricts origin, commit the asset to `cmd/api/static/...` and serve same-origin.
+- Same-origin-only assets are the right default for this project regardless of CSP — air-gapped deploys, offline-first ops, and EU privacy posture all benefit.
+- If a sub-agent reports "URL resolves" or "CDN loads", that means the SERVER returns the file, not that the client's CSP allows it. Always one level deeper.
+
+**The 5-line check to run before any external asset:**
+```
+grep -r "Content-Security-Policy" internal/ cmd/
+# If you find one with 'self' restrictions → ship the asset locally.
+```
+
+---
+
 ## Systemic Failure: QA Always Forgotten
 
 **Problem:** I keep forgetting to run QA checks before commits. User has told me many times.
