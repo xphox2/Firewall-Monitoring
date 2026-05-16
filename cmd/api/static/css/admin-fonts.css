@@ -1,0 +1,35 @@
+/* admin-fonts.css — self-hosted Inter + JetBrains Mono (variable, latin subset).
+ *
+ * Both families are variable fonts: a single .woff2 carries every weight from
+ * 100–900 via OpenType variations, so the browser interpolates intermediate
+ * weights at zero per-weight download cost. Total payload: ~80 KB.
+ *
+ * Subsetted to latin (U+0000–00FF + a handful of European punctuation) — the
+ * admin UI's full text content fits inside this subset. If we ever ship UI
+ * translations into Cyrillic / Greek / Vietnamese, fetch the matching
+ * subset.woff2 from `fonts.gstatic.com/s/{family}/v{N}/...` and add a second
+ * @font-face block with the matching unicode-range.
+ *
+ * Files are committed to cmd/api/static/fonts/ so they're embedded into the
+ * binary by `//go:embed static` and served same-origin under /static/fonts/.
+ * No CDN, no Google Fonts fetch, no third-party origin in any request — clean
+ * with the existing `font-src 'self'` CSP at middleware.go:257.
+ */
+
+@font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 100 900; /* variable axis */
+    font-display: swap;
+    src: url("/static/fonts/inter-latin.woff2") format("woff2-variations"),
+         url("/static/fonts/inter-latin.woff2") format("woff2");
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 100 800; /* variable axis */
+    font-display: swap;
+    src: url("/static/fonts/jetbrains-mono-latin.woff2") format("woff2-variations"),
+         url("/static/fonts/jetbrains-mono-latin.woff2") format("woff2");
+}

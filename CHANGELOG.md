@@ -1,4 +1,16 @@
 # Changelog
+## [0.10.207] - 2026-05-16
+
+### Added — self-hosted Inter + JetBrains Mono on the device-detail page
+- `cmd/api/static/fonts/inter-latin.woff2` (48 KB) and `cmd/api/static/fonts/jetbrains-mono-latin.woff2` (31 KB) — variable-font WOFF2, latin subset (U+0000–00FF plus a handful of European punctuation). Variable fonts mean a single file per family carries the entire weight axis 100–900; the browser interpolates intermediate weights with no extra fetch.
+- New `cmd/api/static/css/admin-fonts.css` declares both via `@font-face` with `font-display: swap` so the system-font fallback paints immediately and the WOFF2 swaps in once decoded — no FOIT.
+- `web/admin/device-detail.html` `<head>` now `<link rel="preload">`'s both WOFF2 files before the CSS, so the swap happens within the first paint frame on a warm cache and before first text on a cold cache.
+
+### Why this matters
+v0.10.206 backed out the Google Fonts `<link>` because the CSP blocked it, falling back to system fonts. That worked but lost the distinctive typographic pairing the redesign was built around. Self-hosting brings Inter + JetBrains Mono back without re-introducing any third-party origin — `font-src 'self'` is satisfied, no EU privacy issue, no offline failure mode, and the latin-subset variable-font approach keeps the total typography payload under 80 KB.
+
+If we later want UI translations or non-latin content, add a second @font-face block for the matching Cyrillic / Greek / Vietnamese subset fetched from `fonts.gstatic.com/s/{family}/v{N}/...`. Until then, latin-only is the right call.
+
 ## [0.10.206] - 2026-05-16
 
 ### Fixed — device-detail charts blank because CSP blocked CDN uPlot

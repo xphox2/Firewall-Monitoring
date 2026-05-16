@@ -7,12 +7,12 @@
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <!-- v0.10.205: uPlot for operator-grade time-series charts above the tab strip.
-         v0.10.206: uPlot + its CSS are now served from /static/ (same-origin) rather
-         than jsDelivr — the server CSP is `script-src 'self'` / `style-src 'self'`,
-         which blocked the CDN-served version entirely. Google Fonts links are also
-         removed for the same reason; the CSS variable fallback chain renders fine
-         on system fonts (Segoe UI / SF Pro / Roboto / etc.), and most system fonts
-         support tabular numerals via the same `font-feature-settings` rule. -->
+         v0.10.206: uPlot served from /static/ (CSP blocked the CDN).
+         v0.10.207: Inter + JetBrains Mono self-hosted under /static/fonts/ —
+         single variable woff2 per family, latin subset, ~80 KB total. -->
+    <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/static/css/admin-fonts.css">
     <link rel="stylesheet" href="/static/css/uPlot.min.css">
     <link rel="stylesheet" href="/static/css/admin-device-detail.css">
     <style>
