@@ -1,4 +1,16 @@
 # Changelog
+## [0.10.203] - 2026-05-16
+
+### Fixed — duplicate startup log output from racing processes
+- The container runs three processes (API, poller, trap-receiver) and each calls `database.NewDatabase()` on boot. All three were racing to run the same idempotent post-migration setup (`EnsurePartitions`, `ConfigureAutovacuum`, `CollapseLegacyConfigRevisionDuplicates`, `EnsureDefaultPolicy`, `auditDeviceVendors`, `migrateEncryptSecrets`), producing 2-3× duplicates of every setup log line — `Database: connected`, `WARNING: ENCRYPTION_KEY not set`, partition info, vendor audit, etc.
+- Added a Postgres session-scoped advisory lock (`pg_try_advisory_lock(0x46574d4e53545550)`, the ASCII bytes of "FWMNSTUP") around the post-migration block. Exactly one process wins the race and runs the chatty setup; the other two log a single explanatory line ("another process holds the migration lock; skipping...") and move on.
+- `AutoMigrate` itself is left running unconditionally because schema must exist before any process queries it, regardless of who wins the lock. GORM's silent logger (configured at line 55) keeps it noiseless on no-op runs.
+- Lock is intentionally NOT released — it's session-scoped, so Postgres drops it when the connection closes (5-minute `SetConnMaxLifetime` boundary, or process exit). By then all sibling processes have already passed the setup branch and won't re-attempt.
+- **Data safety:** all operations under the lock are idempotent. Losing the race is correctness-safe — the second process just doesn't repeat work that's already been done. SQLite (test) path returns `true` unconditionally and runs setup inline (single-process anyway).
+
+### Why this matters
+v0.10.202 cleaned up the partition-creation log spam but exposed the underlying pattern: every startup log line appeared twice with the same timestamp, once with a `database.go:NNN:` prefix (from poller/trap-receiver with `Lshortfile`) and once without (from the API with default flags). After this change, startup logs from the database layer fire exactly once per restart.
+
 ## [0.10.202] - 2026-05-16
 
 ### Fixed — partition creation log spam on legacy deployments

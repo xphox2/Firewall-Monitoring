@@ -99,6 +99,22 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// The chatty post-migration setup steps (partitions, autovacuum, legacy
+	// duplicate collapse, default policy, vendor audit, secret encryption)
+	// are all idempotent. The container runs 3 processes that each call
+	// NewDatabase — without serialization, all three race to do the same
+	// work and produce 2-3× duplicate log lines for every step. A Postgres
+	// session-scoped advisory lock lets exactly ONE process do the work
+	// (and log it); the other two skip silently with a single explanatory
+	// line. AutoMigrate above is left running unconditionally because
+	// (a) GORM's silent logger keeps it noiseless on no-op runs and
+	// (b) schema must exist before any process queries, regardless of
+	// which one wins the lock race.
+	if !d.tryAcquireStartupLock() {
+		log.Println("Startup setup: another process holds the migration lock; skipping partition/autovacuum/vendor-audit (work is idempotent and being done by a sibling process).")
+		return d, nil
+	}
+
 	// Ensure PostgreSQL partitions exist for high-volume tables
 	if err := d.EnsurePartitions(); err != nil {
 		log.Printf("Partition setup warning: %v", err)
@@ -133,6 +149,37 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	d.migrateEncryptSecrets()
 
 	return d, nil
+}
+
+// startupMigrationLockKey identifies the post-migration startup-setup
+// advisory lock. Any stable int64 works — the only constraint is that all
+// three processes (API, poller, trap-receiver) target the same key. Value
+// is the ASCII bytes of "FWMNSTUP" packed into a uint64 so it's visible if
+// it ever shows up in pg_locks.
+const startupMigrationLockKey int64 = 0x46574d4e53545550
+
+// tryAcquireStartupLock attempts a non-blocking Postgres advisory lock that
+// serializes the chatty post-migration startup steps across processes that
+// share a database. The lock is intentionally NOT released here — it's
+// session-scoped, so Postgres drops it when the connection closes (at the
+// 5-minute SetConnMaxLifetime boundary or at process exit, whichever comes
+// first). By the time the lock is released, every sibling process has
+// already passed the startup-setup branch and won't re-attempt.
+//
+// SQLite (tests) returns true unconditionally — single-process there.
+func (d *Database) tryAcquireStartupLock() bool {
+	if !d.dialect.IsPostgres() {
+		return true
+	}
+	var acquired bool
+	if err := d.db.Raw("SELECT pg_try_advisory_lock(?)", startupMigrationLockKey).Scan(&acquired).Error; err != nil {
+		// Probe failure: bias toward running setup (idempotent) over
+		// skipping. Duplicate log output is better than a missed startup
+		// step on a transient error.
+		log.Printf("Startup lock probe failed (%v); proceeding with setup anyway.", err)
+		return true
+	}
+	return acquired
 }
 
 func (d *Database) migrate() error {
