@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.202] - 2026-05-16
+
+### Fixed — partition creation log spam on legacy deployments
+- `EnsurePartitions()` now probes `pg_partitioned_table` for each candidate parent (`syslog_messages`, `syslog_summaries`, `trap_events`, `flow_samples`) BEFORE attempting to attach a monthly partition. Deployments that ran GORM `AutoMigrate` before the partitioning code was added (rust-01 is one) carry these as plain tables, and `CREATE TABLE ... PARTITION OF ...` against a plain parent fails with SQLSTATE 42P17 — producing 28 noise lines per startup (4 tables × 7 months ahead).
+- New behavior: probe once, log a single clear info line per plain table ("syslog_messages is a plain table on this deployment; skipping monthly partition creation"), and skip the per-month attempts entirely. No behavior change for fresh deployments where the tables are partitioned from the start.
+- **Data safety unchanged:** the plain tables continue to function normally. The only "lost" benefit is partition-prune query speedups and the ability to `DROP PARTITION` (O(1)) instead of `DELETE ... WHERE timestamp < ...` (writes WAL). A separate in-place migration to convert plain → partitioned is planned for a future release; the log line points at `docs/partition-migration.md`.
+
+### Cleanup
+- Removed the obsolete `version: '3.8'` line from `docker-compose.yml`. The Compose spec dropped the `version` field years ago and Docker emits a `WARN[0000] ... the attribute version is obsolete` on every command. No behavior change.
+
 ## [0.10.201] - 2026-05-16
 
 ### Changed — `DATA_DIR` parameterized in shipped compose

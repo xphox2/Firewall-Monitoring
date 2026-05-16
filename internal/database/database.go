@@ -322,6 +322,35 @@ func (d *Database) EnsurePartitions() error {
 		{"flow_samples", "timestamp"},
 	}
 
+	// Filter the candidate list to only tables that are actually partitioned
+	// parents. Deployments that ran GORM AutoMigrate before partitioning was
+	// added carry these tables as plain (non-partitioned) tables — attaching
+	// a partition there fails with SQLSTATE 42P17 and spams 28 lines per
+	// startup. Probe pg_partitioned_table once and emit a single info line
+	// per plain table so the operator knows a separate migration is needed.
+	partitioned := make([]partitionDef, 0, len(tables))
+	for _, def := range tables {
+		var isPartitioned bool
+		err := d.db.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM pg_partitioned_table pt
+				JOIN pg_class c ON c.oid = pt.partrelid
+				WHERE c.relname = ?
+			)`, def.tableName).Scan(&isPartitioned).Error
+		if err != nil {
+			log.Printf("Partition probe warning for %s: %v", def.tableName, err)
+			continue
+		}
+		if !isPartitioned {
+			log.Printf("Partition setup: %q is a plain table on this deployment; skipping monthly partition creation. To convert in place, run the migration in docs/partition-migration.md (planned for a future release).", def.tableName)
+			continue
+		}
+		partitioned = append(partitioned, def)
+	}
+	if len(partitioned) == 0 {
+		return nil
+	}
+
 	// Create partitions for current month + 6 months ahead
 	now := time.Now()
 	for i := 0; i <= 6; i++ {
@@ -339,7 +368,7 @@ func (d *Database) EnsurePartitions() error {
 		startStr := partitionStart.Format("2006-01-02")
 		endStr := partitionEnd.Format("2006-01-02")
 
-		for _, def := range tables {
+		for _, def := range partitioned {
 			partitionName := fmt.Sprintf("%s_%d%02d", def.tableName, year, month)
 			// Check if partition already exists
 			var count int
