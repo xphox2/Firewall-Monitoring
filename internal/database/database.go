@@ -10,6 +10,7 @@ import (
 
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/models"
 
 	"gorm.io/driver/postgres"
@@ -120,8 +121,13 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	// Ensure a default alert policy exists
 	d.EnsureDefaultPolicy()
 
-	// Backfill vendor for existing devices
-	db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
+	// Backfill empty vendor → fortigate (the in-code default per
+	// internal/models/models.go) and audit the fleet's vendor distribution.
+	// Any device whose vendor lacks a rich normalizer in internal/configdiff
+	// will silently false-alert on every config backup, because byte-equality
+	// hashing makes random-IV ENC ciphertext look like a real change. The
+	// audit log makes that visible without mutating the data.
+	d.auditDeviceVendors()
 
 	// Encrypt any existing plaintext SNMP credentials
 	d.migrateEncryptSecrets()
@@ -947,6 +953,61 @@ func (d *Database) CollapseLegacyConfigRevisionDuplicates() (int64, error) {
 		}
 	}
 	return totalDeleted, nil
+}
+
+// auditDeviceVendors backfills empty vendor → "fortigate" (the in-code default)
+// and logs the fleet's vendor distribution at startup. For each distinct
+// vendor value, it cross-references configdiff.HasRichNormalizer — any vendor
+// with config revisions but no rich normalizer is flagged in the log as a
+// likely source of false CONFIG_CHANGE alerts. No data is mutated beyond the
+// empty-vendor backfill.
+func (d *Database) auditDeviceVendors() {
+	// Step 1: backfill empty vendor to the in-code default. This preserves
+	// pre-vendor-field behavior for any rows that predate the column.
+	res := d.db.Exec("UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL")
+	if res.Error != nil {
+		log.Printf("vendor backfill: %v", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("vendor backfill: set %d devices with empty vendor → 'fortigate'", res.RowsAffected)
+	}
+
+	// Step 2: count devices per vendor.
+	type vendorCount struct {
+		Vendor string
+		N      int64
+	}
+	var counts []vendorCount
+	if err := d.db.Model(&models.Device{}).
+		Select("vendor as vendor, COUNT(*) as n").
+		Group("vendor").
+		Find(&counts).Error; err != nil {
+		log.Printf("vendor audit: %v", err)
+		return
+	}
+	if len(counts) == 0 {
+		return
+	}
+
+	// Step 3: log distribution + warn on missing rich normalizer.
+	// A device with no rich normalizer will hash by byte equality, which makes
+	// random-IV ENC ciphertext look like a real change every backup. That's
+	// the false-alert root cause we already fixed for fortigate.
+	sort.Slice(counts, func(i, j int) bool { return counts[i].N > counts[j].N })
+	var unsupported []string
+	for _, c := range counts {
+		marker := "rich"
+		if !configdiff.HasRichNormalizer(c.Vendor) {
+			marker = "IDENTITY (false-alert risk on config-backup diffs)"
+			unsupported = append(unsupported, fmt.Sprintf("%s=%d", c.Vendor, c.N))
+		}
+		log.Printf("vendor audit: vendor=%q devices=%d normalizer=%s", c.Vendor, c.N, marker)
+	}
+	if len(unsupported) > 0 {
+		log.Printf("vendor audit: WARNING — %d vendor(s) lack rich normalization in internal/configdiff (%s). Config-backup diffs for these devices will hash by byte equality and may false-alert on encrypted-field drift. Consider switching the device's vendor to a supported value, or extending configdiff with a normalizer for the missing vendor.",
+			len(unsupported), strings.Join(unsupported, ", "))
+	}
 }
 
 func (d *Database) Close() error {

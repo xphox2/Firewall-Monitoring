@@ -174,10 +174,12 @@ func TestGetDeviceConfigDiff_InvalidParams_400(t *testing.T) {
 	}
 }
 
-// TestGetDeviceConfigDiff_NonFortiGateDevice_NoVolatilePatterns — devices
-// without a known vendor get the identity normalizer; volatile_patterns
-// should be empty (or null) so the JS doesn't try to mask anything.
-func TestGetDeviceConfigDiff_NonFortiGateDevice_NoVolatilePatterns(t *testing.T) {
+// TestGetDeviceConfigDiff_IdentityVendor_NoVolatilePatterns — devices whose
+// vendor uses the identity normalizer (no rich masking) get an empty
+// volatile_patterns list, so the JS doesn't try to mask anything. As of
+// v0.10.200 fortigate / paloalto / cisco_asa all have rich normalizers, so
+// "generic" is the canary identity-vendor.
+func TestGetDeviceConfigDiff_IdentityVendor_NoVolatilePatterns(t *testing.T) {
 	h, db := setupTestHandler(t)
 	probe := &models.Probe{
 		Name:            "test-probe",
@@ -189,7 +191,7 @@ func TestGetDeviceConfigDiff_NonFortiGateDevice_NoVolatilePatterns(t *testing.T)
 		t.Fatalf("create probe: %v", err)
 	}
 	device := &models.Device{
-		Name: "generic-fw", IPAddress: "10.0.0.1", Vendor: "paloalto", ProbeID: &probe.ID,
+		Name: "generic-fw", IPAddress: "10.0.0.1", Vendor: "generic", ProbeID: &probe.ID,
 	}
 	if err := db.Gorm().Create(device).Error; err != nil {
 		t.Fatalf("create device: %v", err)
@@ -215,10 +217,10 @@ func TestGetDeviceConfigDiff_NonFortiGateDevice_NoVolatilePatterns(t *testing.T)
 		} `json:"data"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp.Data.Vendor != "paloalto" {
-		t.Errorf("vendor = %q, want %q", resp.Data.Vendor, "paloalto")
+	if resp.Data.Vendor != "generic" {
+		t.Errorf("vendor = %q, want %q", resp.Data.Vendor, "generic")
 	}
 	if len(resp.Data.VolatilePatterns) != 0 {
-		t.Errorf("volatile_patterns should be empty for paloalto (no vendor-specific masking yet); got %d", len(resp.Data.VolatilePatterns))
+		t.Errorf("volatile_patterns should be empty for identity-vendor 'generic'; got %d", len(resp.Data.VolatilePatterns))
 	}
 }

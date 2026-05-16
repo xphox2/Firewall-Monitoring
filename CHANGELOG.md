@@ -1,4 +1,40 @@
 # Changelog
+## [0.10.200] - 2026-05-16
+
+### Hardened — config-backup false-alert defenses (defense-in-depth pass)
+The merge-into-latest model in v0.10.198 closed the false-alert path for FortiGate devices tagged `Vendor="fortigate"`, but a multi-angle audit (4 parallel research streams covering the existing code, RANCID/Oxidized canonical practice, FortiOS/PAN-OS/Cisco ASA password-format research, and design-alternative brainstorm) surfaced four remaining gaps. This release closes them.
+
+#### Startup vendor audit (`internal/database/database.go`)
+- Replaced the blunt `UPDATE devices SET vendor = 'fortigate' WHERE vendor = '' OR vendor IS NULL` with `auditDeviceVendors()`. Still backfills empty vendor → `fortigate` (the in-code default), but now also:
+  - Counts devices per vendor and logs the distribution at startup.
+  - Cross-references each distinct vendor against `configdiff.HasRichNormalizer()` — any vendor with config revisions but only identity hashing is flagged with `normalizer=IDENTITY (false-alert risk on config-backup diffs)` and a summary WARNING line.
+- **Why this matters:** a device tagged with one of the 4 unsupported vendors (`sonicwall`, `firewalla`, `pfsense`, `opnsense`) falls through to identity hashing, which makes random-IV ENC ciphertext look like a real change every backup. The log makes the gap visible without mutating data.
+
+#### FortiGate PEM regex generalized (`internal/configdiff/vendor_fortigate.go`)
+- Replaced `fortiPrivateKeyBlockRegex` (anchored to `set private-key`) with `fortiPemBlockRegex` matching ANY `set <field> "-----BEGIN..."` PEM-bearing line. Now covers `set ca`, `set csr`, `set certificate`, plus any future PEM-bearing field FortiOS adds.
+- **Critical regex bugfix uncovered during testing:** the original `[^"]+` pattern was greedy across newlines under `(?s)` dotall mode. With TWO adjacent PEM blocks (e.g. `set ca` followed by `set csr`), the engine would collapse both blocks into a single capture, masking the second field name. Fixed by anchoring the BEGIN/END inner-text to `[^"\r\n]+` so each match stays on one line; the body between them remains multi-line via the `[^"]*?` (non-greedy, no-quote) inner pattern. Added `TestFortiGateNormalizerStripsCertAndCSRBlocks` to guard against regression.
+
+#### PAN-OS normalizer filled in (`internal/configdiff/vendor_paloalto.go`)
+- Was an identity stub; now strips: `<phash>...</phash>` (re-salted per emission), `<secret>...</secret>` (LDAP/RADIUS/IKE/SNMPv3), `<key>...</key>` (AES-256-CBC, random IV), `<password>`, `<passphrase>`, and `<config version="..." detail-version="..." ...>` root-attribute drift.
+- Heuristic: 3+ occurrences of the `*****` literal flag the backup as `QualityMasked` (PAN-OS sanitized export from non-superuser).
+- 4 new tests cover stable-across-emissions, real-change-detected, sensitive-content-stripped, sanitized-export-detected.
+
+#### Cisco ASA normalizer filled in (`internal/configdiff/vendor_cisco_asa.go`)
+- Was an identity stub; now strips ONLY Type 6 secrets (`enable secret 6 ...`, `username X password 6 ...`, `key 6 ...`, `key-string 6 ...`) and the `: Saved` / `: Written by` timestamp headers. Master passphrase declaration also masked.
+- **Deliberately leaves Types 5/7/8/9 visible** — those hash forms are deterministic (MD5-crypt, Vigenere, PBKDF2-SHA256, scrypt), so a real password rotation produces a detectable hash change. Only Type 6 (AES with master passphrase + random nonce per emission) is truly volatile.
+- 3 new tests cover stable-across-emissions, real-change-detected, type5/7/8/9-not-masked.
+
+#### Alert-side regression test for IV-drift merge (`internal/api/handlers/handlers_config_revision_fortigate_test.go`)
+- Existing `TestReceiveConfigRevision_FortiGateIVDrift_MergesIntoLatest` proved the merge happened and the latest bytes won, but did NOT assert that the alerts table stayed empty. Now wires a real `AlertManager`, parses the response `action`, and asserts `CONFIG_CHANGE` count = 0 after the IV-drift merge. The marquee guarantee for the false-alert fix.
+- New paired test `TestReceiveConfigRevision_FortiGateRealChange_FiresExactlyOneAlert` proves the alert path still fires on a real structural change — guards against a regression that silenced all config alerts entirely.
+
+#### Registry helpers (`internal/configdiff/normalize.go`)
+- New `HasRichNormalizer(vendor)` returns true only for vendors that publish at least one volatile pattern. Used by the startup audit.
+- New `RegisteredVendors()` returns the registered vendor key set (unordered). Forward-compatible with vendor-management UI.
+
+### Why this matters
+The v0.10.198 release closed the false-alert path for the common case (FortiGate devices, default vendor). Reports of continued false alerts in the field were traced to two scenarios this release addresses: (1) devices added with `vendor=""` before the model's `default:fortigate` GORM directive took effect, and (2) PEM-bearing fields beyond `set private-key` that drifted under the narrow regex. With the audit log now surfacing identity-vendor devices and the regex covering all `set <field> "-----BEGIN..."` lines, both vectors are closed. Design trade-off held from RANCID/Oxidized canonical practice: a real plaintext password rotation produces no alert at all (the ENC blob is masked the same as an IV-only change). The user has explicitly accepted this trade-off — restore fidelity preserved via the merge path always overwriting `ConfigText` with the latest live ciphertext.
+
 ## [0.10.199] - 2026-05-11
 
 ### Fixed — `syslog_messages` could grow unbounded in default deploys

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 )
 
@@ -170,8 +172,16 @@ func setupFortiGateProbeDevice(t *testing.T) (*Handler, *models.Probe, *models.D
 // IV-drifted backups (different raw bytes, same normalized hash) MERGE into
 // the prior row in v0.10.198+. We get exactly one row, VerifyCount=2, and the
 // stored ConfigText is the *latest* bytes (so restore has fresh ENC ciphertext).
+//
+// As of v0.10.200 this test also wires up a real AlertManager and asserts the
+// CONFIG_CHANGE alerts table is empty after the merge — the false-alert
+// regression we keep coming back to. If a future change in the normalizer or
+// handler flow accidentally re-introduces the alert on IV drift, this test
+// fails loudly instead of silently sending production noise.
 func TestReceiveConfigRevision_FortiGateIVDrift_MergesIntoLatest(t *testing.T) {
 	h, probe, device := setupFortiGateProbeDevice(t)
+	am := alerts.NewAlertManager(&config.Config{}, nil, h.db)
+	h.SetAlertManager(am)
 
 	body1 := map[string]interface{}{
 		"device_id":   device.ID,
@@ -211,6 +221,63 @@ func TestReceiveConfigRevision_FortiGateIVDrift_MergesIntoLatest(t *testing.T) {
 	}
 	if rev.ConfigText != fortigateRawB {
 		t.Errorf("merged ConfigText should be the latest emission's bytes (B), not the original (A)")
+	}
+
+	// The response action must be "merge" — distinct from "insert-change",
+	// which is the only path that triggers CheckConfigRevision.
+	var resp struct {
+		Data struct {
+			Action string `json:"action"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v body=%s", err, w.Body.String())
+	}
+	if resp.Data.Action != "merge" {
+		t.Errorf("action = %q, want %q (IV-drift must merge, not insert-change)",
+			resp.Data.Action, "merge")
+	}
+
+	// Zero CONFIG_CHANGE alerts must have been raised. This is the marquee
+	// guarantee: the false-alert problem is gone.
+	var alertCount int64
+	h.db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ?", device.ID, "CONFIG_CHANGE").
+		Count(&alertCount)
+	if alertCount != 0 {
+		t.Errorf("CONFIG_CHANGE alerts after IV-drift merge = %d, want 0 — FALSE ALERT REGRESSION",
+			alertCount)
+	}
+}
+
+// Counterpart to the merge test: a real config change MUST fire exactly one
+// CONFIG_CHANGE alert. Without this assertion paired against the no-alert one
+// above, a regression that silenced all config alerts entirely would slip
+// through the merge test.
+func TestReceiveConfigRevision_FortiGateRealChange_FiresExactlyOneAlert(t *testing.T) {
+	h, probe, device := setupFortiGateProbeDevice(t)
+	am := alerts.NewAlertManager(&config.Config{}, nil, h.db)
+	h.SetAlertManager(am)
+
+	doTestRequest(t, h.ReceiveConfigRevision, "POST", "/config-revision", probe.ID, probe.RegistrationKey, map[string]interface{}{
+		"device_id":   device.ID,
+		"config_text": fortigateRawA,
+		"checksum":    "raw-a",
+		"length":      len(fortigateRawA),
+	})
+	doTestRequest(t, h.ReceiveConfigRevision, "POST", "/config-revision", probe.ID, probe.RegistrationKey, map[string]interface{}{
+		"device_id":   device.ID,
+		"config_text": fortigateRawC, // adds policy 2 — real structural change
+		"checksum":    "raw-c",
+		"length":      len(fortigateRawC),
+	})
+
+	var alertCount int64
+	h.db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ?", device.ID, "CONFIG_CHANGE").
+		Count(&alertCount)
+	if alertCount != 1 {
+		t.Errorf("CONFIG_CHANGE alerts after real change = %d, want 1", alertCount)
 	}
 }
 

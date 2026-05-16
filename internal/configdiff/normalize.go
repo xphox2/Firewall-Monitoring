@@ -81,6 +81,28 @@ func VolatilePatternsFor(vendor string) []VolatilePattern {
 	return Lookup(vendor).VolatilePatterns()
 }
 
+// HasRichNormalizer reports whether the vendor has a non-identity normalizer
+// registered. Used by startup audit to flag devices whose configs will not be
+// stripped of volatile content before hashing — which makes them prone to
+// false CONFIG_CHANGE alerts on every backup.
+func HasRichNormalizer(vendor string) bool {
+	n, ok := registry[strings.ToLower(strings.TrimSpace(vendor))]
+	if !ok {
+		return false
+	}
+	return len(n.VolatilePatterns()) > 0
+}
+
+// RegisteredVendors returns the set of vendor keys for which a normalizer is
+// registered (rich or identity). Order is not stable.
+func RegisteredVendors() []string {
+	out := make([]string, 0, len(registry))
+	for k := range registry {
+		out = append(out, k)
+	}
+	return out
+}
+
 // identityNormalizer is the fallback for unknown/unsupported vendors. The
 // normalized form is byte-identical to the input — equivalent to the
 // pre-configdiff hashing behavior. No volatile patterns.

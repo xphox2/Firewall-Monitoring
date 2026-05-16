@@ -47,11 +47,22 @@ var (
 	// `!System time:` — ad-hoc timestamp banners some FortiOS builds inject.
 	fortiSystemTimeRegex = regexp.MustCompile(`(?m)^(\s*!System time:\s*).*$`)
 
-	// Multi-line PEM-style private key blocks. Body is re-encrypted with random
-	// IV on every backup. Match from the BEGIN line through the matching END line.
-	// Use (?s) for dotall so `.` spans newlines.
-	fortiPrivateKeyBlockRegex = regexp.MustCompile(
-		`(?s)(\s*set\s+private-key\s+"-----BEGIN[^"]+-----).*?(-----END[^"]+-----")`,
+	// Multi-line PEM-bearing fields. Covers `set private-key` (body re-encrypted
+	// with random IV every backup), `set ca`, `set csr`, `set certificate`, and
+	// any future `set <field> "-----BEGIN..."` line FortiOS adds. Even
+	// deterministic certs/CSRs can drift on re-emission due to whitespace
+	// normalization — masking the body keeps the diff stable. The captured
+	// BEGIN/END markers are preserved so the diff UI still shows WHICH field
+	// was masked.
+	//
+	// (?s) makes `[^"]*?` span newlines for the body, but the BEGIN/END line
+	// inner-text uses [^"\r\n]+ so each match stays anchored to ONE BEGIN
+	// line and ONE END line — otherwise greedy matching collapses two
+	// adjacent PEM blocks (e.g. `set ca` immediately followed by `set csr`)
+	// into a single capture, masking the second field name and losing the
+	// boundary between them.
+	fortiPemBlockRegex = regexp.MustCompile(
+		`(?s)(\s*set\s+\S+\s+"-----BEGIN[^"\r\n]+-----)[^"]*?(-----END[^"\r\n]+-----")`,
 	)
 
 	// Password-masking marker (FortiOS 7.2.1+ optional feature). Presence in the
@@ -71,7 +82,7 @@ func (fortigateNormalizer) Normalize(raw []byte) ([]byte, string) {
 	out = fortiPrivateEncKeyRegex.ReplaceAll(out, []byte(`${1}<volatile-private-encryption-key>`))
 	out = fortiLastLoginRegex.ReplaceAll(out, []byte(`${1}<volatile-last-login>`))
 	out = fortiSystemTimeRegex.ReplaceAll(out, []byte(`${1}<volatile-system-time>`))
-	out = fortiPrivateKeyBlockRegex.ReplaceAll(out, []byte(`${1}<volatile-private-key>${2}`))
+	out = fortiPemBlockRegex.ReplaceAll(out, []byte(`${1}<volatile-pem>${2}`))
 
 	quality := QualityFull
 	if bytes.Contains(raw, fortiMaskingMarker) || bytes.Contains(raw, fortiMaskingMarker2) {
@@ -89,6 +100,6 @@ func (fortigateNormalizer) VolatilePatterns() []VolatilePattern {
 		{Name: "private-encryption-key", Description: "Admin-supplied private-data-encryption key", Regex: `^(#private-encryption-key=).*$`},
 		{Name: "last-login", Description: "Per-admin last-login timestamp", Regex: `^(\s*set\s+last-login\s+).*$`},
 		{Name: "system-time", Description: "FortiOS system-time banner", Regex: `^(\s*!System time:\s*).*$`},
-		{Name: "private-key", Description: "PEM-encoded private key block (random IV body)", Regex: `(?s)(\s*set\s+private-key\s+"-----BEGIN[^"]+-----).*?(-----END[^"]+-----")`},
+		{Name: "pem-block", Description: "PEM-bearing field (private-key, ca, csr, certificate) — body masked, BEGIN/END preserved", Regex: `(?s)(\s*set\s+\S+\s+"-----BEGIN[^"\r\n]+-----)[^"]*?(-----END[^"\r\n]+-----")`},
 	}
 }
