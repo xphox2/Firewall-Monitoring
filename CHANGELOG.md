@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.206] - 2026-05-16
+
+### Fixed — device-detail charts blank because CSP blocked CDN uPlot
+- v0.10.205 loaded uPlot + its CSS from `cdn.jsdelivr.net` and Inter/JetBrains Mono from Google Fonts. The server's existing CSP at `internal/api/middleware/middleware.go:257` is `script-src 'self'` / `style-src 'self'` / `font-src 'self'` — so the browser silently dropped all three external loads. Result: `typeof uPlot === 'undefined'` when the chart module ran, console error `uPlot not loaded; charts cannot render`, three blank chart cards.
+- **Fix:** `uPlot.iife.min.js` (50 KB) and `uPlot.min.css` (1.9 KB) are now committed to `cmd/api/static/js/` and `cmd/api/static/css/` and served same-origin. HTML loads them via `/static/...` paths. Same-origin satisfies the CSP cleanly — no CDN, no `'unsafe-inline'`, no policy change.
+- **Fonts:** Google Fonts `<link>` tags removed since the CSP blocks them too. The CSS variable fallback chain (`ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, ...` for UI and `ui-monospace, "SF Mono", Menlo, Consolas, ...` for numerics) renders cleanly on every modern OS. Tabular numerals (`font-feature-settings: "tnum" 1`) work on system fonts too — Segoe UI, SF Pro, Roboto, and DejaVu all support the OpenType `tnum` feature. The aesthetic loss is modest; the offline-friendliness, security posture, and EU privacy posture (no third-party font fetch) all improve.
+
+### Why this matters
+The whole point of v0.10.205 was to make the device-detail charts usable. v0.10.205 was DOA on any deployment with a same-origin CSP — which is the default for this project and every other security-conscious deploy. Same-origin-only assets are the only sustainable pattern for an admin UI that has to work on air-gapped, CSP-strict, and offline-first deployments. Lesson logged.
+
 ## [0.10.205] - 2026-05-16
 
 ### Changed — device-detail page chart redesign (operator-grade)

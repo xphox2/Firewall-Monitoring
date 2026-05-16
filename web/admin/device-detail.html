@@ -6,12 +6,14 @@
     <title>Device Detail - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
-    <!-- v0.10.205: refreshed typography pairing (Inter UI + JetBrains Mono numerics)
-         and uPlot for the three operator-grade time-series charts above the tab strip. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+    <!-- v0.10.205: uPlot for operator-grade time-series charts above the tab strip.
+         v0.10.206: uPlot + its CSS are now served from /static/ (same-origin) rather
+         than jsDelivr — the server CSP is `script-src 'self'` / `style-src 'self'`,
+         which blocked the CDN-served version entirely. Google Fonts links are also
+         removed for the same reason; the CSS variable fallback chain renders fine
+         on system fonts (Segoe UI / SF Pro / Roboto / etc.), and most system fonts
+         support tabular numerals via the same `font-feature-settings` rule. -->
+    <link rel="stylesheet" href="/static/css/uPlot.min.css">
     <link rel="stylesheet" href="/static/css/admin-device-detail.css">
     <style>
         @media (max-width: 768px) {
@@ -477,7 +479,7 @@
     </div>
 
     <script defer src="/static/js/chart.umd.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+    <script defer src="/static/js/uPlot.iife.min.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
     <script defer src="/static/js/admin-device-detail-charts.js"></script>
     <script>
