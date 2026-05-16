@@ -1,4 +1,13 @@
 # Changelog
+## [0.10.201] - 2026-05-16
+
+### Changed — `DATA_DIR` parameterized in shipped compose
+- `docker-compose.yml` volume `./data:/data` is now `${DATA_DIR:-./data}:/data`. Fresh deploys still get a project-local `./data` directory with no setup. Production deployments set `DATA_DIR` in a `.env` file (gitignored) to point at a dedicated partition — eliminates the recurring "Your local changes to docker-compose.yml would be overwritten by merge" on every upstream pull.
+- New `.env.example` documents the variable with the prod rust-01 value (`/mnt/STORAGE/firewall-mon-data`) commented out so future deployers can see the intended pattern without inheriting our specific path.
+
+### Why this matters
+The rust-01 host outgrew its root volume in 2026-05 (CHANGELOG v0.10.199) and was relocated to `/mnt/STORAGE`. The prod compose carried the new path as an uncommitted local edit, which collided with every upstream `git pull`. Parameterizing via env keeps the prod path on the prod box and the upstream file generic.
+
 ## [0.10.200] - 2026-05-16
 
 ### Hardened — config-backup false-alert defenses (defense-in-depth pass)

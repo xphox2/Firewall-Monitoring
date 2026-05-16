@@ -20,5 +20,10 @@ services:
       - "6343:6343/udp"   # sFlow
       - "8089:8089"       # Probe server
     volumes:
-      - ./data:/data
+      # Host path for SQLite/Postgres data + config-backup archive. Default is
+      # a project-local ./data dir (works out of the box for fresh deploys).
+      # Production should set DATA_DIR in a .env file (gitignored) to point at
+      # a dedicated partition with adequate free space — syslog_messages alone
+      # can grow into the GB range. See `.env.example` and CHANGELOG v0.10.201.
+      - ${DATA_DIR:-./data}:/data
       - ./config:/config
