@@ -186,6 +186,37 @@
         }
     }
 
+    // smartPercentRange — uPlot range function for "this is a percentage"
+    // y-axes (Overview CPU/Mem/Disk, CPU Breakdown). Behavior:
+    //
+    //   - Min is ALWAYS 0. Percentages floating on a non-zero baseline are
+    //     misleading; readers don't expect "0%" to mean "85%".
+    //   - Max auto-fits the visible-data max with a 15% headroom. uPlot's
+    //     auto-fit considers ONLY series that aren't toggled off via the
+    //     legend, so clicking a high-value series to hide it makes the
+    //     remaining low-value series pop. That's the user's feature request.
+    //   - The top is snapped UP to a "nice" round number (5/10/20/25/50/100)
+    //     so axis ticks land on whole numbers, not 17.3 / 34.6 / 51.9.
+    //   - A floor of 5% on the top means even a flat-at-zero chart still
+    //     renders a readable axis (otherwise uPlot collapses to a hairline).
+    //   - When utilization is near saturation (data max > 85%), we snap to
+    //     100 — operators expect a "full" axis at high load.
+    //
+    // dataMin/dataMax come pre-computed by uPlot from visible series. When
+    // every series is toggled off they arrive as Infinity/-Infinity; the
+    // fallback is the historical hardcoded [0, 100].
+    function smartPercentRange(u, dataMin, dataMax) {
+        if (dataMax == null || !isFinite(dataMax)) return [0, 100];
+        if (dataMax > 85) return [0, 100];
+        var raw = Math.max(5, dataMax * 1.15);
+        // Snap to a nice round number.
+        var steps = [5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
+        for (var i = 0; i < steps.length; i++) {
+            if (raw <= steps[i]) return [0, steps[i]];
+        }
+        return [0, 100];
+    }
+
     function resetZoom() {
         // setScale('x', {min: null, max: null}) is a NO-OP in uPlot — null
         // means "keep the current value," not "auto-fit." To actually clear
@@ -318,7 +349,7 @@
         ];
 
         var opts = commonOpts(host, '', seriesDefs, {
-            range: function() { return [0, 100]; }
+            range: smartPercentRange
         });
         opts.axes[1].values = function(u, vals) {
             return vals.map(function(v) { return v + '%'; });
@@ -426,7 +457,7 @@
         ];
 
         var opts = commonOpts(host, '', seriesDefs, {
-            range: function() { return [0, 100]; }
+            range: smartPercentRange
         });
         opts.axes[1].values = function(u, vals) {
             return vals.map(function(v) { return v + '%'; });

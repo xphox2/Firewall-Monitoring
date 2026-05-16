@@ -1,4 +1,24 @@
 # Changelog
+## [0.10.209] - 2026-05-16
+
+### Changed — smarter y-axis + larger server-side buckets on device-detail charts
+Two improvements operators asked for in the same breath: "no more tiny noise bumps" and "let me zoom into a 10%-max series instead of always staring at 0-100%."
+
+#### Smart y-axis range (`smartPercentRange` in `admin-device-detail-charts.js`)
+- Replaces the hardcoded `range: [0, 100]` on the System Overview and CPU Breakdown charts with a dynamic range function. Behavior:
+  - **Min is always 0.** Percentages floating on a non-zero baseline mislead the reader.
+  - **Max auto-fits the visible-data max** with a 15% headroom. Because `legend.isolate: true` triggers a re-render on legend click, **toggling off the dominant series** (e.g. clicking "CPU" when CPU is at 80%) **rescales the axis to fit the remaining series.** Variation in a 10%-max memory line now shows as a tall, readable trace instead of a hairline at the bottom of a 0-100 grid.
+  - **Top snaps to a "nice" round number** (5 / 10 / 15 / 20 / 25 / 30 / 40 / 50 / 60 / 70 / 80 / 90 / 100) so axis ticks land on whole values, not 17.3 / 34.6 / 51.9.
+  - **Saturation snap-back:** if any visible series exceeds 85%, the axis returns to [0, 100]. Operators expect a "full" axis at high load.
+  - **Floor of 5%:** a flat-at-zero chart still renders a readable axis instead of collapsing to a hairline.
+
+#### Server-side bucket-size tuning (`GetSystemStatusBuckets` in `internal/database/database.go`)
+- The 6h / 12h / 24h ranges previously used `minute` bucketing (360 / 720 / 1440 points per chart). A typical 800-1000px-wide chart paints those as sub-pixel-spaced jitter — visible as a perpetually fuzzy line even on genuinely flat data. The "tiny bumps" complaint.
+- Switched 6h / 12h / 24h to the existing `5min` bucket expression (already in `dialect.go` for Postgres and SQLite). Counts drop to 72 / 144 / 288 — roughly one bucket per 2-4 chart pixels. 5-minute AVG still catches every real sustained CPU/memory/network change; the only thing lost is high-frequency poll-cadence noise, which was never useful anyway.
+
+#### Net visual effect
+A 24h chart on a steady-state device that used to look like a fuzzy comb at 30% now reads as a clean line near 30. Click "CPU" in the legend to hide it and the chart rescales — variation in the now-dominant 10%-max memory series becomes a readable line at the top half of the plot instead of a near-flat hairline.
+
 ## [0.10.208] - 2026-05-16
 
 ### Fixed — device-detail chart "reset" button was a no-op

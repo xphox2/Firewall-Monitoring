@@ -1921,16 +1921,24 @@ type SystemStatusBucket struct {
 func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error) {
 	var hours int
 	var bucketExpr string
+	// Bucket-size tuning (v0.10.209): the goal is to keep each range under
+	// roughly 300 points so a typical 800-1000px chart gets multiple pixels
+	// per bucket. Minute-cadence buckets at 6h+ produced 360-1440 points
+	// each, which painted as sub-pixel-spaced jitter — the "tiny bumps"
+	// the user complained about. Switching the 6h/12h/24h ranges to 5-minute
+	// buckets reduces the count to 72/144/288 respectively, smoothing the
+	// visual without losing real movement (5-min AVG still catches every
+	// real sustained change in CPU/memory/network).
 	switch rangeStr {
 	case "1h":
 		hours = 1
 		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
 	case "6h":
 		hours = 6
-		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+		bucketExpr = d.dialect.TimeBucket("5min", "timestamp")
 	case "12h":
 		hours = 12
-		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+		bucketExpr = d.dialect.TimeBucket("5min", "timestamp")
 	case "7d":
 		hours = 168
 		bucketExpr = d.dialect.TimeBucket("hour", "timestamp")
@@ -1945,7 +1953,7 @@ func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]Sys
 		bucketExpr = d.dialect.TimeBucket("day", "timestamp")
 	default: // 24h
 		hours = 24
-		bucketExpr = d.dialect.TimeBucket("minute", "timestamp")
+		bucketExpr = d.dialect.TimeBucket("5min", "timestamp")
 	}
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
