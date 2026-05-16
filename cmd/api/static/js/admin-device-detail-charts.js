@@ -187,9 +187,18 @@
     }
 
     function resetZoom() {
+        // setScale('x', {min: null, max: null}) is a NO-OP in uPlot — null
+        // means "keep the current value," not "auto-fit." To actually clear
+        // a brush-zoom we have to set the scale back to the data's full
+        // x-range. Each chart owns its own data array so we read from there
+        // (rather than re-fetching). state.charts is sparse if a chart was
+        // hidden (e.g. CPU breakdown when no breakdown data exists).
         for (var k in state.charts) {
             var c = state.charts[k];
-            if (c && c.setScale) c.setScale('x', { min: null, max: null });
+            if (!c || !c.data || !c.data[0] || !c.setScale) continue;
+            var xs = c.data[0];
+            if (xs.length === 0) continue;
+            c.setScale('x', { min: xs[0], max: xs[xs.length - 1] });
         }
     }
 

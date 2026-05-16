@@ -1,4 +1,11 @@
 # Changelog
+## [0.10.208] - 2026-05-16
+
+### Fixed — device-detail chart "reset" button was a no-op
+- `FwmonDeviceCharts.resetZoom()` was calling `chart.setScale('x', { min: null, max: null })` to clear a brush-zoom. In uPlot, `null` on `setScale` means "keep the current value" — not "auto-fit." The call did nothing.
+- Fix at `cmd/api/static/js/admin-device-detail-charts.js:189`: explicitly set the x-scale to `{ min: data[0][0], max: data[0][last] }`, i.e. the first and last timestamp in the chart's own data array. That snaps the visible window back to the full requested range. Iterates all three synced charts so a reset clears the zoom on Overview, Network, and CPU Breakdown together.
+- Guards on `c.data && c.data[0]` so a chart that's hidden (e.g. CPU Breakdown when the device doesn't report per-core stats) doesn't trip the reset path.
+
 ## [0.10.207] - 2026-05-16
 
 ### Added — self-hosted Inter + JetBrains Mono on the device-detail page
