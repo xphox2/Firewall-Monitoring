@@ -21,6 +21,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// settingsSecretKeys is the source of truth for which system_settings rows
+// hold secret values that must be encrypted at rest and masked in API
+// responses. Defined at package scope so GetSettings, UpdateSettings, and
+// the startup backfill share one list. v0.10.226 (see CHANGELOG).
+var settingsSecretKeys = map[string]bool{
+	"smtp_password": true,
+}
+
 func (h *Handler) GetSettings(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.SystemSetting{}))
@@ -36,9 +44,15 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		return
 	}
 
-	// Mask secret values
+	// Mask secret values. v0.10.226: key off the settingsSecretKeys map
+	// rather than the row's is_secret column. The column was being
+	// silently corrupted by UpdateSettings (it never copied is_secret
+	// onto the existing row before Save) — relying on it meant raw
+	// {enc}<base64> ciphertext was being leaked back to the settings UI
+	// any time a row got out of sync. The key list is the static source
+	// of truth here.
 	for i := range settings {
-		if settings[i].IsSecret {
+		if settingsSecretKeys[settings[i].Key] {
 			settings[i].Value = "********"
 		}
 	}
@@ -88,9 +102,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"spike_alert_enabled":     true,
 	}
 
-	secretKeys := map[string]bool{
-		"smtp_password": true,
-	}
+	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
 
 	var validSettings []models.SystemSetting
 	// v0.10.224: collect non-fatal warnings (e.g. whitespace trimmed from
@@ -228,6 +240,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			existing.Value = s.Value
 			existing.Label = s.Label
 			existing.Category = s.Category
+			// v0.10.226 — THE bug. This line was missing. Without it,
+			// FirstOrCreate populates `existing` from the DB row (or
+			// zero-value defaults if the row is new), but is_secret was
+			// never copied across from the incoming request, so the
+			// row got persisted with is_secret=false even when the value
+			// was encrypted ciphertext. getNotificationSetting then
+			// gated decryption on is_secret and returned the raw
+			// {enc}<base64> string as the "password" to SMTP AUTH —
+			// causing Dovecot to log "Password mismatch" while IMAP
+			// auth with the same credentials worked fine. See the
+			// v0.10.226 CHANGELOG entry for the full forensic trail.
+			existing.IsSecret = s.IsSecret
 			if err := h.db.Gorm().Save(&existing).Error; err != nil {
 				log.Printf("Failed to save setting %s: %v", s.Key, err)
 				failedKeys = append(failedKeys, s.Key)
@@ -247,14 +271,21 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 }
 
 // getNotificationSetting reads a key from system_settings, falling back to config.
+//
+// v0.10.226: drop the s.IsSecret gate — DecryptField is idempotent for
+// values that don't carry the "{enc}" prefix (see internal/database/crypto.go),
+// so calling it unconditionally is safe for both encrypted secrets AND
+// plaintext settings. The old gate was load-bearing on UpdateSettings
+// correctly persisting is_secret, which it didn't — every SMTP test was
+// shipping the raw "{enc}<base64>" ciphertext to the mail server as the
+// password. Keying off the value's actual prefix (inside DecryptField)
+// instead of an out-of-band flag makes the read path robust to any
+// existing DB rows where is_secret is wrong.
 func (h *Handler) getNotificationSetting(key string) string {
 	if h.db != nil {
 		var s models.SystemSetting
 		if err := h.db.Gorm().Where("\"key\" = ?", key).First(&s).Error; err == nil && s.Value != "" {
-			if s.IsSecret {
-				return h.db.DecryptField(s.Value)
-			}
-			return s.Value
+			return h.db.DecryptField(s.Value)
 		}
 	}
 	// Fall back to env/config values

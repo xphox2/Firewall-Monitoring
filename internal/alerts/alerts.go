@@ -441,7 +441,19 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 		case "smtp_username":
 			am.config.Alerts.SMTPUsername = s.Value
 		case "smtp_password":
-			am.config.Alerts.SMTPPassword = s.Value
+			// v0.10.226: was assigning raw s.Value, which is "{enc}<base64>"
+			// ciphertext for any password saved through the admin UI.
+			// Result: every real alert email (CPU threshold, interface
+			// down, VPN tunnel down, etc.) was sending ciphertext to the
+			// SMTP server as the auth password, which never matched.
+			// DecryptField is idempotent for unencrypted values, so this
+			// is safe even when smtp_password was set via env var rather
+			// than the admin UI.
+			if am.db != nil {
+				am.config.Alerts.SMTPPassword = am.db.DecryptField(s.Value)
+			} else {
+				am.config.Alerts.SMTPPassword = s.Value
+			}
 		case "smtp_from":
 			am.config.Alerts.SMTPFrom = s.Value
 		case "smtp_to":

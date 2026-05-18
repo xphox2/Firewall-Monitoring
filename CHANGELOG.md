@@ -1,4 +1,66 @@
 # Changelog
+## [0.10.226] - 2026-05-18
+
+### Fixed — SMTP auth: raw ciphertext sent as password (the REAL cause of every 535 in this thread)
+Every theory in v0.10.222–v0.10.225 about why SMTP auth was failing — LOGIN vs PLAIN, username format, whitespace, MITM, Dovecot's `(reason unavailable)` — was working around the symptom, not the cause. The bug was on our side, in two adjacent lines of `UpdateSettings` that the user kept asking me to find.
+
+#### Root cause: `IsSecret` was never persisted on save
+`UpdateSettings` in `internal/api/handlers/handlers_settings.go` did this:
+
+```go
+existing := models.SystemSetting{Key: s.Key}
+h.db.Gorm().FirstOrCreate(&existing, models.SystemSetting{Key: s.Key})
+// FirstOrCreate populates `existing` from the DB row, or zero-values if new
+if !s.IsSecret || s.Value != "" {
+    existing.Value = s.Value         // ciphertext written
+    existing.Label = s.Label
+    existing.Category = s.Category
+    h.db.Gorm().Save(&existing)      // IsSecret NEVER copied — stays at its zero value
+}
+```
+
+`s.IsSecret = true` was set on the request struct, the value was encrypted with `EncryptField` → `"{enc}<base64-ciphertext>"`, and then both got handed to `Save(&existing)` — but `existing.IsSecret` was never set from `s.IsSecret`. So the persisted row was `{ Value: "{enc}AAAA...base64...", IsSecret: false }`. On every save thereafter the same thing happened — fresh ciphertext, `IsSecret` still `false`.
+
+#### Why this caused exactly the 535 the operator was seeing
+`getNotificationSetting` gated decryption on `IsSecret`:
+
+```go
+if s.IsSecret { return h.db.DecryptField(s.Value) }
+return s.Value   // <-- raw "{enc}<base64>" returned to caller
+```
+
+So when `runSMTPDiagnostic` called `getNotificationSetting("smtp_password")`, it got back the literal string `"{enc}AAAA...base64..."` and passed it to `smtp.PlainAuth("", username, password, host)` as the password. Postfix forwarded that string verbatim over the Dovecot SASL socket. Dovecot's SQL passdb compared it against the actual stored password column for `support@technicallabs.org` and (correctly) returned `Password mismatch`. IMAP login from the operator's webmail worked because the operator typed the real password into the browser — only firewall-mon was sending ciphertext.
+
+The "different bytes every save" observation matches the symptom: AES-GCM uses a random nonce per encrypt, so each save produced different ciphertext, all of which looked nothing like the real password.
+
+#### Secondary bug — real alert emails were broken in the same way
+`internal/alerts/alerts.go:443-444` populated `am.config.Alerts.SMTPPassword` with `s.Value` directly, no decryption. Every CPU/memory/disk/VPN/interface-down alert email since the encrypted-storage migration was sending ciphertext as the password to the SMTP server — silently failing in production, never reported because the operator wasn't watching alert-email delivery. Fixed.
+
+#### Tertiary bug — settings page was leaking ciphertext back to the UI
+`GetSettings` masked secret values based on the row's `IsSecret` column. Because the column was wrong, the mask never fired for `smtp_password`, and a GET `/admin/api/settings` response was returning `"{enc}<base64-ciphertext>"` as the value for `smtp_password`. The settings UI's JS subsequently treated that as the existing-value placeholder and rendered it back into the password input field. Not exploitable on its own (AES-256-GCM ciphertext is useless without the key), but a correctness leak.
+
+### Fixes
+1. **`UpdateSettings`** — add `existing.IsSecret = s.IsSecret` immediately before `Save(&existing)`. The one missing line. (`handlers_settings.go:233-241`)
+2. **`getNotificationSetting`** — drop the `IsSecret` gate. `DecryptField` is idempotent: it checks for the `{enc}` prefix internally and returns the input unchanged for plaintext values, so calling it unconditionally is safe for every settings key (`crypto.go:57-60`). This makes the read path robust to *any* existing DB row whose `IsSecret` flag is wrong — no DB migration required for the auth to start working. (`handlers_settings.go:264-282`)
+3. **`GetSettings`** — mask based on a package-level `settingsSecretKeys` map (the static source of truth for which keys are secret) rather than the row's `IsSecret` column. Same robustness rationale. (`handlers_settings.go:24-58`)
+4. **`alerts.go`** — wrap `s.Value` in `am.db.DecryptField(s.Value)` for the `smtp_password` case so real alert emails get the plaintext password. (`alerts.go:443-460`)
+
+### Why every prior version in this thread didn't fix it
+- **v0.10.220-221** (verbose SMTP trace): exposed the failure to the UI but couldn't see *why* it failed because the server's reply was `(reason unavailable)`.
+- **v0.10.222** (LOGIN/CompoundAuth): right answer to a different question — server actually offered PLAIN, which the stdlib had supported all along.
+- **v0.10.223** (username override + length leak): all wrong, reverted in v0.10.224.
+- **v0.10.224** (MITM check + Dovecot hint): fixed a real (latent) security bug and pointed the operator at the right log, but the underlying password-bytes-don't-match problem was never going to surface without reading our own storage path.
+- **v0.10.225** (admin SPA navigation): unrelated, fixed in passing.
+
+The operator was right to push back with "please don't assume — research the proper way." All the SMTP-side theories were avoiding the simpler hypothesis that *our own code was sending the wrong bytes*, and a 30-line agent investigation of the storage path found the missing-line bug in minutes.
+
+### Files
+- Modified: `internal/api/handlers/handlers_settings.go` — extracted `settingsSecretKeys` to package scope, made `GetSettings` mask off it, added `existing.IsSecret = s.IsSecret` in `UpdateSettings`, made `getNotificationSetting` always-decrypt.
+- Modified: `internal/alerts/alerts.go` — `RefreshThresholds` decrypts `smtp_password` before storing in `config.Alerts.SMTPPassword`.
+
+### Operator action required after deploying
+None — the always-decrypt read path makes the SMTP test work immediately against existing `{enc}`-prefixed rows. The first re-save of `smtp_password` after deploy will also write `is_secret=true` correctly, so the settings page stops returning ciphertext to the browser. No DB migration script needed.
+
 ## [0.10.225] - 2026-05-18
 
 ### Fixed — admin SPA navigation: detail-page clicks lost in interceptor + two related bugs
