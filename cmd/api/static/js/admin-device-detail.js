@@ -688,12 +688,19 @@
             var state = v.state || (v.status === 'up' ? 'active' : 'inactive');
             var stateClass = (state === 'active' && hasTraffic) ? 'active' : (state === 'active' ? 'up' : 'inactive');
             var stateLabel = (state === 'active' && hasTraffic) ? 'Online' : state;
+            // Cross-pivot (v0.10.215, bundle E3): remote-end IP links to
+            // /admin/syslog?search=<ip> so an operator looking at a flapping
+            // tunnel can jump to "what is the remote saying" in one click.
+            var remoteCell = (v.remote_ip && window.AdminCommon)
+                ? window.AdminCommon.filterLink('syslog', { search: v.remote_ip }, v.remote_ip,
+                    { title: 'Search syslog for messages mentioning ' + v.remote_ip })
+                : esc(v.remote_ip);
             return '<tr>' +
                 '<td>' + esc(v.phase1_name || v.tunnel_name) + '</td>' +
                 '<td><strong>' + esc(v.tunnel_name) + '</strong></td>' +
                 '<td>' + getTunnelTypeBadge(v.tunnel_type) + '</td>' +
                 '<td style="color:#8b949e;font-size:0.8rem;">' + esc(v.interface_name || '-') + '</td>' +
-                '<td>' + esc(v.remote_ip) + '</td>' +
+                '<td>' + remoteCell + '</td>' +
                 '<td style="color:#8b949e;font-size:0.78rem;">' + esc(v.mode || '-') + '</td>' +
                 '<td><span class="badge ' + v.status + '">' + v.status + '</span></td>' +
                 '<td><span class="badge ' + stateClass + '">' + stateLabel + '</span></td>' +
@@ -806,6 +813,15 @@
                 '<td>' + esc(a.message) + '</td>' +
             '</tr>';
         }).join('');
+
+        // Update "View all alerts" link with the current device filter
+        // (v0.10.215, bundle E3). The state key is `device_id` (matches
+        // FwmonControls.attachAnalyticsPage descriptor for the alerts page).
+        // Idempotent — safe to call repeatedly.
+        var viewAllLink = document.getElementById('alerts-view-all-link');
+        if (viewAllLink && deviceId) {
+            viewAllLink.href = '/admin/alerts?device_id=' + encodeURIComponent(deviceId);
+        }
     }
 
     function renderPing() {

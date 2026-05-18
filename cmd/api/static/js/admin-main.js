@@ -581,10 +581,16 @@
                     ? '<span style="color:#8b949e;font-size:0.75rem;">Auto-managed</span>'
                     : '<button class="btn danger sm" data-action="delete-connection" data-id="' + c.id + '">Delete</button>';
                 var editBtn = '<button class="btn secondary sm" data-action="edit-connection" data-id="' + c.id + '">Edit</button>';
+                // Cross-page nav (v0.10.215, bundle E2): source + dest
+                // device names link straight to each device's detail page.
+                var srcName = c.source_device ? c.source_device.name : ('DEV-' + c.source_device_id);
+                var dstName = c.dest_device   ? c.dest_device.name   : ('DEV-' + c.dest_device_id);
+                var srcCell = AC.deviceLink(c.source_device_id, srcName);
+                var dstCell = AC.deviceLink(c.dest_device_id,   dstName);
                 return '<tr>' +
                     '<td>' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
-                    '<td>' + (escapeHtml(c.source_device ? c.source_device.name : '') || c.source_device_id) + '</td>' +
-                    '<td>' + (escapeHtml(c.dest_device ? c.dest_device.name : '') || c.dest_device_id) + '</td>' +
+                    '<td>' + srcCell + '</td>' +
+                    '<td>' + dstCell + '</td>' +
                     '<td>' + escapeHtml(c.connection_type ? c.connection_type.toUpperCase() : 'IPSEC') + '</td>' +
                     '<td><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
                     '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
@@ -837,10 +843,22 @@
                     typeBadge = '<span class="badge ' + (t === 'TRAFFIC' ? 'info' : (t === 'IPS' ? 'error' : (t === 'AV' ? 'critical' : 'warning'))) + '">' + t + '</span>';
                 }
             }
+            // Cross-page nav (v0.10.215, bundle E2): source IP filters the
+            // syslog page to "all entries from this device"; hostname does
+            // the same via its column. Both stay on the same page (no full
+            // reload — admin SPA picks up the ?search param on load).
+            var srcIpCell = m.source_ip
+                ? AC.filterLink('syslog', { search: m.source_ip }, m.source_ip,
+                    { title: 'Show all syslog entries from ' + m.source_ip })
+                : '';
+            var hostnameCell = m.hostname
+                ? AC.filterLink('syslog', { search: m.hostname }, m.hostname,
+                    { title: 'Show all syslog entries from ' + m.hostname })
+                : '';
             return '<tr class="syslog-row" data-id="' + m.id + '">' +
                 '<td style="white-space:nowrap;">' + formatDate(m.timestamp) + '</td>' +
-                '<td class="mono">' + escapeHtml(m.source_ip) + '</td>' +
-                '<td>' + escapeHtml(m.hostname) + '</td>' +
+                '<td class="mono">' + srcIpCell + '</td>' +
+                '<td>' + hostnameCell + '</td>' +
                 '<td><span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></td>' +
                 '<td>' + typeBadge + '</td>' +
                 '<td class="expandable-msg" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(m.message) + '</td>' +
@@ -1452,10 +1470,17 @@
             } else {
                 statusCol = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Ack</button>';
             }
+            // Cross-page nav (v0.10.215, bundle E2): the device cell links
+            // straight to that device's detail page so an alerts triage
+            // session is one click to context.
+            var dev = currentDevices.find(function(d) { return d.id === a.device_id; });
+            var deviceCell = a.device_id
+                ? AC.deviceLink(a.device_id, dev ? dev.name : ('DEV-' + a.device_id))
+                : '';
             return '<tr class="alert-row" data-id="' + a.id + '">' +
                 checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
-                '<td>' + getDeviceName(a.device_id) + '</td>' +
+                '<td>' + deviceCell + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td class="expandable-msg" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(a.message) + '</td>' +
@@ -1493,6 +1518,25 @@
                 parsedMsg = parseFortiGateLog(a.message);
             }
 
+            // Cross-page nav (v0.10.215, bundle E3): the device row in the
+            // alert-detail modal is a link to the device-detail page, and
+            // we surface two extra context-jumps so an operator triaging
+            // an alert can pivot to "all alerts for this device" or "all
+            // syslog around this time" in one click.
+            var devForAlert = currentDevices.find(function(d) { return d.id === a.device_id; });
+            var devLinkHtml = a.device_id
+                ? AC.deviceLink(a.device_id, devForAlert ? devForAlert.name : ('DEV-' + a.device_id))
+                : 'Unknown';
+            // The analytics pages use device_id (not device) as their state
+            // key — see FwmonControls.attachAnalyticsPage descriptors below.
+            var deviceAlertsLink = a.device_id
+                ? ' ' + AC.filterLink('alerts', { device_id: a.device_id }, 'All alerts',
+                    { title: 'Show all alerts from this device' })
+                : '';
+            var deviceSyslogLink = (a.device_id && devForAlert)
+                ? ' ' + AC.filterLink('syslog', { device_id: a.device_id }, 'Related syslog',
+                    { title: 'Show syslog entries from this device' })
+                : '';
             var headerHtml =
                 '<div style="margin-bottom:16px;">' +
                     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
@@ -1501,9 +1545,14 @@
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +
                         '<div><span style="color:#8b949e;">Time:</span> ' + formatDate(a.timestamp) + '</div>' +
-                        '<div><span style="color:#8b949e;">Device:</span> ' + escapeHtml(getDeviceName(a.device_id)) + '</div>' +
+                        '<div><span style="color:#8b949e;">Device:</span> ' + devLinkHtml + '</div>' +
                         '<div><span style="color:#8b949e;">Policy:</span> ' + (a.policy_id ? 'ID ' + a.policy_id : 'N/A') + '</div>' +
                     '</div>' +
+                    (deviceAlertsLink || deviceSyslogLink ?
+                        '<div style="margin-top:10px;font-size:0.8rem;color:#8b949e;display:flex;gap:14px;flex-wrap:wrap;">' +
+                        '<span>Drill into:</span>' +
+                        deviceAlertsLink + deviceSyslogLink +
+                        '</div>' : '') +
                 '</div>';
 
             var metricHtml = '';
@@ -1678,9 +1727,17 @@
     function renderTrapsTable(traps, append) {
         var tbody = document.querySelector('#traps-table tbody');
         var html = traps.map(function(t) {
+            // Source-IP cross-pivot (v0.10.215, bundle E2): traps page has
+            // no search filter today, so the IP cell pivots to /admin/syslog
+            // filtered by the same source instead — operators triaging a
+            // trap usually want the surrounding syslog context anyway.
+            var srcCell = t.source_ip
+                ? AC.filterLink('syslog', { search: t.source_ip }, t.source_ip,
+                    { title: 'Show syslog entries from ' + t.source_ip })
+                : '';
             return '<tr>' +
                 '<td>' + formatDate(t.timestamp) + '</td>' +
-                '<td class="mono">' + escapeHtml(t.source_ip) + '</td>' +
+                '<td class="mono">' + srcCell + '</td>' +
                 '<td>' + escapeHtml(t.trap_type) + '</td>' +
                 '<td><span class="badge ' + escapeHtml(t.severity) + '">' + escapeHtml(t.severity).toUpperCase() + '</span></td>' +
                 '<td>' + escapeHtml(t.message) + '</td>' +
@@ -3042,8 +3099,11 @@
     // Click on syslog row to show detail
     document.addEventListener('click', function(e) {
         // Ignore clicks on form controls or data-action elements — they have
-        // their own handlers (selection checkboxes, ack button, etc.).
-        if (e.target.closest('input, button, select, textarea, [data-action]')) return;
+        // their own handlers (selection checkboxes, ack button, etc.). Also
+        // skip <a> clicks (v0.10.215, bundle E2): syslog/alert rows now
+        // contain inline filter-links, and we don't want clicking those
+        // links to *also* open the row detail modal.
+        if (e.target.closest('a, input, button, select, textarea, [data-action]')) return;
         var row = e.target.closest('.syslog-row');
         if (row) { showSyslogDetail(parseInt(row.dataset.id)); return; }
         var row2 = e.target.closest('.alert-row');

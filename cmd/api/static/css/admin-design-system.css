@@ -690,6 +690,32 @@
     box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.35);
 }
 
+/* Cross-page link affordance (v0.10.215, bundle E2). Used by
+ * AdminCommon.deviceLink / connectionLink / filterLink helpers to mark
+ * up clickable IDs inside table cells. The underline-on-hover pattern
+ * keeps tables visually quiet at rest but signals interactivity on
+ * pointer move. Color uses the sky-300 series so it's visually anchored
+ * to the rest of the accent palette.
+ */
+.fwmon-link {
+    color: var(--fwmon-series-1);
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+    transition: border-color 80ms ease, color 80ms ease;
+}
+
+.fwmon-link:hover {
+    color: #a5dcff;
+    border-bottom-color: currentColor;
+}
+
+.fwmon-link:focus-visible {
+    outline: none;
+    color: #a5dcff;
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.45);
+    border-radius: 2px;
+}
+
 /* Screen-reader-only utility — for visually-hidden text that still
  * needs to be announced (e.g. icon-only button captions).
  */
@@ -830,7 +856,8 @@
     .fwmon-flows-chip-clear,
     .fwmon-flows-select,
     .fwmon-flows-input,
-    .skip-link {
+    .skip-link,
+    .fwmon-link {
         transition: none !important;
     }
 }

@@ -1,4 +1,41 @@
 # Changelog
+## [0.10.215] - 2026-05-18
+
+### Changed — admin-wide cross-page linkification (Bundle E: E1 + E2 + E3)
+Fourth commit of the "improve the whole admin area" sweep. The visual + a11y + perf foundations from bundles A/B/C are in place; this bundle wires the navigation that ties them together so an operator triaging an alert / syslog / trap row can pivot to context in a single click.
+
+#### Audit
+One parallel sub-agent audited every render function across the admin JS files. Findings: 9 plain-text fields display a device, probe, site, IP, or tunnel ID/name with no link affordance even though a natural deep-link target exists. Highest-value gaps: alerts table device cell (no link to device-detail), syslog/traps source IP and hostname cells (no link to the page filter), connections table source/dest device names (only the "Details" button was a link), tunnel remote-IP cell (no pivot to remote-side syslog).
+
+#### E2 — Helpers + linkified ID cells
+- New helpers on `AdminCommon` in `admin-common.js`:
+  - `deviceLink(id, label, opts)` → `<a href="/admin/devices/:id" class="fwmon-link" …>label</a>`
+  - `connectionLink(id, label, opts)` → `<a href="/admin/connections/:id" …>`
+  - `filterLink(page, params, label, opts)` → `<a href="/admin/:page?k=v&…" …>` — deep-links into a list page with the URL state machinery from v0.10.212 picking up the query params at boot.
+- All three helpers `escapeHtml()` their inputs so callers don't have to.
+- New `.fwmon-link` primitive in `admin-design-system.css`: sky-300 color, dotted underline on hover, `:focus-visible` ring. Added to the `prefers-reduced-motion` suppression list.
+- Wired into 4 render sites in `admin-main.js`:
+  - **Syslog table** (`renderSyslogTable`): source IP + hostname cells filter the syslog page by `search=<value>`.
+  - **Alerts table** (`renderAlertsTable`): device cell links to `/admin/devices/:id`.
+  - **Traps table** (`renderTrapsTable`): source IP cell cross-pivots to `/admin/syslog?search=<ip>` (traps page has no search filter today; syslog is the natural destination for "what was this source saying").
+  - **Connections table** (devices section): source-device and dest-device names link to their respective device-detail pages.
+- Row-click handler (`syslog-row` / `alert-row`) updated to ignore `<a>` clicks so clicking an inline filter link doesn't also pop the detail modal.
+
+#### E3 — Alert → syslog deep-links + tunnel cross-pivots
+- **Alert-detail modal**: device row is now a link to the device-detail page. Two new "Drill into" affordances appear under the header — `All alerts` (jumps to `/admin/alerts?device_id=N`) and `Related syslog` (jumps to `/admin/syslog?device_id=N`). Same state keys the analytics-page descriptors already use, so the URL params take effect on page load.
+- **Device-detail Alerts tab**: new "View all alerts for this device →" link in the section header — populated with `?device_id=N` when the page knows its device ID.
+- **Device-detail VPN tab**: tunnel `remote_ip` cells link to `/admin/syslog?search=<ip>` so an operator looking at a flapping tunnel can pivot to remote-side syslog context with one click. Falls back to escaped plain text if `AdminCommon` isn't loaded.
+
+### Files
+- Modified: `cmd/api/static/js/admin-common.js` — `deviceLink`, `connectionLink`, `filterLink`, exports.
+- Modified: `cmd/api/static/css/admin-design-system.css` — `.fwmon-link` + reduced-motion entry.
+- Modified: `cmd/api/static/js/admin-main.js` — 4 render sites linkified + alert-detail modal + row-click guard.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — VPN remote-IP link + alerts "view all" link wiring.
+- Modified: `web/admin/device-detail.html` — alerts section header + `#alerts-view-all-link` anchor.
+
+### Why this matters
+Triage flow before bundle E: see alert → copy device name → paste into syslog search → set time range. Five steps + memory tax. After bundle E: see alert → click "Related syslog" — one click, no manual copy/paste, no risk of typo. The same pattern repeats across every cross-page hop in the admin. Right-click + open-in-new-tab works too, so an operator can fan out a triage session across multiple tabs without losing their place in the originating list.
+
 ## [0.10.214] - 2026-05-18
 
 ### Changed — admin-wide performance pass (Bundle C: C1 + C2 + C3 + C4)

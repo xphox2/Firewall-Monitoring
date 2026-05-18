@@ -180,6 +180,70 @@
         });
     }
 
+    /* ------------------------------------------------------------------
+     * Cross-page link helpers (v0.10.215, bundle E2).
+     *
+     * Operators frequently need to drill from a row in one table to the
+     * detail page or filtered list of a related entity:
+     *   - Alert row → device-detail page (already know device_id)
+     *   - Syslog row → /admin/syslog filtered by hostname
+     *   - Trap row → /admin/traps filtered by source IP
+     *   - Connections row → /admin/devices/:id (both source + dest cells)
+     *   - VPN tunnel row → /admin/devices/:remote-id if known
+     *
+     * Pre-E2 every operator copied the device name and pasted it into a
+     * search bar. These helpers emit a properly-escaped <a href> so the
+     * navigation is one click + keyboard reachable + bookmarkable + right-
+     * click-openable in a new tab.
+     *
+     * The targets are real URLs, not hash routes. The admin SPA picks them
+     * up via activateTabFromUrl() on load + the FwmonControls.stateFromURL
+     * machinery wired in v0.10.212. Server-side this routes to admin.html.
+     *
+     * All helpers escape their inputs so callers don't need to.
+     * ------------------------------------------------------------------ */
+
+    function deviceLink(id, label, opts) {
+        opts = opts || {};
+        if (id == null || id === '' || id === 0) return escapeHtml(label || '');
+        var displayLabel = label != null ? label : ('DEV-' + id);
+        var extraAttrs = opts.title ? ' title="' + escapeHtml(opts.title) + '"' : '';
+        var extraClass = opts.className ? ' ' + opts.className : '';
+        return '<a href="/admin/devices/' + encodeURIComponent(id) +
+               '" class="fwmon-link' + extraClass + '"' + extraAttrs + '>' +
+               escapeHtml(displayLabel) + '</a>';
+    }
+
+    function connectionLink(id, label, opts) {
+        opts = opts || {};
+        if (id == null || id === '' || id === 0) return escapeHtml(label || '');
+        return '<a href="/admin/connections/' + encodeURIComponent(id) +
+               '" class="fwmon-link' + (opts.className ? ' ' + opts.className : '') + '">' +
+               escapeHtml(label != null ? label : id) + '</a>';
+    }
+
+    // Filter-link: deep-links into a list page with a query param so the
+    // page boots with that filter already applied. Used to jump from an
+    // alert/syslog/trap detail back to "show everything for this device".
+    //
+    // page: 'syslog' | 'alerts' | 'traps' | 'flows'
+    // params: { key: value, ... } — encoded into the query string
+    function filterLink(page, params, label, opts) {
+        opts = opts || {};
+        if (!page) return escapeHtml(label || '');
+        var qs = [];
+        Object.keys(params || {}).forEach(function(k) {
+            var v = params[k];
+            if (v === '' || v == null) return;
+            qs.push(encodeURIComponent(k) + '=' + encodeURIComponent(v));
+        });
+        var href = '/admin/' + page + (qs.length ? '?' + qs.join('&') : '');
+        return '<a href="' + href + '" class="fwmon-link' +
+               (opts.className ? ' ' + opts.className : '') + '"' +
+               (opts.title ? ' title="' + escapeHtml(opts.title) + '"' : '') + '>' +
+               escapeHtml(label != null ? label : '') + '</a>';
+    }
+
     function doLogout() {
         apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
             window.location.href = '/admin/login';
@@ -675,6 +739,9 @@
         closeModal: closeModal,
         pollWhenVisible: pollWhenVisible,
         loadCytoscape: loadCytoscape,
+        deviceLink: deviceLink,
+        connectionLink: connectionLink,
+        filterLink: filterLink,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,
