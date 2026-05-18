@@ -334,6 +334,13 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 	record("ehlo", "EHLO firewall-mon-test", "accepted", "ok", "", eStart)
 
 	// ----- STARTTLS (only if not already wrapped) -----
+	// v0.10.221 fix: the stdlib smtp.Client allows Hello() to be called
+	// at most once. StartTLS internally re-issues EHLO over the encrypted
+	// channel using the localName saved by the first Hello() call. The
+	// earlier code called Hello() a second time after StartTLS, which the
+	// stdlib rejects with "Hello called after other methods" — masking
+	// every downstream step (including the AUTH step the operator was
+	// actually trying to debug).
 	if !usingImplicitTLS {
 		tStart := time.Now()
 		if hasStartTLS, _ := client.Extension("STARTTLS"); hasStartTLS {
@@ -341,15 +348,9 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 				summary, _ = fail("starttls", "STARTTLS upgrade", tStart, err)
 				return trace, false, summary
 			}
-			// Re-issue EHLO over the encrypted channel — STARTTLS
-			// invalidates the previous capability list.
-			if err := client.Hello("firewall-mon-test"); err != nil {
-				summary, _ = fail("starttls", "EHLO after STARTTLS", tStart, err)
-				return trace, false, summary
-			}
 			// Pull TLS state for the trace via the stdlib accessor
-			// (Go 1.20+); the smtp.Client owns the wrapped conn so
-			// we can't reach for it through our netConn handle.
+			// (Go 1.20+). The implicit post-StartTLS EHLO has already
+			// run by the time we get here.
 			var tlsDetail string
 			if st, ok := client.TLSConnectionState(); ok {
 				tlsDetail = fmt.Sprintf("%s, %s, cert CN=%s",
@@ -357,7 +358,7 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 			} else {
 				tlsDetail = "established"
 			}
-			record("starttls", "STARTTLS upgrade + EHLO", tlsDetail, "ok", "", tStart)
+			record("starttls", "STARTTLS upgrade (EHLO re-issued internally)", tlsDetail, "ok", "", tStart)
 		} else {
 			record("starttls", "STARTTLS not advertised by server", "skipped", "skipped", "", tStart)
 		}

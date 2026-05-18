@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.221] - 2026-05-18
+
+### Fixed — SMTP test STARTTLS double-EHLO bug
+The verbose SMTP test shipped in v0.10.220 (bundle I) had a self-inflicted bug: `runSMTPDiagnostic` called `smtp.Client.Hello("firewall-mon-test")` once before STARTTLS and again after the TLS upgrade. The Go stdlib's `smtp.Client.Hello` is documented to be callable at most once — any subsequent call returns `"smtp: Hello called after other methods"`. After the STARTTLS step the test was failing at the second Hello, never reaching AUTH, and masking the actual credential / mechanism issue the operator was trying to diagnose.
+
+Fix: drop the explicit second `Hello()` after `StartTLS`. The stdlib's `StartTLS` already re-issues EHLO internally over the encrypted channel, using the local name captured by the first `Hello()` call. The trace now lands on AUTH where the real failure (if any) actually lives.
+
+### Files
+- Modified: `internal/api/handlers/handlers_settings.go` — removed post-STARTTLS `client.Hello()` call, expanded comment explaining the stdlib's once-only semantics.
+
 ## [0.10.220] - 2026-05-18
 
 ### Changed — verbose SMTP test diagnostic (Bundle I)
