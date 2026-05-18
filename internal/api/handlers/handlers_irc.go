@@ -12,8 +12,10 @@ import (
 )
 
 func (h *Handler) GetIRCServer(c *gin.Context) {
+	// Defensive cap (v0.10.217, bundle D3). IRC config rarely exceeds
+	// a handful of servers; 200 leaves headroom for accidental dupes.
 	var servers []models.IRCServer
-	if err := h.db.Gorm().Preload("Channels").Find(&servers).Error; err != nil {
+	if err := h.db.Gorm().Preload("Channels").Limit(200).Find(&servers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get IRC servers"))
 		return
 	}
@@ -224,13 +226,15 @@ func (h *Handler) GetIRCChannels(c *gin.Context) {
 	serverID := c.Query("server_id")
 	var channels []models.IRCChannel
 
+	// Defensive cap (v0.10.217, bundle D3). IRC channels per fleet are
+	// typically under 100; 500 is comfortable headroom.
 	if serverID != "" {
-		if err := h.db.Gorm().Where("server_id = ?", serverID).Find(&channels).Error; err != nil {
+		if err := h.db.Gorm().Where("server_id = ?", serverID).Limit(500).Find(&channels).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get channels"))
 			return
 		}
 	} else {
-		if err := h.db.Gorm().Find(&channels).Error; err != nil {
+		if err := h.db.Gorm().Limit(500).Find(&channels).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get channels"))
 			return
 		}
@@ -340,8 +344,9 @@ func (h *Handler) DeleteIRCChannel(c *gin.Context) {
 }
 
 func (h *Handler) GetIRCCommands(c *gin.Context) {
+	// Defensive cap (v0.10.217, bundle D3).
 	var commands []models.IRCCommand
-	if err := h.db.Gorm().Find(&commands).Error; err != nil {
+	if err := h.db.Gorm().Limit(500).Find(&commands).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get commands"))
 		return
 	}

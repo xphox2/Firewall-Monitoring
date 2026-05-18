@@ -1,4 +1,58 @@
 # Changelog
+## [0.10.217] - 2026-05-18
+
+### Changed — admin-wide backend consistency pass (Bundle D: D1 + D2 + D3 + D4)
+Sixth and final commit of the "improve the whole admin area" sweep. The previous five bundles touched almost exclusively frontend code; this one normalises the API surface so subsequent work — and external callers — see a consistent contract.
+
+#### Audit
+One parallel sub-agent inventoried every backend inconsistency that surfaced during bundles A-F. Findings: 5 handlers still inline-parsed `hours` with different caps and error semantics; 8 list endpoints called `.Find(...)` with no `.Limit(...)`; the probe-facing endpoints disagree on whether errors return `{"error":…}` or `{"message":…}`; `VPNStatus` had no field to indicate when a currently-down tunnel was last up; 3 of 4 `/stats` endpoints accepted no `device_id` filter.
+
+#### D2 — Unified range parsing
+- Every handler that took `?hours=` now delegates to `httputil.ParseHours` (default 24, hard cap 8760). Migrated `GetSystemStatusHistory`, `GetConnectionEvents`, `GetConnectionFlows`, and `GetProcessStats`. Endpoints with a tighter business cap (720 h, 30 days) still apply that cap by a single `if hours > 720` line after the helper, so the canonical parse + 8760 ceiling is centralised but per-endpoint sensitivity remains.
+- Dropped the now-unused `strconv` import from `handlers_connections.go`.
+
+#### D3 — Defensive pagination on configuration list endpoints
+- `GetDashboardAll`: `Find(&devices)` and `Find(&connections)` now `.Limit(1000)`.
+- `GetDeviceDataDiag`: same 1000 cap on devices.
+- `GetIRCServer`: 200 cap on servers (sized for the realistic operator surface).
+- `GetIRCChannels`: 500 cap (filtered + unfiltered paths).
+- `GetIRCCommands`: 500 cap.
+- `GetAllSettings`: 1000 cap.
+- All caps are above any realistic fleet/config size, so they're invisible to current clients while bounding worst-case memory if a misconfiguration or test fixture inflates row counts.
+
+#### D4 — Stats `device_id` filter + VPN `last_up_at` + probe error-field consistency
+**`device_id` filter on stats endpoints**:
+- `GetAlertStats`, `GetTrapStats`, `GetSyslogStats` now accept an optional `?device_id=N` query parameter.
+- The database methods take a `deviceID uint` argument (0 = no filter, matches existing API semantics). Internal helpers `groupByString` and `timeSeriesCount` also take the filter parameter so the WHERE clause is applied to every aggregation, not just the top-level COUNT. SyslogStats' summary tables get the same filter via a small local helper.
+- Unblocks the noisy-device-leaderboard feature deferred from bundle F5 — frontend can now fetch per-device stats without an N+1 loop.
+
+**`last_up_at` on VPN status**:
+- New `LastUpAt *time.Time` field on `models.VPNStatus`, marked `gorm:"-"` (computed, not stored). `json:",omitempty"` so the field is absent when no historical "up" snapshot exists.
+- `GetLatestVPNStatuses` populates it from a single grouped query: `SELECT tunnel_name, MAX(timestamp) FROM vpn_statuses WHERE device_id = ? AND status = 'up' GROUP BY tunnel_name`. One query per device-detail request rather than one per tunnel.
+- Frontend `renderVPN` in `admin-device-detail.js` now displays "last up Xh ago" in the uptime column for currently-down tunnels (with `formatRelative`), title-attribute hovering shows the absolute timestamp. Up tunnels still show normal uptime; tunnels with no historical "up" snapshot show a dash. Resolves the bundle F5 deferral for the down-tunnel half.
+
+**Probe `error` vs `message` field unification**:
+- New internal helper `probeErr(c, status, msg)` in `handlers_probes.go` emits `{"success": false, "error": msg, "message": msg}` — both fields are present in every error response. New clients can read `error` consistently; legacy `Firewall-Collector` binaries that read `message` keep working unchanged.
+- Applied to every error path in `RegisterProbe` (5 sites) and `ProbeHeartbeat` (4 sites). `TestProbeConnection` already used `message` for its success response; left alone.
+
+### Files
+- Modified: `internal/api/handlers/handlers_dashboard.go` — ParseHours migration + 1000-row caps on dashboard lists.
+- Modified: `internal/api/handlers/handlers_connections.go` — ParseHours migrations (2 sites) + strconv import removed.
+- Modified: `internal/api/handlers/handlers_devices.go` — ParseHours migration on GetProcessStats.
+- Modified: `internal/api/handlers/handlers_irc.go` — `.Limit()` on 3 list endpoints.
+- Modified: `internal/api/handlers/handlers_settings.go` — `.Limit(1000)` on GetAllSettings.
+- Modified: `internal/api/handlers/handlers_probes.go` — `probeErr` helper + 9 call-site conversions.
+- Modified: `internal/api/handlers/handlers_analytics.go` — `parseStatsDeviceFilter` + 3 stats endpoints take device_id.
+- Modified: `internal/database/database.go` — `groupByString` / `timeSeriesCount` / `GetAlertStats` / `GetTrapStats` / `GetSyslogStats` take `deviceID`; `GetLatestVPNStatuses` populates `LastUpAt`; `GetDashboardTimeSeries` passes 0 for unfiltered.
+- Modified: `internal/models/models.go` — `VPNStatus.LastUpAt` field.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — uptime column renders last-up-ago for down tunnels.
+
+### Why this matters
+External clients of the admin API (custom dashboards, automation scripts, the `Firewall-Collector` probe binary) now see the same `error` field on every probe-facing error, the same `hours` cap on every stats endpoint, and the same `device_id` filter shape on `/alerts/stats`, `/traps/stats`, `/syslog/stats`, and `/flows/stats`. The frontend gains a new fact (when a down tunnel was last up) that the F bundle had to skip. And every configuration-list endpoint is bounded by a sane LIMIT so a single misconfigured row in a test database can't OOM the API process.
+
+### Whole-admin sweep complete
+v0.10.212 (A — foundation) → v0.10.213 (B — accessibility) → v0.10.214 (C — performance) → v0.10.215 (E — cross-page linkification) → v0.10.216 (F — operator features) → v0.10.217 (D — backend consistency). Six bundles, ~2 100 lines of additions, every page touched, no breaking client changes.
+
 ## [0.10.216] - 2026-05-18
 
 ### Changed — admin-wide operator features (Bundle F: F1 + F2 + F3 + F4)

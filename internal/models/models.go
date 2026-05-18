@@ -92,6 +92,12 @@ type VPNStatus struct {
 	TunnelUptime  uint64    `json:"tunnel_uptime"`
 	InterfaceName string    `json:"interface_name"`
 	Mode          string    `json:"mode"`
+	// LastUpAt — most recent timestamp at which this tunnel reported
+	// `status='up'` for this device. Computed (not stored) by
+	// GetLatestVPNStatuses (v0.10.217, bundle D4) by scanning historical
+	// rows. Nil when no historical 'up' is known. Lets the UI render
+	// "last seen up 2h ago" for tunnels currently down.
+	LastUpAt *time.Time `json:"last_up_at,omitempty" gorm:"-"`
 }
 
 type HAStatus struct {

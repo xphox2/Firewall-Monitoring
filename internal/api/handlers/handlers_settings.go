@@ -23,8 +23,11 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		return
 	}
 
+	// Defensive cap (v0.10.217, bundle D3). System settings are a fixed
+	// list of operator-tunable knobs — 1000 is well above any realistic
+	// schema.
 	var settings []models.SystemSetting
-	if err := h.db.Gorm().Find(&settings).Error; err != nil {
+	if err := h.db.Gorm().Limit(1000).Find(&settings).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get settings"))
 		return
 	}

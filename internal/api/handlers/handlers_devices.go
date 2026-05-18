@@ -684,9 +684,12 @@ func (h *Handler) GetDeviceSecurityStats(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
 		return
 	}
-	hours, _ := strconv.Atoi(c.DefaultQuery("hours", "24"))
-	if hours <= 0 || hours > 720 {
-		hours = 24
+	// Unified parsing (v0.10.217, bundle D2). 720h cap retained for the
+	// per-device process/security stats — going further back is unsafe
+	// on busy fleets (millions of rows).
+	hours := httputil.ParseHours(c)
+	if hours > 720 {
+		hours = 720
 	}
 
 	latest, err := h.db.GetLatestSecurityStats(uint(id))

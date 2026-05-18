@@ -373,9 +373,19 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 	}))
 }
 
+// probeErr emits a consistent error payload for the probe-facing endpoints
+// (v0.10.217, bundle D4). Historically RegisterProbe / TestProbeConnection
+// used a top-level `message` field while ProbeHeartbeat used `error` —
+// any client that wanted to display the reason had to read both. This
+// helper emits BOTH on every error so older collector binaries keep
+// working unchanged while new clients can read just `error`.
+func probeErr(c *gin.Context, status int, msg string) {
+	c.JSON(status, gin.H{"success": false, "error": msg, "message": msg})
+}
+
 func (h *Handler) RegisterProbe(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Database not available"})
+		probeErr(c, http.StatusServiceUnavailable, "Database not available")
 		return
 	}
 
@@ -383,26 +393,26 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		RegistrationKey string `json:"registration_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request"})
+		probeErr(c, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
 	if req.RegistrationKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Registration key required"})
+		probeErr(c, http.StatusBadRequest, "Registration key required")
 		return
 	}
 
 	var setting models.SystemSetting
 	err := h.db.Gorm().Where("key = ?", "probe_registration_"+req.RegistrationKey).First(&setting).Error
 	if err != nil || setting.Value == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "Invalid registration key"})
+		probeErr(c, http.StatusUnauthorized, "Invalid registration key")
 		return
 	}
 
 	existingProbe := &models.Probe{}
 	err = h.db.Gorm().Where("name = ?", setting.Value).First(existingProbe).Error
 	if err != nil || existingProbe.ID == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "Probe not found — it may have been deleted"})
+		probeErr(c, http.StatusNotFound, "Probe not found — it may have been deleted")
 		return
 	}
 
@@ -491,7 +501,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 
 func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not available"})
+		probeErr(c, http.StatusServiceUnavailable, "Database not available")
 		return
 	}
 
@@ -506,20 +516,20 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		Status  string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		probeErr(c, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
 	// Validate that the probe_id in the body matches the authenticated probe
 	if req.ProbeID != 0 && req.ProbeID != probe.ID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Probe ID mismatch"})
+		probeErr(c, http.StatusForbidden, "Probe ID mismatch")
 		return
 	}
 
 	// Validate status against allowed values
 	validStatuses := map[string]bool{"online": true, "offline": true, "degraded": true}
 	if req.Status != "" && !validStatuses[req.Status] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status value"})
+		probeErr(c, http.StatusBadRequest, "Invalid status value")
 		return
 	}
 

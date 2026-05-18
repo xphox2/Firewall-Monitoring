@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -54,11 +53,13 @@ func (h *Handler) GetConnectionEvents(c *gin.Context) {
 		return
 	}
 
-	hours := 24
-	if h := c.DefaultQuery("hours", "24"); h != "" {
-		if parsed, err := strconv.Atoi(h); err == nil && parsed > 0 && parsed <= 720 {
-			hours = parsed
-		}
+	// Unified parsing (v0.10.217, bundle D2). The previous inline cap of
+	// 720 hours (30 days) was lower than the shared 8760 cap — left in
+	// place for now to avoid widening this endpoint's row set without
+	// product review. Migrated to httputil.ParseHours by manual clamp.
+	hours := httputil.ParseHours(c)
+	if hours > 720 {
+		hours = 720
 	}
 
 	events, err := h.db.GetConnectionEvents(conn.SourceDeviceID, conn.DestDeviceID, hours)
@@ -324,11 +325,10 @@ func (h *Handler) GetConnectionFlows(c *gin.Context) {
 	if !ok {
 		return
 	}
-	hoursStr := c.DefaultQuery("hours", "24")
-	hours, err := strconv.Atoi(hoursStr)
-	if err != nil || hours < 1 {
-		hours = 24
-	}
+	// Unified parsing (v0.10.217, bundle D2). 720h cap retained for this
+	// endpoint — flow-stats over multi-month ranges aren't useful for the
+	// connection-detail view.
+	hours := httputil.ParseHours(c)
 	if hours > 720 {
 		hours = 720
 	}

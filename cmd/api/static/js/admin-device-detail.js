@@ -714,7 +714,19 @@
                 '<td><code style="color:#3fb950;font-size:0.8rem;">' + esc(v.remote_subnet || '-') + '</code></td>' +
                 '<td>' + formatBytes(v.bytes_in) + '</td>' +
                 '<td>' + formatBytes(v.bytes_out) + '</td>' +
-                '<td>' + formatVpnUptime(v.tunnel_uptime) + '</td>' +
+                // Uptime column (v0.10.217, bundle D4): for currently-up
+                // tunnels show how long they've been up; for currently-
+                // down tunnels show "last seen up X ago" if we have a
+                // historical 'up' snapshot, otherwise dash. Compresses
+                // two facts ("status: down" + "last_up_at: T") into one
+                // glanceable cell.
+                '<td>' + (v.status === 'up'
+                    ? formatVpnUptime(v.tunnel_uptime)
+                    : (v.last_up_at
+                        ? '<span title="Last observed up: ' + esc(formatTime(v.last_up_at)) +
+                          '" style="color:#8b949e;font-size:0.85rem;">last up ' + esc(formatRelative(v.last_up_at)) + '</span>'
+                        : '<span style="color:#6e7681;">-</span>')) +
+                '</td>' +
             '</tr>';
         }).join('');
 

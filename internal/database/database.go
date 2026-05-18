@@ -697,6 +697,38 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 		}
 	}
 
+	// last_up_at enrichment (v0.10.217, bundle D4). For every tunnel in
+	// the latest snapshot, look up the most-recent historical timestamp
+	// at which the same (device, tunnel_name) reported status='up'. Lets
+	// the frontend show "last seen up 2h ago" for tunnels currently down
+	// instead of just "down".
+	//
+	// Single grouped query rather than N per-tunnel queries — for a fleet
+	// with 200 tunnels per device the difference is meaningful. Skipped
+	// for tunnels that are currently up (LastUpAt would just equal the
+	// snapshot timestamp anyway and the UI doesn't render the chip).
+	type lastUpRow struct {
+		TunnelName string    `gorm:"column:tunnel_name"`
+		MaxTs      time.Time `gorm:"column:max_ts"`
+	}
+	var rows []lastUpRow
+	if err := d.db.Model(&models.VPNStatus{}).
+		Select("tunnel_name, MAX(timestamp) as max_ts").
+		Where("device_id = ? AND status = ?", deviceID, "up").
+		Group("tunnel_name").
+		Scan(&rows).Error; err == nil {
+		byName := make(map[string]time.Time, len(rows))
+		for _, r := range rows {
+			byName[r.TunnelName] = r.MaxTs
+		}
+		for i := range statuses {
+			if ts, ok := byName[statuses[i].TunnelName]; ok {
+				t := ts
+				statuses[i].LastUpAt = &t
+			}
+		}
+	}
+
 	return statuses, err
 }
 
@@ -2850,13 +2882,18 @@ type EventStatsResult struct {
 }
 
 // timeSeriesCount queries hourly time-bucketed counts for model since cutoff.
-func (d *Database) timeSeriesCount(model interface{}, cutoff time.Time) []TimeBucket {
+// timeSeriesCount returns per-hour COUNT buckets for the given model
+// since cutoff. deviceID = 0 means "all devices" (v0.10.217, bundle D4).
+func (d *Database) timeSeriesCount(model interface{}, cutoff time.Time, deviceID uint) []TimeBucket {
 	var rows []struct {
 		Bucket string
 		Count  int64
 	}
-	d.db.Model(model).Where("timestamp > ?", cutoff).
-		Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, COUNT(*) as count").
+	q := d.db.Model(model).Where("timestamp > ?", cutoff)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	q.Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, COUNT(*) as count").
 		Group("bucket").Order("bucket ASC").Scan(&rows)
 	buckets := make([]TimeBucket, 0, len(rows))
 	for _, r := range rows {
@@ -2866,14 +2903,18 @@ func (d *Database) timeSeriesCount(model interface{}, cutoff time.Time) []TimeBu
 }
 
 // groupByString queries COUNT grouped by groupCol on model since cutoff.
-func (d *Database) groupByString(model interface{}, cutoff time.Time, groupCol string) []KeyCount {
+// deviceID = 0 means "all devices". (v0.10.217, bundle D4)
+func (d *Database) groupByString(model interface{}, cutoff time.Time, groupCol string, deviceID uint) []KeyCount {
 	var rows []struct {
 		Key   string
 		Count int64
 	}
 	qCol := d.dialect.QuoteIdent(groupCol)
-	d.db.Model(model).Where("timestamp > ?", cutoff).
-		Select(qCol + " as key, COUNT(*) as count").Group(qCol).Order("count DESC").Scan(&rows)
+	q := d.db.Model(model).Where("timestamp > ?", cutoff)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	q.Select(qCol + " as key, COUNT(*) as count").Group(qCol).Order("count DESC").Scan(&rows)
 	counts := make([]KeyCount, 0, len(rows))
 	for _, r := range rows {
 		counts = append(counts, KeyCount{Key: r.Key, Count: r.Count})
@@ -2881,44 +2922,69 @@ func (d *Database) groupByString(model interface{}, cutoff time.Time, groupCol s
 	return counts
 }
 
-// GetAlertStats returns aggregated alert statistics
-func (d *Database) GetAlertStats(hours int) (*EventStatsResult, error) {
+// GetAlertStats returns aggregated alert statistics. deviceID = 0 means
+// "all devices" (the existing /admin/alerts page passes 0); a non-zero
+// value scopes the stats to a single device for the per-device noise
+// view added in v0.10.217 (bundle D4).
+func (d *Database) GetAlertStats(hours int, deviceID uint) (*EventStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &EventStatsResult{}
 
-	d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff).Count(&result.Total)
-	result.BySeverity = d.groupByString(&models.Alert{}, cutoff, "severity")
-	result.ByType = d.groupByString(&models.Alert{}, cutoff, "alert_type")
-	result.OverTime = d.timeSeriesCount(&models.Alert{}, cutoff)
+	q := d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	q.Count(&result.Total)
+	result.BySeverity = d.groupByString(&models.Alert{}, cutoff, "severity", deviceID)
+	result.ByType = d.groupByString(&models.Alert{}, cutoff, "alert_type", deviceID)
+	result.OverTime = d.timeSeriesCount(&models.Alert{}, cutoff, deviceID)
 
 	return result, nil
 }
 
-// GetTrapStats returns aggregated trap statistics
-func (d *Database) GetTrapStats(hours int) (*EventStatsResult, error) {
+// GetTrapStats returns aggregated trap statistics. deviceID semantics
+// same as GetAlertStats. Trap rows are matched on `device_id` when set;
+// trap events arriving from unknown sources are excluded from a per-
+// device filter (they have device_id = 0).
+func (d *Database) GetTrapStats(hours int, deviceID uint) (*EventStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &EventStatsResult{}
 
-	d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff).Count(&result.Total)
-	result.BySeverity = d.groupByString(&models.TrapEvent{}, cutoff, "severity")
-	result.ByType = d.groupByString(&models.TrapEvent{}, cutoff, "trap_type")
-	result.OverTime = d.timeSeriesCount(&models.TrapEvent{}, cutoff)
+	q := d.db.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff)
+	if deviceID != 0 {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	q.Count(&result.Total)
+	result.BySeverity = d.groupByString(&models.TrapEvent{}, cutoff, "severity", deviceID)
+	result.ByType = d.groupByString(&models.TrapEvent{}, cutoff, "trap_type", deviceID)
+	result.OverTime = d.timeSeriesCount(&models.TrapEvent{}, cutoff, deviceID)
 
 	return result, nil
 }
 
-// GetSyslogStats returns aggregated syslog statistics (raw + summaries combined)
-func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
+// GetSyslogStats returns aggregated syslog statistics (raw + summaries
+// combined). deviceID = 0 means "all devices" (v0.10.217, bundle D4).
+func (d *Database) GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &EventStatsResult{}
+
+	// applyDevFilter is a small helper to keep the device_id WHERE
+	// clause out of every chain below.
+	applyDevFilter := func(q *gorm.DB) *gorm.DB {
+		if deviceID != 0 {
+			return q.Where("device_id = ?", deviceID)
+		}
+		return q
+	}
 
 	// Total: raw syslog + summaries
 	var rawCount int64
-	if err := d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).Count(&rawCount).Error; err != nil {
+	if err := applyDevFilter(d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff)).
+		Count(&rawCount).Error; err != nil {
 		return nil, fmt.Errorf("failed to count raw syslog: %w", err)
 	}
 	var summaryCount int64
-	if err := d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff).
+	if err := applyDevFilter(d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff)).
 		Select("COALESCE(SUM(count), 0)").Scan(&summaryCount).Error; err != nil {
 		return nil, fmt.Errorf("failed to count syslog summaries: %w", err)
 	}
@@ -2931,7 +2997,7 @@ func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 		Count    int64
 	}
 	// Get severity counts from raw syslog
-	if err := d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff).
+	if err := applyDevFilter(d.db.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff)).
 		Select("severity, COUNT(*) as count").Group("severity").Scan(&bySev).Error; err != nil {
 		return nil, fmt.Errorf("failed to get raw syslog severity counts: %w", err)
 	}
@@ -2940,7 +3006,7 @@ func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 		Severity int
 		Count    int64
 	}
-	if err := d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff).
+	if err := applyDevFilter(d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff)).
 		Select("severity, SUM(count) as count").Group("severity").Scan(&summaryBySev).Error; err != nil {
 		return nil, fmt.Errorf("failed to get summary severity counts: %w", err)
 	}
@@ -2961,13 +3027,13 @@ func (d *Database) GetSyslogStats(hours int) (*EventStatsResult, error) {
 	}
 
 	// OverTime: combine raw time series with summary counts
-	rawTimeSeries := d.timeSeriesCount(&models.SyslogMessage{}, cutoff)
+	rawTimeSeries := d.timeSeriesCount(&models.SyslogMessage{}, cutoff, deviceID)
 	// Get summary time series grouped by hour
 	var summaryTimeSeries []struct {
 		Bucket string
 		Count  int64
 	}
-	if err := d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff).
+	if err := applyDevFilter(d.db.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff)).
 		Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(count) as count").
 		Group("bucket").Order("bucket ASC").Scan(&summaryTimeSeries).Error; err != nil {
 		return nil, fmt.Errorf("failed to get summary time series: %w", err)
@@ -3006,10 +3072,10 @@ type DashboardTimeSeries struct {
 func (d *Database) GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &DashboardTimeSeries{
-		FlowsOverTime:  d.timeSeriesCount(&models.FlowSample{}, cutoff),
-		AlertsOverTime: d.timeSeriesCount(&models.Alert{}, cutoff),
-		SyslogOverTime: d.timeSeriesCount(&models.SyslogMessage{}, cutoff),
-		TrapsOverTime:  d.timeSeriesCount(&models.TrapEvent{}, cutoff),
+		FlowsOverTime:  d.timeSeriesCount(&models.FlowSample{}, cutoff, 0),
+		AlertsOverTime: d.timeSeriesCount(&models.Alert{}, cutoff, 0),
+		SyslogOverTime: d.timeSeriesCount(&models.SyslogMessage{}, cutoff, 0),
+		TrapsOverTime:  d.timeSeriesCount(&models.TrapEvent{}, cutoff, 0),
 	}
 
 	// Device status distribution

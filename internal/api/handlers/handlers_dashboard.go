@@ -454,12 +454,10 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 		return
 	}
 
-	hours := 24
-	if hStr := c.DefaultQuery("hours", "24"); hStr != "" {
-		if parsed, err := strconv.Atoi(hStr); err == nil && parsed > 0 && parsed <= 8760 {
-			hours = parsed
-		}
-	}
+	// Unified parsing (v0.10.217, bundle D2). httputil.ParseHours enforces
+	// the 24h default + 8760h (1 year) cap shared by every endpoint that
+	// accepts an `hours` query parameter.
+	hours := httputil.ParseHours(c)
 
 	statuses, err := h.db.GetSystemStatusHistory(deviceID, hours)
 	if err != nil {
@@ -552,11 +550,16 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 	recentAlerts := []models.Alert{}
 
 	if h.db != nil {
-		if err := h.db.Gorm().Preload("Site").Preload("Probe").Find(&devices).Error; err != nil {
+		// Defensive bounds (v0.10.217, bundle D3). Devices + connections
+		// are configuration tables, but on a fleet with thousands of
+		// auto-detected connections the previous unbounded Find could
+		// pull an enormous payload. 1000 is well above any realistic
+		// admin-managed fleet, low enough to fit in a single response.
+		if err := h.db.Gorm().Preload("Site").Preload("Probe").Limit(1000).Find(&devices).Error; err != nil {
 			log.Printf("Failed to get devices: %v", err)
 		}
 
-		if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Find(&connections).Error; err != nil {
+		if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(1000).Find(&connections).Error; err != nil {
 			log.Printf("Failed to get connections: %v", err)
 		}
 
@@ -679,8 +682,9 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 		return
 	}
 
+	// Defensive cap (v0.10.217, bundle D3).
 	var devices []models.Device
-	if err := h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Find(&devices).Error; err != nil {
+	if err := h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Limit(1000).Find(&devices).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
 		return
 	}

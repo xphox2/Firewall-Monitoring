@@ -305,6 +305,21 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(stats))
 }
 
+// parseStatsDeviceFilter reads an optional device_id query parameter from
+// /stats endpoints (v0.10.217, bundle D4). Returns 0 if absent or invalid,
+// matching the "no filter" sentinel used by the database layer.
+func parseStatsDeviceFilter(c *gin.Context) uint {
+	raw := c.Query("device_id")
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint(n)
+}
+
 func (h *Handler) GetAlertStats(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
@@ -312,8 +327,9 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 	}
 
 	hours := httputil.ParseHours(c)
+	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := h.db.GetAlertStats(hours)
+	stats, err := h.db.GetAlertStats(hours, deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get alert stats"))
 		return
@@ -329,8 +345,9 @@ func (h *Handler) GetTrapStats(c *gin.Context) {
 	}
 
 	hours := httputil.ParseHours(c)
+	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := h.db.GetTrapStats(hours)
+	stats, err := h.db.GetTrapStats(hours, deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get trap stats"))
 		return
@@ -346,8 +363,9 @@ func (h *Handler) GetSyslogStats(c *gin.Context) {
 	}
 
 	hours := httputil.ParseHours(c)
+	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := h.db.GetSyslogStats(hours)
+	stats, err := h.db.GetSyslogStats(hours, deviceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get syslog stats"))
 		return
