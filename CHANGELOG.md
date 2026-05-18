@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.218] - 2026-05-18
+
+### Added — picked up deferred items from Bundles E and F (Bundle G: G1 + G2 + G3)
+After the six-bundle whole-admin sweep wrapped, this bundle picks up three features that were unblocked by the backend work in D (v0.10.217) but never built, plus one new operator workflow (snooze alerts) that needed its own backend change.
+
+#### G1 — Noisy-device leaderboard widget
+- New "Noisy Devices" card on the dashboard ranks devices by recent alert + syslog volume.
+- Window selector: 1 h / 6 h / 24 h (default) / 7 d. Persisted in `localStorage` (`fwmon-noisy-window-hours`).
+- Top 10 by total volume; each row shows device name (links to detail), alert count (links to filtered `/admin/alerts`), syslog count (links to filtered `/admin/syslog`), and a width-proportional volume bar.
+- Card auto-hides when no device has any messages — no dead chrome.
+- Uses the `?device_id=N` filter on `/api/syslog/stats` and `/api/alerts/stats` added in v0.10.217 (D4). One stats call per device, fired in parallel; bounded by the existing 1000-device dashboard cap.
+
+#### G2 — Snooze alerts (backend column + endpoint + UI)
+- New columns on `models.Alert`: `SnoozedUntil *time.Time` (indexed), `SnoozedBy string`, `SnoozedReason string`. GORM auto-migrate adds them on first start.
+- Two new endpoints: `POST /admin/api/alerts/:id/snooze` (body: `{hours, reason}`) and `POST /admin/api/alerts/:id/unsnooze`. Hours are clamped to `[1, 720]` server-side.
+- `GetAlerts` listing now filters out currently-snoozed alerts by default. New `?include_snoozed=true` query param overrides for views that need to see them. Refactored filter logic into a shared `applyAlertFilters` helper so the listing + count paths stay in sync.
+- New `SnoozeAlert` and `UnsnoozeAlert` methods on `*Database`.
+- Alert-detail modal: open alerts now show both **Acknowledge** and **Snooze** buttons. Snoozed alerts show a "SNOOZED until …" badge + **Unsnooze** button, with optional `snoozed_by` / `snoozed_reason` audit detail underneath.
+- Alerts table: snoozed rows render a `SNOOZED` badge in the status column (tooltip reveals wake-up timestamp).
+- Snooze prompt uses `window.prompt()` — deliberate friction-free flow for a self-serve action; a dedicated modal felt overkill.
+
+#### G3 — VPN remote-end device linkification
+- New computed `VPNStatus.RemoteDeviceID *uint` field (omitempty + `gorm:"-"`). Populated by `GetLatestVPNStatuses` using the existing remote-IP peer-matching pass already running for subnet cross-fill — zero extra queries.
+- Two-pass resolution: first pass populates during the subnet cross-fill loop; new second pass resolves remote_device_id for tunnels that didn't need a subnet fix.
+- Device-detail VPN tab: when `remote_device_id` is set, the `remote_ip` cell links directly to the peer's `/admin/devices/:id` page instead of `/admin/syslog?search=<ip>`. Tooltip clarifies "resolved by RemoteIP match". Falls back to the syslog cross-pivot when no peer match is known.
+
+### Files
+- Modified: `internal/models/models.go` — `VPNStatus.RemoteDeviceID`, `Alert.SnoozedUntil/By/Reason`.
+- Modified: `internal/database/database.go` — `RemoteDeviceID` population (2 pass), `SnoozeAlert` / `UnsnoozeAlert` methods.
+- Modified: `internal/api/handlers/handlers_analytics.go` — `applyAlertFilters` helper, `SnoozeAlert` / `UnsnoozeAlert` handlers, `gorm.io/gorm` + `time` imports.
+- Modified: `cmd/api/main.go` — 2 new alert routes, version bump.
+- Modified: `cmd/api/static/js/admin-main.js` — `renderNoisyDevices` + dashboard hook, snooze UI in alert-detail modal + alerts table, `showSnoozePrompt` / `unsnoozeAlert` handlers + delegated actions.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — VPN remote-end device linkification with syslog fallback.
+- Modified: `web/admin/admin.html` — new `#noisy-devices-card` section in dashboard.
+
+### Why this matters
+Three lingering items from the original sweep now ship in one tidy bundle. The leaderboard uses backend filters that have been waiting since D4 with no consumer; the VPN remote-end linkification closes the second half of the "click through to the peer" affordance that E2 only half-resolved; snooze gives operators a third state ("not relevant right now, but still real") between "acknowledge" and "ignore".
+
 ## [0.10.217] - 2026-05-18
 
 ### Changed — admin-wide backend consistency pass (Bundle D: D1 + D2 + D3 + D4)

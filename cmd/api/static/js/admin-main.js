@@ -226,6 +226,136 @@
             '</table>';
     }
 
+    // ---- Noisy-device leaderboard (v0.10.218, bundle G1) ----
+    //
+    // Ranks devices by recent alert + syslog volume so an operator can
+    // spot the top offenders that are filling the queue. Uses the
+    // `device_id` filter on /alerts/stats + /syslog/stats added in D4
+    // (v0.10.217) — without that filter we'd need an N+1 pattern.
+    //
+    // The naive query pattern is still N+1 *across the device list*:
+    // one /alerts/stats and one /syslog/stats call per device. Bounded
+    // by the dashboard's existing device cap (1000, per D3). We fire
+    // them in parallel and accept the request fan-out as the cost of
+    // staying frontend-only — a proper per-device aggregate endpoint
+    // could replace this in a future bundle if the request count
+    // becomes a problem.
+    var NOISY_WINDOW_KEY = 'fwmon-noisy-window-hours';
+    var noisyDeviceListCache = [];
+
+    function getNoisyWindowHours() {
+        var sel = document.getElementById('noisy-window-select');
+        if (sel && sel.value) return parseInt(sel.value, 10) || 24;
+        try {
+            var saved = localStorage.getItem(NOISY_WINDOW_KEY);
+            if (saved) return parseInt(saved, 10) || 24;
+        } catch (e) { /* ignore */ }
+        return 24;
+    }
+
+    function renderNoisyDevices(deviceList) {
+        noisyDeviceListCache = deviceList || [];
+        var card  = document.getElementById('noisy-devices-card');
+        var host  = document.getElementById('noisy-devices-list');
+        var count = document.getElementById('noisy-devices-count');
+        if (!card || !host) return;
+
+        var sel = document.getElementById('noisy-window-select');
+        if (sel && !sel.__fwmonBound) {
+            sel.__fwmonBound = true;
+            try {
+                var saved = localStorage.getItem(NOISY_WINDOW_KEY);
+                if (saved) sel.value = saved;
+            } catch (e) { /* ignore */ }
+            sel.addEventListener('change', function() {
+                try { localStorage.setItem(NOISY_WINDOW_KEY, sel.value); } catch (e) { /* ignore */ }
+                renderNoisyDevices(noisyDeviceListCache);
+            });
+        }
+
+        if (noisyDeviceListCache.length === 0) {
+            card.style.display = 'none';
+            return;
+        }
+
+        host.innerHTML = '<div class="loading" style="padding:24px;color:#8b949e;">Loading top message producers…</div>';
+        card.style.display = '';
+
+        var hours = getNoisyWindowHours();
+        // Concurrent fetch — one /alerts/stats and one /syslog/stats per
+        // device, parameterized by ?device_id=. Promise.all collects them.
+        var promises = noisyDeviceListCache.map(function(d) {
+            return Promise.all([
+                apiFetch(API_BASE + '/alerts/stats?hours=' + hours + '&device_id=' + d.id)['catch'](function() { return null; }),
+                apiFetch(API_BASE + '/syslog/stats?hours=' + hours + '&device_id=' + d.id)['catch'](function() { return null; })
+            ]).then(function(results) {
+                var alertTotal  = (results[0] && results[0].data && results[0].data.total) || 0;
+                var syslogTotal = (results[1] && results[1].data && results[1].data.total) || 0;
+                return {
+                    device: d,
+                    alerts: alertTotal,
+                    syslog: syslogTotal,
+                    total:  alertTotal + syslogTotal
+                };
+            });
+        });
+
+        Promise.all(promises).then(function(rows) {
+            // Drop devices with zero messages — the leaderboard is for
+            // "noisy" devices, not a sparse list of silent ones.
+            rows = rows.filter(function(r) { return r.total > 0; });
+            if (rows.length === 0) {
+                card.style.display = 'none';
+                return;
+            }
+            // Sort descending by total volume, show top 10.
+            rows.sort(function(a, b) { return b.total - a.total; });
+            var topN = rows.slice(0, 10);
+            if (count) count.textContent = 'top ' + topN.length;
+
+            // Maximum value for bar widths (relative scale).
+            var maxTotal = topN[0].total;
+
+            host.innerHTML =
+                '<table style="width:100%;border-collapse:collapse;">' +
+                    '<thead><tr>' +
+                        '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Device</th>' +
+                        '<th style="text-align:right;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Alerts</th>' +
+                        '<th style="text-align:right;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Syslog</th>' +
+                        '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;width:40%;">Volume</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' +
+                    topN.map(function(r) {
+                        var d = r.device;
+                        var pct = Math.max(2, Math.round((r.total / maxTotal) * 100));
+                        var alertsCell = r.alerts > 0
+                            ? AC.filterLink('alerts', { device_id: d.id, hours: hours }, r.alerts.toLocaleString(),
+                                { title: 'Show alerts from this device' })
+                            : '<span style="color:#6e7681;">0</span>';
+                        var syslogCell = r.syslog > 0
+                            ? AC.filterLink('syslog', { device_id: d.id, hours: hours }, r.syslog.toLocaleString(),
+                                { title: 'Show syslog from this device' })
+                            : '<span style="color:#6e7681;">0</span>';
+                        return '<tr>' +
+                            '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
+                                AC.deviceLink(d.id, d.name) +
+                            '</td>' +
+                            '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' + alertsCell + '</td>' +
+                            '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' + syslogCell + '</td>' +
+                            '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
+                                '<div style="background:rgba(125,211,252,0.15);height:10px;border-radius:5px;width:' + pct + '%;min-width:20px;"' +
+                                ' title="' + r.total.toLocaleString() + ' total"></div>' +
+                            '</td>' +
+                        '</tr>';
+                    }).join('') +
+                    '</tbody>' +
+                '</table>';
+        })['catch'](function(err) {
+            console.error('Noisy-device leaderboard failed:', err);
+            host.innerHTML = '<div class="error" style="padding:16px;color:#f85149;">Failed to load leaderboard</div>';
+        });
+    }
+
     function loadDashboard() {
         Promise.all([
             apiFetch(API_BASE + '/dashboard'),
@@ -252,6 +382,12 @@
             // surfaces anything past the cutoff. Hidden entirely when
             // nothing is stale.
             renderStaleDevices(deviceList);
+
+            // Noisy-device leaderboard (v0.10.218, bundle G1). Ranks
+            // devices by recent alert + syslog volume; fired after the
+            // dashboard renders so the slower per-device stats fetches
+            // don't block the initial paint.
+            renderNoisyDevices(deviceList);
 
             var activeProbes = probes.filter(function(p) { return p.approval_status === 'approved' && p.status === 'online'; });
             document.getElementById('active-probes').textContent = activeProbes.length;
@@ -1569,8 +1705,16 @@
             var checkboxCell = canSelect
                 ? '<td><input type="checkbox" data-action="toggle-alert-selection" data-id="' + a.id + '"></td>'
                 : '<td></td>';
+            // Snooze badge (v0.10.218, bundle G2): operator sees at-a-
+            // glance which rows are currently snoozed. Hovering reveals
+            // the wake-up timestamp. Snoozed rows are only visible if
+            // the operator opted in via the "Show snoozed" toggle (the
+            // server default filters them out).
+            var snoozedActive = !!(a.snoozed_until && (new Date(a.snoozed_until).getTime() > Date.now()));
             if (a.suppressed) {
                 statusCol = '<span class="badge unknown">MAINT</span>';
+            } else if (snoozedActive) {
+                statusCol = '<span class="badge warning" title="Until ' + escapeHtml(formatDate(a.snoozed_until)) + '">SNOOZED</span>';
             } else if (a.acknowledged) {
                 statusCol = '<span class="badge info" title="' + escapeHtml((a.acknowledged_at ? formatDate(a.acknowledged_at) : '') + (a.notes ? ' — ' + a.notes : '')) + '">ACK</span>';
             } else {
@@ -1604,8 +1748,22 @@
             var body = document.getElementById('alert-detail-body');
             var sevClass = (a.severity || 'info').toLowerCase();
             var statusHtml = '';
+            // Snoozed state (v0.10.218, bundle G2) — surface as its own
+            // status, with an Unsnooze button. Snooze is orthogonal to
+            // acknowledged: a snoozed-then-acked alert is still acked.
+            var snoozedActive = !!(a.snoozed_until && (new Date(a.snoozed_until).getTime() > Date.now()));
             if (a.suppressed) {
                 statusHtml = '<span class="badge unknown">SUPPRESSED (MAINT)</span>';
+            } else if (snoozedActive) {
+                statusHtml =
+                    '<span class="badge warning">SNOOZED until ' + escapeHtml(formatDate(a.snoozed_until)) + '</span>' +
+                    '<button class="btn secondary sm" style="margin-left:8px;" data-action="unsnooze-alert" data-id="' + a.id + '">Unsnooze</button>';
+                if (a.snoozed_by || a.snoozed_reason) {
+                    statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
+                    if (a.snoozed_by) statusHtml += 'By: ' + escapeHtml(a.snoozed_by);
+                    if (a.snoozed_reason) statusHtml += '<br>Reason: ' + escapeHtml(a.snoozed_reason);
+                    statusHtml += '</div>';
+                }
             } else if (a.acknowledged) {
                 statusHtml = '<span class="badge info">ACKNOWLEDGED</span>';
                 if (a.acknowledged_at || a.notes) {
@@ -1615,7 +1773,11 @@
                     statusHtml += '</div>';
                 }
             } else {
-                statusHtml = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Acknowledge</button>';
+                // Open alert — offer both Acknowledge (close it) and
+                // Snooze (postpone surfacing).
+                statusHtml =
+                    '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Acknowledge</button>' +
+                    ' <button class="btn secondary sm" data-action="snooze-alert" data-id="' + a.id + '">Snooze</button>';
             }
 
             var isSyslogAlert = a.metric_name === 'syslog';
@@ -1750,6 +1912,44 @@
         })['catch'](function(e) {
             console.error('Failed to acknowledge alert:', e);
             AC.showError('Failed to acknowledge alert');
+        });
+    }
+
+    // Snooze flow (v0.10.218, bundle G2). Uses prompt() rather than a
+    // dedicated modal — the friction is intentional, snooze is a self-
+    // serve action and a full modal is overkill. Hours are clamped
+    // server-side to [1, 720]; we accept anything parseable here.
+    function showSnoozePrompt(id) {
+        var hoursStr = window.prompt('Snooze this alert for how many hours?\n(1 hour to 720 hours / 30 days)', '4');
+        if (hoursStr == null) return; // operator cancelled
+        var hours = parseInt(hoursStr, 10);
+        if (!isFinite(hours) || hours < 1) {
+            AC.showError('Enter a positive number of hours');
+            return;
+        }
+        var reason = window.prompt('Optional reason for the audit log (leave blank to skip):', '') || '';
+        apiFetch(API_BASE + '/alerts/' + id + '/snooze', {
+            method: 'POST',
+            body: { hours: hours, reason: reason }
+        }).then(function(res) {
+            closeAlertDetail();
+            refreshAlertsAtCurrentPage();
+            var until = res && res.data && res.data.snoozed_until;
+            AC.showSuccess('Alert snoozed' + (until ? ' until ' + formatDate(until) : ''));
+        })['catch'](function(e) {
+            console.error('Failed to snooze alert:', e);
+            AC.showError('Failed to snooze alert: ' + (e.message || ''));
+        });
+    }
+
+    function unsnoozeAlert(id) {
+        apiFetch(API_BASE + '/alerts/' + id + '/unsnooze', { method: 'POST' }).then(function() {
+            closeAlertDetail();
+            refreshAlertsAtCurrentPage();
+            AC.showSuccess('Alert unsnoozed');
+        })['catch'](function(e) {
+            console.error('Failed to unsnooze alert:', e);
+            AC.showError('Failed to unsnooze alert');
         });
     }
 
@@ -3154,8 +3354,11 @@
             });
         },
         'delete-connection': function(el) { deleteConnection(parseInt(el.dataset.id)); },
-        'show-ack-modal': function(el) { showAckModal(parseInt(el.dataset.id)); },
+        'show-ack-modal':  function(el) { showAckModal(parseInt(el.dataset.id)); },
         'close-ack-modal': function() { closeAckModal(); },
+        // Snooze handlers (v0.10.218, bundle G2).
+        'snooze-alert':    function(el) { showSnoozePrompt(parseInt(el.dataset.id)); },
+        'unsnooze-alert':  function(el) { unsnoozeAlert(parseInt(el.dataset.id)); },
         'show-policy-modal': function() { showPolicyModal(); },
         'close-policy-modal': function() { closePolicyModal(); },
         'edit-policy': function(el) { showPolicyModal(parseInt(el.dataset.id)); },

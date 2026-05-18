@@ -98,6 +98,12 @@ type VPNStatus struct {
 	// rows. Nil when no historical 'up' is known. Lets the UI render
 	// "last seen up 2h ago" for tunnels currently down.
 	LastUpAt *time.Time `json:"last_up_at,omitempty" gorm:"-"`
+	// RemoteDeviceID — resolved peer device id when GetLatestVPNStatuses
+	// is able to match this tunnel to a peer's VPN snapshot by RemoteIP
+	// (v0.10.218, bundle G3). Lets the frontend link the remote_ip cell
+	// to the peer's /admin/devices/:id page when known. Nil when no peer
+	// match exists (typical for tunnels to non-monitored remote sites).
+	RemoteDeviceID *uint `json:"remote_device_id,omitempty" gorm:"-"`
 }
 
 type HAStatus struct {
@@ -218,6 +224,16 @@ type Alert struct {
 	PolicyID        *uint      `json:"policy_id" gorm:"index"`
 	EscalationCount int        `json:"escalation_count" gorm:"default:0"`
 	Suppressed      bool       `json:"suppressed" gorm:"default:false;index:idx_alert_unack,priority:2"`
+	// Snooze controls (v0.10.218, bundle G2). An alert can be snoozed
+	// for a duration without being acknowledged — distinct from
+	// `Acknowledged` because snoozing is "ack temporarily, surface
+	// again once the snooze expires". Implemented as a future
+	// timestamp; alerts where SnoozedUntil > now are filtered out of
+	// the default alerts list. SnoozedBy + SnoozedReason are audit-
+	// only and never displayed to non-admin viewers.
+	SnoozedUntil  *time.Time `json:"snoozed_until,omitempty" gorm:"index"`
+	SnoozedBy     string     `json:"snoozed_by,omitempty"`
+	SnoozedReason string     `json:"snoozed_reason,omitempty"`
 }
 
 type AlertPolicy struct {

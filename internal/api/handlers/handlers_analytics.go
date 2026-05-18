@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // ipFilterClause turns a user-supplied `src_addr` or `dst_addr` query value
@@ -71,6 +73,33 @@ func ipFilterClause(column, val string) (string, interface{}, bool) {
 	}
 }
 
+// applyAlertFilters writes every query-string filter into the GORM
+// chain. Extracted from the listing + count paths (v0.10.218, bundle G2)
+// so a new snooze filter only needs to be added in one place.
+//
+// Snooze behavior: by default, alerts with `snoozed_until > now` are
+// hidden — the operator who snoozed them doesn't want to see them. Pass
+// `include_snoozed=true` to override (used by the bulk-ack flow + the
+// snoozed-alerts view).
+func applyAlertFilters(c *gin.Context, q *gorm.DB) *gorm.DB {
+	if deviceID := c.Query("device_id"); deviceID != "" {
+		q = q.Where("device_id = ?", deviceID)
+	}
+	if severity := c.Query("severity"); severity != "" {
+		q = q.Where("severity = ?", severity)
+	}
+	if alertType := c.Query("alert_type"); alertType != "" {
+		q = q.Where("alert_type = ?", alertType)
+	}
+	if ack := c.Query("acknowledged"); ack != "" {
+		q = q.Where("acknowledged = ?", ack == "true")
+	}
+	if c.Query("include_snoozed") != "true" {
+		q = q.Where("snoozed_until IS NULL OR snoozed_until < ?", time.Now())
+	}
+	return q
+}
+
 func (h *Handler) GetAlerts(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": []models.Alert{}, "total": 0}))
@@ -79,20 +108,7 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
-
-	if deviceID := c.Query("device_id"); deviceID != "" {
-		query = query.Where("device_id = ?", deviceID)
-	}
-	if severity := c.Query("severity"); severity != "" {
-		query = query.Where("severity = ?", severity)
-	}
-	if alertType := c.Query("alert_type"); alertType != "" {
-		query = query.Where("alert_type = ?", alertType)
-	}
-	if ack := c.Query("acknowledged"); ack != "" {
-		query = query.Where("acknowledged = ?", ack == "true")
-	}
+	query := applyAlertFilters(c, h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset))
 
 	var alerts []models.Alert
 	if err := query.Find(&alerts).Error; err != nil {
@@ -101,20 +117,7 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 	}
 
 	var total int64
-	countQuery := h.db.Gorm().Model(&models.Alert{})
-	if deviceID := c.Query("device_id"); deviceID != "" {
-		countQuery = countQuery.Where("device_id = ?", deviceID)
-	}
-	if severity := c.Query("severity"); severity != "" {
-		countQuery = countQuery.Where("severity = ?", severity)
-	}
-	if alertType := c.Query("alert_type"); alertType != "" {
-		countQuery = countQuery.Where("alert_type = ?", alertType)
-	}
-	if ack := c.Query("acknowledged"); ack != "" {
-		countQuery = countQuery.Where("acknowledged = ?", ack == "true")
-	}
-	countQuery.Count(&total)
+	applyAlertFilters(c, h.db.Gorm().Model(&models.Alert{})).Count(&total)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": alerts, "total": total}))
 }
@@ -396,6 +399,75 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.MessageResponse("Alert acknowledged"))
+}
+
+// SnoozeAlert temporarily silences an alert until SnoozedUntil. Distinct
+// from acknowledge: the alert resurfaces in the default list once the
+// snooze expires (v0.10.218, bundle G2). Common operator pattern is
+// "snooze for 4 hours while I finish unrelated triage".
+//
+// Body: { "hours": 4, "reason": "weekly rotation, check Monday" }
+// `hours` is clamped to [1, 720] (30 days max). Empty/zero hours = 1.
+func (h *Handler) SnoozeAlert(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Hours  int    `json:"hours"`
+		Reason string `json:"reason"`
+	}
+	c.ShouldBindJSON(&body)
+
+	hours := body.Hours
+	if hours < 1 {
+		hours = 1
+	}
+	if hours > 720 {
+		hours = 720
+	}
+
+	until := time.Now().Add(time.Duration(hours) * time.Hour)
+	// Best-effort capture of who snoozed for the audit fields. Username
+	// lookup happens in the database layer to avoid threading session
+	// state through this handler.
+	user, _ := c.Get("username")
+	username, _ := user.(string)
+
+	if err := h.db.SnoozeAlert(id, until, username, body.Reason); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to snooze alert"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"snoozed_until": until,
+		"hours":         hours,
+	}))
+}
+
+// UnsnoozeAlert clears the snooze, re-surfacing the alert immediately
+// (v0.10.218, bundle G2).
+func (h *Handler) UnsnoozeAlert(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+
+	if err := h.db.UnsnoozeAlert(id); err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to unsnooze alert"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.MessageResponse("Alert unsnoozed"))
 }
 
 // maxBulkAckIDs caps how many alerts can be acked in a single bulk request.

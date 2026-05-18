@@ -30,7 +30,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.217"
+const ServerVersion = "0.10.218"
 
 func main() {
 	cfg := config.Load()
@@ -432,6 +432,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/interfaces", handler.GetAllInterfaces)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
+		admin.POST("/api/alerts/:id/snooze", handler.SnoozeAlert)
+		admin.POST("/api/alerts/:id/unsnooze", handler.UnsnoozeAlert)
 		admin.POST("/api/alerts/bulk-acknowledge", handler.BulkAcknowledgeAlerts)
 		admin.POST("/api/alerts/bulk-acknowledge-filter", handler.BulkAcknowledgeAlertsByFilter)
 		admin.POST("/api/alerts/:id/notes", handler.UpdateAlertNotes)

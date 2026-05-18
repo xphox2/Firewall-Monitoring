@@ -693,7 +693,42 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 				if statuses[i].RemoteSubnet == "" && peerTunnel.RemoteSubnet != "" {
 					statuses[i].RemoteSubnet = peerTunnel.RemoteSubnet
 				}
+				// Surface the resolved peer device id (v0.10.218, bundle G3).
+				// Frontend uses this to link the remote_ip cell to the peer's
+				// /admin/devices/:id detail page.
+				if peerTunnel.DeviceID != 0 && peerTunnel.DeviceID != statuses[i].DeviceID {
+					pid := peerTunnel.DeviceID
+					statuses[i].RemoteDeviceID = &pid
+				}
 			}
+		}
+	}
+
+	// Second-pass peer resolution (v0.10.218, bundle G3). The block above
+	// only populates RemoteDeviceID when a subnet cross-fill was needed.
+	// Tunnels that already had complete subnet info skipped that path but
+	// can still benefit from a peer link in the UI. Re-run the same match
+	// logic for RemoteDeviceID only.
+	for i := range statuses {
+		if statuses[i].RemoteDeviceID != nil {
+			continue
+		}
+		var peerTunnel *models.VPNStatus
+		myIPs := deviceIPSet[statuses[i].DeviceID]
+		for ip := range myIPs {
+			if pt, ok := peerTunnelsByRemoteIP[ip]; ok {
+				peerTunnel = &pt
+				break
+			}
+		}
+		if peerTunnel == nil && statuses[i].RemoteIP != "" {
+			if pt, ok := peerTunnelsByRemoteIP[statuses[i].RemoteIP]; ok {
+				peerTunnel = &pt
+			}
+		}
+		if peerTunnel != nil && peerTunnel.DeviceID != 0 && peerTunnel.DeviceID != statuses[i].DeviceID {
+			pid := peerTunnel.DeviceID
+			statuses[i].RemoteDeviceID = &pid
 		}
 	}
 
@@ -4063,6 +4098,29 @@ func (d *Database) AcknowledgeAlertEnhanced(id uint, notes string) error {
 		"acknowledged":    true,
 		"acknowledged_at": now,
 		"notes":           notes,
+	}).Error
+}
+
+// SnoozeAlert sets SnoozedUntil to the given timestamp (v0.10.218,
+// bundle G2). The handler clamps `until` into a 1h..30d window before
+// calling here. Audit fields SnoozedBy / SnoozedReason are recorded for
+// post-mortem review.
+func (d *Database) SnoozeAlert(id uint, until time.Time, by, reason string) error {
+	return d.db.Model(&models.Alert{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"snoozed_until":  until,
+		"snoozed_by":     by,
+		"snoozed_reason": reason,
+	}).Error
+}
+
+// UnsnoozeAlert clears the snooze window (v0.10.218, bundle G2). Used
+// when an operator changes their mind, or programmatically from the
+// frontend when a snooze duration has obviously elapsed.
+func (d *Database) UnsnoozeAlert(id uint) error {
+	return d.db.Model(&models.Alert{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"snoozed_until":  nil,
+		"snoozed_by":     "",
+		"snoozed_reason": "",
 	}).Error
 }
 

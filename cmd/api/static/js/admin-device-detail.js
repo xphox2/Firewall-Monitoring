@@ -694,13 +694,22 @@
             var state = v.state || (v.status === 'up' ? 'active' : 'inactive');
             var stateClass = (state === 'active' && hasTraffic) ? 'active' : (state === 'active' ? 'up' : 'inactive');
             var stateLabel = (state === 'active' && hasTraffic) ? 'Online' : state;
-            // Cross-pivot (v0.10.215, bundle E3): remote-end IP links to
-            // /admin/syslog?search=<ip> so an operator looking at a flapping
-            // tunnel can jump to "what is the remote saying" in one click.
-            var remoteCell = (v.remote_ip && window.AdminCommon)
-                ? window.AdminCommon.filterLink('syslog', { search: v.remote_ip }, v.remote_ip,
-                    { title: 'Search syslog for messages mentioning ' + v.remote_ip })
-                : esc(v.remote_ip);
+            // Cross-pivot (v0.10.215, bundle E3 + v0.10.218, bundle G3):
+            // - If the backend resolved a peer device (remote_device_id is
+            //   set), the IP links to /admin/devices/:peer-id for one-click
+            //   navigation to the other end of the tunnel.
+            // - Otherwise fall back to /admin/syslog?search=<ip> so the
+            //   operator can at least see remote-side messages.
+            var remoteCell;
+            if (v.remote_ip && v.remote_device_id && window.AdminCommon) {
+                remoteCell = window.AdminCommon.deviceLink(v.remote_device_id, v.remote_ip,
+                    { title: 'Open peer device detail (resolved by RemoteIP match)' });
+            } else if (v.remote_ip && window.AdminCommon) {
+                remoteCell = window.AdminCommon.filterLink('syslog', { search: v.remote_ip }, v.remote_ip,
+                    { title: 'Search syslog for messages mentioning ' + v.remote_ip });
+            } else {
+                remoteCell = esc(v.remote_ip);
+            }
             return '<tr>' +
                 '<td>' + esc(v.phase1_name || v.tunnel_name) + '</td>' +
                 '<td><strong>' + esc(v.tunnel_name) + '</strong></td>' +

@@ -299,6 +299,29 @@
                 </div>
                 <div id="stale-devices-list"></div>
             </div>
+            <!-- Noisy-Device Leaderboard (v0.10.218, bundle G1): ranks
+                 devices by recent alert + syslog volume so an operator
+                 can spot misconfigured / flapping devices that are
+                 drowning out everything else in the queue. Uses the
+                 device_id filter on /stats endpoints added in D4. -->
+            <div class="card" id="noisy-devices-card" style="display:none;">
+                <div class="card-header">
+                    <h2>Noisy Devices
+                        <span class="fwmon-chip subdued" id="noisy-devices-count"
+                              style="margin-left:8px;font-size:0.7rem;"></span>
+                    </h2>
+                    <span class="text-[#8b949e]" style="font-size:0.78rem;">
+                        Top message producers in the last
+                        <select id="noisy-window-select" class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1 ml-2" style="font-size:0.78rem;">
+                            <option value="1">1 hour</option>
+                            <option value="6">6 hours</option>
+                            <option value="24" selected>24 hours</option>
+                            <option value="168">7 days</option>
+                        </select>
+                    </span>
+                </div>
+                <div id="noisy-devices-list"></div>
+            </div>
         </div>
 
         <!-- Devices Page -->
