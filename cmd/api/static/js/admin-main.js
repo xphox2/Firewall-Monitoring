@@ -96,7 +96,22 @@
             case 'interfaces': populateIfaceFilters().then(function() { loadInterfaces(); }); break;
             case 'connections': loadConnections(); break;
             case 'syslog': loadSyslog(); break;
-            case 'flows': loadFlows(); break;
+            case 'flows':
+                // v0.10.211: the Flows tab is owned by FwmonFlows (admin-flows.js).
+                // It binds its own controls, syncs filters with the URL, and
+                // handles uPlot rendering. The legacy loadFlows()/loadFlowCharts()
+                // path is left below as a fallback in case admin-flows.js fails
+                // to load. Devices + probes lists are populated for the filter
+                // dropdowns first so FwmonFlows.applyStateToControls() can label
+                // any pre-applied filter chips.
+                ensureFlowFilterLists().then(function() {
+                    if (window.FwmonFlows && window.FwmonFlows.init) {
+                        window.FwmonFlows.init();
+                    } else {
+                        loadFlows();
+                    }
+                });
+                break;
             case 'settings': loadSettings(); break;
             case 'alerts': loadAlerts(); break;
             case 'traps': loadTraps(); break;
@@ -861,6 +876,33 @@
     }
 
     // ---- Flows ----
+    // ensureFlowFilterLists — populate the device + probe <select> dropdowns
+    // and expose the cached lists to FwmonFlows via window.adminMainState
+    // (so chip rendering can resolve `device_id=42` to "fw-edge-01"). Cached
+    // after first fetch like the original loadFlows() did.
+    function ensureFlowFilterLists() {
+        var p = Promise.resolve();
+        if (currentProbes.length === 0) {
+            p = apiFetch(API_BASE + '/probes').then(function(pr) {
+                currentProbes = pr && pr.data ? pr.data : [];
+            });
+        }
+        return p.then(function() {
+            if (currentDevices.length === 0) {
+                return apiFetch(API_BASE + '/devices').then(function(dr) {
+                    currentDevices = dr && dr.data ? dr.data : [];
+                });
+            }
+        }).then(function() {
+            populateFilterProbes('flows-filter-probe');
+            populateFilterDevices('flows-filter-device');
+            // Surface to admin-flows.js for chip labels.
+            window.adminMainState = window.adminMainState || {};
+            window.adminMainState.devices = currentDevices;
+            window.adminMainState.probes = currentProbes;
+        });
+    }
+
     function loadFlows() {
         flowsOffset = 0;
         var p = Promise.resolve();
@@ -2817,10 +2859,26 @@
         'load-more-syslog': function() { loadMoreSyslog(); },
         'set-flow-range': function(el) {
             var hours = parseInt(el.dataset.hours);
-            setFlowRange(hours);
+            // v0.10.211: range is now driven by FwmonFlows.setFilter('hours',...).
+            // The legacy data-action handler stays for any external deep-link.
+            if (window.FwmonFlows && window.FwmonFlows.setFilter) {
+                window.FwmonFlows.setFilter('hours', hours);
+            } else {
+                setFlowRange(hours);
+            }
         },
-        'load-flows': function() { loadFlows(); },
-        'load-more-flows': function() { loadMoreFlows(); },
+        'load-flows': function() {
+            if (window.FwmonFlows && window.FwmonFlows.refresh) {
+                window.FwmonFlows.refresh();
+            } else {
+                loadFlows();
+            }
+        },
+        'load-more-flows': function() {
+            // FwmonFlows binds its own "load more" button directly; this
+            // handler stays for the legacy fallback path.
+            if (!window.FwmonFlows) loadMoreFlows();
+        },
         'load-alerts': function() { loadAlerts(); },
         'load-more-alerts': function() { loadMoreAlerts(); },
         'prev-alerts': function() { prevAlerts(); },

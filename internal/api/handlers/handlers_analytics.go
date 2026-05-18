@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,62 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// ipFilterClause turns a user-supplied `src_addr` or `dst_addr` query value
+// into a WHERE clause + bound argument. Supports:
+//
+//   - exact match:        "10.0.0.5"           → column = ?
+//   - octet-aligned CIDR: "10.0.0.0/8|16|24"   → column LIKE prefix.%
+//   - /32 CIDR:           "10.0.0.5/32"        → column = ? (network IP)
+//   - any other input:    fall back to exact match against the raw string,
+//     so a malformed CIDR doesn't crash and the operator still sees something
+//
+// We use prefix matching on the text column rather than casting to inet
+// because flow_samples.src_addr/dst_addr are stored as strings and we want
+// the same code path to work on SQLite (test DB) and Postgres (prod).
+// Non-octet-aligned CIDRs (e.g. /20, /28) fall back to exact match on the
+// network address — improving that needs a numeric range query on a parsed
+// IPv4-as-int column, which is a bigger refactor.
+//
+// Returns (sqlFragment, boundArg, applied). applied=false means caller
+// should NOT apply this filter (invalid CIDR, etc.).
+func ipFilterClause(column, val string) (string, interface{}, bool) {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return "", nil, false
+	}
+	if !strings.Contains(val, "/") {
+		return column + " = ?", val, true
+	}
+	_, ipNet, err := net.ParseCIDR(val)
+	if err != nil {
+		return column + " = ?", val, true
+	}
+	ones, bits := ipNet.Mask.Size()
+	if bits != 32 {
+		// IPv6 CIDR — fall back to exact match for now. Proper IPv6 CIDR
+		// matching on a text column needs lexicographic prefixing on the
+		// canonical form, which our store doesn't guarantee.
+		return column + " = ?", ipNet.IP.String(), true
+	}
+	netStr := ipNet.IP.To4().String()
+	parts := strings.Split(netStr, ".")
+	if len(parts) != 4 {
+		return column + " = ?", val, true
+	}
+	switch ones {
+	case 8:
+		return column + " LIKE ?", parts[0] + ".%", true
+	case 16:
+		return column + " LIKE ?", parts[0] + "." + parts[1] + ".%", true
+	case 24:
+		return column + " LIKE ?", parts[0] + "." + parts[1] + "." + parts[2] + ".%", true
+	case 32:
+		return column + " = ?", netStr, true
+	default:
+		return column + " = ?", netStr, true
+	}
+}
 
 func (h *Handler) GetAlerts(c *gin.Context) {
 	if h.db == nil {
@@ -198,10 +255,20 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 		query = query.Where("device_id = ?", deviceID)
 	}
 	if src := c.Query("src_addr"); src != "" {
-		query = query.Where("src_addr = ?", src)
+		if frag, arg, ok := ipFilterClause("src_addr", src); ok {
+			query = query.Where(frag, arg)
+		}
 	}
 	if dst := c.Query("dst_addr"); dst != "" {
-		query = query.Where("dst_addr = ?", dst)
+		if frag, arg, ok := ipFilterClause("dst_addr", dst); ok {
+			query = query.Where(frag, arg)
+		}
+	}
+	// Optional dst port filter — top-port drill-down sends this.
+	if dport := c.Query("dst_port"); dport != "" {
+		if p, err := strconv.ParseUint(dport, 10, 16); err == nil {
+			query = query.Where("dst_port = ?", p)
+		}
 	}
 	if proto := c.Query("protocol"); proto != "" {
 		query = query.Where("protocol = ?", proto)

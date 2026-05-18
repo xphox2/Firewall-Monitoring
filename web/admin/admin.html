@@ -6,6 +6,12 @@
     <title>Firewall Monitor - Admin</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
+    <!-- v0.10.211: same self-hosted fonts + uPlot stack as device-detail, scoped via admin-flows.css. -->
+    <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/static/css/admin-fonts.css">
+    <link rel="stylesheet" href="/static/css/uPlot.min.css">
+    <link rel="stylesheet" href="/static/css/admin-flows.css">
     <style>
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
@@ -176,6 +182,8 @@
         });
     </script>
     <script defer src="/static/js/chart.umd.min.js"></script>
+    <script defer src="/static/js/uPlot.iife.min.js"></script>
+    <script defer src="/static/js/admin-flows.js"></script>
     <script defer src="/static/js/cytoscape.min.js"></script>
     <script defer src="/static/js/layout-base.js"></script>
     <script defer src="/static/js/cose-base.js"></script>
@@ -404,111 +412,133 @@
             </div>
         </div>
 
-        <!-- Flows Page -->
-        <div class="page" id="page-flows">
-            <div class="filter-bar" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
-                <label style="color:#8b949e;font-size:0.78rem;white-space:nowrap;">Time Range:</label>
-                <select class="chart-range-select" id="flow-range-select">
-                    <option value="0.25">15m</option>
-                    <option value="0.5">30m</option>
-                    <option value="1">1h</option>
-                    <option value="6">6h</option>
-                    <option value="12">12h</option>
-                    <option value="24" selected>24h</option>
-                    <option value="168">1w</option>
-                    <option value="720">1m</option>
-                    <option value="2160">3m</option>
-                    <option value="8760">1y</option>
-                </select>
-            </div>
-            <div class="stat-grid stat-grid-5" id="flows-stats-grid">
-                <div class="stat-card"><div class="stat-label">Total Flows</div><div class="stat-value accent" id="flows-total">--</div></div>
-                <div class="stat-card"><div class="stat-label">Sampled Bytes</div><div class="stat-value" id="flows-bytes">--</div></div>
-                <div class="stat-card"><div class="stat-label">Avg Throughput</div><div class="stat-value" id="flows-throughput">--</div></div>
-                <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="flows-sources">--</div></div>
-                <div class="stat-card"><div class="stat-label">Unique Destinations</div><div class="stat-value" id="flows-dests">--</div></div>
-                <div class="stat-card"><div class="stat-label">Protocols</div><div class="stat-value" id="flows-protocols">--</div></div>
-                <div class="stat-card"><div class="stat-label">Sampling Rate</div><div class="stat-value" id="flows-sampling-rate">--</div></div>
-                <div class="stat-card"><div class="stat-label">Total Packets</div><div class="stat-value" id="flows-packets">--</div></div>
-            </div>
-            <div id="flows-local-traffic-bar" style="display:none;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:0.82rem;color:#8b949e">
-                &#9888; <strong style="color:#d2992a">Internal/Local Traffic (port 0):</strong>
-                <span id="flows-local-bytes" style="color:#c9d1d9;margin-left:8px">--</span> bytes,
-                <span id="flows-local-flows" style="color:#c9d1d9">--</span> flows,
-                <span id="flows-local-packets" style="color:#c9d1d9">--</span> packets
-                <span style="color:#484f58;margin-left:8px">(filtered from charts below)</span>
-            </div>
-            <div class="chart-row">
-                <div class="chart-card">
-                    <h3>Bandwidth Over Time</h3>
-                    <canvas id="flows-bytes-time-chart"></canvas>
+        <!-- Flows Page (v0.10.211 redesign — see FwmonFlows in admin-flows.js) -->
+        <div class="page fwmon-flows" id="page-flows">
+
+            <!-- Page header: range pill bar (left), sampling-rate chip + active-filter chips (right) -->
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">Network Flows</h2>
+                    <div class="chart-range-pills" id="flows-range-pills">
+                        <button type="button" class="chart-range-pill" data-range="1">1h</button>
+                        <button type="button" class="chart-range-pill" data-range="6">6h</button>
+                        <button type="button" class="chart-range-pill" data-range="12">12h</button>
+                        <button type="button" class="chart-range-pill active" data-range="24">24h</button>
+                        <button type="button" class="chart-range-pill" data-range="168">7d</button>
+                        <button type="button" class="chart-range-pill" data-range="720">30d</button>
+                        <button type="button" class="chart-range-pill" data-range="2160">90d</button>
+                    </div>
                 </div>
-                <div class="chart-card">
-                    <h3>Protocol Distribution</h3>
-                    <canvas id="flows-protocol-chart"></canvas>
+                <div class="fwmon-flows-header-right">
+                    <div class="fwmon-flows-chips" id="flows-active-filter-chips">
+                        <!-- Filter chips ("src: 10.0.0.5 ×", "proto: TCP ×") rendered by FwmonFlows -->
+                    </div>
+                    <div class="fwmon-flows-sampling-chip" id="flows-sampling-chip" title="Average sampling rate across the selected time range">
+                        <span class="fwmon-flows-sampling-label">sampling</span>
+                        <span class="fwmon-flows-sampling-value" id="flows-sampling-rate-chip">--</span>
+                    </div>
                 </div>
             </div>
-            <div class="chart-row">
-                <div class="chart-card">
-                    <h3>Top Sources (by bytes)</h3>
-                    <canvas id="flows-top-talkers-chart"></canvas>
+
+            <!-- 6 stat cards — same data as before, restyled with overflow-safe typography -->
+            <div class="fwmon-flows-stats" id="flows-stats-grid">
+                <div class="fwmon-stat"><div class="fwmon-stat-label">Total Flows</div><div class="fwmon-stat-value" id="flows-total">--</div></div>
+                <div class="fwmon-stat"><div class="fwmon-stat-label">Total Bytes</div><div class="fwmon-stat-value" id="flows-bytes">--</div></div>
+                <div class="fwmon-stat"><div class="fwmon-stat-label">Avg Throughput</div><div class="fwmon-stat-value" id="flows-throughput">--</div></div>
+                <div class="fwmon-stat"><div class="fwmon-stat-label">Packets</div><div class="fwmon-stat-value" id="flows-packets">--</div></div>
+                <div class="fwmon-stat"><div class="fwmon-stat-label">Unique Src / Dst</div><div class="fwmon-stat-value" id="flows-fanout">--</div></div>
+                <div class="fwmon-stat"><div class="fwmon-stat-label">Protocols</div><div class="fwmon-stat-value" id="flows-protocols">--</div></div>
+            </div>
+
+            <!-- Local traffic notice — only shown when port-0 traffic > 0 -->
+            <div class="fwmon-flows-local-notice" id="flows-local-traffic-bar" hidden>
+                <span class="fwmon-flows-local-icon">&#9888;</span>
+                <strong>Internal traffic (port 0):</strong>
+                <span id="flows-local-bytes">--</span> bytes ·
+                <span id="flows-local-flows">--</span> flows ·
+                <span id="flows-local-packets">--</span> packets
+                <span class="fwmon-flows-local-aside">(filtered from charts below)</span>
+            </div>
+
+            <!-- Bandwidth-over-time chart (uPlot with brush-to-zoom) -->
+            <div class="chart-card fwmon-bandwidth-card">
+                <div class="chart-card-header">
+                    <div>
+                        <h3 class="chart-card-title">Bandwidth Over Time</h3>
+                        <div class="chart-card-subtitle">throughput · effective rate after sampling adjustment</div>
+                    </div>
+                    <span class="chart-zoom-hint">
+                        <span>drag to zoom · dbl-click to reset</span>
+                        <button type="button" class="chart-reset-btn" id="flows-reset-zoom">reset</button>
+                    </span>
                 </div>
-                <div class="chart-card">
-                    <h3>Top Destinations (by bytes)</h3>
-                    <canvas id="flows-top-dests-chart"></canvas>
+                <div class="chart-host" id="flows-bandwidth-chart"></div>
+            </div>
+
+            <!-- Top-talker lists — HTML rendered, clickable rows that filter the page -->
+            <div class="fwmon-flows-toptalk-grid">
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">Top Sources<span class="fwmon-toptalk-hint">click to filter</span></h3>
+                    <ul class="fwmon-toptalk-list" id="flows-top-sources"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">Top Destinations<span class="fwmon-toptalk-hint">click to filter</span></h3>
+                    <ul class="fwmon-toptalk-list" id="flows-top-destinations"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">Top Ports<span class="fwmon-toptalk-hint">click to filter</span></h3>
+                    <ul class="fwmon-toptalk-list" id="flows-top-ports"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">Protocols<span class="fwmon-toptalk-hint">click to filter</span></h3>
+                    <ul class="fwmon-toptalk-list" id="flows-top-protocols"></ul>
                 </div>
             </div>
-            <div class="chart-row">
-                <div class="chart-card">
-                    <h3>Top Ports (by bytes)</h3>
-                    <canvas id="flows-top-ports-chart"></canvas>
-                </div>
-                <div class="chart-card" id="flows-retention-card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;color:#8b949e;font-size:0.85rem;">
-                    <div style="font-size:2rem;margin-bottom:8px;">&#128202;</div>
-                    <div><strong>Data Retention:</strong> <span id="flows-retention-days">365</span> days</div>
-                    <div style="margin-top:4px;color:#484f58;">Flow rollups: 5m → 1h → 1d</div>
-                </div>
-            </div>
+
+            <!-- Top Conversations — full sortable table, click row to filter src+dst+port -->
             <div class="card">
                 <div class="card-header">
                     <h2>Top Conversations</h2>
+                    <span class="fwmon-toptalk-hint">click to filter</span>
                 </div>
                 <div class="table-wrap" style="max-height: 360px;">
-                    <table id="flows-conversations-table">
-                        <thead><tr><th>Source</th><th>&#8594;</th><th>Destination</th><th>Protocol</th><th>Bytes</th><th>Packets</th><th>% of Total</th></tr></thead>
+                    <table id="flows-conversations-table" class="fwmon-flows-table">
+                        <thead><tr><th>Source</th><th></th><th>Destination</th><th>Protocol</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">%</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
             </div>
+
+            <!-- Flow Samples — filter pills, IP inputs with CIDR support, auto-apply -->
             <div class="card">
                 <div class="card-header">
                     <h2>Flow Samples</h2>
                 </div>
-                <div class="filter-bar">
-                    <select id="flows-filter-device"><option value="">All Devices</option></select>
-                    <select id="flows-filter-probe"><option value="">All Probes</option></select>
-                    <select id="flows-filter-protocol">
-                        <option value="">All Protocols</option>
-                        <option value="6">TCP</option>
-                        <option value="17">UDP</option>
-                        <option value="1">ICMP</option>
-                        <option value="58">ICMPv6</option>
-                        <option value="47">GRE</option>
-                        <option value="50">ESP</option>
-                        <option value="89">OSPF</option>
-                    </select>
-                    <input type="text" id="flows-filter-src" placeholder="Src IP..." autocomplete="one-time-code">
-                    <input type="text" id="flows-filter-dst" placeholder="Dst IP..." autocomplete="one-time-code">
-                    <button class="btn secondary sm" data-action="load-flows">Apply</button>
+                <div class="fwmon-flows-filter-row">
+                    <select id="flows-filter-device" class="fwmon-flows-select"><option value="">All devices</option></select>
+                    <select id="flows-filter-probe" class="fwmon-flows-select"><option value="">All probes</option></select>
+                    <div class="chart-range-pills" id="flows-protocol-pills">
+                        <button type="button" class="chart-range-pill active" data-protocol="" title="All protocols">All</button>
+                        <button type="button" class="chart-range-pill" data-protocol="6">TCP</button>
+                        <button type="button" class="chart-range-pill" data-protocol="17">UDP</button>
+                        <button type="button" class="chart-range-pill" data-protocol="1">ICMP</button>
+                        <button type="button" class="chart-range-pill" data-protocol="47">GRE</button>
+                        <button type="button" class="chart-range-pill" data-protocol="50">ESP</button>
+                    </div>
+                    <input type="text" id="flows-filter-src" class="fwmon-flows-input" placeholder="src IP or CIDR (10.0.0.0/24)" autocomplete="one-time-code" spellcheck="false">
+                    <input type="text" id="flows-filter-dst" class="fwmon-flows-input" placeholder="dst IP or CIDR" autocomplete="one-time-code" spellcheck="false">
+                    <input type="text" id="flows-filter-dport" class="fwmon-flows-input fwmon-flows-input-port" placeholder="dst port" autocomplete="one-time-code" spellcheck="false" inputmode="numeric">
+                    <button type="button" class="btn secondary sm fwmon-flows-clear" id="flows-clear-filters">clear</button>
                 </div>
                 <div class="table-wrap" style="max-height: 600px;">
-                    <table id="flows-table">
-                        <thead><tr><th>Time</th><th>Src IP:Port</th><th>&#8594;</th><th>Dst IP:Port</th><th>Protocol</th><th>Bytes</th><th>Packets</th><th>Rate</th></tr></thead>
+                    <table id="flows-table" class="fwmon-flows-table">
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
-                <div style="margin-top: 12px; text-align: center;">
-                    <button class="btn secondary" data-action="load-more-flows">Load More</button>
+                <div class="fwmon-flows-loadmore">
+                    <button class="btn secondary" data-action="load-more-flows" id="flows-load-more">Load more</button>
+                    <span class="fwmon-flows-loadmore-hint" id="flows-loaded-count">--</span>
                 </div>
             </div>
         </div>

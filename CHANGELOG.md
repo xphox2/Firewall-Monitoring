@@ -1,4 +1,52 @@
 # Changelog
+## [0.10.211] - 2026-05-17
+
+### Changed — `/admin/flows` page redesign
+Brought the Flows tab in line with the device-detail visual language and added the interactivity it had been missing. The previous implementation was 5 Chart.js charts + 8 stat tiles + a filter row with an "Apply" button — visually inconsistent with the rest of the redesigned admin, and with dead-end widgets (you couldn't click a top-source row to filter by it).
+
+#### Page header (new)
+- Range pill bar (1h / 6h / 12h / 24h / 7d / 30d / 90d) replacing the `<select>` dropdown — matches the device-detail aesthetic.
+- **Sampling-rate chip** in the header right-side. Operators forget the page shows *sampled* bytes; the persistent `sampling 1:1000` chip prevents misreading totals as raw.
+- **Active-filter chips** that show every applied filter (`src 10.0.0.5`, `proto TCP`, `dport 443`) with an × to clear individually. Makes the current view auditable at a glance.
+
+#### Bandwidth chart (uPlot)
+- Replaced the Chart.js line chart with **uPlot** — same library + sync key (`fwmon-flows`) pattern as the device-detail charts.
+- **Brush-to-zoom** + double-click reset + dedicated `reset` button.
+- Bps formatting with adaptive units (bps / kbps / Mbps / Gbps).
+
+#### Top-talker lists (HTML, no Chart.js)
+- Replaced 4 Chart.js horizontal-bar charts (Top Sources / Destinations / Ports / Protocols) with **HTML lists**: each row is a label + value + inline width-based bar. Faster, cleaner, mobile-friendly.
+- **Click-to-filter**: click any row to set the corresponding filter and refresh the whole page. Click the active row again to clear. Click target encoded as `data-filter-key` + `data-filter-value` on each `<li>`. The protocol row's "TCP" key is reverse-mapped to "6" for the URL state.
+
+#### Top Conversations table
+- Rows are now clickable — pick a conversation, page filters to that src + dst + dst_port triple.
+
+#### Flow Samples filter row
+- Removed the "Apply" button. **Auto-apply with debounce** (400 ms on text inputs, instant on selects/pills).
+- Protocol filter is now a **pill bar** (All / TCP / UDP / ICMP / GRE / ESP) instead of a `<select>`.
+- IP inputs accept **CIDR**: `10.0.0.0/24`, `192.168.0.0/16`, `203.0.113.5/32`. Octet-aligned IPv4 CIDRs are translated server-side to prefix-match `LIKE` clauses; non-aligned CIDRs (/20, /28 etc.) fall back to exact-match on the network IP.
+- New **dst port** input — used by Top-Ports drill-down.
+- New **clear** button beside the inputs.
+
+#### URL state ↔ filters
+- Every filter is mirrored to the URL via `history.replaceState`: `?src=10.0.0.5&proto=6&hours=6&dport=443`. Refresh, back-button, and share all preserve the view. Defaults (24h, blank filters) are omitted from the URL to keep clean URLs.
+
+#### Backend
+- `internal/api/handlers/handlers_analytics.go` — new `ipFilterClause(column, val)` helper. `src_addr`/`dst_addr` query params accept exact IPs OR octet-aligned IPv4 CIDR (10.0.0.0/8, /16, /24, /32 → prefix-match LIKE). Invalid CIDR falls back to exact match so a malformed input doesn't crash. New `dst_port` query param for the top-port drill-down.
+
+#### Files
+- New: `cmd/api/static/css/admin-flows.css` — scoped flows styling.
+- New: `cmd/api/static/js/admin-flows.js` — `window.FwmonFlows` module (init / refresh / setFilter / getState).
+- Modified: `web/admin/admin.html` — flows section rebuilt; preload fonts + uPlot CSS + admin-flows.{js,css} in head.
+- Modified: `cmd/api/static/js/admin-main.js` — `case 'flows':` delegates to FwmonFlows; new `ensureFlowFilterLists()` helper surfaces device+probe lists to the module via `window.adminMainState`. Legacy chart functions kept as fallback path.
+- Modified: `internal/api/handlers/handlers_analytics.go` — `ipFilterClause` + `dst_port` filter.
+
+#### Validation
+Sub-agent cross-checked 12 contract points (endpoint URLs, CIDR helper, dst_port filter, every JSON field, every mount-point ID, CSP compatibility, script load order, click-to-filter wiring, URL state, legacy fallback, embed-FS pickup, dead references). 12 PASS, 2 expected WARNs on the legacy fallback path (would throw if triggered, but only triggers if FwmonFlows fails to load — CSP-hosted same-origin script).
+
+### Why this matters
+The flows page was the highest-traffic forensic surface in the admin and the most visually mismatched. Operators need to drill from "show me the worst current source" to "show me all flows for that source between 14:00 and 14:15" without typing — now that's two clicks. URL state means an SRE can paste the URL into a ticket and the engineer who opens it sees exactly the same view.
+
 ## [0.10.210] - 2026-05-16
 
 ### Changed — interface filter pills restyled

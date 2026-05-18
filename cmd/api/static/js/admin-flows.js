@@ -1,0 +1,764 @@
+/* admin-flows.js — v0.10.211 Flows-tab redesign.
+ *
+ * Owns the page rendered at /admin/flows. Replaces the previous Chart.js
+ * implementations of:
+ *   - Bandwidth-over-time chart → uPlot with brush-zoom
+ *   - Top sources / dests / ports / protocols → HTML lists with click-to-filter
+ *   - Filter row → pill-bar protocol selector, CIDR-capable IP inputs,
+ *     auto-apply with debounce, URL-state sync.
+ *
+ * Public API (called from admin-main.js):
+ *   FwmonFlows.init()                  // bind controls, sync from URL, fetch
+ *   FwmonFlows.refresh()               // re-fetch with current filter state
+ *   FwmonFlows.getState()              // current filter/range state (for tests)
+ *   FwmonFlows.setFilter(key, value)   // programmatic filter set (drill-down)
+ *
+ * State model:
+ *   {
+ *     hours: 24,
+ *     device_id: "", probe_id: "",
+ *     protocol: "",
+ *     src: "", dst: "", dport: ""
+ *   }
+ * Every state mutation calls syncURL() (replaceState), persistChips(), and
+ * scheduleReload() (debounced apiFetch).
+ */
+(function() {
+    'use strict';
+
+    var SYNC_KEY = 'fwmon-flows';
+    var DEFAULTS = {
+        hours: 24,
+        device_id: '',
+        probe_id: '',
+        protocol: '',
+        src: '',
+        dst: '',
+        dport: ''
+    };
+
+    // URL params <-> state. URL is the source of truth on page load so
+    // refresh / back / share preserves the view.
+    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport'];
+
+    var state = Object.assign({}, DEFAULTS);
+    var inited = false;
+    var charts = { bandwidth: null };
+    var flowsOffset = 0;
+    var reloadTimer = null;
+    var statsTimer = null;
+
+    // ----------------------------------------------------------------------
+    // Boot
+    // ----------------------------------------------------------------------
+    function init() {
+        if (inited) {
+            // Re-init is a no-op other than re-reading URL — the user may have
+            // navigated via tab switch. Force a refresh anyway.
+            stateFromURL();
+            applyStateToControls();
+            reload();
+            return;
+        }
+        inited = true;
+        stateFromURL();
+        bindControls();
+        applyStateToControls();
+        reload();
+    }
+
+    function stateFromURL() {
+        try {
+            var url = new URL(window.location.href);
+            URL_KEYS.forEach(function(k) {
+                var v = url.searchParams.get(k);
+                if (v == null || v === '') return;
+                if (k === 'hours') {
+                    var n = parseFloat(v);
+                    if (isFinite(n) && n > 0) state.hours = n;
+                } else {
+                    state[k] = v;
+                }
+            });
+        } catch (e) { /* old browsers — fall back to defaults */ }
+    }
+
+    function syncURL() {
+        try {
+            var url = new URL(window.location.href);
+            URL_KEYS.forEach(function(k) {
+                var v = state[k];
+                if (v === '' || v == null ||
+                    (k === 'hours' && Number(v) === DEFAULTS.hours)) {
+                    url.searchParams['delete'](k);
+                } else {
+                    url.searchParams.set(k, String(v));
+                }
+            });
+            window.history.replaceState(null, '', url.toString());
+        } catch (e) { /* swallow */ }
+    }
+
+    // ----------------------------------------------------------------------
+    // Control wiring
+    // ----------------------------------------------------------------------
+    function bindControls() {
+        // Range pills
+        var rangePills = document.getElementById('flows-range-pills');
+        if (rangePills) {
+            rangePills.addEventListener('click', function(ev) {
+                var btn = ev.target && ev.target.closest && ev.target.closest('.chart-range-pill');
+                if (!btn) return;
+                var h = parseFloat(btn.getAttribute('data-range'));
+                if (isFinite(h)) {
+                    state.hours = h;
+                    applyStateToControls();
+                    syncURL();
+                    reload();
+                }
+            });
+        }
+
+        // Protocol pills
+        var protoPills = document.getElementById('flows-protocol-pills');
+        if (protoPills) {
+            protoPills.addEventListener('click', function(ev) {
+                var btn = ev.target && ev.target.closest && ev.target.closest('.chart-range-pill');
+                if (!btn) return;
+                state.protocol = btn.getAttribute('data-protocol') || '';
+                applyStateToControls();
+                syncURL();
+                reload();
+            });
+        }
+
+        // Device / probe selects — auto-apply on change
+        bindSelectAuto('flows-filter-device', 'device_id');
+        bindSelectAuto('flows-filter-probe',  'probe_id');
+
+        // IP / port inputs — debounced auto-apply on input, immediate on Enter/blur
+        bindInputAuto('flows-filter-src',   'src',   400);
+        bindInputAuto('flows-filter-dst',   'dst',   400);
+        bindInputAuto('flows-filter-dport', 'dport', 400);
+
+        // "Clear filters" button
+        var clearBtn = document.getElementById('flows-clear-filters');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function() {
+                state.device_id = '';
+                state.probe_id  = '';
+                state.protocol  = '';
+                state.src = '';
+                state.dst = '';
+                state.dport = '';
+                applyStateToControls();
+                syncURL();
+                reload();
+            });
+        }
+
+        // Reset-zoom button on the bandwidth chart
+        var resetBtn = document.getElementById('flows-reset-zoom');
+        if (resetBtn) resetBtn.addEventListener('click', resetZoom);
+
+        // "Load more" pagination
+        var loadMore = document.getElementById('flows-load-more');
+        if (loadMore) loadMore.addEventListener('click', loadMoreSamples);
+
+        // Top-talker rows — event delegation. Each list rendered with
+        // data-filter-key / data-filter-value attributes.
+        ['flows-top-sources', 'flows-top-destinations',
+         'flows-top-ports', 'flows-top-protocols'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener('click', onTopTalkerClick);
+        });
+
+        // Top conversations rows — event delegation
+        var convTable = document.getElementById('flows-conversations-table');
+        if (convTable) convTable.addEventListener('click', onConversationClick);
+
+        // Resize handler for the bandwidth chart
+        if (typeof ResizeObserver !== 'undefined') {
+            var host = document.getElementById('flows-bandwidth-chart');
+            if (host) {
+                var ro = new ResizeObserver(function(entries) {
+                    if (!charts.bandwidth || !charts.bandwidth.setSize) return;
+                    var r = entries[0] && entries[0].contentRect;
+                    if (!r || r.width === 0) return;
+                    charts.bandwidth.setSize({ width: Math.max(280, r.width), height: 240 });
+                });
+                ro.observe(host);
+            }
+        }
+    }
+
+    function bindSelectAuto(elId, stateKey) {
+        var el = document.getElementById(elId);
+        if (!el) return;
+        el.addEventListener('change', function() {
+            state[stateKey] = el.value || '';
+            syncURL();
+            reload();
+        });
+    }
+
+    function bindInputAuto(elId, stateKey, debounceMs) {
+        var el = document.getElementById(elId);
+        if (!el) return;
+        var pending = null;
+        el.addEventListener('input', function() {
+            if (pending) clearTimeout(pending);
+            pending = setTimeout(function() {
+                state[stateKey] = el.value.trim();
+                syncURL();
+                reload();
+            }, debounceMs);
+        });
+        el.addEventListener('blur', function() {
+            if (pending) { clearTimeout(pending); pending = null; }
+            if (state[stateKey] !== el.value.trim()) {
+                state[stateKey] = el.value.trim();
+                syncURL();
+                reload();
+            }
+        });
+        el.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+                if (pending) { clearTimeout(pending); pending = null; }
+                state[stateKey] = el.value.trim();
+                syncURL();
+                reload();
+            }
+        });
+    }
+
+    function applyStateToControls() {
+        // Range pills
+        var rangePills = document.querySelectorAll('#flows-range-pills .chart-range-pill');
+        for (var i = 0; i < rangePills.length; i++) {
+            var p = rangePills[i];
+            var h = parseFloat(p.getAttribute('data-range'));
+            p.classList.toggle('active', isFinite(h) && h === Number(state.hours));
+        }
+        // Protocol pills
+        var protoPills = document.querySelectorAll('#flows-protocol-pills .chart-range-pill');
+        for (var j = 0; j < protoPills.length; j++) {
+            var pp = protoPills[j];
+            pp.classList.toggle('active', pp.getAttribute('data-protocol') === state.protocol);
+        }
+        // Selects + inputs
+        setVal('flows-filter-device', state.device_id);
+        setVal('flows-filter-probe',  state.probe_id);
+        setVal('flows-filter-src',    state.src);
+        setVal('flows-filter-dst',    state.dst);
+        setVal('flows-filter-dport',  state.dport);
+        renderActiveChips();
+    }
+
+    function setVal(id, v) {
+        var el = document.getElementById(id);
+        if (el && el.value !== v) el.value = v || '';
+    }
+
+    function renderActiveChips() {
+        var host = document.getElementById('flows-active-filter-chips');
+        if (!host) return;
+        var chips = [];
+        if (state.src)       chips.push({ key: 'src',   val: state.src,   stateKey: 'src' });
+        if (state.dst)       chips.push({ key: 'dst',   val: state.dst,   stateKey: 'dst' });
+        if (state.dport)     chips.push({ key: 'dport', val: state.dport, stateKey: 'dport' });
+        if (state.protocol)  chips.push({ key: 'proto', val: protocolName(state.protocol), stateKey: 'protocol' });
+        if (state.device_id) chips.push({ key: 'device', val: deviceLabel(state.device_id), stateKey: 'device_id' });
+        if (state.probe_id)  chips.push({ key: 'probe',  val: probeLabel(state.probe_id),   stateKey: 'probe_id' });
+
+        if (chips.length === 0) { host.innerHTML = ''; return; }
+        host.innerHTML = chips.map(function(c) {
+            return '<span class="fwmon-flows-chip" data-stateKey="' + esc(c.stateKey) + '">' +
+                '<span class="fwmon-flows-chip-key">' + esc(c.key) + '</span>' +
+                '<span class="fwmon-flows-chip-val">' + esc(c.val) + '</span>' +
+                '<button type="button" class="fwmon-flows-chip-clear" title="Clear filter">×</button>' +
+            '</span>';
+        }).join('');
+        // Delegated click on the chip ×
+        host.querySelectorAll('.fwmon-flows-chip-clear').forEach(function(btn) {
+            btn.addEventListener('click', function(ev) {
+                var chip = ev.target.closest('.fwmon-flows-chip');
+                if (!chip) return;
+                var k = chip.getAttribute('data-stateKey');
+                if (k) {
+                    state[k] = '';
+                    applyStateToControls();
+                    syncURL();
+                    reload();
+                }
+            });
+        });
+    }
+
+    // ----------------------------------------------------------------------
+    // Reload — schedule a debounced fetch of /flows + /flows/stats
+    // ----------------------------------------------------------------------
+    function reload() {
+        flowsOffset = 0;
+        scheduleStats();
+        scheduleSamples();
+    }
+
+    function refresh() { reload(); }
+
+    function scheduleStats() {
+        if (statsTimer) clearTimeout(statsTimer);
+        statsTimer = setTimeout(loadStats, 0);
+    }
+    function scheduleSamples() {
+        if (reloadTimer) clearTimeout(reloadTimer);
+        reloadTimer = setTimeout(loadSamples, 0);
+    }
+
+    function statsURL() {
+        var params = ['hours=' + encodeURIComponent(state.hours)];
+        if (state.device_id) params.push('device_id=' + encodeURIComponent(state.device_id));
+        return '/admin/api/flows/stats?' + params.join('&');
+    }
+
+    function samplesURL(limit, offset) {
+        var p = ['limit=' + limit];
+        if (offset > 0) p.push('offset=' + offset);
+        if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
+        if (state.probe_id)  p.push('probe_id='  + encodeURIComponent(state.probe_id));
+        if (state.protocol)  p.push('protocol='  + encodeURIComponent(state.protocol));
+        if (state.src)       p.push('src_addr='  + encodeURIComponent(state.src));
+        if (state.dst)       p.push('dst_addr='  + encodeURIComponent(state.dst));
+        if (state.dport)     p.push('dst_port='  + encodeURIComponent(state.dport));
+        return '/admin/api/flows?' + p.join('&');
+    }
+
+    // ----------------------------------------------------------------------
+    // Stats fetch → top-talkers, bandwidth chart, sampling chip, stat tiles
+    // ----------------------------------------------------------------------
+    function loadStats() {
+        var AC = window.AdminCommon;
+        if (!AC || !AC.apiFetch) return;
+        showChartLoading();
+        AC.apiFetch(statsURL()).then(function(result) {
+            if (!result || !result.data) {
+                showChartEmpty('No data');
+                clearTopTalkers();
+                return;
+            }
+            renderStats(result.data);
+        })['catch'](function(e) {
+            console.error('FwmonFlows: stats fetch failed', e);
+            showChartEmpty('Error');
+            clearTopTalkers();
+        });
+    }
+
+    function renderStats(d) {
+        // Stat tiles
+        setText('flows-total',      (d.total_flows || 0).toLocaleString());
+        setText('flows-bytes',      formatBytes(d.total_bytes || 0));
+        setText('flows-throughput', formatBps(d.bits_per_second || 0));
+        setText('flows-packets',    (d.total_packets || 0).toLocaleString());
+        var us = (d.unique_sources || 0).toLocaleString();
+        var ud = (d.unique_dests   || 0).toLocaleString();
+        setText('flows-fanout',     us + ' / ' + ud);
+        setText('flows-protocols',  (d.protocol_count || 0).toLocaleString());
+
+        // Sampling chip
+        var samplingValue = document.getElementById('flows-sampling-rate-chip');
+        if (samplingValue) {
+            var r = d.avg_sampling_rate || 0;
+            samplingValue.textContent = r > 1 ? '1:' + Math.round(r) : '1:1';
+        }
+
+        // Local-traffic notice
+        var localBar = document.getElementById('flows-local-traffic-bar');
+        if (localBar && d.local_traffic && d.local_traffic.bytes > 0) {
+            localBar.hidden = false;
+            setText('flows-local-bytes',   formatBytes(d.local_traffic.bytes));
+            setText('flows-local-flows',   (d.local_traffic.flows || 0).toLocaleString());
+            setText('flows-local-packets', (d.local_traffic.packets || 0).toLocaleString());
+        } else if (localBar) {
+            localBar.hidden = true;
+        }
+
+        // Bandwidth chart
+        renderBandwidth(d);
+
+        // Top talkers
+        renderTopTalkers(d);
+    }
+
+    // ----------------------------------------------------------------------
+    // Bandwidth chart (uPlot)
+    // ----------------------------------------------------------------------
+    function renderBandwidth(d) {
+        if (typeof uPlot === 'undefined') {
+            showChartEmpty('uPlot unavailable');
+            return;
+        }
+        var host = document.getElementById('flows-bandwidth-chart');
+        if (!host) return;
+        var points = d.bytes_over_time || [];
+        if (!points.length) {
+            host.innerHTML = '<div class="chart-empty">No traffic in this range</div>';
+            if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+            return;
+        }
+        var intervalSec = d.bucket_seconds || 3600;
+        var xs = [];
+        var bps = [];
+        for (var i = 0; i < points.length; i++) {
+            xs.push(Math.floor(parseBucketToMs(points[i].bucket) / 1000));
+            bps.push((points[i].count * 8) / intervalSec);
+        }
+
+        host.innerHTML = '';
+        var width = host.clientWidth || 600;
+        var opts = {
+            width: width,
+            height: 240,
+            cursor: {
+                sync: { key: SYNC_KEY, setSeries: true },
+                drag: { x: true, y: false, setScale: true },
+                points: { size: 6, fill: function(u, sIdx) { return u.series[sIdx].stroke; } }
+            },
+            legend: { live: true, isolate: true },
+            scales: {
+                x: { time: true },
+                y: { auto: true, range: function(u, dataMin, dataMax) {
+                    if (dataMax == null || !isFinite(dataMax)) return [0, 100];
+                    return [0, dataMax * 1.1];
+                } }
+            },
+            axes: [
+                { stroke: '#6b7280', font: '11px "JetBrains Mono", ui-monospace, monospace',
+                  size: 24, grid: { stroke: '#1f2937', width: 1 },
+                  ticks: { stroke: '#374151', width: 1, size: 4 }, space: 60 },
+                { stroke: '#6b7280', font: '11px "JetBrains Mono", ui-monospace, monospace',
+                  size: 56, grid: { stroke: '#1f2937', width: 1 },
+                  ticks: { stroke: '#374151', width: 1, size: 4 },
+                  values: function(u, vals) { return vals.map(formatBpsShort); } }
+            ],
+            series: [
+                {},
+                {
+                    label: 'Throughput',
+                    stroke: '#7DD3FC',
+                    width: 1.6,
+                    fill: 'rgba(125,211,252,0.10)',
+                    value: function(u, v) { return v == null ? '--' : formatBps(v); },
+                    points: { show: false }
+                }
+            ]
+        };
+        if (charts.bandwidth) charts.bandwidth.destroy();
+        charts.bandwidth = new uPlot(opts, [xs, bps], host);
+    }
+
+    function resetZoom() {
+        var c = charts.bandwidth;
+        if (!c || !c.data || !c.data[0]) return;
+        var xs = c.data[0];
+        if (xs.length === 0) return;
+        c.setScale('x', { min: xs[0], max: xs[xs.length - 1] });
+    }
+
+    function showChartLoading() {
+        var host = document.getElementById('flows-bandwidth-chart');
+        if (host && !charts.bandwidth) {
+            host.innerHTML = '<div class="chart-loading">loading…</div>';
+        }
+    }
+    function showChartEmpty(msg) {
+        var host = document.getElementById('flows-bandwidth-chart');
+        if (host) host.innerHTML = '<div class="chart-empty">' + esc(msg) + '</div>';
+    }
+
+    // ----------------------------------------------------------------------
+    // Top-talker lists
+    // ----------------------------------------------------------------------
+    function renderTopTalkers(d) {
+        renderList('flows-top-sources',      d.top_sources      || [], 'sources',   'src',      function(v) { return v; });
+        renderList('flows-top-destinations', d.top_destinations || [], 'dests',     'dst',      function(v) { return v; });
+        renderList('flows-top-ports',        d.top_ports        || [], 'ports',     'dport',    function(v) { return v; });
+        renderList('flows-top-protocols',    d.by_protocol      || [], 'protocols', 'protocol', protocolNumber);
+    }
+
+    function clearTopTalkers() {
+        ['flows-top-sources', 'flows-top-destinations',
+         'flows-top-ports', 'flows-top-protocols'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
+        });
+    }
+
+    function renderList(elId, rows, colorTag, stateKey, toFilterValue) {
+        var el = document.getElementById(elId);
+        if (!el) return;
+        el.setAttribute('data-color', colorTag);
+        if (!rows.length) {
+            el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
+            return;
+        }
+        var max = 0;
+        for (var i = 0; i < rows.length; i++) { if (rows[i].count > max) max = rows[i].count; }
+        if (max === 0) max = 1;
+        var html = '';
+        for (var j = 0; j < rows.length; j++) {
+            var r = rows[j];
+            var pct = (r.count / max) * 100;
+            var filterVal = toFilterValue(r.key);
+            var isActive = String(state[stateKey]) === String(filterVal);
+            html += '<li class="fwmon-toptalk-row' + (isActive ? ' active' : '') +
+                '" data-filter-key="' + esc(stateKey) +
+                '" data-filter-value="' + esc(filterVal) + '"' +
+                ' style="--bar-pct:' + pct.toFixed(1) + '%">' +
+                '<span class="fwmon-toptalk-row-label" title="' + esc(r.key) + '">' + esc(r.key) + '</span>' +
+                '<span class="fwmon-toptalk-row-value">' + formatBytes(r.count) + '</span>' +
+                '<span class="fwmon-toptalk-row-bar"></span>' +
+            '</li>';
+        }
+        el.innerHTML = html;
+    }
+
+    function onTopTalkerClick(ev) {
+        var row = ev.target && ev.target.closest && ev.target.closest('.fwmon-toptalk-row');
+        if (!row) return;
+        var k = row.getAttribute('data-filter-key');
+        var v = row.getAttribute('data-filter-value');
+        if (!k) return;
+        // Toggle: clicking the active row clears the filter.
+        if (String(state[k]) === String(v)) {
+            state[k] = '';
+        } else {
+            state[k] = v;
+        }
+        applyStateToControls();
+        syncURL();
+        reload();
+    }
+
+    function onConversationClick(ev) {
+        var row = ev.target && ev.target.closest && ev.target.closest('tr.fwmon-clickable');
+        if (!row) return;
+        var src   = row.getAttribute('data-src') || '';
+        var dst   = row.getAttribute('data-dst') || '';
+        var dport = row.getAttribute('data-dport') || '';
+        state.src = src;
+        state.dst = dst;
+        state.dport = dport;
+        applyStateToControls();
+        syncURL();
+        reload();
+    }
+
+    // ----------------------------------------------------------------------
+    // Samples table (paginated raw FlowSample rows)
+    // ----------------------------------------------------------------------
+    function loadSamples() {
+        var AC = window.AdminCommon;
+        if (!AC || !AC.apiFetch) return;
+        AC.apiFetch(samplesURL(100, 0)).then(function(result) {
+            if (!result) return;
+            var samples = result.data || [];
+            renderSamples(samples, false);
+            flowsOffset = samples.length;
+            updateLoadedCount();
+            renderConversations(); // re-renders existing conversation rows with current click target
+        })['catch'](function(e) {
+            console.error('FwmonFlows: samples fetch failed', e);
+        });
+    }
+
+    function loadMoreSamples() {
+        var AC = window.AdminCommon;
+        if (!AC || !AC.apiFetch) return;
+        AC.apiFetch(samplesURL(100, flowsOffset)).then(function(result) {
+            if (!result || !result.data) return;
+            var samples = result.data || [];
+            renderSamples(samples, true);
+            flowsOffset += samples.length;
+            updateLoadedCount();
+        })['catch'](function(e) {
+            console.error('FwmonFlows: load-more failed', e);
+        });
+    }
+
+    function renderSamples(samples, append) {
+        var tbody = document.querySelector('#flows-table tbody');
+        if (!tbody) return;
+        var html = samples.map(function(f) {
+            return '<tr>' +
+                '<td>' + esc(formatDate(f.timestamp)) + '</td>' +
+                '<td>' + esc(f.src_addr) + ':' + f.src_port + '</td>' +
+                '<td>→</td>' +
+                '<td>' + esc(f.dst_addr) + ':' + f.dst_port + '</td>' +
+                '<td>' + esc(protocolName(f.protocol)) + '</td>' +
+                '<td class="num">' + formatBytes(f.bytes) + '</td>' +
+                '<td class="num">' + (f.packets || 0).toLocaleString() + '</td>' +
+                '<td class="num">' + (f.sampling_rate ? '1:' + f.sampling_rate : '—') + '</td>' +
+            '</tr>';
+        }).join('');
+        if (append) tbody.innerHTML += html;
+        else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples match these filters</td></tr>';
+    }
+
+    function updateLoadedCount() {
+        var el = document.getElementById('flows-loaded-count');
+        if (el) el.textContent = flowsOffset.toLocaleString() + ' loaded';
+    }
+
+    function renderConversations() {
+        // Conversations come from stats; re-render is triggered by stats fetch.
+        // This stub is a placeholder for any future post-samples reconciliation.
+    }
+
+    // ----------------------------------------------------------------------
+    // Top conversations table (rendered from stats payload)
+    //
+    // Hooked into renderStats — append rows with click targets for src+dst+port.
+    // ----------------------------------------------------------------------
+    var originalRenderStats = renderStats;
+    renderStats = function(d) {
+        originalRenderStats(d);
+        var tbody = document.querySelector('#flows-conversations-table tbody');
+        if (!tbody) return;
+        var total = d.total_bytes || 1;
+        var convos = d.top_conversations || [];
+        if (!convos.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No conversations</td></tr>';
+            return;
+        }
+        tbody.innerHTML = convos.map(function(c) {
+            var pct = ((c.bytes / total) * 100).toFixed(1);
+            return '<tr class="fwmon-clickable" data-src="' + esc(c.src_addr) +
+                '" data-dst="' + esc(c.dst_addr) +
+                '" data-dport="' + esc(String(c.dst_port || '')) + '">' +
+                '<td>' + esc(c.src_addr) + '</td>' +
+                '<td>→</td>' +
+                '<td>' + esc(c.dst_addr) + ':' + (c.dst_port || '0') + '</td>' +
+                '<td>' + esc(c.protocol) + '</td>' +
+                '<td class="num">' + formatBytes(c.bytes) + '</td>' +
+                '<td class="num">' + (c.packets || 0).toLocaleString() + '</td>' +
+                '<td class="num">' + pct + '%</td>' +
+            '</tr>';
+        }).join('');
+    };
+
+    // ----------------------------------------------------------------------
+    // Helpers
+    // ----------------------------------------------------------------------
+    function setText(id, val) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = val;
+    }
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // Bucket strings come from the backend's TimeBucket dialect: either
+    // "2026-05-16 14:30" / "2026-05-16 14:00" / "2026-05-16" depending on
+    // granularity. Parse → ms.
+    function parseBucketToMs(s) {
+        if (!s) return 0;
+        // Pad short forms to a parseable ISO-ish string.
+        var t = s.indexOf(' ') >= 0 ? s.replace(' ', 'T') : (s.length === 10 ? s + 'T00:00:00' : s);
+        var d = new Date(t);
+        if (!isNaN(d.getTime())) return d.getTime();
+        return 0;
+    }
+
+    function formatBytes(b) {
+        if (!b && b !== 0) return '--';
+        if (b < 1024) return b + ' B';
+        var k = b / 1024;
+        if (k < 1024) return k.toFixed(1) + ' KB';
+        var m = k / 1024;
+        if (m < 1024) return m.toFixed(1) + ' MB';
+        var g = m / 1024;
+        if (g < 1024) return g.toFixed(2) + ' GB';
+        return (g / 1024).toFixed(2) + ' TB';
+    }
+    function formatBps(b) {
+        if (!b && b !== 0) return '--';
+        if (b < 1000) return Math.round(b) + ' bps';
+        var k = b / 1000;
+        if (k < 1000) return k.toFixed(1) + ' kbps';
+        var m = k / 1000;
+        if (m < 1000) return m.toFixed(2) + ' Mbps';
+        return (m / 1000).toFixed(2) + ' Gbps';
+    }
+    function formatBpsShort(v) {
+        if (v < 1000) return Math.round(v) + '';
+        if (v < 1e6)  return (v / 1e3).toFixed(0) + 'k';
+        if (v < 1e9)  return (v / 1e6).toFixed(1) + 'M';
+        return (v / 1e9).toFixed(1) + 'G';
+    }
+    function formatDate(ts) {
+        if (!ts) return '--';
+        var d = new Date(ts);
+        if (isNaN(d.getTime())) return '--';
+        var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+        return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' +
+               pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+    var PROTOCOLS = {
+        '1':'ICMP', '6':'TCP', '17':'UDP', '47':'GRE', '50':'ESP', '58':'ICMPv6', '89':'OSPF'
+    };
+    function protocolName(p) {
+        if (p == null || p === '') return '';
+        var s = String(p);
+        return PROTOCOLS[s] || s;
+    }
+    function protocolNumber(name) {
+        // Reverse lookup — used when clicking a top-protocol row whose key is
+        // a NAME ("TCP") that needs to become a NUMBER ("6") for the filter.
+        if (name == null) return '';
+        for (var k in PROTOCOLS) {
+            if (PROTOCOLS[k] === name) return k;
+        }
+        // If it's already a number, just return it.
+        return /^\d+$/.test(String(name)) ? String(name) : '';
+    }
+
+    function deviceLabel(id) {
+        try {
+            var devs = (window.adminMainState && window.adminMainState.devices) || [];
+            for (var i = 0; i < devs.length; i++) {
+                if (String(devs[i].id) === String(id)) return devs[i].name || ('dev:' + id);
+            }
+        } catch (e) {}
+        return 'dev:' + id;
+    }
+    function probeLabel(id) {
+        try {
+            var probes = (window.adminMainState && window.adminMainState.probes) || [];
+            for (var i = 0; i < probes.length; i++) {
+                if (String(probes[i].id) === String(id)) return probes[i].name || ('probe:' + id);
+            }
+        } catch (e) {}
+        return 'probe:' + id;
+    }
+
+    function setFilter(key, value) {
+        if (!(key in state)) return;
+        state[key] = value;
+        applyStateToControls();
+        syncURL();
+        reload();
+    }
+
+    function getState() { return Object.assign({}, state); }
+
+    window.FwmonFlows = {
+        init: init,
+        refresh: refresh,
+        setFilter: setFilter,
+        getState: getState
+    };
+})();

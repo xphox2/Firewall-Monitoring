@@ -1,0 +1,695 @@
+/* admin-flows.css — flows-tab styling for the v0.10.211 redesign.
+ *
+ * Scoped under .fwmon-flows so it can coexist with admin-shared.css's looser
+ * rules. Reuses the device-detail palette + chart-card/chart-range-pill
+ * classes so the two pages read as one design system.
+ *
+ * Pulls in --fwmon-* variables defined in admin-device-detail.css when the
+ * flows page is visible inside the same admin SPA shell; if the operator
+ * navigates to /admin/flows before /admin/devices/:id, we re-declare a
+ * minimal subset here so the page styles correctly on its own.
+ */
+
+:root {
+    --fwmon-font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif;
+    --fwmon-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+        "Liberation Mono", monospace;
+    --fwmon-series-1: #7dd3fc;
+    --fwmon-series-2: #fca5a5;
+    --fwmon-series-3: #fcd34d;
+    --fwmon-series-4: #86efac;
+    --fwmon-series-5: #c4b5fd;
+    --fwmon-series-6: #f0abfc;
+    --fwmon-series-7: #fdba74;
+    --fwmon-series-8: #5eead4;
+    --fwmon-card-bg: #0d1117;
+    --fwmon-panel-bg: #161b22;
+    --fwmon-border: #30363d;
+    --fwmon-text: #e6edf3;
+    --fwmon-text-dim: #8b949e;
+    --fwmon-text-faint: #6e7681;
+    --fwmon-axis-stroke: #6b7280;
+    --fwmon-grid-stroke: #1f2937;
+}
+
+.fwmon-flows {
+    font-family: var(--fwmon-font-ui);
+    font-feature-settings: "tnum" 1, "cv11" 1;
+}
+
+/* === Page header (title + range pills + sampling chip + active-filter chips) === */
+.fwmon-flows-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.fwmon-flows-header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.fwmon-flows-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.fwmon-flows-title {
+    font-family: var(--fwmon-font-ui);
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--fwmon-text);
+    margin: 0;
+    letter-spacing: -0.2px;
+}
+
+/* Re-use chart-range-pills + chart-range-pill from admin-device-detail.css,
+ * but scope a fallback in case that stylesheet isn't loaded on this page. */
+.fwmon-flows .chart-range-pills {
+    display: inline-flex;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.fwmon-flows .chart-range-pill {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--fwmon-text-dim);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 80ms ease, color 80ms ease;
+    letter-spacing: 0.3px;
+}
+
+.fwmon-flows .chart-range-pill:hover {
+    color: var(--fwmon-text);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.fwmon-flows .chart-range-pill.active {
+    background: rgba(125, 211, 252, 0.12);
+    color: var(--fwmon-series-1);
+    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2);
+}
+
+/* Sampling-rate chip — quiet, monospaced, slightly elevated. Tooltip
+ * explains what the rate means. */
+.fwmon-flows-sampling-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(125, 211, 252, 0.06);
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+    color: var(--fwmon-text-dim);
+}
+
+.fwmon-flows-sampling-label {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fwmon-text-faint);
+    font-size: 0.65rem;
+}
+
+.fwmon-flows-sampling-value {
+    color: var(--fwmon-series-1);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Active-filter chips — each shows a current filter and an × to clear it. */
+.fwmon-flows-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.fwmon-flows-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(125, 211, 252, 0.10);
+    border: 1px solid rgba(125, 211, 252, 0.30);
+    border-radius: 999px;
+    padding: 3px 4px 3px 10px;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.7rem;
+    color: var(--fwmon-series-1);
+    font-weight: 500;
+}
+
+.fwmon-flows-chip-key {
+    color: var(--fwmon-text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-size: 0.62rem;
+}
+
+.fwmon-flows-chip-val {
+    color: var(--fwmon-text);
+    font-weight: 600;
+}
+
+.fwmon-flows-chip-clear {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--fwmon-text-dim);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 0.8rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 80ms ease, color 80ms ease;
+}
+
+.fwmon-flows-chip-clear:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fwmon-text);
+}
+
+/* === Stat tiles === */
+.fwmon-flows-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.fwmon-stat {
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.fwmon-stat-label {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.68rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--fwmon-text-faint);
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fwmon-stat-value {
+    font-family: var(--fwmon-font-mono);
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--fwmon-text);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Local-traffic notice — softer than the original yellow alert; it's
+ * informational, not a warning. */
+.fwmon-flows-local-notice {
+    background: rgba(252, 211, 77, 0.06);
+    border: 1px solid rgba(252, 211, 77, 0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 0.78rem;
+    color: var(--fwmon-text-dim);
+    font-family: var(--fwmon-font-ui);
+}
+
+.fwmon-flows-local-notice strong {
+    color: var(--fwmon-series-3);
+    margin-right: 6px;
+}
+
+.fwmon-flows-local-icon {
+    margin-right: 6px;
+    color: var(--fwmon-series-3);
+}
+
+.fwmon-flows-local-aside {
+    margin-left: 8px;
+    color: var(--fwmon-text-faint);
+    font-style: italic;
+}
+
+/* === Bandwidth chart card — same chart-card classes from
+ * admin-device-detail.css, no extra rules needed. The chart-host
+ * div gets min-height there. */
+.fwmon-bandwidth-card {
+    margin-bottom: 16px;
+}
+
+.fwmon-flows .chart-card {
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 10px;
+    padding: 16px 18px 18px;
+    overflow: visible;
+}
+
+.fwmon-flows .chart-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.fwmon-flows .chart-card-title {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--fwmon-text-dim);
+    margin: 0;
+}
+
+.fwmon-flows .chart-card-subtitle {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.7rem;
+    color: var(--fwmon-text-faint);
+    font-weight: 500;
+}
+
+.fwmon-flows .chart-zoom-hint {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.66rem;
+    color: var(--fwmon-text-faint);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fwmon-flows .chart-reset-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-dim);
+    font-family: inherit;
+    font-size: inherit;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 80ms ease, color 80ms ease;
+}
+
+.fwmon-flows .chart-reset-btn:hover {
+    color: var(--fwmon-text);
+    border-color: var(--fwmon-text-dim);
+}
+
+.fwmon-flows .chart-host {
+    width: 100%;
+    min-height: 220px;
+}
+
+.fwmon-flows .chart-empty,
+.fwmon-flows .chart-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.78rem;
+}
+
+/* === Top-talker grid === */
+.fwmon-flows-toptalk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.fwmon-toptalk-card {
+    padding: 14px 16px;
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 10px;
+    min-height: 220px;
+}
+
+.fwmon-toptalk-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--fwmon-text-dim);
+    margin: 0 0 12px;
+}
+
+.fwmon-toptalk-hint {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.65rem;
+    color: var(--fwmon-text-faint);
+    text-transform: lowercase;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+}
+
+.fwmon-toptalk-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.fwmon-toptalk-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    position: relative;
+    transition: background-color 80ms ease, transform 80ms ease;
+    margin-bottom: 2px;
+    overflow: hidden;
+}
+
+.fwmon-toptalk-row:hover {
+    background: rgba(125, 211, 252, 0.06);
+}
+
+.fwmon-toptalk-row:active {
+    transform: translateX(1px);
+}
+
+.fwmon-toptalk-row.active {
+    background: rgba(125, 211, 252, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.25);
+}
+
+.fwmon-toptalk-row-label {
+    grid-column: 1;
+    grid-row: 1;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.8rem;
+    color: var(--fwmon-text);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 1;
+}
+
+.fwmon-toptalk-row-value {
+    grid-column: 2;
+    grid-row: 1;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+    color: var(--fwmon-text-dim);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    z-index: 1;
+}
+
+.fwmon-toptalk-row-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.03);
+    margin-top: 4px;
+    position: relative;
+    overflow: hidden;
+}
+
+.fwmon-toptalk-row-bar::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--bar-pct, 0%);
+    background: linear-gradient(90deg,
+        rgba(125, 211, 252, 0.6) 0%,
+        rgba(125, 211, 252, 0.3) 100%);
+    border-radius: 2px;
+    transition: width 250ms ease-out;
+}
+
+.fwmon-toptalk-list[data-color="dests"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(134, 239, 172, 0.6) 0%,
+        rgba(134, 239, 172, 0.3) 100%);
+}
+
+.fwmon-toptalk-list[data-color="ports"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(252, 211, 77, 0.6) 0%,
+        rgba(252, 211, 77, 0.3) 100%);
+}
+
+.fwmon-toptalk-list[data-color="protocols"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(196, 181, 253, 0.6) 0%,
+        rgba(196, 181, 253, 0.3) 100%);
+}
+
+.fwmon-toptalk-empty {
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.78rem;
+    padding: 24px 8px;
+    text-align: center;
+}
+
+/* === Filter row above Flow Samples === */
+.fwmon-flows-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.015);
+    border-bottom: 1px solid var(--fwmon-border);
+}
+
+.fwmon-flows-select,
+.fwmon-flows-input {
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 6px;
+    color: var(--fwmon-text);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.78rem;
+    padding: 6px 10px;
+    min-width: 0;
+    transition: border-color 80ms ease, background-color 80ms ease;
+}
+
+.fwmon-flows-input {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.74rem;
+    min-width: 200px;
+    flex: 1;
+    max-width: 280px;
+}
+
+.fwmon-flows-input-port {
+    min-width: 80px;
+    max-width: 100px;
+    flex: 0 0 auto;
+}
+
+.fwmon-flows-select:focus,
+.fwmon-flows-input:focus {
+    outline: none;
+    border-color: var(--fwmon-series-1);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.18);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.fwmon-flows-input::placeholder {
+    color: var(--fwmon-text-faint);
+    font-style: normal;
+}
+
+.fwmon-flows-clear {
+    margin-left: auto;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+}
+
+/* === Flow tables === */
+.fwmon-flows-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.8rem;
+}
+
+.fwmon-flows-table thead th {
+    text-align: left;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-faint);
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.fwmon-flows-table thead th.num {
+    text-align: right;
+}
+
+.fwmon-flows-table tbody td {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--fwmon-text);
+    font-size: 0.78rem;
+    font-family: var(--fwmon-font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.fwmon-flows-table tbody td.num {
+    text-align: right;
+}
+
+.fwmon-flows-table tbody tr:hover {
+    background: rgba(125, 211, 252, 0.04);
+}
+
+.fwmon-flows-table tbody tr.fwmon-clickable {
+    cursor: pointer;
+}
+
+.fwmon-flows-table tbody tr.fwmon-clickable:active {
+    transform: translateX(1px);
+}
+
+.fwmon-flows-table .empty-state {
+    text-align: center;
+    color: var(--fwmon-text-faint);
+    font-style: italic;
+    padding: 24px;
+}
+
+/* "Load more" row beneath Flow Samples */
+.fwmon-flows-loadmore {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 14px;
+    border-top: 1px solid var(--fwmon-border);
+}
+
+.fwmon-flows-loadmore-hint {
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+}
+
+/* uPlot overrides (matching admin-device-detail.css) — duplicated here so
+ * the flows tab styles correctly even when device-detail.css isn't loaded
+ * (the admin SPA shell doesn't fetch device-detail.css). */
+.fwmon-flows .uplot {
+    font-family: var(--fwmon-font-mono);
+    color: var(--fwmon-text-dim);
+}
+
+.fwmon-flows .uplot .u-legend {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.72rem;
+    color: var(--fwmon-text-dim);
+    margin-top: 6px;
+    text-align: left;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    justify-content: flex-start;
+}
+
+.fwmon-flows .uplot .u-legend .u-marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    border-width: 0 !important;
+    margin-right: 6px;
+}
+
+.fwmon-flows .uplot .u-legend .u-value {
+    font-family: var(--fwmon-font-mono);
+    color: var(--fwmon-text);
+    font-feature-settings: "tnum" 1;
+    min-width: 60px;
+    text-align: right;
+}
+
+.fwmon-flows .uplot .u-select {
+    background: rgba(125, 211, 252, 0.08);
+    border: 1px solid rgba(125, 211, 252, 0.35);
+}
+
+.fwmon-flows .uplot .u-title { display: none; }
+
+/* Narrow-viewport adjustments. */
+@media (max-width: 720px) {
+    .fwmon-flows-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .fwmon-flows-header-right {
+        justify-content: flex-start;
+    }
+    .fwmon-flows-filter-row {
+        padding: 10px;
+    }
+    .fwmon-flows-input {
+        flex: 1 1 100%;
+        max-width: none;
+    }
+}
