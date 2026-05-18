@@ -40,46 +40,81 @@
     font-family: var(--fwmon-font-mono);
 }
 
-/* === Legacy .stat-card overflow fix ===
+/* === device-detail stat-card layout (v0.10.227) ===
  *
- * The device-detail header tiles use the OLDER .stat-card class (not the
- * new .fwmon-stat). Keep this rule until those tiles can be migrated.
+ * admin-shared.css:770 declares .stat-card as a flex-row container
+ * (icon-left, content-right — designed for the dashboard tiles which
+ * have a .stat-icon sibling). The device-detail page reuses the same
+ * class name but renders TILES with label-above-value layout, driven
+ * by Tailwind utility classes in the HTML (`text-center`, `mb-2`,
+ * `text-[0.72rem]`, etc.). Without these overrides:
+ *   - `display: flex` from admin-shared.css put the label and the
+ *     value side-by-side inside the card, halving the width each had,
+ *   - then .stat-card .stat-value's `font-size: 1.4rem` won over the
+ *     HTML's inline `text-[0.85rem]` (specificity 0,2,0 beats 0,1,0),
+ *   - then `white-space: nowrap; text-overflow: ellipsis` truncated
+ *     long firmware/AV-sig/IPS-sig version strings to "...".
+ * The operator-visible symptom was "FIRM... v7.4.12,build2902,2..."
+ * — label and value both clipped, side-by-side.
+ *
+ * Fix: reset display to block, drop the font-size + nowrap rules so the
+ * inline Tailwind classes drive sizing, and let values wrap on long
+ * strings. Numeric value cards (Sessions, Uptime, etc.) still pick up
+ * their explicit `text-[1.8rem]` / `text-[1.2rem]` inline because we
+ * no longer override font-size here.
  */
 .stat-card {
+    display: block;           /* override flex-row from admin-shared.css */
+    text-align: center;       /* matches the inline `text-center` Tailwind class */
     min-width: 0;
     overflow: hidden;
 }
 
 .stat-card .stat-label {
-    font-size: 0.7rem;
-    letter-spacing: 0.6px;
     color: var(--fwmon-text-faint);
     text-transform: uppercase;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    letter-spacing: 0.5px;
     margin-bottom: 8px;
+    /* font-size handled by :where() rule below so the inline Tailwind
+       `text-[0.72rem]` wins. No nowrap so 2-word labels like
+       "AV Signature" wrap cleanly inside a narrow card. */
 }
 
 .stat-card .stat-value {
-    font-size: 1.4rem;
     font-weight: 600;
     color: var(--fwmon-text);
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.3;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    /* font-size handled by :where() rule below — see explanation. */
 }
 
+/* Specificity-0 fallback sizing for stat-card text. `:where()` zeroes out
+ * the specificity of its argument, so these rules lose to ANY class on
+ * the target element (Tailwind utilities like `text-[0.85rem]` have
+ * specificity 0,1,0 and win). Net effect:
+ *   - device-detail HTML cards with inline `text-[0.72rem]` / `text-[1.8rem]`
+ *     / `text-[0.85rem]` Tailwind classes render at the size the markup
+ *     declares (the fix the operator reported — firmware no longer clipped),
+ *   - Security tab cards rendered from JS WITHOUT inline sizing classes
+ *     fall through to these reasonable defaults so their counters still
+ *     look like "stat hero" numbers rather than 1rem body text. */
+:where(.stat-card .stat-label) {
+    font-size: 0.72rem;
+}
+
+:where(.stat-card .stat-value) {
+    font-size: 1.4rem;
+}
+
+/* Backwards-compat: cards rendered with the legacy `.stat-long` class
+ * still get the mono font + smaller weight treatment, but the wrap
+ * behaviour is now the default for every .stat-value, so this is
+ * primarily a font-family helper. */
 .stat-card .stat-value.stat-long {
-    font-size: 0.85rem;
     font-weight: 500;
     font-family: var(--fwmon-font-mono);
-    color: var(--fwmon-text);
-    word-break: break-all;
-    white-space: normal;
     line-height: 1.35;
-    overflow-wrap: anywhere;
 }
 
 .gauge .gauge-text {

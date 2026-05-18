@@ -1,4 +1,27 @@
 # Changelog
+## [0.10.227] - 2026-05-18
+
+### Fixed — device-detail stat-card labels/values truncated ("FIRM... v7.4.12,build2902,2...")
+Operator on `/admin/devices/1` reported the stat cards along the top of the device-detail page were clipping both their labels and their values mid-string. Root cause was two CSS stylesheets fighting on the same selector:
+
+- `cmd/api/static/css/admin-shared.css:770-779` declares `.stat-card { display: flex; align-items: center; gap: 14px; }` — that's the **dashboard** layout where each tile has a `.stat-icon` sibling rendered to the left of its `.stat-content`. Designed for icon-left, text-right.
+- `cmd/api/static/css/admin-device-detail.css:48-51` only adds `min-width: 0; overflow: hidden;` and never resets `display` — so on the device-detail page the cards were also `flex-row`, and the `.stat-label` div ended up side-by-side with the value div instead of stacked above it. The whole content area split in half.
+- `.stat-card .stat-value` further forced `font-size: 1.4rem; white-space: nowrap; text-overflow: ellipsis;`. CSS specificity (0,2,0) beat the inline Tailwind `text-[0.85rem]` (0,1,0), so the firmware value rendered at 1.4rem instead of 0.85rem and the inline-Tailwind size declared in the markup never won. A long FortiOS build string like `v7.4.12,build2902,250214` couldn't fit at 1.4rem in a half-card width and got truncated to `v7.4.12,build2902,2...`. The label next to it truncated to `FIRM...` for the same reason.
+
+#### Fixes in `admin-device-detail.css`
+1. `.stat-card` override now also sets `display: block` and `text-align: center` so cards render as standalone tiles (label-above-value), matching the layout the device-detail HTML was always written for.
+2. Default `.stat-value`/`.stat-label` overrides dropped the explicit `font-size` and the `white-space: nowrap; text-overflow: ellipsis` rules.
+3. Replaced with two `:where(.stat-card .stat-label)` / `:where(.stat-card .stat-value)` rules carrying the *fallback* font sizes. `:where()` zeroes out the selector's specificity (0,0,0), so any inline Tailwind class on the element (like `text-[0.85rem]` at 0,1,0) wins. Net behaviour:
+   - device-detail HTML cards with inline `text-[Nrem]` Tailwind classes now render at the markup-declared size — firmware/AV-sig/IPS-sig version strings fit at 0.85rem with `word-break: break-word` so they wrap inside the card instead of truncating;
+   - JS-rendered Security tab cards (`admin-device-detail.js:926-945`) with no inline sizing fall through to the 1.4rem fallback so the "stat hero" numeric look is preserved.
+4. Wrap behaviour: every `.stat-value` now has `word-break: break-word; overflow-wrap: anywhere;` so values exceeding the card width wrap to a second line rather than ellipsizing. Better for diagnostic strings — full firmware version visible without a tooltip.
+
+### Files
+- Modified: `cmd/api/static/css/admin-device-detail.css` — `.stat-card` override now resets display, drops nowrap/ellipsis from values and labels, fallback font sizes moved into `:where()` blocks.
+
+### Why this only showed up now
+The same flex-row CSS rule has been on the page for several minor versions, but it became visibly broken only after the device-detail page started receiving longer string values (full FortiOS build strings, AV/IPS signature versions with dates). Short numeric values like CPU%/Sessions count happened to fit even in the cramped half-width layout. The cards were always laid out wrong; the truncation was the first thing the operator could see.
+
 ## [0.10.226] - 2026-05-18
 
 ### Fixed — SMTP auth: raw ciphertext sent as password (the REAL cause of every 535 in this thread)
