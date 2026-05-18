@@ -127,6 +127,105 @@
     }
 
     // ---- Dashboard ----
+    // ---- Stale-device card (v0.10.216, bundle F3) ----
+    //
+    // The dashboard card lists every device whose last successful poll is
+    // older than the operator-selected threshold. Useful for catching the
+    // "device says online, but we haven't actually heard from it in 3
+    // hours" failure mode — a stuck poller, broken probe, mid-firmware
+    // upgrade, etc.
+    //
+    // Threshold is operator-controllable (15m / 30m / 1h / 3h / 12h / 24h)
+    // via the in-card <select>; default 1h. The selection is persisted in
+    // localStorage so the operator's preferred sensitivity sticks across
+    // reloads.
+    var STALE_THRESHOLD_KEY = 'fwmon-stale-threshold-min';
+    var staleDeviceListCache = [];
+
+    function getStaleThresholdMin() {
+        var sel = document.getElementById('stale-threshold-select');
+        if (sel && sel.value) return parseInt(sel.value, 10) || 60;
+        try {
+            var saved = localStorage.getItem(STALE_THRESHOLD_KEY);
+            if (saved) return parseInt(saved, 10) || 60;
+        } catch (e) { /* localStorage blocked — fall through */ }
+        return 60;
+    }
+
+    function renderStaleDevices(deviceList) {
+        staleDeviceListCache = deviceList || [];
+        var card  = document.getElementById('stale-devices-card');
+        var host  = document.getElementById('stale-devices-list');
+        var count = document.getElementById('stale-devices-count');
+        if (!card || !host) return;
+
+        var sel = document.getElementById('stale-threshold-select');
+        if (sel && !sel.__fwmonBound) {
+            sel.__fwmonBound = true;
+            try {
+                var saved = localStorage.getItem(STALE_THRESHOLD_KEY);
+                if (saved) sel.value = saved;
+            } catch (e) { /* ignore */ }
+            sel.addEventListener('change', function() {
+                try { localStorage.setItem(STALE_THRESHOLD_KEY, sel.value); } catch (e) { /* ignore */ }
+                renderStaleDevices(staleDeviceListCache);
+            });
+        }
+
+        var thresholdMs = getStaleThresholdMin() * 60 * 1000;
+        var now = Date.now();
+        var stale = staleDeviceListCache.filter(function(d) {
+            if (!d.last_polled) return true; // never polled → always stale
+            var t = new Date(d.last_polled).getTime();
+            if (!isFinite(t)) return true;
+            return (now - t) > thresholdMs;
+        });
+
+        if (stale.length === 0) {
+            card.style.display = 'none';
+            return;
+        }
+
+        // Sort: oldest last_polled first (most concerning).
+        stale.sort(function(a, b) {
+            var ta = a.last_polled ? new Date(a.last_polled).getTime() : 0;
+            var tb = b.last_polled ? new Date(b.last_polled).getTime() : 0;
+            return ta - tb;
+        });
+
+        card.style.display = '';
+        if (count) count.textContent = stale.length + ' stale';
+
+        host.innerHTML =
+            '<table style="width:100%;border-collapse:collapse;">' +
+                '<thead><tr>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Device</th>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">IP</th>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Last polled</th>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Status</th>' +
+                    '<th></th>' +
+                '</tr></thead>' +
+                '<tbody>' +
+                stale.map(function(d) {
+                    var lastSeen = d.last_polled ? timeAgo(d.last_polled) : 'never';
+                    var statusBadge = '<span class="badge ' + escapeHtml(d.status || 'unknown') + '">' +
+                        escapeHtml((d.status || 'unknown').toUpperCase()) + '</span>';
+                    return '<tr>' +
+                        '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
+                            AC.deviceLink(d.id, d.name) +
+                        '</td>' +
+                        '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;color:#8b949e;">' + escapeHtml(d.ip_address || '-') + '</td>' +
+                        '<td style="padding:8px;border-bottom:1px solid #21262d;color:#8b949e;">' + lastSeen + '</td>' +
+                        '<td style="padding:8px;border-bottom:1px solid #21262d;">' + statusBadge + '</td>' +
+                        '<td style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' +
+                            AC.sshLaunchButton(d) +
+                        '</td>' +
+                    '</tr>';
+                }).join('') +
+                '</tbody>' +
+            '</table>';
+    }
+
     function loadDashboard() {
         Promise.all([
             apiFetch(API_BASE + '/dashboard'),
@@ -147,6 +246,12 @@
             document.getElementById('total-devices').textContent = deviceList.length || 0;
             document.getElementById('online-devices').textContent = deviceList.filter(function(f) { return f.status === 'online'; }).length || 0;
             document.getElementById('offline-devices').textContent = deviceList.filter(function(f) { return f.status === 'offline'; }).length || 0;
+
+            // Stale-device card (v0.10.216, bundle F3). Compares each
+            // device's last_polled to the operator-chosen threshold and
+            // surfaces anything past the cutoff. Hidden entirely when
+            // nothing is stale.
+            renderStaleDevices(deviceList);
 
             var activeProbes = probes.filter(function(p) { return p.approval_status === 'approved' && p.status === 'online'; });
             document.getElementById('active-probes').textContent = activeProbes.length;
@@ -352,6 +457,7 @@
                     '<td><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td>' +
+                        AC.sshLaunchButton(d) +
                         '<button class="btn secondary sm" data-action="device-alert-config" data-id="' + d.id + '">Alerts</button> ' +
                         '<button class="btn secondary sm" data-action="edit-device" data-id="' + d.id + '">Edit</button> ' +
                         '<button class="btn danger sm" data-action="delete-device" data-id="' + d.id + '">Delete</button>' +

@@ -99,6 +99,12 @@
         document.getElementById('deviceProbe').textContent = dev.probe ? 'Probe: ' + dev.probe.name : '';
         document.getElementById('deviceSite').textContent = dev.site ? 'Site: ' + dev.site.name : '';
         document.getElementById('devicePolled').textContent = dev.last_polled ? 'Last polled: ' + formatTime(dev.last_polled) : '';
+        // SSH launch button (v0.10.216, bundle F2): renders as <a href="ssh://…">
+        // so the OS hands the URL to the operator's registered SSH handler.
+        var sshHost = document.getElementById('deviceSshLaunch');
+        if (sshHost && AC.sshLaunchButton) {
+            sshHost.innerHTML = AC.sshLaunchButton(dev);
+        }
 
         renderSystemStatus();
         renderInterfaces();

@@ -1,4 +1,44 @@
 # Changelog
+## [0.10.216] - 2026-05-18
+
+### Changed — admin-wide operator features (Bundle F: F1 + F2 + F3 + F4)
+Fifth commit of the "improve the whole admin area" sweep. Three concrete operator quality-of-life additions, all frontend-only — every required data field was already exposed by existing API responses.
+
+#### Audit
+Parallel sub-agent confirmed data availability for the planned features. **Available without backend changes**: `Device.ip_address`, `Device.ssh_username`, `Device.ssh_port`, `Device.last_polled`, every `FlowSample` field needed for CSV export. **Deferred (needs backend change)**: tunnel last-seen for `status='down'` tunnels (`VPNStatus` exposes `tunnel_uptime` for up tunnels but no `last_up_at` for down ones); per-device syslog/alert noise counts (`/api/syslog/stats` etc. accept no `device_id` filter).
+
+#### F2 — SSH launch button (`AdminCommon.sshLaunchButton`)
+- New helper renders an `<a class="btn secondary sm" href="ssh://user@host[:port]">SSH</a>` for any device — the operator's OS hands the URL to their registered SSH handler (PuTTY, Terminal, iTerm2, Windows Terminal, etc.). No credentials flow through the admin server.
+- Inputs are URI-encoded; missing `ip_address` yields an empty string (no button). Non-default `ssh_port` (anything other than 22) appended as `:port`.
+- Wired into the devices table actions column in `admin-main.js` and the device-detail page header (new `#deviceSshLaunch` placeholder).
+
+#### F3 — Stale-device dashboard card
+- New "Stale Devices" card on the dashboard listing every device whose `last_polled` is older than the operator-selected threshold. Threshold dropdown ranges 15 m / 30 m / 1 h (default) / 3 h / 12 h / 24 h; selection persists in `localStorage` under `fwmon-stale-threshold-min`.
+- Per-row content: device-link (uses the bundle E2 `AC.deviceLink`), IP, "X minutes/hours/days ago" relative time, status badge, SSH launch button.
+- Card auto-hides when nothing is stale — no dead chrome on a healthy fleet. Rows are sorted oldest-poll-first so the most concerning entries surface at the top.
+- Driven entirely off the existing `/api/dashboard` payload — no extra API call, no extra round trip on the polling loop.
+
+#### F4 — CSV export on flows page (`FwmonFlows.exportCsv`)
+- New "Export CSV" button in the flows page header (right side, between the active-filter chips and the sampling chip).
+- Pulls up to 10 000 rows matching the **current filter state** (range / device / probe / protocol / src / dst / dport) from the existing `/admin/api/flows` endpoint — no new endpoint.
+- Columns: `timestamp, src_addr, src_port, dst_addr, dst_port, protocol, protocol_name, bytes, packets, sampling_rate, device_id, probe_id, sampler_address`. RFC 4180-style escaping for any field containing comma / quote / CR / LF; embedded quotes doubled.
+- Filename encodes the current filter signature so successive exports don't collide in the operator's Downloads folder — e.g. `flows-2026-05-18T19-42-15-24h-dev42-protoTCP-port443.csv`.
+- Button disables + shows "Exporting…" while fetching. Hard 10 000-row cap with a polite toast prompting the operator to refine the filter if it triggers.
+
+#### F5 — Deferred
+Tunnel last-seen for down tunnels and the noisy-device leaderboard both need small backend changes (a `last_up_at` field in the VPN status response, and a `device_id` query param on the stats endpoints). Deferred to keep this bundle frontend-only; tracked for a future backend-leaning bundle.
+
+### Files
+- Modified: `cmd/api/static/js/admin-common.js` — `sshLaunchButton` helper, export.
+- Modified: `cmd/api/static/js/admin-main.js` — devices table SSH column, `renderStaleDevices` + threshold persistence + `loadDashboard` integration.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — header SSH button render.
+- Modified: `cmd/api/static/js/admin-flows.js` — `exportCsv`, csv escaping, filename signature, button binding.
+- Modified: `web/admin/admin.html` — stale-devices card + flows export button.
+- Modified: `web/admin/device-detail.html` — `#deviceSshLaunch` slot in header.
+
+### Why this matters
+Three high-frequency triage chores collapse from minutes to seconds. Logging into a device used to require copying its IP into a separate terminal; "SSH" is now a one-click affordance everywhere the device is listed. Investigating "did this device drop?" used to mean cross-referencing the device list against the last-poll column manually; the stale-data card surfaces the same answer at a glance. Sharing a flow sample for a peer review used to mean a screenshot or a manual copy/paste from the table; "Export CSV" gives the operator a properly-named file in one click. None of these features add backend load — they all reuse data the API already returns.
+
 ## [0.10.215] - 2026-05-18
 
 ### Changed — admin-wide cross-page linkification (Bundle E: E1 + E2 + E3)

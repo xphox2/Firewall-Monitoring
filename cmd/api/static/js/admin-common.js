@@ -244,6 +244,39 @@
                escapeHtml(label != null ? label : '') + '</a>';
     }
 
+    /* ------------------------------------------------------------------
+     * sshLaunchButton — render a small "SSH" affordance for a device row
+     * (v0.10.216, bundle F2).
+     *
+     * The button is just an <a href="ssh://user@host[:port]"> — the operator's
+     * OS hands the URL to their registered SSH handler (PuTTY, Terminal,
+     * iTerm2, Windows Terminal, etc.). No backend support needed and no
+     * extra credentials flow through the admin server.
+     *
+     * Inputs:
+     *   device — the Device JSON (ip_address, ssh_username, ssh_port).
+     *
+     * Behavior:
+     *   - If `ip_address` is missing, returns an empty string (no button).
+     *   - If `ssh_username` is set, includes it in the URL.
+     *   - If `ssh_port` is set and isn't 22, appends `:port`.
+     *   - The host segment is URI-encoded to keep names with `@` or `:`
+     *     out of the wrong slot.
+     * ------------------------------------------------------------------ */
+    function sshLaunchButton(device) {
+        if (!device || !device.ip_address) return '';
+        var user = device.ssh_username ? String(device.ssh_username).trim() : '';
+        var port = device.ssh_port && device.ssh_port !== 22 ? device.ssh_port : '';
+        var host = encodeURIComponent(device.ip_address);
+        var url  = 'ssh://' + (user ? encodeURIComponent(user) + '@' : '') + host +
+                   (port ? ':' + port : '');
+        var title = 'Launch SSH to ' + (user ? (user + '@') : '') +
+                    device.ip_address + (port ? (':' + port) : '');
+        return '<a href="' + url + '" class="btn secondary sm" title="' +
+               escapeHtml(title) + '" aria-label="' + escapeHtml(title) +
+               '" style="margin-right:6px;">SSH</a>';
+    }
+
     function doLogout() {
         apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
             window.location.href = '/admin/login';
@@ -742,6 +775,7 @@
         deviceLink: deviceLink,
         connectionLink: connectionLink,
         filterLink: filterLink,
+        sshLaunchButton: sshLaunchButton,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

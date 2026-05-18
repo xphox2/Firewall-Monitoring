@@ -103,6 +103,13 @@
     // Control wiring
     // ----------------------------------------------------------------------
     function bindControls() {
+        // CSV export button (v0.10.216, bundle F4).
+        var exportBtn = document.getElementById('flows-export-csv-btn');
+        if (exportBtn && !exportBtn.__fwmonBound) {
+            exportBtn.__fwmonBound = true;
+            exportBtn.addEventListener('click', exportCsv);
+        }
+
         // Range pills
         var rangePills = document.getElementById('flows-range-pills');
         if (rangePills) {
@@ -586,6 +593,115 @@
         });
     }
 
+    /* ------------------------------------------------------------------
+     * CSV export (v0.10.216, bundle F4).
+     *
+     * Pulls every flow row that matches the current filter state — up to
+     * a hard cap of EXPORT_MAX rows — and triggers a browser download
+     * with the operator's filter signature in the filename so successive
+     * exports don't overwrite each other in the Downloads folder.
+     *
+     * We export server-fetched rows rather than just the currently-loaded
+     * page because operators usually want "the whole filtered slice", not
+     * "what's on screen right now". Capped at EXPORT_MAX to bound memory
+     * (very wide ranges can return tens of thousands of rows; at 50 KB/row
+     * average that's a few MB — acceptable but worth a hard ceiling).
+     * ------------------------------------------------------------------ */
+    var EXPORT_MAX = 10000;
+
+    function exportCsv() {
+        var AC = window.AdminCommon;
+        if (!AC || !AC.apiFetch) return;
+        var btn = document.getElementById('flows-export-csv-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Exporting…'; }
+        AC.apiFetch(samplesURL(EXPORT_MAX, 0)).then(function(result) {
+            var samples = (result && result.data) || [];
+            if (samples.length === 0) {
+                if (AC.showError) AC.showError('No flow samples to export');
+                return;
+            }
+            var headers = ['timestamp', 'src_addr', 'src_port', 'dst_addr', 'dst_port',
+                           'protocol', 'protocol_name', 'bytes', 'packets', 'sampling_rate',
+                           'device_id', 'probe_id', 'sampler_address'];
+            var lines = [headers.join(',')];
+            for (var i = 0; i < samples.length; i++) {
+                var f = samples[i];
+                var row = [
+                    csvField(f.timestamp),
+                    csvField(f.src_addr),
+                    f.src_port == null ? '' : f.src_port,
+                    csvField(f.dst_addr),
+                    f.dst_port == null ? '' : f.dst_port,
+                    f.protocol == null ? '' : f.protocol,
+                    csvField(protocolName(f.protocol)),
+                    f.bytes == null ? '' : f.bytes,
+                    f.packets == null ? '' : f.packets,
+                    f.sampling_rate == null ? '' : f.sampling_rate,
+                    f.device_id == null ? '' : f.device_id,
+                    f.probe_id == null ? '' : f.probe_id,
+                    csvField(f.sampler_address)
+                ];
+                lines.push(row.join(','));
+            }
+            var csv = lines.join('\r\n') + '\r\n';
+            var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            var sig = filterSignature();
+            var filename = 'flows-' + ts + (sig ? '-' + sig : '') + '.csv';
+            triggerCsvDownload(csv, filename);
+
+            if (samples.length >= EXPORT_MAX && AC.showError) {
+                AC.showError('Export capped at ' + EXPORT_MAX.toLocaleString() +
+                             ' rows — refine the filter for the full set.');
+            }
+        })['catch'](function(e) {
+            console.error('FwmonFlows: csv export failed', e);
+            if (AC.showError) AC.showError('Export failed: ' + (e.message || 'unknown'));
+        }).finally(function() {
+            if (btn) { btn.disabled = false; btn.textContent = 'Export CSV'; }
+        });
+    }
+
+    // RFC 4180-ish escaping: wrap in quotes if the field contains a
+    // comma / quote / CR / LF, and double up any embedded quotes.
+    function csvField(v) {
+        if (v == null) return '';
+        var s = String(v);
+        if (s.indexOf(',') === -1 && s.indexOf('"') === -1 &&
+            s.indexOf('\r') === -1 && s.indexOf('\n') === -1) {
+            return s;
+        }
+        return '"' + s.replace(/"/g, '""') + '"';
+    }
+
+    // Filter signature for the filename — encodes the most distinctive
+    // filter so successive exports don't clobber each other. Best-effort,
+    // not bulletproof.
+    function filterSignature() {
+        var bits = [];
+        if (state.hours)     bits.push(state.hours + 'h');
+        if (state.device_id) bits.push('dev' + state.device_id);
+        if (state.probe_id)  bits.push('probe' + state.probe_id);
+        if (state.protocol)  bits.push('proto' + state.protocol);
+        if (state.src)       bits.push('src-' + state.src.replace(/[^a-z0-9._-]/gi, ''));
+        if (state.dst)       bits.push('dst-' + state.dst.replace(/[^a-z0-9._-]/gi, ''));
+        if (state.dport)     bits.push('port' + state.dport);
+        return bits.join('-');
+    }
+
+    function triggerCsvDownload(content, filename) {
+        var blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Defer revoke so Safari has time to start the download.
+        setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    }
+
     function renderSamples(samples, append) {
         var tbody = document.querySelector('#flows-table tbody');
         if (!tbody) return;
@@ -759,6 +875,7 @@
         init: init,
         refresh: refresh,
         setFilter: setFilter,
-        getState: getState
+        getState: getState,
+        exportCsv: exportCsv
     };
 })();
