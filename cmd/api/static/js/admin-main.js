@@ -2632,8 +2632,17 @@
             AC.setTimezone(tzSel.value);
         }
 
-        apiFetch(API_BASE + '/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }).then(function() {
+        apiFetch(API_BASE + '/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) }).then(function(result) {
             AC.showSuccess('Settings saved!');
+            // v0.10.224: surface server-side mutation warnings (e.g.
+            // "Trimmed leading/trailing whitespace from smtp_password
+            // before encrypting"). These previously happened silently;
+            // the operator had no way to tell whether their stored
+            // password matched what they typed. Each warning becomes
+            // its own toast so they can't be missed even with a busy
+            // save flow.
+            var warnings = (result && result.data && Array.isArray(result.data.warnings)) ? result.data.warnings : [];
+            warnings.forEach(function(w) { AC.showError(w); });
         })['catch'](function(err) {
             console.error('Settings save failed:', err);
             AC.showError('Error: ' + err.message);
@@ -2644,11 +2653,9 @@
         var resultEl = document.getElementById('test-email-result');
         resultEl.innerHTML = '<div style="color:#8b949e;font-size:0.85rem;">Running diagnostic… (this can take a few seconds)</div>';
         var toOverride = document.getElementById('test-email-to-override');
-        var userOverride = document.getElementById('test-email-username-override');
-        var payload = {};
-        if (toOverride && toOverride.value.trim()) payload.to = toOverride.value.trim();
-        if (userOverride && userOverride.value.trim()) payload.username = userOverride.value.trim();
-        var body = Object.keys(payload).length ? JSON.stringify(payload) : '{}';
+        var body = toOverride && toOverride.value.trim()
+            ? JSON.stringify({ to: toOverride.value.trim() })
+            : '{}';
 
         apiFetch(API_BASE + '/settings/test-email', {
             method: 'POST',
@@ -2672,30 +2679,20 @@
         var headerColor = ok ? '#3fb950' : '#f85149';
         var headerIcon = ok ? '✓' : '✗';
 
-        // v0.10.223: include username + byte lengths so operators can spot
-        // hidden whitespace or storage corruption without backend access.
-        // A trailing space stored in the password will surface as an off-by-one
-        // password_len compared to what the operator expected.
-        var userBits = '';
-        if (typeof d.username === 'string' && d.username !== '') {
-            userBits = '<span><strong>User:</strong> <span class="mono" style="color:#c9d1d9;">' +
-                escapeHtml(d.username) +
-                '</span> <span style="color:#6e7681;">(' + escapeHtml(String(d.username_len || 0)) + ' B)</span></span>';
-        }
-        var pwBits = '';
-        if (typeof d.password_len === 'number' && d.password_len > 0) {
-            pwBits = '<span><strong>Pwd len:</strong> <span class="mono" style="color:#c9d1d9;">' +
-                escapeHtml(String(d.password_len)) + ' B</span></span>';
-        }
-
+        // v0.10.224: reverted v0.10.223's username/length metadata.
+        // swaks' --auth-hide-password convention explicitly keeps
+        // credential data out of test transcripts; mail-admin UIs
+        // (Mailcow, Mailu, Postal) follow the same line. The "did your
+        // password get mutated?" signal that password_len was trying
+        // to provide is now surfaced at SAVE time as a warning toast
+        // when TrimSpace actually changes the value — see
+        // UpdateSettings in handlers_settings.go.
         var meta =
             '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.78rem;color:#8b949e;margin-bottom:6px;">' +
             '<span><strong>Host:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.host || '') + ':' + escapeHtml(String(d.port || '')) + '</span></span>' +
             '<span><strong>From:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.from || '') + '</span></span>' +
             '<span><strong>To:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.to || '') + '</span></span>' +
             '<span><strong>Auth:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.auth_method || 'none') + '</span></span>' +
-            userBits +
-            pwBits +
             '<span><strong>Total:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(String(d.total_ms || 0)) + ' ms</span></span>' +
             '</div>';
 
@@ -2718,6 +2715,13 @@
             var errorRow = s.error
                 ? '<div style="color:#f85149;font-size:0.82rem;margin-top:4px;font-family:monospace;background:rgba(248,81,73,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #f85149;">' + escapeHtml(s.error) + '</div>'
                 : '';
+            // v0.10.224: operator-facing remediation hint. Distinct
+            // styling from the error row so the operator can scan past
+            // the wire-protocol error and land on the actionable next
+            // step (e.g. "check Dovecot auth log on the mail server").
+            var hintRow = s.hint
+                ? '<div style="color:#79c0ff;font-size:0.8rem;margin-top:6px;background:rgba(56,139,253,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #1f6feb;line-height:1.5;"><strong style="color:#58a6ff;">Next step:</strong> ' + escapeHtml(s.hint) + '</div>'
+                : '';
             return '<tr>' +
                 '<td style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;">' +
                     '<span style="background:' + statusBg + ';color:' + statusColor + ';padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;letter-spacing:0.4px;">' + statusLabel + '</span>' +
@@ -2727,7 +2731,7 @@
                 '</td>' +
                 '<td style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;">' +
                     '<div style="color:#c9d1d9;font-size:0.82rem;">' + escapeHtml(s.detail || '') + '</div>' +
-                    responseRow + errorRow +
+                    responseRow + errorRow + hintRow +
                 '</td>' +
                 '<td class="mono" style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;text-align:right;color:#8b949e;font-size:0.78rem;">' +
                     escapeHtml(String(s.duration_ms || 0)) + ' ms' +

@@ -33,33 +33,39 @@ import (
 )
 
 // LoginAuth returns an smtp.Auth that implements the LOGIN mechanism.
+//
+// NOTE: LOGIN is *not* in RFC 4954 — it lives in the expired
+// draft-murchison-sasl-login-00 and is widely deployed for Postfix
+// + Dovecot/Cyrus despite that. RFC 4954 §4's plaintext-over-TLS
+// requirement still applies here because LOGIN sends the password
+// in cleartext, just split over two server prompts.
 type loginAuth struct {
-	username, password string
-	step               int
+	username, password, host string
+	step                     int
 }
 
-func LoginAuth(username, password string) smtp.Auth {
-	return &loginAuth{username: username, password: password}
+func LoginAuth(username, password, host string) smtp.Auth {
+	return &loginAuth{username: username, password: password, host: host}
 }
 
-// Start declares the mechanism. The stdlib's smtp.Client guards against
-// non-TLS LOGIN auth by checking server.TLS, the same way it does for
-// PLAIN. We do not bypass that.
+// Start declares the mechanism. Two safety gates, both mirroring the
+// stdlib's smtp.PlainAuth:
+//
+//  1. server.Name == host — refuse to send credentials to a server
+//     that doesn't match the host the caller asked to connect to.
+//     Without this a MITM with a redirected DNS / connection could
+//     terminate the TLS handshake on a *different* host that also
+//     advertises LOGIN and harvest the password under that identity.
+//     stdlib PlainAuth gates on this; v0.10.223 was missing it.
+//
+//  2. server.TLS — refuse to send credentials over a cleartext
+//     connection. Same rule as PlainAuth.
 func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	if server.Name != a.host {
+		return "", nil, fmt.Errorf("wrong host name (server presented %q, expected %q)", server.Name, a.host)
+	}
 	if !server.TLS {
-		// Mirror the stdlib's PlainAuth behaviour: refuse to send
-		// credentials over a cleartext connection unless the operator
-		// explicitly opts in (which we never do).
-		advertised := false
-		for _, m := range server.Auth {
-			if strings.EqualFold(m, "LOGIN") {
-				advertised = true
-				break
-			}
-		}
-		if !advertised {
-			return "", nil, errors.New("unencrypted connection")
-		}
+		return "", nil, errors.New("unencrypted connection")
 	}
 	return "LOGIN", nil, nil
 }
@@ -117,7 +123,7 @@ func (a *compoundAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
 		a.inner = smtp.PlainAuth("", a.username, a.password, a.host)
 	case hasLogin:
 		a.chosenName = "LOGIN"
-		a.inner = LoginAuth(a.username, a.password)
+		a.inner = LoginAuth(a.username, a.password, a.host)
 	default:
 		return "", nil, fmt.Errorf("no supported AUTH mechanism (server offered: %s)",
 			strings.Join(server.Auth, ", "))

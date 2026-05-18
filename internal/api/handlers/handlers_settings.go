@@ -93,6 +93,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	var validSettings []models.SystemSetting
+	// v0.10.224: collect non-fatal warnings (e.g. whitespace trimmed from
+	// a secret) so the operator can see, at SAVE time, what the server
+	// actually persisted vs what they typed. This replaces the
+	// password_len leak in v0.10.223 — same signal ("did your password
+	// get mutated?"), surfaced at the moment it's actionable.
+	var warnings []string
 	for _, s := range settings {
 		if !allowedKeys[s.Key] {
 			continue
@@ -162,9 +168,15 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			}
 		case "smtp_host", "smtp_username", "smtp_from", "smtp_to":
 			// v0.10.223: trim whitespace defensively — copy-paste from webmail
-			// settings pages commonly drags a trailing space on host/username
-			// that breaks SASL with an opaque "535 reason unavailable" reply.
-			s.Value = strings.TrimSpace(s.Value)
+			// settings pages commonly drags a trailing space on host/username.
+			// These are non-secret so a silent trim is acceptable; the secret
+			// case (smtp_password) is handled separately below with an
+			// operator-visible warning so the operator can confirm whether
+			// their stored password got mutated.
+			if trimmed := strings.TrimSpace(s.Value); trimmed != s.Value {
+				warnings = append(warnings, fmt.Sprintf("Trimmed leading/trailing whitespace from %s", s.Key))
+				s.Value = trimmed
+			}
 			if len(s.Value) > 255 {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
 				return
@@ -181,11 +193,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			if s.Value == "********" {
 				continue
 			}
-			// v0.10.223: trim whitespace before encrypting — same rationale as
-			// host/username above. Surfacing the corrected length back to the
-			// test page (password_len in the trace metadata) lets the operator
-			// spot when a trim actually changed something.
-			s.Value = strings.TrimSpace(s.Value)
+			// v0.10.224: trim and SURFACE the mutation. Silently mutating
+			// a secret is a footgun — if it didn't actually fix the
+			// auth problem, the operator now also has to debug why their
+			// password "isn't what they typed" without any signal that
+			// the server modified it. So we report it as a warning in
+			// the response. Length of trimmed bytes is NOT exposed
+			// (information disclosure even authenticated — see swaks'
+			// --auth-hide-password convention).
+			if trimmed := strings.TrimSpace(s.Value); trimmed != s.Value {
+				warnings = append(warnings, "Trimmed leading/trailing whitespace from smtp_password before encrypting — re-run the SMTP test to confirm the trim fixed the auth failure")
+				s.Value = trimmed
+			}
 			// Encrypt secret values before storage
 			if s.Value != "" && h.db != nil {
 				s.Value = h.db.EncryptField(s.Value)
@@ -221,7 +240,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys))))
 		return
 	}
-	c.JSON(http.StatusOK, models.MessageResponse("Settings updated"))
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"message":  "Settings updated",
+		"warnings": warnings,
+	}))
 }
 
 // getNotificationSetting reads a key from system_settings, falling back to config.
@@ -268,6 +290,7 @@ type smtpTraceStep struct {
 	Response string `json:"response,omitempty"` // server response (or summary like cipher / cert subject for non-textual steps)
 	Status   string `json:"status"`             // "ok" | "skipped" | "fail"
 	Error    string `json:"error,omitempty"`    // populated when Status == "fail"
+	Hint     string `json:"hint,omitempty"`     // optional operator-facing remediation hint (v0.10.224)
 	DurMs    int64  `json:"duration_ms"`        // wall time for this step
 }
 
@@ -292,7 +315,24 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 		})
 	}
 	fail := func(step, detail string, start time.Time, err error) (string, error) {
-		record(step, detail, "", "fail", err.Error(), start)
+		// v0.10.224: attach an operator-facing remediation hint to the
+		// failed step when the error matches a known pattern (Postfix
+		// (reason unavailable), 504 unrecognized auth, etc.). The hint
+		// is what the operator should *do next*, not a restatement of
+		// the error — see authFailureHint().
+		errStr := err.Error()
+		hint := ""
+		if step == "auth" {
+			hint = authFailureHint(errStr)
+		}
+		trace = append(trace, smtpTraceStep{
+			Step:   step,
+			Detail: detail,
+			Status: "fail",
+			Error:  errStr,
+			Hint:   hint,
+			DurMs:  time.Since(start).Milliseconds(),
+		})
 		return fmt.Sprintf("%s failed: %v", step, err), err
 	}
 
@@ -328,7 +368,7 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 		}
 		st := tlsConn.ConnectionState()
 		record("tls", "implicit TLS handshake (port 465)",
-			fmt.Sprintf("%s, %s, cert CN=%s", tlsVersionName(st.Version), tlsCipherName(st.CipherSuite), tlsLeafSubject(st)),
+			tlsLeafSummary(st),
 			"ok", "", tStart)
 		netConn = tlsConn
 		negotiatedTLS = true
@@ -372,8 +412,7 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 			// run by the time we get here.
 			var tlsDetail string
 			if st, ok := client.TLSConnectionState(); ok {
-				tlsDetail = fmt.Sprintf("%s, %s, cert CN=%s",
-					tlsVersionName(st.Version), tlsCipherName(st.CipherSuite), tlsLeafSubject(st))
+				tlsDetail = tlsLeafSummary(st)
 			} else {
 				tlsDetail = "established"
 			}
@@ -508,6 +547,54 @@ func tlsLeafSubject(st tls.ConnectionState) string {
 	return st.PeerCertificates[0].Subject.CommonName
 }
 
+// tlsLeafSummary returns "TLS-VERSION, CIPHER, CN=…, expires YYYY-MM-DD"
+// for the trace TLS step. NotAfter is included because cert expiry is
+// a top-3 operator-debuggable cause of "test send works fine in the
+// staging UI but fails in prod 24h later" — every reputable mail
+// admin UI (Mailcow, Mail-in-a-Box, Mailu) surfaces it; v0.10.220-223
+// didn't (v0.10.224).
+func tlsLeafSummary(st tls.ConnectionState) string {
+	base := fmt.Sprintf("%s, %s, cert CN=%s",
+		tlsVersionName(st.Version), tlsCipherName(st.CipherSuite), tlsLeafSubject(st))
+	if len(st.PeerCertificates) > 0 {
+		base += ", expires " + st.PeerCertificates[0].NotAfter.UTC().Format("2006-01-02")
+	}
+	return base
+}
+
+// authFailureHint inspects the AUTH error string from the stdlib smtp
+// client and returns an operator-facing remediation hint, or "" if the
+// failure doesn't match any pattern we recognise.
+//
+// The current target is Postfix's "535 5.7.8 ... (reason unavailable)"
+// reply. Per the Postfix source (src/smtpd/smtpd_sasl_glue.c), that
+// literal placeholder is emitted when Postfix's SASL plugin returned
+// FAIL with an empty reason — and per the Dovecot auth-protocol docs
+// (doc.dovecot.org/main/developers/design/auth_protocol.html), Dovecot
+// DELIBERATELY omits the `reason=` field for the most common failure
+// modes ("MUST NOT reveal exact failure reasons like user not found vs
+// password mismatch"). So the real diagnostic the operator needs is
+// always in Dovecot's own auth log on the mail server — Postfix /
+// SMTP cannot surface it on the wire.
+//
+// Sources researched in v0.10.224:
+//   - https://github.com/vdukhovni/postfix/blob/master/postfix/src/smtpd/smtpd_sasl_glue.c
+//   - https://doc.dovecot.org/main/developers/design/auth_protocol.html
+//   - https://doc.dovecot.org/main/howto/sasl/postfix.html
+func authFailureHint(errStr string) string {
+	lc := strings.ToLower(errStr)
+	if strings.Contains(lc, "535") && strings.Contains(lc, "reason unavailable") {
+		return "Postfix emits '(reason unavailable)' when its SASL plugin returned FAIL without a reason — most commonly Dovecot, which intentionally suppresses the per-failure reason on the wire (auth_protocol design). The actual cause is logged on the MAIL SERVER side. SSH to the mail host and run: `journalctl -u dovecot --since '5 min ago'` (or `tail /var/log/dovecot.log`). Look for an auth-worker line keyed to your username with `reason=…` — that line contains the real failure (wrong password, unknown user, mech mismatch, passdb error, etc.). If Dovecot logs nothing for this attempt, the auth never reached Dovecot → check the `private/auth` socket permissions on the Postfix side."
+	}
+	if strings.Contains(lc, "535") {
+		return "535 from the mail server: credentials were rejected. Try testing the same username/password against the server's webmail or IMAP service to isolate whether the credentials themselves are valid before debugging SMTP-specific config. If the SMTP submission service uses Dovecot SASL, check Dovecot's auth log on the mail host for the underlying reason — Postfix passes through whatever Dovecot returns."
+	}
+	if strings.Contains(lc, "504") && strings.Contains(lc, "unrecognized authentication") {
+		return "Server rejected the auth mechanism. Re-check the EHLO row above for the AUTH mechs the server advertises; if the list is empty the server doesn't accept SMTP AUTH on this port — Postfix typically only enables auth on the submission port (587) and SMTPS (465), not the public MX port (25)."
+	}
+	return ""
+}
+
 func (h *Handler) TestEmail(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
@@ -521,21 +608,23 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	smtpFrom := h.getNotificationSetting("smtp_from")
 	smtpTo := h.getNotificationSetting("smtp_to")
 
-	// Allow per-test overrides without rewriting saved settings:
-	//   - "to":       recipient override (v0.10.220, bundle I)
-	//   - "username": auth username override (v0.10.223) — useful when
-	//                 the mail server's SASL backend wants a different
-	//                 form (e.g. `support` vs `support@example.com`).
+	// Allow a per-test recipient override without rewriting saved
+	// settings (v0.10.220, bundle I). The v0.10.223 username override
+	// was removed in v0.10.224 — no reputable mail admin tool (Mailcow,
+	// Mailu, Postal, swaks-the-CLI) exposes a username-only test field,
+	// and it turns this endpoint into a free credential-stuffing oracle
+	// against an arbitrary external SMTP server for any authenticated
+	// admin (or anyone who phishes/CSRFs an admin session). If we ever
+	// need to test alternate credentials, the right shape is an
+	// explicit ad-hoc-credentials test that takes BOTH username and
+	// password and is rate-limited + audit-logged — not a half-override
+	// that pairs typed-in usernames with the saved password.
 	var req struct {
-		ToOverride       string `json:"to"`
-		UsernameOverride string `json:"username"`
+		ToOverride string `json:"to"`
 	}
 	_ = c.ShouldBindJSON(&req)
 	if req.ToOverride != "" {
 		smtpTo = req.ToOverride
-	}
-	if req.UsernameOverride != "" {
-		smtpUsername = strings.TrimSpace(req.UsernameOverride)
 	}
 
 	if smtpHost == "" || smtpFrom == "" || smtpTo == "" {
@@ -564,11 +653,17 @@ func (h *Handler) TestEmail(c *gin.Context) {
 		log.Printf("Test email failed: %s", summary)
 	}
 
-	// Length metadata (v0.10.223): operator can spot hidden whitespace
-	// or copy-paste damage by comparing the byte length we read out of
-	// the DB against what they expect. Trailing newlines from clipboard
-	// are a common cause of 535 auth failures despite the password
-	// "looking right" in the form field.
+	// v0.10.224: dropped username_len / password_len fields shipped in
+	// v0.10.223. swaks (the de-facto SMTP test CLI) goes the opposite
+	// direction with --auth-hide-password — its documented stance is to
+	// keep credential data out of transcripts entirely. Even for an
+	// authenticated admin session, password byte length is information
+	// disclosure that narrows the search space for anyone who later
+	// scrapes the response from browser history / a proxy log / a
+	// forwarded screenshot. The "did trim change the password?" signal
+	// that password_len was supposed to provide is now surfaced at SAVE
+	// time instead (see UpdateSettings — passwords are no longer
+	// silently trimmed).
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"success":     ok,
 		"message":     summary,
@@ -579,9 +674,6 @@ func (h *Handler) TestEmail(c *gin.Context) {
 		"auth_method": authMethodLabel(smtpUsername),
 		"from":        smtpFrom,
 		"to":          smtpTo,
-		"username":    smtpUsername,
-		"username_len": len(smtpUsername),
-		"password_len": len(smtpPassword),
 	}))
 }
 

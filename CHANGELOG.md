@@ -1,4 +1,49 @@
 # Changelog
+## [0.10.224] - 2026-05-18
+
+### Reverted + replaced — research-backed SMTP test fixes
+User pushed back on v0.10.223 with "please don't assume — research the proper way for this to be implemented." Four research agents went off and read primary sources (Postfix `smtpd_sasl_glue.c`, Dovecot auth-protocol docs, RFC 4954, swaks reference manual, Mailcow/Mailu/Postal docs, OWASP A07). Findings reversed three of the five decisions shipped in v0.10.223 and exposed a security bug in v0.10.222's `LoginAuth`. This entry rolls back the wrong parts and replaces them with research-backed equivalents.
+
+#### Security fix — `LoginAuth` missing MITM check (regression introduced in v0.10.222)
+The stdlib `smtp.PlainAuth` validates `server.Name == host` in its `Start()` method before sending credentials. Without that check, a MITM with a redirected DNS / connection can terminate the TLS handshake on a *different* server that also advertises LOGIN and harvest the password under that identity. My `LoginAuth` in v0.10.222 was missing this gate — it only checked `server.TLS`. Fixed: `LoginAuth` now takes a `host` parameter and refuses if `server.Name != host`. `CompoundAuth` plumbs `host` through to `LoginAuth`. Matches stdlib `PlainAuth` semantics exactly.
+
+#### Reverted — username override input on test page (v0.10.223 mistake)
+No reputable mail admin tool (Mailcow, Mailu, Postal, swaks) exposes a username-only override field. The pattern is an outbound credential-stuffing oracle: an authenticated admin (or anyone who CSRFs the endpoint) can probe arbitrary username/saved-password pairs against an external SMTP server and read 235 vs 535 from the response. OWASP A07:2025 calls this out. If we ever need ad-hoc credential testing, the right shape is an explicit "test with ad-hoc credentials" mode that takes BOTH fields, rate-limits, and audit-logs — not a half-override pairing a typed name with the stored secret. Removed the input from the UI, removed the JSON field from the request struct, removed the `strings.TrimSpace` of the override.
+
+#### Reverted — `username_len` / `password_len` in the test response (v0.10.223 mistake)
+swaks' `--auth-hide-password` documented stance is "keep credential data out of transcripts entirely." Even for an authenticated admin session, password byte length is information disclosure that narrows the search space for anyone who later scrapes the response from browser history / a proxy log / a forwarded screenshot. Dropped both fields from the JSON, dropped the rendering in `renderSMTPTrace()`.
+
+#### Replaced — silent password TrimSpace → save-time warning (better signal)
+v0.10.223 silently `TrimSpace`d the saved password and tried to make the change visible via `password_len` in the test response. That's the wrong moment AND the wrong vector. New behavior: `UpdateSettings` still trims, but if the trim actually changed the value it appends a warning string to the JSON response. `saveSettings()` in the admin JS pops each warning as a separate red toast. The signal arrives at the moment the operator can act on it (right after they pasted the password) instead of being deferred to the next test run. Non-secret fields (`smtp_host` / `smtp_username` / `smtp_from` / `smtp_to`) also produce save-time warnings when their trim actually does work.
+
+#### Added — operator-facing remediation hint when AUTH fails
+Per Postfix source (`src/smtpd/smtpd_sasl_glue.c`), `(reason unavailable)` is Postfix's fallback string emitted when its SASL plugin returned FAIL with an empty reason. Per Dovecot's auth protocol docs (`/main/developers/design/auth_protocol.html`), Dovecot **deliberately** omits the `reason=` field on FAIL for the common failure modes — "MUST NOT reveal exact failure reasons like user not found vs. password mismatch." So `(reason unavailable)` on the wire means *the real diagnostic is always in Dovecot's auth log on the mail server, never on the SMTP transcript*. New `authFailureHint()` helper detects the empty-reason 535 pattern (and a few others — generic 535, `504 unrecognized authentication`) and attaches an operator-facing "Next step:" hint to the failed auth row. For the Postfix+Dovecot case the hint walks the operator through `journalctl -u dovecot --since '5 min ago'` and tells them what to look for. The new `Hint` field is rendered as a blue-bordered call-out below the error row.
+
+#### Added — cert NotAfter in TLS step (industry standard)
+Mailcow / Mailu / Mail-in-a-Box admin UIs all surface certificate expiry in their SMTP test output. v0.10.220-223 only showed TLS version / cipher / CN. Now the TLS detail line is e.g. `TLS 1.3, TLS_AES_128_GCM_SHA256, cert CN=mail.example.com, expires 2026-08-14`. Cert-expiry-in-N-days is a top-3 cause of "tests pass today, fail in production next week" so this rounds out the swaks-style transcript the diagnostic was modelled on.
+
+#### What did NOT change
+- LOGIN step-counter implementation in `LoginAuth.Next()` — research confirmed this matches `wneessen/go-mail` (the canonical modern Go mail library); ignoring the prompt text is exactly correct per the (expired) `draft-murchison-sasl-login-00`.
+- PLAIN-before-LOGIN selection order in `CompoundAuth` — matches industry convention.
+- The per-step transcript UI shape — research validated it as the swaks/Mailcow standard.
+
+### Files
+- Modified: `internal/notifier/smtp_auth.go` — `LoginAuth` signature now takes `host`; `Start()` validates `server.Name == a.host`; `CompoundAuth` plumbs host through.
+- Modified: `internal/api/handlers/handlers_settings.go` — removed `UsernameOverride` field, removed `username_len`/`password_len` from response, removed silent `TrimSpace` on `smtp_password` (replaced with save-time warning), added `authFailureHint()` and `tlsLeafSummary()` helpers, added `Hint` field to `smtpTraceStep`, switched `UpdateSettings` response to `SuccessResponse(gin.H{message, warnings})`.
+- Modified: `web/admin/admin.html` — removed the username override input + its explainer text.
+- Modified: `cmd/api/static/js/admin-main.js` — `testEmail()` no longer sends `username`, `renderSMTPTrace()` no longer shows length cells but does render the new `hint` block, `saveSettings()` surfaces server-side warnings as toasts.
+
+### Sources researched
+- Postfix `smtpd_sasl_glue.c` and `xsasl_dovecot_server.c` (vdukhovni/postfix mirror)
+- Dovecot auth protocol design doc (`doc.dovecot.org/main/developers/design/auth_protocol.html`)
+- Dovecot Postfix-SASL howto (`doc.dovecot.org/main/howto/sasl/postfix.html`)
+- Postfix SASL_README (`postfix.org/SASL_README.html`)
+- RFC 4954 + draft-murchison-sasl-login-00
+- swaks reference manual (`jetmore.org/john/code/swaks/latest/doc/ref.txt`)
+- Mailcow relayhost docs, WP Mail SMTP debug events doc, SendGrid 535 troubleshooting
+- OWASP A07:2025 (Authentication Failures), OWASP Authentication Cheat Sheet
+- `wneessen/go-mail` LOGIN auth implementation (the canonical modern Go SMTP library)
+
 ## [0.10.223] - 2026-05-18
 
 ### Added — SMTP test diagnostics for opaque 535 auth failures
