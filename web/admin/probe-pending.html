@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pending Approvals - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
+    <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
 <body class="bg-[#0d1117] text-[#c9d1d9]">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>Firewall Monitor</h2>
@@ -17,11 +19,11 @@
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main-content p-6">
+    <main class="main-content p-6" id="main-content" tabindex="-1">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-xl font-semibold text-[#e6edf3]">Pending Probe Approvals</h1>
         </div>
@@ -30,9 +32,9 @@
         <div class="bg-[rgba(63,185,80,0.1)] border border-[rgba(63,185,80,0.3)] text-[#3fb150] p-4 rounded-lg mb-5 hidden" id="success-msg"></div>
 
         <div id="pending-container">
-            <div class="text-center p-8 text-[#484f58]">Loading...</div>
+            <div class="text-center p-8 text-[#6e7681]">Loading...</div>
         </div>
-    </div>
+    </main>
 
     <!-- Reject Modal -->
     <div class="hidden fixed inset-0 bg-black/60 z-[200] flex items-center justify-center" id="reject-modal">

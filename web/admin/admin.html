@@ -21,10 +21,10 @@
         .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
         .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
         .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
-        .sidebar-header .subtitle { color: #484f58; font-size: 0.7rem; margin-top: 2px; }
+        .sidebar-header .subtitle { color: #6e7681; font-size: 0.7rem; margin-top: 2px; }
         .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
         .nav-section { margin-bottom: 16px; }
-        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #484f58; padding: 4px 12px 6px; }
+        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #6e7681; padding: 4px 12px 6px; }
         .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
         .nav-item:hover { background: #21262d; color: #e6edf3; }
         .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
@@ -88,7 +88,7 @@
         .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; min-width: 0; }
         .probe-card .probe-stat { background: #0d1117; border-radius: 6px; padding: 12px 6px; text-align: center; min-width: 0; overflow: hidden; }
         .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; overflow-wrap: break-word; word-break: break-word; }
-        .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #484f58; text-transform: uppercase; margin-top: 4px; }
+        .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #6e7681; text-transform: uppercase; margin-top: 4px; }
         .probe-card .probe-stat .lbl .last-hour { color: #3fb950; display: block; font-size: 0.7rem; margin-top: 2px; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
         .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
@@ -122,7 +122,7 @@
         .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
         .btn.secondary:hover { background: #30363d; }
         .btn.secondary.active[data-action="dg-filter-type"] { background: #238636; border-color: #2ea043; color: #fff; }
-        .btn.secondary[data-action="dg-filter-type"]:not(.active) { background: #161b22; border-color: #21262d; color: #484f58; opacity: 0.6; }
+        .btn.secondary[data-action="dg-filter-type"]:not(.active) { background: #161b22; border-color: #21262d; color: #6e7681; opacity: 0.6; }
         .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
         .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
         .filter-bar select, .filter-bar input { padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.82rem; }
@@ -133,7 +133,7 @@
         .panel-chart-container canvas { max-height: 200px; }
         .panel-tunnel-row { cursor: pointer; transition: background 0.15s; }
         .panel-tunnel-row:hover td { background: #1c2128; }
-        .panel-tunnel-row .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #484f58; margin-right: 4px; }
+        .panel-tunnel-row .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #6e7681; margin-right: 4px; }
         .panel-tunnel-row .chevron.open { transform: rotate(90deg); }
         .panel-tunnel-expand { display: none; }
         .panel-tunnel-expand.open { display: table-row; }
@@ -203,9 +203,10 @@
     <script defer src="/static/js/admin-main.js"></script>
 </head>
 <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
     <div class="mobile-header">
-        <button class="mobile-menu-btn" id="mobile-menu-btn">&#9776;</button>
+        <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open navigation menu" aria-expanded="false" aria-controls="sidebar">&#9776;</button>
         <span class="text-[#58a6ff] font-semibold">Firewall Monitor</span>
     </div>
     <div class="sidebar" id="sidebar">
@@ -217,11 +218,11 @@
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" id="logout-btn"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" id="logout-btn" href="#"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main">
+    <main class="main" id="main-content" tabindex="-1">
         <div class="page-header">
             <h1 id="page-title">Dashboard</h1>
         </div>
@@ -329,7 +330,7 @@
                     <h2>Network Connections</h2>
                     <button class="btn" data-action="show-connection-modal">+ Add Connection</button>
                 </div>
-                <p style="color: #484f58; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
+                <p style="color: #6e7681; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
                 <div class="table-wrap">
                     <table id="connections-table">
                         <thead><tr><th>Devices</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Discovery</th><th>Networks</th><th>Actions</th></tr></thead>
@@ -631,8 +632,8 @@
                 <div class="modal hidden fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center" id="alerts-bulk-ack-modal">
                     <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-5 w-[480px] max-w-[92vw]">
                         <div class="flex justify-between items-center mb-3">
-                            <h2 class="text-lg text-[#e6edf3]">Acknowledge alerts</h2>
-                            <span data-action="close-bulk-ack" class="cursor-pointer text-2xl text-[#8b949e] hover:text-white">&times;</span>
+                            <h2 class="text-lg text-[#e6edf3]" id="alerts-bulk-ack-title">Acknowledge alerts</h2>
+                            <button type="button" data-action="close-bulk-ack" class="bg-transparent border-none cursor-pointer text-2xl text-[#8b949e] hover:text-white" aria-label="Close dialog">&times;</button>
                         </div>
                         <div class="text-[0.82rem] text-[#8b949e] mb-3" id="alerts-bulk-ack-count">Acknowledging N alerts</div>
                         <label class="block mb-1 text-[#8b949e] text-sm">Notes (optional)</label>
@@ -787,7 +788,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Display Timezone</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
+                <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
                 <div class="setting-item">
                     <label>Timezone</label>
                     <select id="display-timezone" name="display_timezone" style="width:100%;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.88rem;">
@@ -796,7 +797,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Public Dashboard Display</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Control default widget visibility on the public dashboard. Users can also hide/show widgets locally via the Widgets menu.</p>
+                <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">Control default widget visibility on the public dashboard. Users can also hide/show widgets locally via the Widgets menu.</p>
                 <div id="display-settings">
                     <div class="toggle-row"><label>Show VPN Tunnels</label><input type="checkbox" name="public_show_vpn"></div>
                     <div class="toggle-row"><label>Show Connection Map</label><input type="checkbox" name="public_show_connections"></div>
@@ -816,7 +817,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>SMTP Configuration</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
+                <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
                 <div class="settings-grid" id="settings-smtp"></div>
                 <div style="margin-top: 12px;">
                     <button class="btn secondary" data-action="test-email">Send Test Email</button>
@@ -825,7 +826,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Webhook Test</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
+                <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                     <button class="btn secondary" data-action="test-webhook" data-type="slack_webhook">Test Slack</button>
                     <button class="btn secondary" data-action="test-webhook" data-type="discord_webhook">Test Discord</button>
@@ -835,19 +836,19 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Email Reports</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Schedule automated email reports with device status summaries.</p>
+                <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">Schedule automated email reports with device status summaries.</p>
                 <div class="settings-grid" id="settings-reports"></div>
             </div>
             <div class="card">
                 <div class="card-header"><h2>Traffic Spike Detection</h2></div>
-                <p style="color: #484f58; margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
+                <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
                 <div class="settings-grid" id="settings-spike"></div>
             </div>
             <div class="card">
                 <button class="btn" data-action="save-settings">Save Settings</button>
             </div>
         </div>
-    </div>
+    </main>
 
     <!-- Device Modal -->
     <div class="modal" id="device-modal">
@@ -1040,7 +1041,7 @@
                 </div>
                 <div style="border-top:1px solid #30363d;margin:16px 0 12px;padding-top:12px;">
                     <label style="display:block;color:#8b949e;font-size:0.82rem;font-weight:500;margin-bottom:4px;">Threshold Overrides</label>
-                    <p style="color:#484f58;font-size:0.78rem;margin:0 0 10px;">Leave blank to inherit from policy/site/global defaults.</p>
+                    <p style="color:#6e7681;font-size:0.78rem;margin:0 0 10px;">Leave blank to inherit from policy/site/global defaults.</p>
                     <div class="form-row">
                         <div class="form-group">
                             <label>CPU (%)</label>

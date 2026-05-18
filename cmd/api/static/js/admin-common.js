@@ -114,6 +114,18 @@
         var container = document.createElement('div');
         container.className = 'toast-container';
         container.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;';
+        // a11y (v0.10.213, bundle B4): toasts are announced to screen readers.
+        // Errors are assertive (interrupt); success/warning are polite (queued).
+        // role=status + aria-live duplicates intentionally — Safari/iOS VO
+        // sometimes ignores one or the other.
+        if (type === 'error') {
+            container.setAttribute('role', 'alert');
+            container.setAttribute('aria-live', 'assertive');
+        } else {
+            container.setAttribute('role', 'status');
+            container.setAttribute('aria-live', 'polite');
+        }
+        container.setAttribute('aria-atomic', 'true');
         var toast = document.createElement('div');
         toast.className = 'toast-message ' + (type || 'error');
         toast.textContent = msg;
@@ -318,6 +330,192 @@
         });
     }
 
+    /* ------------------------------------------------------------------
+     * Shared modal a11y wrapper (v0.10.213, bundle B2).
+     *
+     * The admin UI has 10+ `<div class="modal" id="…">` dialogs that all
+     * toggle visibility via `.modal.active`. Pre-B2 none had `role=dialog`,
+     * `aria-modal`, `aria-labelledby`, focus management, or ESC handling.
+     * This wrapper adds all of those without touching the existing markup —
+     * just call openModal('device-modal') instead of (or in addition to)
+     * the legacy `.classList.add('active')`. closeModal() restores focus to
+     * whatever element was active when openModal() ran.
+     *
+     * Designed to coexist with the legacy open paths: if a caller forgets
+     * and uses `.classList.add('active')` directly, the modal still renders
+     * — it just won't be screen-reader-announced or focus-trapped. That
+     * graceful degradation matters because some open paths are deep in
+     * legacy code we won't migrate in this bundle.
+     *
+     * Idempotent: calling openModal() on an already-open modal re-enters
+     * cleanly (rebinds the trap to whatever focusables exist now — useful
+     * when modal contents are populated async).
+     * ------------------------------------------------------------------ */
+
+    // Internal registry: modalId → { closeHandler, prevFocus, keyHandler }
+    var __fwmonOpenModals = {};
+
+    function focusableWithin(root) {
+        if (!root) return [];
+        var sel = 'a[href], button:not([disabled]), textarea:not([disabled]), ' +
+                  'input:not([disabled]):not([type="hidden"]), select:not([disabled]), ' +
+                  '[tabindex]:not([tabindex="-1"])';
+        var nodes = root.querySelectorAll(sel);
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            // skip elements inside aria-hidden subtrees or invisible
+            if (n.offsetParent === null && n.tagName !== 'AREA') continue;
+            out.push(n);
+        }
+        return out;
+    }
+
+    function openModal(modalId, opts) {
+        opts = opts || {};
+        var modal = (typeof modalId === 'string') ? document.getElementById(modalId) : modalId;
+        if (!modal) return null;
+        var id = modal.id || ('fwmon-modal-' + Math.random().toString(36).slice(2, 8));
+        modal.id = id;
+
+        // Tag for assistive tech.
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+
+        // Derive a label target. Preference order:
+        //   1. opts.labelledBy (caller-supplied element id)
+        //   2. existing heading with class .modal-title or h2/h3 inside
+        //   3. auto-injected hidden span with title text
+        if (opts.labelledBy) {
+            modal.setAttribute('aria-labelledby', opts.labelledBy);
+        } else if (!modal.getAttribute('aria-labelledby')) {
+            var heading = modal.querySelector('.modal-title, .modal-header h2, .modal-header h3, h2, h3');
+            if (heading) {
+                if (!heading.id) heading.id = id + '-title';
+                modal.setAttribute('aria-labelledby', heading.id);
+            }
+        }
+
+        // Tag every close button so it has a name.
+        var closeBtns = modal.querySelectorAll('.modal-close, [data-action^="close-"]');
+        for (var i = 0; i < closeBtns.length; i++) {
+            if (!closeBtns[i].hasAttribute('aria-label')) {
+                closeBtns[i].setAttribute('aria-label', 'Close dialog');
+            }
+        }
+
+        // Show via the legacy mechanism (add .active) so existing CSS works.
+        modal.classList.add('active');
+
+        // If already open in our registry, re-bind without duplicating handlers.
+        if (__fwmonOpenModals[id]) {
+            return __fwmonOpenModals[id];
+        }
+
+        var prevFocus = document.activeElement;
+
+        function onKey(ev) {
+            if (ev.key === 'Escape') {
+                ev.preventDefault();
+                closeModal(id);
+                return;
+            }
+            if (ev.key === 'Tab') {
+                var focusables = focusableWithin(modal);
+                if (!focusables.length) return;
+                var first = focusables[0];
+                var last  = focusables[focusables.length - 1];
+                if (ev.shiftKey && document.activeElement === first) {
+                    ev.preventDefault();
+                    last.focus();
+                } else if (!ev.shiftKey && document.activeElement === last) {
+                    ev.preventDefault();
+                    first.focus();
+                }
+            }
+        }
+
+        document.addEventListener('keydown', onKey, true);
+
+        // Move initial focus into the dialog. Caller can opt out (e.g. for
+        // form modals where the first input is also the labelled element).
+        if (opts.focus !== false) {
+            setTimeout(function() {
+                var focusables = focusableWithin(modal);
+                // Skip the close button as the first focus target — operators
+                // typing into a form would otherwise close immediately on Esc-misfire.
+                var target = null;
+                for (var j = 0; j < focusables.length; j++) {
+                    if (!focusables[j].classList.contains('modal-close')) {
+                        target = focusables[j];
+                        break;
+                    }
+                }
+                if (!target && focusables.length) target = focusables[0];
+                if (target && target.focus) {
+                    try { target.focus(); } catch (e) { /* ignore */ }
+                }
+            }, 0);
+        }
+
+        var record = {
+            id: id,
+            modal: modal,
+            prevFocus: prevFocus,
+            keyHandler: onKey
+        };
+        __fwmonOpenModals[id] = record;
+        return record;
+    }
+
+    function closeModal(modalId) {
+        var modal = (typeof modalId === 'string') ? document.getElementById(modalId) : modalId;
+        if (!modal) return;
+        var id = modal.id;
+        modal.classList.remove('active');
+        var record = __fwmonOpenModals[id];
+        if (!record) return;
+        document.removeEventListener('keydown', record.keyHandler, true);
+        delete __fwmonOpenModals[id];
+        if (record.prevFocus && record.prevFocus.focus) {
+            try { record.prevFocus.focus(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    // On page load, retroactively tag every .modal in the DOM. This lets
+    // legacy code that still calls .classList.add('active') directly at
+    // least benefit from role/aria-labelledby/close-btn label, even if it
+    // misses focus trap + ESC.
+    function tagStaticModals() {
+        var modals = document.querySelectorAll('.modal');
+        for (var i = 0; i < modals.length; i++) {
+            var m = modals[i];
+            if (!m.hasAttribute('role')) m.setAttribute('role', 'dialog');
+            if (!m.hasAttribute('aria-modal')) m.setAttribute('aria-modal', 'true');
+            if (!m.hasAttribute('aria-labelledby')) {
+                var heading = m.querySelector('.modal-title, .modal-header h2, .modal-header h3, h2, h3');
+                if (heading) {
+                    if (!heading.id) heading.id = (m.id || 'fwmon-modal') + '-title';
+                    m.setAttribute('aria-labelledby', heading.id);
+                }
+            }
+            var closes = m.querySelectorAll('.modal-close, [data-action^="close-"]');
+            for (var j = 0; j < closes.length; j++) {
+                if (!closes[j].hasAttribute('aria-label')) {
+                    closes[j].setAttribute('aria-label', 'Close dialog');
+                }
+            }
+        }
+    }
+
+    if (typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', tagStaticModals);
+        } else {
+            tagStaticModals();
+        }
+    }
+
     // Export to window for use by other scripts and diagram modules
     window.AdminCommon = {
         API_BASE: API_BASE,
@@ -334,6 +532,8 @@
         showToast: showToast,
         clearToasts: clearToasts,
         confirm: confirmModal,
+        openModal: openModal,
+        closeModal: closeModal,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

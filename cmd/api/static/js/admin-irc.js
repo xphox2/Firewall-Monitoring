@@ -104,7 +104,7 @@ function renderServers() {
 }
 
 function openServerModal(server = null) {
-    document.getElementById('serverModal').classList.add('active');
+    AdminCommon.openModal('serverModal');
     document.getElementById('serverModalTitle').textContent = server ? 'Edit Server' : 'Add Server';
     document.getElementById('serverId').value = server ? server.id : '';
     document.getElementById('serverName').value = server ? server.name : '';
@@ -126,7 +126,7 @@ function openServerModal(server = null) {
 }
 
 function closeServerModal() {
-    document.getElementById('serverModal').classList.remove('active');
+    AdminCommon.closeModal('serverModal');
 }
 
 function toggleSASLFields() {
@@ -306,7 +306,7 @@ function openServerSelect() {
 
 function openChannelModal(channel = null) {
     openServerSelect();
-    document.getElementById('channelModal').classList.add('active');
+    AdminCommon.openModal('channelModal');
     document.getElementById('channelModalTitle').textContent = channel ? 'Edit Channel' : 'Add Channel';
     document.getElementById('channelId').value = channel ? channel.id : '';
     document.getElementById('channelServerId').value = channel ? channel.server_id : '';
@@ -323,7 +323,7 @@ function openChannelModal(channel = null) {
 }
 
 function closeChannelModal() {
-    document.getElementById('channelModal').classList.remove('active');
+    AdminCommon.closeModal('channelModal');
 }
 
 function toggleStatusInterval() {
@@ -422,7 +422,7 @@ function renderCommands() {
 }
 
 function openCommandModal(command = null) {
-    document.getElementById('commandModal').classList.add('active');
+    AdminCommon.openModal('commandModal');
     document.getElementById('commandModalTitle').textContent = command ? 'Edit Command' : 'Add Command';
     document.getElementById('commandId').value = command ? command.id : '';
     document.getElementById('commandCmd').value = command ? command.command : '';
@@ -435,7 +435,7 @@ function openCommandModal(command = null) {
 }
 
 function closeCommandModal() {
-    document.getElementById('commandModal').classList.remove('active');
+    AdminCommon.closeModal('commandModal');
 }
 
 function toggleCommandResponse() {

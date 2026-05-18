@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IRC Management - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
+    <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <style>
         .nav-item:hover { background: #21262d; color: #e6edf3; }
@@ -18,6 +19,7 @@
     </style>
 </head>
 <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>Firewall Monitor</h2>
@@ -27,11 +29,11 @@
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main-content p-6">
+    <main class="main-content p-6" id="main-content" tabindex="-1">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-xl font-semibold text-[#e6edf3]">IRC Management</h1>
             <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="open-server-modal">Add Server</button>
@@ -50,7 +52,7 @@
             <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">IRC Servers</h2>
                 <div id="serversList">
-                    <div class="text-center p-7.5 text-[#484f58]">Loading servers...</div>
+                    <div class="text-center p-7.5 text-[#6e7681]">Loading servers...</div>
                 </div>
             </div>
         </div>
@@ -85,7 +87,7 @@
                         </tr>
                     </thead>
                     <tbody id="commandsList">
-                        <tr><td colspan="6" class="text-center p-7.5 text-[#484f58]">Loading commands...</td></tr>
+                        <tr><td colspan="6" class="text-center p-7.5 text-[#6e7681]">Loading commands...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -113,7 +115,7 @@
                 <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="send-message">Send Message</button>
             </div>
         </div>
-    </div>
+    </main>
 
     <div id="serverModal" class="fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] hidden items-center justify-center">
         <div class="bg-[#161b22] border border-[#30363d] rounded-xl p-6 w-[520px] max-w-[92vw] max-h-[85vh] overflow-y-auto">

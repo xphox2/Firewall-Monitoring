@@ -1125,8 +1125,7 @@
             openConfigDiff(configCompareSelection.from, configCompareSelection.to);
         }
         if (t.dataset && t.dataset.action === 'close-config-diff') {
-            var modal = document.getElementById('config-diff-modal');
-            if (modal) modal.classList.remove('active');
+            AC.closeModal('config-diff-modal');
         }
     });
 
@@ -1149,7 +1148,7 @@
                             esc(String((result && result.error) || 'unknown')) +
                             '</div>';
                         modal.classList.remove('hidden');
-                        modal.classList.add('active');
+                        AC.openModal('config-diff-modal');
                     }
                     return;
                 }
@@ -1165,7 +1164,7 @@
                         '<span style="color:#8b949e;font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
                         '</div>';
                     modal.classList.remove('hidden');
-                    modal.classList.add('active');
+                    AC.openModal('config-diff-modal');
                 }
             });
     }
@@ -1182,7 +1181,7 @@
         // Show the modal FIRST. If diff rendering throws, the user at least
         // sees an error in the modal body instead of a frozen-looking page.
         modal.classList.remove('hidden');
-        modal.classList.add('active');
+        AC.openModal('config-diff-modal');
         body.innerHTML = '<div style="padding:20px;color:#8b949e">Computing diff…</div>';
 
         try {
@@ -1344,7 +1343,7 @@
             '<span>Timestamp: ' + formatTime(timestamp) + '</span>' +
             '<span class="ml-4">Checksum: ' + esc(checksum || '-') + '</span></div>' +
             '<pre class="config-text bg-[#0d1117] border border-[#30363d] rounded p-4 overflow-auto" style="max-height:60vh;white-space:pre-wrap;font-size:0.8rem">' + esc(configText || '') + '</pre>';
-        modal.classList.add('active');
+        AC.openModal(modal);
     }
 
     function showDiffModal(title, text1, text2, ts1, ts2) {
@@ -1356,7 +1355,7 @@
             '<div><span class="text-[#f85149]">Older:</span> ' + formatTime(ts1) + '</div>' +
             '<div><span class="text-[#3fb950]">Newer:</span> ' + formatTime(ts2) + '</div></div>' +
             '<div class="diff-container bg-[#0d1117] border border-[#30363d] rounded p-4 overflow-auto" style="max-height:60vh;white-space:pre-wrap;font-size:0.8rem">' + diffHtml + '</div>';
-        modal.classList.add('active');
+        AC.openModal(modal);
     }
 
     function computeDiff(text1, text2) {
@@ -1391,12 +1390,12 @@
         modal.className = 'modal';
         modal.innerHTML = '<div class="modal-content" style="width:95vw;max-width:1400px;">' +
             '<div class="modal-header">' +
-            '<h2>Configuration</h2>' +
-            '<button class="modal-close" onclick="this.closest(\'.modal\').classList.remove(\'active\')">&times;</button>' +
+            '<h2 id="config-modal-title">Configuration</h2>' +
+            '<button class="modal-close" aria-label="Close dialog" onclick="window.AdminCommon&&window.AdminCommon.closeModal(\'config-modal\')">&times;</button>' +
             '</div>' +
             '<div class="config-modal-body" style="max-height:75vh;overflow-y:auto;"></div>' +
             '<div class="modal-footer">' +
-            '<button type="button" class="btn secondary" onclick="this.closest(\'.modal\').classList.remove(\'active\')">Close</button>' +
+            '<button type="button" class="btn secondary" onclick="window.AdminCommon&&window.AdminCommon.closeModal(\'config-modal\')">Close</button>' +
             '</div></div>';
         document.body.appendChild(modal);
         var style = document.createElement('style');

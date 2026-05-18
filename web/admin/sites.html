@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Site Management - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
+    <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <style>
         .modal.active { display: flex; }
     </style>
 </head>
 <body class="bg-[#0d1117] text-[#c9d1d9]">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>Firewall Monitor</h2>
@@ -20,11 +22,11 @@
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main-content p-6">
+    <main class="main-content p-6" id="main-content" tabindex="-1">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-2xl font-semibold text-[#e6edf3]">Site Management</h1>
             <button class="bg-[#238636] text-white border-none px-3 py-1.5 rounded cursor-pointer text-[0.82rem] font-medium hover:bg-[#2ea043] transition-colors duration-150" data-action="show-add-modal">+ Add Site</button>
@@ -34,9 +36,9 @@
         <div class="bg-[rgba(63,185,80,0.1)] border border-[rgba(63,185,80,0.3)] text-[#3fb150] p-4 rounded-lg mb-5 hidden" id="success-msg"></div>
 
         <div id="sites-container">
-            <div class="text-center p-8 text-[#484f58]">Loading sites...</div>
+            <div class="text-center p-8 text-[#6e7681]">Loading sites...</div>
         </div>
-    </div>
+    </main>
 
     <!-- Add/Edit Modal -->
     <div class="modal hidden fixed inset-0 bg-black/60 z-[200] flex items-center justify-center" id="site-modal">

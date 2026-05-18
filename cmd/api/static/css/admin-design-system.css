@@ -644,13 +644,153 @@
 }
 
 /* ============================================================
- * Accessibility primitives — kept here so every page that links this
- * stylesheet gets them. (Bundle B will expand on this.)
+ * Accessibility primitives (v0.10.213, bundle B3)
+ *
+ * This block extends a11y coverage to legacy selectors that the
+ * `fwmon-*` design-system primitives don't directly cover:
+ *   - The pre-redesign `.btn / .btn.secondary / .btn.danger` buttons
+ *   - `.modal-close` (× buttons inside every modal)
+ *   - `.copy-btn` (inline "copy" affordance)
+ *   - `.nav-item / .tab-item / .section-tab` navigation chrome
+ *   - Clickable table rows
+ *   - Form inputs (upgrade from `:focus` to `:focus-visible`)
+ *
+ * Plus a global skip-link, screen-reader-only utility, and a broader
+ * `prefers-reduced-motion` block that catches the legacy keyframes
+ * (toastSlideIn, pulse, fadeIn, slideUp) that live in admin-shared.css
+ * and inline <style> blocks.
  * ============================================================ */
 
-/* Honor reduced-motion preference across all decorative animations
- * defined in this file. Page-specific CSS should add its own equivalent
- * for its own keyframes / transitions. */
+/* Skip-to-main-content link. Hidden until keyboard-focused, then jumps
+ * to the top-left as the first focusable element on every admin page.
+ * Markup pattern: <a class="skip-link" href="#main-content">Skip to main content</a>
+ * Target the page-content region with id="main-content".
+ */
+.skip-link {
+    position: absolute;
+    top: -200px;
+    left: 8px;
+    z-index: 100000;
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-series-1);
+    color: var(--fwmon-series-1);
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: top 120ms ease-out;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+    top: 8px;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.35);
+}
+
+/* Screen-reader-only utility — for visually-hidden text that still
+ * needs to be announced (e.g. icon-only button captions).
+ */
+.fwmon-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ------------------------------------------------------------
+ * :focus-visible coverage for legacy controls
+ *
+ * `:focus-visible` only paints the ring when the user reached the
+ * element via keyboard — clicking a button still doesn't flash a
+ * ring, which is exactly what operators want. The legacy CSS used
+ * `:focus` which painted on mouse-click too; this overrides it with
+ * the more polite variant.
+ * ------------------------------------------------------------ */
+.btn:focus-visible,
+.btn.secondary:focus-visible,
+.btn.danger:focus-visible,
+.btn.sm:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.35);
+    border-color: var(--fwmon-series-1);
+}
+
+.btn.danger:focus-visible {
+    box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.35);
+    border-color: #f85149;
+}
+
+.modal-close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.4);
+    border-radius: 4px;
+}
+
+.copy-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.5);
+    border-radius: 4px;
+}
+
+.nav-item:focus-visible,
+.tab-item:focus-visible,
+.section-tab:focus-visible,
+.tab-btn:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--fwmon-series-1);
+    border-radius: 4px;
+}
+
+/* Form inputs: upgrade existing `:focus` to `:focus-visible` where
+ * relevant. `:focus` is kept for click-into-input behaviour because
+ * users expect the cursor to land somewhere visible regardless of
+ * input modality. We *add* a stronger ring for keyboard. */
+.form-group input:focus-visible,
+.form-group select:focus-visible,
+.form-group textarea:focus-visible,
+.fwmon-flows-input:focus-visible,
+.fwmon-flows-select:focus-visible,
+.setting-item input:focus-visible,
+.setting-item select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.25);
+}
+
+/* Clickable table rows (Top-Talker lists, conversation rows, etc.).
+ * Need tabindex=0 set in JS to be keyboard-reachable. */
+.fwmon-toptalk-row:focus-visible,
+.fwmon-clickable:focus-visible,
+.expandable-msg:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--fwmon-series-1);
+}
+
+/* Range-button-style controls (legacy) */
+.range-btn:focus-visible,
+.chart-range-btns .range-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.45);
+}
+
+/* ------------------------------------------------------------
+ * prefers-reduced-motion — broadened to catch legacy keyframes.
+ *
+ * The previous block only covered fwmon-* elements. This expands
+ * coverage to admin-shared.css animations (toastSlideIn, pulse,
+ * fadeIn, slideUp) and a catch-all for keyframe animations + long
+ * transitions on common patterns. We don't kill ALL animation —
+ * very short transitions (<=80ms) read as instant visual feedback,
+ * not motion, and are kept. Anything longer or any keyframe is
+ * suppressed.
+ * ------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
     .chart-loading::before {
         animation: none !important;
@@ -665,5 +805,32 @@
     .fwmon-confirm-overlay,
     .fwmon-confirm-dialog {
         animation: none !important;
+    }
+    /* Legacy keyframes in admin-shared.css / inline styles. */
+    .toast-message,
+    .toast-container,
+    .pulse-dot,
+    .pulse-dot.online,
+    .pulse-dot.pending,
+    .animate-fade-in {
+        animation: none !important;
+    }
+    /* Long transitions on hover/click in legacy controls. */
+    .btn,
+    .nav-item,
+    .tab-item,
+    .section-tab,
+    .copy-btn,
+    .modal-close,
+    .probe-card.clickable,
+    .toggle-slider,
+    .toggle-slider::before,
+    .fwmon-toptalk-row,
+    .fwmon-toptalk-row-bar::after,
+    .fwmon-flows-chip-clear,
+    .fwmon-flows-select,
+    .fwmon-flows-input,
+    .skip-link {
+        transition: none !important;
     }
 }

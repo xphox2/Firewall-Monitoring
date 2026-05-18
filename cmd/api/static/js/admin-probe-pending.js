@@ -69,11 +69,11 @@
     function showRejectModal(id) {
         document.getElementById('reject-probe-id').value = id;
         document.getElementById('reject-reason').value = '';
-        document.getElementById('reject-modal').classList.add('active');
+        AC.openModal('reject-modal');
     }
 
     function closeRejectModal() {
-        document.getElementById('reject-modal').classList.remove('active');
+        AC.closeModal('reject-modal');
     }
 
     function submitReject(e) {

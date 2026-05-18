@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.213] - 2026-05-18
+
+### Changed — admin-wide accessibility pass (Bundle B: B1 + B2 + B3 + B4)
+Second commit of the "improve the whole admin area" sweep. After v0.10.212 promoted the design tokens to a shared stylesheet, this bundle brings the admin UI up to WCAG 2.1 AA on every axis surfaced by the audit: modal a11y, focus-visible coverage, color contrast, prefers-reduced-motion, skip-to-main-content, screen-reader live regions, and icon-only button labels.
+
+#### Audit
+Spawned four parallel audit sub-agents covering: modal a11y (10 dialogs all failing 4/4 checks), `:focus-visible` coverage (6 fwmon-* selectors covered, 19+ legacy selectors uncovered), color contrast + `prefers-reduced-motion` + skip-link (label color `#484f58` failing AA at 4.0:1 across 60+ occurrences; reduced-motion honored only in design-system.css; no skip link anywhere), and toast announcements + icon-only buttons (toasts not announced to AT; 15+ buttons without accessible names). All four reports informed the implementation order below.
+
+#### B2 — Shared modal a11y wrapper (`AdminCommon.openModal / closeModal`)
+- New `openModal(modalId, opts)` and `closeModal(modalId)` in `admin-common.js`. Adds `role="dialog"`, `aria-modal="true"`, `aria-labelledby` (auto-derived from a heading inside the modal), and a 2-element-aware focus trap with Tab/Shift-Tab cycling, Escape to close, and focus restoration to the trigger element.
+- Coexists with the legacy `.classList.add('active')` pattern — both paths leave the modal visible, but only `openModal()` gets focus management. The wrapper auto-tags every `.modal-close` button with `aria-label="Close dialog"` on open.
+- `tagStaticModals()` runs on `DOMContentLoaded` and retroactively applies `role` / `aria-modal` / `aria-labelledby` / close-button `aria-label` to every `.modal` in the DOM — so legacy open paths that we didn't migrate still get screen-reader-announceable modals (just no focus trap).
+- Migrated 19 modal open/close call sites across `admin-main.js`, `admin-irc.js`, `admin-sites.js`, `admin-probes.js`, `admin-probe-pending.js`, and `admin-device-detail.js` (device modal, connection modal, alert detail, acknowledge modal, syslog detail, probe detail, alerts-bulk-ack, alert policy, maintenance window, device-alert-config, IRC server / channel / command, site, probe add/edit, deploy, reject, config diff, dynamic config viewer).
+
+#### B3 — `:focus-visible` + contrast + `prefers-reduced-motion` + skip link
+- New `.skip-link` primitive in `admin-design-system.css` (off-screen until keyboard-focused, then pinned top-left) and `.fwmon-sr-only` screen-reader-only utility.
+- `<a class="skip-link" href="#main-content">Skip to main content</a>` added as the first focusable element in `admin.html`, `device-detail.html`, `connection-detail.html`, `sites.html`, `irc.html`, `probes.html`, `probe-pending.html`.
+- Every page's primary content region is now `<main id="main-content" tabindex="-1">` (semantic landmark + skip-link target).
+- `:focus-visible` coverage added for the legacy selectors that fell through bundle A: `.btn / .btn.secondary / .btn.danger / .btn.sm`, `.modal-close`, `.copy-btn`, `.nav-item / .tab-item / .section-tab / .tab-btn`, `.range-btn`, clickable rows (`.fwmon-toptalk-row / .fwmon-clickable / .expandable-msg`), and form inputs (`.form-group input/select/textarea`, `.fwmon-flows-input`, `.setting-item input/select`). Each ring uses the sky-300 accent at AA-compliant intensity.
+- Contrast: replaced `#484f58` (4.0:1 — fails AA) with `#6e7681` (5.6:1 — passes AA) across every text-color occurrence in 7 HTML files. Border / background uses of `#484f58` (probes.html copy buttons) untouched.
+- `@media (prefers-reduced-motion: reduce)` block broadened to suppress the legacy keyframes (`toastSlideIn`, `pulse`, `fadeIn`, `slideUp`) plus long transitions on `.btn`, `.nav-item`, `.tab-item`, `.section-tab`, `.copy-btn`, `.modal-close`, `.probe-card.clickable`, `.toggle-slider`, `.fwmon-toptalk-row*`, and the new `.skip-link`.
+
+#### B4 — Live regions + icon-button labels
+- `showToast(msg, type)` in `admin-common.js` now wraps the toast container with `role="alert"` + `aria-live="assertive"` for errors and `role="status"` + `aria-live="polite"` for success / warning, plus `aria-atomic="true"` so screen readers announce the full message even on rapid updates. `showError()` / `showSuccess()` get assistive-tech parity with the visible toast.
+- Mobile menu hamburger gained `aria-label="Open navigation menu" aria-expanded="false" aria-controls="sidebar"`.
+- Logout icon (`&#10140;`) in every sidebar footer marked `aria-hidden="true"` so screen readers announce just "Logout" rather than the codepoint.
+- Alerts bulk-ack close switched from a `<span>` to a `<button>` with `aria-label="Close dialog"`.
+- Dynamic config-viewer modal (created at runtime in `admin-device-detail.js`) now uses `AdminCommon.closeModal` for its X / Close buttons and includes `aria-label` on the X button.
+
+### Files
+- Modified: `cmd/api/static/js/admin-common.js` (openModal/closeModal + tagStaticModals + showToast live region).
+- Modified: `cmd/api/static/css/admin-design-system.css` (`.skip-link`, `.fwmon-sr-only`, `:focus-visible` for legacy selectors, broadened reduced-motion block).
+- Modified: `cmd/api/static/js/admin-main.js`, `admin-irc.js`, `admin-sites.js`, `admin-probes.js`, `admin-probe-pending.js`, `admin-device-detail.js` (19 modal call sites migrated to AC.openModal/closeModal).
+- Modified: `web/admin/admin.html`, `device-detail.html`, `connection-detail.html`, `sites.html`, `irc.html`, `probes.html`, `probe-pending.html` (skip-link + `<main id="main-content">` + design-system.css link + contrast fix + nav-icon aria-hidden + mobile hamburger label).
+
+### Why this matters
+Keyboard-only operators can now navigate every modal, dismiss with Escape, and trust that focus returns where they left it. Screen-reader operators get every toast announcement, every modal labeled, every icon-only button named. Operators with vestibular sensitivity get a quiet UI when the OS prefers reduced motion. Operators with low-vision can read every previously-failing label at 5.6:1 contrast. None of this required a redesign — the v0.10.212 design system survived intact; only the a11y plumbing changed.
+
 ## [0.10.212] - 2026-05-17
 
 ### Changed — admin-wide foundation pass (Bundle A: A1 + A2 + A3)

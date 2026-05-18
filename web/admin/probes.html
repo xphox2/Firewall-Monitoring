@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Probes - Firewall Monitor Admin</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
+    <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <style>
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -13,6 +14,7 @@
     </style>
 </head>
 <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="sidebar">
         <div class="sidebar-header">
             <h2>Firewall Monitor</h2>
@@ -22,11 +24,11 @@
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
-            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon">&#10140;</span> Logout</a>
+            <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>
 
-    <div class="main-content p-6">
+    <main class="main-content p-6" id="main-content" tabindex="-1">
         <div class="flex justify-between items-center mb-6">
             <h1 class="text-xl font-semibold text-[#e6edf3]">Probe Management</h1>
             <button class="bg-[#238636] text-white border-none py-1.5 px-3.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:bg-[#2ea043]" data-action="show-add-modal">+ Add Probe</button>
@@ -40,7 +42,7 @@
                 <h3 class="text-base text-[#8b949e]">Data Totals (All Probes)</h3>
             </div>
             <div id="probe-summary-stats" class="grid grid-cols-4 gap-4">
-                <div class="text-center text-[#484f58] py-6">Loading stats...</div>
+                <div class="text-center text-[#6e7681] py-6">Loading stats...</div>
             </div>
         </div>
 
@@ -68,7 +70,7 @@
                 <tbody></tbody>
             </table>
         </div>
-    </div>
+    </main>
 
     <!-- Add/Edit Probe Modal -->
     <div class="modal hidden fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200] items-center justify-center" id="probe-modal">

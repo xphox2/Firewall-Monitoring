@@ -207,7 +207,7 @@
                 if (!modal) return;
                 document.getElementById('probe-detail-name').textContent = probeName;
                 document.getElementById('probe-detail-body').innerHTML = '<div class="loading">Loading...</div>';
-                modal.classList.add('active');
+                AC.openModal('probe-detail-modal');
 
                 apiFetch(API_BASE + '/probes/' + probeId + '/stats').then(function(r) {
                     if (!r || !r.data) {
@@ -252,8 +252,7 @@
             };
 
             window.closeProbeDetailModal = function() {
-                var modal = document.getElementById('probe-detail-modal');
-                if (modal) modal.classList.remove('active');
+                AC.closeModal('probe-detail-modal');
             };
 
             loadDashboardCharts();
@@ -864,13 +863,13 @@
                     '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(m.message) + '</div>';
             }
             body.innerHTML = parsedHtml;
-            document.getElementById('syslog-detail-modal').classList.add('active');
+            AC.openModal('syslog-detail-modal');
         })['catch'](function(err) {
             console.error('Failed to load syslog detail:', err);
             AC.showError('Failed to load syslog detail');
         });
     }
-    function closeSyslogDetail() { document.getElementById('syslog-detail-modal').classList.remove('active'); }
+    function closeSyslogDetail() { AC.closeModal('syslog-detail-modal'); }
 
     function loadMoreSyslog() {
         var params = buildSyslogParams(100);
@@ -1280,7 +1279,7 @@
         if (selectAllMatchingMode) label += ' (all matching the current filter)';
         document.getElementById('alerts-bulk-ack-count').textContent = label;
         document.getElementById('alerts-bulk-ack-notes').value = '';
-        if (modal) modal.classList.add('active');
+        AC.openModal('alerts-bulk-ack-modal');
     }
 
     function confirmBulkAck() {
@@ -1319,8 +1318,7 @@
         }
 
         promise.then(function(result) {
-            var modal = document.getElementById('alerts-bulk-ack-modal');
-            if (modal) modal.classList.remove('active');
+            AC.closeModal('alerts-bulk-ack-modal');
             selectAllMatchingMode = false;
             clearAlertSelection();
             var n = (result && result.data && result.data.acknowledged) || 0;
@@ -1557,22 +1555,22 @@
 
             body.innerHTML = headerHtml + metricHtml + msgHtml +
                 '<div style="margin-top:12px;">' + statusHtml + '</div>';
-            document.getElementById('alert-detail-modal').classList.add('active');
+            AC.openModal('alert-detail-modal');
         })['catch'](function(err) {
             console.error('Failed to load alert detail:', err);
             AC.showError('Failed to load alert detail');
         });
     }
-    function closeAlertDetail() { document.getElementById('alert-detail-modal').classList.remove('active'); }
+    function closeAlertDetail() { AC.closeModal('alert-detail-modal'); }
 
     function showAckModal(id) {
         document.getElementById('ack-alert-id').value = id;
         document.getElementById('ack-notes').value = '';
-        document.getElementById('ack-modal').classList.add('active');
+        AC.openModal('ack-modal');
     }
 
     function closeAckModal() {
-        document.getElementById('ack-modal').classList.remove('active');
+        AC.closeModal('ack-modal');
     }
 
     function acknowledgeAlert(id, notes) {
@@ -1871,7 +1869,7 @@
 
     // ---- Device Modal ----
     function showDeviceModal(id) {
-        document.getElementById('device-modal').classList.add('active');
+        AC.openModal('device-modal');
         document.getElementById('device-modal-title').textContent = id ? 'Edit Device' : 'Add Device';
         populateProbeSelect('device-probe');
         populateSiteSelect('device-site');
@@ -1915,7 +1913,7 @@
         toggleV3Fields();
     }
 
-    function closeDeviceModal() { document.getElementById('device-modal').classList.remove('active'); }
+    function closeDeviceModal() { AC.closeModal('device-modal'); }
 
     function toggleV3Fields() {
         var ver = document.getElementById('device-snmp-version').value;
@@ -2097,7 +2095,7 @@
 
     function showConnectionModal(id) {
         if (currentDevices.length < 2) { alert('You need at least 2 devices'); return; }
-        document.getElementById('connection-modal').classList.add('active');
+        AC.openModal('connection-modal');
         document.getElementById('connection-form').reset();
         document.getElementById('connection-id').value = id || '';
         populateDeviceSelects();
@@ -2118,7 +2116,7 @@
             document.querySelector('#connection-modal h2').textContent = 'Add Connection';
         }
     }
-    function closeConnectionModal() { document.getElementById('connection-modal').classList.remove('active'); }
+    function closeConnectionModal() { AC.closeModal('connection-modal'); }
 
     // Connection form submit
     var connectionForm = document.getElementById('connection-form');
@@ -2359,7 +2357,7 @@
     }
 
     function showPolicyModal(id) {
-        document.getElementById('policy-modal').classList.add('active');
+        AC.openModal('policy-modal');
         document.getElementById('policy-modal-title').textContent = id ? 'Edit Alert Policy' : 'Create Alert Policy';
         document.getElementById('policy-form').reset();
         document.getElementById('policy-id').value = '';
@@ -2456,7 +2454,7 @@
     }
 
     function closePolicyModal() {
-        document.getElementById('policy-modal').classList.remove('active');
+        AC.closeModal('policy-modal');
     }
 
     var policyForm = document.getElementById('policy-form');
@@ -2628,7 +2626,7 @@
     }
 
     function showMaintModal(id) {
-        document.getElementById('maint-modal').classList.add('active');
+        AC.openModal('maint-modal');
         document.getElementById('maint-modal-title').textContent = id ? 'Edit Maintenance Window' : 'Create Maintenance Window';
         document.getElementById('maint-form').reset();
         document.getElementById('maint-id').value = '';
@@ -2704,7 +2702,7 @@
     }
 
     function closeMaintModal() {
-        document.getElementById('maint-modal').classList.remove('active');
+        AC.closeModal('maint-modal');
     }
 
     // Toggle scope fields (radio buttons)
@@ -2821,7 +2819,7 @@
                 if (cfg.cooldown_minutes) document.getElementById('device-alert-cooldown').value = cfg.cooldown_minutes;
             }
 
-            document.getElementById('device-alert-modal').classList.add('active');
+            AC.openModal('device-alert-modal');
         })['catch'](function(e) {
             console.error('Failed to load alert config:', e);
             AC.showError('Failed to load alert config: ' + e.message);
@@ -2829,7 +2827,7 @@
     }
 
     function closeDeviceAlertModal() {
-        document.getElementById('device-alert-modal').classList.remove('active');
+        AC.closeModal('device-alert-modal');
     }
 
     function resetDeviceAlertConfig() {
@@ -2997,7 +2995,7 @@
             clearAlertSelection();
         },
         'bulk-ack-alerts': function() { bulkAckSelected(); },
-        'close-bulk-ack': function() { var m = document.getElementById('alerts-bulk-ack-modal'); if (m) m.classList.remove('active'); },
+        'close-bulk-ack': function() { AC.closeModal('alerts-bulk-ack-modal'); },
         'confirm-bulk-ack': function() { confirmBulkAck(); },
         'select-all-matching': function(el, e) {
             if (e && e.preventDefault) e.preventDefault();

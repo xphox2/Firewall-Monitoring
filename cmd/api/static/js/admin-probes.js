@@ -122,7 +122,7 @@
     }
 
     function showAddModal() {
-        document.getElementById('probe-modal').classList.add('active');
+        AC.openModal('probe-modal');
         document.getElementById('probe-modal-title').textContent = 'Add Probe';
         document.getElementById('probe-form').reset();
         document.getElementById('probe-id').value = '';
@@ -130,7 +130,7 @@
     }
 
     function closeProbeModal() {
-        document.getElementById('probe-modal').classList.remove('active');
+        AC.closeModal('probe-modal');
     }
 
     function editProbe(id) {
@@ -144,7 +144,7 @@
         if (!probe) return;
 
         loadSites().then(function() {
-            document.getElementById('probe-modal').classList.add('active');
+            AC.openModal('probe-modal');
             document.getElementById('probe-modal-title').textContent = 'Edit Probe';
             document.getElementById('probe-id').value = probe.id;
             document.getElementById('probe-name').value = probe.name;
@@ -205,7 +205,7 @@
         envBlock.innerHTML = '<button class="copy-btn" data-action="copy-env">Copy</button>' +
             AC.escapeHtml(envContent);
 
-        document.getElementById('deploy-modal').classList.add('active');
+        AC.openModal('deploy-modal');
     }
 
     function showDeployInfo(id) {
@@ -233,7 +233,7 @@
     }
 
     function closeDeployModal() {
-        document.getElementById('deploy-modal').classList.remove('active');
+        AC.closeModal('deploy-modal');
         currentDeployProbe = null;
     }
 

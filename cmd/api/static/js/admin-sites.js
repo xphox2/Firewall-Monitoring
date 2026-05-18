@@ -52,7 +52,7 @@
         document.getElementById('site-form').reset();
         document.getElementById('site-id').value = '';
         document.getElementById('csrf-token').value = AC.getCsrfToken();
-        document.getElementById('site-modal').classList.add('active');
+        AC.openModal('site-modal');
     }
 
     function editSite(id) {
@@ -75,11 +75,11 @@
         document.getElementById('site-timezone').value = site.timezone || '';
         document.getElementById('site-description').value = site.description || '';
         document.getElementById('csrf-token').value = AC.getCsrfToken();
-        document.getElementById('site-modal').classList.add('active');
+        AC.openModal('site-modal');
     }
 
     function closeModal() {
-        document.getElementById('site-modal').classList.remove('active');
+        AC.closeModal('site-modal');
     }
 
     function saveSite(e) {
