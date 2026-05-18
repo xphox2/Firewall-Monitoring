@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -246,6 +249,233 @@ func (h *Handler) getNotificationSetting(key string) string {
 	return ""
 }
 
+// smtpTraceStep is one entry in the verbose SMTP test transcript
+// (v0.10.220, bundle I). Each step corresponds to one SMTP verb or
+// transition (CONNECT, EHLO, STARTTLS, AUTH, MAIL FROM, ...).
+type smtpTraceStep struct {
+	Step     string `json:"step"`               // "connect", "ehlo", "starttls", "auth", "mail-from", "rcpt-to", "data", "quit"
+	Detail   string `json:"detail,omitempty"`   // human-readable description of what was tried
+	Response string `json:"response,omitempty"` // server response (or summary like cipher / cert subject for non-textual steps)
+	Status   string `json:"status"`             // "ok" | "skipped" | "fail"
+	Error    string `json:"error,omitempty"`    // populated when Status == "fail"
+	DurMs    int64  `json:"duration_ms"`        // wall time for this step
+}
+
+// runSMTPDiagnostic executes the standard SMTP test flow against the
+// configured server while recording each protocol step. Returns the
+// trace plus a boolean for overall success and a high-level error
+// suitable for top-of-card display (v0.10.220, bundle I).
+//
+// The flow mirrors what smtp.SendMail does internally, but stepped out
+// so we can show the operator which verb failed and what the server
+// said. Operator-supplied to allows overriding the recipient without
+// changing the saved setting (handy for one-off test sends).
+func runSMTPDiagnostic(host string, port int, username, password, from, to string) (trace []smtpTraceStep, ok bool, summary string) {
+	record := func(step, detail, response, status, errStr string, start time.Time) {
+		trace = append(trace, smtpTraceStep{
+			Step:     step,
+			Detail:   detail,
+			Response: response,
+			Status:   status,
+			Error:    errStr,
+			DurMs:    time.Since(start).Milliseconds(),
+		})
+	}
+	fail := func(step, detail string, start time.Time, err error) (string, error) {
+		record(step, detail, "", "fail", err.Error(), start)
+		return fmt.Sprintf("%s failed: %v", step, err), err
+	}
+
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+
+	// ----- CONNECT -----
+	cStart := time.Now()
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	netConn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		summary, _ = fail("connect", "tcp dial "+addr, cStart, err)
+		return trace, false, summary
+	}
+	defer netConn.Close()
+	record("connect", "tcp dial "+addr, "established", "ok", "", cStart)
+
+	// Implicit TLS on 465 (smtps). For 587 / 25 we STARTTLS later.
+	usingImplicitTLS := port == 465
+	if usingImplicitTLS {
+		tStart := time.Now()
+		tlsConn := tls.Client(netConn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+		if err := tlsConn.Handshake(); err != nil {
+			summary, _ = fail("tls", "implicit TLS handshake (port 465)", tStart, err)
+			return trace, false, summary
+		}
+		st := tlsConn.ConnectionState()
+		record("tls", "implicit TLS handshake (port 465)",
+			fmt.Sprintf("%s, %s, cert CN=%s", tlsVersionName(st.Version), tlsCipherName(st.CipherSuite), tlsLeafSubject(st)),
+			"ok", "", tStart)
+		netConn = tlsConn
+	}
+
+	// ----- SMTP CLIENT WRAPPER -----
+	hStart := time.Now()
+	client, err := smtp.NewClient(netConn, host)
+	if err != nil {
+		summary, _ = fail("greeting", "read 220 banner", hStart, err)
+		return trace, false, summary
+	}
+	defer client.Close()
+	record("greeting", "read 220 banner", "ok", "ok", "", hStart)
+
+	// ----- EHLO -----
+	eStart := time.Now()
+	if err := client.Hello("firewall-mon-test"); err != nil {
+		summary, _ = fail("ehlo", "EHLO firewall-mon-test", eStart, err)
+		return trace, false, summary
+	}
+	record("ehlo", "EHLO firewall-mon-test", "accepted", "ok", "", eStart)
+
+	// ----- STARTTLS (only if not already wrapped) -----
+	if !usingImplicitTLS {
+		tStart := time.Now()
+		if hasStartTLS, _ := client.Extension("STARTTLS"); hasStartTLS {
+			if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+				summary, _ = fail("starttls", "STARTTLS upgrade", tStart, err)
+				return trace, false, summary
+			}
+			// Re-issue EHLO over the encrypted channel — STARTTLS
+			// invalidates the previous capability list.
+			if err := client.Hello("firewall-mon-test"); err != nil {
+				summary, _ = fail("starttls", "EHLO after STARTTLS", tStart, err)
+				return trace, false, summary
+			}
+			// Pull TLS state for the trace via the stdlib accessor
+			// (Go 1.20+); the smtp.Client owns the wrapped conn so
+			// we can't reach for it through our netConn handle.
+			var tlsDetail string
+			if st, ok := client.TLSConnectionState(); ok {
+				tlsDetail = fmt.Sprintf("%s, %s, cert CN=%s",
+					tlsVersionName(st.Version), tlsCipherName(st.CipherSuite), tlsLeafSubject(st))
+			} else {
+				tlsDetail = "established"
+			}
+			record("starttls", "STARTTLS upgrade + EHLO", tlsDetail, "ok", "", tStart)
+		} else {
+			record("starttls", "STARTTLS not advertised by server", "skipped", "skipped", "", tStart)
+		}
+	}
+
+	// ----- AUTH -----
+	aStart := time.Now()
+	authMechs := ""
+	if supported, mechs := client.Extension("AUTH"); supported {
+		authMechs = mechs
+	}
+	if username != "" {
+		// PlainAuth requires TLS or localhost. If we didn't TLS-up
+		// successfully (server didn't advertise STARTTLS and we're not
+		// on 465), surface that as the AUTH failure mode it would
+		// produce — clearer for the operator than the generic stdlib
+		// "unencrypted connection" error.
+		if !usingImplicitTLS {
+			if hasStartTLS, _ := client.Extension("STARTTLS"); !hasStartTLS {
+				summary, _ = fail("auth", "PLAIN auth refused: connection is not encrypted (server didn't advertise STARTTLS)", aStart, errors.New("unencrypted connection"))
+				return trace, false, summary
+			}
+		}
+		auth := smtp.PlainAuth("", username, password, host)
+		if err := client.Auth(auth); err != nil {
+			detail := fmt.Sprintf("PLAIN auth as %s (server advertised mechs: %s)", username, authMechs)
+			summary, _ = fail("auth", detail, aStart, err)
+			return trace, false, summary
+		}
+		record("auth", fmt.Sprintf("PLAIN auth as %s", username), "accepted (mechs offered: "+authMechs+")", "ok", "", aStart)
+	} else {
+		record("auth", "skipped — no smtp_username configured", "skipped", "skipped", "", aStart)
+	}
+
+	// ----- MAIL FROM -----
+	mStart := time.Now()
+	if err := client.Mail(from); err != nil {
+		summary, _ = fail("mail-from", "MAIL FROM:<"+from+">", mStart, err)
+		return trace, false, summary
+	}
+	record("mail-from", "MAIL FROM:<"+from+">", "accepted", "ok", "", mStart)
+
+	// ----- RCPT TO -----
+	rStart := time.Now()
+	if err := client.Rcpt(to); err != nil {
+		summary, _ = fail("rcpt-to", "RCPT TO:<"+to+">", rStart, err)
+		return trace, false, summary
+	}
+	record("rcpt-to", "RCPT TO:<"+to+">", "accepted", "ok", "", rStart)
+
+	// ----- DATA -----
+	dStart := time.Now()
+	w, err := client.Data()
+	if err != nil {
+		summary, _ = fail("data", "DATA", dStart, err)
+		return trace, false, summary
+	}
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+		return s
+	}
+	subject := "Firewall Monitor - Test Email"
+	body := fmt.Sprintf("This is a test email from Firewall Monitor.\n\nSent at: %s\n\nIf you received this email, your SMTP settings are configured correctly.",
+		time.Now().Format(time.RFC3339))
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		sanitize(from), sanitize(to), sanitize(subject), body)
+	if _, err := w.Write([]byte(msg)); err != nil {
+		summary, _ = fail("data", "write message body", dStart, err)
+		return trace, false, summary
+	}
+	if err := w.Close(); err != nil {
+		summary, _ = fail("data", "close DATA (server final response)", dStart, err)
+		return trace, false, summary
+	}
+	record("data", "DATA + body + final dot", fmt.Sprintf("accepted (%d bytes)", len(msg)), "ok", "", dStart)
+
+	// ----- QUIT -----
+	qStart := time.Now()
+	if err := client.Quit(); err != nil {
+		record("quit", "QUIT", "", "fail", err.Error(), qStart)
+		// Don't treat QUIT failure as overall failure — the message
+		// already went through. Server-side post-DATA log will show
+		// the message id.
+	} else {
+		record("quit", "QUIT", "accepted", "ok", "", qStart)
+	}
+
+	return trace, true, "Test email accepted by " + addr
+}
+
+// tlsVersionName turns a tls.VersionTLSxx constant into a human label.
+func tlsVersionName(v uint16) string {
+	switch v {
+	case tls.VersionTLS10:
+		return "TLSv1.0"
+	case tls.VersionTLS11:
+		return "TLSv1.1"
+	case tls.VersionTLS12:
+		return "TLSv1.2"
+	case tls.VersionTLS13:
+		return "TLSv1.3"
+	}
+	return fmt.Sprintf("TLS-0x%04x", v)
+}
+
+// tlsCipherName uses tls.CipherSuiteName which is the stdlib helper.
+func tlsCipherName(c uint16) string { return tls.CipherSuiteName(c) }
+
+// tlsLeafSubject returns the CN of the leaf server certificate, or "?"
+// if the chain is empty (it shouldn't be on a successful handshake).
+func tlsLeafSubject(st tls.ConnectionState) string {
+	if len(st.PeerCertificates) == 0 {
+		return "?"
+	}
+	return st.PeerCertificates[0].Subject.CommonName
+}
+
 func (h *Handler) TestEmail(c *gin.Context) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
@@ -258,6 +488,16 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	smtpPassword := h.getNotificationSetting("smtp_password")
 	smtpFrom := h.getNotificationSetting("smtp_from")
 	smtpTo := h.getNotificationSetting("smtp_to")
+
+	// Allow the operator to override the recipient for a one-off test
+	// without rewriting the saved smtp_to setting (v0.10.220, bundle I).
+	var req struct {
+		ToOverride string `json:"to"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if req.ToOverride != "" {
+		smtpTo = req.ToOverride
+	}
 
 	if smtpHost == "" || smtpFrom == "" || smtpTo == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host, sender, and recipient address are required"))
@@ -277,40 +517,32 @@ func (h *Handler) TestEmail(c *gin.Context) {
 		}
 	}
 
-	addr := fmt.Sprintf("%s:%d", smtpHost, smtpPort)
+	startedAt := time.Now()
+	trace, ok, summary := runSMTPDiagnostic(smtpHost, smtpPort, smtpUsername, smtpPassword, smtpFrom, smtpTo)
+	totalMs := time.Since(startedAt).Milliseconds()
 
-	var auth smtp.Auth
-	if smtpUsername != "" {
-		auth = smtp.PlainAuth("", smtpUsername, smtpPassword, smtpHost)
-	}
-
-	subject := "Firewall Monitor - Test Email"
-	body := fmt.Sprintf("This is a test email from Firewall Monitor.\n\nSent at: %s\n\nIf you received this email, your SMTP settings are configured correctly.",
-		time.Now().Format(time.RFC3339))
-
-	// Sanitize header values
-	sanitize := func(s string) string {
-		s = strings.ReplaceAll(s, "\r", "")
-		s = strings.ReplaceAll(s, "\n", "")
-		return s
-	}
-
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		sanitize(smtpFrom), sanitize(smtpTo), sanitize(subject), body)
-
-	if err := smtp.SendMail(addr, auth, smtpFrom, []string{smtpTo}, []byte(msg)); err != nil {
-		log.Printf("Test email failed: %v", err)
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-			"success": false,
-			"message": fmt.Sprintf("Failed to send test email: %v", err),
-		}))
-		return
+	if !ok {
+		log.Printf("Test email failed: %s", summary)
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
-		"success": true,
-		"message": fmt.Sprintf("Test email sent to %s", smtpTo),
+		"success":     ok,
+		"message":     summary,
+		"trace":       trace,
+		"total_ms":    totalMs,
+		"host":        smtpHost,
+		"port":        smtpPort,
+		"auth_method": authMethodLabel(smtpUsername),
+		"from":        smtpFrom,
+		"to":          smtpTo,
 	}))
+}
+
+func authMethodLabel(username string) string {
+	if username == "" {
+		return "none"
+	}
+	return "PLAIN"
 }
 
 func (h *Handler) TestWebhook(c *gin.Context) {

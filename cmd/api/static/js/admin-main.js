@@ -2642,17 +2642,89 @@
 
     function testEmail() {
         var resultEl = document.getElementById('test-email-result');
-        resultEl.textContent = 'Sending...';
-        resultEl.style.color = '#8b949e';
-        apiFetch(API_BASE + '/settings/test-email', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' }).then(function(result) {
-            if (result && result.data && result.data.success) {
-                resultEl.textContent = result.data.message;
-                resultEl.style.color = '#3fb950';
+        resultEl.innerHTML = '<div style="color:#8b949e;font-size:0.85rem;">Running diagnostic… (this can take a few seconds)</div>';
+        var override = document.getElementById('test-email-to-override');
+        var body = override && override.value ? JSON.stringify({ to: override.value.trim() }) : '{}';
+
+        apiFetch(API_BASE + '/settings/test-email', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: body
+        }).then(function(result) {
+            var d = (result && result.data) || {};
+            renderSMTPTrace(resultEl, d);
+        })['catch'](function(e) {
+            resultEl.innerHTML = '<div style="color:#f85149;font-weight:500;">Request failed: ' + escapeHtml(e.message || 'unknown') + '</div>';
+        });
+    }
+
+    // renderSMTPTrace — pretty-print the verbose SMTP trace returned by
+    // /api/settings/test-email (v0.10.220, bundle I). Each step renders
+    // as a row with status pill, timing, detail (what we tried) and the
+    // server's response. Failed step is anchored top.
+    function renderSMTPTrace(host, d) {
+        var ok = !!d.success;
+        var trace = Array.isArray(d.trace) ? d.trace : [];
+        var headerColor = ok ? '#3fb950' : '#f85149';
+        var headerIcon = ok ? '✓' : '✗';
+
+        var meta =
+            '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.78rem;color:#8b949e;margin-bottom:6px;">' +
+            '<span><strong>Host:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.host || '') + ':' + escapeHtml(String(d.port || '')) + '</span></span>' +
+            '<span><strong>From:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.from || '') + '</span></span>' +
+            '<span><strong>To:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.to || '') + '</span></span>' +
+            '<span><strong>Auth:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.auth_method || 'none') + '</span></span>' +
+            '<span><strong>Total:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(String(d.total_ms || 0)) + ' ms</span></span>' +
+            '</div>';
+
+        var summary =
+            '<div style="font-size:0.95rem;font-weight:500;color:' + headerColor + ';margin-bottom:8px;">' +
+            headerIcon + ' ' + escapeHtml(d.message || (ok ? 'OK' : 'Failed')) + '</div>';
+
+        var rows = trace.map(function(s) {
+            var statusColor, statusBg, statusLabel;
+            if (s.status === 'ok') {
+                statusColor = '#3fb950'; statusBg = 'rgba(63,185,80,0.15)'; statusLabel = 'OK';
+            } else if (s.status === 'skipped') {
+                statusColor = '#8b949e'; statusBg = 'rgba(139,148,158,0.15)'; statusLabel = 'SKIP';
             } else {
-                resultEl.textContent = (result && result.data ? result.data.message : '') || 'Failed';
-                resultEl.style.color = '#f85149';
+                statusColor = '#f85149'; statusBg = 'rgba(248,81,73,0.15)'; statusLabel = 'FAIL';
             }
-        })['catch'](function(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; });
+            var responseRow = s.response
+                ? '<div style="color:#8b949e;font-size:0.78rem;margin-top:4px;"><span style="color:#6e7681;">response:</span> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(s.response) + '</span></div>'
+                : '';
+            var errorRow = s.error
+                ? '<div style="color:#f85149;font-size:0.82rem;margin-top:4px;font-family:monospace;background:rgba(248,81,73,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #f85149;">' + escapeHtml(s.error) + '</div>'
+                : '';
+            return '<tr>' +
+                '<td style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;">' +
+                    '<span style="background:' + statusBg + ';color:' + statusColor + ';padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;letter-spacing:0.4px;">' + statusLabel + '</span>' +
+                '</td>' +
+                '<td class="mono" style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;font-size:0.82rem;color:#c9d1d9;font-weight:600;">' +
+                    escapeHtml(s.step) +
+                '</td>' +
+                '<td style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;">' +
+                    '<div style="color:#c9d1d9;font-size:0.82rem;">' + escapeHtml(s.detail || '') + '</div>' +
+                    responseRow + errorRow +
+                '</td>' +
+                '<td class="mono" style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;text-align:right;color:#8b949e;font-size:0.78rem;">' +
+                    escapeHtml(String(s.duration_ms || 0)) + ' ms' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+
+        var table = trace.length === 0 ? '' :
+            '<table style="width:100%;border-collapse:collapse;background:#0d1117;border:1px solid #30363d;border-radius:6px;overflow:hidden;">' +
+                '<thead><tr>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;width:60px;"></th>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;width:110px;">Step</th>' +
+                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;">Action / Server response</th>' +
+                    '<th style="text-align:right;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;width:70px;">Time</th>' +
+                '</tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+            '</table>';
+
+        host.innerHTML = summary + meta + table;
     }
 
     function testWebhook(type) {

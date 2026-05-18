@@ -1,4 +1,38 @@
 # Changelog
+## [0.10.220] - 2026-05-18
+
+### Changed — verbose SMTP test diagnostic (Bundle I)
+The previous "Send Test Email" button on Settings ran `smtp.SendMail` and returned a single opaque success/failure message. Operators with a failing setup had to grep server-side Postfix/Exchange logs to see which step actually broke. After bundle I the test page returns a full step-by-step transcript of the SMTP conversation, with timing, TLS details, and the server's own response to each verb.
+
+#### Backend (`internal/api/handlers/handlers_settings.go`)
+- `TestEmail` replaced with `runSMTPDiagnostic` plus a thin handler wrapper. The diagnostic dials, optionally wraps for implicit TLS on port 465, reads the greeting, sends EHLO, negotiates STARTTLS on 587/25 if advertised, sends EHLO again over TLS, runs AUTH PLAIN if `smtp_username` is set, then MAIL FROM, RCPT TO, DATA, body, and QUIT. Each step records:
+  - `step`: short verb name (`connect` / `greeting` / `ehlo` / `starttls` / `auth` / `mail-from` / `rcpt-to` / `data` / `quit`)
+  - `detail`: what we tried (`PLAIN auth as support@example.com (server advertised mechs: PLAIN LOGIN)`)
+  - `response`: server response or extracted info (`TLSv1.3, TLS_AES_128_GCM_SHA256, cert CN=mail.example.com`)
+  - `status`: `ok` / `skipped` / `fail`
+  - `error`: present only on `fail` — the raw error string from the SMTP stack or stdlib
+  - `duration_ms`: wall-clock time for the step
+- New optional `{"to": "alt@example.com"}` body param to override the recipient for a one-off test without changing the saved `smtp_to` setting.
+- AUTH step has an explicit early-fail path when the server doesn't advertise STARTTLS and we're not on the implicit-TLS 465 port — the stdlib's generic "unencrypted connection" error is rewritten to a clearer "PLAIN auth refused: connection is not encrypted (server didn't advertise STARTTLS)" so an operator knows whether the failure was credentials vs. transport.
+- TLS state pulled via `smtp.Client.TLSConnectionState()` (Go 1.20+) so the trace includes the negotiated version, cipher suite, and server certificate CN.
+
+#### Frontend (`web/admin/admin.html`, `cmd/api/static/js/admin-main.js`)
+- Settings → SMTP card now has a recipient-override input next to the Send Test Email button. Leave blank to use the configured `smtp_to`; useful for "send the test to me first" workflows without rewriting the saved setting.
+- New `renderSMTPTrace(host, data)` JS helper paints a table: each row is `[status pill] step | action + server response + error | duration`. Status pill is green `OK`, gray `SKIP`, or red `FAIL`. Failure rows highlight the error inline with a red left border so the eye lands on it first. A summary line above the table shows host:port, from, to, auth method, and total wall time.
+
+### Files
+- Modified: `internal/api/handlers/handlers_settings.go` — `runSMTPDiagnostic`, `smtpTraceStep`, `tlsVersionName` / `tlsCipherName` / `tlsLeafSubject`, `authMethodLabel`, expanded `TestEmail` handler, new imports (`crypto/tls`, `errors`, `net`).
+- Modified: `cmd/api/static/js/admin-main.js` — `testEmail()` + `renderSMTPTrace()`.
+- Modified: `web/admin/admin.html` — recipient-override input + `#test-email-result` rehosted as a div.
+
+### Why this matters
+The user reported a failing SMTP setup and shared a Postfix log fragment ending after the TLS handshake — without further log lines (which Postfix only emits at a later stage) the failure was invisible from the admin UI. The verbose trace surfaces the exact verb that failed and the server's response, so the next time a test fails the operator sees something like:
+```
+FAIL  auth   PLAIN auth as support@example.com (server advertised mechs: PLAIN LOGIN)
+             error: 535 5.7.8 Error: authentication failed: …
+```
+…directly on the page, with no log-grepping required.
+
 ## [0.10.219] - 2026-05-18
 
 ### Added — API versioning + polish (Bundle H: H1 + H2 + H3)

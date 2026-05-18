@@ -870,10 +870,17 @@
                 <div class="card-header"><h2>SMTP Configuration</h2></div>
                 <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
                 <div class="settings-grid" id="settings-smtp"></div>
-                <div style="margin-top: 12px;">
+                <div style="margin-top: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <button class="btn secondary" data-action="test-email">Send Test Email</button>
-                    <span id="test-email-result" style="margin-left: 12px; font-size: 0.82rem;"></span>
+                    <span style="color:#8b949e; font-size:0.82rem;">to (optional override):</span>
+                    <input type="email" id="test-email-to-override" placeholder="leave blank for configured smtp_to"
+                           class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1"
+                           style="font-size:0.85rem; min-width:240px;">
                 </div>
+                <!-- Verbose trace results (v0.10.220, bundle I) — populated by
+                     testEmail() in admin-main.js. Each SMTP step renders as a
+                     row with status pill + timing + server response. -->
+                <div id="test-email-result" style="margin-top: 12px;"></div>
             </div>
             <div class="card">
                 <div class="card-header"><h2>Webhook Test</h2></div>
