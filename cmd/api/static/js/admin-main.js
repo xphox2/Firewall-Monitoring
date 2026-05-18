@@ -22,6 +22,12 @@
     var syslogRefreshTimer;
     var syslogOffset = 0;
     var flowsOffset = 0;
+    // v0.10.212 (bundle A2) — per-analytics-page state. Initialized from URL
+    // on first tab activation by wireSyslog/Alerts/TrapsAnalyticsPage(). The
+    // `hours` value drives both the stats fetch and is mirrored back to the
+    // pill bar via FwmonControls. Sentinel of 0/'' means "default" and is
+    // stripped from the URL by FwmonControls.syncURL.
+    var analyticsPages = { syslog: null, alerts: null, traps: null };
     var alertsOffset = 0;
     var trapsOffset = 0;
     var chartInstances = {};
@@ -95,7 +101,7 @@
             case 'devices': loadDevices(); break;
             case 'interfaces': populateIfaceFilters().then(function() { loadInterfaces(); }); break;
             case 'connections': loadConnections(); break;
-            case 'syslog': loadSyslog(); break;
+            case 'syslog': wireSyslogAnalyticsPage(); loadSyslog(); break;
             case 'flows':
                 // v0.10.211: the Flows tab is owned by FwmonFlows (admin-flows.js).
                 // It binds its own controls, syncs filters with the URL, and
@@ -113,8 +119,8 @@
                 });
                 break;
             case 'settings': loadSettings(); break;
-            case 'alerts': loadAlerts(); break;
-            case 'traps': loadTraps(); break;
+            case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
+            case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
             case 'alert-policies': loadAlertPolicies(); break;
             case 'maintenance': loadMaintenance(); break;
         }
@@ -763,7 +769,9 @@
     }
 
     function loadSyslogCharts() {
-        apiFetch(API_BASE + '/syslog/stats').then(function(result) {
+        var s = analyticsPages.syslog && analyticsPages.syslog.getState();
+        var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        apiFetch(API_BASE + '/syslog/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
             document.getElementById('syslog-total').textContent = (d.total || 0).toLocaleString();
@@ -798,10 +806,12 @@
 
     function buildSyslogParams(limit) {
         var parts = ['limit=' + limit];
+        var s = analyticsPages.syslog && analyticsPages.syslog.getState();
         var probe = document.getElementById('syslog-filter-probe');
         var device = document.getElementById('syslog-filter-device');
         var severity = document.getElementById('syslog-filter-severity');
         var search = document.getElementById('syslog-filter-search');
+        if (s && s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
         if (probe && probe.value) parts.push('probe_id=' + probe.value);
         if (device && device.value) parts.push('device_id=' + device.value);
         if (severity && severity.value !== '') parts.push('severity=' + severity.value);
@@ -1384,10 +1394,12 @@
 
     function buildAlertParams(limit) {
         var parts = ['limit=' + limit];
+        var s = analyticsPages.alerts && analyticsPages.alerts.getState();
         var dev = document.getElementById('alerts-filter-device');
         var type = document.getElementById('alerts-filter-type');
         var sev = document.getElementById('alerts-filter-severity');
         var ack = document.getElementById('alerts-filter-ack');
+        if (s && s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
         if (dev && dev.value) parts.push('device_id=' + dev.value);
         if (type && type.value) parts.push('alert_type=' + encodeURIComponent(type.value));
         if (sev && sev.value) parts.push('severity=' + sev.value);
@@ -1600,7 +1612,9 @@
     }
 
     function loadAlertCharts() {
-        apiFetch(API_BASE + '/alerts/stats').then(function(result) {
+        var s = analyticsPages.alerts && analyticsPages.alerts.getState();
+        var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        apiFetch(API_BASE + '/alerts/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
             document.getElementById('alerts-total').textContent = (d.total || 0).toLocaleString();
@@ -1642,8 +1656,10 @@
 
     function buildTrapParams(limit) {
         var parts = ['limit=' + limit];
+        var s = analyticsPages.traps && analyticsPages.traps.getState();
         var sev = document.getElementById('traps-filter-severity');
         var type = document.getElementById('traps-filter-type');
+        if (s && s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
         if (sev && sev.value) parts.push('severity=' + sev.value);
         if (type && type.value) parts.push('trap_type=' + encodeURIComponent(type.value));
         return parts.join('&');
@@ -1678,7 +1694,9 @@
     }
 
     function loadTrapCharts() {
-        apiFetch(API_BASE + '/traps/stats').then(function(result) {
+        var s = analyticsPages.traps && analyticsPages.traps.getState();
+        var hoursParam = (s && s.hours) ? ('?hours=' + s.hours) : '';
+        apiFetch(API_BASE + '/traps/stats' + hoursParam).then(function(result) {
             if (!result || !result.data) return;
             var d = result.data;
             document.getElementById('traps-total').textContent = (d.total || 0).toLocaleString();
@@ -2028,13 +2046,19 @@
     function editDevice(id) { showDeviceModal(id); }
 
     function deleteDevice(id) {
-        if (!confirm('Delete this device and all its data?')) return;
-        apiFetch(API_BASE + '/devices/' + id, { method: 'DELETE' }).then(function() {
-            loadDevices();
-            AC.showSuccess('Device deleted');
-        })['catch'](function(err) {
-            console.error('Error deleting device:', err);
-            AC.showError('Error deleting device: ' + err.message);
+        AC.confirm('Delete this device and all its data?', {
+            title: 'Delete device?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            apiFetch(API_BASE + '/devices/' + id, { method: 'DELETE' }).then(function() {
+                loadDevices();
+                AC.showSuccess('Device deleted');
+            })['catch'](function(err) {
+                console.error('Error deleting device:', err);
+                AC.showError('Error deleting device: ' + err.message);
+            });
         });
     }
 
@@ -2123,13 +2147,19 @@
     }
 
     function deleteConnection(id) {
-        if (!confirm('Delete this connection?')) return;
-        apiFetch(API_BASE + '/connections/' + id, { method: 'DELETE' }).then(function() {
-            loadConnections();
-            AC.showSuccess('Connection deleted');
-        })['catch'](function(err) {
-            console.error('Error deleting connection:', err);
-            AC.showError('Error deleting connection: ' + err.message);
+        AC.confirm('Delete this connection?', {
+            title: 'Delete connection?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            apiFetch(API_BASE + '/connections/' + id, { method: 'DELETE' }).then(function() {
+                loadConnections();
+                AC.showSuccess('Connection deleted');
+            })['catch'](function(err) {
+                console.error('Error deleting connection:', err);
+                AC.showError('Error deleting connection: ' + err.message);
+            });
         });
     }
 
@@ -2483,13 +2513,19 @@
     }
 
     function deletePolicy(id) {
-        if (!confirm('Delete this alert policy?')) return;
-        apiFetch(API_BASE + '/alert-policies/' + id, {method: 'DELETE'}).then(function() {
-            loadAlertPolicies();
-            AC.showSuccess('Policy deleted');
-        })['catch'](function(e) {
-            console.error('Delete policy failed:', e);
-            AC.showError('Delete failed: ' + e.message);
+        AC.confirm('Delete this alert policy?', {
+            title: 'Delete alert policy?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            apiFetch(API_BASE + '/alert-policies/' + id, {method: 'DELETE'}).then(function() {
+                loadAlertPolicies();
+                AC.showSuccess('Policy deleted');
+            })['catch'](function(e) {
+                console.error('Delete policy failed:', e);
+                AC.showError('Delete failed: ' + e.message);
+            });
         });
     }
 
@@ -2721,13 +2757,19 @@
     }
 
     function deleteMaintWindow(id) {
-        if (!confirm('Delete this maintenance window?')) return;
-        apiFetch(API_BASE + '/maintenance-windows/' + id, {method: 'DELETE'}).then(function() {
-            loadMaintenance();
-            AC.showSuccess('Maintenance window deleted');
-        })['catch'](function(e) {
-            console.error('Delete maintenance window failed:', e);
-            AC.showError('Delete failed: ' + e.message);
+        AC.confirm('Delete this maintenance window?', {
+            title: 'Delete maintenance window?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            apiFetch(API_BASE + '/maintenance-windows/' + id, {method: 'DELETE'}).then(function() {
+                loadMaintenance();
+                AC.showSuccess('Maintenance window deleted');
+            })['catch'](function(e) {
+                console.error('Delete maintenance window failed:', e);
+                AC.showError('Delete failed: ' + e.message);
+            });
         });
     }
 
@@ -2793,14 +2835,20 @@
     function resetDeviceAlertConfig() {
         var deviceId = document.getElementById('device-alert-device-id').value;
         if (!deviceId) return;
-        if (!confirm('Reset alert configuration to defaults? This removes all overrides for this device.')) return;
-        apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config', { method: 'DELETE' }).then(function() {
-            closeDeviceAlertModal();
-            loadDevices();
-            AC.showSuccess('Alert config reset to defaults');
-        })['catch'](function(e) {
-            console.error('Reset alert config failed:', e);
-            AC.showError('Reset failed: ' + e.message);
+        AC.confirm('Reset alert configuration to defaults? This removes all overrides for this device.', {
+            title: 'Reset alert config?',
+            confirmLabel: 'Reset',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            apiFetch(API_BASE + '/devices/' + deviceId + '/alert-config', { method: 'DELETE' }).then(function() {
+                closeDeviceAlertModal();
+                loadDevices();
+                AC.showSuccess('Alert config reset to defaults');
+            })['catch'](function(e) {
+                console.error('Reset alert config failed:', e);
+                AC.showError('Reset failed: ' + e.message);
+            });
         });
     }
 
@@ -2987,6 +3035,94 @@
     });
 
     // ---- Init ----
+    // v0.10.212 (bundle A2) — wire range pills + auto-apply + URL state for
+    // the three analytics tabs. These helpers are idempotent (FwmonControls
+    // primitives guard with one-shot binding flags), so calling them on
+    // every tab activation is cheap. The first call hydrates the page state
+    // from the URL; subsequent calls only paint the chip strip.
+    function wireSyslogAnalyticsPage() {
+        if (!window.FwmonControls) return;
+        if (analyticsPages.syslog) {
+            analyticsPages.syslog.refresh();
+            return;
+        }
+        analyticsPages.syslog = FwmonControls.attachAnalyticsPage({
+            page: 'syslog',
+            rangePillsId: 'syslog-range-pills',
+            chipsId: 'syslog-active-chips',
+            defaults: { hours: 24, device_id: '', probe_id: '', severity: '', search: '' },
+            inputs: [
+                { id: 'syslog-filter-search', stateKey: 'search', chipKey: 'search' }
+            ],
+            selects: [
+                { id: 'syslog-filter-device',   stateKey: 'device_id', chipKey: 'device',
+                  chipLabel: function(v) { return deviceLabel(v); } },
+                { id: 'syslog-filter-probe',    stateKey: 'probe_id',  chipKey: 'probe',
+                  chipLabel: function(v) { return probeLabel(v); } },
+                { id: 'syslog-filter-severity', stateKey: 'severity',  chipKey: 'sev' }
+            ],
+            onChange: function() { loadSyslog(); }
+        });
+    }
+
+    function wireAlertsAnalyticsPage() {
+        if (!window.FwmonControls) return;
+        if (analyticsPages.alerts) {
+            analyticsPages.alerts.refresh();
+            return;
+        }
+        analyticsPages.alerts = FwmonControls.attachAnalyticsPage({
+            page: 'alerts',
+            rangePillsId: 'alerts-range-pills',
+            chipsId: 'alerts-active-chips',
+            defaults: { hours: 24, device_id: '', alert_type: '', severity: '', acknowledged: '' },
+            inputs: [],
+            selects: [
+                { id: 'alerts-filter-device',   stateKey: 'device_id',    chipKey: 'device',
+                  chipLabel: function(v) { return deviceLabel(v); } },
+                { id: 'alerts-filter-type',     stateKey: 'alert_type',   chipKey: 'type' },
+                { id: 'alerts-filter-severity', stateKey: 'severity',     chipKey: 'sev' },
+                { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack' }
+            ],
+            onChange: function() { loadAlerts(); }
+        });
+    }
+
+    function wireTrapsAnalyticsPage() {
+        if (!window.FwmonControls) return;
+        if (analyticsPages.traps) {
+            analyticsPages.traps.refresh();
+            return;
+        }
+        analyticsPages.traps = FwmonControls.attachAnalyticsPage({
+            page: 'traps',
+            rangePillsId: 'traps-range-pills',
+            chipsId: 'traps-active-chips',
+            defaults: { hours: 24, severity: '', trap_type: '' },
+            inputs: [],
+            selects: [
+                { id: 'traps-filter-severity', stateKey: 'severity',  chipKey: 'sev' },
+                { id: 'traps-filter-type',     stateKey: 'trap_type', chipKey: 'type' }
+            ],
+            onChange: function() { loadTraps(); }
+        });
+    }
+
+    // deviceLabel / probeLabel — used by the analytics-page chip formatter
+    // to render `device: prod-edge-01` instead of `device: 42`.
+    function deviceLabel(id) {
+        for (var i = 0; i < currentDevices.length; i++) {
+            if (String(currentDevices[i].id) === String(id)) return currentDevices[i].name || ('dev:' + id);
+        }
+        return 'dev:' + id;
+    }
+    function probeLabel(id) {
+        for (var i = 0; i < currentProbes.length; i++) {
+            if (String(currentProbes[i].id) === String(id)) return currentProbes[i].name || ('probe:' + id);
+        }
+        return 'probe:' + id;
+    }
+
     var initialPage = activateTabFromUrl();
     AC.fetchCsrfToken().then(function() { loadPageData(initialPage); });
 

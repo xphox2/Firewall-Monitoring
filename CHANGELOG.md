@@ -1,4 +1,45 @@
 # Changelog
+## [0.10.212] - 2026-05-17
+
+### Changed — admin-wide foundation pass (Bundle A: A1 + A2 + A3)
+First commit of the "improve the whole admin area" sweep. Three sub-bundles ship together because they touch the same set of files and reinforce each other — extracting the foundation (A1), then reusing it in three more pages (A2), then replacing the last bit of stock-browser chrome (A3).
+
+#### A1 — Foundation extraction (`cmd/api/static/css/admin-design-system.css`)
+The `fwmon-*` design system that grew up inside `admin-device-detail.css` for the v0.10.205 redesign and got reused inline for the v0.10.211 flows page is now a **single shared stylesheet** every admin page can opt into.
+- Promoted tokens: `--fwmon-font-ui / --fwmon-font-mono / --fwmon-series-1..8 / --fwmon-card-bg / --fwmon-panel-bg / --fwmon-border / --fwmon-text* / --fwmon-axis-stroke / --fwmon-grid-stroke / --fwmon-tick-stroke`.
+- Promoted components: `.chart-range-pills`, `.chart-range-pill`, `.filter-btn` (+ `.filter-count`), `.chart-card` (+ `-header / -title / -subtitle`), `.chart-host`, `.chart-loading / -empty / -zoom-hint / -reset-btn`, `.fwmon-stat-grid`, `.fwmon-stat` (+ `-label / -value` and `.accent / .good / .warn / .bad` modifiers), `.fwmon-chip` (+ `-key / -val / -clear / .subdued`), `.fwmon-chips`, and the `uPlot` dark-theme overrides.
+- Stripped the duplicated rules from `admin-device-detail.css` and `admin-flows.css`; both files now hold only their page-specific overrides.
+- `web/admin/admin.html` and `web/admin/device-detail.html` both link the new stylesheet immediately after `admin-fonts.css`.
+- Added `prefers-reduced-motion` block honoring the user's OS preference for every animation defined in the file.
+
+#### A2 — Syslog / Alerts / Traps pages restyled to match Flows (`cmd/api/static/js/admin-controls.js` — new module)
+Brought the three high-traffic forensic pages in line with the v0.10.211 flows experience without duplicating wiring.
+- New reusable module `window.FwmonControls` with helpers: `bindRangePills`, `activatePill`, `bindAutoApply`, `setInputValues`, `stateFromURL`, `syncURL`, `renderChips`, `renderRangePills`, and the high-level `attachAnalyticsPage(descriptor)` wrapper that wires range pills + auto-apply filters + URL state + active-filter chips for a whole page from one declarative spec.
+- Syslog / Alerts / Traps page headers now use the same **time-range pill bar** as device-detail and flows (1h / 6h / 12h / 24h / 7d). The old `<select>` time pickers were dropped.
+- Filter rows lost their **Apply** buttons — `bindAutoApply` debounces text inputs (400ms) and fires immediately on selects/pills.
+- Each page gets an **active-filter chip strip** with × to clear individually (device name, search, severity, etc.). Device/probe IDs are resolved to names via `deviceLabel(id)` / `probeLabel(id)` helpers so chips read `device sjc-fw-01` not `device 42`.
+- Every filter and the time range mirror to the URL via `history.replaceState` — shareable, refresh-stable.
+- `admin-main.js` — added `var analyticsPages = { syslog, alerts, traps };` and `wireSyslogAnalyticsPage / wireAlertsAnalyticsPage / wireTrapsAnalyticsPage` initialisers; `buildSyslogParams / buildAlertParams / buildTrapParams` and the chart-loading helpers now read `hours` from the page state.
+- `web/admin/admin.html` — three page headers rebuilt to host the pill bar + chip container; Apply buttons and `<select>` time pickers removed.
+
+#### A3 — Styled confirm() modal (`AdminCommon.confirm`)
+The 14 destructive operations across the admin (delete device / connection / alert policy / maintenance window / IRC server / IRC channel / IRC command / config revision / site / probe + regenerate key + approve probe + reset alert config) all used native `window.confirm()`. Unstyled, unbranded, no danger affordance, no focus management — jarring next to the redesigned UI and an accessibility audit miss.
+- New `AdminCommon.confirm(message, opts)` in `admin-common.js` returns a `Promise<bool>` and renders a modal with `role="dialog"`, `aria-modal`, `aria-labelledby`, a 2-element Tab focus trap, Escape to cancel, focus restoration on close, and a `danger: true` variant that paints the confirm button in `--fwmon-series-2` (red) so destructive ops can't be mistaken for benign ones.
+- Cancel is focused by default — operators can't Enter-spam through a destructive prompt.
+- All 14 call sites converted (`admin-irc.js`, `admin-device-detail.js`, `admin-main.js`, `admin-sites.js`, `admin-probes.js`, `admin-probe-pending.js`) — every destructive button now opens the styled modal with an appropriate title (`Delete device?`, `Delete IRC channel?`, `Regenerate key?`, etc.) and `Delete` / `Reset` / `Regenerate` / `Approve` confirm labels.
+- CSS for `.fwmon-confirm-overlay / -dialog / -title / -body / -actions / -btn / -btn.primary / -btn.danger` lives in `admin-design-system.css` with fade-in + rise animations gated by `prefers-reduced-motion`.
+
+### Files
+- New: `cmd/api/static/css/admin-design-system.css`, `cmd/api/static/js/admin-controls.js`.
+- Modified: `cmd/api/static/css/admin-device-detail.css`, `cmd/api/static/css/admin-flows.css` (duplicated foundation rules removed).
+- Modified: `cmd/api/static/js/admin-common.js` (`confirmModal` + `AdminCommon.confirm` export).
+- Modified: `cmd/api/static/js/admin-main.js` (analytics-page wiring + range param threading).
+- Modified: `cmd/api/static/js/admin-irc.js`, `admin-device-detail.js`, `admin-sites.js`, `admin-probes.js`, `admin-probe-pending.js` (confirm() call sites).
+- Modified: `web/admin/admin.html`, `web/admin/device-detail.html` (design-system stylesheet link, restyled page headers).
+
+### Why this matters
+Every subsequent admin-area bundle (B accessibility, C performance, E linkification, F operator features, D backend consistency) builds on the shared design tokens promoted in A1 and the analytics-page wiring in A2. Without A1, each new page would either drift visually or paste another copy of the same 200 lines of CSS; without A2, every analytics-style page would need its own bespoke filter/chip/URL wiring; without A3, every destructive op would keep using stock-browser chrome that doesn't match the rest of the surface. This commit is the foundation the rest of the sweep stands on.
+
 ## [0.10.211] - 2026-05-17
 
 ### Changed — `/admin/flows` page redesign

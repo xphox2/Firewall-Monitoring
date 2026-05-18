@@ -196,6 +196,128 @@
         }
     })['catch'](function() { /* version endpoint not exposed — old build */ });
 
+    /* ------------------------------------------------------------------
+     * confirmModal — accessible replacement for window.confirm().
+     *
+     * Usage:
+     *   AdminCommon.confirm("Delete this device and all its data?", {
+     *       title: "Delete device?",
+     *       confirmLabel: "Delete",
+     *       danger: true
+     *   }).then(function(ok) { if (ok) doDelete(); });
+     *
+     * Why this exists (v0.10.212, bundle A3):
+     *   - Native confirm() is unstyled, blocking, and has no operator
+     *     branding — jarring next to the rest of the admin UI.
+     *   - Accessibility audit flagged native confirm() as not respecting
+     *     keyboard navigation conventions (no focus return, no aria).
+     *   - Destructive ops (delete device / connection / policy / etc.)
+     *     deserve a danger-styled red Confirm button operators can't
+     *     mistake for a benign action.
+     *
+     * Accessibility:
+     *   - role="dialog" + aria-modal + aria-labelledby
+     *   - Focus moves into the dialog on open (Cancel by default; Confirm
+     *     if `defaultButton: 'confirm'` is passed)
+     *   - Tab cycles between Cancel and Confirm (focus trap)
+     *   - Escape resolves false; Enter on focused Confirm resolves true
+     *   - Focus restored to the triggering element on close
+     *
+     * Falls back to window.confirm() if document is not available
+     * (defensive — shouldn't happen in browser code).
+     */
+    function confirmModal(message, opts) {
+        opts = opts || {};
+        if (typeof document === 'undefined') {
+            return Promise.resolve(window.confirm(message));
+        }
+        return new Promise(function(resolve) {
+            var trigger = document.activeElement;
+            var titleId = 'fwmon-confirm-title-' + Math.random().toString(36).slice(2, 8);
+            var overlay = document.createElement('div');
+            overlay.className = 'fwmon-confirm-overlay';
+            overlay.setAttribute('role', 'presentation');
+
+            var dialog = document.createElement('div');
+            dialog.className = 'fwmon-confirm-dialog' + (opts.danger ? ' danger' : '');
+            dialog.setAttribute('role', 'dialog');
+            dialog.setAttribute('aria-modal', 'true');
+            dialog.setAttribute('aria-labelledby', titleId);
+
+            var title = document.createElement('h2');
+            title.id = titleId;
+            title.className = 'fwmon-confirm-title';
+            title.textContent = opts.title || (opts.danger ? 'Are you sure?' : 'Confirm');
+
+            var body = document.createElement('div');
+            body.className = 'fwmon-confirm-body';
+            body.textContent = message;
+
+            var actions = document.createElement('div');
+            actions.className = 'fwmon-confirm-actions';
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'fwmon-confirm-btn cancel';
+            cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.type = 'button';
+            confirmBtn.className = 'fwmon-confirm-btn confirm' + (opts.danger ? ' danger' : '');
+            confirmBtn.textContent = opts.confirmLabel || (opts.danger ? 'Delete' : 'OK');
+
+            actions.appendChild(cancelBtn);
+            actions.appendChild(confirmBtn);
+            dialog.appendChild(title);
+            dialog.appendChild(body);
+            dialog.appendChild(actions);
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+
+            function cleanup(result) {
+                document.removeEventListener('keydown', onKey, true);
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                if (trigger && trigger.focus) {
+                    try { trigger.focus(); } catch (e) { /* ignore */ }
+                }
+                resolve(result);
+            }
+
+            function onKey(ev) {
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    cleanup(false);
+                } else if (ev.key === 'Tab') {
+                    // 2-element focus trap.
+                    var focusables = [cancelBtn, confirmBtn];
+                    var idx = focusables.indexOf(document.activeElement);
+                    if (idx === -1) {
+                        ev.preventDefault();
+                        focusables[0].focus();
+                        return;
+                    }
+                    var next = (idx + (ev.shiftKey ? -1 : 1) + focusables.length) % focusables.length;
+                    ev.preventDefault();
+                    focusables[next].focus();
+                }
+            }
+
+            cancelBtn.addEventListener('click', function() { cleanup(false); });
+            confirmBtn.addEventListener('click', function() { cleanup(true); });
+            overlay.addEventListener('click', function(ev) {
+                if (ev.target === overlay) cleanup(false);
+            });
+            document.addEventListener('keydown', onKey, true);
+
+            // Initial focus — Cancel by default so the user can't Enter-spam
+            // through a destructive prompt.
+            setTimeout(function() {
+                var initial = opts.defaultButton === 'confirm' ? confirmBtn : cancelBtn;
+                if (initial.focus) initial.focus();
+            }, 0);
+        });
+    }
+
     // Export to window for use by other scripts and diagram modules
     window.AdminCommon = {
         API_BASE: API_BASE,
@@ -211,6 +333,7 @@
         showSuccess: showSuccess,
         showToast: showToast,
         clearToasts: clearToasts,
+        confirm: confirmModal,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

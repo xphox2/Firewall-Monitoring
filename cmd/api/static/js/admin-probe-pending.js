@@ -48,16 +48,21 @@
     }
 
     function approveProbe(id) {
-        if (!confirm('Approve this probe?')) return;
+        AC.confirm('Approve this probe?', {
+            title: 'Approve probe?',
+            confirmLabel: 'Approve',
+        }).then(function(ok) {
+            if (!ok) return;
 
-        AC.apiFetch(API_BASE + '/probes/' + id + '/approve', {
-            method: 'POST',
-            body: { notes: 'Approved via admin panel' }
-        }).then(function() {
-            AC.showSuccess('Probe approved');
-            loadProbes();
-        })['catch'](function(err) {
-            AC.showError('Error: ' + err.message);
+            AC.apiFetch(API_BASE + '/probes/' + id + '/approve', {
+                method: 'POST',
+                body: { notes: 'Approved via admin panel' }
+            }).then(function() {
+                AC.showSuccess('Probe approved');
+                loadProbes();
+            })['catch'](function(err) {
+                AC.showError('Error: ' + err.message);
+            });
         });
     }
 

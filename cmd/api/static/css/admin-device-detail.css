@@ -1,53 +1,31 @@
-/* admin-device-detail.css — device-detail-only typography + chart styling.
+/* admin-device-detail.css — page-specific overrides for /admin/devices/:id.
  *
- * Layered on top of admin-shared.css. Goals (v0.10.205 redesign):
- *   1. Fix the "font overflows boxes" complaint via min-width:0 + ellipsis
- *      on every grid stat-card child.
- *   2. Tabular numerals on every numeric value so columns visually align.
- *   3. Dense, operator-grade typography pairing: Inter (UI) + JetBrains Mono
- *      (numerics). Loaded via Google Fonts in the HTML head.
- *   4. Dark-theme uPlot palette — restyle library defaults to match the
- *      GitHub-dark aesthetic the rest of the admin uses.
+ * Shared design tokens + pill bars + chart cards + chips + uPlot overrides
+ * live in admin-design-system.css. This file is now strictly the rules that
+ * only apply to the device-detail page: legacy stat-card overflow fix,
+ * legacy gauge styling, and the filter-btn refinement specific to the
+ * interface filter row.
+ *
+ * Load order in device-detail.html:
+ *   1. admin-shared.css
+ *   2. admin-fonts.css
+ *   3. uPlot.min.css
+ *   4. admin-design-system.css   <-- shared primitives
+ *   5. admin-device-detail.css   <-- this file
  */
 
-:root {
-    --fwmon-font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-        Roboto, "Helvetica Neue", Arial, sans-serif;
-    --fwmon-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
-        "Liberation Mono", monospace;
-
-    /* Curated palette — Okabe-Ito-adjacent, tuned for the #0d1117 base. */
-    --fwmon-series-1: #7dd3fc; /* sky-300       — primary metric */
-    --fwmon-series-2: #fca5a5; /* red-300       — errors / system */
-    --fwmon-series-3: #fcd34d; /* amber-300     — warnings / out */
-    --fwmon-series-4: #86efac; /* green-300     — healthy / disk */
-    --fwmon-series-5: #c4b5fd; /* violet-300    — memory */
-    --fwmon-series-6: #f0abfc; /* fuchsia-300   — sessions */
-    --fwmon-series-7: #fdba74; /* orange-300    — saturation */
-    --fwmon-series-8: #5eead4; /* teal-300      — latency */
-    --fwmon-axis-stroke: #6b7280;
-    --fwmon-grid-stroke: #1f2937;
-    --fwmon-tick-stroke: #374151;
-    --fwmon-card-bg: #0d1117;
-    --fwmon-panel-bg: #161b22;
-    --fwmon-border: #30363d;
-    --fwmon-text: #e6edf3;
-    --fwmon-text-dim: #8b949e;
-    --fwmon-text-faint: #6e7681;
-}
-
-/* Scope these to the device-detail page only — the rest of the admin keeps
- * the existing typography stack to avoid a fleet-wide visual jolt. */
+/* Scope the design-system font stack to the device-detail page so the rest
+ * of the admin (which still uses the legacy stack) isn't visually disturbed
+ * by this transitional period. After bundle A1 ships and admin.html also
+ * adopts the font stack globally, this rule can move into admin-shared. */
 .main-content .device-header,
 .main-content .stat-grid,
 .main-content .chart-card,
 .main-content .tabs-container {
     font-family: var(--fwmon-font-ui);
     font-feature-settings: "tnum" 1, "cv11" 1;
-    /* tnum = tabular numerals; cv11 = single-storey 'a' (subtle but cleaner) */
 }
 
-/* Tabular monospace for anything that's actually a measurement. */
 .stat-value,
 .stat-label,
 .device-meta span,
@@ -62,12 +40,10 @@
     font-family: var(--fwmon-font-mono);
 }
 
-/* === STAT-CARD OVERFLOW FIX ===
- * The original markup let long firmware strings, signature versions, and
- * uptime values overflow their tiles, especially on narrow viewports. Pin
- * every text child to a known max width and ellipsis-truncate. min-width:0
- * is the critical line — without it, grid items can't shrink below their
- * intrinsic content width.
+/* === Legacy .stat-card overflow fix ===
+ *
+ * The device-detail header tiles use the OLDER .stat-card class (not the
+ * new .fwmon-stat). Keep this rule until those tiles can be migrated.
  */
 .stat-card {
     min-width: 0;
@@ -93,7 +69,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    /* Long firmware/signature strings get a smaller cascade rather than truncating. */
 }
 
 .stat-card .stat-value.stat-long {
@@ -107,324 +82,24 @@
     overflow-wrap: anywhere;
 }
 
-/* Make the gauge text inside the dial readable + monospaced. */
 .gauge .gauge-text {
     font-family: var(--fwmon-font-mono);
     font-size: 0.85rem;
     font-weight: 600;
 }
 
-/* === CHART CARDS ===
- * Drop the rigid 340px and give each chart room. Use min-height so a
- * legend / range row at the top doesn't compress the plot area.
- */
-.chart-card {
-    background: var(--fwmon-panel-bg);
-    border: 1px solid var(--fwmon-border);
-    border-radius: 10px;
-    padding: 16px 18px 18px;
-    overflow: visible;
-    height: auto;
-    min-height: 280px;
-    margin-bottom: 16px;
-}
-
-.chart-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-}
-
-.chart-card-title {
-    font-family: var(--fwmon-font-ui);
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    color: var(--fwmon-text-dim);
-    margin: 0;
-}
-
-.chart-card-subtitle {
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.72rem;
-    color: var(--fwmon-text-faint);
-    font-weight: 500;
-}
-
-.chart-host {
-    width: 100%;
-    /* uPlot reads width via JS but a CSS height gives it the viewport hint. */
-    min-height: 220px;
-    /* uPlot renders its own canvas; this rule prevents layout jump on first render. */
-}
-
-/* Range selector — used both above charts and within the legacy tab content. */
-.chart-range-pills {
-    display: inline-flex;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--fwmon-border);
-    border-radius: 6px;
-    padding: 2px;
-    gap: 1px;
-    align-items: center;
-    flex-shrink: 0;
-}
-
-.chart-range-pill {
-    appearance: none;
-    background: transparent;
-    border: none;
-    color: var(--fwmon-text-dim);
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.72rem;
-    font-weight: 500;
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 80ms ease, color 80ms ease;
-    letter-spacing: 0.3px;
-}
-
-.chart-range-pill:hover {
-    color: var(--fwmon-text);
-    background: rgba(255, 255, 255, 0.04);
-}
-
-.chart-range-pill.active {
-    background: rgba(125, 211, 252, 0.12);
-    color: var(--fwmon-series-1);
-    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2);
-}
-
-.chart-zoom-hint {
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.66rem;
-    color: var(--fwmon-text-faint);
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.chart-zoom-hint .chart-reset-btn {
-    appearance: none;
-    background: transparent;
-    border: 1px solid var(--fwmon-border);
-    color: var(--fwmon-text-dim);
-    font-family: inherit;
-    font-size: inherit;
-    padding: 2px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: border-color 80ms ease, color 80ms ease;
-}
-
-.chart-zoom-hint .chart-reset-btn:hover {
-    color: var(--fwmon-text);
-    border-color: var(--fwmon-text-dim);
-}
-
-.chart-empty,
-.chart-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 220px;
-    color: var(--fwmon-text-faint);
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.78rem;
-}
-
-.chart-loading::before {
-    content: "";
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--fwmon-series-1);
-    margin-right: 10px;
-    opacity: 0.6;
-    animation: fwmon-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes fwmon-pulse {
-    0%, 100% { opacity: 0.25; transform: scale(0.9); }
-    50% { opacity: 0.85; transform: scale(1.1); }
-}
-
-/* === uPlot DARK THEME OVERRIDES === */
-.uplot {
-    font-family: var(--fwmon-font-mono);
-    color: var(--fwmon-text-dim);
-}
-
-.uplot .u-legend {
-    font-family: var(--fwmon-font-ui);
-    font-size: 0.72rem;
-    color: var(--fwmon-text-dim);
-    margin-top: 6px;
-    /* Tighter legend layout. */
-    text-align: left;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    justify-content: flex-start;
-}
-
-.uplot .u-legend th,
-.uplot .u-legend td {
-    font-weight: 500;
-    padding: 1px 0;
-}
-
-.uplot .u-legend .u-marker {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    border-width: 0 !important;
-    margin-right: 6px;
-    vertical-align: middle;
-}
-
-.uplot .u-legend .u-value {
-    font-family: var(--fwmon-font-mono);
-    color: var(--fwmon-text);
-    font-feature-settings: "tnum" 1;
-    min-width: 56px;
-    text-align: right;
-}
-
-.uplot .u-legend .u-inline tr {
-    display: inline-flex;
-    align-items: center;
-    margin-right: 18px;
-}
-
-/* Series-disabled state — series toggled off via legend click. */
-.uplot .u-legend .u-off > * {
-    opacity: 0.35;
-}
-
-.uplot .u-cursor-pt {
-    border-width: 2px;
-}
-
-.uplot .u-select {
-    background: rgba(125, 211, 252, 0.08);
-    border: 1px solid rgba(125, 211, 252, 0.35);
-}
-
-.uplot .u-over,
-.uplot .u-under {
-    background: transparent;
-}
-
-/* The plot title baked into uPlot.opts.title — we hide it because we render
- * our own .chart-card-title above it for consistent typography. */
-.uplot .u-title {
-    display: none;
-}
-
-/* === INTERFACE FILTER PILLS ===
- * Used inside #ifaceFilters above the Interfaces table. Each pill toggles
- * a filter (All / Up / Down / Ethernet / Tunnel / VLAN / ...). Operators
- * use these constantly to triage which interfaces to look at, so they
- * need to read as obviously interactive (clear hover affordance, clear
- * active state, distinctive count typography).
+/* === device-detail chart card overrides ===
  *
- * Style notes:
- *   - Border at rest, not just on hover. The "looks like a clickable
- *     pill" affordance is the border + matching radius.
- *   - Active state uses the same sky-300 accent as the chart-range-pills
- *     for visual coherence across the page.
- *   - The count is split into a .filter-count span so we can render it
- *     in JetBrains Mono — operators scan the counts to decide which
- *     filter is worth clicking, so they get type hierarchy.
- *   - Min-width on the pill so a row of single-character labels still
- *     reads as a row of pills, not a row of letters.
- */
-
-.filter-btn {
-    appearance: none;
-    -webkit-appearance: none;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--fwmon-border);
-    color: var(--fwmon-text-dim);
-    font-family: var(--fwmon-font-ui);
-    font-size: 0.78rem;
-    font-weight: 500;
-    letter-spacing: 0.2px;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    min-width: 56px;
-    text-align: center;
-    user-select: none;
-    transition: background-color 100ms ease, border-color 100ms ease,
-                color 100ms ease, transform 80ms ease;
-    /* Ensure a consistent height across labels of different lengths. */
-    line-height: 1.25;
-}
-
-.filter-btn:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: var(--fwmon-text-faint);
-    color: var(--fwmon-text);
-}
-
-.filter-btn:active {
-    transform: translateY(1px);
-}
-
-.filter-btn:focus-visible {
-    outline: none;
-    border-color: var(--fwmon-series-1);
-    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.18);
-}
-
-.filter-btn.active {
-    background: rgba(125, 211, 252, 0.14);
-    border-color: rgba(125, 211, 252, 0.42);
-    color: var(--fwmon-series-1);
-    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.12),
-                0 1px 4px -2px rgba(125, 211, 252, 0.35);
-}
-
-.filter-btn .filter-count {
-    margin-left: 6px;
-    font-family: var(--fwmon-font-mono);
-    font-feature-settings: "tnum" 1;
-    font-size: 0.72rem;
-    color: var(--fwmon-text-faint);
-    font-weight: 500;
-    /* Render counts with a subtle gap from the label so they read as
-     * "metadata about this filter" rather than "part of the filter name." */
-    padding-left: 0;
-}
-
-.filter-btn.active .filter-count {
-    color: var(--fwmon-series-1);
-    opacity: 0.85;
-}
-
-.filter-btn:hover .filter-count {
-    color: var(--fwmon-text-dim);
+ * Most of .chart-card lives in admin-design-system.css now. The override
+ * here is the legacy .chart-card height: 340px from admin-shared.css —
+ * we reset it to auto and let min-height drive the layout. */
+.main-content .chart-card {
+    height: auto;
 }
 
 /* Narrow-viewport adjustments. */
 @media (max-width: 720px) {
-    .chart-card {
+    .main-content .chart-card {
         padding: 14px 12px 16px;
-    }
-    .chart-card-header {
-        flex-direction: column;
-        align-items: stretch;
-    }
-    .chart-range-pills {
-        overflow-x: auto;
-        flex-wrap: nowrap;
     }
 }

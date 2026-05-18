@@ -1,0 +1,669 @@
+/* admin-design-system.css — shared design tokens + component primitives
+ * for the Firewall-Mon admin UI.
+ *
+ * History: v0.10.205 introduced the `fwmon-*` design system scoped to the
+ * device-detail page; v0.10.211 reused it for the flows page; v0.10.212
+ * promotes the shared parts here so EVERY admin page can opt in by including
+ * this single stylesheet.
+ *
+ * Naming convention:
+ *   --fwmon-*  CSS custom properties (design tokens — palette, typography,
+ *              axis colors). Stable contract; consumers may reference them.
+ *   .fwmon-*   Component classes. Page-specific overrides can extend with
+ *              attribute or descendant selectors (e.g. .fwmon-flows .fwmon-stat).
+ *
+ * Pages that link this file:
+ *   - web/admin/admin.html         (SPA shell — all tabs inherit)
+ *   - web/admin/device-detail.html
+ *   - web/admin/connection-detail.html  (added by v0.10.212)
+ *
+ * Companion stylesheets (page-specific overrides, loaded AFTER this file):
+ *   - admin-device-detail.css
+ *   - admin-flows.css
+ *
+ * Companion fonts: admin-fonts.css (Inter + JetBrains Mono, latin subset).
+ * Companion library CSS: uPlot.min.css.
+ */
+
+/* ============================================================
+ * Design tokens
+ * ============================================================ */
+
+:root {
+    --fwmon-font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif;
+    --fwmon-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+        "Liberation Mono", monospace;
+
+    /* Curated series palette — Okabe-Ito-adjacent, tuned for the dark base.
+     * Reuse across charts, chips, accent borders. */
+    --fwmon-series-1: #7dd3fc; /* sky-300       — primary metric */
+    --fwmon-series-2: #fca5a5; /* red-300       — errors / system */
+    --fwmon-series-3: #fcd34d; /* amber-300     — warnings / out */
+    --fwmon-series-4: #86efac; /* green-300     — healthy / disk */
+    --fwmon-series-5: #c4b5fd; /* violet-300    — memory */
+    --fwmon-series-6: #f0abfc; /* fuchsia-300   — sessions */
+    --fwmon-series-7: #fdba74; /* orange-300    — saturation */
+    --fwmon-series-8: #5eead4; /* teal-300      — latency */
+
+    /* Chrome */
+    --fwmon-card-bg:    #0d1117;
+    --fwmon-panel-bg:   #161b22;
+    --fwmon-border:     #30363d;
+
+    /* Text */
+    --fwmon-text:       #e6edf3;
+    --fwmon-text-dim:   #8b949e;
+    --fwmon-text-faint: #6e7681;
+
+    /* Axes / grids (chart use) */
+    --fwmon-axis-stroke: #6b7280;
+    --fwmon-grid-stroke: #1f2937;
+    --fwmon-tick-stroke: #374151;
+}
+
+/* ============================================================
+ * Pill bar — used for time-range, protocol filter, etc.
+ * ============================================================
+ * Container: <div class="chart-range-pills" id="...">
+ * Pills:     <button class="chart-range-pill" data-value="...">label</button>
+ * Active:    add `.active` class to the chosen pill.
+ *
+ * The chart-* naming is a (slight) historical accident — the same pills are
+ * now used outside chart contexts (Flows protocol filter, future syslog
+ * severity filter). Kept for backwards compatibility; new code should use
+ * the same classes for visual consistency.
+ */
+.chart-range-pills {
+    display: inline-flex;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.chart-range-pill {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--fwmon-text-dim);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 5px 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 80ms ease, color 80ms ease;
+    letter-spacing: 0.3px;
+    /* Slight min-target-size bump for touch — still tight at ~28px tall but
+     * up from 24px. WCAG 2.5.5 wants 44px; we trade off density vs. AA on
+     * the desktop-first operator surface. */
+    min-height: 28px;
+}
+
+.chart-range-pill:hover {
+    color: var(--fwmon-text);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.chart-range-pill:focus-visible {
+    outline: none;
+    color: var(--fwmon-text);
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.45);
+}
+
+.chart-range-pill.active {
+    background: rgba(125, 211, 252, 0.12);
+    color: var(--fwmon-series-1);
+    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2);
+}
+
+/* ============================================================
+ * Filter button — used for the Interfaces tab filter pills.
+ *
+ * Same conceptual shape as chart-range-pill but slightly larger (these are
+ * the primary navigation on the page, not a header secondary control).
+ * ============================================================ */
+.filter-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-dim);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 56px;
+    text-align: center;
+    user-select: none;
+    transition: background-color 100ms ease, border-color 100ms ease,
+                color 100ms ease, transform 80ms ease;
+    line-height: 1.25;
+}
+
+.filter-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--fwmon-text-faint);
+    color: var(--fwmon-text);
+}
+
+.filter-btn:active {
+    transform: translateY(1px);
+}
+
+.filter-btn:focus-visible {
+    outline: none;
+    border-color: var(--fwmon-series-1);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.18);
+}
+
+.filter-btn.active {
+    background: rgba(125, 211, 252, 0.14);
+    border-color: rgba(125, 211, 252, 0.42);
+    color: var(--fwmon-series-1);
+    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.12),
+                0 1px 4px -2px rgba(125, 211, 252, 0.35);
+}
+
+.filter-btn .filter-count {
+    margin-left: 6px;
+    font-family: var(--fwmon-font-mono);
+    font-feature-settings: "tnum" 1;
+    font-size: 0.72rem;
+    color: var(--fwmon-text-faint);
+    font-weight: 500;
+}
+
+.filter-btn.active .filter-count {
+    color: var(--fwmon-series-1);
+    opacity: 0.85;
+}
+
+.filter-btn:hover .filter-count {
+    color: var(--fwmon-text-dim);
+}
+
+/* ============================================================
+ * Chart cards — host for uPlot and friends.
+ * ============================================================
+ * Markup:
+ *   <div class="chart-card">
+ *     <div class="chart-card-header">
+ *       <div>
+ *         <h3 class="chart-card-title">Title</h3>
+ *         <div class="chart-card-subtitle">Optional subtitle</div>
+ *       </div>
+ *       <-- optional right-side: range pills, zoom hint, etc. -->
+ *     </div>
+ *     <div class="chart-host" id="some-host"></div>
+ *   </div>
+ */
+.chart-card {
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 10px;
+    padding: 16px 18px 18px;
+    overflow: visible;
+    height: auto;
+    min-height: 280px;
+    margin-bottom: 16px;
+}
+
+.chart-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.chart-card-title {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--fwmon-text-dim);
+    margin: 0;
+}
+
+.chart-card-subtitle {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.72rem;
+    color: var(--fwmon-text-faint);
+    font-weight: 500;
+}
+
+.chart-host {
+    width: 100%;
+    min-height: 220px;
+}
+
+.chart-empty,
+.chart-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 220px;
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.78rem;
+}
+
+.chart-loading::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--fwmon-series-1);
+    margin-right: 10px;
+    opacity: 0.6;
+    animation: fwmon-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes fwmon-pulse {
+    0%, 100% { opacity: 0.25; transform: scale(0.9); }
+    50%      { opacity: 0.85; transform: scale(1.1); }
+}
+
+/* Zoom hint + reset button next to a chart header. */
+.chart-zoom-hint {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.7rem;
+    color: var(--fwmon-text-faint);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chart-reset-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-dim);
+    font-family: inherit;
+    font-size: inherit;
+    padding: 3px 9px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 80ms ease, color 80ms ease;
+}
+
+.chart-reset-btn:hover {
+    color: var(--fwmon-text);
+    border-color: var(--fwmon-text-dim);
+}
+
+.chart-reset-btn:focus-visible {
+    outline: none;
+    border-color: var(--fwmon-series-1);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.18);
+}
+
+/* ============================================================
+ * Stat tiles — small KPI rectangles in a responsive grid.
+ *
+ * Replaces the legacy `.stat-card` which had no overflow guard. New code
+ * should use `.fwmon-stat` directly. To progressively migrate the older
+ * pages, page-specific CSS can re-style `.stat-card` to inherit these
+ * properties OR drop the old class entirely.
+ * ============================================================ */
+.fwmon-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.fwmon-stat {
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    min-width: 0; /* critical: lets grid items shrink below intrinsic width */
+    overflow: hidden;
+}
+
+.fwmon-stat-label {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--fwmon-text-faint);
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fwmon-stat-value {
+    font-family: var(--fwmon-font-mono);
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--fwmon-text);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Long-string modifier for firmware versions, signatures, etc. — drops to
+ * mono small + word-break so the value stays readable instead of truncated. */
+.fwmon-stat-value.long {
+    font-size: 0.85rem;
+    font-weight: 500;
+    font-family: var(--fwmon-font-mono);
+    word-break: break-all;
+    white-space: normal;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+/* Color modifiers for sentiment. */
+.fwmon-stat-value.accent { color: var(--fwmon-series-1); }
+.fwmon-stat-value.good   { color: var(--fwmon-series-4); }
+.fwmon-stat-value.warn   { color: var(--fwmon-series-3); }
+.fwmon-stat-value.bad    { color: var(--fwmon-series-2); }
+
+/* ============================================================
+ * Chips — active-filter chips, status chips, sampling chips, etc.
+ * ============================================================ */
+.fwmon-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.fwmon-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(125, 211, 252, 0.10);
+    border: 1px solid rgba(125, 211, 252, 0.30);
+    border-radius: 999px;
+    padding: 3px 4px 3px 10px;
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.7rem;
+    color: var(--fwmon-series-1);
+    font-weight: 500;
+}
+
+.fwmon-chip-key {
+    color: var(--fwmon-text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-size: 0.66rem;
+}
+
+.fwmon-chip-val {
+    color: var(--fwmon-text);
+    font-weight: 600;
+}
+
+.fwmon-chip-clear {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--fwmon-text-dim);
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 80ms ease, color 80ms ease;
+}
+
+.fwmon-chip-clear:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fwmon-text);
+}
+
+.fwmon-chip-clear:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.45);
+}
+
+/* Subdued variant — for read-only meta chips like sampling-rate. */
+.fwmon-chip.subdued {
+    background: rgba(125, 211, 252, 0.06);
+    border-color: rgba(125, 211, 252, 0.18);
+    color: var(--fwmon-text-dim);
+}
+
+/* ============================================================
+ * uPlot dark-theme overrides — universal across pages that use the lib.
+ * ============================================================ */
+.uplot {
+    font-family: var(--fwmon-font-mono);
+    color: var(--fwmon-text-dim);
+}
+
+.uplot .u-legend {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.72rem;
+    color: var(--fwmon-text-dim);
+    margin-top: 6px;
+    text-align: left;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    justify-content: flex-start;
+}
+
+.uplot .u-legend th,
+.uplot .u-legend td {
+    font-weight: 500;
+    padding: 1px 0;
+}
+
+.uplot .u-legend .u-marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    border-width: 0 !important;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+.uplot .u-legend .u-value {
+    font-family: var(--fwmon-font-mono);
+    color: var(--fwmon-text);
+    font-feature-settings: "tnum" 1;
+    min-width: 60px;
+    text-align: right;
+}
+
+.uplot .u-legend .u-inline tr {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 18px;
+}
+
+.uplot .u-legend .u-off > * { opacity: 0.35; }
+
+.uplot .u-cursor-pt { border-width: 2px; }
+
+.uplot .u-select {
+    background: rgba(125, 211, 252, 0.08);
+    border: 1px solid rgba(125, 211, 252, 0.35);
+}
+
+.uplot .u-over,
+.uplot .u-under { background: transparent; }
+
+.uplot .u-title { display: none; }
+
+/* ============================================================
+ * Confirm modal — accessible replacement for window.confirm().
+ *
+ * Markup is built dynamically by AdminCommon.confirm(message, opts) in
+ * admin-common.js. Structure:
+ *   <div class="fwmon-confirm-overlay">
+ *     <div class="fwmon-confirm-dialog" role="dialog" aria-modal="true"
+ *          aria-labelledby="...">
+ *       <div class="fwmon-confirm-title" id="...">Confirm</div>
+ *       <div class="fwmon-confirm-body">…message…</div>
+ *       <div class="fwmon-confirm-actions">
+ *         <button class="fwmon-confirm-btn">Cancel</button>
+ *         <button class="fwmon-confirm-btn primary">OK</button>
+ *       </div>
+ *     </div>
+ *   </div>
+ * ============================================================ */
+.fwmon-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: fwmon-confirm-fade 120ms ease-out;
+}
+
+@keyframes fwmon-confirm-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.fwmon-confirm-dialog {
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 10px;
+    min-width: 320px;
+    max-width: 480px;
+    padding: 20px 22px 18px;
+    box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.6),
+                0 0 0 1px rgba(255, 255, 255, 0.03);
+    color: var(--fwmon-text);
+    animation: fwmon-confirm-rise 140ms ease-out;
+}
+
+@keyframes fwmon-confirm-rise {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+.fwmon-confirm-title {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--fwmon-text-dim);
+    margin-bottom: 10px;
+}
+
+.fwmon-confirm-body {
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: var(--fwmon-text);
+    margin-bottom: 18px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.fwmon-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.fwmon-confirm-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.82rem;
+    font-weight: 500;
+    padding: 7px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 80ms ease, border-color 80ms ease,
+                color 80ms ease;
+    min-width: 84px;
+}
+
+.fwmon-confirm-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--fwmon-text-faint);
+}
+
+.fwmon-confirm-btn:focus-visible {
+    outline: none;
+    border-color: var(--fwmon-series-1);
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.25);
+}
+
+.fwmon-confirm-btn.primary {
+    background: rgba(125, 211, 252, 0.14);
+    border-color: rgba(125, 211, 252, 0.42);
+    color: var(--fwmon-series-1);
+}
+
+.fwmon-confirm-btn.primary:hover {
+    background: rgba(125, 211, 252, 0.22);
+    border-color: rgba(125, 211, 252, 0.6);
+}
+
+.fwmon-confirm-btn.danger {
+    background: rgba(252, 165, 165, 0.12);
+    border-color: rgba(252, 165, 165, 0.42);
+    color: var(--fwmon-series-2);
+}
+
+.fwmon-confirm-btn.danger:hover {
+    background: rgba(252, 165, 165, 0.20);
+    border-color: rgba(252, 165, 165, 0.6);
+}
+
+.fwmon-confirm-btn.danger:focus-visible {
+    border-color: var(--fwmon-series-2);
+    box-shadow: 0 0 0 3px rgba(252, 165, 165, 0.25);
+}
+
+/* ============================================================
+ * Accessibility primitives — kept here so every page that links this
+ * stylesheet gets them. (Bundle B will expand on this.)
+ * ============================================================ */
+
+/* Honor reduced-motion preference across all decorative animations
+ * defined in this file. Page-specific CSS should add its own equivalent
+ * for its own keyframes / transitions. */
+@media (prefers-reduced-motion: reduce) {
+    .chart-loading::before {
+        animation: none !important;
+    }
+    .chart-range-pill,
+    .filter-btn,
+    .chart-reset-btn,
+    .fwmon-chip-clear,
+    .fwmon-confirm-btn {
+        transition: none !important;
+    }
+    .fwmon-confirm-overlay,
+    .fwmon-confirm-dialog {
+        animation: none !important;
+    }
+}

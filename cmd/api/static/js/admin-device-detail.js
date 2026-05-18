@@ -1420,16 +1420,22 @@
     };
 
     window.deleteConfigRevision = function(revId) {
-        if (!confirm('Delete this configuration revision?')) return;
-        fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId, {
-            method: 'DELETE',
-            credentials: 'same-origin',
-            headers: { 'X-CSRF-Token': AC.getCsrfToken() }
-        }).then(function(resp) { return resp.json(); })
-        .then(function(result) {
-            if (result.success) renderConfigHistory();
-            else alert('Failed to delete: ' + (result.error || 'Unknown error'));
-        })['catch'](function(e) { console.error('Failed to delete config:', e); });
+        AC.confirm('Delete this configuration revision?', {
+            title: 'Delete revision?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId, {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                headers: { 'X-CSRF-Token': AC.getCsrfToken() }
+            }).then(function(resp) { return resp.json(); })
+            .then(function(result) {
+                if (result.success) renderConfigHistory();
+                else alert('Failed to delete: ' + (result.error || 'Unknown error'));
+            })['catch'](function(e) { console.error('Failed to delete config:', e); });
+        });
     };
 
     var procSshChart = null;

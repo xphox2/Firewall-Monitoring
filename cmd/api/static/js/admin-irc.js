@@ -180,8 +180,13 @@ function editServer(id) {
 }
 
 async function deleteServer(id) {
-    if (!confirm('Are you sure you want to delete this server?')) return;
-    
+    const ok = await AdminCommon.confirm('Are you sure you want to delete this server?', {
+        title: 'Delete IRC server?',
+        confirmLabel: 'Delete',
+        danger: true,
+    });
+    if (!ok) return;
+
     try {
         await apiCall(`/admin/api/irc/servers/${id}`, { method: 'DELETE' });
         loadServers();
@@ -365,8 +370,13 @@ function editChannel(id) {
 }
 
 async function deleteChannel(id) {
-    if (!confirm('Are you sure you want to delete this channel?')) return;
-    
+    const ok = await AdminCommon.confirm('Are you sure you want to delete this channel?', {
+        title: 'Delete IRC channel?',
+        confirmLabel: 'Delete',
+        danger: true,
+    });
+    if (!ok) return;
+
     try {
         await apiCall(`/admin/api/irc/channels/${id}`, { method: 'DELETE' });
         loadChannels();
@@ -510,8 +520,13 @@ function editCommand(id) {
 }
 
 async function deleteCommand(id) {
-    if (!confirm('Are you sure you want to delete this command?')) return;
-    
+    const ok = await AdminCommon.confirm('Are you sure you want to delete this command?', {
+        title: 'Delete IRC command?',
+        confirmLabel: 'Delete',
+        danger: true,
+    });
+    if (!ok) return;
+
     try {
         await apiCall(`/admin/api/irc/commands/${id}`, { method: 'DELETE' });
         loadCommands();

@@ -10,28 +10,9 @@
  * minimal subset here so the page styles correctly on its own.
  */
 
-:root {
-    --fwmon-font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-        Roboto, "Helvetica Neue", Arial, sans-serif;
-    --fwmon-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
-        "Liberation Mono", monospace;
-    --fwmon-series-1: #7dd3fc;
-    --fwmon-series-2: #fca5a5;
-    --fwmon-series-3: #fcd34d;
-    --fwmon-series-4: #86efac;
-    --fwmon-series-5: #c4b5fd;
-    --fwmon-series-6: #f0abfc;
-    --fwmon-series-7: #fdba74;
-    --fwmon-series-8: #5eead4;
-    --fwmon-card-bg: #0d1117;
-    --fwmon-panel-bg: #161b22;
-    --fwmon-border: #30363d;
-    --fwmon-text: #e6edf3;
-    --fwmon-text-dim: #8b949e;
-    --fwmon-text-faint: #6e7681;
-    --fwmon-axis-stroke: #6b7280;
-    --fwmon-grid-stroke: #1f2937;
-}
+/* Design tokens (--fwmon-*), pill bars, chart cards, chips, uPlot dark
+ * theme, and reduced-motion handling all live in admin-design-system.css.
+ * This file is now strictly the flows-page-specific rules. */
 
 .fwmon-flows {
     font-family: var(--fwmon-font-ui);
@@ -70,45 +51,6 @@
     color: var(--fwmon-text);
     margin: 0;
     letter-spacing: -0.2px;
-}
-
-/* Re-use chart-range-pills + chart-range-pill from admin-device-detail.css,
- * but scope a fallback in case that stylesheet isn't loaded on this page. */
-.fwmon-flows .chart-range-pills {
-    display: inline-flex;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--fwmon-border);
-    border-radius: 6px;
-    padding: 2px;
-    gap: 1px;
-    align-items: center;
-    flex-shrink: 0;
-}
-
-.fwmon-flows .chart-range-pill {
-    appearance: none;
-    background: transparent;
-    border: none;
-    color: var(--fwmon-text-dim);
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.72rem;
-    font-weight: 500;
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 80ms ease, color 80ms ease;
-    letter-spacing: 0.3px;
-}
-
-.fwmon-flows .chart-range-pill:hover {
-    color: var(--fwmon-text);
-    background: rgba(255, 255, 255, 0.04);
-}
-
-.fwmon-flows .chart-range-pill.active {
-    background: rgba(125, 211, 252, 0.12);
-    color: var(--fwmon-series-1);
-    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.2);
 }
 
 /* Sampling-rate chip — quiet, monospaced, slightly elevated. Tooltip
@@ -195,46 +137,13 @@
     color: var(--fwmon-text);
 }
 
-/* === Stat tiles === */
+/* === Stat tiles === — using the shared .fwmon-stat from
+ * admin-design-system.css. Only the grid wrapper is page-specific. */
 .fwmon-flows-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 12px;
     margin-bottom: 16px;
-}
-
-.fwmon-stat {
-    background: var(--fwmon-card-bg);
-    border: 1px solid var(--fwmon-border);
-    border-radius: 8px;
-    padding: 14px 16px;
-    min-width: 0;
-    overflow: hidden;
-}
-
-.fwmon-stat-label {
-    font-family: var(--fwmon-font-ui);
-    font-size: 0.68rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--fwmon-text-faint);
-    margin-bottom: 6px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.fwmon-stat-value {
-    font-family: var(--fwmon-font-mono);
-    font-size: 1.4rem;
-    font-weight: 600;
-    color: var(--fwmon-text);
-    font-variant-numeric: tabular-nums;
-    line-height: 1.15;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* Local-traffic notice — softer than the original yellow alert; it's
@@ -266,89 +175,9 @@
     font-style: italic;
 }
 
-/* === Bandwidth chart card — same chart-card classes from
- * admin-device-detail.css, no extra rules needed. The chart-host
- * div gets min-height there. */
-.fwmon-bandwidth-card {
-    margin-bottom: 16px;
-}
-
-.fwmon-flows .chart-card {
-    background: var(--fwmon-panel-bg);
-    border: 1px solid var(--fwmon-border);
-    border-radius: 10px;
-    padding: 16px 18px 18px;
-    overflow: visible;
-}
-
-.fwmon-flows .chart-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-}
-
-.fwmon-flows .chart-card-title {
-    font-family: var(--fwmon-font-ui);
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    color: var(--fwmon-text-dim);
-    margin: 0;
-}
-
-.fwmon-flows .chart-card-subtitle {
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.7rem;
-    color: var(--fwmon-text-faint);
-    font-weight: 500;
-}
-
-.fwmon-flows .chart-zoom-hint {
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.66rem;
-    color: var(--fwmon-text-faint);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.fwmon-flows .chart-reset-btn {
-    appearance: none;
-    background: transparent;
-    border: 1px solid var(--fwmon-border);
-    color: var(--fwmon-text-dim);
-    font-family: inherit;
-    font-size: inherit;
-    padding: 2px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: border-color 80ms ease, color 80ms ease;
-}
-
-.fwmon-flows .chart-reset-btn:hover {
-    color: var(--fwmon-text);
-    border-color: var(--fwmon-text-dim);
-}
-
-.fwmon-flows .chart-host {
-    width: 100%;
-    min-height: 220px;
-}
-
-.fwmon-flows .chart-empty,
-.fwmon-flows .chart-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 200px;
-    color: var(--fwmon-text-faint);
-    font-family: var(--fwmon-font-mono);
-    font-size: 0.78rem;
-}
+/* Bandwidth chart card uses the shared .chart-card from
+ * admin-design-system.css. Only the page-specific wrapper margin lives here. */
+.fwmon-bandwidth-card { margin-bottom: 16px; }
 
 /* === Top-talker grid === */
 .fwmon-flows-toptalk-grid {
@@ -633,48 +462,7 @@
     font-size: 0.72rem;
 }
 
-/* uPlot overrides (matching admin-device-detail.css) — duplicated here so
- * the flows tab styles correctly even when device-detail.css isn't loaded
- * (the admin SPA shell doesn't fetch device-detail.css). */
-.fwmon-flows .uplot {
-    font-family: var(--fwmon-font-mono);
-    color: var(--fwmon-text-dim);
-}
-
-.fwmon-flows .uplot .u-legend {
-    font-family: var(--fwmon-font-ui);
-    font-size: 0.72rem;
-    color: var(--fwmon-text-dim);
-    margin-top: 6px;
-    text-align: left;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    justify-content: flex-start;
-}
-
-.fwmon-flows .uplot .u-legend .u-marker {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    border-width: 0 !important;
-    margin-right: 6px;
-}
-
-.fwmon-flows .uplot .u-legend .u-value {
-    font-family: var(--fwmon-font-mono);
-    color: var(--fwmon-text);
-    font-feature-settings: "tnum" 1;
-    min-width: 60px;
-    text-align: right;
-}
-
-.fwmon-flows .uplot .u-select {
-    background: rgba(125, 211, 252, 0.08);
-    border: 1px solid rgba(125, 211, 252, 0.35);
-}
-
-.fwmon-flows .uplot .u-title { display: none; }
+/* uPlot dark-theme overrides live in admin-design-system.css now. */
 
 /* Narrow-viewport adjustments. */
 @media (max-width: 720px) {

@@ -113,13 +113,18 @@
     }
 
     function deleteSite(id) {
-        if (!confirm('Are you sure you want to delete this site?')) return;
-
-        AC.apiFetch(API_BASE + '/sites/' + id, { method: 'DELETE' }).then(function() {
-            AC.showSuccess('Site deleted');
-            loadSites();
-        })['catch'](function(err) {
-            AC.showError('Error deleting site: ' + err.message);
+        AC.confirm('Are you sure you want to delete this site?', {
+            title: 'Delete site?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            AC.apiFetch(API_BASE + '/sites/' + id, { method: 'DELETE' }).then(function() {
+                AC.showSuccess('Site deleted');
+                loadSites();
+            })['catch'](function(err) {
+                AC.showError('Error deleting site: ' + err.message);
+            });
         });
     }
 

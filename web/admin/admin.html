@@ -11,6 +11,8 @@
     <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/static/css/admin-fonts.css">
     <link rel="stylesheet" href="/static/css/uPlot.min.css">
+    <!-- v0.10.212: shared design-system primitives now live in their own file. -->
+    <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/admin-flows.css">
     <style>
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
@@ -183,6 +185,8 @@
     </script>
     <script defer src="/static/js/chart.umd.min.js"></script>
     <script defer src="/static/js/uPlot.iife.min.js"></script>
+    <!-- v0.10.212: shared control primitives used by flows + syslog + alerts + traps. -->
+    <script defer src="/static/js/admin-controls.js"></script>
     <script defer src="/static/js/admin-flows.js"></script>
     <script defer src="/static/js/cytoscape.min.js"></script>
     <script defer src="/static/js/layout-base.js"></script>
@@ -359,8 +363,24 @@
             </div>
         </div>
 
-        <!-- Syslog Page -->
+        <!-- Syslog Page (v0.10.212: pill-bar range + auto-apply filters + URL state) -->
         <div class="page" id="page-syslog">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">Syslog</h2>
+                    <div class="chart-range-pills" id="syslog-range-pills">
+                        <button type="button" class="chart-range-pill" data-range="1">1h</button>
+                        <button type="button" class="chart-range-pill" data-range="6">6h</button>
+                        <button type="button" class="chart-range-pill" data-range="12">12h</button>
+                        <button type="button" class="chart-range-pill active" data-range="24">24h</button>
+                        <button type="button" class="chart-range-pill" data-range="168">7d</button>
+                        <button type="button" class="chart-range-pill" data-range="720">30d</button>
+                    </div>
+                </div>
+                <div class="fwmon-flows-header-right">
+                    <div class="fwmon-chips" id="syslog-active-chips"></div>
+                </div>
+            </div>
             <div class="stat-grid" id="syslog-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Messages</div><div class="stat-value accent" id="syslog-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Emergency/Critical</div><div class="stat-value bad" id="syslog-critical">--</div></div>
@@ -396,7 +416,6 @@
                         <option value="7">Debug</option>
                     </select>
                     <input type="text" class="search-input" id="syslog-filter-search" placeholder="Search messages..." autocomplete="one-time-code">
-                    <button class="btn secondary sm" data-action="load-syslog">Apply</button>
                     <div class="auto-refresh-toggle">
                         <input type="checkbox" id="syslog-auto-refresh">
                         <label for="syslog-auto-refresh">Auto-refresh</label>
@@ -543,8 +562,24 @@
             </div>
         </div>
 
-        <!-- Alerts Page -->
+        <!-- Alerts Page (v0.10.212: pill-bar range + auto-apply filters + URL state) -->
         <div class="page" id="page-alerts">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">Alerts</h2>
+                    <div class="chart-range-pills" id="alerts-range-pills">
+                        <button type="button" class="chart-range-pill" data-range="1">1h</button>
+                        <button type="button" class="chart-range-pill" data-range="6">6h</button>
+                        <button type="button" class="chart-range-pill" data-range="12">12h</button>
+                        <button type="button" class="chart-range-pill active" data-range="24">24h</button>
+                        <button type="button" class="chart-range-pill" data-range="168">7d</button>
+                        <button type="button" class="chart-range-pill" data-range="720">30d</button>
+                    </div>
+                </div>
+                <div class="fwmon-flows-header-right">
+                    <div class="fwmon-chips" id="alerts-active-chips"></div>
+                </div>
+            </div>
             <div class="stat-grid" id="alerts-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Alerts</div><div class="stat-value accent" id="alerts-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value bad" id="alerts-critical">--</div></div>
@@ -577,7 +612,6 @@
                         <option value="false">Unacknowledged</option>
                         <option value="true">Acknowledged</option>
                     </select>
-                    <button class="btn secondary sm" data-action="load-alerts">Apply</button>
                 </div>
                 <div id="alerts-bulk-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
                     <span id="alerts-bulk-summary" style="color:#8b949e;font-size:0.82rem;">No alerts selected</span>
@@ -672,8 +706,24 @@
             </div>
         </div>
 
-        <!-- Traps Page -->
+        <!-- Traps Page (v0.10.212: pill-bar range + auto-apply filters + URL state) -->
         <div class="page" id="page-traps">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">SNMP Traps</h2>
+                    <div class="chart-range-pills" id="traps-range-pills">
+                        <button type="button" class="chart-range-pill" data-range="1">1h</button>
+                        <button type="button" class="chart-range-pill" data-range="6">6h</button>
+                        <button type="button" class="chart-range-pill" data-range="12">12h</button>
+                        <button type="button" class="chart-range-pill active" data-range="24">24h</button>
+                        <button type="button" class="chart-range-pill" data-range="168">7d</button>
+                        <button type="button" class="chart-range-pill" data-range="720">30d</button>
+                    </div>
+                </div>
+                <div class="fwmon-flows-header-right">
+                    <div class="fwmon-chips" id="traps-active-chips"></div>
+                </div>
+            </div>
             <div class="stat-grid" id="traps-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Traps</div><div class="stat-value accent" id="traps-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value bad" id="traps-critical">--</div></div>
@@ -702,7 +752,6 @@
                     <select id="traps-filter-type">
                         <option value="">All Types</option>
                     </select>
-                    <button class="btn secondary sm" data-action="load-traps">Apply</button>
                 </div>
                 <div class="table-wrap">
                     <table id="traps-table">

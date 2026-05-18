@@ -256,43 +256,55 @@
         var probeId = document.getElementById('deploy-probe-id').value;
         if (!probeId) return;
 
-        if (!confirm('Regenerate the registration key? The old key will stop working immediately.')) return;
+        AC.confirm('Regenerate the registration key? The old key will stop working immediately.', {
+            title: 'Regenerate key?',
+            confirmLabel: 'Regenerate',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
 
-        AC.apiFetch(API_BASE + '/probes/' + probeId + '/regenerate-key', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        }).then(function(result) {
-            if (result && result.data) {
-                var newKey = result.data.registration_key;
-                document.getElementById('deploy-key').textContent = newKey;
+            AC.apiFetch(API_BASE + '/probes/' + probeId + '/regenerate-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).then(function(result) {
+                if (result && result.data) {
+                    var newKey = result.data.registration_key;
+                    document.getElementById('deploy-key').textContent = newKey;
 
-                if (currentDeployProbe) {
-                    currentDeployProbe.registration_key = newKey;
-                    var serverUrl = getServerUrl();
-                    var envContent = 'PROBE_NAME=' + currentDeployProbe.name +
-                        '\nPROBE_SITE_ID=' + (currentDeployProbe.site_id || 0) +
-                        '\nPROBE_REGISTRATION_KEY=' + newKey +
-                        '\nPROBE_SERVER_URL=' + serverUrl;
-                    var envBlock = document.getElementById('deploy-env');
-                    envBlock.innerHTML = '<button class="copy-btn" data-action="copy-env">Copy</button>' +
-                        AC.escapeHtml(envContent);
+                    if (currentDeployProbe) {
+                        currentDeployProbe.registration_key = newKey;
+                        var serverUrl = getServerUrl();
+                        var envContent = 'PROBE_NAME=' + currentDeployProbe.name +
+                            '\nPROBE_SITE_ID=' + (currentDeployProbe.site_id || 0) +
+                            '\nPROBE_REGISTRATION_KEY=' + newKey +
+                            '\nPROBE_SERVER_URL=' + serverUrl;
+                        var envBlock = document.getElementById('deploy-env');
+                        envBlock.innerHTML = '<button class="copy-btn" data-action="copy-env">Copy</button>' +
+                            AC.escapeHtml(envContent);
+                    }
+
+                    AC.showSuccess('Registration key regenerated');
+                    loadProbes();
                 }
-
-                AC.showSuccess('Registration key regenerated');
-                loadProbes();
-            }
-        })['catch'](function(err) {
-            AC.showError('Error regenerating key: ' + err.message);
+            })['catch'](function(err) {
+                AC.showError('Error regenerating key: ' + err.message);
+            });
         });
     }
 
     function deleteProbe(id) {
-        if (!confirm('Delete this probe?')) return;
-        AC.apiFetch(API_BASE + '/probes/' + id, { method: 'DELETE' }).then(function() {
-            loadProbes();
-            AC.showSuccess('Probe deleted');
-        })['catch'](function(err) {
-            AC.showError('Error deleting probe: ' + err.message);
+        AC.confirm('Delete this probe?', {
+            title: 'Delete probe?',
+            confirmLabel: 'Delete',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            AC.apiFetch(API_BASE + '/probes/' + id, { method: 'DELETE' }).then(function() {
+                loadProbes();
+                AC.showSuccess('Probe deleted');
+            })['catch'](function(err) {
+                AC.showError('Error deleting probe: ' + err.message);
+            });
         });
     }
 
