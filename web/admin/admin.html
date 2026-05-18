@@ -872,10 +872,18 @@
                 <div class="settings-grid" id="settings-smtp"></div>
                 <div style="margin-top: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <button class="btn secondary" data-action="test-email">Send Test Email</button>
-                    <span style="color:#8b949e; font-size:0.82rem;">to (optional override):</span>
-                    <input type="email" id="test-email-to-override" placeholder="leave blank for configured smtp_to"
+                    <span style="color:#8b949e; font-size:0.82rem;">to:</span>
+                    <input type="email" id="test-email-to-override" placeholder="override smtp_to"
                            class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1"
-                           style="font-size:0.85rem; min-width:240px;">
+                           style="font-size:0.85rem; min-width:200px;">
+                    <span style="color:#8b949e; font-size:0.82rem;">user:</span>
+                    <input type="text" id="test-email-username-override" placeholder="override smtp_username (try 'support' vs 'support@example.com')"
+                           autocomplete="off"
+                           class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1"
+                           style="font-size:0.85rem; min-width:280px;">
+                </div>
+                <div style="margin-top: 6px; color:#6e7681; font-size:0.78rem;">
+                    Overrides are one-shot — they apply to this test only and don't change saved settings. Use the username override to rule out SASL bare-name vs full-address mismatch.
                 </div>
                 <!-- Verbose trace results (v0.10.220, bundle I) — populated by
                      testEmail() in admin-main.js. Each SMTP step renders as a

@@ -1,4 +1,26 @@
 # Changelog
+## [0.10.223] - 2026-05-18
+
+### Added — SMTP test diagnostics for opaque 535 auth failures
+After the v0.10.222 LOGIN/CompoundAuth fix landed, the operator's verbose-test trace showed the diagnostic reaching AUTH cleanly (TLSv1.3 handshake good, mechs `PLAIN LOGIN` advertised, PLAIN selected) and then failing with `535 5.7.8 Error: authentication failed: (reason unavailable)`. The mail server's reason-unavailable reply gives operators nothing to act on, and reproducing on the backend is exactly the friction the verbose test was supposed to remove. v0.10.223 adds three orthogonal diagnostics so each common cause can be ruled out without backend shell access.
+
+#### Username override (one-shot, test-only)
+SMTP card now has a second free-form input next to the recipient override: `username` (override `smtp_username`). The `/api/settings/test-email` request body accepts an optional `"username"` field; when present, `runSMTPDiagnostic` uses that value for AUTH and reports it back via `auth_method` and the new `username` metadata field, *without* persisting anything to `system_settings`. Lets the operator try `support` vs `support@example.com` (and other SASL bare-name vs full-address variants) against a Postfix/Dovecot or Cyrus saslauthd backend in a single click — the common case behind a `(reason unavailable)` 535 when the password is known good.
+
+#### Length metadata in the trace summary
+Response now includes `username` (echo, after server-side TrimSpace), `username_len` (byte length of the effective username), and `password_len` (byte length of the *decrypted* password actually handed to the SMTP client). Rendered in the trace metadata row as `User: support@example.com (24 B)` and `Pwd len: 18 B`. Operators who know what their password length *should* be can spot a trailing-space corruption that the masked `********` rendering hides — a length-mismatch of one byte is the cheapest way to localise the failure to the password storage path versus the wire protocol.
+
+#### Defensive TrimSpace on save (host/username/from/to/password)
+Updated `UpdateSettings` to call `strings.TrimSpace` on `smtp_host`, `smtp_username`, `smtp_from`, `smtp_to`, and `smtp_password` before validation/encryption. Copy-paste from webmail settings pages and password managers regularly drags a trailing space; a single trailing space on a username sent to Cyrus/Dovecot SASL is exactly the kind of input that produces `(reason unavailable)` rather than a useful error. Combined with the length metadata above, an operator who re-saves their existing settings will see `password_len` change in the next test if a trim actually removed something — closing the loop on the "did the trim fix it" question.
+
+### Files
+- Modified: `internal/api/handlers/handlers_settings.go` — `UsernameOverride` parsing in `runSMTPDiagnostic`, `username`/`username_len`/`password_len` added to JSON response, `strings.TrimSpace` applied to the five SMTP settings in `UpdateSettings`.
+- Modified: `web/admin/admin.html` — second free-form input (`#test-email-username-override`) plus operator-facing note explaining that overrides are one-shot.
+- Modified: `cmd/api/static/js/admin-main.js` — `testEmail()` packs both overrides into the request body when present; `renderSMTPTrace()` renders `User:` and `Pwd len:` cells in the metadata row when the server supplies them.
+
+### Why this matters
+A `535 5.7.8 (reason unavailable)` from Postfix/Cyrus is almost never the password itself — by the time AUTH PLAIN reaches the server, the wire format and TLS state are already validated. The remaining suspects are username format (bare name vs `user@domain`), invisible whitespace in either credential, and storage-side encryption drift. Each diagnostic in this bundle targets exactly one of those without requiring an SSH session into the mail server, so the operator can resolve the issue from the admin UI alone.
+
 ## [0.10.222] - 2026-05-18
 
 ### Added — SMTP LOGIN auth + fixed post-STARTTLS state check (Bundle J)

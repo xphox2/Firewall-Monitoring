@@ -161,6 +161,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				}
 			}
 		case "smtp_host", "smtp_username", "smtp_from", "smtp_to":
+			// v0.10.223: trim whitespace defensively — copy-paste from webmail
+			// settings pages commonly drags a trailing space on host/username
+			// that breaks SASL with an opaque "535 reason unavailable" reply.
+			s.Value = strings.TrimSpace(s.Value)
 			if len(s.Value) > 255 {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
 				return
@@ -177,6 +181,11 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			if s.Value == "********" {
 				continue
 			}
+			// v0.10.223: trim whitespace before encrypting — same rationale as
+			// host/username above. Surfacing the corrected length back to the
+			// test page (password_len in the trace metadata) lets the operator
+			// spot when a trim actually changed something.
+			s.Value = strings.TrimSpace(s.Value)
 			// Encrypt secret values before storage
 			if s.Value != "" && h.db != nil {
 				s.Value = h.db.EncryptField(s.Value)
@@ -512,14 +521,21 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	smtpFrom := h.getNotificationSetting("smtp_from")
 	smtpTo := h.getNotificationSetting("smtp_to")
 
-	// Allow the operator to override the recipient for a one-off test
-	// without rewriting the saved smtp_to setting (v0.10.220, bundle I).
+	// Allow per-test overrides without rewriting saved settings:
+	//   - "to":       recipient override (v0.10.220, bundle I)
+	//   - "username": auth username override (v0.10.223) — useful when
+	//                 the mail server's SASL backend wants a different
+	//                 form (e.g. `support` vs `support@example.com`).
 	var req struct {
-		ToOverride string `json:"to"`
+		ToOverride       string `json:"to"`
+		UsernameOverride string `json:"username"`
 	}
 	_ = c.ShouldBindJSON(&req)
 	if req.ToOverride != "" {
 		smtpTo = req.ToOverride
+	}
+	if req.UsernameOverride != "" {
+		smtpUsername = strings.TrimSpace(req.UsernameOverride)
 	}
 
 	if smtpHost == "" || smtpFrom == "" || smtpTo == "" {
@@ -548,6 +564,11 @@ func (h *Handler) TestEmail(c *gin.Context) {
 		log.Printf("Test email failed: %s", summary)
 	}
 
+	// Length metadata (v0.10.223): operator can spot hidden whitespace
+	// or copy-paste damage by comparing the byte length we read out of
+	// the DB against what they expect. Trailing newlines from clipboard
+	// are a common cause of 535 auth failures despite the password
+	// "looking right" in the form field.
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"success":     ok,
 		"message":     summary,
@@ -558,6 +579,9 @@ func (h *Handler) TestEmail(c *gin.Context) {
 		"auth_method": authMethodLabel(smtpUsername),
 		"from":        smtpFrom,
 		"to":          smtpTo,
+		"username":    smtpUsername,
+		"username_len": len(smtpUsername),
+		"password_len": len(smtpPassword),
 	}))
 }
 

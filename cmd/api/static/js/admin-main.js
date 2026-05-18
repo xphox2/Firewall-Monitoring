@@ -2643,8 +2643,12 @@
     function testEmail() {
         var resultEl = document.getElementById('test-email-result');
         resultEl.innerHTML = '<div style="color:#8b949e;font-size:0.85rem;">Running diagnostic… (this can take a few seconds)</div>';
-        var override = document.getElementById('test-email-to-override');
-        var body = override && override.value ? JSON.stringify({ to: override.value.trim() }) : '{}';
+        var toOverride = document.getElementById('test-email-to-override');
+        var userOverride = document.getElementById('test-email-username-override');
+        var payload = {};
+        if (toOverride && toOverride.value.trim()) payload.to = toOverride.value.trim();
+        if (userOverride && userOverride.value.trim()) payload.username = userOverride.value.trim();
+        var body = Object.keys(payload).length ? JSON.stringify(payload) : '{}';
 
         apiFetch(API_BASE + '/settings/test-email', {
             method: 'POST',
@@ -2668,12 +2672,30 @@
         var headerColor = ok ? '#3fb950' : '#f85149';
         var headerIcon = ok ? '✓' : '✗';
 
+        // v0.10.223: include username + byte lengths so operators can spot
+        // hidden whitespace or storage corruption without backend access.
+        // A trailing space stored in the password will surface as an off-by-one
+        // password_len compared to what the operator expected.
+        var userBits = '';
+        if (typeof d.username === 'string' && d.username !== '') {
+            userBits = '<span><strong>User:</strong> <span class="mono" style="color:#c9d1d9;">' +
+                escapeHtml(d.username) +
+                '</span> <span style="color:#6e7681;">(' + escapeHtml(String(d.username_len || 0)) + ' B)</span></span>';
+        }
+        var pwBits = '';
+        if (typeof d.password_len === 'number' && d.password_len > 0) {
+            pwBits = '<span><strong>Pwd len:</strong> <span class="mono" style="color:#c9d1d9;">' +
+                escapeHtml(String(d.password_len)) + ' B</span></span>';
+        }
+
         var meta =
             '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.78rem;color:#8b949e;margin-bottom:6px;">' +
             '<span><strong>Host:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.host || '') + ':' + escapeHtml(String(d.port || '')) + '</span></span>' +
             '<span><strong>From:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.from || '') + '</span></span>' +
             '<span><strong>To:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.to || '') + '</span></span>' +
             '<span><strong>Auth:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.auth_method || 'none') + '</span></span>' +
+            userBits +
+            pwBits +
             '<span><strong>Total:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(String(d.total_ms || 0)) + ' ms</span></span>' +
             '</div>';
 
