@@ -271,7 +271,23 @@
 
         return {
             getState: function() { return Object.assign({}, state); },
-            refresh:  function() { d.onChange(state); }
+            refresh:  function() { d.onChange(state); },
+            // reseedFromURL — re-read every URL-tracked key into state
+            // and re-paint (v0.10.219, bundle H2). Lets the SPA-aware
+            // link interceptor change the URL via history.replaceState
+            // and then have the page apply the new filters without a
+            // full reload. Idempotent.
+            reseedFromURL: function() {
+                var next = stateFromURL(d.defaults, allKeys);
+                // Mutate `state` in place so the closure references in
+                // bindAutoApply / bindRangePills still see updates.
+                Object.keys(next).forEach(function(k) { state[k] = next[k]; });
+                allKeys.forEach(function(k) {
+                    if (!(k in next)) state[k] = (typeof d.defaults[k] === 'number')
+                        ? d.defaults[k] : '';
+                });
+                commit();
+            }
         };
     }
 

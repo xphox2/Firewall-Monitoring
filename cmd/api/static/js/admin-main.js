@@ -3522,6 +3522,78 @@
         return 'probe:' + id;
     }
 
+    // SPA-aware filter-link interceptor (v0.10.219, bundle H2).
+    //
+    // Bundles E and G added filter-links like /admin/alerts?device_id=42
+    // throughout the admin (alert detail modal, noisy-device leaderboard,
+    // device-detail "view all" link, etc). Clicking those links from
+    // inside the SPA used to do a full page reload — visible flash, lost
+    // scroll position, every chart re-initialised. This handler catches
+    // those clicks and applies the new filter via history.pushState +
+    // the analytics-page reseedFromURL helper added in H2.
+    //
+    // Only same-origin /admin/* links are intercepted. Modifier-key
+    // clicks (Ctrl/Cmd-click for new tab, Shift-click for new window,
+    // middle-click via the button check) bypass the handler so the
+    // browser keeps its native open-in-new-tab affordance — which is
+    // critical for the multi-tab triage flow.
+    var SPA_PAGES = { dashboard:1, devices:1, interfaces:1, connections:1,
+        settings:1, syslog:1, flows:1, alerts:1, traps:1,
+        'alert-policies':1, maintenance:1,
+        probes:1, sites:1, network:1, 'probe-pending':1, irc:1 };
+
+    document.addEventListener('click', function(ev) {
+        if (ev.button !== 0) return;                        // not a primary click
+        if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+        var a = ev.target && ev.target.closest && ev.target.closest('a[href]');
+        if (!a) return;
+        if (a.target && a.target !== '' && a.target !== '_self') return;
+        // Same-origin admin route?
+        var href = a.getAttribute('href') || '';
+        if (!href || href[0] === '#') return;
+        var url;
+        try { url = new URL(href, window.location.href); } catch (e) { return; }
+        if (url.origin !== window.location.origin) return;
+        if (!url.pathname.indexOf('/admin/api/') === 0 && url.pathname.indexOf('/admin/') !== 0) return;
+        // Device-detail / connection-detail are NOT in SPA_PAGES — they
+        // are separate HTML documents; let those load normally.
+        var seg = url.pathname.replace(/^\/admin\/?/, '').split('/')[0];
+        if (!SPA_PAGES[seg || 'dashboard']) return;
+
+        ev.preventDefault();
+        var page = seg || 'dashboard';
+        // Push the new URL so future refresh / back-button preserves the
+        // filter exactly.
+        history.pushState(null, '', url.pathname + url.search);
+
+        // If already on the target page, just re-seed filters in place.
+        var currentActive = document.querySelector('.page.active');
+        var alreadyOnPage = currentActive && currentActive.id === ('page-' + page);
+        if (alreadyOnPage) {
+            // The analytics-page handles (when present) own URL state for
+            // syslog / alerts / traps. Re-seed from URL and let them
+            // refresh the data + chips.
+            if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+                analyticsPages[page].reseedFromURL();
+            } else {
+                loadPageData(page);
+            }
+            return;
+        }
+
+        // Switch tabs via the same path nav-item clicks use, then load.
+        document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
+        var navItem = document.querySelector('.nav-item[data-page="' + page + '"]');
+        if (navItem) navItem.classList.add('active');
+        document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+        var pageEl = document.getElementById('page-' + page);
+        if (pageEl) pageEl.classList.add('active');
+        var titleEl = document.getElementById('page-title');
+        if (titleEl) titleEl.textContent = navItem ? navItem.textContent.trim() : page;
+        if (page !== 'connections') stopConnRefresh();
+        loadPageData(page);
+    });
+
     var initialPage = activateTabFromUrl();
     AC.fetchCsrfToken().then(function() { loadPageData(initialPage); });
 

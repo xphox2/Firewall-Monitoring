@@ -1,4 +1,34 @@
 # Changelog
+## [0.10.219] - 2026-05-18
+
+### Added — API versioning + polish (Bundle H: H1 + H2 + H3)
+Closes the deferred-items list. One forward-looking infrastructure change (API versioning lane), one UX polish (no-reload navigation), one small bug fix (IPv6 host:port).
+
+#### H1 — `/api/v1/` aliasing (forward-compat lane)
+- New path-rewrite middleware in `cmd/api/main.go` aliases `/api/v1/*` → `/api/*` and `/admin/api/v1/*` → `/admin/api/*`. Implemented as a single `router.Use(...)` block that mutates `c.Request.URL.Path` before route matching — no per-route duplication, no redirect roundtrip, no measurable overhead.
+- The canonical paths remain `/api/*` and `/admin/api/*`. The admin JS and the Firewall-Collector probe binary keep working unchanged.
+- The v1 aliases give us a clean upgrade lane: when a future breaking API change ships, we add `/api/v2/*` alongside the existing routes and operate both for a deprecation window. New external consumers can adopt `/api/v1/` today knowing the v1 contract is stable.
+
+#### H2 — SPA-aware filter-link click interception
+- The cross-page filter links added in bundles E and G (`/admin/alerts?device_id=42`, `/admin/syslog?search=10.0.0.5`, etc.) used to do a full page reload when clicked from inside the admin SPA. Bundle H2 intercepts those clicks and applies the filter via `history.pushState` + the new `reseedFromURL` helper exposed by `FwmonControls.attachAnalyticsPage`, completely avoiding the reload.
+- Modifier-key clicks (Ctrl/Cmd-click for new tab, Shift-click for new window, middle-click) bypass the handler so the multi-tab triage flow still works — operators can fan out a triage session into multiple tabs exactly as before.
+- Cross-page clicks (e.g. operator is on dashboard, clicks a link to `/admin/alerts?…`) tab-switch in place via the same path as the sidebar nav-item clicks, then run `loadPageData` which kicks off the analytics-page wiring that reads filter params from the URL on init. No reload either.
+- Same-page clicks (operator already on `/admin/syslog`, clicks a new syslog filter) re-seed the existing analytics-page handle from the URL and refresh — fastest path, doesn't re-create the page DOM at all.
+- Device-detail / connection-detail / probe / IRC / other separate-document pages are *not* intercepted — those are real page navigations and full reloads are correct.
+
+#### H3 — IPv6 `host:port` fix in `TestProbeConnection`
+- `handlers_probes.go:356` previously formed the dial address with `fmt.Sprintf("%s:%d", host, port)`. For an IPv6 listen address this produces `2001:db8::1:9876` instead of the bracketed `[2001:db8::1]:9876`, which `net.DialTimeout` would parse as a different IP entirely (treating the trailing `:9876` as an extra hextet).
+- Replaced with `net.JoinHostPort(host, strconv.Itoa(port))` which handles both IPv4 and IPv6 correctly. Dropped the now-unused `fmt` import.
+
+### Files
+- Modified: `cmd/api/main.go` — `/v1/` rewrite middleware + `strings` import + version.
+- Modified: `cmd/api/static/js/admin-controls.js` — `reseedFromURL` on the analytics-page handle.
+- Modified: `cmd/api/static/js/admin-main.js` — SPA link interceptor.
+- Modified: `internal/api/handlers/handlers_probes.go` — `net.JoinHostPort`; `fmt` import removed.
+
+### Deferred-items inventory cleared
+After this bundle, every concrete item from the post-sweep audit (noisy-device leaderboard, snooze alerts, VPN remote-end linkification, SPA-aware filter links, IPv6 host:port, API versioning lane) has shipped. The remaining open recommendations are all cosmetic / large-diff items I'd only do on request: the codebase-wide `interface{}` → `any` migration, the `infertypeargs` and `minmax` style suggestions surfaced by the linter, and the `SyslogSummary`/`FlowRollup` raw endpoints (no consumer).
+
 ## [0.10.218] - 2026-05-18
 
 ### Added — picked up deferred items from Bundles E and F (Bundle G: G1 + G2 + G3)

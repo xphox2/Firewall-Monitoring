@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,7 +31,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.218"
+const ServerVersion = "0.10.219"
 
 func main() {
 	cfg := config.Load()
@@ -49,6 +50,30 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 	router.SetTrustedProxies(nil) // Do not trust proxy headers for client IP
+
+	// API versioning aliases (v0.10.219, bundle H1).
+	//
+	// Mount /api/v1/* as a synonym for /api/* (and /admin/api/v1/* for
+	// /admin/api/*) via a path-rewrite middleware. /api/ stays the
+	// canonical path for now — both existing admin JS and the
+	// Firewall-Collector probe binary call /api/ paths unchanged. The
+	// versioned aliases give us a clean upgrade lane: when a future
+	// breaking change ships, we add /api/v2/* alongside the existing
+	// routes and operate both during a deprecation window.
+	//
+	// Implementation: rewrite the request URL before route matching so
+	// downstream handlers and middleware see the canonical path. No
+	// per-route duplication, no redirect roundtrip.
+	router.Use(func(c *gin.Context) {
+		p := c.Request.URL.Path
+		switch {
+		case strings.HasPrefix(p, "/api/v1/"):
+			c.Request.URL.Path = "/api/" + p[len("/api/v1/"):]
+		case strings.HasPrefix(p, "/admin/api/v1/"):
+			c.Request.URL.Path = "/admin/api/" + p[len("/admin/api/v1/"):]
+		}
+		c.Next()
+	})
 
 	db, err := database.NewDatabase(cfg)
 	if err != nil {

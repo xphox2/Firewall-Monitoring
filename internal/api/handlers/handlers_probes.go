@@ -3,7 +3,6 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -353,7 +352,12 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 		return
 	}
 
-	address := fmt.Sprintf("%s:%d", req.ListenAddress, req.ListenPort)
+	// v0.10.219 (bundle H3): use net.JoinHostPort so IPv6 listen addresses
+	// get bracketed correctly. `fmt.Sprintf("%s:%d", host, port)` produces
+	// `2001:db8::1:9876` instead of `[2001:db8::1]:9876` for IPv6 hosts,
+	// which net.DialTimeout would parse incorrectly (treating `9876` as
+	// part of the address). JoinHostPort handles both v4 and v6.
+	address := net.JoinHostPort(req.ListenAddress, strconv.Itoa(req.ListenPort))
 
 	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
