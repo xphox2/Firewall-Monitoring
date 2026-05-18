@@ -148,7 +148,10 @@ This is an automated alert from your Firewall monitoring system.
 
 	var auth smtp.Auth
 	if nc.SMTPUsername != "" {
-		auth = smtp.PlainAuth("", nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
+		// CompoundAuth picks PLAIN or LOGIN based on server-advertised
+		// AUTH mechanisms (v0.10.222, bundle J). Works against both
+		// PLAIN-only and LOGIN-only submission servers.
+		auth = CompoundAuth(nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
 	}
 
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
@@ -335,7 +338,10 @@ func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachm
 	addr := fmt.Sprintf("%s:%d", nc.SMTPHost, nc.SMTPPort)
 	var auth smtp.Auth
 	if nc.SMTPUsername != "" {
-		auth = smtp.PlainAuth("", nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
+		// CompoundAuth picks PLAIN or LOGIN based on server-advertised
+		// AUTH mechanisms (v0.10.222, bundle J). Works against both
+		// PLAIN-only and LOGIN-only submission servers.
+		auth = CompoundAuth(nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
 	}
 
 	recipientList := strings.Split(recipients, ",")

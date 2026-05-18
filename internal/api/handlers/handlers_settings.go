@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/notifier"
 
 	"github.com/gin-gonic/gin"
 )
@@ -301,6 +302,14 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 
 	// Implicit TLS on 465 (smtps). For 587 / 25 we STARTTLS later.
 	usingImplicitTLS := port == 465
+	// negotiatedTLS tracks whether the connection is currently encrypted.
+	// v0.10.222 (bundle J): the previous AUTH pre-check re-queried
+	// Extension("STARTTLS") to decide if we were on TLS, but RFC 3207 §2
+	// is explicit that a server MUST NOT advertise STARTTLS over an
+	// already-secured connection. So Extension("STARTTLS") is false after
+	// a successful STARTTLS upgrade, and the pre-check was misreading that
+	// as "no TLS". This flag is the authoritative source.
+	negotiatedTLS := false
 	if usingImplicitTLS {
 		tStart := time.Now()
 		tlsConn := tls.Client(netConn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
@@ -313,6 +322,7 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 			fmt.Sprintf("%s, %s, cert CN=%s", tlsVersionName(st.Version), tlsCipherName(st.CipherSuite), tlsLeafSubject(st)),
 			"ok", "", tStart)
 		netConn = tlsConn
+		negotiatedTLS = true
 	}
 
 	// ----- SMTP CLIENT WRAPPER -----
@@ -359,36 +369,48 @@ func runSMTPDiagnostic(host string, port int, username, password, from, to strin
 				tlsDetail = "established"
 			}
 			record("starttls", "STARTTLS upgrade (EHLO re-issued internally)", tlsDetail, "ok", "", tStart)
+			negotiatedTLS = true
 		} else {
 			record("starttls", "STARTTLS not advertised by server", "skipped", "skipped", "", tStart)
 		}
 	}
 
 	// ----- AUTH -----
+	// v0.10.222 (bundle J):
+	//   1. Refuse to send credentials over a still-cleartext connection.
+	//      Use the negotiatedTLS flag rather than Extension("STARTTLS")
+	//      because the latter is intentionally false post-upgrade.
+	//   2. Use CompoundAuth to pick PLAIN (preferred) or LOGIN based on
+	//      what the server advertises. Earlier versions only did PLAIN,
+	//      which fails on LOGIN-only Postfix/Cyrus/Dovecot submission
+	//      servers with a confusing "unrecognized authentication type"
+	//      error.
 	aStart := time.Now()
 	authMechs := ""
 	if supported, mechs := client.Extension("AUTH"); supported {
 		authMechs = mechs
 	}
 	if username != "" {
-		// PlainAuth requires TLS or localhost. If we didn't TLS-up
-		// successfully (server didn't advertise STARTTLS and we're not
-		// on 465), surface that as the AUTH failure mode it would
-		// produce — clearer for the operator than the generic stdlib
-		// "unencrypted connection" error.
-		if !usingImplicitTLS {
-			if hasStartTLS, _ := client.Extension("STARTTLS"); !hasStartTLS {
-				summary, _ = fail("auth", "PLAIN auth refused: connection is not encrypted (server didn't advertise STARTTLS)", aStart, errors.New("unencrypted connection"))
-				return trace, false, summary
-			}
+		if !negotiatedTLS {
+			summary, _ = fail("auth",
+				"auth refused: connection is not encrypted (no implicit TLS on this port and STARTTLS was not advertised by the server)",
+				aStart, errors.New("unencrypted connection"))
+			return trace, false, summary
 		}
-		auth := smtp.PlainAuth("", username, password, host)
-		if err := client.Auth(auth); err != nil {
-			detail := fmt.Sprintf("PLAIN auth as %s (server advertised mechs: %s)", username, authMechs)
+		compound := notifier.CompoundAuth(username, password, host).(interface {
+			smtp.Auth
+			ChosenMechanism() string
+		})
+		if err := client.Auth(compound); err != nil {
+			detail := fmt.Sprintf("auth as %s (server advertised mechs: %s; selected: %s)",
+				username, authMechs, compound.ChosenMechanism())
 			summary, _ = fail("auth", detail, aStart, err)
 			return trace, false, summary
 		}
-		record("auth", fmt.Sprintf("PLAIN auth as %s", username), "accepted (mechs offered: "+authMechs+")", "ok", "", aStart)
+		record("auth",
+			fmt.Sprintf("%s auth as %s", compound.ChosenMechanism(), username),
+			"accepted (mechs offered: "+authMechs+"; selected: "+compound.ChosenMechanism()+")",
+			"ok", "", aStart)
 	} else {
 		record("auth", "skipped — no smtp_username configured", "skipped", "skipped", "", aStart)
 	}
@@ -539,11 +561,15 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	}))
 }
 
+// authMethodLabel reports the configured auth posture for the summary
+// chip. v0.10.222 (bundle J): the test now auto-selects PLAIN or LOGIN
+// at AUTH time, so the label is "auto" rather than a fixed mechanism.
+// The trace row reports which mechanism actually got selected.
 func authMethodLabel(username string) string {
 	if username == "" {
 		return "none"
 	}
-	return "PLAIN"
+	return "auto (PLAIN→LOGIN fallback)"
 }
 
 func (h *Handler) TestWebhook(c *gin.Context) {

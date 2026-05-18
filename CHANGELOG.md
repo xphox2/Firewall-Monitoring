@@ -1,4 +1,29 @@
 # Changelog
+## [0.10.222] - 2026-05-18
+
+### Added — SMTP LOGIN auth + fixed post-STARTTLS state check (Bundle J)
+Two related fixes after operator testing of the verbose SMTP diagnostic shipped in v0.10.220-221 revealed both a self-inflicted bug in the test path and a gap in the production notifier path: many Postfix/Cyrus/Dovecot submission servers advertise only LOGIN on port 587, and Go's stdlib `net/smtp` ships PLAIN but not LOGIN.
+
+#### J1 — Authoritative TLS state tracking
+The v0.10.221 hotfix dropped a redundant `Hello()` call but the AUTH pre-check still misreported `STARTTLS not advertised` after a *successful* STARTTLS upgrade. RFC 3207 §2 is explicit that a server MUST NOT advertise STARTTLS again once the connection is encrypted, so `client.Extension("STARTTLS")` returning false post-upgrade is correct server behavior — the test code was the one drawing the wrong conclusion. New `negotiatedTLS` boolean tracks the actual encryption state across both the implicit-TLS (port 465) and STARTTLS (port 587/25) paths, and the AUTH guard reads from it rather than re-querying the extension list. Error message reworded to be specific about both paths.
+
+#### J2 — LOGIN auth mechanism + auto-selection
+New `internal/notifier/smtp_auth.go`:
+- **`LoginAuth(username, password) smtp.Auth`** — implements RFC 4954 LOGIN. Doesn't try to parse the server's prompt text (which varies — "Username:", "User Name", base64-encoded localised strings, …); instead tracks which step it's on internally (step 0 = username, step 1 = password). Mirrors `smtp.PlainAuth`'s TLS-required guard.
+- **`CompoundAuth(username, password, host) smtp.Auth`** — inspects `server.Auth` in `Start()` and picks PLAIN (preferred) or LOGIN based on what's advertised. Returns a clear error when neither is offered. Designed to be a drop-in replacement for `smtp.PlainAuth` anywhere in the codebase. Exposes `ChosenMechanism()` for trace-time reporting.
+
+Wired into both code paths:
+- **Notifier** (`internal/notifier/notifier.go`): both `smtp.PlainAuth` call sites — the per-alert email path and the digest email path — now use `CompoundAuth`. Real alert emails to LOGIN-only servers work without operator reconfiguration.
+- **Verbose test** (`internal/api/handlers/handlers_settings.go`): `runSMTPDiagnostic` uses `CompoundAuth` and reports the chosen mechanism in the trace row's detail + response text — operator sees `LOGIN auth as support@example.com` and `accepted (mechs offered: PLAIN LOGIN; selected: PLAIN)` instead of always `PLAIN auth as …`.
+
+### Files
+- New: `internal/notifier/smtp_auth.go` — LOGIN + CompoundAuth implementation.
+- Modified: `internal/notifier/notifier.go` — both `smtp.PlainAuth` call sites switched to `CompoundAuth`.
+- Modified: `internal/api/handlers/handlers_settings.go` — `negotiatedTLS` tracking + CompoundAuth in `runSMTPDiagnostic` + `authMethodLabel` rewritten to reflect auto-selection.
+
+### Why this matters
+The operator's first verbose-test trace (post-v0.10.221) failed at AUTH with `unencrypted connection` even though the STARTTLS step itself reported a clean TLSv1.3 handshake with a valid certificate — the diagnostic was lying about its own previous step. After J1 the AUTH guard reads from the same flag that gets set when the upgrade actually succeeds, so the report is internally consistent. After J2 the test (and every real alert email) auto-picks PLAIN or LOGIN depending on what the server offers; a mailserver advertising only LOGIN no longer needs a code change.
+
 ## [0.10.221] - 2026-05-18
 
 ### Fixed — SMTP test STARTTLS double-EHLO bug
