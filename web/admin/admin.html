@@ -188,12 +188,13 @@
     <!-- v0.10.212: shared control primitives used by flows + syslog + alerts + traps. -->
     <script defer src="/static/js/admin-controls.js"></script>
     <script defer src="/static/js/admin-flows.js"></script>
-    <script defer src="/static/js/cytoscape.min.js"></script>
-    <script defer src="/static/js/layout-base.js"></script>
-    <script defer src="/static/js/cose-base.js"></script>
-    <script defer src="/static/js/cytoscape-fcose.js"></script>
-    <script defer src="/static/js/diagram-cytoscape.js"></script>
-    <script defer src="/static/js/diagram-panels.js"></script>
+    <!-- v0.10.214 (bundle C3): Cytoscape (~421 KB across 4 files) is now
+         lazy-loaded by AdminCommon.loadCytoscape() the first time the
+         connections page is opened. Every other page skips the payload.
+         The eager <script> tags were:
+           cytoscape.min.js, layout-base.js, cose-base.js, cytoscape-fcose.js,
+           diagram-cytoscape.js, diagram-panels.js
+         All six are now injected on demand. -->
     <script defer src="/static/js/admin-common.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {

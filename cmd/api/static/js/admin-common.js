@@ -188,6 +188,145 @@
         });
     }
 
+    /* ------------------------------------------------------------------
+     * loadCytoscape — lazy-load the Cytoscape network-diagram bundle
+     * (v0.10.214, bundle C3).
+     *
+     * Why: ~421 KB across 4 files (cytoscape + layout-base + cose-base +
+     * cytoscape-fcose) plus our 2 wrappers (diagram-cytoscape + diagram-
+     * panels) used to load eagerly on every admin page even when the
+     * operator never opened the Connections tab. This loader injects
+     * them on first use and caches the resulting promise so subsequent
+     * calls are free.
+     *
+     * Returns a Promise that resolves when `window.FWDiagram` is ready
+     * to use. Safe to call repeatedly.
+     * ------------------------------------------------------------------ */
+    var __fwmonCytoscapePromise = null;
+    function loadCytoscape() {
+        if (window.FWDiagram && window.FWDiagram.Panels) {
+            return Promise.resolve(window.FWDiagram);
+        }
+        if (__fwmonCytoscapePromise) return __fwmonCytoscapePromise;
+
+        function inject(src) {
+            return new Promise(function(resolve, reject) {
+                var s = document.createElement('script');
+                s.src = src;
+                s.async = false; // preserve execution order
+                s.onload = function() { resolve(); };
+                s.onerror = function() { reject(new Error('Failed to load ' + src)); };
+                document.head.appendChild(s);
+            });
+        }
+
+        // Load order matters: core library, then layout deps, then fcose
+        // extension, then our wrappers.
+        __fwmonCytoscapePromise = inject('/static/js/cytoscape.min.js')
+            .then(function() { return inject('/static/js/layout-base.js'); })
+            .then(function() { return inject('/static/js/cose-base.js'); })
+            .then(function() { return inject('/static/js/cytoscape-fcose.js'); })
+            .then(function() { return inject('/static/js/diagram-cytoscape.js'); })
+            .then(function() { return inject('/static/js/diagram-panels.js'); })
+            .then(function() { return window.FWDiagram; })
+            ['catch'](function(err) {
+                __fwmonCytoscapePromise = null; // allow retry
+                throw err;
+            });
+        return __fwmonCytoscapePromise;
+    }
+
+    /* ------------------------------------------------------------------
+     * pollWhenVisible — visibility-gated refresher (v0.10.214, bundle C2).
+     *
+     * Drop-in replacement for `setInterval(fn, ms)` patterns used to refresh
+     * dashboards / lists / charts. The difference is that the timer is
+     * suspended whenever `document.hidden` is true (tab in another window,
+     * browser minimised, mobile screen off, etc.) — and resumes the moment
+     * the tab is visible again, optionally firing immediately on resume so
+     * the user doesn't see stale data after switching back.
+     *
+     * Why this matters:
+     *   - Before C2, every admin tab kept hammering /api endpoints even
+     *     when the operator was on another tab. On a fleet of 100 admin
+     *     browsers, that's hundreds of needless requests per minute.
+     *   - The connection-detail page's 30s chart refresh re-created the
+     *     uPlot canvas in a hidden tab — wasted CPU and memory pressure.
+     *   - Switching back to a tab that had been polling stale data was
+     *     also confusing: the first frame the user saw was an old number
+     *     until the next setInterval tick.
+     *
+     * Usage:
+     *   var handle = AdminCommon.pollWhenVisible(refreshFn, 15000);
+     *   // ... later ...
+     *   handle.stop();      // permanently cancels
+     *   handle.runNow();    // optional: trigger an immediate refresh
+     *
+     * Options:
+     *   { immediate: false }   skip the initial call (default true)
+     *   { onResume: false }    don't fire on visibilitychange→visible
+     *                          (default true)
+     * ------------------------------------------------------------------ */
+    function pollWhenVisible(fn, intervalMs, opts) {
+        opts = opts || {};
+        if (typeof fn !== 'function' || !(intervalMs > 0)) return { stop: function() {} };
+
+        var timer = null;
+        var stopped = false;
+        var lastRun = 0;
+
+        function safeFn() {
+            lastRun = Date.now();
+            try { fn(); } catch (e) { console.error('pollWhenVisible callback threw:', e); }
+        }
+
+        function schedule() {
+            if (stopped || timer != null) return;
+            timer = setInterval(function() {
+                if (document.hidden) return;
+                safeFn();
+            }, intervalMs);
+        }
+
+        function pause() {
+            if (timer != null) { clearInterval(timer); timer = null; }
+        }
+
+        function onVis() {
+            if (document.hidden) {
+                pause();
+            } else {
+                // If we've been hidden longer than the interval, fire once
+                // immediately so the user doesn't see stale data on tab return.
+                if (opts.onResume !== false && (Date.now() - lastRun) >= intervalMs) {
+                    safeFn();
+                }
+                schedule();
+            }
+        }
+
+        document.addEventListener('visibilitychange', onVis);
+
+        // Initial behaviour.
+        if (opts.immediate !== false) {
+            // Run immediately if we're visible right now, otherwise wait
+            // for visibilitychange.
+            if (!document.hidden) safeFn();
+        }
+        if (!document.hidden) schedule();
+
+        return {
+            stop: function() {
+                stopped = true;
+                pause();
+                document.removeEventListener('visibilitychange', onVis);
+            },
+            runNow: function() {
+                if (!stopped && !document.hidden) safeFn();
+            }
+        };
+    }
+
     function delegateEvent(eventType, actionMap) {
         document.addEventListener(eventType, function(e) {
             var el = e.target.closest('[data-action]');
@@ -534,6 +673,8 @@
         confirm: confirmModal,
         openModal: openModal,
         closeModal: closeModal,
+        pollWhenVisible: pollWhenVisible,
+        loadCytoscape: loadCytoscape,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

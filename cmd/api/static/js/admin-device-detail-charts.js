@@ -330,17 +330,30 @@
 
     // ----------------------------------------------------------------------
     // Chart 1: System Overview — CPU/Memory/Disk %.
+    //
+    // In-place update path (v0.10.214, bundle C4): the series count and
+    // formatter are stable across range changes (always CPU+Memory+Disk
+    // at the same %-format), so we can reuse the existing uPlot instance
+    // and just call setData(). Saves the ~30-50ms construction + GC on
+    // every range-pill click; range-pill spam in particular feels snappy
+    // now instead of stuttering.
     // ----------------------------------------------------------------------
     function renderOverview(buckets) {
         var host = document.getElementById('fwmon-chart-overview');
         if (!host) return;
-        host.innerHTML = '';
 
         var x   = buckets.map(function(b) { return Math.floor(b.bucket_ms / 1000); });
         var cpu = buckets.map(function(b) { return numOrNull(b.cpu_usage); });
         var mem = buckets.map(function(b) { return numOrNull(b.memory_usage); });
         var dsk = buckets.map(function(b) { return numOrNull(b.disk_usage); });
+        var data = [x, cpu, mem, dsk];
 
+        if (state.charts.overview) {
+            state.charts.overview.setData(data);
+            return;
+        }
+
+        host.innerHTML = '';
         var seriesDefs = [
             {},
             seriesLine('CPU',     P.cpu,    valuePct),
@@ -354,9 +367,7 @@
         opts.axes[1].values = function(u, vals) {
             return vals.map(function(v) { return v + '%'; });
         };
-        var chart = new uPlot(opts, [x, cpu, mem, dsk], host);
-        if (state.charts.overview) state.charts.overview.destroy();
-        state.charts.overview = chart;
+        state.charts.overview = new uPlot(opts, data, host);
     }
 
     // ----------------------------------------------------------------------
@@ -419,6 +430,9 @@
     // ----------------------------------------------------------------------
     // Chart 3: CPU Breakdown — stacked components. Hidden if all zero.
     // ----------------------------------------------------------------------
+    // In-place update path (v0.10.214, bundle C4): 7 fixed series, fixed
+    // %-formatter, no axis-unit switching — same setData()-reuse pattern
+    // as renderOverview.
     function renderCPUBreakdown(buckets) {
         var host = document.getElementById('fwmon-chart-cpu');
         var section = document.getElementById('cpu-breakdown-section');
@@ -432,19 +446,8 @@
             return;
         }
         if (section) section.style.display = '';
-        host.innerHTML = '';
 
         var x = buckets.map(function(b) { return Math.floor(b.bucket_ms / 1000); });
-        var seriesDefs = [
-            {},
-            seriesLine('user',    P.user,    valuePct),
-            seriesLine('system',  P.system,  valuePct),
-            seriesLine('nice',    P.nice,    valuePct),
-            seriesLine('iowait',  P.iowait,  valuePct),
-            seriesLine('irq',     P.irq,     valuePct),
-            seriesLine('softirq', P.softirq, valuePct),
-            seriesLine('idle',    P.idle,    valuePct)
-        ];
         var data = [
             x,
             buckets.map(function(b) { return numOrNull(b.cpu_user); }),
@@ -456,15 +459,30 @@
             buckets.map(function(b) { return numOrNull(b.cpu_idle); })
         ];
 
+        if (state.charts.cpu) {
+            state.charts.cpu.setData(data);
+            return;
+        }
+
+        host.innerHTML = '';
+        var seriesDefs = [
+            {},
+            seriesLine('user',    P.user,    valuePct),
+            seriesLine('system',  P.system,  valuePct),
+            seriesLine('nice',    P.nice,    valuePct),
+            seriesLine('iowait',  P.iowait,  valuePct),
+            seriesLine('irq',     P.irq,     valuePct),
+            seriesLine('softirq', P.softirq, valuePct),
+            seriesLine('idle',    P.idle,    valuePct)
+        ];
+
         var opts = commonOpts(host, '', seriesDefs, {
             range: smartPercentRange
         });
         opts.axes[1].values = function(u, vals) {
             return vals.map(function(v) { return v + '%'; });
         };
-        var chart = new uPlot(opts, data, host);
-        if (state.charts.cpu) state.charts.cpu.destroy();
-        state.charts.cpu = chart;
+        state.charts.cpu = new uPlot(opts, data, host);
     }
 
     // ----------------------------------------------------------------------

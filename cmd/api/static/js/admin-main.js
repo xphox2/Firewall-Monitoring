@@ -603,12 +603,16 @@
 
     function startConnRefresh() {
         stopConnRefresh();
-        connRefreshTimer = setInterval(pollConnectionStatuses, 15000);
+        // Visibility-gated (v0.10.214, bundle C2). The previous setInterval
+        // hit the status-summary endpoint every 15s even when the admin
+        // tab was hidden — meaningless work in a background tab.
+        connRefreshTimer = AC.pollWhenVisible(pollConnectionStatuses, 15000, { immediate: false });
     }
 
     function stopConnRefresh() {
         if (connRefreshTimer) {
-            clearInterval(connRefreshTimer);
+            if (typeof connRefreshTimer.stop === 'function') connRefreshTimer.stop();
+            else clearInterval(connRefreshTimer);
             connRefreshTimer = null;
         }
     }
@@ -642,7 +646,10 @@
                 }
             });
 
-            if (connChanges.length > 0 || deviceChanges.length > 0) {
+            // FWDiagram may not be loaded yet — diagram is lazy-loaded
+            // (v0.10.214, bundle C3). Status updates only run if the
+            // operator has actually opened the Connections tab.
+            if ((connChanges.length > 0 || deviceChanges.length > 0) && window.FWDiagram) {
                 FWDiagram.updateStatuses(connChanges, deviceChanges);
             }
 
@@ -650,7 +657,7 @@
             apiFetch(API_BASE + '/connections/vpn-map').then(function(vpnRes) {
                 if (vpnRes && vpnRes.data) {
                     currentVpnMap = vpnRes.data;
-                    FWDiagram.updateVPNBadges(currentVpnMap);
+                    if (window.FWDiagram) FWDiagram.updateVPNBadges(currentVpnMap);
                 }
             })['catch'](function(err) {
                 console.error('Failed to refresh VPN badges:', err);
@@ -1123,16 +1130,21 @@
         }).join('');
     }
 
-    // Syslog auto-refresh
+    // Syslog auto-refresh — visibility-gated (v0.10.214, bundle C2). The
+    // page-active check still applies so we don't run when on a different
+    // admin tab, plus the new gate suspends when the whole browser tab is
+    // hidden.
     var sysAutoRefreshEl = document.getElementById('syslog-auto-refresh');
     if (sysAutoRefreshEl) {
         sysAutoRefreshEl.addEventListener('change', function() {
             if (this.checked) {
-                syslogRefreshTimer = setInterval(function() {
+                syslogRefreshTimer = AC.pollWhenVisible(function() {
                     if (document.querySelector('#page-syslog.active')) loadSyslog();
-                }, 10000);
-            } else {
-                clearInterval(syslogRefreshTimer);
+                }, 10000, { immediate: false });
+            } else if (syslogRefreshTimer) {
+                if (typeof syslogRefreshTimer.stop === 'function') syslogRefreshTimer.stop();
+                else clearInterval(syslogRefreshTimer);
+                syslogRefreshTimer = null;
             }
         });
     }
@@ -2061,26 +2073,46 @@
     }
 
     // ---- Connection Diagram ----
+    // Cytoscape is lazy-loaded (v0.10.214, bundle C3). The diagram bundle
+    // (~421 KB) only fetches the first time an operator opens the
+    // Connections tab. Subsequent draws are cached.
     function drawConnectionDiagram() {
-        if (!FWDiagram.Panels.getCurrentPanelConnId()) {
-            var panelContainer = document.getElementById('conn-detail-panel-container');
-            if (panelContainer) panelContainer.innerHTML = '';
-        }
-
         if (currentDevices.length === 0) {
-            document.getElementById('connection-diagram').innerHTML =
-                '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
+            var host = document.getElementById('connection-diagram');
+            if (host) {
+                host.innerHTML =
+                    '<div class="loading" style="padding:60px 20px;">Add devices to see the network diagram</div>';
+            }
             return;
         }
 
-        FWDiagram.init('connection-diagram');
-        var siteNames = {};
-        currentSites.forEach(function(s) { siteNames[s.id] = s.name; });
-        FWDiagram.setCallbacks(
-            function(conn) { FWDiagram.Panels.showRichConnDetailPanel(conn); },
-            function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
-        );
-        FWDiagram.render(currentDevices, currentConnections, deviceSiteMap, currentVpnMap, siteNames);
+        var diagramHost = document.getElementById('connection-diagram');
+        if (diagramHost && !window.FWDiagram) {
+            diagramHost.innerHTML =
+                '<div class="loading" style="padding:60px 20px;">Loading network diagram…</div>';
+        }
+
+        AC.loadCytoscape().then(function() {
+            if (!window.FWDiagram) return;
+            if (!FWDiagram.Panels.getCurrentPanelConnId()) {
+                var panelContainer = document.getElementById('conn-detail-panel-container');
+                if (panelContainer) panelContainer.innerHTML = '';
+            }
+            FWDiagram.init('connection-diagram');
+            var siteNames = {};
+            currentSites.forEach(function(s) { siteNames[s.id] = s.name; });
+            FWDiagram.setCallbacks(
+                function(conn) { FWDiagram.Panels.showRichConnDetailPanel(conn); },
+                function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
+            );
+            FWDiagram.render(currentDevices, currentConnections, deviceSiteMap, currentVpnMap, siteNames);
+        })['catch'](function(err) {
+            console.error('Failed to load network diagram bundle:', err);
+            if (diagramHost) {
+                diagramHost.innerHTML =
+                    '<div class="error" style="padding:60px 20px;color:#f85149;">Failed to load network diagram. Try refreshing the page.</div>';
+            }
+        });
     }
     window.drawConnectionDiagram = drawConnectionDiagram;
 
@@ -3124,8 +3156,11 @@
     var initialPage = activateTabFromUrl();
     AC.fetchCsrfToken().then(function() { loadPageData(initialPage); });
 
-    adminRefreshTimer = setInterval(function() {
+    // Dashboard refresh — visibility-gated (v0.10.214, bundle C2). Page-
+    // active check stays so we don't refresh when on syslog/alerts/etc;
+    // the new gate also pauses when the whole browser tab is hidden.
+    adminRefreshTimer = AC.pollWhenVisible(function() {
         var activePage = document.querySelector('.page.active');
         if (activePage && activePage.id === 'page-dashboard') loadDashboard();
-    }, 30000);
+    }, 30000, { immediate: false });
 })();

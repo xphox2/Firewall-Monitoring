@@ -321,14 +321,16 @@
             if (!data) return;
 
             var canvas = document.getElementById('traffic-chart');
-            if (trafficChart) trafficChart.destroy();
 
             if (!Array.isArray(data) || data.length === 0) {
-                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
+                if (trafficChart) { trafficChart.destroy(); trafficChart = null; }
+                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#6e7681;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
                 return;
             }
 
             var labels = data.map(function(d) { return d.bucket.split(' ').pop() || d.bucket; });
+            var inSeries  = data.map(function(d) { return d.in_bytes; });
+            var outSeries = data.map(function(d) { return d.out_bytes; });
 
             // Throughput gauges — use server-computed bytes/sec, gauge max = 1 Gbps (125 MB/s)
             var oneGbps = 125000000; // 1 Gbps in bytes/sec
@@ -339,17 +341,30 @@
             document.getElementById('gauge-in-val').textContent = formatSpeed(tIn);
             document.getElementById('gauge-out-val').textContent = formatSpeed(tOut);
 
-            trafficChart = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Inbound', data: data.map(function(d) { return d.in_bytes; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Outbound', data: data.map(function(d) { return d.out_bytes; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: chartOptions()
-            });
+            // In-place update (v0.10.214, bundle C4). Previously this chart
+            // was destroyed and recreated every 30 seconds by the page's
+            // poll loop — roughly 30-50 ms of Chart.js construction +
+            // garbage collection per tick on a midrange browser. Re-using
+            // the existing instance and updating data is a few hundred
+            // microseconds.
+            if (trafficChart) {
+                trafficChart.data.labels = labels;
+                trafficChart.data.datasets[0].data = inSeries;
+                trafficChart.data.datasets[1].data = outSeries;
+                trafficChart.update('none'); // 'none' skips the animation on refresh
+            } else {
+                trafficChart = new Chart(canvas, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'Inbound',  data: inSeries,  borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                            { label: 'Outbound', data: outSeries, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                        ]
+                    },
+                    options: chartOptions()
+                });
+            }
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Error loading traffic chart:', err);
             AC.showError('Failed to load traffic chart');
@@ -552,10 +567,13 @@
     }
     init();
 
-    // Auto-refresh every 30s with race condition prevention
+    // Auto-refresh every 30s, with race-condition guard + visibility gating
+    // (v0.10.214, bundle C2). When the tab is hidden the timer suspends —
+    // saves a chart-rebuild + 2-3 fetches every 30s for a browser sitting
+    // in the background.
     var refreshTimeout = null;
     var isRefreshing = false;
-    setInterval(function() {
+    AC.pollWhenVisible(function() {
         if (isRefreshing) return;
         isRefreshing = true;
         refreshTimeout = Date.now();
@@ -573,5 +591,5 @@
         }).finally(function() {
             isRefreshing = false;
         });
-    }, 30000);
+    }, 30000, { immediate: false });
 })();

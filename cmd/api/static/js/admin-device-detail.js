@@ -1687,8 +1687,8 @@
     // old listener block was removed because the dropdown element no longer
     // exists in the rendered DOM.
 
-    // Auto-refresh every 60 seconds
-    setInterval(loadDevice, 60000);
+    // Auto-refresh every 60 seconds — visibility-gated (v0.10.214, bundle C2)
+    AC.pollWhenVisible(loadDevice, 60000, { immediate: false });
 
     // Initial load — wait for CSRF token fetch then load
     AC.fetchCsrfToken().then(function() {

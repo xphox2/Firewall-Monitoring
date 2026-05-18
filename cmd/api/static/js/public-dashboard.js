@@ -316,6 +316,9 @@
     }
 
     function tickUptimes() {
+        // Visibility gate (v0.10.214, bundle C2): no point paying for 1Hz DOM
+        // writes when the dashboard isn't on-screen.
+        if (document.hidden) return;
         var now = Date.now();
         Object.keys(uptimeTimers).forEach(function(wid) {
             var t = uptimeTimers[wid];
@@ -506,12 +509,27 @@
     // ---- Auto-refresh ----
     function startRefresh() {
         var interval = parseInt(displaySettings['public_refresh_interval']) || 30;
+        // Visibility-gated (v0.10.214, bundle C2). The previous setInterval
+        // re-fetched every widget every N seconds even when the public
+        // dashboard tab was hidden — wasted bandwidth on TVs/wallboards
+        // when the browser was minimised.
         refreshTimer = setInterval(function() {
+            if (document.hidden) return;
             allWidgetDefs.forEach(function(def) {
                 if (hiddenWidgets[def.id]) return;
                 renderWidgetContent(def);
             });
         }, interval * 1000);
+        document.addEventListener('visibilitychange', function() {
+            // On tab-becoming-visible, fire a refresh immediately so the
+            // operator doesn't see stale data after switching back.
+            if (!document.hidden) {
+                allWidgetDefs.forEach(function(def) {
+                    if (hiddenWidgets[def.id]) return;
+                    renderWidgetContent(def);
+                });
+            }
+        });
     }
 
     // ---- Event handlers ----

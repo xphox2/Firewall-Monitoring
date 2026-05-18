@@ -1,4 +1,43 @@
 # Changelog
+## [0.10.214] - 2026-05-18
+
+### Changed — admin-wide performance pass (Bundle C: C1 + C2 + C3 + C4)
+Third commit of the "improve the whole admin area" sweep. Three measurable wins after the foundation (A) + a11y (B) work landed: cut idle background work, trim the eager-JS payload, and stop re-creating chart canvases that could just be updated in place.
+
+#### Audit
+Spawned one parallel audit sub-agent covering polling loops + cytoscape load + chart re-creation. Findings:
+- 5 `setInterval` polling loops, only 1 page-gated; **0** visibility-gated.
+- ~421 KB of Cytoscape + extensions loaded eagerly on every admin page even when the operator never opens the Connections tab.
+- 3 chart-rebuild sites destroy+recreate uPlot/Chart.js instances on each refresh — worst is connection-detail traffic chart at 30 s cadence.
+
+#### C2 — Visibility-gated polling (`AdminCommon.pollWhenVisible`)
+- New `pollWhenVisible(fn, intervalMs, opts)` helper in `admin-common.js` returns `{ stop, runNow }`. Internally uses `setInterval` + `visibilitychange` to suspend the timer when `document.hidden` is true, resume on visible, and optionally re-fire immediately on resume so the operator never sees stale data after switching back to the tab.
+- Migrated 4 admin-side `setInterval` call sites: `pollConnectionStatuses` (15 s), dashboard refresh (30 s), syslog auto-refresh (10 s), device-detail full refresh (60 s), and connection-detail combined refresh (30 s).
+- Public dashboard (`public-dashboard.js`) gets inline visibility gates on its 1 Hz uptime ticker and N-second widget refresher — separate from the helper because the public dashboard doesn't load `admin-common.js`.
+
+#### C3 — Lazy-load Cytoscape (`AdminCommon.loadCytoscape`)
+- Removed the 6 eager `<script defer>` tags for cytoscape + layout-base + cose-base + cytoscape-fcose + diagram-cytoscape + diagram-panels from `web/admin/admin.html`.
+- New `loadCytoscape()` in `admin-common.js` injects them on demand (sequentially, preserving execution order via `script.async = false`) and caches the resulting Promise so subsequent calls are free.
+- `drawConnectionDiagram()` now awaits the loader, shows a "Loading network diagram…" message while fetching, and degrades to a clear error message if the bundle fails to load.
+- `pollConnectionStatuses` guards `FWDiagram.updateStatuses` and `FWDiagram.updateVPNBadges` with `window.FWDiagram` checks so the poll loop runs harmlessly until the diagram is first opened.
+- Net effect: ~421 KB of JS is no longer downloaded by operators who only ever use Syslog / Alerts / Traps / Flows. First-time Connections-tab open pays a one-time fetch.
+
+#### C4 — In-place chart updates (`chart.update()` / `setData()`)
+- Connection-detail traffic chart (`admin-connection-detail.js`, refreshed every 30 s by the page poll loop): replaced `trafficChart.destroy(); trafficChart = new Chart(...)` with `trafficChart.data = ...; trafficChart.update('none')` (the `'none'` mode skips the chart animation on auto-refresh so re-fetches don't flicker). First call still creates the chart; subsequent calls reuse the instance. Construction cost (~30-50 ms per tick on a midrange browser) is now amortised across the lifetime of the page instead of paid every 30 s.
+- Device-detail overview chart + CPU-breakdown chart (`admin-device-detail-charts.js`, refreshed on every range-pill click): replaced `new uPlot(...)` + post-hoc destroy with `chart.setData(data)` when an instance exists. Range-pill spam now feels snappy instead of stuttering. The network chart was left as-is because it dynamically switches between kbps and Mbps axis units across renders, which requires a full rebuild.
+
+### Files
+- Modified: `cmd/api/static/js/admin-common.js` — `pollWhenVisible`, `loadCytoscape`, exports.
+- Modified: `cmd/api/static/js/admin-main.js` — 3 setInterval migrations + diagram lazy-load wiring + FWDiagram guards.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — setInterval migration.
+- Modified: `cmd/api/static/js/admin-connection-detail.js` — setInterval migration + in-place chart update.
+- Modified: `cmd/api/static/js/admin-device-detail-charts.js` — in-place uPlot setData for overview + CPU charts.
+- Modified: `cmd/api/static/js/public-dashboard.js` — inline visibility gates.
+- Modified: `web/admin/admin.html` — removed 6 eager `<script defer>` cytoscape tags.
+
+### Why this matters
+A typical admin browser left open on the dashboard tab while the operator works in another window used to hit `/api/dashboard/stats` every 30 s, `/api/connections/status-summary` every 15 s, and various device-detail endpoints every 60 s — for hours. After C2 those polls suspend on tab hide and resume on focus. Wallboard / TV browsers running the public dashboard 24/7 were the worst offenders; the 1 Hz uptime ticker alone was 86,400 DOM writes per day per widget. After C3, an operator who only uses Syslog and Alerts never downloads the ~421 KB Cytoscape bundle. After C4, the connection-detail page consumes a flat memory and CPU baseline instead of a sawtooth.
+
 ## [0.10.213] - 2026-05-18
 
 ### Changed — admin-wide accessibility pass (Bundle B: B1 + B2 + B3 + B4)
