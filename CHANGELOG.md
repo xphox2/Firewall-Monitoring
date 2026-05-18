@@ -1,4 +1,29 @@
 # Changelog
+## [0.10.228] - 2026-05-18
+
+### Fixed — same stat-card flex-row bug on admin.html + connection-detail.html
+After fixing the visible firmware-string truncation on `/admin/devices/:id` in v0.10.227, the operator asked to check the rest of the admin area for the same bug class. An audit found the identical CSS conflict on two more pages — but the symptom was masked because the content happens to be short numeric counters and byte counts rather than long version strings, so nothing visibly truncated. The layout was still wrong (label sat *beside* value instead of stacked above it) and any future long-string content would have visibly broken in the same way.
+
+#### Pages fixed
+- **`web/admin/admin.html`** — local `<style>` block at line 93 declared `.stat-card { background: …; border: …; padding: 16px; }` but didn't set `display`, so the flex-row default from `admin-shared.css:770` leaked through. Affected the dashboard tile grid, the syslog stats grid (line 434), alerts stats grid (line 635), traps stats grid (line 779), and maintenance window stats grid (line 742). Five separate placements of the same broken pattern.
+- **`web/admin/connection-detail.html`** — same omission at line 16. Affected the top stat row (Bytes In/Out, Tunnels, Status).
+
+#### Pages NOT fixed (intentionally)
+- **`admin.html:703-725` (alert-policies)** — these stat-cards have a `.stat-icon` 📋/🔧/🌐 child plus a `.stat-content` wrapper. They were always meant to render icon-left-of-content, so flex-row IS the correct layout. The `:has(.stat-icon)` exception preserves it.
+- **`.expandable-msg` (admin.html:130)** — `cursor: pointer` confirms this is intentional click-to-expand truncation, not the same bug.
+- **`.fwmon-stat` (admin-design-system.css:327)** — the newer replacement class already implements the opt-in `.long` modifier pattern for long-string values, working as designed.
+- **`probes.html` / `sites.html` / `irc.html`** — render tables with naturally-wrapping cells, no truncating CSS.
+
+#### Approach
+Used `:has(.stat-icon)` for the icon-flex exception, which lets one CSS rule cover both layouts without any markup changes. `:has()` is supported in Chrome 105+ / Firefox 121+ / Safari 15.4+ (all shipped by 2023), so it's safe in 2026. Also added `word-break: break-word; overflow-wrap: anywhere;` to `.stat-value` so longer future content wraps inside the card rather than spilling out.
+
+### Files
+- Modified: `web/admin/admin.html` — `.stat-card` style now sets `display: block` by default with `:has(.stat-icon)` flex exception, plus value-wrap rules.
+- Modified: `web/admin/connection-detail.html` — same pattern applied to this page's inline `<style>` block.
+
+### Why this was worth a separate version
+v0.10.227 fixed the visible bug. v0.10.228 fixes the same bug *class* everywhere else it exists so the next person who decides to render a long-string value in a dashboard stat-card doesn't hit it again. Pattern-driven fix rather than symptom-driven.
+
 ## [0.10.227] - 2026-05-18
 
 ### Fixed — device-detail stat-card labels/values truncated ("FIRM... v7.4.12,build2902,2...")

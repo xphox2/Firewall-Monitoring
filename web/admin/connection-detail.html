@@ -13,9 +13,16 @@
         .tunnel-expand { display: none; }
         .tunnel-expand.open { display: table-row; }
         .tunnel-expand td { padding: 0; border-bottom: 1px solid #30363d; }
-        .stat-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        /* v0.10.228: same display reset as admin.html — admin-shared.css's
+         * .stat-card { display: flex } was leaking through because this
+         * file's override didn't reset it. No tiles on this page use the
+         * icon-flex layout (all are label-above-value), but the :has()
+         * exception is kept consistent so adding an icon-tile later works
+         * without further CSS surgery. */
+        .stat-card { display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .stat-card:has(.stat-icon) { display: flex; align-items: center; gap: 14px; }
         .stat-card .stat-label { font-size: 0.72rem; color: #6e7681; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
         .section-tab { display: inline-block; padding: 10px 20px; font-size: 0.875rem; color: #8b949e; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
         .section-tab:hover { color: #e6edf3; }
         .section-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }

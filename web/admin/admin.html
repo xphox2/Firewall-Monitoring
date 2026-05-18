@@ -91,9 +91,19 @@
         .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #6e7681; text-transform: uppercase; margin-top: 4px; }
         .probe-card .probe-stat .lbl .last-hour { color: #3fb950; display: block; font-size: 0.7rem; margin-top: 2px; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
-        .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        /* v0.10.228: reset the flex-row layout inherited from
+         * admin-shared.css:770 (which is designed for the alert-policies
+         * tiles further down that have a `.stat-icon` sibling). Every
+         * other stat-card on this page renders as label-above-value, so
+         * the default needs to be block. The :has(.stat-icon) exception
+         * re-enables flex for the alert-policies markup (admin.html:703)
+         * without requiring a markup change. Same bug class as the one
+         * fixed for /admin/devices/:id in v0.10.227 — pre-existing on
+         * this page but masked by all-numeric content. */
+        .stat-card { display: block; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .stat-card:has(.stat-icon) { display: flex; align-items: center; gap: 14px; }
         .stat-card .stat-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
         .stat-card .stat-value.good { color: #3fb950; }
         .stat-card .stat-value.bad { color: #f85149; }
         .stat-card .stat-value.accent { color: #58a6ff; }
