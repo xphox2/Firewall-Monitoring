@@ -3652,10 +3652,27 @@
         var url;
         try { url = new URL(href, window.location.href); } catch (e) { return; }
         if (url.origin !== window.location.origin) return;
-        if (!url.pathname.indexOf('/admin/api/') === 0 && url.pathname.indexOf('/admin/') !== 0) return;
-        // Device-detail / connection-detail are NOT in SPA_PAGES — they
-        // are separate HTML documents; let those load normally.
-        var seg = url.pathname.replace(/^\/admin\/?/, '').split('/')[0];
+        // Filter to admin page navigations; skip admin API and non-admin
+        // URLs. Earlier code had a precedence bug —
+        //   if (!url.pathname.indexOf('/admin/api/') === 0 && ...)
+        // evaluates as (!indexOf) === 0, which is always false, so the
+        // early return never fired. Fixed in v0.10.225.
+        if (url.pathname.indexOf('/admin/') !== 0) return;       // not an admin page
+        if (url.pathname.indexOf('/admin/api/') === 0) return;   // admin API call, not a page
+        // Split off the segments under /admin/. If there's more than one
+        // segment (e.g. /admin/devices/123, /admin/connections/42), this
+        // is a DETAIL page served from a separate HTML document
+        // (device-detail.html, connection-detail.html — see cmd/api/main.go
+        // routes 409-414). Earlier code only checked the FIRST segment
+        // against SPA_PAGES, so /admin/devices/123 matched 'devices', the
+        // interceptor preventDefault()'d the click, pushed the URL onto
+        // history, and called loadPageData('devices') — which reloads the
+        // devices LIST. URL bar said /admin/devices/123, page showed the
+        // list. That was the reported bug. Fix: bail out the moment we
+        // see a deep path so the browser navigates natively.
+        var pathSegs = url.pathname.replace(/^\/admin\/?/, '').replace(/\/$/, '').split('/').filter(Boolean);
+        if (pathSegs.length > 1) return;
+        var seg = pathSegs[0] || '';
         if (!SPA_PAGES[seg || 'dashboard']) return;
 
         ev.preventDefault();
@@ -3694,6 +3711,23 @@
 
     var initialPage = activateTabFromUrl();
     AC.fetchCsrfToken().then(function() { loadPageData(initialPage); });
+
+    // popstate — re-derive page from the URL after browser back/forward.
+    // Without this, every sidebar tab click pushed a history entry but
+    // the back button only changed the URL bar — the view stayed put
+    // because nothing was listening for the transition. Now back/forward
+    // re-runs activateTabFromUrl() (which switches the active page +
+    // nav-item) and then reseeds analytics pages from URL query string
+    // or calls loadPageData for non-analytics pages. Added v0.10.225.
+    window.addEventListener('popstate', function() {
+        var page = activateTabFromUrl();
+        if (page !== 'connections') stopConnRefresh();
+        if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+            analyticsPages[page].reseedFromURL();
+        } else {
+            loadPageData(page);
+        }
+    });
 
     // Dashboard refresh — visibility-gated (v0.10.214, bundle C2). Page-
     // active check stays so we don't refresh when on syslog/alerts/etc;

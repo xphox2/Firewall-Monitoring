@@ -1,4 +1,55 @@
 # Changelog
+## [0.10.225] - 2026-05-18
+
+### Fixed — admin SPA navigation: detail-page clicks lost in interceptor + two related bugs
+User reported: clicking a device row at `/admin/devices` changes the URL bar to `/admin/devices/<id>` but the page never actually loads the detail view — it stays on the devices list. A scan of the admin area click/history surface turned up the same bug class affecting `/admin/connections/<id>` and a pair of related navigation bugs (one latent precedence error, one missing handler). All three fixed here.
+
+#### Primary bug — interceptor swallows deep `/admin/*` paths
+The global SPA click interceptor in `cmd/api/static/js/admin-main.js` extracted only the FIRST path segment under `/admin/` to decide whether the click should be intercepted:
+
+```js
+var seg = url.pathname.replace(/^\/admin\/?/, '').split('/')[0];
+if (!SPA_PAGES[seg || 'dashboard']) return;
+```
+
+For a click on `/admin/devices/123` this yields `seg='devices'`, which IS in SPA_PAGES — so the interceptor called `ev.preventDefault()`, pushed the URL onto history, and ran `loadPageData('devices')`. That last call reloads the devices LIST. So the URL bar updated, the browser was blocked from following the link, and the user saw the same list they were already on. The detail page (a separate HTML document — `device-detail.html` served by `admin.GET("/devices/:id", ...)` in `cmd/api/main.go:409`) never got a chance to load.
+
+**Fix:** count the segments under `/admin/` and bail out as soon as we see more than one. The browser then navigates natively, the backend serves the detail HTML, the page loads correctly. The interceptor's job is only top-level tab navigation (`/admin/devices`, `/admin/syslog`, etc.) — deep paths are *not* part of the SPA.
+
+This same path affected every detail-page link in the app:
+- Device-name links in the devices table (`admin-main.js:586`)
+- Device-name links in the interfaces table (`admin-main.js:698`)
+- "Details" links in both connections tables (`admin-main.js:840` and `931`)
+- `<a href="/admin/connections/${id}">Full Page →</a>` in `diagram-panels.js:135`
+- `<a href="/admin/devices/${id}">` device chips in tunnel rows (`diagram-panels.js:492`)
+- `AC.deviceLink()` / `AC.connectionLink()` builders in `admin-common.js:212/220`
+
+All of these go through the same interceptor and were broken in the same way — all fixed by the same one-line change.
+
+#### Latent bug — precedence error on the `/admin/api/` early-return
+Line 3655 read:
+
+```js
+if (!url.pathname.indexOf('/admin/api/') === 0 && url.pathname.indexOf('/admin/') !== 0) return;
+```
+
+JavaScript operator precedence makes this `(!url.pathname.indexOf('/admin/api/')) === 0 && ...`. The unary `!` runs first: it converts the indexOf integer to a boolean, so the left side is always either `(true === 0)` or `(false === 0)` — both are `false`. `false && X` is also `false`, so the early return *never fired*. The intent was clearly two checks: skip if the URL is an admin API call, and skip if it isn't an admin page at all. Rewritten as two separate `return` statements to make the logic explicit.
+
+In practice this bug was latent because no `<a href="/admin/api/...">` link ever shows up in the rendered DOM — the API surface is fetched via XHR. But it's a footgun if any future code adds such a link.
+
+#### Missing handler — `popstate` listener
+No code listened for `popstate`, so browser back/forward inside the SPA changed the URL bar but did not refresh the view. Example: user opens `/admin/devices`, clicks Syslog in the sidebar (push to `/admin/syslog`), clicks back — URL went back to `/admin/devices` but the syslog table stayed visible.
+
+Added a listener that re-runs `activateTabFromUrl()` (which switches the active page DOM class) and then calls `loadPageData(page)` for non-analytics pages or `analyticsPages[page].reseedFromURL()` for the analytics pages (syslog / alerts / flows / traps) so their filter chips and query state catch up from `window.location.search`.
+
+This does NOT apply to back-navigation from a detail page (`/admin/devices/123` → `/admin/devices`) because those are cross-document — the browser does a full load of admin.html, popstate doesn't fire, and the initial `activateTabFromUrl()` + `loadPageData()` call at the bottom of the IIFE handles it. The new listener only matters for within-SPA history transitions.
+
+### Files
+- Modified: `cmd/api/static/js/admin-main.js` — three-line fix to the interceptor's segment check, two-line fix to the precedence error, ~12-line `popstate` listener.
+
+### Why this matters
+The bug class is "SPA interceptor too aggressive" — any pattern that takes over every `/admin/*` link click is one bad segment-check away from breaking detail-page navigation site-wide. Fixing the check at the source means every existing detail link works, and any new detail-page routes added in the future automatically work without each one needing manual exemption.
+
 ## [0.10.224] - 2026-05-18
 
 ### Reverted + replaced — research-backed SMTP test fixes
