@@ -1,4 +1,48 @@
 # Changelog
+## [0.10.230] - 2026-05-18
+
+### Fixed — connection-detail dead features (Phase 2 / Traffic Analysis tabs unreachable)
+Audit of `/admin/connections/:id` after the v0.10.229 device-detail sweep found that a half-finished Tailwind refactor had been shipped: two of the page's five section tabs (Phase 2 Selectors, Traffic Analysis) were **completely unreachable** from the UI, plus the page had duplicate HTML IDs and broken chevron affordance. Four real bugs, fixed here.
+
+#### 1. Phase 2 + Traffic Analysis tab buttons never appeared
+Tab buttons at `connection-detail.html:72-73` had `class="section-tab hidden"`. JS at `admin-connection-detail.js:144,148` tried to reveal them with:
+
+```js
+document.getElementById('tab-flows').style.display = data.has_flow_data ? '' : 'none';
+document.getElementById('tab-phase2').style.display = p2matches.length > 0 ? '' : 'none';
+```
+
+But `.hidden { display: none }` is defined in `admin-shared.css` and `style.display = ''` only clears the *inline* property — it can't override a stylesheet rule. So the tabs stayed `display: none` forever. Operators viewing a connection with active Phase 2 selectors or sFlow data had no way to access either visualization. Fixed by switching to `classList.toggle('hidden', !condition)` so the `.hidden` class is properly removed when the data condition warrants it.
+
+Same bug also hit `flow-empty` (`admin-connection-detail.js:391`) — the "sFlow enabled but no samples match" banner could never appear because its element also has `class="hidden …"` and the same inline-vs-class precedence problem. Fixed the same way.
+
+#### 2. Duplicate IDs across orphaned-refactor blocks
+The page had two copies of `tab-content-dst-tunnels` (lines 125-135 + 168-178), `tab-content-phase2` (137-143 + 180-186), and `tab-content-flows` (145-166 + 188-244). The first set used the legacy `.card` / `.tunnel-table` CSS classes defined in the inline `<style>` block, the second set used Tailwind utility classes. Same content rendered with different styling, duplicated.
+
+That meant 9 inner element IDs were also duplicated: `dst-tunnels-table`, `dst-tunnels-title`, `phase2-matches-container`, `flow-range-select`, `flow-empty`, `flow-content`, and all four flow chart canvases (`proto-chart`, `flow-time-chart`, `top-src-chart`, `top-dst-chart`) plus `convos-table`. Per HTML5 spec `getElementById` returns the first match — so JS sometimes wrote to the unreachable orphan elements while `switchTab` activated the legacy block.
+
+#### 3. Traffic Analysis charts were unreachable even bypassing tab visibility
+The orphan `tab-content-flows` block at lines 188-244 had `class="hidden"` — only one class, missing `.tab-content`. `switchTab` (`admin-connection-detail.js:502-510`) iterates `.tab-content` elements and toggles `.active` on them. The orphan never matched, so it was never activated. The four flow chart canvases lived only inside that orphan block, so even if the Traffic Analysis tab button had been reachable, the user would have seen the empty `flow-content` placeholder from the *legacy* block (line 164: `<div id="flow-content"></div>`), with the actual charts permanently hidden in the orphan.
+
+#### Fix
+Consolidated into one canonical block. The three legacy blocks (125-166) kept their styling for src/dst-tunnels + Phase 2 (matches the existing src-tunnels styling at line 113-123). The legacy `tab-content-flows` had its empty `flow-content` placeholder replaced with the rich charts/tiles markup that previously lived in the orphan. All three orphan blocks (168-244) deleted. Net: 9 duplicate IDs eliminated, 100 lines removed, Traffic Analysis charts now reachable.
+
+#### 4. Chevron rotation on tunnel-row expand was a no-op
+JS at `admin-connection-detail.js:261-266` toggles `.open` on the `.chevron` span when a tunnel row is expanded. The matching CSS rule for the rotation existed only as `.panel-tunnel-row .chevron.open { transform: rotate(90deg) }` inside `web/admin/admin.html` (scoped to the diagram-panel context on a different page), so on connection-detail the rotation never fired — the ► glyph stayed pointing right whether the row was expanded or collapsed.
+
+Added `.chevron` / `.chevron.open` rules to the inline `<style>` block on connection-detail.html plus a `.tunnel-row:hover` rule that admin-shared.css had only for `.panel-tunnel-row`. The affordance now works.
+
+### Audit findings deliberately NOT fixed
+- **`setTrafficRange` / `setFlowRange` reference non-existent containers** (`admin-connection-detail.js:376,493` query `#traffic-range .range-pill` / `#flow-range .range-pill` — neither container exists in the markup). The querySelectorAll returns empty, the loop does nothing. Both functions still work because they also drive the actual `<select>` dropdowns. Dead code; leaving for a future cleanup pass.
+- **The audit claimed `tailwind.css` was stale** ("none of the arbitrary-value classes used on this page exist"). I verified by reading the compiled file — `bg-[#0d1117]`, `text-[#58a6ff]`, `text-[0.78rem]`, `h-[250px]`, etc. are all present. False alarm in the audit; no rebuild needed.
+
+### Files
+- Modified: `web/admin/connection-detail.html` — added chevron CSS rules to the inline `<style>` block, removed the three orphan tab-content blocks (lines 168-244), moved the flow-content rich charts/tiles into the legacy `tab-content-flows` block.
+- Modified: `cmd/api/static/js/admin-connection-detail.js` — switched the three `.hidden`-elements (tab-flows / tab-phase2 / flow-empty) from inline `style.display` toggling to `classList.toggle('hidden', !condition)`.
+
+### Why this hadn't been reported
+A connection-detail page on a deployment with no Phase 2 SA matches AND no sFlow data would never *attempt* to show those tabs, so the broken JS path doesn't fire and the operator sees only Overview + Source/Destination Tunnels — which work. The bugs manifest only when there's data to display. That's consistent with the operator never having reported it.
+
 ## [0.10.229] - 2026-05-18
 
 ### Fixed — five device-detail CSS bugs surfaced by audit

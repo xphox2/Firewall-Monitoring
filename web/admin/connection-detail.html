@@ -13,6 +13,16 @@
         .tunnel-expand { display: none; }
         .tunnel-expand.open { display: table-row; }
         .tunnel-expand td { padding: 0; border-bottom: 1px solid #30363d; }
+        /* v0.10.230: chevron rotation on tunnel-row expand. JS toggles
+         * .open on the .chevron span (admin-connection-detail.js:262/265).
+         * The matching rule existed only as `.panel-tunnel-row .chevron.open`
+         * in admin.html (the diagram panel), so the rotation was a no-op
+         * on this page — clicking a tunnel row expanded the detail but
+         * the ► glyph stayed pointing right instead of becoming ▼. */
+        .tunnel-row { cursor: pointer; }
+        .tunnel-row:hover td { background: #1c2128; }
+        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #6e7681; margin-right: 4px; }
+        .chevron.open { transform: rotate(90deg); }
         /* v0.10.228: same display reset as admin.html — admin-shared.css's
          * .stat-card { display: flex } was leaking through because this
          * file's override didn't reset it. No tiles on this page use the
@@ -142,6 +152,15 @@
             </div>
         </div>
 
+        <!-- v0.10.230: this tab-content block was previously DUPLICATED below
+             at lines 188-244 — the first copy here had the time-range
+             dropdown and an empty <div id="flow-content"></div>, the
+             second (now-removed) copy had all the chart canvases and stat
+             tiles but lacked the `.tab-content` class so switchTab could
+             never activate it. Duplicate IDs across both copies meant
+             getElementById returned the unreachable orphan elements while
+             switchTab only ever showed the empty placeholder block.
+             Consolidated into one tab-content with the full charts inline. -->
         <div class="hidden tab-content" id="tab-content-flows">
             <div class="card mb-4">
                 <h2 class="text-base font-semibold mb-4">sFlow Traffic Analysis</h2>
@@ -160,50 +179,7 @@
                         <option value="8760">1y</option>
                     </select>
                 </div>
-                <div id="flow-empty" class="hidden" style="background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);color:#58a6ff;padding:14px;border-radius:8px;font-size:0.875rem;margin-bottom:16px;">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
-                <div id="flow-content"></div>
-            </div>
-        </div>
-
-        <div class="hidden" id="tab-content-dst-tunnels">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4" id="dst-tunnels-title">Destination Tunnels</h2>
-                <div class="overflow-x-auto">
-                    <table id="dst-tunnels-table" class="w-full border-collapse">
-                        <thead><tr><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider"></th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Phase 1</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Phase 2</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Type</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Status</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Remote GW</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Local Subnet</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Remote Subnet</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes In</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Bytes Out</th><th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Uptime</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div class="hidden" id="tab-content-phase2">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4">IPSec Phase 2 Selector Matches</h2>
-                <p class="text-[#8b949e] text-sm mb-4">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
-                <div id="phase2-matches-container"></div>
-            </div>
-        </div>
-
-        <div class="hidden" id="tab-content-flows">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4">sFlow Traffic Analysis</h2>
-                <div class="flex gap-3 mb-3 items-center">
-                    <label class="text-[0.78rem] text-[#8b949e]">Time Range:</label>
-                    <select class="chart-range-select" id="flow-range-select">
-                        <option value="0.25">15m</option>
-                        <option value="0.5">30m</option>
-                        <option value="1">1h</option>
-                        <option value="6">6h</option>
-                        <option value="12">12h</option>
-                        <option value="24" selected>24h</option>
-                        <option value="168">1w</option>
-                        <option value="720">1m</option>
-                        <option value="2160">3m</option>
-                        <option value="8760">1y</option>
-                    </select>
-                </div>
-                <div id="flow-empty" class="hidden bg-[rgba(56,139,253,0.08)] border border-[rgba(56,139,253,0.2)] text-[#58a6ff] p-3.5 rounded-lg text-sm">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
+                <div id="flow-empty" class="hidden bg-[rgba(56,139,253,0.08)] border border-[rgba(56,139,253,0.2)] text-[#58a6ff] p-3.5 rounded-lg text-sm mb-4">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
                 <div id="flow-content">
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
                         <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#6e7681] mb-2">Total Bytes</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-bytes">-</div></div>

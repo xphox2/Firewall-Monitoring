@@ -140,12 +140,17 @@
             var statusEl = document.getElementById('stat-status');
             statusEl.innerHTML = '<span class="badge ' + conn.status + '">' + (conn.status || 'unknown').toUpperCase() + '</span>';
 
-            // Show/hide flows tab
-            document.getElementById('tab-flows').style.display = data.has_flow_data ? '' : 'none';
+            // Show/hide flows tab. v0.10.230: was setting style.display = '',
+            // which can't override the .hidden { display: none } class on
+            // the tab button (admin-shared.css). The tab stayed invisible
+            // even when data was present — Traffic Analysis was effectively
+            // a dead feature. Toggle the .hidden class directly so the
+            // visibility matches the data condition.
+            document.getElementById('tab-flows').classList.toggle('hidden', !data.has_flow_data);
 
-            // Show/hide Phase 2 matches tab
+            // Show/hide Phase 2 matches tab (same .hidden bug as above)
             var p2matches = data.phase2_matches || [];
-            document.getElementById('tab-phase2').style.display = p2matches.length > 0 ? '' : 'none';
+            document.getElementById('tab-phase2').classList.toggle('hidden', p2matches.length === 0);
             renderPhase2Matches(p2matches, srcName, dstName);
 
             // Render tunnel tables
@@ -388,7 +393,13 @@
             if (!data) return;
 
             var hasData = data.total_flows > 0;
-            document.getElementById('flow-empty').style.display = hasData ? 'none' : '';
+            // v0.10.230: flow-empty has class="hidden …" in the markup, so
+            // setting style.display = '' can't unhide it (the .hidden class
+            // wins). Toggle the class directly so the "no samples yet"
+            // banner actually appears when sFlow is enabled but no samples
+            // match the connection's tunnel interfaces. flow-content has no
+            // such class so plain style.display works there.
+            document.getElementById('flow-empty').classList.toggle('hidden', hasData);
             document.getElementById('flow-content').style.display = hasData ? '' : 'none';
             if (!hasData) return;
 
