@@ -232,19 +232,58 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	var cfg models.DeviceAlertConfig
-	if err := c.ShouldBindJSON(&cfg); err != nil {
+	// v0.10.234: load existing first, then bind the request onto it. The
+	// previous code did ShouldBindJSON into a FRESH struct then Save'd
+	// the whole thing — any field absent from the PUT body landed as Go
+	// zero-value, so a partial edit silently wiped sibling fields (memory
+	// threshold zeroed when only cpu was sent, alerts_enabled flipped to
+	// false because the bool zero is false, policy_id cleared, etc.).
+	// encoding/json (which ShouldBindJSON wraps) only writes struct fields
+	// that ARE present in the JSON body, so loading first preserves the
+	// untouched columns. The "create if absent" path keeps the model's
+	// AlertsEnabled=true default.
+	cfg, err := h.db.GetDeviceAlertConfig(id)
+	if err != nil {
+		cfg = &models.DeviceAlertConfig{DeviceID: id, AlertsEnabled: true}
+	}
+	if err := c.ShouldBindJSON(cfg); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
 		return
 	}
-	cfg.DeviceID = id
+	cfg.DeviceID = id // prevent client from rewriting the FK
 
-	if err := h.db.UpsertDeviceAlertConfig(&cfg); err != nil {
+	if msg := validateAlertConfigThresholds(cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold, cfg.CooldownMinutes); msg != "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(msg))
+		return
+	}
+
+	if err := h.db.UpsertDeviceAlertConfig(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save device alert config"))
 		return
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(cfg))
+}
+
+// validateAlertConfigThresholds enforces sensible ranges shared by both the
+// device and site alert-config upserts. v0.10.234: previously no validation
+// at all, so a buggy UI could persist negative thresholds or 200% CPU.
+func validateAlertConfigThresholds(cpu, mem, disk float64, sessions, cooldown int) string {
+	for _, p := range []struct {
+		name string
+		val  float64
+	}{{"cpu_threshold", cpu}, {"memory_threshold", mem}, {"disk_threshold", disk}} {
+		if p.val < 0 || p.val > 100 {
+			return p.name + " must be between 0 and 100"
+		}
+	}
+	if sessions < 0 {
+		return "session_threshold must be non-negative"
+	}
+	if cooldown < 0 {
+		return "cooldown_minutes must be non-negative"
+	}
+	return ""
 }
 
 func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
@@ -295,14 +334,26 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	var cfg models.SiteAlertConfig
-	if err := c.ShouldBindJSON(&cfg); err != nil {
+	// v0.10.234: same load-then-bind pattern as UpsertDeviceAlertConfig
+	// above. See the comment there for the rationale. SiteAlertConfig has
+	// no AlertsEnabled column (site configs always apply when present);
+	// the rest of the threshold/cooldown surface mirrors DeviceAlertConfig.
+	cfg, err := h.db.GetSiteAlertConfig(id)
+	if err != nil {
+		cfg = &models.SiteAlertConfig{SiteID: id}
+	}
+	if err := c.ShouldBindJSON(cfg); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
 		return
 	}
-	cfg.SiteID = id
+	cfg.SiteID = id // prevent client from rewriting the FK
 
-	if err := h.db.UpsertSiteAlertConfig(&cfg); err != nil {
+	if msg := validateAlertConfigThresholds(cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold, cfg.CooldownMinutes); msg != "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(msg))
+		return
+	}
+
+	if err := h.db.UpsertSiteAlertConfig(cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save site alert config"))
 		return
 	}

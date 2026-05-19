@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.234] - 2026-05-18
+
+### Fixed — backend zero-value Save footgun (deferred from v0.10.233 audit)
+The v0.10.233 sweep noted three handler-level instances of the same bug class that v0.10.226 had finally diagnosed in `UpdateSettings`: a struct decoded directly from the request body, then handed to `db.Save`, will UPDATE every column — so any field absent from a partial PUT lands as a Go zero-value and silently wipes the existing column. This entry fixes the three remaining handlers:
+
+#### 1. `UpsertDeviceAlertConfig` (`handlers_alert_policies.go:226`)
+Previous flow: `var cfg models.DeviceAlertConfig; c.ShouldBindJSON(&cfg); db.UpsertDeviceAlertConfig(&cfg)`. PUT `{"cpu_threshold": 95}` on a device with full thresholds and a policy binding would, after the save, leave that device with:
+- `memory_threshold = 0`, `disk_threshold = 0`, `session_threshold = 0`, `cooldown_minutes = 0`
+- `alerts_enabled = false` (because Go bool zero is false — alerts were silently disabled by editing CPU)
+- `policy_id = NULL` (the device fell back to the default policy)
+
+Fix: load the existing row first, bind the JSON onto it, then save. `encoding/json` (which `c.ShouldBindJSON` wraps) only writes struct fields that ARE present in the body, so untouched columns keep their values. If the row doesn't exist yet, seed `&DeviceAlertConfig{DeviceID:id, AlertsEnabled:true}` so the "create on first edit" path keeps the model's intended default.
+
+Defensive `cfg.DeviceID = id` after binding prevents a client from rewriting the foreign key via the request body.
+
+#### 2. `UpsertSiteAlertConfig` (`handlers_alert_policies.go:328`)
+Identical pattern, identical fix. `SiteAlertConfig` has no `AlertsEnabled` column (site configs always apply when present), so the create-if-absent path just seeds `&SiteAlertConfig{SiteID:id}`. The threshold/cooldown surface mirrors the device handler.
+
+#### 3. `UpdateMaintenanceWindow` (`handlers_maintenance.go:73`)
+The most visible of the three. Previous flow loaded `existing` only as an "does this ID exist?" check, then bound the request body into a FRESH `MaintenanceWindow` and called `Save`. Any field absent from the PUT body wiped the row: `recur_rule`, `recur_days`, `alert_types`, `notes`, `suppress_all`, `recurring`. A user editing just the end time of a weekly maintenance window would lose the entire recurrence schedule on save.
+
+Fix: `Gorm().First(&window, id)` to load directly into `window`, bind JSON onto it, then save. Re-asserts `window.ID = id` after binding to prevent PK rewrite.
+
+#### 4. Shared threshold validation (`validateAlertConfigThresholds`)
+Both alert-config upserts gained range validation that was previously absent — CPU/memory/disk must be 0-100, session and cooldown must be non-negative. Previously the UI could (and during one debug session in v0.10.232 nearly did) persist 200% CPU or negative thresholds.
+
+#### Tests
+Six new tests in `handlers_partial_update_test.go` lock the fix in:
+- `TestUpsertDeviceAlertConfig_partial_update_preserves_other_fields` — seeds a full config, PUTs `{"cpu_threshold": 95}`, asserts every other column survives. This test FAILS against the v0.10.233 code.
+- `TestUpsertDeviceAlertConfig_rejects_invalid_threshold` — PUTs `cpu_threshold: 150`, expects 400.
+- `TestUpsertDeviceAlertConfig_creates_when_absent` — verifies `AlertsEnabled` defaults to `true` on insert.
+- `TestUpsertSiteAlertConfig_partial_update_preserves_other_fields` — same shape, site variant.
+- `TestUpdateMaintenanceWindow_partial_update_preserves_other_fields` — seeds a recurring weekly window, PUTs only `end_time`, asserts `recur_rule`/`recur_days`/`alert_types`/`notes`/`suppress_all`/`recurring`/`device_id` all preserved.
+- `TestUpdateMaintenanceWindow_rejects_end_before_start` — guards the existing validation.
+
+### Why the bug kept reappearing
+`db.Save(&struct)` is GORM's natural ergonomic API — it looks like "save this object." But its semantic is "UPDATE every column to the values currently in this object," which is fine when the object was loaded from the DB and then mutated, and catastrophic when the object came straight from JSON decoding (because absent fields are now Go zero-values masquerading as the user's intent). The canonical safe shape across this codebase is either (a) load-existing → bind onto it → save, used by these three handlers now, or (b) bind into a fresh struct → build an allow-listed `map[string]interface{}` → `db.Model(...).Updates(map)`, used by `handlers_devices.go`. Both patterns make the "field was not in the body" case observable.
+
 ## [0.10.233] - 2026-05-18
 
 ### Fixed — comprehensive bundle from 4-agent codebase sweep
