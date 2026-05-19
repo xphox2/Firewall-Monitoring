@@ -77,15 +77,20 @@
             })
             ['catch'](function(e) {
                 if (e.message === 'Not authenticated') return;
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
+                // v0.10.233: #error / #content carry class="hidden" in the
+                // markup (device-detail.html:44, 46). style.display = 'block'
+                // worked only because inline beats class. Same trap as the
+                // v0.10.230/231/232 sweep — switched to classList toggling
+                // so removing the higher-specificity class can't break it.
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('error').classList.remove('hidden');
                 document.getElementById('error').textContent = e.message;
             });
     }
 
     function renderDevice() {
-        document.getElementById('loading').style.display = 'none';
-        document.getElementById('content').style.display = 'block';
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('content').classList.remove('hidden');
 
         var dev = deviceData.device;
         document.getElementById('deviceName').textContent = dev.name || dev.hostname || 'Unknown';
@@ -533,10 +538,10 @@
 
         if (filtered.length === 0) {
             body.innerHTML = '';
-            empty.style.display = 'block';
+            empty.classList.remove('hidden');
             return;
         }
-        empty.style.display = 'none';
+        empty.classList.add('hidden');
 
         // Sort: up first, then by name
         filtered.sort(function(a, b) {
@@ -686,8 +691,8 @@
         var body = document.getElementById('vpnBody');
         var empty = document.getElementById('vpnEmpty');
 
-        if (vpn.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (vpn.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         body.innerHTML = vpn.map(function(v) {
             var hasTraffic = (v.bytes_in > 0) || (v.bytes_out > 0);
@@ -752,8 +757,8 @@
         var empty = document.getElementById('sensorEmpty');
         var summary = document.getElementById('sensorSummary');
 
-        if (sensors.length === 0) { container.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (sensors.length === 0) { container.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
         summary.textContent = sensors.length + ' sensors';
 
         container.innerHTML = sensors.map(function(s) {
@@ -801,8 +806,8 @@
         var empty = document.getElementById('procEmpty');
         var summary = document.getElementById('procSummary');
 
-        if (procs.length === 0) { container.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (procs.length === 0) { container.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         var avg = procs.reduce(function(s, p) { return s + p.usage; }, 0) / procs.length;
         summary.textContent = procs.length + ' cores, avg ' + avg.toFixed(1) + '%';
@@ -829,8 +834,8 @@
         var body = document.getElementById('alertBody');
         var empty = document.getElementById('alertEmpty');
 
-        if (alerts.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (alerts.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         body.innerHTML = alerts.map(function(a) {
             return '<tr>' +
@@ -856,8 +861,8 @@
         var body = document.getElementById('pingBody');
         var empty = document.getElementById('pingEmpty');
 
-        if (pings.length === 0) { body.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (pings.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         body.innerHTML = pings.map(function(p) {
             return '<tr>' +
@@ -884,8 +889,8 @@
         var empty = document.getElementById('haEmpty');
         var header = document.getElementById('haHeader');
 
-        if (!ha.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (!ha.length) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         var mode = ha[0].system_mode || 'unknown';
         var group = ha[0].group_name || '';
@@ -917,8 +922,8 @@
         var content = document.getElementById('securityContent');
         var empty = document.getElementById('securityEmpty');
 
-        if (!sec) { content.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (!sec) { content.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         content.innerHTML =
             '<h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Antivirus</h3>' +
@@ -951,8 +956,8 @@
         var body = document.getElementById('sdwanBody');
         var empty = document.getElementById('sdwanEmpty');
 
-        if (!sdwan.length) { body.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (!sdwan.length) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
 
         body.innerHTML = sdwan.map(function(d) {
             var stateColor = d.state === 'alive' ? '#3fb950' : d.state === 'dead' ? '#f85149' : '#d29922';
@@ -979,8 +984,8 @@
         var empty = document.getElementById('licenseEmpty');
         var summary = document.getElementById('licenseSummary');
 
-        if (!lics.length) { container.innerHTML = ''; empty.style.display = 'block'; return; }
-        empty.style.display = 'none';
+        if (!lics.length) { container.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
         summary.textContent = lics.length + ' licenses';
 
         container.innerHTML = lics.map(function(l) {
@@ -1070,8 +1075,8 @@
                 var empty = document.getElementById('configEmpty');
                 var summary = document.getElementById('configSummary');
 
-                if (!revs.length) { body.innerHTML = ''; empty.style.display = 'block'; }
-                else { empty.style.display = 'none'; }
+                if (!revs.length) { body.innerHTML = ''; empty.classList.remove('hidden'); }
+                else { empty.classList.add('hidden'); }
 
                 // Summary line: each row IS a real change (one row per
                 // logical config state — see merge-into-latest in v0.10.198+).
@@ -1496,11 +1501,11 @@
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
                 if (!result.success || !result.data || !result.data.process_stats || !result.data.process_stats.length) {
-                    document.getElementById('procSshEmpty').style.display = 'block';
+                    document.getElementById('procSshEmpty').classList.remove('hidden');
                     document.getElementById('proc-ssh-chart').style.display = 'none';
                     return;
                 }
-                document.getElementById('procSshEmpty').style.display = 'none';
+                document.getElementById('procSshEmpty').classList.add('hidden');
                 document.getElementById('proc-ssh-chart').style.display = 'block';
                 document.getElementById('procSshSummary').textContent = result.data.process_stats.length + ' snapshots';
 
@@ -1569,11 +1574,11 @@
             .then(function(resp) { return resp.json(); })
             .then(function(result) {
                 if (!result.success || !result.data || !result.data.interface_errors || !result.data.interface_errors.length) {
-                    document.getElementById('ifaceErrEmpty').style.display = 'block';
+                    document.getElementById('ifaceErrEmpty').classList.remove('hidden');
                     document.getElementById('iface-err-chart').style.display = 'none';
                     return;
                 }
-                document.getElementById('ifaceErrEmpty').style.display = 'none';
+                document.getElementById('ifaceErrEmpty').classList.add('hidden');
                 document.getElementById('iface-err-chart').style.display = 'block';
                 document.getElementById('ifaceErrSummary').textContent = result.data.interface_errors.length + ' data points';
 

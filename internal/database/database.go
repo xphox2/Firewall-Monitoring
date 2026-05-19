@@ -1475,6 +1475,15 @@ func (d *Database) GetAllSettings() ([]models.SystemSetting, error) {
 	return settings, err
 }
 
+// UpsertSetting persists a system_settings row, creating it if absent.
+//
+// v0.10.233: was the exact v0.10.226 bug verbatim — FirstOrCreate then
+// copied only Value/Label/Category onto the existing struct before Save,
+// dropping IsSecret and Type on update. Currently has zero in-tree callers,
+// but the function is exported on the public *Database API and would
+// silently corrupt any secret persisted through it. Fixed to mirror the
+// canonical pattern used in UpdateSettings (handlers_settings.go:228-241):
+// copy every field that matters, including IsSecret.
 func (d *Database) UpsertSetting(setting *models.SystemSetting) error {
 	existing := models.SystemSetting{Key: setting.Key}
 	if err := d.db.FirstOrCreate(&existing, models.SystemSetting{Key: setting.Key}).Error; err != nil {
@@ -1483,6 +1492,8 @@ func (d *Database) UpsertSetting(setting *models.SystemSetting) error {
 	existing.Value = setting.Value
 	existing.Label = setting.Label
 	existing.Category = setting.Category
+	existing.Type = setting.Type
+	existing.IsSecret = setting.IsSecret
 	return d.db.Save(&existing).Error
 }
 

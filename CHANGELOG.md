@@ -1,4 +1,57 @@
 # Changelog
+## [0.10.233] - 2026-05-18
+
+### Fixed — comprehensive bundle from 4-agent codebase sweep
+Per the operator's "do a full pass of everything using sub agents — you keep finding all these random bugs and issues," I ran four parallel deep audits across the entire codebase looking for every variant of the bug classes fixed in v0.10.226–v0.10.232. Verified every HIGH finding against the source before patching (audits have been wrong twice — stale Tailwind in v0.10.230, "intentional" expandable-msg in v0.10.231 — so trust-but-verify is now mandatory). This entry is the consolidated bundle.
+
+#### 1. Rich connection-detail side panel was unstyled (HIGH)
+Clicking a connection on the network diagram (`/admin/connections`) renders a side panel with 5 sub-tabs (Overview / Tunnels / Phase 2 / Flows / Events) built by `diagram-panels.js:130-217`. The JS template uses CSS classes `rich-detail-panel`, `panel-header`, `panel-tabs`, `panel-tab`, `panel-tab-content`, `panel-flow-grid`, `panel-flow-card`, `tunnel-columns`, `tunnel-col` — **none of which were defined in any CSS file**. Result:
+- The panel rendered as an unstyled block with no border, no padding, no tab strip.
+- Critically, **`.panel-tab-content { display: none }` was missing**, so all 5 tab-contents rendered simultaneously, stacked vertically — clicking a tab added `.active` but never hid the other tabs. Same shape bug as v0.10.230's connection-detail orphan blocks, on a different surface.
+
+Added the missing rules to `admin-shared.css`. The panel now has a proper card boundary, working tab strip with active-state underline, and only-the-active-pane visibility.
+
+#### 2. IRC management page was unstyled (HIGH)
+The whole `/admin/irc` server-card list (`admin-irc.js:75-103`) referenced `server-card`, `server-card-header`, `actions`, `server-info`, `channel-list`, `channel-tag`, `status-badge`, plus seven status-color classes (`status-connected`, `status-disconnected`, `status-connecting`, `status-error`, `status-joined`, `status-pending`, `status-left`) — zero CSS for any of them. Operators saw a wall of bare text with no card boundaries, action buttons crowded against each other, and connection-state text rendered in default-text color instead of colored pills. v0.10.231 fixed the IRC modals; this finally styles the page behind them.
+
+Added all 14 missing rules. Status pills now use the same color palette as the existing `.badge.online`/`.badge.offline`/etc. for visual consistency.
+
+#### 3. Probe / probe-pending card internals were unstyled (HIGH)
+`admin-probe-pending.js:33-41` rendered pending-probe cards using `probe-header`, `probe-details`, `probe-actions` — undefined. The `.probe-card` outer was styled but the layout inside was raw block-flow, so headers and action buttons stacked unattractively. `admin-probes.js:105-111` used `actions` and `info-text` for the probe-list table's action button group and description text — also undefined. Added all five rules.
+
+#### 4. Connection-detail tunnel-row expand chart had a 0-height container (HIGH)
+When the user expands a tunnel row on `/admin/connections/:id`, `admin-connection-detail.js:199-206` injects `.tunnel-chart-wrap > .range-pills + .chart-container > canvas`. `.tunnel-chart-wrap` and `.chart-container` had no CSS, so the chart container had no `height` declared. Chart.js with `maintainAspectRatio: false` rendered to whatever height it found in the parent — which was 0 in a default table cell. Charts may have been silently rendering at zero height. Fixed by giving `.chart-container` a 220px fixed height and proper padding on the wrap.
+
+#### 5. Interface-type / tunnel-type badge variants had no colors (HIGH-cosmetic)
+JS emitted `<span class="badge vxlan">`, `<span class="badge tunnel">`, `<span class="badge lag">`, `<span class="badge ipsec">`, `<span class="badge l3ipvlan">`, etc. Only the base `.badge` rules existed, so all type pills rendered in the neutral grey of `.badge.unknown` — operators couldn't tell L2VLAN from VXLAN from Tunnel from LAG at a glance. Added color variants matching the existing palette: VXLAN/L3IPVLAN purple, Tunnel/IPSec/GRE/SSLVPN pink, LAG/Bond orange, L2VLAN/VLAN cyan, Ethernet/Physical blue.
+
+#### 6. `Database.UpsertSetting` was the v0.10.226 bug verbatim (MEDIUM)
+`internal/database/database.go:1478-1487` had the exact `FirstOrCreate` → copy 3 fields → `Save` shape that v0.10.226 spent four versions diagnosing in `UpdateSettings`. `IsSecret` and `Type` were never copied onto the existing row. The function has zero in-tree callers today, but it's exported on the public `*Database` API — anyone wiring a new caller (a future migration helper, an admin tool, a webhook receiver) inherits the bug. Fixed to mirror the canonical `UpdateSettings` pattern with all five fields copied.
+
+#### 7. 17 latent `.hidden` + `style.display` traps in admin-device-detail.js (MEDIUM)
+The empty-state placeholders for Interfaces, VPN, Sensors, Processors, Alerts, Ping, HA, Security, SD-WAN, Licenses, Config-History, Process Monitor, and Interface Errors tabs all toggled visibility via `empty.style.display = 'block'/'none'` against elements with `class="hidden"` in markup. Same trap as the connection-detail tabs (v0.10.230), IRC SASL fields (v0.10.231), login error banner (v0.10.232). Worked today only because inline `'block'` (specificity 1,0,0,0) beats `.hidden` (0,1,0). One `style.display = ''` refactor and every device-detail tab's empty state would silently break. Converted all 17 sites — plus the `#loading`/`#content`/`#error` initial-render toggles in `renderDevice` — to `classList.toggle('hidden')` so the markup's `hidden` class and the JS toggling agree on a single source of truth.
+
+#### 8. Dead `error-msg` / `success-msg` banner markup deleted (LOW)
+`probe-pending.html:31-32`, `probes.html:37-38`, and `sites.html:35-36` had `<div … id="error-msg">` / `id="success-msg"` div pairs that were never referenced by any JS — the corresponding admin-*.js files route errors and successes through the `AC.showError` / `AC.showSuccess` toast helpers. Six lines of dead markup deleted.
+
+### Bugs found by audit but NOT fixed in this bundle
+- **21 `.modal` / `.tab-content` elements with redundant `class="hidden"`** — same latent trap class as #7 but on the HTML side. Cosmetic only since `.modal.active` (specificity 0,2,0) currently beats `.hidden` (0,1,0). Deferred — risk of accidentally dropping a needed class on a 21-element sweep outweighs the latent-trap value. Worth a focused cleanup pass.
+- **`UpsertDeviceAlertConfig` / `UpsertSiteAlertConfig` / `UpdateMaintenanceWindow` zero-value `Save` footgun** — three handlers call `db.Save(cfg)` with the bound request struct directly, so any field absent from the PUT body lands as Go zero-value (0 thresholds, `false` booleans, nil policy bindings). Real silent-data-loss class but the fix requires per-field merge logic that I'd want to scope tightly. Filed for a follow-up audit pass.
+- **Slack/Discord/webhook URLs stored unencrypted** — design call, not a bug — they embed per-channel secrets in the path. Worth encrypting at rest like `smtp_password`. Out of scope here.
+
+### Audits that came back CLEAN
+- Pattern C (`onclick="..."` JS-string-literal escape bugs): one was fixed in v0.10.229 (`togglePublicIface`), zero remain.
+- Pattern D (`innerHTML` writes with unescaped user-supplied data): all interpolations go through `esc()` / `escapeHtml()` / `window.escapeHtml()`. No XSS surface found.
+- Pattern P1 (duplicate IDs across admin HTML): cleaned up by v0.10.230's connection-detail consolidation. Zero duplicate IDs remain anywhere under `web/admin/`.
+- Pattern P2 (modals missing `.modal` class): zero remain after the v0.10.231 IRC + probe-pending fixes.
+- Pattern P3 (orphan content blocks missing required class for switchTab): zero remain.
+
+### Files
+- Modified: `cmd/api/static/css/admin-shared.css` — added ~300 lines covering rich-detail-panel, IRC server cards, probe card internals, badge variants, tunnel-chart-wrap, scope-toggle.
+- Modified: `internal/database/database.go` — `UpsertSetting` now copies `Type` + `IsSecret` onto the existing row before `Save`.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — 17+ `style.display` call sites switched to `classList.toggle('hidden')`.
+- Modified: `web/admin/probe-pending.html`, `web/admin/probes.html`, `web/admin/sites.html` — deleted dead `error-msg` / `success-msg` banner markup.
+
 ## [0.10.232] - 2026-05-18
 
 ### Fixed — admin-login.js latent `.hidden` + `style.display` trap

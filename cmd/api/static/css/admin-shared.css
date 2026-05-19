@@ -1255,3 +1255,362 @@ tr:hover {
     font-weight: 600;
     color: #c9d1d9;
 }
+
+/* =======================================================================
+ * v0.10.233: missing-CSS bundle from 4-agent audit sweep.
+ *
+ * Every selector below was referenced from JS template literals or HTML
+ * markup but had ZERO matching rule in any CSS file. The 4 agents found
+ * a wide surface — these rules cover the operator-visible ones.
+ * =====================================================================*/
+
+/* --- Rich detail panel (diagram-panels.js) ---
+ * Clicking a connection in the network diagram pops up a side panel with
+ * 5 sub-tabs (Overview, Tunnels, Phase 2, Flows, Events). Without these
+ * rules the panel rendered as an unstyled block with all 5 tab-contents
+ * stacked simultaneously — `.panel-tab-content { display: none }` is the
+ * critical line that makes the tab switching actually hide the inactive
+ * panes. Affordance gone for as long as no one looked at the panel. */
+.rich-detail-panel {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 0.85rem;
+}
+
+.rich-detail-panel .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.rich-detail-panel .panel-header h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #e6edf3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.panel-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid #30363d;
+    margin-bottom: 12px;
+    overflow-x: auto;
+}
+
+.panel-tab {
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    color: #8b949e;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+
+.panel-tab:hover {
+    color: #c9d1d9;
+}
+
+.panel-tab.active {
+    color: #58a6ff;
+    border-bottom-color: #58a6ff;
+}
+
+.panel-tab-content {
+    display: none;
+}
+
+.panel-tab-content.active {
+    display: block;
+}
+
+.panel-range-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.panel-flow-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.panel-flow-card {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.panel-flow-card h5 {
+    margin: 0 0 6px 0;
+    font-size: 0.78rem;
+    color: #8b949e;
+    font-weight: 500;
+}
+
+.tunnel-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.tunnel-col h5 {
+    margin: 0 0 8px 0;
+    font-size: 0.82rem;
+    color: #c9d1d9;
+}
+
+/* --- Badge variants for interface type / tunnel type ---
+ * .badge.vxlan / .badge.tunnel / .badge.lag / .badge.ipsec were emitted
+ * by JS but had no color rules — they fell through to the bare .badge
+ * default and rendered indistinguishable from other neutral pills. */
+.badge.vxlan, .badge.l3ipvlan {
+    background: rgba(179,146,240,0.15);
+    color: #b392f0;
+}
+
+.badge.tunnel, .badge.ipsec, .badge.gre, .badge.sslvpn {
+    background: rgba(218,125,232,0.15);
+    color: #da7de8;
+}
+
+.badge.lag, .badge.bond {
+    background: rgba(240,136,62,0.15);
+    color: #f0883e;
+}
+
+.badge.l2vlan, .badge.vlan {
+    background: rgba(57,212,224,0.15);
+    color: #39d4e0;
+}
+
+.badge.ethernet, .badge.physical {
+    background: rgba(56,139,253,0.15);
+    color: #58a6ff;
+}
+
+/* --- IRC management cards (admin-irc.js) ---
+ * The entire IRC server card UI on /admin/irc relied on these classes,
+ * none of which existed in any CSS. Cards had no boundary, status pills
+ * had no color, action buttons had no spacing, and connection state
+ * (Connected/Connecting/Joined/etc.) showed as plain undifferentiated
+ * text. v0.10.231 fixed the IRC modals; this finally styles the page
+ * behind them. */
+.server-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.server-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.server-card-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #e6edf3;
+}
+
+.server-card .actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.server-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px 16px;
+    font-size: 0.82rem;
+    color: #c9d1d9;
+    padding: 8px 0;
+    border-top: 1px solid #21262d;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 10px;
+}
+
+.server-info span {
+    color: #8b949e;
+    margin-right: 4px;
+}
+
+.channel-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.82rem;
+    color: #c9d1d9;
+}
+
+.channel-list strong {
+    color: #8b949e;
+    font-weight: 500;
+    margin-right: 4px;
+}
+
+.channel-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 0.78rem;
+    color: #c9d1d9;
+}
+
+/* status-badge variants for IRC connection state. The base styling is
+ * the same shape as .badge above, but the JS emits class names like
+ * status-connected / status-joined that don't pass through .badge. */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.status-badge.status-connected,
+.status-badge.status-joined {
+    background: rgba(63,185,80,0.15);
+    color: #3fb950;
+}
+
+.status-badge.status-disconnected,
+.status-badge.status-error,
+.status-badge.status-left {
+    background: rgba(248,81,73,0.15);
+    color: #f85149;
+}
+
+.status-badge.status-connecting,
+.status-badge.status-pending {
+    background: rgba(210,153,34,0.15);
+    color: #d2992a;
+}
+
+/* --- Probe + probe-pending card internals (admin-probes.js, admin-probe-pending.js) ---
+ * The `.probe-card` wrapper itself was styled; the layout inside (header
+ * row, detail rows, action button group) was not. Operators saw cards
+ * with crowded text and butt-up-against-each-other buttons. */
+.probe-card .probe-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.probe-card .probe-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #e6edf3;
+}
+
+.probe-card .probe-details {
+    font-size: 0.82rem;
+    color: #c9d1d9;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+
+.probe-card .probe-details span {
+    color: #8b949e;
+    margin-right: 4px;
+}
+
+.probe-card .probe-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Generic helpers referenced by admin-probes.js list-rendering and
+ * elsewhere — .actions for an inline button group inside a table cell,
+ * .info-text for muted descriptive copy. */
+td .actions,
+.list-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.info-text {
+    color: #8b949e;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+/* --- Connection-detail tunnel-row expand wrap (admin-connection-detail.js) ---
+ * When the chevron is opened on a tunnel row, the expansion injects
+ * .tunnel-chart-wrap > (.range-pills + .chart-container > canvas). Without
+ * any of these classes defined the canvas had no parent height — Chart.js
+ * with maintainAspectRatio=false renders to whatever container height
+ * it finds, which is 0 in a default-height table cell. */
+.tunnel-chart-wrap {
+    padding: 12px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+}
+
+.tunnel-chart-wrap .range-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.tunnel-chart-wrap .chart-container {
+    position: relative;
+    height: 220px;
+}
+
+/* --- Scope-toggle (admin.html maintenance-window form) ---
+ * Three radio buttons (All / Device / Site) for choosing the scope of a
+ * maintenance window. .scope-toggle had no rule, so the radios stacked
+ * with default block-level <label> children. */
+.scope-toggle {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.scope-toggle label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #c9d1d9;
+}
