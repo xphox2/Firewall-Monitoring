@@ -130,8 +130,14 @@ function closeServerModal() {
 }
 
 function toggleSASLFields() {
+    // v0.10.231: the markup has class="hidden" so this previously worked
+    // only because inline style.display beats class specificity. The
+    // moment anyone refactored to style.display='' (the v0.10.230 footgun)
+    // the field would silently disappear and stop responding to the
+    // checkbox. Toggle the .hidden class directly so the markup's initial
+    // state and the JS toggling agree on a single source of truth.
     const saslEnabled = document.getElementById('serverSASLEnabled').checked;
-    document.getElementById('saslFields').style.display = saslEnabled ? 'block' : 'none';
+    document.getElementById('saslFields').classList.toggle('hidden', !saslEnabled);
 }
 
 document.getElementById('serverSASLEnabled').addEventListener('change', toggleSASLFields);
@@ -327,8 +333,11 @@ function closeChannelModal() {
 }
 
 function toggleStatusInterval() {
+    // v0.10.231: same .hidden-trap fix as toggleSASLFields. The element
+    // carries class="hidden" in markup; toggle that class directly rather
+    // than fighting it with inline style.
     const checked = document.getElementById('channelSendStatus').checked;
-    document.getElementById('statusIntervalGroup').style.display = checked ? 'block' : 'none';
+    document.getElementById('statusIntervalGroup').classList.toggle('hidden', !checked);
 }
 
 async function saveChannel(e) {

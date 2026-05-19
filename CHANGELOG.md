@@ -1,4 +1,45 @@
 # Changelog
+## [0.10.231] - 2026-05-18
+
+### Fixed — three more dead admin features uncovered by audit
+After v0.10.230 fixed the connection-detail tab/duplicate-ID bugs, the operator asked me to sweep the rest of the admin area for the same patterns. The audit turned up three more **completely-broken features** plus one latent trap. Real bugs, not style smell.
+
+#### 1. IRC modals never opened (Add/Edit Server, Add/Edit Channel, Add/Edit Command)
+`web/admin/irc.html:120, 222, 290` declared `<div id="serverModal" class="… hidden …">` for the three IRC dialogs but **omitted the `modal` class**. `AdminCommon.openModal()` (`admin-common.js:610-644`) shows modals by adding `.active`, which the admin-shared `.modal.active { display: flex }` rule then matches. With no `.modal` class on the element, `.active` had no rule to trigger and `.hidden { display: none }` kept the dialog invisible. Clicking *Add Server*, *Edit Channel*, *Add Command* etc. fired the JS handler, the modal got its `active` class, and… nothing visibly happened. The entire IRC configuration UI was unreachable from the admin without backdoor edits (DB or env vars).
+
+**Fix:** added `modal` to the class list of each dialog, removed the now-redundant `hidden` (the `.modal { display: none }` default in admin-shared.css already handles the initial state). The Tailwind utility classes that previously stood in for the modal layout — `fixed top-0 left-0 right-0 bottom-0 bg-black/60 z-[200]` — were kept; they continue to provide the overlay positioning while `.modal.active` toggles visibility.
+
+#### 2. Probe-pending Reject dialog never opened
+Same bug. `web/admin/probe-pending.html:40` had `<div class="hidden …" id="reject-modal">` with no `.modal` class. `admin-probe-pending.js:72` calls `AC.openModal('reject-modal')`. Same `.active`-without-`.modal` problem → dialog invisible. Operators clicking *Reject* on a pending probe got no feedback. (The Approve action on the same page worked because it didn't use a modal.)
+
+**Fix:** identical to #1 — added `modal` class, removed `hidden`.
+
+#### 3. Click-to-expand syslog/alert messages was a no-op
+JS at `admin-main.js:3518-3520` toggles a `.expanded` class on `.expandable-msg` cells when clicked. The intent is clear: cells with long messages render truncated by default, click reveals the full text. But the cells were rendered with inline `style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"` (`admin-main.js:1106` for syslog, `:1736` for alerts). Inline styles have specificity 1,0,0,0 — *no class-based rule* can override them. There was also **no `.expandable-msg.expanded` rule defined anywhere** under `cmd/api/static/css/`, so even removing the inline style wouldn't have done anything. The feature had never worked in production.
+
+Compounding the confusion: the v0.10.228 CHANGELOG explicitly absolved this case ("intentional click-to-expand truncation"). It was wrong — the click handler exists but the visual unwrapping doesn't.
+
+**Fix:** dropped the inline `style=""` from both rendering call sites. The CSS class `.expandable-msg` (already declared in `admin.html:140` with `max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`) carries the truncation now. Added `.expandable-msg.expanded { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; overflow-wrap: anywhere; }` to actually unwrap the message on click. Clicking a truncated syslog or alert message now expands it inline; clicking again collapses it back.
+
+#### 4. Latent trap fixed — IRC form SASL / status-interval pickers
+`admin-irc.js:134` and `:331` set `style.display = 'block'/'none'` on `#saslFields` (the SASL credentials sub-form in the server dialog) and `#statusIntervalGroup` (the status-message interval input in the channel dialog). Both elements have `class="hidden"` in their markup. *Today this works*, because inline styles beat class selectors. But it's exactly the same trap that hid the connection-detail tabs for an unknown number of versions — the moment anyone refactored to use `style.display = ''` (intending "clear the inline override and let the cascade decide"), the fields would silently break and the operator would have no working SASL or status-interval configuration UI.
+
+**Fix:** switched both to `classList.toggle('hidden', !cond)` so the markup's `hidden` class and the JS toggling agree on a single source of truth.
+
+### Audit findings deliberately deferred
+- **Redundant `hidden` on `.modal` dialogs that already work** (alerts-bulk-ack-modal on admin.html, site-modal on sites.html, probe-modal + deploy-modal on probes.html) — same pattern as #1/#2 but `.modal.active { display: flex }` already wins over `.hidden`, so they function correctly. Style smell only; no operator-visible bug. Worth a cleanup pass when someone's already touching those files.
+- **Dead `#error-msg` / `#success-msg` banners on sites.html, probes.html, probe-pending.html** — never queried by any JS. The pages route everything through `AC.showError` / `AC.showSuccess` toasts instead. Markup leftovers; should be deleted but not urgent.
+
+### What was NOT a bug
+The audit also flagged the `tab-content hidden` pattern on IRC tabs (`irc.html:60, 72, 96`) as the same trap. It isn't — `.tab-content.active { display: block }` has specificity 0,2,0 which beats `.hidden { display: none }` at 0,1,0, so adding `.active` correctly reveals the panel. The redundancy is real but harmless.
+
+### Files
+- Modified: `web/admin/irc.html` — added `modal` class to serverModal/channelModal/commandModal, dropped redundant `hidden`.
+- Modified: `web/admin/probe-pending.html` — added `modal` class to reject-modal, dropped redundant `hidden`.
+- Modified: `web/admin/admin.html` — added `.expandable-msg.expanded` CSS rule.
+- Modified: `cmd/api/static/js/admin-main.js` — removed inline truncation style from `.expandable-msg` cells in syslog/alerts table renderers (relies on CSS class now).
+- Modified: `cmd/api/static/js/admin-irc.js` — switched toggleSASLFields and toggleStatusInterval to `classList.toggle('hidden', ...)`.
+
 ## [0.10.230] - 2026-05-18
 
 ### Fixed — connection-detail dead features (Phase 2 / Traffic Analysis tabs unreachable)

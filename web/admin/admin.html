@@ -137,7 +137,15 @@
         .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
         .filter-bar select, .filter-bar input { padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.82rem; }
 .filter-bar .search-input { min-width: 200px; }
+        /* v0.10.231: the click-to-expand affordance was broken since whenever
+         * it shipped. JS at admin-main.js:3518-3520 toggles `.expanded` on
+         * the cell, but the truncation properties used to live on the cell's
+         * inline `style=""` attribute (specificity 1,0,0,0) — no class-based
+         * rule could override them, so clicking did nothing visible. Moved
+         * the truncation to the class rule below and added .expanded that
+         * actually unwraps the message. */
         .expandable-msg { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+        .expandable-msg.expanded { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; overflow-wrap: anywhere; }
         #maint-modal .form-group textarea { resize: vertical; min-height: 60px; }
         .connection-diagram { min-height: 500px; position: relative; background: #0d1117; border-radius: 8px; overflow: hidden; }
         .panel-chart-container canvas { max-height: 200px; }

@@ -1103,7 +1103,7 @@
                 '<td>' + hostnameCell + '</td>' +
                 '<td><span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></td>' +
                 '<td>' + typeBadge + '</td>' +
-                '<td class="expandable-msg" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(m.message) + '</td>' +
+                '<td class="expandable-msg">' + escapeHtml(m.message) + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
@@ -1733,7 +1733,7 @@
                 '<td>' + deviceCell + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
-                '<td class="expandable-msg" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(a.message) + '</td>' +
+                '<td class="expandable-msg">' + escapeHtml(a.message) + '</td>' +
                 '<td>' + statusCol + '</td>' +
             '</tr>';
         }).join('');
