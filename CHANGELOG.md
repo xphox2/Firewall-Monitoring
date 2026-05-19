@@ -1,4 +1,19 @@
 # Changelog
+## [0.10.232] - 2026-05-18
+
+### Fixed — admin-login.js latent `.hidden` + `style.display` trap
+Audit of `/admin/login` for the bug patterns from v0.10.230-231. Found one M1-level latent trap matching the same shape:
+
+`admin-login.js:17/30/35` toggled the error banner with `errorDiv.style.display = 'block'/'none'`. The banner has `class="hidden"` in markup (`login.html:15`) and tailwind.css defines `.hidden { display: none }`. *It works today* only because inline `style.display = 'block'` (specificity 1,0,0,0) beats the `.hidden` class (0,1,0). But that's the exact footgun that hid the connection-detail Phase 2 / Traffic Analysis tabs (v0.10.230) and the IRC SASL fields (v0.10.231 M1) — any future refactor to `style.display = ''` (intending "clear the inline override and let the cascade decide") would silently break the error banner. Operators with bad credentials would see no feedback at all — the form would simply re-enable and stop pretending to log in.
+
+**Fix:** switched to `errorDiv.classList.add('hidden')` / `.remove('hidden')` so the markup's `hidden` class and the JS toggling agree on a single source of truth.
+
+#### Otherwise CLEAN
+The login page is a single self-contained HTML file (`web/admin/login.html`, 37 lines) plus `admin-login.js` (43 lines). It loads only `tailwind.css`, no `admin-shared.css` or `admin-design-system.css`, so the cross-file specificity battles affecting the rest of the admin can't reach it. No modals (so no `.modal`-class-missing bug), no duplicate IDs, no orphan content blocks, no class-toggling-without-matching-CSS-rule, no `.stat-card` flex-row leak. The one finding was the latent trap above.
+
+### Files
+- Modified: `cmd/api/static/js/admin-login.js` — three call sites switched from `style.display` to `classList.add('hidden')`/`.remove('hidden')`.
+
 ## [0.10.231] - 2026-05-18
 
 ### Fixed — three more dead admin features uncovered by audit

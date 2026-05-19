@@ -14,7 +14,14 @@
 
         btn.disabled = true;
         btn.textContent = 'Logging in...';
-        errorDiv.style.display = 'none';
+        // v0.10.232: was using errorDiv.style.display = 'block'/'none' which
+        // worked only because inline style (specificity 1,0,0,0) beats the
+        // .hidden class on the element (markup at login.html:15). Same trap
+        // that hid the connection-detail tabs (v0.10.230) and the IRC SASL
+        // fields (v0.10.231) — refactoring to style.display = '' would
+        // silently break the error banner. Toggle .hidden directly so the
+        // markup and JS use the same source of truth.
+        errorDiv.classList.add('hidden');
 
         fetch(API_BASE + '/auth/login', {
             method: 'POST',
@@ -27,12 +34,12 @@
                 window.location.href = '/admin';
             } else {
                 errorDiv.textContent = data.error || 'Invalid credentials';
-                errorDiv.style.display = 'block';
+                errorDiv.classList.remove('hidden');
             }
         })
         ['catch'](function() {
             errorDiv.textContent = 'Connection error. Please try again.';
-            errorDiv.style.display = 'block';
+            errorDiv.classList.remove('hidden');
         })
         ['finally'](function() {
             btn.disabled = false;
