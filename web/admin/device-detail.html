@@ -217,7 +217,8 @@
             <div class="tab-content hidden" id="tab-vpn">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">VPN Tunnels</h2>
-                    <table class="w-full border-collapse">
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
                         <thead>
                             <tr>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Phase 1</th>
@@ -236,7 +237,8 @@
                             </tr>
                         </thead>
                         <tbody id="vpnBody"></tbody>
-                    </table>
+                        </table>
+                    </div>
                     <div id="vpnEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting VPN tunnel data from probe…</div>
                 </div>
             </div>
@@ -269,7 +271,8 @@
                         <span>Recent Alerts</span>
                         <a id="alerts-view-all-link" class="fwmon-link text-[0.8rem] font-normal" href="/admin/alerts">View all alerts for this device →</a>
                     </h2>
-                    <table class="w-full border-collapse">
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
                         <thead>
                             <tr>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Time</th>
@@ -279,7 +282,8 @@
                             </tr>
                         </thead>
                         <tbody id="alertBody"></tbody>
-                    </table>
+                        </table>
+                    </div>
                     <div id="alertEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No recent alerts — device is healthy</div>
                 </div>
             </div>
@@ -288,7 +292,8 @@
             <div class="tab-content hidden" id="tab-ping">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Ping Statistics</h2>
-                    <table class="w-full border-collapse">
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
                         <thead>
                             <tr>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Target IP</th>
@@ -300,7 +305,8 @@
                             </tr>
                         </thead>
                         <tbody id="pingBody"></tbody>
-                    </table>
+                        </table>
+                    </div>
                     <div id="pingEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting ping data from probe…</div>
                 </div>
             </div>
@@ -309,7 +315,8 @@
             <div class="tab-content hidden" id="tab-ha">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">HA Cluster <span id="haHeader" class="text-[0.78rem] font-normal text-[#8b949e]"></span></h2>
-                    <table class="w-full border-collapse">
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
                         <thead>
                             <tr>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Serial</th>
@@ -323,7 +330,8 @@
                             </tr>
                         </thead>
                         <tbody id="haBody"></tbody>
-                    </table>
+                        </table>
+                    </div>
                     <div id="haEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Standalone mode or awaiting HA data</div>
                 </div>
             </div>
@@ -341,7 +349,8 @@
             <div class="tab-content hidden" id="tab-sdwan">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">SD-WAN Health</h2>
-                    <table class="w-full border-collapse">
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
                         <thead>
                             <tr>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Name</th>
@@ -354,7 +363,8 @@
                             </tr>
                         </thead>
                         <tbody id="sdwanBody"></tbody>
-                    </table>
+                        </table>
+                    </div>
                     <div id="sdwanEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No SD-WAN data available. SD-WAN health requires FortiGate REST API integration (not available via SNMP).</div>
                 </div>
             </div>
@@ -382,7 +392,8 @@
                         <button id="configCompareBtn" class="btn sm secondary" disabled>Compare selected</button>
                         <span id="configCompareHint" class="text-[0.78rem] text-[#8b949e]">Pick two revisions to compare (radio columns).</span>
                     </div>
-                    <table class="w-full border-collapse">
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
                         <thead>
                             <tr>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">From</th>
@@ -397,7 +408,8 @@
                             </tr>
                         </thead>
                         <tbody id="configBody"></tbody>
-                    </table>
+                        </table>
+                    </div>
                     <div id="configEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No config history available. Enable SSH polling to collect config revisions.</div>
                 </div>
             </div>

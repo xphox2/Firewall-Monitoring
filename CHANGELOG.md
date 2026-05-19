@@ -1,4 +1,61 @@
 # Changelog
+## [0.10.229] - 2026-05-18
+
+### Fixed — five device-detail CSS bugs surfaced by audit
+After v0.10.227 fixed the stat-card flex bug on `/admin/devices/:id` and v0.10.228 swept the rest of the admin area, a deeper audit of just the device-detail page found five more issues. All shipped here as one bundle.
+
+#### 1. Interface row expand panel was silently broken (highest-impact)
+Clicking an interface row in the Interfaces table renders an expanded `<tr>` with 13 detail items (Index, Type ID, VLAN ID, High Speed, Description, in/out bytes & packets & errors & discards) plus a chart-range pill bar (24h/7d/30d/90d) and a per-interface throughput chart. The JS at `admin-device-detail.js:568-597` referenced these CSS classes:
+
+- `.expand-row` — the `<tr>`
+- `.expand-content` — the panel container
+- `.detail-grid` — grid wrapping the 13 detail items
+- `.detail-item` / `.label` / `.value` — the label+value pairs
+- `.chart-range-btn` (singular) — the range pills
+
+**None of these were defined in any CSS file.** Result: the 13 detail items stacked in a tall single-column list with raw browser-default text styling, and the chart range buttons rendered as unstyled native `<button>` elements (grey, browser-default font, no spacing). The expand panel has been visibly broken since whenever it shipped — the audit caught it.
+
+Fixes:
+- Added definitions for `.expand-row`, `.expand-content`, `.detail-grid` (CSS grid with `repeat(auto-fill, minmax(180px, 1fr))`), `.detail-item`, `.detail-item .label`, `.detail-item .value`, and `.iface-chart-container` in `admin-device-detail.css`.
+- Renamed `chart-range-btn` → `range-btn` in `admin-device-detail.js` so it matches the existing `.chart-range-btns .range-btn` rule in `admin-shared.css:165-184`.
+
+#### 2. Six tables missing horizontal-scroll wrapper
+The Interfaces table at line 191 was wrapped in `<div class="table-scroll overflow-x-auto">`, but the other six tables (VPN with 13 columns, HA, SD-WAN, Ping, Alerts, Config History) were not. At narrow viewports the VPN table in particular — with full IP addresses, subnet strings, and byte counters — would push the main panel outward and force the whole layout to scroll horizontally including the sidebar.
+
+Wrapped each in `<div class="overflow-x-auto">` so the scrollbar appears inside the card. The Interfaces table's existing wrapper was preserved.
+
+#### 3. Sensor names truncated mid-word
+`admin-device-detail.js:769` rendered each sensor's name with inline `white-space: nowrap; overflow: hidden; text-overflow: ellipsis`. Sensors like `PEM1 Fan 4 Speed`, `DTS CPU Core 6 Temp`, `FortiGate-200F PSU Fan` were getting clipped on the 200px-min sensor cards even though wrapping to a second line would have fit. The `title` attribute provided a hover tooltip, but operators were having to hover-and-wait to read every sensor name.
+
+Switched the inline style to `word-break: break-word; overflow-wrap: anywhere; line-height: 1.25` so names wrap cleanly to two lines.
+
+#### 4. License card descriptions could overflow
+`admin-device-detail.js:1016` rendered the license description (e.g. `FortiGuard Endpoint Vulnerability Scan and Endpoint Compliance`) inside a flex content child. The parent had `flex: 1; min-width: 0` (correctly) but the description div itself had no `word-break` rule, so very long FortiGuard descriptions could overflow the card horizontally rather than wrapping. Added `word-break: break-word; overflow-wrap: anywhere; line-height: 1.3`.
+
+#### 5. `togglePublicIface` onclick was a (theoretical) XSS via interface name
+The "is this a public-facing interface" checkbox at `admin-device-detail.js:565` used:
+
+```js
+'<input type="checkbox" ... onclick="window.togglePublicIface(\'' + esc(iface.name) + '\', this.checked)">'
+```
+
+`esc()` (defined at `admin-device-detail.js:1689-1694`) HTML-escapes by way of `textContent`/`innerHTML` round-trip, which handles `&`/`<`/`>` but does NOT escape `'` or `"`. So an interface name containing a single quote would terminate the JS string literal and inject arbitrary JS into the onclick. SNMP-sourced names are low risk in practice (every vendor profile generates conventional names like `port1`, `vlan-east-corp`, `wan2`), but the fix is trivial.
+
+Switched to:
+```js
+'<input type="checkbox" ... data-action="toggle-public-iface" data-iface="' + esc(iface.name).replace(/"/g, '&quot;') + '">'
+```
+
+with a new `'toggle-public-iface'` handler registered in the existing `AC.delegateEvent('click', ...)` block. The interface name lives in a `data-*` attribute (attribute-safe escaped) and the handler reads it via `el.dataset.iface` — no JS-string-literal context to escape out of.
+
+### Files
+- Modified: `cmd/api/static/css/admin-device-detail.css` — added `.expand-row`, `.expand-content`, `.detail-grid`, `.detail-item`, `.detail-item .label`, `.detail-item .value`, `.iface-chart-container` definitions.
+- Modified: `cmd/api/static/js/admin-device-detail.js` — renamed `chart-range-btn` → `range-btn` (2 occurrences, plus restoring the accidentally-mangled `.chart-range-btns` container during global replace), fixed sensor name + license description wrap, switched togglePublicIface onclick to data-action delegation.
+- Modified: `web/admin/device-detail.html` — wrapped VPN/Alerts/Ping/HA/SD-WAN/Config-History tables in `<div class="overflow-x-auto">`.
+
+### Audit findings deliberately NOT fixed
+The audit also flagged tab a11y (missing `role="tab"`/`aria-selected`), hardcoded hex colors that should be design tokens, breakpoint mismatch (720 vs 768), modal double-scrollbar risk, and the bare `th` selector adding `position: sticky` to every table header even when there's no scrolling container. None of these cause an operator-visible bug today — they're style smell or larger refactors. Tracking separately if needed.
+
 ## [0.10.228] - 2026-05-18
 
 ### Fixed — same stat-card flex-row bug on admin.html + connection-detail.html

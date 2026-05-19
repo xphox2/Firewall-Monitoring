@@ -138,3 +138,66 @@
         padding: 14px 12px 16px;
     }
 }
+
+/* === Interface row expand panel (v0.10.229) ===
+ *
+ * Clicking an interface row in the Interfaces table renders an expanded
+ * `<tr class="expand-row">` containing the deeper SNMP attributes plus
+ * a chart-range pill bar and a per-interface throughput chart (see
+ * admin-device-detail.js:568-597 — buildIfaceTable / loadInterfaceChart).
+ * The JS template references these classes:
+ *   .expand-row     — the <tr> wrapping the whole panel
+ *   .expand-content — the panel container inside the colspan-11 <td>
+ *   .detail-grid    — grid of label/value pairs above the chart
+ *   .detail-item    — one cell in the grid (label + value pair)
+ *   .label, .value  — the two <span>s inside each .detail-item
+ * None of these existed in any CSS file. Result: the 13 detail items
+ * stacked in a tall single column with raw-DOM-default styling, and
+ * looked nothing like the intended grid. Adding these definitions fixes
+ * the expand panel layout that was supposed to ship in the original
+ * interface-row feature. */
+.expand-row > td {
+    background: #0d1117;
+    padding: 16px 20px;
+    border-bottom: 1px solid #30363d;
+}
+
+.expand-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px 16px;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.detail-item .label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--fwmon-text-faint);
+    font-weight: 500;
+}
+
+.detail-item .value {
+    font-size: 0.85rem;
+    color: var(--fwmon-text);
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.iface-chart-container {
+    position: relative;
+    min-height: 200px;
+}

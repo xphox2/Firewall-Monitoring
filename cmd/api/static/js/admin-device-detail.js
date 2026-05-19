@@ -562,7 +562,7 @@
                 '<td>' + ((iface.in_errors || 0) + (iface.out_errors || 0)) + '</td>' +
                 '<td>' + (iface.mtu || '-') + '</td>' +
                 '<td style="font-family:monospace;font-size:0.78rem">' + esc(iface.mac_address || '-') + '</td>' +
-                '<td><input type="checkbox" ' + (isPublicIface(iface) ? 'checked ' : '') + 'onclick="window.togglePublicIface(\'' + esc(iface.name) + '\', this.checked)"></td>' +
+                '<td><input type="checkbox" ' + (isPublicIface(iface) ? 'checked ' : '') + 'data-action="toggle-public-iface" data-iface="' + esc(iface.name).replace(/"/g, '&quot;') + '"></td>' +
                 '</tr>';
 
             if (isExpanded) {
@@ -570,7 +570,7 @@
                 var rangeBtns = '';
                 for (var ri = 0; ri < ranges.length; ri++) {
                     var r = ranges[ri];
-                    rangeBtns += '<button class="chart-range-btn' + (currentChartRange === r ? ' active' : '') + '" data-action="load-iface-chart" data-index="' + iface.index + '" data-range="' + r + '">' + r + '</button>';
+                    rangeBtns += '<button class="range-btn' + (currentChartRange === r ? ' active' : '') + '" data-action="load-iface-chart" data-index="' + iface.index + '" data-range="' + r + '">' + r + '</button>';
                 }
                 html += '<tr class="expand-row"><td colspan="11">' +
                     '<div class="expand-content">' +
@@ -612,7 +612,7 @@
     function loadInterfaceChart(ifIndex, range) {
         currentChartRange = range;
         // Update active button styling
-        document.querySelectorAll('.chart-range-btn').forEach(function(btn) {
+        document.querySelectorAll('.range-btn').forEach(function(btn) {
             btn.classList.toggle('active', btn.textContent === range);
         });
 
@@ -766,7 +766,7 @@
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
                     '<div style="width:36px;height:36px;background:#161b22;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#8b949e;font-size:1.2rem;">' + icon + '</div>' +
                     '<div style="flex:1;min-width:0;">' +
-                        '<div style="color:#e6edf3;font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(s.name) + '">' + esc(s.name) + '</div>' +
+                        '<div style="color:#e6edf3;font-size:0.85rem;font-weight:600;line-height:1.25;word-break:break-word;overflow-wrap:anywhere;" title="' + esc(s.name) + '">' + esc(s.name) + '</div>' +
                         '<div style="color:#8b949e;font-size:0.72rem;text-transform:uppercase;">' + esc(s.unit || '') + '</div>' +
                     '</div>' +
                 '</div>' +
@@ -1013,7 +1013,7 @@
                 '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">' +
                     '<div style="width:40px;height:40px;background:' + statusBg + ';border-radius:8px;display:flex;align-items:center;justify-content:center;color:' + statusColor + ';font-size:1.3rem;">' + icon + '</div>' +
                     '<div style="flex:1;min-width:0;">' +
-                        '<div style="color:#e6edf3;font-size:0.9rem;font-weight:600;margin-bottom:2px;">' + esc(l.description || 'Unknown') + '</div>' +
+                        '<div style="color:#e6edf3;font-size:0.9rem;font-weight:600;margin-bottom:2px;word-break:break-word;overflow-wrap:anywhere;line-height:1.3;">' + esc(l.description || 'Unknown') + '</div>' +
                         '<div style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;text-transform:uppercase;background:' + statusBg + ';color:' + statusColor + ';">' + esc(l.status || 'unknown') + '</div>' +
                     '</div>' +
                 '</div>' +
@@ -1710,6 +1710,19 @@
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
             loadInterfaceChart(parseInt(el.dataset.index, 10), el.dataset.range);
+        },
+        'toggle-public-iface': function(el, e) {
+            // v0.10.229: replaces the previous inline onclick that built
+            // a JS string from esc(iface.name). esc() HTML-escapes for
+            // text content only — it does NOT escape `'` for a JS
+            // string-literal context, so any iface name containing a
+            // single quote could break out and execute arbitrary code.
+            // SNMP-sourced names are low risk in practice but the fix
+            // is trivial. Now the name lives in a data-* attribute
+            // (HTML-escaped + " → &quot; for attribute safety) and the
+            // delegated handler reads it via dataset.iface.
+            e.stopPropagation();
+            window.togglePublicIface(el.dataset.iface, el.checked);
         },
         'load-network-throughput': function(el, e) {
             e.stopPropagation();
