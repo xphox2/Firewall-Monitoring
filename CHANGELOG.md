@@ -1,4 +1,39 @@
 # Changelog
+## [0.10.235] - 2026-05-19
+
+### Fixed — 23 redundant `class="hidden"` tokens on `.modal` / `.tab-content` elements (deferred from v0.10.233)
+v0.10.233 flagged ~21 HTML elements where `class="hidden"` appeared alongside `class="modal"` or `class="tab-content"`, both of which already default to `display: none` in admin-shared.css. The v0.10.233 audit explicitly deferred the cleanup ("risk of accidentally dropping a needed class on a 21-element sweep outweighs the latent-trap value"). This entry does the sweep carefully — verified element-by-element, with one specificity trap caught.
+
+#### Why it's a real bug, not just style smell
+The same shape — class-based show/hide that "works today" because of specificity but breaks if anyone touches the rules — has bitten us in v0.10.230 (connection-detail tabs), v0.10.231 (IRC SASL fields), and v0.10.232 (login error banner). Each landed silent UI regressions on operators. The redundant `hidden` on these 23 elements is the same trap class on the HTML side — `.modal.active { display: flex }` (specificity 0,2,0) currently beats `.hidden { display: none }` (0,1,0), but if Tailwind ever ships `.hidden { display: none !important }` (a real possibility in future Tailwind versions and a frequent monkey-patch), every modal in this repo would silently fail to open.
+
+#### Files touched
+- `web/admin/admin.html` — alerts-bulk-ack-modal.
+- `web/admin/sites.html` — site-modal (special case, see below).
+- `web/admin/probes.html` — probe-modal, deploy-modal.
+- `web/admin/connection-detail.html` — tab-content-src-tunnels, tab-content-dst-tunnels, tab-content-phase2, tab-content-flows.
+- `web/admin/device-detail.html` — tab-vpn, tab-sensors, tab-processors, tab-alerts, tab-ping, tab-ha, tab-security, tab-sdwan, tab-licenses, tab-config, tab-processors-ssh, tab-iface-err (12 tabs).
+- `web/admin/irc.html` — tab-channels, tab-commands, tab-send.
+
+Total: 4 modals + 19 tab-content elements = 23 elements (audit said 21; was off by 2).
+
+#### The `sites.html:42` specificity trap caught during the sweep
+`site-modal` was the one element where `hidden` was NOT purely redundant. It had `class="modal hidden flex …"`. In the compiled tailwind.css, `.flex { display: flex }` is declared AFTER `.modal { display: none }` — same specificity (0,1,0), source-order tiebreak means `.flex` wins. So `hidden` was actually the only thing keeping the modal hidden on page load (also at specificity 0,1,0 but declared after `.flex`). Removing just `hidden` would have rendered the site Add/Edit modal visible-on-load.
+
+Fix: removed BOTH `hidden` AND `flex` from `site-modal`. `.modal.active { display: flex }` (added by `openModal()`) already provides flex layout when the modal is opened; the bare `.modal` default of `display: none` keeps it hidden at rest. This is the correct shape — same as the other three modals that had `items-center justify-center` but no explicit `flex`.
+
+#### Verification
+- `.modal { display: none }` confirmed in `admin-shared.css:506` AND in compiled `tailwind.css` (which loads after admin-shared.css). `.modal.active { display: flex }` likewise.
+- `.tab-content { display: none }` confirmed in `admin-shared.css:524` and `connection-detail.html:39` (inline). `.tab-content.active { display: block }` likewise.
+- `openModal()` in `admin-common.js:644` adds `.active`. No other modal show-path exists in the codebase (grep confirmed).
+- `switchTab()` adds `.active` to the matching tab-content. No other show-path exists.
+- No JS in `cmd/api/static/js/` or `web/` reads `classList.contains('hidden')` against any of the 23 elements — the `hidden` class was dead-code for state checks too.
+- No tests reference `modal hidden` or `tab-content hidden` HTML strings (grep confirmed).
+- `go build ./...` clean, full test suite green.
+
+#### What was NOT touched
+The 24 unrelated `.hidden` classes on non-modal/non-tab-content elements (empty-state placeholders, hidden inputs, error banners that use `classList.toggle('hidden')` correctly per v0.10.232's fix). Those are load-bearing — they're the JS's primary mechanism for show/hide on plain divs. Only the 23 elements where `hidden` was actively shadowed by a stronger rule were cleaned up.
+
 ## [0.10.234] - 2026-05-18
 
 ### Fixed — backend zero-value Save footgun (deferred from v0.10.233 audit)
