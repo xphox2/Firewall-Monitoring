@@ -80,9 +80,22 @@ func computeTraffic(buckets []database.InterfaceChartBucket, bucketSeconds float
 	return total, peak, avg, series, times
 }
 
-// parseBucketTime tolerates the handful of timestamp formats the dialects emit.
+// parseBucketTime tolerates the timestamp formats the dialects emit. The
+// Postgres/SQLite TimeBucket helpers (internal/database/dialect.go) render
+// buckets via to_char/strftime WITHOUT seconds — minute = "2006-01-02 15:04",
+// hour = "2006-01-02 15:00", day = "2006-01-02" — so those layouts MUST come
+// first. The seconds/RFC3339 variants are kept for robustness (raw timestamps,
+// tests). A missed format previously fell back to the zero time, rendering
+// every spike as "Jan 1 00:00".
 func parseBucketTime(s string) time.Time {
-	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
+	layouts := []string{
+		"2006-01-02 15:04", // minute / 5min / hour buckets (HH:00 also matches)
+		"2006-01-02",       // day buckets
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t
 		}

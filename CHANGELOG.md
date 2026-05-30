@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.238] - 2026-05-30
+
+### Fixed — report spike timestamps all showed "Jan 1 00:00"
+
+Traffic-spike cards in the executive report rendered every timestamp as `Jan 1 00:00` (the Go zero time). `parseBucketTime` (`internal/report/data.go`) only tried layouts **with seconds** (RFC3339, `2006-01-02 15:04:05`), but the dialect `TimeBucket` helpers emit buckets via `to_char`/`strftime` **without seconds** — minute = `2006-01-02 15:04`, hour = `2006-01-02 15:00`, day = `2006-01-02` (see `internal/database/dialect.go`). No layout matched, so every parse fell back to the zero time. Added the secondless minute/hour/day layouts (first in the try-list); kept the seconds/RFC3339 variants for raw timestamps.
+
+`internal/report/report_test.go` now feeds `computeTraffic` the real Postgres minute-bucket format and asserts the parsed bucket time is non-zero, so this can't regress.
+
+Spike values/severities and all other report data were already correct — this was display-only. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.237] - 2026-05-30
 
 ### Fixed — Reports page "Failed to load report: res.json is not a function"
