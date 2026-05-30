@@ -43,8 +43,9 @@
         var f = frame();
         if (!f) return;
         setStatus('Loading…');
+        // AdminCommon.apiFetch already parses JSON and returns the body object
+        // (it calls res.json() internally) — do NOT call .json() again here.
         AC.apiFetch('/admin/api/reports/preview?period=' + encodeURIComponent(period()))
-            .then(function (res) { return res.json(); })
             .then(function (json) {
                 if (!json || !json.success || !json.data || !json.data.html) {
                     throw new Error((json && json.error) || 'Empty report');
@@ -104,7 +105,6 @@
             method: 'POST',
             body: JSON.stringify({ period: period() })
         })
-            .then(function (res) { return res.json(); })
             .then(function (json) {
                 if (json && json.success) {
                     AC.showSuccess((json.data && json.data.message) || 'Report sent');

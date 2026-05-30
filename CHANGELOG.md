@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.237] - 2026-05-30
+
+### Fixed — Reports page "Failed to load report: res.json is not a function"
+
+The new admin Reports page (v0.10.236) failed on **View** and **Send Now** with `res.json is not a function`. `admin-reports.js` chained `.then(res => res.json())` onto `AdminCommon.apiFetch(...)`, but `apiFetch` **already parses the body and resolves to the JSON object** (it calls `res.json()` internally at `admin-common.js:179`) — so the second `.json()` ran against a plain object. Removed the redundant `.json()` step at both call sites (preview + send); the resolved value is now consumed directly as `{success, data}`.
+
+Also bumped the `Dockerfile` `org.opencontainers.image.version` label (was stale at `0.10.235`) to match the release.
+
+This is a static-JS fix embedded in the binary, so it requires a container rebuild to reach a deployment (`docker compose up -d --build`). Server-repo only.
+
 ## [0.10.236] - 2026-05-29
 
 ### Redesigned email/summary report — one self-contained executive report, viewable + exportable from the admin panel
