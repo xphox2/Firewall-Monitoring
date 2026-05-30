@@ -1,4 +1,16 @@
 # Changelog
+## [0.10.239] - 2026-05-30
+
+### Improved — traffic spikes are now summarized by interface, not listed per event
+
+A busy link can spike 30+ times in a window, and the report listed every one as its own card — a wall of events, not a summary. Spikes are now **aggregated per device+interface** into a single row showing: event **count** (e.g. `31×`), **peak throughput**, **worst severity** (critical/warning, with a `(N critical)` note when mixed), and the **time window** (`May 30 02:14 – 14:31`). Rows sort critical-first, then by event count.
+
+The fleet **Bandwidth & Traffic** section leads with a headline — `37 spikes on 3 interfaces · 14 critical · 23 warning` — then the top 8 interface rows, with a `+ N more interfaces with spikes` overflow line. Each device's own card shows the same summary scoped to that device (top 6 interfaces, device name omitted).
+
+Implementation: new `SpikeGroup` + `groupSpikes()` aggregation and `windowLabel()` (replacing the per-event `SpikeCard`) in `internal/report/model.go`; new `spikegroup` template row (replacing `spike`) in `template_report.go`. Tests: `TestGroupSpikes` covers aggregation, critical-first sort, window labels, and the cap/overflow; the render test now asserts the summarized spike section appears.
+
+Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.238] - 2026-05-30
 
 ### Fixed — report spike timestamps all showed "Jan 1 00:00"

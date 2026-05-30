@@ -122,9 +122,15 @@ const reportTemplateSrc = `
     <div style="font-size:12px;color:#8b949e;margin-top:14px;">No interface traffic recorded in this window.</div>
     {{end}}
 
-    {{if .SpikeCards}}
-    <div style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:18px 0 8px;">Traffic Spikes</div>
-    {{range .SpikeCards}}{{template "spike" .}}{{end}}
+    {{if .SpikeGroups}}
+    <div style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:18px 0 6px;">Traffic Spikes</div>
+    <div style="font-size:12px;color:#c9d1d9;margin-bottom:8px;">
+      <strong style="color:#e6edf3;">{{.SpikeTotal}}</strong> spike{{if ne .SpikeTotal 1}}s{{end}} on {{.SpikeIfaceCount}} interface{{if ne .SpikeIfaceCount 1}}s{{end}}
+      {{if .SpikeCritical}}<span style="color:#f85149;"> &middot; {{.SpikeCritical}} critical</span>{{end}}
+      {{if .SpikeWarning}}<span style="color:#d29922;"> &middot; {{.SpikeWarning}} warning</span>{{end}}
+    </div>
+    {{range .SpikeGroups}}{{template "spikegroup" .}}{{end}}
+    {{if .SpikeMore}}<div style="font-size:11px;color:#6e7681;margin-top:2px;">+ {{.SpikeMore}} more interface{{if ne .SpikeMore 1}}s{{end}} with spikes</div>{{end}}
     {{end}}
   </td></tr>
 
@@ -195,11 +201,16 @@ const reportTemplateSrc = `
   </td>
 </tr></table>{{end}}
 
-{{define "spike"}}<div style="border:1px solid #30363d;border-left:3px solid {{if .Critical}}#f85149{{else}}#d29922{{end}};background:#0d1117;border-radius:6px;padding:9px 12px;margin-bottom:7px;">
-  <span style="color:{{if .Critical}}#f85149{{else}}#d29922{{end}};font-weight:700;font-size:11px;letter-spacing:0.4px;">{{upper .Severity}}</span>
-  <span style="color:#e6edf3;font-size:12px;">&nbsp;{{.Interface}} on {{.DeviceName}}</span>
-  <div style="color:#8b949e;font-size:11px;margin-top:2px;">{{.ValueHuman}} at {{.TimeLabel}} (rolling avg {{.MeanHuman}})</div>
-</div>{{end}}
+{{define "spikegroup"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:6px;border:1px solid #30363d;border-left:3px solid {{if .IsCritical}}#f85149{{else}}#d29922{{end}};background:#0d1117;border-radius:6px;"><tr>
+  <td style="padding:8px 12px;vertical-align:middle;">
+    <span style="display:inline-block;background:{{if .IsCritical}}rgba(248,81,73,0.15){{else}}rgba(210,153,34,0.15){{end}};color:{{if .IsCritical}}#f85149{{else}}#d29922{{end}};border-radius:4px;padding:1px 7px;font-size:11px;font-weight:700;">{{.Count}}&times;</span>
+    <span style="color:#e6edf3;font-size:12px;font-weight:600;">&nbsp;{{.Interface}}</span>{{if .DeviceName}} <span style="color:#8b949e;font-size:12px;">{{.DeviceName}}</span>{{end}}
+    {{if and .Critical (ne .Critical .Count)}}<span style="color:#8b949e;font-size:11px;"> ({{.Critical}} critical)</span>{{end}}
+  </td>
+  <td align="right" style="padding:8px 12px;vertical-align:middle;font-size:11px;color:#8b949e;white-space:nowrap;">
+    peak <span style="color:#e6edf3;">{{.PeakHuman}}</span>{{if .Window}} &middot; {{.Window}}{{end}}
+  </td>
+</tr></table>{{end}}
 
 {{define "devhead"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
   <td style="vertical-align:middle;">
@@ -241,8 +252,8 @@ const reportTemplateSrc = `
 {{end}}
 
 {{if .Spikes}}
-<div style="font-size:11px;color:#8b949e;margin:12px 0 6px;">Spikes</div>
-{{range .Spikes}}{{template "spike" .}}{{end}}
+<div style="font-size:11px;color:#8b949e;margin:12px 0 6px;">Traffic Spikes</div>
+{{range .Spikes}}{{template "spikegroup" .}}{{end}}
 {{end}}
 {{end}}
 

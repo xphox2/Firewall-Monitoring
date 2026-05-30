@@ -33,7 +33,14 @@ type ReportModel struct {
 	PeakThroughput string // human-readable, e.g. "842.0 Mbps"
 	TotalTransfer  string // human-readable, e.g. "1.2 TB"
 	TopTalkers     []TopTalker
-	SpikeCards     []SpikeCard
+
+	// Traffic spikes — summarized by interface, not listed per event.
+	SpikeGroups     []SpikeGroup
+	SpikeTotal      int // total spike events across the fleet
+	SpikeCritical   int
+	SpikeWarning    int
+	SpikeIfaceCount int // number of distinct device+interface groups
+	SpikeMore       int // groups beyond the displayed cap
 
 	// Alert timeline
 	AlertBuckets []AlertBucket
@@ -51,15 +58,18 @@ type TopTalker struct {
 	BarPct     int    // 0..100, relative to the busiest talker in the set
 }
 
-// SpikeCard is a styled callout for a detected throughput anomaly.
-type SpikeCard struct {
-	DeviceName string
+// SpikeGroup summarizes all throughput anomalies for one device+interface over
+// the window — count, peak rate, worst severity, and the time span — instead of
+// listing every individual event (a busy link can spike 30+ times).
+type SpikeGroup struct {
+	DeviceName string // blank when rendered inside a device card (redundant there)
 	Interface  string
-	TimeLabel  string
-	ValueHuman string // spike throughput, human-readable
-	MeanHuman  string // rolling mean throughput
-	Severity   string // "warning" / "critical"
-	Critical   bool
+	Count      int
+	Critical   int    // how many of Count were critical
+	PeakHuman  string // peak throughput across the group, human-readable
+	WorstSev   string // "critical" / "warning"
+	IsCritical bool
+	Window     string // "May 30 02:14 – 14:31"
 }
 
 // AlertBucket is one column in the alert-frequency timeline.
@@ -93,7 +103,7 @@ type DeviceCard struct {
 	Sparkline    []SparkBar
 	HasSparkline bool
 	Talkers      []TopTalker
-	Spikes       []SpikeCard
+	Spikes       []SpikeGroup
 }
 
 // BuildReportModel assembles a ReportModel from gathered per-device data.
@@ -118,6 +128,7 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 		t      IfaceTraffic
 	}
 	var fleetTalkers []fleetTalker
+	var fleetSpikes []spikeItem
 	var allAlerts []models.Alert
 	var uptimeSum float64
 	var uptimeCount int
@@ -163,7 +174,15 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 			}
 		}
 
-		cards := spikeCards(device.Name, dd.Spikes, loc)
+		// Per-device spike summary (device name omitted — it's in the header).
+		var devItems []spikeItem
+		for _, s := range dd.Spikes {
+			item := spikeItem{device: device.Name, s: s}
+			devItems = append(devItems, item)
+			fleetSpikes = append(fleetSpikes, item)
+		}
+		devGroups, _, _, _, _ := groupSpikes(devItems, loc, false, 6)
+
 		card := DeviceCard{
 			Name:         device.Name,
 			IPAddress:    device.IPAddress,
@@ -180,13 +199,15 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 			AlertCount:   dd.AlertCount,
 			Talkers:      barsFromTalkers(device.Name, dd.Talkers, false),
 			Sparkline:    sparkline(dd.Sparkline),
-			Spikes:       cards,
+			Spikes:       devGroups,
 		}
 		card.HasSparkline = len(card.Sparkline) > 0
 		m.Devices = append(m.Devices, card)
-
-		m.SpikeCards = append(m.SpikeCards, cards...)
 	}
+
+	// Fleet spike summary — grouped by device+interface, headline counts, top 8.
+	m.SpikeGroups, m.SpikeMore, m.SpikeTotal, m.SpikeCritical, m.SpikeWarning = groupSpikes(fleetSpikes, loc, true, 8)
+	m.SpikeIfaceCount = len(m.SpikeGroups) + m.SpikeMore
 
 	// Fleet Top Talkers — sort by bytes transferred, keep the busiest 8.
 	sort.Slice(fleetTalkers, func(a, b int) bool {
@@ -253,20 +274,111 @@ func barsFromTalkers(deviceName string, talkers []IfaceTraffic, includeDevice bo
 	return out
 }
 
-func spikeCards(deviceName string, spikes []TrafficSpike, loc *time.Location) []SpikeCard {
-	out := make([]SpikeCard, 0, len(spikes))
-	for _, s := range spikes {
-		out = append(out, SpikeCard{
-			DeviceName: deviceName,
-			Interface:  s.Interface,
-			TimeLabel:  s.Timestamp.In(loc).Format("Jan 2 15:04"),
-			ValueHuman: formatThroughput(s.Value),
-			MeanHuman:  formatThroughput(s.Mean),
-			Severity:   s.Severity,
-			Critical:   s.Severity == "critical",
-		})
+// spikeItem pairs a spike with its device for fleet-level aggregation.
+type spikeItem struct {
+	device string
+	s      TrafficSpike
+}
+
+// groupSpikes collapses individual spike events into one SpikeGroup per
+// device+interface: count, peak rate, worst severity, and time window. Groups
+// are sorted critical-first, then by event count, then peak. When showDevice is
+// false the device name is omitted (rendered inside a device card). max caps the
+// returned groups; the overflow count is returned as `more`.
+func groupSpikes(items []spikeItem, loc *time.Location, showDevice bool, limit int) (groups []SpikeGroup, more, total, crit, warn int) {
+	type agg struct {
+		device, iface string
+		count, crit   int
+		peak          float64
+		first, last   time.Time
 	}
-	return out
+	type key struct{ device, iface string }
+
+	order := make([]key, 0)
+	byKey := make(map[key]*agg)
+	for _, it := range items {
+		total++
+		isCrit := it.s.Severity == "critical"
+		if isCrit {
+			crit++
+		} else {
+			warn++
+		}
+		k := key{it.device, it.s.Interface}
+		a, ok := byKey[k]
+		if !ok {
+			a = &agg{device: it.device, iface: it.s.Interface, first: it.s.Timestamp, last: it.s.Timestamp}
+			byKey[k] = a
+			order = append(order, k)
+		}
+		a.count++
+		if isCrit {
+			a.crit++
+		}
+		if it.s.Value > a.peak {
+			a.peak = it.s.Value
+		}
+		if !it.s.Timestamp.IsZero() {
+			if a.first.IsZero() || it.s.Timestamp.Before(a.first) {
+				a.first = it.s.Timestamp
+			}
+			if it.s.Timestamp.After(a.last) {
+				a.last = it.s.Timestamp
+			}
+		}
+	}
+
+	for _, k := range order {
+		a := byKey[k]
+		g := SpikeGroup{
+			Interface:  a.iface,
+			Count:      a.count,
+			Critical:   a.crit,
+			PeakHuman:  formatThroughput(a.peak),
+			IsCritical: a.crit > 0,
+			WorstSev:   "warning",
+			Window:     windowLabel(a.first, a.last, loc),
+		}
+		if g.IsCritical {
+			g.WorstSev = "critical"
+		}
+		if showDevice {
+			g.DeviceName = a.device
+		}
+		groups = append(groups, g)
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].IsCritical != groups[j].IsCritical {
+			return groups[i].IsCritical // criticals first
+		}
+		if groups[i].Count != groups[j].Count {
+			return groups[i].Count > groups[j].Count
+		}
+		return false
+	})
+
+	if limit > 0 && len(groups) > limit {
+		more = len(groups) - limit
+		groups = groups[:limit]
+	}
+	return groups, more, total, crit, warn
+}
+
+// windowLabel formats the [first,last] span of a spike group compactly.
+func windowLabel(first, last time.Time, loc *time.Location) string {
+	if first.IsZero() && last.IsZero() {
+		return ""
+	}
+	a := first.In(loc)
+	b := last.In(loc)
+	if a.Equal(b) {
+		return a.Format("Jan 2 15:04")
+	}
+	if a.Year() == b.Year() && a.YearDay() == b.YearDay() {
+		return a.Format("Jan 2 15:04") + " – " + b.Format("15:04") // same day
+	}
+	return a.Format("Jan 2 15:04") + " – " + b.Format("Jan 2 15:04")
 }
 
 // sparkline normalizes a throughput series into 0..100 column heights, keeping
