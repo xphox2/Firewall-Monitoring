@@ -9,6 +9,16 @@ import (
 	"firewall-mon/internal/models"
 )
 
+// IfaceTraffic holds correctly-derived traffic figures for one interface over
+// the report window. Totals/rates come from SNMP octet-counter DELTAS (see
+// computeTraffic), not from summing the raw cumulative counters.
+type IfaceTraffic struct {
+	Name       string
+	TotalBytes float64 // total bytes transferred (in+out) over the window
+	PeakBps    float64 // peak throughput (bits/sec) in any single bucket
+	AvgBps     float64 // average throughput (bits/sec) over the window
+}
+
 // DeviceReportData holds all aggregated data for a single device in a report.
 type DeviceReportData struct {
 	CPUAvg       float64
@@ -21,10 +31,63 @@ type DeviceReportData struct {
 	Alerts       []models.Alert
 	Spikes       []TrafficSpike
 
-	// Pre-rendered chart PNGs
-	UptimeChart  []byte
-	CPUMemChart  []byte
-	TrafficChart []byte
+	// Bandwidth (image-free, v0.10.236)
+	Talkers   []IfaceTraffic // top interfaces by bytes transferred
+	Sparkline []float64      // per-bucket throughput (bps) for the busiest interface
+
+	// Uptime
+	UptimePct         float64
+	UptimeDaysTracked int
+}
+
+// rangeForHours maps a report window to the GetInterfaceChartData range string
+// and the bucket width in seconds used for that range.
+func rangeForHours(hours int) (rangeStr string, bucketSeconds float64) {
+	if hours >= 168 {
+		return "7d", 3600 // hourly buckets
+	}
+	return "24h", 60 // minute buckets
+}
+
+// computeTraffic derives honest traffic figures from a series of interface
+// chart buckets whose values are cumulative octet counters. It returns total
+// bytes transferred, peak/avg throughput (bps), and the per-bucket throughput
+// series (aligned with the returned times) for sparkline + spike detection.
+//
+// Each consecutive bucket delta is the bytes transferred in that bucket window.
+// Negative deltas (counter reset or 32-bit wrap) are clamped to zero.
+func computeTraffic(buckets []database.InterfaceChartBucket, bucketSeconds float64) (total, peak, avg float64, series []float64, times []time.Time) {
+	if len(buckets) < 2 || bucketSeconds <= 0 {
+		return 0, 0, 0, nil, nil
+	}
+	for i := 1; i < len(buckets); i++ {
+		delta := (buckets[i].InBytes + buckets[i].OutBytes) - (buckets[i-1].InBytes + buckets[i-1].OutBytes)
+		if delta < 0 {
+			delta = 0 // counter reset / wrap
+		}
+		total += delta
+		bps := delta * 8 / bucketSeconds
+		if bps > peak {
+			peak = bps
+		}
+		series = append(series, bps)
+		times = append(times, parseBucketTime(buckets[i].Bucket))
+	}
+	windowSeconds := bucketSeconds * float64(len(buckets)-1)
+	if windowSeconds > 0 {
+		avg = total * 8 / windowSeconds
+	}
+	return total, peak, avg, series, times
+}
+
+// parseBucketTime tolerates the handful of timestamp formats the dialects emit.
+func parseBucketTime(s string) time.Time {
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // GatherDeviceData collects all report data for a single device over the given hours.
@@ -64,58 +127,44 @@ func GatherDeviceData(db *database.Database, device *models.Device, hours int, p
 	data.Alerts = alerts
 	data.AlertCount = len(alerts)
 
-	// Get top interfaces for traffic chart
+	// Get top interfaces (ranking heuristic), then derive honest per-interface
+	// traffic from counter deltas.
+	rangeStr, bucketSeconds := rangeForHours(hours)
 	topIfaces, err := db.GetTopInterfacesByTraffic(device.ID, hours, 3)
 	if err != nil {
 		log.Printf("Report: failed to get top interfaces for %s: %v", device.Name, err)
 	}
 
-	// Render traffic chart for top interface
-	if len(topIfaces) > 0 {
-		rangeStr := "24h"
-		if hours >= 168 {
-			rangeStr = "7d"
-		}
-		chartData, err := db.GetInterfaceChartData(device.ID, topIfaces[0].Index, rangeStr)
-		if err == nil && len(chartData) > 0 {
-			title := fmt.Sprintf("%s — %s Traffic", device.Name, topIfaces[0].Name)
-			png, err := RenderTrafficChart(chartData, title)
-			if err != nil {
-				log.Printf("Report: failed to render traffic chart for %s: %v", device.Name, err)
-			} else {
-				data.TrafficChart = png
-			}
-
-			// Spike detection on chart data
-			if spikeThreshold > 0 {
-				spikes := DetectTrafficSpikes(chartData, spikeThreshold, topIfaces[0].Name)
-				data.Spikes = append(data.Spikes, spikes...)
-			}
-		}
-	}
-
-	// Render CPU/Mem chart
-	if len(history) > 0 {
-		title := fmt.Sprintf("%s — CPU/Memory", device.Name)
-		png, err := RenderCPUMemChart(history, title)
+	for idx, ti := range topIfaces {
+		chartData, err := db.GetInterfaceChartData(device.ID, ti.Index, rangeStr)
 		if err != nil {
-			log.Printf("Report: failed to render CPU/mem chart for %s: %v", device.Name, err)
-		} else {
-			data.CPUMemChart = png
+			log.Printf("Report: failed to get chart data for %s/%s: %v", device.Name, ti.Name, err)
+			continue
+		}
+		total, peak, avg, series, times := computeTraffic(chartData, bucketSeconds)
+		data.Talkers = append(data.Talkers, IfaceTraffic{
+			Name:       ti.Name,
+			TotalBytes: total,
+			PeakBps:    peak,
+			AvgBps:     avg,
+		})
+
+		// Sparkline + spike detection run on the busiest interface only.
+		if idx == 0 {
+			data.Sparkline = series
+			if spikeThreshold > 0 {
+				data.Spikes = append(data.Spikes, detectSpikesInSeries(series, times, spikeThreshold, ti.Name)...)
+			}
 		}
 	}
 
-	// Uptime calculation and chart
+	// Uptime calculation
 	uptime, err := CalculateDeviceUptime(db, device.ID, 30, pollIntervalSec)
 	if err != nil {
 		log.Printf("Report: failed to calculate uptime for %s: %v", device.Name, err)
-	} else if uptime.DaysTracked > 0 {
-		png, err := RenderUptimeMeter(uptime.Percent, uptime.DaysTracked, uptime.MaxDays)
-		if err != nil {
-			log.Printf("Report: failed to render uptime meter for %s: %v", device.Name, err)
-		} else {
-			data.UptimeChart = png
-		}
+	} else if uptime != nil {
+		data.UptimePct = uptime.Percent
+		data.UptimeDaysTracked = uptime.DaysTracked
 	}
 
 	return data
@@ -131,7 +180,7 @@ func GatherRecentHistory(db *database.Database, deviceID uint) []models.SystemSt
 	return history
 }
 
-// durationUntilTime returns the duration until the next occurrence of HH:MM in the given timezone.
+// DurationUntilTime returns the duration until the next occurrence of HH:MM in the given timezone.
 func DurationUntilTime(targetTime string, tz string) time.Duration {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {

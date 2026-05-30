@@ -5,11 +5,11 @@ import (
 	"math"
 	"sync"
 	"time"
-
-	"firewall-mon/internal/database"
 )
 
-// TrafficSpike represents a detected spike in traffic data.
+// TrafficSpike represents a detected spike in traffic data. For report spike
+// cards (v0.10.236) Value/Mean/StdDev are throughput in bits-per-second derived
+// from counter deltas — NOT raw octet-counter values.
 type TrafficSpike struct {
 	Timestamp time.Time `json:"timestamp"`
 	Interface string    `json:"interface"`
@@ -19,20 +19,22 @@ type TrafficSpike struct {
 	Severity  string    `json:"severity"` // "warning" or "critical"
 }
 
-// DetectTrafficSpikes analyzes chart bucket data for anomalies using rolling-window
-// standard deviation. windowSize is the rolling window (e.g. 60 for minute buckets).
-func DetectTrafficSpikes(data []database.InterfaceChartBucket, stddevThreshold float64, ifName string) []TrafficSpike {
-	if len(data) < 3 || stddevThreshold <= 0 {
+// detectSpikesInSeries flags anomalies in a throughput (bps) series using a
+// rolling-window standard deviation. values[i] is aligned with times[i].
+//
+// v0.10.236: this replaces the old DetectTrafficSpikes, which ran std-dev
+// analysis directly on InterfaceChartBucket.InBytes+OutBytes — i.e. on a
+// monotonically increasing SNMP octet counter. A cumulative counter trends
+// strictly upward, so the latest sample is always far above the rolling mean,
+// making the old detector fire constantly and report meaningless byte counts.
+// The honest signal is the per-bucket throughput derived from counter deltas
+// (see computeTraffic in data.go), which is what we analyze here.
+func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold float64, ifName string) []TrafficSpike {
+	if len(values) < 3 || stddevThreshold <= 0 {
 		return nil
 	}
 
-	// Use total bytes (in+out) for spike detection
-	values := make([]float64, len(data))
-	for i, d := range data {
-		values[i] = d.InBytes + d.OutBytes
-	}
-
-	// Rolling window size: up to 1/4 of data points, min 3
+	// Rolling window size: up to 1/4 of data points, min 3, max 60.
 	windowSize := len(values) / 4
 	if windowSize < 3 {
 		windowSize = 3
@@ -55,7 +57,10 @@ func DetectTrafficSpikes(data []database.InterfaceChartBucket, stddevThreshold f
 			if values[i] > mean+stddevThreshold*2*stddev {
 				severity = "critical"
 			}
-			ts, _ := time.Parse(time.RFC3339, data[i].Bucket)
+			var ts time.Time
+			if i < len(times) {
+				ts = times[i]
+			}
 			spikes = append(spikes, TrafficSpike{
 				Timestamp: ts,
 				Interface: ifName,

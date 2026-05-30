@@ -288,52 +288,68 @@ func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachm
 	}
 
 	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-	boundary := writer.Boundary()
 
-	// Write top-level headers
-	buf.Reset()
-	fmt.Fprintf(&buf, "From: %s\r\n", sanitize(nc.SMTPFrom))
-	fmt.Fprintf(&buf, "To: %s\r\n", sanitize(recipients))
-	fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
-	fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
-	fmt.Fprintf(&buf, "Content-Type: multipart/related; boundary=%q\r\n", boundary)
-	fmt.Fprintf(&buf, "\r\n")
+	if len(attachments) == 0 {
+		// No inline images → send a single text/html message instead of an
+		// empty multipart/related wrapper. Compliant clients then show one
+		// clean message with zero attachments (v0.10.236). UTF-8 HTML is sent
+		// 8bit, which every modern submission server (8BITMIME) accepts.
+		fmt.Fprintf(&buf, "From: %s\r\n", sanitize(nc.SMTPFrom))
+		fmt.Fprintf(&buf, "To: %s\r\n", sanitize(recipients))
+		fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
+		fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
+		fmt.Fprintf(&buf, "Content-Type: text/html; charset=UTF-8\r\n")
+		fmt.Fprintf(&buf, "Content-Transfer-Encoding: 8bit\r\n")
+		fmt.Fprintf(&buf, "\r\n")
+		buf.WriteString(htmlBody)
+	} else {
+		writer := multipart.NewWriter(&buf)
+		boundary := writer.Boundary()
 
-	// HTML part
-	htmlHeader := make(textproto.MIMEHeader)
-	htmlHeader.Set("Content-Type", "text/html; charset=UTF-8")
-	htmlHeader.Set("Content-Transfer-Encoding", "quoted-printable")
-	htmlPart, err := writer.CreatePart(htmlHeader)
-	if err != nil {
-		return fmt.Errorf("failed to create HTML part: %w", err)
-	}
-	htmlPart.Write([]byte(htmlBody))
+		// Write top-level headers
+		buf.Reset()
+		fmt.Fprintf(&buf, "From: %s\r\n", sanitize(nc.SMTPFrom))
+		fmt.Fprintf(&buf, "To: %s\r\n", sanitize(recipients))
+		fmt.Fprintf(&buf, "Subject: %s\r\n", sanitize(subject))
+		fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
+		fmt.Fprintf(&buf, "Content-Type: multipart/related; boundary=%q\r\n", boundary)
+		fmt.Fprintf(&buf, "\r\n")
 
-	// Inline image attachments
-	for _, att := range attachments {
-		attHeader := make(textproto.MIMEHeader)
-		attHeader.Set("Content-Type", att.MIMEType)
-		attHeader.Set("Content-Transfer-Encoding", "base64")
-		attHeader.Set("Content-ID", "<"+att.ContentID+">")
-		attHeader.Set("Content-Disposition", "inline")
-		part, err := writer.CreatePart(attHeader)
+		// HTML part
+		htmlHeader := make(textproto.MIMEHeader)
+		htmlHeader.Set("Content-Type", "text/html; charset=UTF-8")
+		htmlHeader.Set("Content-Transfer-Encoding", "quoted-printable")
+		htmlPart, err := writer.CreatePart(htmlHeader)
 		if err != nil {
-			return fmt.Errorf("failed to create attachment part: %w", err)
+			return fmt.Errorf("failed to create HTML part: %w", err)
 		}
-		encoded := base64.StdEncoding.EncodeToString(att.Data)
-		// Write in 76-char lines per RFC 2045
-		for i := 0; i < len(encoded); i += 76 {
-			end := i + 76
-			if end > len(encoded) {
-				end = len(encoded)
-			}
-			part.Write([]byte(encoded[i:end]))
-			part.Write([]byte("\r\n"))
-		}
-	}
+		htmlPart.Write([]byte(htmlBody))
 
-	writer.Close()
+		// Inline image attachments
+		for _, att := range attachments {
+			attHeader := make(textproto.MIMEHeader)
+			attHeader.Set("Content-Type", att.MIMEType)
+			attHeader.Set("Content-Transfer-Encoding", "base64")
+			attHeader.Set("Content-ID", "<"+att.ContentID+">")
+			attHeader.Set("Content-Disposition", "inline")
+			part, err := writer.CreatePart(attHeader)
+			if err != nil {
+				return fmt.Errorf("failed to create attachment part: %w", err)
+			}
+			encoded := base64.StdEncoding.EncodeToString(att.Data)
+			// Write in 76-char lines per RFC 2045
+			for i := 0; i < len(encoded); i += 76 {
+				end := i + 76
+				if end > len(encoded) {
+					end = len(encoded)
+				}
+				part.Write([]byte(encoded[i:end]))
+				part.Write([]byte("\r\n"))
+			}
+		}
+
+		writer.Close()
+	}
 
 	addr := fmt.Sprintf("%s:%d", nc.SMTPHost, nc.SMTPPort)
 	var auth smtp.Auth

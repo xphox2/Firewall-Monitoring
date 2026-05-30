@@ -1,4 +1,43 @@
 # Changelog
+## [0.10.236] - 2026-05-29
+
+### Redesigned email/summary report — one self-contained executive report, viewable + exportable from the admin panel
+
+The daily/weekly email report was a `multipart/related` message with go-chart PNGs embedded via `Content-ID`. Outlook and several clients list those inline images as **separate attachments** — the "mix of text and multiple individual files" complaint. The charts were basic and, worse, the bandwidth section was fundamentally broken (details below). There was also no way to see the report without waiting for the scheduled email.
+
+This rewrite replaces it with a single, modern, **image-free** report rendered entirely from email-safe HTML/CSS, delivered three ways from one template: the scheduled email, a new **Reports** page in the admin panel, and browser print-to-PDF.
+
+#### The bandwidth detection was mathematically wrong — now fixed
+`interface_stats.in_bytes`/`out_bytes` store the **raw cumulative SNMP octet counter** (`ifHCInOctets`), not a per-interval delta. The old report fed that monotonically increasing counter straight into:
+- **Spike detection** (`DetectTrafficSpikes`) — running rolling std-dev on an always-increasing series means the latest sample is permanently far above the rolling mean. It fired constantly and reported meaningless raw byte counts ("12345 bytes at 15:04").
+- **Top interfaces** (`GetTopInterfacesByTraffic` `SUM(in_bytes)`) — summing a cumulative counter is not bytes-transferred.
+
+Now traffic is derived from **consecutive counter deltas** (`computeTraffic` in `internal/report/data.go`), with negative deltas clamped for counter resets/32-bit wrap. This yields honest **bytes transferred** (telescoping delta sum), **peak/avg throughput** (bits/sec), a throughput **sparkline**, and spike detection that runs on the *throughput* series (`detectSpikesInSeries`) and reports rates ("842.0 Mbps at …"), not counter values.
+
+#### What the new report contains
+- **Fleet KPI cards** — devices, online/offline, alerts, critical, fleet uptime %.
+- **Bandwidth & Traffic** — peak throughput + total transferred chips, fleet **Top Talkers** horizontal bars, and traffic **spike callouts** as styled cards.
+- **Alert timeline** — pure HTML/CSS column histogram (ported off go-chart).
+- **Per-device detail** — KPI mini-grid, uptime bar, throughput sparkline, interface bars, spikes. Collapsible (`<details>`) in the admin preview; always-open in email.
+
+#### Admin panel — new Reports page
+- Sidebar **System → Reports** (`/admin/reports`).
+- **View** (renders the report into an isolated iframe via `document.write` — robust against the `frame-src`-less CSP), **Export PDF** (browser print of the iframe; print CSS expands all device blocks and hides UI chrome), **Download HTML** (self-contained single file), **Send Now** (emails the report immediately, reusing the Test-Email SMTP path + SSRF guard).
+- New endpoints: `GET /admin/api/reports/preview?period=daily|weekly`, `POST /admin/api/reports/send`.
+
+#### Email is now a single message with zero attachments
+`Notifier.SendHTMLEmail` sends a plain `text/html` message (8bit) when there are no attachments, instead of an empty `multipart/related` wrapper — so compliant clients show one clean message. The `multipart/related` path is retained for critical-alert emails, which still embed one CPU/Memory image.
+
+#### Internal refactor
+- New: `internal/report/model.go` (pure-data `ReportModel` + `BuildReportModel`), `template_report.go` (single email-safe HTML template + `RenderReportHTML`), `format.go` (`autoScale` moved out of `charts.go` + `formatBytes`/`formatThroughput`), `internal/api/handlers/handlers_reports.go`.
+- `internal/report/data.go` now gathers raw series instead of pre-rendered PNGs; `email.go` `BuildDailyReport`/`BuildWeeklyReport` return `(subject, html, err)`; `charts.go` trimmed to `RenderCPUMemChart` (go-chart now used only for critical-alert emails); old `dailyTemplate` removed.
+- `Handler` gains a `notifier` + `version` (injected in `cmd/api/main.go`); `ServerVersion` → `0.10.236`.
+- Tests: `internal/report/report_test.go` covers counter-delta math, formatters, throughput-series spike detection, and a render smoke test asserting no `cid:`/`<img>` in the output.
+
+#### Verification
+- `go build ./...`, `go vet`, and `go test ./...` all pass (new report tests green).
+- Server-repo only — no collector changes.
+
 ## [0.10.235] - 2026-05-19
 
 ### Fixed — 23 redundant `class="hidden"` tokens on `.modal` / `.tab-content` elements (deferred from v0.10.233)

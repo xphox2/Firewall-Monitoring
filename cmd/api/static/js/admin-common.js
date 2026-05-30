@@ -792,7 +792,7 @@
             var segments = path.split('/');
             var lastSegment = segments[segments.length - 1];
             var pageMap = { 'dashboard':'', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
-                'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
+                'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
                 'probe-pending':'probe-pending', 'irc':'irc' };
             currentPage = pageMap[lastSegment] || 'dashboard';
@@ -801,7 +801,7 @@
         var pageIcons = {
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;', 'interfaces': '&#8646;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
-            'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;',
+            'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
             'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;'
         };
         var navHtml = '<div class="nav-section"><div class="nav-section-title">Monitoring</div>' +
@@ -822,6 +822,7 @@
             '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active' : '') + '" href="/admin/alert-policies"><span class="nav-icon">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
             '<a class="nav-item' + (currentPage === 'maintenance' ? ' active' : '') + '" href="/admin/maintenance"><span class="nav-icon">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">System</div>' +
+            '<a class="nav-item' + (currentPage === 'reports' ? ' active' : '') + '" href="/admin/reports"><span class="nav-icon">' + pageIcons['reports'] + '</span> Reports</a>' +
             '<a class="nav-item' + (currentPage === 'settings' ? ' active' : '') + '" href="/admin/settings"><span class="nav-icon">' + pageIcons['settings'] + '</span> Settings</a>' +
             '<a class="nav-item' + (currentPage === 'irc' ? ' active' : '') + '" href="/admin/irc"><span class="nav-icon">' + pageIcons['irc'] + '</span> IRC</a>' +
             '</div>';

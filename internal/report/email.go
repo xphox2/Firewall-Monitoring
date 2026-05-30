@@ -9,156 +9,37 @@ import (
 	"firewall-mon/internal/notifier"
 )
 
-// DeviceReportSection holds pre-computed data for one device in a report.
-type DeviceReportSection struct {
-	DeviceName      string
-	IPAddress       string
-	Status          string
-	CPUAvg          float64
-	CPUMax          float64
-	MemAvg          float64
-	MemMax          float64
-	DiskUsage       float64
-	SessionCount    int
-	AlertCount      int
-	UptimeChartCID  string
-	CPUMemChartCID  string
-	TrafficChartCID string
-	Spikes          []TrafficSpike
+// BuildDailyReport builds a self-contained HTML daily report (no attachments).
+func BuildDailyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, error) {
+	return buildReport(devices, deviceData, tz, 24, "Daily", "")
 }
 
-// DailyReportData holds all data for the daily report template.
-type DailyReportData struct {
-	Date           string
-	Timezone       string
-	Hours          int
-	TotalDevices   int
-	OnlineDevices  int
-	OfflineDevices int
-	TotalAlerts    int
-	Devices        []DeviceReportSection
-	AlertTrendCID  string
+// BuildWeeklyReport builds a self-contained HTML weekly report (no attachments).
+func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, error) {
+	return buildReport(devices, deviceData, tz, 168, "Weekly", "")
 }
 
-// BuildDailyReport builds an HTML daily report with embedded chart images.
-func BuildDailyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, []notifier.Attachment, error) {
-	return buildReport(devices, deviceData, tz, 24, "Daily")
-}
-
-// BuildWeeklyReport builds an HTML weekly report with embedded chart images.
-func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, tz string) (string, string, []notifier.Attachment, error) {
-	return buildReport(devices, deviceData, tz, 168, "Weekly")
-}
-
-func buildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period string) (string, string, []notifier.Attachment, error) {
-	now := time.Now()
-	loc, err := time.LoadLocation(tz)
+// BuildReport renders a report HTML body + subject for the given window. The
+// collapsible flag wraps per-device detail in <details> (admin preview); email
+// sends always-open blocks. Returns (subject, html, error).
+func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, error) {
+	m := BuildReportModel(devices, deviceData, tz, hours, period)
+	m.Version = version
+	m.Collapsible = collapsible
+	html, err := RenderReportHTML(m)
 	if err != nil {
+		return "", "", err
+	}
+	loc, e := time.LoadLocation(tz)
+	if e != nil {
 		loc = time.UTC
 	}
+	subject := fmt.Sprintf("Firewall Monitor — %s Report — %s", period, time.Now().In(loc).Format("2006-01-02"))
+	return subject, html, nil
+}
 
-	data := DailyReportData{
-		Date:         now.In(loc).Format("Monday, January 2, 2006"),
-		Timezone:     tz,
-		Hours:        hours,
-		TotalDevices: len(devices),
-	}
-
-	var attachments []notifier.Attachment
-	chartIdx := 0
-
-	for i, device := range devices {
-		if device.Status == "online" {
-			data.OnlineDevices++
-		} else {
-			data.OfflineDevices++
-		}
-
-		if i >= len(deviceData) || deviceData[i] == nil {
-			continue
-		}
-		dd := deviceData[i]
-		data.TotalAlerts += dd.AlertCount
-
-		section := DeviceReportSection{
-			DeviceName:   device.Name,
-			IPAddress:    device.IPAddress,
-			Status:       device.Status,
-			CPUAvg:       dd.CPUAvg,
-			CPUMax:       dd.CPUMax,
-			MemAvg:       dd.MemAvg,
-			MemMax:       dd.MemMax,
-			DiskUsage:    dd.DiskUsage,
-			SessionCount: dd.SessionCount,
-			AlertCount:   dd.AlertCount,
-			Spikes:       dd.Spikes,
-		}
-
-		// Uptime chart
-		if dd.UptimeChart != nil {
-			cid := fmt.Sprintf("uptime_%d", chartIdx)
-			chartIdx++
-			section.UptimeChartCID = cid
-			attachments = append(attachments, notifier.Attachment{
-				ContentID: cid,
-				Data:      dd.UptimeChart,
-				MIMEType:  "image/png",
-			})
-		}
-
-		// CPU/Mem chart
-		if dd.CPUMemChart != nil {
-			cid := fmt.Sprintf("cpumem_%d", chartIdx)
-			chartIdx++
-			section.CPUMemChartCID = cid
-			attachments = append(attachments, notifier.Attachment{
-				ContentID: cid,
-				Data:      dd.CPUMemChart,
-				MIMEType:  "image/png",
-			})
-		}
-
-		// Traffic chart
-		if dd.TrafficChart != nil {
-			cid := fmt.Sprintf("traffic_%d", chartIdx)
-			chartIdx++
-			section.TrafficChartCID = cid
-			attachments = append(attachments, notifier.Attachment{
-				ContentID: cid,
-				Data:      dd.TrafficChart,
-				MIMEType:  "image/png",
-			})
-		}
-
-		data.Devices = append(data.Devices, section)
-	}
-
-	// Alert trend chart
-	if len(deviceData) > 0 {
-		var allAlerts []models.Alert
-		for _, dd := range deviceData {
-			if dd != nil {
-				allAlerts = append(allAlerts, dd.Alerts...)
-			}
-		}
-		if trendPNG, err := RenderAlertTrend(allAlerts, hours); err == nil && trendPNG != nil {
-			cid := "alert_trend"
-			data.AlertTrendCID = cid
-			attachments = append(attachments, notifier.Attachment{
-				ContentID: cid,
-				Data:      trendPNG,
-				MIMEType:  "image/png",
-			})
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := dailyTemplate.Execute(&buf, data); err != nil {
-		return "", "", nil, fmt.Errorf("render template: %w", err)
-	}
-
-	subject := fmt.Sprintf("Firewall Monitor — %s Report — %s", period, now.In(loc).Format("2006-01-02"))
-	return subject, buf.String(), attachments, nil
+func buildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string) (string, string, error) {
+	return BuildReport(devices, deviceData, tz, hours, period, version, false)
 }
 
 // CriticalAlertData holds data for the critical alert template.

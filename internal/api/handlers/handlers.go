@@ -11,6 +11,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/irc"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/uptime"
 
@@ -24,6 +25,8 @@ type Handler struct {
 	uptimeTrack  *uptime.UptimeTracker
 	alertManager *alerts.AlertManager
 	ircManager   *irc.Manager
+	notifier     *notifier.Notifier
+	version      string
 	db           *database.Database
 	mu           sync.RWMutex
 }
@@ -59,6 +62,21 @@ func (h *Handler) SetSNMPClient(client *snmp.SNMPClient) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.snmpClient = client
+}
+
+// SetNotifier wires the notifier used for on-demand report sends from the
+// admin panel (the scheduled reports run in the poller process).
+func (h *Handler) SetNotifier(n *notifier.Notifier) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.notifier = n
+}
+
+// SetVersion records the server version stamped into rendered reports.
+func (h *Handler) SetVersion(v string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.version = v
 }
 
 func (h *Handler) GetHealth(c *gin.Context) {

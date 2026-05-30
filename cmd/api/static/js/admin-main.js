@@ -119,6 +119,7 @@
                 });
                 break;
             case 'settings': loadSettings(); break;
+            case 'reports': if (window.AdminReports && window.AdminReports.init) window.AdminReports.init(); break;
             case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
             case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
             case 'alert-policies': loadAlertPolicies(); break;
@@ -2792,7 +2793,7 @@
         var segments = path.split('/');
         var lastSegment = segments[segments.length - 1];
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
-            'settings':'settings', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
+            'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
             'alert-policies':'alert-policies', 'maintenance':'maintenance',
             'probes':'probes', 'sites':'sites', 'network':'network', 'probe-pending':'probe-pending', 'irc':'irc' };
         var page = pageMap[lastSegment];
@@ -3636,7 +3637,7 @@
     // browser keeps its native open-in-new-tab affordance — which is
     // critical for the multi-tab triage flow.
     var SPA_PAGES = { dashboard:1, devices:1, interfaces:1, connections:1,
-        settings:1, syslog:1, flows:1, alerts:1, traps:1,
+        settings:1, reports:1, syslog:1, flows:1, alerts:1, traps:1,
         'alert-policies':1, maintenance:1,
         probes:1, sites:1, network:1, 'probe-pending':1, irc:1 };
 

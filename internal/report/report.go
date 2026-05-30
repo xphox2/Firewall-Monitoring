@@ -149,13 +149,12 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 		deviceData[i] = GatherDeviceData(rs.db, &devices[i], hours, pollInterval, spikeThreshold)
 	}
 
-	// Build report
+	// Build report (single self-contained HTML body, no attachments)
 	var subject, htmlBody string
-	var attachments []notifier.Attachment
 	if hours <= 24 {
-		subject, htmlBody, attachments, err = BuildDailyReport(devices, deviceData, tz)
+		subject, htmlBody, err = BuildDailyReport(devices, deviceData, tz)
 	} else {
-		subject, htmlBody, attachments, err = BuildWeeklyReport(devices, deviceData, tz)
+		subject, htmlBody, err = BuildWeeklyReport(devices, deviceData, tz)
 	}
 	if err != nil {
 		log.Printf("Report: failed to build report: %v", err)
@@ -167,7 +166,7 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 	nc := notifier.SnapshotConfig(&rs.cfg.Alerts)
 	rs.mu.RUnlock()
 
-	if err := rs.notifier.SendHTMLEmail(subject, htmlBody, attachments, nc, recipients); err != nil {
+	if err := rs.notifier.SendHTMLEmail(subject, htmlBody, nil, nc, recipients); err != nil {
 		log.Printf("Report: failed to send report: %v", err)
 	} else {
 		log.Printf("Report: %dh report sent successfully to %s", hours, recipients)

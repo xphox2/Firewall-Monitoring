@@ -31,7 +31,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.235"
+const ServerVersion = "0.10.236"
 
 func main() {
 	cfg := config.Load()
@@ -130,6 +130,11 @@ func main() {
 	alertMgr := alerts.NewAlertManager(cfg, notif, db)
 	alertMgr.RefreshThresholds(db.Gorm())
 	handler.SetAlertManager(alertMgr)
+
+	// Wire the notifier + version for on-demand report sends / rendering from
+	// the admin Reports page (scheduled reports run in the poller process).
+	handler.SetNotifier(notif)
+	handler.SetVersion(ServerVersion)
 
 	snmpClient, err := snmp.NewSNMPClient(cfg)
 	if err != nil {
@@ -358,6 +363,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/reports", func(c *gin.Context) {
+			c.HTML(http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/connections", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", nil)
 		})
@@ -524,6 +533,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/settings/test-email", handler.TestEmail)
 		admin.POST("/api/settings/test-webhook", handler.TestWebhook)
 		admin.GET("/api/display-settings", handler.GetPublicDisplaySettings)
+
+		admin.GET("/api/reports/preview", handler.PreviewReport)
+		admin.POST("/api/reports/send", handler.SendReportNow)
 
 		admin.GET("/irc", func(c *gin.Context) {
 			c.HTML(http.StatusOK, "irc.html", nil)
