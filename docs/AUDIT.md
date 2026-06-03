@@ -1198,6 +1198,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-062 | `admin-irc.js` showAlert uses inline `style.display` | 0.10.308 | fb19621 | showAlert toggled inline `style.display` and scheduled an uncleared 5s `setTimeout` each call, so back-to-back alerts hid each other early. Now toggles the shared `.hidden` class and `clearTimeout`s a tracked `alertTimer`; `#alertMessage` starts with `class="hidden"`. `TestIRCShowAlert_AUDIT062` in `internal/shell/` pins the change. |
 | AUDIT-063 | Public dashboard "Reset Layout" wipes localStorage with no confirmation | 0.10.309 | 4941a8a | Added a `confirm()` guard to `resetLayout()`. Used a native `confirm()` deliberately rather than loading admin-common.js (~36 KB + a /admin/api fetch) onto the public wallboard, which would partly undo AUDIT-052. `TestResetConfirm_AUDIT063` in `internal/shell/` pins the confirm-before-clear ordering. |
 | AUDIT-065 | Unescaped `conn.status` in innerHTML (connection-detail) | 0.10.310 | b1c5483 | `statusEl.innerHTML` concatenated raw `conn.status` into the badge class + text. Server validates to an enum (defense-in-depth gap, not live XSS); wrapped with `AC.escapeHtml` (uppercase then escape). `TestConnStatusEscape_AUDIT065` in `internal/shell/` pins it. |
+| AUDIT-064 | N+1 in probes page loadProbeSummaryStats | 0.10.311 | (pending) | Added `GET /admin/api/probes/stats?ids=` (`GetProbesStatsBatch`) returning total + last-hour counts for all probes in 8 grouped queries (`WHERE probe_id IN (...) GROUP BY probe_id`), regardless of N; `admin-probes.js` makes one batched call instead of one per approved probe. Static route, sibling of `/api/probes/:id`. Tests: `TestGetProbesStatsBatch_AUDIT064` (+EmptyIDs) handler/DB, `TestProbesBatchStats_FrontendUsesBatch_AUDIT064` JS. |
 
 ---
 
@@ -1284,6 +1285,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-062 — irc showAlert uses .hidden class + clears timer — v0.10.308 — fb19621 — opencode
 2026-06-03 — AUDIT-063 — confirm() before public dashboard layout reset — v0.10.309 — 4941a8a — opencode
 2026-06-03 — AUDIT-065 — escape conn.status before innerHTML (connection-detail) — v0.10.310 — b1c5483 — opencode
+2026-06-03 — AUDIT-064 — batch /probes/stats?ids= endpoint (kills probes N+1) — v0.10.311 — (pending) — opencode
 ```
 
 ---

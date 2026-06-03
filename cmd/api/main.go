@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.310"
+const ServerVersion = "0.10.311"
 
 func main() {
 	cfg := config.Load()
@@ -508,6 +508,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/probes/:id", handler.GetProbe)
 		admin.POST("/api/probes/test", handler.TestProbeConnection)
 		admin.GET("/api/probes/pending", handler.GetPendingProbes)
+		admin.GET("/api/probes/stats", handler.GetProbesStatsBatch) // AUDIT-064: batch stats (static path, sibling of /:id)
 		admin.POST("/api/probes/:id/approve", handler.ApproveProbe)
 		admin.POST("/api/probes/:id/reject", handler.RejectProbe)
 		admin.POST("/api/probes/:id/regenerate-key", handler.RegenerateProbeKey)

@@ -31,7 +31,7 @@
 
         var totalSyslog = 0, totalTraps = 0, totalFlows = 0, totalPings = 0;
         var lastHourSyslog = 0, lastHourTraps = 0, lastHourFlows = 0, lastHourPings = 0;
-        var loaded = 0, failed = 0;
+        var failed = 0;
 
         function renderSummary() {
             var failedNote = failed > 0 ? ' (' + failed + ' probe(s) unavailable)' : '';
@@ -42,30 +42,25 @@
                 '<div class="probe-summary-stat"><div class="stat-val">' + totalPings.toLocaleString() + '</div><div class="stat-lbl">Total Pings' + failedNote + '</div><div class="stat-sub">+' + lastHourPings.toLocaleString() + ' last hr</div></div>';
         }
 
-        approvedProbes.forEach(function(probe) {
-            AC.apiFetch(API_BASE + '/probes/' + probe.id + '/stats').then(function(r) {
-                if (r && r.data) {
-                    var d = r.data;
-                    var lh = d.last_hour || {};
-                    totalSyslog += d.syslog || 0;
-                    totalTraps += d.traps || 0;
-                    totalFlows += d.flows || 0;
-                    totalPings += d.pings || 0;
-                    lastHourSyslog += lh.syslog || 0;
-                    lastHourTraps += lh.traps || 0;
-                    lastHourFlows += lh.flows || 0;
-                    lastHourPings += lh.pings || 0;
-                }
-                loaded++;
-                if (loaded + failed === approvedProbes.length) {
-                    renderSummary();
-                }
-            })['catch'](function() {
-                failed++;
-                if (loaded + failed === approvedProbes.length) {
-                    renderSummary();
-                }
+        // AUDIT-064: one batched request for all approved probes instead of an
+        // N+1 (one /probes/:id/stats per probe — 20 probes = 20 round-trips).
+        var ids = approvedProbes.map(function(p) { return p.id; });
+        AC.apiFetch(API_BASE + '/probes/stats?ids=' + ids.join(',')).then(function(r) {
+            (r && r.data ? r.data : []).forEach(function(d) {
+                var lh = d.last_hour || {};
+                totalSyslog += d.syslog || 0;
+                totalTraps += d.traps || 0;
+                totalFlows += d.flows || 0;
+                totalPings += d.pings || 0;
+                lastHourSyslog += lh.syslog || 0;
+                lastHourTraps += lh.traps || 0;
+                lastHourFlows += lh.flows || 0;
+                lastHourPings += lh.pings || 0;
             });
+            renderSummary();
+        })['catch'](function() {
+            failed = approvedProbes.length;
+            renderSummary();
         });
     }
 

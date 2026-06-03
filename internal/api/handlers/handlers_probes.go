@@ -735,6 +735,104 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 	}))
 }
 
+// GetProbesStatsBatch returns total + last-hour counts for many probes in a
+// fixed number of queries (8: four totals + four last-hour, each grouped by
+// probe_id), eliminating the N+1 the probes summary page used to make — one
+// GET /probes/:id/stats per approved probe. It intentionally omits the 24h
+// hourly_breakdown that GetProbeStats computes: the summary never uses it and
+// computing it per probe is 96 extra queries each. AUDIT-064.
+func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	idsParam := strings.TrimSpace(c.Query("ids"))
+	if idsParam == "" {
+		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
+		return
+	}
+
+	const maxBatchIDs = 500
+	ids := make([]uint, 0)
+	seen := make(map[uint]bool)
+	for _, p := range strings.Split(idsParam, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(p, 10, 64)
+		if err != nil || n == 0 || seen[uint(n)] {
+			continue
+		}
+		seen[uint(n)] = true
+		ids = append(ids, uint(n))
+		if len(ids) >= maxBatchIDs {
+			break
+		}
+	}
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
+		return
+	}
+
+	hourAgo := time.Now().UTC().Add(-1 * time.Hour)
+
+	// countByProbe runs one grouped query:
+	//   SELECT probe_id, count(*) FROM <table>
+	//   WHERE probe_id IN (ids) [AND timestamp > hourAgo] GROUP BY probe_id
+	// returning probe_id -> count. Eight calls cover four tables × {total,
+	// last-hour} regardless of how many probe ids are requested.
+	countByProbe := func(model interface{}, sinceHour bool) map[uint]int64 {
+		type row struct {
+			ProbeID uint
+			Cnt     int64
+		}
+		var rows []row
+		q := h.db.Gorm().Model(model).
+			Select("probe_id, count(*) as cnt").
+			Where("probe_id IN ?", ids)
+		if sinceHour {
+			q = q.Where("timestamp > ?", hourAgo)
+		}
+		if err := q.Group("probe_id").Scan(&rows).Error; err != nil {
+			log.Printf("GetProbesStatsBatch: grouped count failed: %v", err)
+			return map[uint]int64{}
+		}
+		m := make(map[uint]int64, len(rows))
+		for _, r := range rows {
+			m[r.ProbeID] = r.Cnt
+		}
+		return m
+	}
+
+	syslogTotal := countByProbe(&models.SyslogMessage{}, false)
+	trapTotal := countByProbe(&models.TrapEvent{}, false)
+	flowTotal := countByProbe(&models.FlowSample{}, false)
+	pingTotal := countByProbe(&models.PingResult{}, false)
+	syslogHour := countByProbe(&models.SyslogMessage{}, true)
+	trapHour := countByProbe(&models.TrapEvent{}, true)
+	flowHour := countByProbe(&models.FlowSample{}, true)
+	pingHour := countByProbe(&models.PingResult{}, true)
+
+	out := make([]gin.H, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, gin.H{
+			"probe_id": id,
+			"syslog":   syslogTotal[id],
+			"traps":    trapTotal[id],
+			"flows":    flowTotal[id],
+			"pings":    pingTotal[id],
+			"last_hour": gin.H{
+				"syslog": syslogHour[id],
+				"traps":  trapHour[id],
+				"flows":  flowHour[id],
+				"pings":  pingHour[id],
+			},
+		})
+	}
+	c.JSON(http.StatusOK, models.SuccessResponse(out))
+}
+
 func (h *Handler) GetProbeDevices(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
