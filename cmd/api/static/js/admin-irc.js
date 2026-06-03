@@ -471,6 +471,11 @@ document.addEventListener('click', function(e) {
     if (id) id = parseInt(id, 10);
 
     switch (action) {
+        // AUDIT-047: the IRC page's delegated switch had no logout case, so
+        // the sidebar "Logout" link (data-action="logout") was dead — it
+        // navigated to '#' and stayed on the page. This file uses the full
+        // AdminCommon reference (no AC alias is defined here).
+        case 'logout': AdminCommon.doLogout(); return;
         case 'open-server-modal': openServerModal(); break;
         case 'close-server-modal': closeServerModal(); break;
         case 'test-server': testServer(); break;
