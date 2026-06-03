@@ -240,7 +240,11 @@
             credentials: 'same-origin'
         }).then(function(res) {
             if (res.status === 401 || res.status === 302) {
-                window.location.href = '/admin/login';
+                // AUDIT-058: redirect the TOP frame, not the current one. A 401
+                // inside the Reports preview iframe would otherwise render the
+                // login page inside the report frame instead of navigating the
+                // whole tab to /login.
+                (window.top || window).location.href = '/admin/login';
                 return Promise.reject(new Error('Not authenticated'));
             }
             if (res.status === 403) {
