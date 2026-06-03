@@ -31,7 +31,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.242"
+const ServerVersion = "0.10.243"
 
 func main() {
 	cfg := config.Load()
@@ -214,12 +214,13 @@ func main() {
 	setupRoutes(router, cfg, handler, authManager)
 
 	server := &http.Server{
-		Addr:           fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
-		Handler:        router,
-		ReadTimeout:    cfg.Server.ReadTimeout,
-		WriteTimeout:   cfg.Server.WriteTimeout,
-		IdleTimeout:    cfg.Server.IdleTimeout,
-		MaxHeaderBytes: 1 << 16, // 64KB
+		Addr:              fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
+		Handler:           router,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: 10 * time.Second, // AUDIT-023: protect against slow-loris header attacks
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+		MaxHeaderBytes:    1 << 16, // 64KB
 	}
 
 	go func() {

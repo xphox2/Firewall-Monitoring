@@ -1,4 +1,18 @@
 # Changelog
+## [0.10.243] - 2026-06-02
+
+### Added — `LICENSE` (MIT) + AUDIT-002 / AUDIT-010 / AUDIT-023 / AUDIT-025 / AUDIT-122
+
+Five small audit items, batched because each is a one-or-two-line change with no functional risk:
+
+- **AUDIT-002** — added top-level `LICENSE` with standard MIT text (`Copyright (c) 2026 Firewall-Mon Contributors`). README has claimed MIT since v0.10.140 but no license file shipped; without it, Berne Convention defaults the codebase to All Rights Reserved.
+- **AUDIT-010** — `internal/config/config.go:247`: changed `PROBE_SERVER_URL` default from `https://stats.technicallabs.org` to `""`. The probe binary itself already required the env var (`cmd/probe/main.go:67` fails if empty), but the hardcoded third-party domain in the server config was a public-release smell. Server side does not actually consume `cfg.Probe.ServerURL` anywhere — this is defensive cleanup.
+- **AUDIT-023** — `cmd/api/main.go:216`: added `ReadHeaderTimeout: 10 * time.Second` on the HTTP server. `ReadTimeout` was 30s but `ReadHeaderTimeout` was unset, so a slow-loris attacker holding partial headers could tie up a goroutine per connection up to the existing 30s body limit. 10s is conservative for the longest practical real header.
+- **AUDIT-025** — `internal/api/middleware/middleware.go:253`: added `Permissions-Policy` header denying camera, microphone, geolocation, USB, payment, accelerometer, gyroscope, magnetometer, midi, sync-xhr. The admin panel has no use for any of these; sending the deny header tells the browser to block them even if a future UI bug accidentally calls one.
+- **AUDIT-122** — `internal/api/handlers/handlers_config_revision_retention_test.go:282`: deleted the 60-line `_unused_legacy_top50_test` orphan that was left in place with a leading underscore when the old retention policy was removed.
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Static-binary change (the header/timeout are baked into the API binary) → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.242] - 2026-06-02
 
 ### Fixed — AUDIT-074 + AUDIT-075: project-wide gofmt sweep and line-ending normalization

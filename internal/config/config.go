@@ -244,7 +244,7 @@ func Load() *Config {
 			EnableProbeServer:    getBoolEnv("PROBE_SERVER_ENABLED", false),
 			ListenAddress:        getEnv("PROBE_LISTEN_ADDRESS", "0.0.0.0"),
 			ListenPort:           getIntEnv("PROBE_LISTEN_PORT", 8089),
-			ServerURL:            getEnv("PROBE_SERVER_URL", "https://stats.technicallabs.org"),
+			ServerURL:            getEnv("PROBE_SERVER_URL", ""),
 			EnableTLS:            getBoolEnv("PROBE_TLS_ENABLED", false),
 			TLSCertFile:          getEnv("PROBE_TLS_CERT", "/etc/firewall-mon/probe.crt"),
 			TLSKeyFile:           getEnv("PROBE_TLS_KEY", "/etc/firewall-mon/probe.key"),

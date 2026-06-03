@@ -250,6 +250,9 @@ func SecureHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private")
 		c.Header("Pragma", "no-cache")
+		// AUDIT-025: deny browser APIs we don't use; admin panel has no
+		// reason to access camera, microphone, geolocation, USB, etc.
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), usb=(), payment=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), sync-xhr=()")
 		// Only send HSTS over TLS to avoid issues with plain HTTP setups
 		if c.Request.TLS != nil {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

@@ -1120,8 +1120,13 @@ By leverage × risk × fit with existing architecture:
 | ID | Title | Version | Commit | Notes |
 |----|-------|---------|--------|-------|
 | AUDIT-001 | Untrack `*_test.go` from `.gitignore` | 0.10.241 | 671dbd8 | Removed line 9 of `.gitignore`; added `internal/configdiff/normalize_test.go` (631 LOC) and `internal/report/report_test.go` (192 LOC) so the regression net cited in v0.10.236/0.10.238/0.10.239 actually ships with public clones. |
-| AUDIT-074 | `internal/irc/bot.go` CRLF line endings | 0.10.242 | (pending) | Normalized via `gofmt -w .`. Was flagged as "CR-only" in the audit — actually CRLF, now LF like the rest of the tree. |
-| AUDIT-075 | 16 files fail `gofmt -l` | 0.10.242 | (pending) | Whole-tree `gofmt -w .` pass; whitespace-only diff (`git diff -w` is empty). After: `gofmt -l .` returns nothing. CI enforcement (AUDIT-152) follows once the CI workflow exists. |
+| AUDIT-074 | `internal/irc/bot.go` CRLF line endings | 0.10.242 | 842fcf6 | Normalized via `gofmt -w .`. Was flagged as "CR-only" in the audit — actually CRLF, now LF like the rest of the tree. |
+| AUDIT-075 | 16 files fail `gofmt -l` | 0.10.242 | 842fcf6 | Whole-tree `gofmt -w .` pass; whitespace-only diff (`git diff -w` is empty). After: `gofmt -l .` returns nothing. CI enforcement (AUDIT-152) follows once the CI workflow exists. |
+| AUDIT-002 | No `LICENSE` file (README claims MIT) | 0.10.243 | (pending) | Added standard MIT text with `Copyright (c) 2026 Firewall-Mon Contributors`. README continues to claim MIT. |
+| AUDIT-010 | `PROBE_SERVER_URL` default hardcodes author's domain | 0.10.243 | (pending) | `internal/config/config.go:247` default changed from `https://stats.technicallabs.org` to `""`. Probe binary already required the env var (`cmd/probe/main.go:67`); server-side `cfg.Probe.ServerURL` is not consumed. Defensive removal of a public-release smell. |
+| AUDIT-023 | `ReadHeaderTimeout` not set on HTTP server | 0.10.243 | (pending) | Added `ReadHeaderTimeout: 10 * time.Second` to the `http.Server` in `cmd/api/main.go:216`. Closes the slow-loris partial-header window left by the unset field (only `ReadTimeout=30s` was set). |
+| AUDIT-025 | `Permissions-Policy` header missing | 0.10.243 | (pending) | `SecureHeaders` middleware now sends `Permissions-Policy: camera=(), microphone=(), geolocation=(), usb=(), payment=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), sync-xhr=()`. The admin panel uses none of these APIs. |
+| AUDIT-122 | Dead `_unused_legacy_top50_test` orphan | 0.10.243 | (pending) | Deleted the 60-line dead test function (originally retained with a leading underscore when the legacy retention policy was removed). |
 
 ---
 
@@ -1132,8 +1137,13 @@ Append a one-line entry per resolved finding in chronological order.
 ```
 # Format: YYYY-MM-DD — AUDIT-NNN — short title — version — commit SHA — author
 2026-06-02 — AUDIT-001 — untrack *_test.go — v0.10.241 — 671dbd8 — opencode
-2026-06-02 — AUDIT-074 — fix CRLF line endings in irc/bot.go — v0.10.242 — (pending) — opencode
-2026-06-02 — AUDIT-075 — project-wide gofmt -w sweep — v0.10.242 — (pending) — opencode
+2026-06-02 — AUDIT-074 — fix CRLF line endings in irc/bot.go — v0.10.242 — 842fcf6 — opencode
+2026-06-02 — AUDIT-075 — project-wide gofmt -w sweep — v0.10.242 — 842fcf6 — opencode
+2026-06-02 — AUDIT-002 — add MIT LICENSE — v0.10.243 — (pending) — opencode
+2026-06-02 — AUDIT-010 — PROBE_SERVER_URL default empty — v0.10.243 — (pending) — opencode
+2026-06-02 — AUDIT-023 — ReadHeaderTimeout=10s — v0.10.243 — (pending) — opencode
+2026-06-02 — AUDIT-025 — Permissions-Policy header — v0.10.243 — (pending) — opencode
+2026-06-02 — AUDIT-122 — delete dead _unused_legacy_top50_test — v0.10.243 — (pending) — opencode
 ```
 
 ---
