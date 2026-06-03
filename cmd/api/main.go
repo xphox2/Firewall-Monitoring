@@ -31,7 +31,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.247"
+const ServerVersion = "0.10.248"
 
 func main() {
 	cfg := config.Load()
@@ -223,29 +223,43 @@ func main() {
 		MaxHeaderBytes:    1 << 16, // 64KB
 	}
 
+	// AUDIT-086: previously the listen goroutine called log.Fatal on any
+	// listener error, which exits the process immediately and skips every
+	// `defer` registered above (ircManager.Stop, snmpClient.Close, etc.).
+	// Now the goroutine surfaces the error on errCh and the main goroutine
+	// picks it up via select alongside the signal channel; both paths run
+	// the same graceful-shutdown sequence and let defers fire on return.
+	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("Server starting on %s:%s", cfg.Server.Host, cfg.Server.Port)
+		var err error
 		if cfg.Server.EnableTLS {
-			if err := server.ListenAndServeTLS(cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile); err != nil && err != http.ErrServerClosed {
-				log.Fatal(err)
-			}
+			err = server.ListenAndServeTLS(cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
 		} else {
-			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatal(err)
-			}
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			errCh <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("Shutting down server...")
+
+	select {
+	case sig := <-quit:
+		log.Printf("Received signal %v, shutting down server...", sig)
+	case err := <-errCh:
+		log.Printf("HTTP listener failed: %v — initiating graceful shutdown", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatal(err)
+		// Don't log.Fatal: that would skip the deferred ircManager.Stop /
+		// snmpClient.Close. Log the error and let main return so defers run.
+		log.Printf("Server.Shutdown error: %v", err)
 	}
 
 	log.Println("Server exited")

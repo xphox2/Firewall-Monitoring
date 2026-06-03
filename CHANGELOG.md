@@ -1,4 +1,22 @@
 # Changelog
+## [0.10.248] - 2026-06-02
+
+### Fixed — AUDIT-086: HTTP listener errors no longer skip graceful shutdown
+
+The listener goroutine in `cmd/api/main.go:226` called `log.Fatal` if `ListenAndServe[TLS]` returned anything other than `http.ErrServerClosed`. `log.Fatal` calls `os.Exit(1)` immediately, which **skips every `defer`** registered earlier in `main`: `defer ircManager.Stop()`, `defer snmpClient.Close()`, and the deferred `cancel` for the JWT-prune ticker. Result: bind-conflict / cert-load failure → IRC bot left connected with a half-open SASL session, SNMP socket leaked, batchers not flushed.
+
+The same pattern existed at the post-signal `server.Shutdown` call (`cmd/api/main.go:248`). A 10-second shutdown timeout, plus `log.Fatal` on overrun, also skipped the defers.
+
+Both paths now use the same graceful-shutdown sequence:
+
+- Listener goroutine writes the error onto a buffered `errCh` (no `log.Fatal`).
+- Main goroutine `select`s on either the signal channel or `errCh`, logs which one fired, then runs `server.Shutdown`.
+- `server.Shutdown` failure logs the error and returns normally so the deferred `ircManager.Stop` / `snmpClient.Close` / `cancel` all run before the process exits.
+
+No automated test (would require integration-level harness: spawn a real `http.Server` and trigger a bind-conflict mid-flight); the change is small and obvious from inspection. Manually verified: rebuilt, started, sent SIGTERM — saw "Received signal terminated, shutting down server..." → "Server exited" with all defers logged.
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.247] - 2026-06-02
 
 ### Fixed — AUDIT-015: CORS `*` rejected at startup when Allow-Credentials=true
