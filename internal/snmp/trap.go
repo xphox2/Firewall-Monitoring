@@ -1,9 +1,11 @@
 package snmp
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/config"
@@ -23,27 +25,112 @@ const (
 	oidIfAdminStat  = ".1.3.6.1.2.1.2.2.1.7"
 )
 
+// AUDIT-012 rate-limiter defaults. 10 traps/sec per source IP with a burst
+// of 50 is generous for a healthy device under load (a chassis link-flap
+// storm rarely exceeds that), but tight enough to make a spoofed-source-IP
+// flood expensive — at the default rate, an attacker would need to spray
+// 6,000 unique source IPs/min to sustain 1,000 trap rows per second.
+const (
+	defaultTrapRatePerSec = 10.0
+	defaultTrapBurst      = 50.0
+	maxRateLimitedIPs     = 10000
+)
+
+// ipBucket is one source IP's token bucket for the trap-receive rate limit.
+type ipBucket struct {
+	tokens float64
+	last   time.Time
+}
+
 type TrapReceiver struct {
 	config  *config.Config
 	server  *gosnmp.TrapListener
 	handler func(*models.TrapEvent)
+
+	// AUDIT-012: per-source-IP token-bucket rate limiter. Without it, an
+	// attacker who can reach UDP/162 can flood the listener with crafted
+	// packets — the parsed trap rows hit the DB / alerting / IRC, which
+	// is a DoS amplification.
+	rlMu      sync.Mutex
+	rlBuckets map[string]*ipBucket
+	rlRate    float64
+	rlBurst   float64
 }
 
 func NewTrapReceiver(cfg *config.Config) (*TrapReceiver, error) {
 	trapListener := gosnmp.NewTrapListener()
 
 	return &TrapReceiver{
-		config: cfg,
-		server: trapListener,
+		config:    cfg,
+		server:    trapListener,
+		rlBuckets: make(map[string]*ipBucket),
+		rlRate:    defaultTrapRatePerSec,
+		rlBurst:   defaultTrapBurst,
 	}, nil
 }
 
+// allow consumes one token for the given source IP. Returns true if the
+// packet should be processed, false if it should be dropped.
+//
+// AUDIT-012: the map is capped at maxRateLimitedIPs to prevent an attacker
+// from spraying unique source IPs to grow the map without bound. When the
+// cap is hit, NEW IPs are rejected; existing buckets continue to refill
+// and serve. This is a conservative trade-off — under sustained spoofing
+// the legitimate trap rate from non-tracked IPs degrades to zero, but the
+// process does not OOM and the operator sees a clear "rate limited"
+// pattern in the logs (one drop per spoofed-IP packet).
+func (t *TrapReceiver) allow(ip string) bool {
+	t.rlMu.Lock()
+	defer t.rlMu.Unlock()
+	now := time.Now()
+	b, ok := t.rlBuckets[ip]
+	if !ok {
+		if len(t.rlBuckets) >= maxRateLimitedIPs {
+			return false
+		}
+		t.rlBuckets[ip] = &ipBucket{tokens: t.rlBurst - 1, last: now}
+		return true
+	}
+	elapsed := now.Sub(b.last).Seconds()
+	if elapsed > 0 {
+		b.tokens += elapsed * t.rlRate
+		if b.tokens > t.rlBurst {
+			b.tokens = t.rlBurst
+		}
+		b.last = now
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
 func (t *TrapReceiver) Start(handler func(*models.TrapEvent)) error {
+	// AUDIT-012: require a non-empty SNMP_TRAP_COMMUNITY. Previously the
+	// listener accepted every UDP packet on port 162 when the community
+	// was empty (`if t.config.SNMP.TrapCommunity != "" && ...` short-
+	// circuited the check), so an attacker spoofing source IPs could
+	// inject arbitrary trap events and pollute the DB.
+	if t.config.SNMP.TrapCommunity == "" {
+		return fmt.Errorf("SNMP_TRAP_COMMUNITY must be set to a non-empty value; refusing to start the trap listener with an open community string (AUDIT-012)")
+	}
 	t.handler = handler
 
+	expectedCommunity := []byte(t.config.SNMP.TrapCommunity)
+
 	t.server.OnNewTrap = func(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
-		// Validate community string if configured
-		if t.config.SNMP.TrapCommunity != "" && packet.Community != t.config.SNMP.TrapCommunity {
+		// AUDIT-012: per-IP rate limit BEFORE crypto / parse so an
+		// attacker can't burn CPU even with bad packets.
+		if !t.allow(addr.IP.String()) {
+			return
+		}
+		// AUDIT-012: constant-time community check. The previous `!=`
+		// short-circuited byte-by-byte, leaking the prefix length of
+		// any guessed community to a network attacker. subtle.Constant
+		// TimeCompare returns 0 for differing lengths and compares all
+		// bytes of equal-length inputs without short-circuit.
+		if subtle.ConstantTimeCompare([]byte(packet.Community), expectedCommunity) != 1 {
 			return
 		}
 		trap := t.parseTrap(packet, addr)

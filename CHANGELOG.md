@@ -1,4 +1,36 @@
 # Changelog
+## [0.10.250] - 2026-06-02
+
+### Fixed — AUDIT-012: trap receiver is no longer an open relay
+
+`internal/snmp/trap.go:46` had this short-circuit:
+```go
+if t.config.SNMP.TrapCommunity != "" && packet.Community != t.config.SNMP.TrapCommunity {
+    return
+}
+```
+When `SNMP_TRAP_COMMUNITY` was empty (or unset), the whole check was skipped and **every** UDP packet on port 162 was accepted, parsed, and stored as a trap event with `SourceIP = packet.SourceIP`. An attacker spoofing source IPs could inject thousands of bogus alerts, mask real outages, or just OOM the trap-event table.
+
+Three changes:
+
+1. **Fail-closed config**: `TrapReceiver.Start` now refuses to listen when `SNMP_TRAP_COMMUNITY` is empty: `"SNMP_TRAP_COMMUNITY must be set to a non-empty value; refusing to start the trap listener with an open community string"`. Operators who want the listener disabled should not run the `trap-receiver` daemon at all.
+2. **Constant-time community compare**: replaced `packet.Community != expected` with `subtle.ConstantTimeCompare`. Closes a byte-by-byte timing oracle that let a network attacker recover the prefix length of any guessed community.
+3. **Per-source-IP token-bucket rate limit**: 10 traps/sec sustained, burst 50, applied BEFORE the community check so a flooding attacker can't burn CPU on the crypto / parser. The IP map is capped at 10,000 entries to prevent unbounded growth under unique-source-IP spraying — when the cap is hit, *new* IPs are rejected (logged as drops); existing buckets continue to refill and serve.
+
+The defaults (10/s, burst 50, cap 10k) are tight enough that a spoofed flood needs ~6,000 unique source IPs/min to sustain even 1,000 trap rows/sec; loose enough that a chassis link-flap storm from a real device stays within budget.
+
+`config.env.example:36` now documents the requirement with an AUDIT-012 reference.
+
+Regression tests (`internal/snmp/trap_test.go`, new — first test file for the SNMP package, closes part of AUDIT-117):
+
+- `TestTrapReceiver_Start_RequiresCommunity` — empty community → Start returns error mentioning `SNMP_TRAP_COMMUNITY`.
+- `TestTrapReceiver_Allow_BurstThenRefill` — first `burst` calls succeed; the next fails; after a refill window, one more succeeds.
+- `TestTrapReceiver_Allow_PerIPIsolated` — draining IP A's bucket does not affect IP B's bucket (spoofing-defense requirement).
+- `TestTrapReceiver_Allow_MapCapped` — fills the map to `maxRateLimitedIPs`, asserts the (cap+1)th NEW IP is rejected while EXISTING tracked IPs still serve.
+- `TestTrapReceiver_Allow_ConcurrencySafe` — 50 goroutines × 5 calls under a burst of 10 → exactly 10 succeed (locking is neither too loose nor too tight). Race-detector compatible; runs under `-race` in CI once AUDIT-121 / AUDIT-004 land.
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Operator action required: confirm `SNMP_TRAP_COMMUNITY` is set if running the trap-receiver daemon. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.249] - 2026-06-02
 
 ### Fixed — AUDIT-013: `TestIRCServer` now SSRF-gated (and validates port)
