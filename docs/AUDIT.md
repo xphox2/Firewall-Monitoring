@@ -1138,8 +1138,9 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-008 | Auto-generated JWT secret is in-memory only and breaks AES decrypt | 0.10.252 | 03d2e6e | New `internal/secrets` package (10 tests). `cmd/api/main.go` now persists auto-generated JWT secret to `$SECRETS_DIR/.jwt-secret` (default `/data`) chmod 0600 on first run; subsequent runs reload. Same treatment for admin password. Any I/O failure is `log.Fatal`. Collaterally closes AUDIT-137 (masked password no longer logged). |
 | AUDIT-137 | Logs masked admin password | 0.10.252 | 03d2e6e | Removed alongside AUDIT-008 — the rewritten flow logs the file path instead of any password characters. |
 | AUDIT-005 | Trap-receiver drops every trap silently | 0.10.253 | c0ae1f4 | `cmd/trap-receiver/main.go` now constructs a real `*database.Database` and passes it to `AlertManager`. Also wired AUDIT-008 secrets-loading to `cmd/trap-receiver` AND `cmd/poller` so all three processes derive the same AES key from `/data/.jwt-secret`. `secrets.LoadOrGenerate` updated to use `O_CREATE\|O_EXCL` for safe concurrent first-start. New race-safe test verifies 16 concurrent callers converge on identical secret. |
-| AUDIT-003 | `THIRD-PARTY-NOTICES.md` missing | 0.10.254 | (pending) | Top-level `THIRD-PARTY-NOTICES.md` inventories 10 vendored browser assets + 10 direct Go deps with version / license / copyright / source URL, plus full license texts for MIT / BSD-2 / BSD-3 / Apache-2.0 / OFL-1.1. README links to it. |
-| AUDIT-011 | No SECURITY.md / no runbook / no CONTRIBUTING.md | 0.10.254 | (pending) | Added `SECURITY.md` (private disclosure policy, response-SLOs, scope), `CONTRIBUTING.md` (dev env, QA gate, PR workflow), `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1). README now links all four governance docs + the audit doc. Deferred: `.well-known/security.txt` route (AUDIT-112), GitHub issue templates (AUDIT-163), `docs/OPERATIONS.md` runbook (AUDIT-111). |
+| AUDIT-003 | `THIRD-PARTY-NOTICES.md` missing | 0.10.254 | 4743ca7 | Top-level `THIRD-PARTY-NOTICES.md` inventories 10 vendored browser assets + 10 direct Go deps with version / license / copyright / source URL, plus full license texts for MIT / BSD-2 / BSD-3 / Apache-2.0 / OFL-1.1. README links to it. |
+| AUDIT-011 | No SECURITY.md / no runbook / no CONTRIBUTING.md | 0.10.254 | 4743ca7 | Added `SECURITY.md` (private disclosure policy, response-SLOs, scope), `CONTRIBUTING.md` (dev env, QA gate, PR workflow), `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1). README now links all four governance docs + the audit doc. Deferred: `.well-known/security.txt` route (AUDIT-112), GitHub issue templates (AUDIT-163), `docs/OPERATIONS.md` runbook (AUDIT-111). |
+| AUDIT-004 | No git tags, no CI, no release flow | 0.10.255 | (pending) | Partial: `.github/workflows/ci.yml` (build-test job + vuln-scan job — closes AUDIT-018, AUDIT-075/AUDIT-152, AUDIT-121 gates in CI), `Makefile` with `qa`/`test`/`test-race`/`build`/`vet`/`fmt`/`tidy`/`vuln`/`docker` targets. Deferred (separate commits): release.yml, goreleaser, golangci.yml linter (would surface waivers needing triage), backfill git tags, build-flags (`-trimpath -buildvcs=false`). |
 
 ---
 
@@ -1168,8 +1169,9 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-02 — AUDIT-008 — JWT secret + admin password persistence (new internal/secrets pkg) — v0.10.252 — 03d2e6e — opencode
 2026-06-02 — AUDIT-137 — stop logging masked admin password (collateral with AUDIT-008) — v0.10.252 — 03d2e6e — opencode
 2026-06-02 — AUDIT-005 — trap-receiver real DB + race-safe multi-process JWT secret — v0.10.253 — c0ae1f4 — opencode
-2026-06-02 — AUDIT-003 — THIRD-PARTY-NOTICES.md — v0.10.254 — (pending) — opencode
-2026-06-02 — AUDIT-011 — SECURITY.md + CONTRIBUTING.md + CODE_OF_CONDUCT.md — v0.10.254 — (pending) — opencode
+2026-06-02 — AUDIT-003 — THIRD-PARTY-NOTICES.md — v0.10.254 — 4743ca7 — opencode
+2026-06-02 — AUDIT-011 — SECURITY.md + CONTRIBUTING.md + CODE_OF_CONDUCT.md — v0.10.254 — 4743ca7 — opencode
+2026-06-02 — AUDIT-004 — CI workflow + Makefile (partial) — v0.10.255 — (pending) — opencode
 ```
 
 ---

@@ -1,0 +1,94 @@
+name: CI
+
+# AUDIT-004: minimum CI gate covering build, tests (with race detector),
+# formatting, static analysis, and known-vulnerability scan. Future work
+# (AUDIT-152 enforces gofmt as the canonical formatter check, AUDIT-121
+# enforces -race coverage, AUDIT-117 calls for more test coverage which
+# will land progressively) builds on this baseline.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod download
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "::error::go.mod / go.sum out of sync; run 'go mod tidy' locally and commit"
+            git --no-pager diff -- go.mod go.sum
+            exit 1
+          fi
+
+      - name: gofmt
+        # AUDIT-075 + AUDIT-152: project-wide gofmt enforcement.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build all binaries
+        run: go build ./...
+
+      - name: Tests (with -race)
+        # AUDIT-121: race detector required in CI. Local runs on Windows
+        # may skip this (requires CGO + a working C toolchain); CI has
+        # both.
+        run: go test -race -count=1 -timeout=5m ./...
+
+  vuln-scan:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Scan
+        # AUDIT-018: bump stale deps. govulncheck flags any known CVEs
+        # in the dependency tree; failing CI on a new CVE means the
+        # maintainer notices before the operator does.
+        run: govulncheck ./...

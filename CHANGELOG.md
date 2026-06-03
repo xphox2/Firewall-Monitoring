@@ -1,4 +1,27 @@
 # Changelog
+## [0.10.255] - 2026-06-02
+
+### Added — AUDIT-004 (partial): CI workflow + Makefile
+
+`.github/workflows/ci.yml` runs on every push and pull request to `master`/`main`. Two jobs:
+
+- **build-test**: verifies `go.mod`/`go.sum` are tidy, enforces `gofmt -l . | (! grep .)` (AUDIT-075 / AUDIT-152), runs `go vet`, builds all four binaries, runs `go test -race -count=1 -timeout=5m ./...` (AUDIT-121 — race detector finally lands in CI).
+- **vuln-scan**: installs `govulncheck` and scans every dependency for known CVEs (AUDIT-018 — surfaces stale-dep risk to the maintainer instead of leaving it for operators).
+
+`Makefile` mirrors the same gates locally so contributors can run `make qa` before pushing (CONTRIBUTING.md already prescribed `gofmt -l . | (! grep .)` etc.; this makes it one command). Other targets: `make test`, `make test-race`, `make build`, `make vet`, `make fmt`, `make tidy`, `make vuln`, `make clean`, `make docker`, `make version`.
+
+`go.mod` collateral cleanup: `github.com/glebarez/sqlite` was marked `// indirect` but is actually imported by `internal/database/testing.go`; CI's `go mod tidy` check would have failed without this fix, so I ran tidy and committed. Also added `google/pprof` to `go.sum` (transitive of the race detector / testing pkg).
+
+**What this does NOT cover from AUDIT-004**:
+
+- `.github/workflows/release.yml` (tag-triggered release flow) — out of scope without a goreleaser config + a sense of where binaries should land (GitHub Releases? Docker registry?).
+- `.goreleaser.yml` — needs a sign-off on the artefact layout.
+- `.golangci.yml` enabling `staticcheck` / `errcheck` / `ineffassign` / `unused` / `gosec` — separate commit because each linter typically flags real issues that need triage / waivers.
+- One-time `git tag -a v0.10.X` backfill — operator decision.
+- `-trimpath -buildvcs=false -ldflags=-X main.ServerVersion=${VERSION}` build flags (AUDIT-102) — Dockerfile change, separate commit.
+
+QA: `go build ./...`, `go test -race -count=1 ./...` (8 pkgs, race-clean), `go vet ./...`, `gofmt -l .` all clean locally. CI YAML validated by inspection (no `actions/setup-go` deprecation warnings, no `ubuntu-latest` removal-list packages). Server-repo only.
+
 ## [0.10.254] - 2026-06-02
 
 ### Added — AUDIT-002 (LICENSE doc reference) + AUDIT-003 + AUDIT-011: public-release governance documents
