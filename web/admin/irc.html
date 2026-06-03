@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
-    <style>
+    <style nonce="{{ .Nonce }}">
         .nav-item:hover { background: #21262d; color: #e6edf3; }
         .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
         .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
@@ -337,7 +337,7 @@
     </div>
 
     <script defer src="/static/js/admin-common.js"></script>
-    <script>
+    <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
     });

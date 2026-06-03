@@ -1,4 +1,68 @@
 # Changelog
+## [0.10.259] - 2026-06-02
+
+### Fixed — AUDIT-022: CSP nonce for inline scripts/styles (no more 'unsafe-inline')
+
+Pre-AUDIT the admin/public UI shipped a CSP that allowed `'unsafe-inline'` for both `script-src` and `style-src`. With that flag, CSP provides *zero* XSS defense-in-depth — any HTML or JS injection point (query string reflected into a JS context, a future template bug, a third-party JS that builds a `<script>` string and assigns it via `innerHTML`, etc.) would execute freely. The flag was a stop-gap from the v0.10-era development, when the inline `<script>AdminCommon.renderSidebar()</script>` bootstrap call was the easiest way to get the sidebar wired. AUDIT-022 closed it by switching to a per-request nonce.
+
+**What changed**
+
+- `internal/api/middleware/middleware.go` — `SecureHeaders()` now:
+  1. Generates a fresh 128-bit random nonce (`crypto/rand` → 16 bytes → base64 std encoding) on every request.
+  2. Stores it on the gin context via `c.Set("csp-nonce", nonce)`.
+  3. Emits the CSP header with `script-src 'self' 'nonce-<x>'` and `style-src 'self' 'nonce-<x>'` — `'unsafe-inline'` is gone.
+
+- New `middleware.RenderHTML(c, code, name, data)` — drop-in replacement for `c.HTML`. It pulls the nonce from the context and wraps `data` in a `HTMLRenderData{Data, Nonce}` struct so the template can reference `{{ .Nonce }}`. All 22 `c.HTML(...)` calls in `cmd/api/main.go` are now `middleware.RenderHTML(...)`. Routes that bypassed this wrapper would render with `Nonce: ""` and the browser would block every inline block — the *loud* failure mode, not silent.
+
+- New `middleware.GetCSPNonce(c)` — exported helper for any handler that builds HTML by hand (e.g. test fixtures, future email templates).
+
+- `web/admin/*.html` and `web/public/index.html` — 16 inline blocks stamped with `nonce="{{ .Nonce }}"`:
+  - admin.html: 2 style + 2 script (mobile menu, sidebar bootstrap)
+  - connection-detail.html: 1 style + 1 script
+  - device-detail.html: 1 style + 1 script
+  - irc.html: 1 style + 1 script
+  - probe-pending.html: 1 script (no inline style)
+  - probes.html: 1 style + 1 script
+  - sites.html: 1 style + 1 script
+  - public/index.html: 1 style (no inline script — all external)
+  - login.html: 0 (no inline blocks; skipped)
+
+**Why nonce, not SHA-256 hash**
+
+Both nonce and hash are valid CSP defense mechanisms. Nonce was chosen because:
+- The 8 inline scripts include `AdminCommon.renderSidebar()` which calls functions that change with each version — managing a SHA-256 allow-list of every `AdminCommon.*` invocation would mean updating the allow-list on every admin release.
+- Nonce requires zero maintenance; the cost is the 22-byte-per-response header growth and a 16-byte random source per request.
+- 128 bits of entropy gives a collision bound of 2^64 requests — well past the 24-hour key-rotation budget of any realistic attack.
+
+**Backward compatibility**
+
+- The CSP change is fail-closed: any inline block that was *not* stamped with a matching nonce (e.g. a forgotten inline `<script>` in a future page) will be blocked by the browser, not silently allowed. This is the desired security posture — operators see the regression immediately rather than having it discover itself via incident response.
+- All inline `style="..."` attributes (e.g. `<div style="display:flex;">`) are unaffected — attribute styling is not subject to CSP `style-src` (it's subject to `style-src-attr`, which we deliberately do not set).
+- `script-src` still lists `'self'`, so external `<script src="/static/js/...">` references continue to work.
+
+**Regression tests** (16 new test cases across 2 packages):
+
+`internal/api/middleware/csp_nonce_test.go` (new, 9 tests):
+- `TestSecureHeaders_CSPNoLongerAllowsUnsafeInline_AUDIT022` — headline: `'unsafe-inline'` is gone, nonces are in `script-src` and `style-src`, both are equal.
+- `TestSecureHeaders_NonceIsFreshPerRequest` — 5 sequential requests produce 5 distinct nonces (collision resistance).
+- `TestSecureHeaders_OtherHeadersPreserved_AUDIT022` — the AUDIT-025 headers (X-Content-Type-Options, Permissions-Policy, etc.) are intact.
+- `TestSecureHeaders_CSPHasAllExpectedDirectives` — `default-src`, `connect-src`, `img-src`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'none'` all still present.
+- `TestSecureHeaders_HSTSOnlyOnTLS` — pre-existing HSTS-over-TLS-only behavior is unchanged.
+- `TestGetCSPNonce_ReturnsStoredValue` and `TestGetCSPNonce_MissingReturnsEmpty` — the helper works in both states.
+- `TestRenderHTML_InjectsNonceIntoTemplateData` and `TestRenderHTML_NilDataStillExposesNonce` — the wrapper handles real data and `nil` data identically.
+- `TestNewCSPNonce_FormatAndEntropy` and `TestNewCSPNonce_ConcurrentSafe` — 100 serial + 200 concurrent calls all return valid 16-byte nonces with no collisions.
+
+`internal/api/handlers/csp_nonce_html_test.go` (new, 1 test × 9 subtests):
+- `TestAllHTMLFiles_StampNonceOnEveryInlineScriptAndStyle_AUDIT022` — full integration: loads each HTML file from disk, parses it as a template, renders it through a real gin engine with `middleware.SecureHeaders` + `middleware.RenderHTML`, then verifies the response body's inline `<script>`/`<style>` tags each carry a `nonce="..."` attribute that *exactly matches* the nonce in the response's CSP header (after HTML-entity decoding, which is what the browser does on parse). This test would catch a missing nonce, a typo in `{{ .Nonce }}`, a route that uses `c.HTML` instead of `RenderHTML`, or any other class of mistake that would produce a blank admin page in production.
+
+**What this does NOT do (deferred)**
+
+- `'strict-dynamic'` — would let the browser trust nonces from trusted scripts at runtime, simplifying the JS bundle ordering. Not needed for this commit; would require switching all `<script defer>` to `<script>` (eager) which changes load order.
+- `report-uri` / `report-to` — would let the browser POST a JSON violation report to `/api/csp-report`. Deferred: requires new endpoint, new handler, new model. AUDIT-110.
+- SHA-256 hash fallback for static inline blocks that are *truly* unchanging across deploys (e.g. the bootstrap sidebar call). Not currently exercised — every inline block now uses a nonce.
+
+QA: `go build ./...`, `go test -count=1 ./...` (8 pkgs, 125 tests, +9 AUDIT-022), `gofmt -l .`, `go vet ./...` all clean. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.258] - 2026-06-02
 
 ### Fixed — AUDIT-009: encryption key rotation now possible (key chain)

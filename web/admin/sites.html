@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
-    <style>
+    <style nonce="{{ .Nonce }}">
         .modal.active { display: flex; }
     </style>
 </head>
@@ -485,7 +485,7 @@
     </div>
 
     <script defer src="/static/js/admin-common.js"></script>
-    <script>
+    <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
     });

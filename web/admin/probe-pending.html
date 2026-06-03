@@ -55,7 +55,7 @@
     </div>
 
     <script defer src="/static/js/admin-common.js"></script>
-    <script>
+    <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
     });

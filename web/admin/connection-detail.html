@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
-    <style>
+    <style nonce="{{ .Nonce }}">
         .gauge-bg { fill: none; stroke: #21262d; stroke-width: 6; }
         .gauge-fill { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 0.5s; }
         .tunnel-expand { display: none; }
@@ -222,7 +222,7 @@
 
     <script defer src="/static/js/chart.umd.min.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
-    <script>
+    <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
     });

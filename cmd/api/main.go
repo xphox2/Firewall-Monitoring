@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.258"
+const ServerVersion = "0.10.259"
 
 func main() {
 	cfg := config.Load()
@@ -322,7 +322,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.LoadHTMLGlob("./web/**/*.html")
 
 	router.GET("/", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "index.html", nil)
+		middleware.RenderHTML(c, http.StatusOK, "index.html", nil)
 	})
 
 	// Public version endpoint — no auth required so the admin UI can
@@ -338,7 +338,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	})
 
 	router.GET("/admin/login", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "login.html", nil)
+		middleware.RenderHTML(c, http.StatusOK, "login.html", nil)
 	})
 
 	api := router.Group("/api")
@@ -395,79 +395,79 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	admin.Use(middleware.CSRFProtection(cfg))
 	{
 		admin.GET("", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/dashboard", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/devices", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/settings", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/reports", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/connections", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/probes", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "probes.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "probes.html", nil)
 		})
 
 		admin.GET("/sites", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "sites.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "sites.html", nil)
 		})
 
 		admin.GET("/probe-pending", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "probe-pending.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "probe-pending.html", nil)
 		})
 
 		admin.GET("/syslog", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/flows", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/interfaces", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/alerts", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/alert-policies", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/maintenance", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/traps", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "admin.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/network", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "network.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "network.html", nil)
 		})
 
 		admin.GET("/devices/:id", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "device-detail.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "device-detail.html", nil)
 		})
 
 		admin.GET("/connections/:id", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "connection-detail.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "connection-detail.html", nil)
 		})
 
 		admin.GET("/api/csrf-token", handler.GetCSRFToken)
@@ -585,7 +585,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/reports/send", handler.SendReportNow)
 
 		admin.GET("/irc", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "irc.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "irc.html", nil)
 		})
 
 		admin.GET("/api/irc/servers", handler.GetIRCServer)

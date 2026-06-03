@@ -3,7 +3,9 @@ package middleware
 import (
 	"container/list"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -19,6 +21,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
+
+// cspNonceKey is the gin.Context key under which SecureHeaders stores the
+// per-request CSP nonce. Exported indirectly via GetCSPNonce / RenderHTML so
+// the route handlers and tests don't need to know the literal string.
+const cspNonceKey = "csp-nonce"
 
 // maxRateLimiterEntries caps the per-IP table size. AUDIT-083: without a
 // cap, an attacker spraying unique source IPs (trivially done from an EC2
@@ -304,6 +311,54 @@ func BodySizeLimit(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
+// newCSPNonce returns a fresh base64-encoded 128-bit random nonce. AUDIT-022:
+// emitted on every request so the CSP header can list 'nonce-<x>' in place of
+// 'unsafe-inline'. 128 bits of entropy is the same strength Cloudflare/AWS use
+// for per-request nonces — collision risk is negligible (birthday bound ≈ 2^64
+// requests before a 50% chance of a repeat).
+//
+// base64 (not hex, not raw) keeps the header value short and the inline-attribute
+// serialization compatible with Go's html/template attribute escaping.
+func newCSPNonce() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand should never fail on a healthy OS. If it does, the
+		// process is in such a bad state that falling back to a fixed
+		// nonce is the least of the operator's problems — and falling
+		// back would silently weaken CSP. Log loudly and return an empty
+		// string; the route will render with no nonce and the browser
+		// will block the inline script (loud failure, not silent).
+		log.Printf("[SECURITY] crypto/rand failed in CSP nonce generation: %v", err)
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b[:])
+}
+
+// GetCSPNonce returns the per-request CSP nonce that SecureHeaders generated
+// for this request, or "" if the middleware didn't run (e.g. the route was
+// attached to a router that doesn't use SecureHeaders, or the request is
+// being rendered by a code path that bypassed middleware). Exported for
+// tests and for any handler that builds HTML by hand.
+func GetCSPNonce(c *gin.Context) string {
+	if v, ok := c.Get(cspNonceKey); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// HTMLRenderData is the wrapper that RenderHTML passes to gin.HTML. It carries
+// the per-request CSP nonce alongside the caller's payload so templates can
+// reference `{{ .Nonce }}` on inline `<script>` and `<style>` tags. The
+// embedded `Data` is the user-supplied struct/map (kept under the field name
+// `Data` so callers who want to opt in to nonce injection can do so
+// explicitly: `RenderHTML(c, code, name, myStruct)`.
+type HTMLRenderData struct {
+	Data  interface{}
+	Nonce string
+}
+
 func SecureHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
@@ -319,9 +374,41 @@ func SecureHeaders() gin.HandlerFunc {
 		if c.Request.TLS != nil {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+		// AUDIT-022: per-request nonce replaces 'unsafe-inline' in script-src
+		// and style-src. The nonce is generated above, stored on the gin
+		// context, and exposed to templates via RenderHTML — every inline
+		// <script> and <style> tag in web/**/*.html must carry
+		// nonce="{{ .Nonce }}", or the browser will refuse to execute the
+		// inline block.
+		nonce := newCSPNonce()
+		if nonce != "" {
+			c.Set(cspNonceKey, nonce)
+		}
+		c.Header("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'nonce-"+nonce+"'; "+
+				"style-src 'self' 'nonce-"+nonce+"'; "+
+				"connect-src 'self'; "+
+				"img-src 'self' data:; "+
+				"font-src 'self'; "+
+				"object-src 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self'; "+
+				"frame-ancestors 'none'")
 		c.Next()
 	}
+}
+
+// RenderHTML is the wrapper around c.HTML that injects the per-request CSP
+// nonce (from SecureHeaders) into the template data. Use this from route
+// handlers instead of c.HTML directly — the templates assume `{{ .Nonce }}` is
+// available.
+//
+// `data` may be nil; the wrapper still emits a payload that exposes
+// `{{ .Nonce }}` correctly. (Go's html/template treats a nil interface in a
+// struct field as the zero value, which for a string is "".)
+func RenderHTML(c *gin.Context, code int, name string, data interface{}) {
+	c.HTML(code, name, HTMLRenderData{Data: data, Nonce: GetCSPNonce(c)})
 }
 
 // parseCORSAllowedOrigins parses the comma-separated CORS_ALLOWED_ORIGINS

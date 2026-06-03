@@ -17,7 +17,7 @@
     <!-- v0.10.212: shared design-system primitives now live in their own file. -->
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/admin-device-detail.css">
-    <style>
+    <style nonce="{{ .Nonce }}">
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .main { margin-left: 0; }
@@ -501,7 +501,7 @@
     <script defer src="/static/js/uPlot.iife.min.js"></script>
     <script defer src="/static/js/admin-common.js"></script>
     <script defer src="/static/js/admin-device-detail-charts.js"></script>
-    <script>
+    <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
     });
