@@ -838,8 +838,17 @@ type IRCChannel struct {
 	Enabled        bool       `json:"enabled" gorm:"column:enabled;default:true"`
 	Status         string     `json:"status" gorm:"column:status;default:pending"`
 	JoinedAt       *time.Time `json:"joined_at" gorm:"column:joined_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// AdminNicks is a semicolon-separated list of IRC nicks authorized to
+	// execute commands with `AdminOnly: true` in this channel. AUDIT-019:
+	// comparison is case-insensitive; an empty value means NO ONE (not even
+	// the bot itself) can execute admin-only commands in the channel.
+	// Examples: "alice;bob" or "ChanOp". Stored as a single text column
+	// because the list is bounded (typically 1-5 entries per channel) and
+	// a join table would be overkill for a feature most deployments
+	// either don't use or use with 1-2 admins.
+	AdminNicks string    `json:"admin_nicks" gorm:"column:admin_nicks;default:''"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 func (IRCChannel) TableName() string { return "irc_channels" }

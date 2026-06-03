@@ -427,7 +427,7 @@ func (b *Bot) onPrivmsg(e *irc.Event) {
 		return
 	}
 
-	if cmd.AdminOnly && !b.isAdmin(nick) {
+	if cmd.AdminOnly && !b.isAdmin(target, nick) {
 		b.Conn.Notice(target, "This command is admin only")
 		return
 	}
@@ -490,11 +490,65 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 	}
 }
 
-func (b *Bot) isAdmin(nick string) bool {
-	// Only the bot's configured nick is treated as admin.
-	// External users cannot execute admin-only commands.
-	if b.Conn != nil && strings.EqualFold(nick, b.Conn.GetNick()) {
-		return true
+// isAdmin reports whether the given IRC nick is allowed to execute
+// AdminOnly commands in the given target. AUDIT-019: previously this
+// returned true ONLY for the bot's own nick (which made the admin-only
+// check functionally a "no one can run this" check, since the bot never
+// PRIVMSGs itself). The pre-fix behavior was a security smell because:
+//   - Any admin command was effectively dead code in production
+//     (operators couldn't actually use !reset, !config, etc.).
+//   - Worse, anyone who could read the code and the channel would
+//     assume "admin only" meant "admins only", when in reality it
+//     meant "nobody".
+//
+// The fix: a per-channel allow-list of admin nicks stored on the
+// IRCChannel model. If the channel's AdminNicks is empty, no one
+// (NOT EVEN THE BOT) can execute admin-only commands — fail-closed
+// is the right default for destructive operations.
+func (b *Bot) isAdmin(target, nick string) bool {
+	if b.Server == nil {
+		return false
+	}
+	// If the message was sent as a private message to the bot
+	// (target == bot's own nick), there is no channel config to
+	// consult — deny. Operators who want PM-admin can extend this
+	// with a server-level allow-list; we deliberately don't ship
+	// that until there's a concrete use case.
+	if target == "" {
+		return false
+	}
+	if b.Conn != nil && strings.EqualFold(target, b.Conn.GetNick()) {
+		return false
+	}
+	for i := range b.Server.Channels {
+		ch := &b.Server.Channels[i]
+		if ch.ChannelName != target {
+			continue
+		}
+		return channelNickAllowed(ch.AdminNicks, nick)
+	}
+	// Target was a channel we don't have a config record for
+	// (e.g. the bot was invited to a channel it wasn't told to
+	// join). Fail closed.
+	return false
+}
+
+// channelNickAllowed returns true if `nick` appears in the
+// semicolon-separated `allowList` (case-insensitive, surrounding
+// whitespace trimmed). An empty allow list denies everyone.
+func channelNickAllowed(allowList, nick string) bool {
+	allowList = strings.TrimSpace(allowList)
+	if allowList == "" {
+		return false
+	}
+	for _, entry := range strings.Split(allowList, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.EqualFold(entry, nick) {
+			return true
+		}
 	}
 	return false
 }

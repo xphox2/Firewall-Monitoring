@@ -1,4 +1,43 @@
 # Changelog
+## [0.10.260] - 2026-06-02
+
+### Fixed — AUDIT-019: IRC bot admin commands now have a real per-channel allow-list
+
+Pre-AUDIT, `Bot.isAdmin(nick)` returned `true` only when the calling nick equaled the bot's own configured nick. Since the bot never `PRIVMSG`es itself, this meant **`AdminOnly: true` commands were effectively dead code in production** — no human IRC user could execute them, and no human IRC user ever had. Operators reading the source naturally assumed "admin only" meant "channel admins only"; in reality it meant "nobody".
+
+Worse, the failure mode was silent: a typo in the admin config would result in a command that does nothing when invoked, with no error to the operator. The AdminOnly flag was functionally a guarantee of non-execution.
+
+**The fix**
+
+1. New `IRCChannel.AdminNicks` field (string, semicolon-separated list of nicks). Empty means "no admins" — fail-closed.
+2. `Bot.isAdmin` now takes `(target, nick)` and consults the target channel's `AdminNicks` list. Case-insensitive match, whitespace-tolerant, empty-list deny.
+3. Private messages to the bot (target == bot's own nick) are denied for admin commands. The bot has no global admin allow-list by design — operators who want PM-admin can extend this later if a real use case appears.
+4. **The bot's own nick is NO LONGER auto-admin.** This is the only behavior change visible to existing deployments. Since no production code path was using the old "bot-self-as-admin" path, this is a safe removal.
+
+**Wire format / migration**
+
+- AutoMigrate adds the new `admin_nicks` column with `default:''`. Existing rows get an empty allow-list, which means existing channels' admin commands become disabled until an operator configures admins — this is the fail-closed default and matches the pre-fix behavior of "nobody can run admin commands".
+- No data loss. The bot's previously-set nick on IRCServer is unchanged.
+
+**Operator workflow**
+
+In the admin UI, edit an IRC channel and set `Admin Nicks` to e.g. `alice;bob` (semicolon-separated). Admins can now execute `!reset`, `!config`, and any other `AdminOnly: true` commands in that channel. Other channels are unaffected — they remain admin-free until configured.
+
+**Regression tests** (`internal/irc/bot_audit019_test.go`, new — 30 cases across 2 tests):
+
+- `TestChannelNickAllowed_AUDIT019` (16 subtests): empty / whitespace / single / multi / case-insensitive / trailing-semicolon / leading-semicolon / double-semicolon / partial-match-rejection / whitespace-around-nicks. Covers the data-layer helper directly.
+- `TestBot_IsAdmin_AUDIT019` (14 subtests): end-to-end through `Bot.isAdmin(target, nick)` with a stub `*models.IRCServer` containing three channels (`#ops` with admins, `#alerts` with no admins, `#mixed` with one admin). Covers the happy paths, the `#alerts` empty-list case, the bot-self-is-NOT-admin regression, PMs to the bot, unknown channels, and empty target.
+- `TestBot_IsAdmin_NilServer_AUDIT019`: nil-Server guard so a partial init can't deref-panic.
+
+First test file for the `internal/irc` package.
+
+**What this does NOT do (deferred)**
+
+- A separate `models.IRCAdmin` join table with a per-user audit trail. The audit doc offered this as an alternative; we went with the simpler field-on-channel for the same reason we use semicolon-separated nicks — most deployments have 1-2 admins per channel, and a join table is overkill until the feature needs RBAC granularity.
+- Per-nick permission levels (read vs write vs destructive). Today's `AdminOnly: true` is a single bit. A real RBAC scheme would need a permissions model and a migration of every `IRCCommand` row. Out of scope for AUDIT-019.
+
+QA: `go build ./...`, `go test -count=1 ./...` (9 pkgs, 155 tests, +30 AUDIT-019), `gofmt -l .`, `go vet ./...` all clean. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.259] - 2026-06-02
 
 ### Fixed — AUDIT-022: CSP nonce for inline scripts/styles (no more 'unsafe-inline')
