@@ -1184,7 +1184,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-047 | Logout link is dead on `/admin/irc` | 0.10.294 | db0b62f | `admin-irc.js` delegated-click `switch` had no `case 'logout'`, so the sidebar Logout link (`data-action="logout"`) navigated to `#` and stayed on the page. Added `case 'logout': AdminCommon.doLogout(); return;` — this file uses the full `AdminCommon` reference (no `AC` alias defined here). `TestIRCLogout_HasLogoutCase_AUDIT047` in `internal/shell/` pins the case, the reference, and the audit ID. |
 | AUDIT-048 | `.section-tab` redefines display, nullifying `.hidden` fix | 0.10.295 | 25ad013 | Inline `.section-tab { display: inline-block }` (loaded after admin-shared.css) overrode `.hidden { display: none }` on `#tab-phase2` / `#tab-flows`, so the v0.10.230 `classList.toggle('hidden', ...)` fix was a no-op. Added `.section-tab.hidden { display: none !important; }` to the same inline `<style>` block. `TestSectionTab_HiddenOverride_AUDIT048` in `internal/shell/` pins the rule and the audit ID. |
 | AUDIT-049 | IRC tab nav active state never updates | 0.10.296 | 0188631 | No `.tab-btn.active` rule existed, so `switchTab()`'s `classList.add('active')` had no visual effect; the highlight was hardcoded as Tailwind utilities on the Servers button and never moved. Added `.tab-btn.active { color:#58a6ff; border-bottom-color:#58a6ff; }` and normalized the Servers button to the same class list as the other tabs. `TestIRCTab_ActiveRuleExists_AUDIT049` in `internal/shell/` pins the rule, the removal of the hardcoded border utility, and the audit ID. |
-| AUDIT-050 | `admin-irc.js` is not IIFE-wrapped | 0.10.297 | (pending) | The file declared `let servers/channels/commands` and every function at top level, leaking them onto `window`. Wrapped the whole file in `(function () { 'use strict'; ... })();` and converted the three top-level declarations to `var`. Minimal body diff (no re-indent); full ES6→ES5 conversion is tracked as AUDIT-131. Safe because irc.html has zero inline `onclick` (all handlers are data-action delegated). `TestIRCIife_Wrapped_AUDIT050` in `internal/shell/` pins the IIFE, strict mode, the `var` conversion, and the audit ID. |
+| AUDIT-050 | `admin-irc.js` is not IIFE-wrapped | 0.10.297 | cacca59 | The file declared `let servers/channels/commands` and every function at top level, leaking them onto `window`. Wrapped the whole file in `(function () { 'use strict'; ... })();` and converted the three top-level declarations to `var`. Minimal body diff (no re-indent); full ES6→ES5 conversion is tracked as AUDIT-131. Safe because irc.html has zero inline `onclick` (all handlers are data-action delegated). `TestIRCIife_Wrapped_AUDIT050` in `internal/shell/` pins the IIFE, strict mode, the `var` conversion, and the audit ID. |
 
 ---
 
@@ -1257,7 +1257,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-047 — add logout case to admin-irc.js delegated switch (dead Logout link) — v0.10.294 — db0b62f — opencode
 2026-06-03 — AUDIT-048 — .section-tab.hidden override so JS toggle hides tabs — v0.10.295 — 25ad013 — opencode
 2026-06-03 — AUDIT-049 — add .tab-btn.active rule + normalize Servers button — v0.10.296 — 0188631 — opencode
-2026-06-03 — AUDIT-050 — IIFE-wrap admin-irc.js (no more global scope leak) — v0.10.297 — (pending) — opencode
+2026-06-03 — AUDIT-050 — IIFE-wrap admin-irc.js (no more global scope leak) — v0.10.297 — cacca59 — opencode
 ```
 
 ---
