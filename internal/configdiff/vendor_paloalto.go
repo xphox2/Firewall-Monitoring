@@ -83,4 +83,3 @@ func (paloaltoNormalizer) VolatilePatterns() []VolatilePattern {
 		{Name: "config-attrs", Description: "PAN-OS <config> root attributes (version/detail-version drift)", Regex: `(<config\s+)[^>]*(>)`},
 	}
 }
-

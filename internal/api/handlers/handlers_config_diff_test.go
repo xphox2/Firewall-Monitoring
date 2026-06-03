@@ -92,8 +92,8 @@ func TestGetDeviceConfigDiff_ResponseShape_MatchesJSExpectations(t *testing.T) {
 				BackupQuality      string `json:"backup_quality"`
 				ConfigText         string `json:"config_text"`
 			} `json:"to"`
-			Vendor           string                          `json:"vendor"`
-			VolatilePatterns []map[string]interface{}        `json:"volatile_patterns"`
+			Vendor           string                   `json:"vendor"`
+			VolatilePatterns []map[string]interface{} `json:"volatile_patterns"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {

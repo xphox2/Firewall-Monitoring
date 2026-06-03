@@ -152,9 +152,9 @@ func (p *PingCollector) pingTarget(fg models.Device, probe models.Probe) {
 			ProbeID:    probe.ID,
 			TargetIP:   targetIP,
 			Success:    true,
-			Latency:     avgLatency,
-			PacketLoss:  packetLoss,
-			TTL:         ttl,
+			Latency:    avgLatency,
+			PacketLoss: packetLoss,
+			TTL:        ttl,
 		}
 
 		if err := p.DB.SavePingResult(result); err != nil {
@@ -194,15 +194,15 @@ func (p *PingCollector) updateStats(deviceID uint, probeID uint, targetIP string
 
 	if existing == nil {
 		stats := &models.PingStats{
-			DeviceID: deviceID,
-			ProbeID:  probeID,
-			TargetIP:    targetIP,
-			MinLatency:  latency,
-			MaxLatency:  latency,
-			AvgLatency:  latency,
-			PacketLoss:  packetLoss,
-			Samples:     1,
-			UpdatedAt:   time.Now(),
+			DeviceID:   deviceID,
+			ProbeID:    probeID,
+			TargetIP:   targetIP,
+			MinLatency: latency,
+			MaxLatency: latency,
+			AvgLatency: latency,
+			PacketLoss: packetLoss,
+			Samples:    1,
+			UpdatedAt:  time.Now(),
 		}
 
 		if err := p.DB.SavePingStats(stats); err != nil {

@@ -11,6 +11,6 @@ func init() {
 
 type genericNormalizer struct{}
 
-func (genericNormalizer) Vendor() string                       { return "generic" }
+func (genericNormalizer) Vendor() string                        { return "generic" }
 func (genericNormalizer) Normalize(raw []byte) ([]byte, string) { return raw, QualityUnknown }
 func (genericNormalizer) VolatilePatterns() []VolatilePattern   { return nil }

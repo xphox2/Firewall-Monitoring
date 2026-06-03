@@ -68,7 +68,7 @@ var (
 	// Password-masking marker (FortiOS 7.2.1+ optional feature). Presence in the
 	// backup means the backup is NOT restorable — restore requires re-entering
 	// secrets. We surface this as BackupQuality="masked".
-	fortiMaskingMarker = []byte(`config_masked_password`)
+	fortiMaskingMarker  = []byte(`config_masked_password`)
 	fortiMaskingMarker2 = []byte(`ENC <removed>`)
 )
 

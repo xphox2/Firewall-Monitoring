@@ -1119,7 +1119,9 @@ By leverage × risk × fit with existing architecture:
 
 | ID | Title | Version | Commit | Notes |
 |----|-------|---------|--------|-------|
-| AUDIT-001 | Untrack `*_test.go` from `.gitignore` | 0.10.241 | (pending) | Removed line 9 of `.gitignore`; added `internal/configdiff/normalize_test.go` (631 LOC) and `internal/report/report_test.go` (192 LOC) so the regression net cited in v0.10.236/0.10.238/0.10.239 actually ships with public clones. |
+| AUDIT-001 | Untrack `*_test.go` from `.gitignore` | 0.10.241 | 671dbd8 | Removed line 9 of `.gitignore`; added `internal/configdiff/normalize_test.go` (631 LOC) and `internal/report/report_test.go` (192 LOC) so the regression net cited in v0.10.236/0.10.238/0.10.239 actually ships with public clones. |
+| AUDIT-074 | `internal/irc/bot.go` CRLF line endings | 0.10.242 | (pending) | Normalized via `gofmt -w .`. Was flagged as "CR-only" in the audit — actually CRLF, now LF like the rest of the tree. |
+| AUDIT-075 | 16 files fail `gofmt -l` | 0.10.242 | (pending) | Whole-tree `gofmt -w .` pass; whitespace-only diff (`git diff -w` is empty). After: `gofmt -l .` returns nothing. CI enforcement (AUDIT-152) follows once the CI workflow exists. |
 
 ---
 
@@ -1129,7 +1131,9 @@ Append a one-line entry per resolved finding in chronological order.
 
 ```
 # Format: YYYY-MM-DD — AUDIT-NNN — short title — version — commit SHA — author
-2026-06-02 — AUDIT-001 — untrack *_test.go — v0.10.241 — (pending) — opencode
+2026-06-02 — AUDIT-001 — untrack *_test.go — v0.10.241 — 671dbd8 — opencode
+2026-06-02 — AUDIT-074 — fix CRLF line endings in irc/bot.go — v0.10.242 — (pending) — opencode
+2026-06-02 — AUDIT-075 — project-wide gofmt -w sweep — v0.10.242 — (pending) — opencode
 ```
 
 ---

@@ -108,6 +108,6 @@ func RegisteredVendors() []string {
 // pre-configdiff hashing behavior. No volatile patterns.
 type identityNormalizer struct{}
 
-func (identityNormalizer) Vendor() string                      { return "" }
+func (identityNormalizer) Vendor() string                        { return "" }
 func (identityNormalizer) Normalize(raw []byte) ([]byte, string) { return raw, QualityUnknown }
 func (identityNormalizer) VolatilePatterns() []VolatilePattern   { return nil }

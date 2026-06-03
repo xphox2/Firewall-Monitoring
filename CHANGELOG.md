@@ -1,4 +1,31 @@
 # Changelog
+## [0.10.242] - 2026-06-02
+
+### Fixed — AUDIT-074 + AUDIT-075: project-wide gofmt sweep and line-ending normalization
+
+`gofmt -l .` flagged 14 files as unformatted, and `internal/irc/bot.go` had CRLF line endings inconsistent with the rest of the tree. Both were captured by AUDIT-074 and AUDIT-075 in `docs/AUDIT.md` and are now resolved with a single `gofmt -w .` pass.
+
+Files reformatted (whitespace-only — `git diff -w` returns empty):
+
+- `internal/api/handlers/handlers_config_diff_test.go`
+- `internal/api/handlers/handlers_data.go`
+- `internal/api/handlers/handlers_devices.go`
+- `internal/api/handlers/handlers_probes.go`
+- `internal/configdiff/normalize.go`
+- `internal/configdiff/validate.go`
+- `internal/configdiff/vendor_cisco_asa.go`
+- `internal/configdiff/vendor_fortigate.go`
+- `internal/configdiff/vendor_generic.go`
+- `internal/configdiff/vendor_paloalto.go`
+- `internal/irc/bot.go` (also normalized CRLF → LF)
+- `internal/ping/ping.go`
+- `internal/snmp/snmp.go`
+- `internal/snmp/vendor_firewalla.go`
+
+After this commit, `gofmt -l .` returns empty. AUDIT-152 (CI gofmt enforcement) is the natural follow-up — once the CI workflow exists (AUDIT-004) it should fail on any new unformatted file.
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...` all clean. Static-binary change → requires `docker compose up -d --build` to reach a deployment. Server-repo only.
+
 ## [0.10.241] - 2026-06-02
 
 ### Fixed — AUDIT-001: test files are now tracked in git

@@ -774,7 +774,7 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
 		"revisions":   revisions,
-		"distinct":    true,    // legacy field name; every row is already distinct now
+		"distinct":    true, // legacy field name; every row is already distinct now
 		"total_all":   totalAll,
 		"total_shown": len(revisions),
 	}))

@@ -25,8 +25,8 @@ var (
 	// `: Saved` and `: Written by ... at ...` — timestamp banners at the top
 	// of `show tech` style dumps. Plain `show running-config` skips these,
 	// but some backup mechanisms include them.
-	asaSavedHeaderRegex   = regexp.MustCompile(`(?m)^(\s*:\s*Saved)[^\r\n]*$`)
-	asaWrittenByRegex     = regexp.MustCompile(`(?m)^(\s*:\s*Written by\s+)[^\r\n]*$`)
+	asaSavedHeaderRegex = regexp.MustCompile(`(?m)^(\s*:\s*Saved)[^\r\n]*$`)
+	asaWrittenByRegex   = regexp.MustCompile(`(?m)^(\s*:\s*Written by\s+)[^\r\n]*$`)
 
 	// Type 6 secrets (master-passphrase AES, random nonce per emission). Match
 	// any password-bearing config line where the type indicator is `6`.

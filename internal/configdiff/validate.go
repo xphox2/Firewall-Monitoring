@@ -26,13 +26,13 @@ const FortiOSMaxNonPrintableRatio = 0.01
 // Errors are exported so callers (tests, handlers, audit log) can match on
 // them rather than parsing message strings.
 var (
-	ErrEmptyBackup           = errors.New("backup is empty")
-	ErrBackupTooSmall        = errors.New("backup smaller than minimum plausible size")
-	ErrMissingVersionHeader  = errors.New("backup missing #config-version= header")
-	ErrMissingSystemGlobal   = errors.New("backup missing config system global section")
-	ErrTooFewConfigBlocks    = errors.New("backup has too few config blocks (likely truncated)")
+	ErrEmptyBackup            = errors.New("backup is empty")
+	ErrBackupTooSmall         = errors.New("backup smaller than minimum plausible size")
+	ErrMissingVersionHeader   = errors.New("backup missing #config-version= header")
+	ErrMissingSystemGlobal    = errors.New("backup missing config system global section")
+	ErrTooFewConfigBlocks     = errors.New("backup has too few config blocks (likely truncated)")
 	ErrUnbalancedConfigBlocks = errors.New("backup has unbalanced config/end blocks (likely truncated)")
-	ErrBinaryCorruption      = errors.New("backup contains an unexpected fraction of non-printable bytes")
+	ErrBinaryCorruption       = errors.New("backup contains an unexpected fraction of non-printable bytes")
 )
 
 // ValidateFortiGateBackup performs a cheap structural sanity check on bytes

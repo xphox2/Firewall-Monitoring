@@ -14,7 +14,7 @@ import (
 // Standard MIB OIDs (vendor-neutral)
 var (
 	// IP-MIB ipAddrTable (standard, works on all vendors)
-	OIDIpAddrTable   = ".1.3.6.1.2.1.4.20.1"
+	OIDIpAddrTable    = ".1.3.6.1.2.1.4.20.1"
 	OIDIpAdEntIfIndex = ".1.3.6.1.2.1.4.20.1.2"
 	OIDIpAdEntNetMask = ".1.3.6.1.2.1.4.20.1.3"
 

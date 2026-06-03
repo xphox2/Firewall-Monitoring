@@ -687,8 +687,8 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	// concurrent backups for the same device.
 	now := time.Now()
 	var (
-		mergedID      uint
-		mergedAction  string // "merge" | "insert-first" | "insert-change" | "insert-suspect"
+		mergedID       uint
+		mergedAction   string // "merge" | "insert-first" | "insert-change" | "insert-suspect"
 		prevNormalized string
 	)
 
@@ -711,7 +711,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		if hasPrev && !suspect && prevRev.NormalizedChecksum == rev.NormalizedChecksum && rev.NormalizedChecksum != "" {
 			updates := map[string]interface{}{
 				"checksum":         rev.Checksum,
-				"config_text":     rev.ConfigText,
+				"config_text":      rev.ConfigText,
 				"length":           len(rev.ConfigText),
 				"last_verified_at": now,
 				"verify_count":     prevRev.VerifyCount + 1,

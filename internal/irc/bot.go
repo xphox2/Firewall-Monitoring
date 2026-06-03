@@ -809,8 +809,8 @@ func NewTestBot(serverHost string, serverPort int, nick, username string, useTLS
 		nick:         nick,
 		username:     username,
 		useTLS:       useTLS,
-		password:    password,
-		saslEnabled: saslEnabled,
+		password:     password,
+		saslEnabled:  saslEnabled,
 		saslUsername: saslUsername,
 		saslPassword: saslPassword,
 	}
