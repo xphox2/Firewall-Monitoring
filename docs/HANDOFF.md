@@ -15,14 +15,18 @@ the entire audit.
 
 > **Session 13 (2026-06-03) completed all 10 of its HIGH frontend quick wins
 > (AUDIT-046 through 055), v0.10.293 → v0.10.302.** See the "Session 13
-> completion log" near the bottom of this file. The next accessible batch is
-> Session 14 (AUDIT-056 through 065).
+> completion log" near the bottom of this file.
+>
+> **Session 14 (2026-06-03) completed all 10 of AUDIT-056 through 065,
+> v0.10.303 → v0.10.312** (incl. the AUDIT-064 batch-stats backend endpoint).
+> See the "Session 14 completion log". The next accessible batch is Session 15
+> (AUDIT-066 through 070, plus 034/035; note 081/155/156 are wontfix).
 
 **Remaining scope:**
 
 | Bucket | Count | Effort to complete |
 |---|---|---|
-| Open bug audits (HIGH severity) | 74 | ~30 XS/S + 35 M + 9 L |
+| Open bug audits (HIGH severity) | 64 | ~20 XS/S + 35 M + 9 L |
 | Open bug audits (MEDIUM severity) | 13 | ~8 XS/S + 5 M |
 | Open bug audits (LOW severity) | 12 | ~12 XS/S |
 | Feature recommendations (F01–F89) | 89 | Mostly M/L; not in scope for "complete the audit" |
@@ -112,7 +116,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-054 | admin.html has 1,500-line `<style>` block buried in `<body>` | S | Move to `<head>`. CSP doesn't need a nonce for this style (the v0.10.259 CSP doesn't set style-src-attr). |
 | AUDIT-055 | Mobile sidebar only on `admin.html` | S | Copy the `<button class="mobile-menu-btn">` markup to other admin pages. |
 
-### Session 14: HIGH quick wins (S) — 10 audits
+### Session 14: HIGH quick wins (S) — 10 audits ✅ DONE (v0.10.303–312, 2026-06-03)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -403,6 +407,52 @@ were additionally validated with `node --check`.
   `docs/SCAN.md`. Relevant to **AUDIT-018** (stale deps) in a future session.
 - **Next up: Session 14 (AUDIT-056–065)** — labels/`for=`, aria, iframe-401,
   `escapeHtml` falsy-0, print CSS, Chart.js teardown, N+1 in probes, etc.
+
+## Session 14 completion log (2026-06-03)
+
+All 10 of AUDIT-056 through 065 resolved, one commit + one SHA-backfill
+commit each. Versions **v0.10.303 → v0.10.312**. Resolved-audit count in
+`docs/AUDIT.md` grew **71 → 81**. Full suite green throughout (`go build`,
+`go test ./...`, `gofmt -l .`, `go vet ./...`); JS edits validated with
+`node --check`. This batch was not purely frontend — AUDIT-064 added a real
+backend endpoint with a DB-level test.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-057 | 0.10.303 | 9eddf4b | renderSidebar adds `aria-current="page"` to active link + `aria-hidden="true"` to all 16 nav icons |
+| AUDIT-058 | 0.10.304 | 4cf18fe | apiFetch 401 redirects `(window.top \|\| window)` so a 401 in the Reports iframe doesn't navigate the iframe |
+| AUDIT-059 | 0.10.305 | 419baf4 | escapeHtml nullish guard (`== null`) in admin-common.js + admin-irc.js — no longer blanks numeric 0 |
+| AUDIT-060 | 0.10.306 | ffa440b | `@media print` block in admin-shared.css hides sidebar/mobile-header/overlay/toasts/.no-print |
+| AUDIT-061 | 0.10.307 | 46e9c54 | device-detail switchTab destroys proc-ssh / iface-err charts on leave, recreates from controls on enter |
+| AUDIT-062 | 0.10.308 | fb19621 | irc showAlert toggles `.hidden` + clears a tracked timer (back-to-back alerts no longer cut each other off) |
+| AUDIT-063 | 0.10.309 | 4941a8a | public dashboard "Reset Layout" guarded by `confirm()` (native, to avoid bloating the wallboard) |
+| AUDIT-065 | 0.10.310 | b1c5483 | connection-detail escapes `conn.status` with AC.escapeHtml before innerHTML |
+| AUDIT-064 | 0.10.311 | ecefba0 | **backend**: `GET /admin/api/probes/stats?ids=` (8 grouped queries) replaces the per-probe N+1; admin-probes.js calls it once |
+| AUDIT-056 | 0.10.312 | 41c6836 | 88 form `<label>`s get `for="<input id>"` via `scripts/audit056_labels.py` (integrity-tested) |
+
+**Discoveries for the next session:**
+
+- **AUDIT-070 is now incidentally resolved** by the AUDIT-055 (Session 13)
+  `renderMobileChrome` — it sets `aria-expanded` on the hamburger button in
+  its open/close handler. A future session should verify and close AUDIT-070
+  in the doc rather than re-implement it.
+- **Pre-existing tab bug found (not yet an audit):** in
+  `web/admin/device-detail.html` the Processes/SSH tab uses
+  `data-tab="processes-ssh"` but its content div is `id="tab-processors-ssh"`
+  (processes vs processors). `switchTab` does `getElementById('tab-' + name)`,
+  so that tab's *content* never shows (the button still highlights). Worth a
+  one-line fix in a future pass — left untouched here to keep AUDIT-061 scoped.
+- **AUDIT-064 pattern for batch endpoints:** one grouped query per table
+  (`COUNT(*) ... WHERE x IN (?) GROUP BY x`) instead of looping. The new route
+  is a *static* sibling of `/api/probes/:id` and works because gin already
+  tolerates `/api/probes/pending` next to `:id`. Handler tests live in
+  `internal/api/handlers/` (real SQLite DB via `setupTestHandler`), not
+  `internal/shell/`.
+- **The label-sweep script (`scripts/audit056_labels.py`)** can be reused/
+  extended: it skips wrapping labels and id-less controls. A few public-
+  settings inputs (`public_show_vpn`, `public_show_connections`,
+  `public_refresh_interval`) have only `name=`, no `id=`, so their labels were
+  left unassociated — a tiny follow-up could add ids if desired.
 
 ## Closing
 
