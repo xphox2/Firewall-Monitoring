@@ -505,7 +505,13 @@ func (d *Database) EnsurePartitions() error {
 			continue
 		}
 		if !isPartitioned {
-			log.Printf("Partition setup: %q is a plain table on this deployment; skipping monthly partition creation. To convert in place, run the migration in docs/partition-migration.md (planned for a future release).", def.tableName)
+			// AUDIT-146: surface this as a clear WARNING, not
+			// a per-table info line. The pre-fix message used
+			// log.Printf with no prefix, which made it easy
+			// to miss in startup noise. The WARNING prefix
+			// is grep-able (`grep WARNING firewall-mon.log`)
+			// and matches the AUDIT-146 fix's recommendation.
+			log.Printf("WARNING: AUDIT-146 partition setup: %q is a plain table on this deployment; skipping monthly partition creation. To convert in place, run the migration in docs/partition-migration.md (planned for a future release). Without monthly partitions, the table will grow unbounded and the cleanup cron (AUDIT-029) will eventually run full-table DELETE statements that take minutes to complete.", def.tableName)
 			continue
 		}
 		partitioned = append(partitioned, def)
