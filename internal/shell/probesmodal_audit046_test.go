@@ -14,9 +14,12 @@ import (
 // base `.modal { display: none }` from admin-shared.css and forced both
 // modals visible on first paint.
 //
-// The fix replaces the rule with `.modal.active { display: flex; }`, matching
-// the admin-shared.css convention. A future edit that reintroduces the
-// `:not(.hidden)` form (or drops the AUDIT-046 marker) fails here.
+// The fix removed the negated-hidden rule. As of AUDIT-054 the inline
+// `.modal.active` duplicate was also removed, so probes.html now relies on
+// admin-shared.css for modal display. The enduring AUDIT-046 invariant is:
+// probes.html must NOT carry a `:not(.hidden)` rule, and the canonical
+// `.modal.active` rule must live in admin-shared.css. A future edit that
+// reintroduces the `:not(.hidden)` form (or drops the AUDIT-046 marker) fails.
 func TestProbesModal_UsesActiveClass_AUDIT046(t *testing.T) {
 	const path = "../../web/admin/probes.html"
 	data, err := os.ReadFile(path)
@@ -26,14 +29,20 @@ func TestProbesModal_UsesActiveClass_AUDIT046(t *testing.T) {
 	body := string(data)
 
 	if strings.Contains(body, ".modal:not(.hidden)") {
-		t.Errorf("probes.html still contains the buggy `.modal:not(.hidden)` rule (AUDIT-046): modals never carry a .hidden class, so this forces them visible on first paint. Use `.modal.active { display: flex; }` instead.")
+		t.Errorf("probes.html still contains the buggy `.modal:not(.hidden)` rule (AUDIT-046): modals never carry a .hidden class, so this forces them visible on first paint. Modal display must come from admin-shared.css `.modal.active`.")
 	}
-	for _, sig := range []string{
-		"AUDIT-046",                     // traceability
-		".modal.active { display: flex", // the fix (matches admin-shared.css convention)
-	} {
-		if !strings.Contains(body, sig) {
-			t.Errorf("probes.html missing the %q signal (AUDIT-046): the modal display rule must use the `.active` convention and reference the audit ID in a comment.", sig)
-		}
+	if !strings.Contains(body, "AUDIT-046") {
+		t.Errorf("probes.html missing the AUDIT-046 marker (traceability): the comment documenting the modal-display convention must reference the audit ID.")
+	}
+
+	// The canonical `.modal.active` rule must live in admin-shared.css
+	// (AUDIT-054 made it the single source of truth).
+	const sharedPath = "../../cmd/api/static/css/admin-shared.css"
+	shared, err := os.ReadFile(sharedPath)
+	if err != nil {
+		t.Skipf("admin-shared.css not found at %s; err: %v", sharedPath, err)
+	}
+	if !strings.Contains(string(shared), ".modal.active {") {
+		t.Errorf("admin-shared.css is missing the canonical `.modal.active` rule (AUDIT-046/054): probes.html relies on it for modal display.")
 	}
 }

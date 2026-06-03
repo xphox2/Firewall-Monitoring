@@ -37,14 +37,13 @@
         .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
         .page { display: none; }
         .page.active { display: block; animation: fadeIn 0.2s ease; }
-        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; }
-        .modal.active { display: flex; }
+        /* AUDIT-054: .modal / .modal.active / .modal-header / .modal-header h2 /
+           .modal-close / .modal-close:hover / .modal-footer were byte-for-byte
+           duplicates of admin-shared.css:506-573 — removed so the modal rules
+           have a single source of truth. Only .modal-content is kept: it
+           intentionally overrides the shared 95vw/90vh with a narrower
+           92vw/85vh for this page's wide probe-detail modal. */
         .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 1000px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .modal-header h2 { font-size: 1.1rem; color: #e6edf3; }
-        .modal-close { cursor: pointer; font-size: 1.3rem; color: #8b949e; background: none; border: none; padding: 4px; }
-        .modal-close:hover { color: #e6edf3; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
         .table-wrap { max-height: 500px; overflow-y: auto; border-radius: 6px; }
         table { width: 100%; border-collapse: collapse; }
         th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; background: #161b22; }
