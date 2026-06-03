@@ -1191,7 +1191,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-054 | admin.html has duplicate inline `.modal` rules | 0.10.301 | d391d30 | The `.modal { display:none }` / `.modal.active { display:flex }` display rules (plus admin.html's identical `.modal-header` / `.modal-close` / `.modal-footer`) were duplicated inline across admin.html, sites.html, probes.html — all redundant with admin-shared.css:506-573. Removed the duplicates; admin-shared.css is now the single source of truth (admin.html keeps only its genuinely-different `.modal-content` 92vw/85vh override). The AUDIT-046 test was updated to pin the enduring invariant after the inline `.modal.active` was removed from probes.html. `TestModalDedup_SingleSource_AUDIT054` in `internal/shell/` pins the removal across all three pages. |
 | AUDIT-055 | Mobile sidebar only on `admin.html` | 0.10.302 | 888a7d6 | Only admin.html had the mobile header / hamburger / slide-in sidebar (inline); every other page had a fixed 240px sidebar covering half a phone viewport. Moved the chrome CSS to a shared section in admin-shared.css, added `AdminCommon.renderMobileChrome()` (injects markup + wires an idempotent toggle that syncs `aria-expanded`), and call it after `renderSidebar()` on all 7 admin pages. admin.html's inline CSS/markup/script were removed. `TestMobileChrome_OnAllPages_AUDIT055` in `internal/shell/` pins the method, the shared CSS, and the per-page call. |
 | AUDIT-057 | JS-rendered nav has no `aria-current`/`aria-hidden` | 0.10.303 | 9eddf4b | `renderSidebar` marked the active item with only a `.active` class and left nav-icon glyphs readable by AT. Added `aria-current="page"` to the active link and `aria-hidden="true"` to all 16 `<span class="nav-icon">`. `TestSidebarAria_AUDIT057` in `internal/shell/` pins both attributes. |
-| AUDIT-058 | `apiFetch` 401 redirect fires inside iframes | 0.10.304 | (pending) | The 401/302 handler did `window.location.href = '/admin/login'`, navigating the Reports preview iframe to /login. Changed to `(window.top \|\| window).location.href`. `TestApiFetch401_TopFrame_AUDIT058` in `internal/shell/` pins the top-frame redirect. |
+| AUDIT-058 | `apiFetch` 401 redirect fires inside iframes | 0.10.304 | 4cf18fe | The 401/302 handler did `window.location.href = '/admin/login'`, navigating the Reports preview iframe to /login. Changed to `(window.top \|\| window).location.href`. `TestApiFetch401_TopFrame_AUDIT058` in `internal/shell/` pins the top-frame redirect. |
 
 ---
 
@@ -1271,7 +1271,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-054 — dedup inline .modal rules (single source: admin-shared.css) — v0.10.301 — d391d30 — opencode
 2026-06-03 — AUDIT-055 — AdminCommon.renderMobileChrome() on all admin pages — v0.10.302 — 888a7d6 — opencode
 2026-06-03 — AUDIT-057 — aria-current + aria-hidden on rendered sidebar nav — v0.10.303 — 9eddf4b — opencode
-2026-06-03 — AUDIT-058 — apiFetch 401 redirects top frame (iframe-safe) — v0.10.304 — (pending) — opencode
+2026-06-03 — AUDIT-058 — apiFetch 401 redirects top frame (iframe-safe) — v0.10.304 — 4cf18fe — opencode
 ```
 
 ---
