@@ -925,8 +925,12 @@
         </div>
     </main>
 
+    <!-- AUDIT-069: static modals carry role="dialog" aria-modal="true"
+         aria-labelledby="<title-id>" directly in markup (not only via
+         admin-common.js tagStaticModals at runtime). See
+         scripts/audit069_modal_aria.py. -->
     <!-- Device Modal -->
-    <div class="modal" id="device-modal">
+    <div class="modal" id="device-modal" role="dialog" aria-modal="true" aria-labelledby="device-modal-title">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="device-modal-title">Add Device</h2>
@@ -1091,7 +1095,7 @@
     </div>
 
     <!-- Device Alert Config Modal -->
-    <div class="modal" id="device-alert-modal">
+    <div class="modal" id="device-alert-modal" role="dialog" aria-modal="true" aria-labelledby="device-alert-modal-title">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="device-alert-modal-title">Device Alert Configuration</h2>
@@ -1155,10 +1159,10 @@
     </div>
 
     <!-- Connection Modal -->
-    <div class="modal" id="connection-modal">
+    <div class="modal" id="connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-modal-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Add Connection</h2>
+                <h2 id="connection-modal-title">Add Connection</h2>
                 <button class="modal-close" data-action="close-connection-modal">&times;</button>
             </div>
             <form id="connection-form">
@@ -1207,10 +1211,10 @@
 
 
     <!-- Syslog Detail Modal -->
-    <div class="modal" id="syslog-detail-modal">
+    <div class="modal" id="syslog-detail-modal" role="dialog" aria-modal="true" aria-labelledby="syslog-detail-modal-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Syslog Message Detail</h2>
+                <h2 id="syslog-detail-modal-title">Syslog Message Detail</h2>
                 <button class="modal-close" data-action="close-syslog-detail">&times;</button>
             </div>
             <div id="syslog-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;"></div>
@@ -1221,10 +1225,10 @@
     </div>
 
     <!-- Alert Detail Modal -->
-    <div class="modal" id="alert-detail-modal">
+    <div class="modal" id="alert-detail-modal" role="dialog" aria-modal="true" aria-labelledby="alert-detail-modal-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Alert Detail</h2>
+                <h2 id="alert-detail-modal-title">Alert Detail</h2>
                 <button class="modal-close" data-action="close-alert-detail">&times;</button>
             </div>
             <div id="alert-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;"></div>
@@ -1235,7 +1239,7 @@
     </div>
 
     <!-- Alert Policy Modal -->
-    <div class="modal" id="policy-modal">
+    <div class="modal" id="policy-modal" role="dialog" aria-modal="true" aria-labelledby="policy-modal-title">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="policy-modal-title">Create Alert Policy</h2>
@@ -1345,7 +1349,7 @@
     </div>
 
     <!-- Maintenance Window Modal -->
-    <div class="modal" id="maint-modal">
+    <div class="modal" id="maint-modal" role="dialog" aria-modal="true" aria-labelledby="maint-modal-title">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="maint-modal-title">Create Maintenance Window</h2>
@@ -1403,10 +1407,10 @@
     </div>
 
     <!-- Acknowledge Alert Modal -->
-    <div class="modal" id="ack-modal">
+    <div class="modal" id="ack-modal" role="dialog" aria-modal="true" aria-labelledby="ack-modal-title">
         <div class="modal-content" style="max-width:400px">
             <div class="modal-header">
-                <h2>Acknowledge Alert</h2>
+                <h2 id="ack-modal-title">Acknowledge Alert</h2>
                 <button class="modal-close" data-action="close-ack-modal">&times;</button>
             </div>
             <form id="ack-form">
@@ -1424,7 +1428,7 @@
     </div>
 
     <!-- Probe Detail Modal -->
-    <div class="modal" id="probe-detail-modal">
+    <div class="modal" id="probe-detail-modal" role="dialog" aria-modal="true" aria-labelledby="probe-detail-name">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="probe-detail-name">Probe Stats</h2>

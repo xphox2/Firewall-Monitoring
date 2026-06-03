@@ -423,11 +423,11 @@
                  fixed positioning, dark overlay, and centered flex layout.
                  Don't add Tailwind utility classes here — they fight with the
                  legacy rules on specificity and the modal renders blank. -->
-            <div class="modal" id="config-diff-modal">
+            <div class="modal" id="config-diff-modal" role="dialog" aria-modal="true" aria-labelledby="config-diff-modal-title">
                 <div class="modal-content" style="width:1400px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="modal-header">
                         <div>
-                            <h2>Configuration Diff</h2>
+                            <h2 id="config-diff-modal-title">Configuration Diff</h2>
                             <div style="font-size:0.78rem;color:#8b949e" id="config-diff-meta">&nbsp;</div>
                         </div>
                         <button class="modal-close" data-action="close-config-diff">&times;</button>
