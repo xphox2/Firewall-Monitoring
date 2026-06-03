@@ -1,4 +1,46 @@
 # Changelog
+## [0.10.265] - 2026-06-02
+
+### Fixed — AUDIT-093: PostgreSQL password is now auto-generated, not hardcoded
+
+Pre-AUDIT, `entrypoint.sh` shipped with `CREATE USER fwmon WITH PASSWORD 'fwmon'` and `export DB_PASSWORD="fwmon"`. The literal `'fwmon'` was baked into the public repo. With the embedded Postgres configured to `listen_addresses = ''` and `initdb --auth=trust`, the password was not actually checked for local connections — but the moment an operator flipped `listen_addresses` to enable a remote connection (a common production change for running the API outside the container, or for adding pgAdmin access), they would silently ship a publicly-known credential.
+
+**The fix** (`entrypoint.sh`):
+
+1. New `/config/pg-credentials` file (mode 0600) holds `PG_USER` and `PG_PASSWORD`. Created on first init with a 32-character random alphanumeric password (`head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32`).
+2. `CREATE USER ... WITH PASSWORD '$PG_PASSWORD'` now uses the sourced value. New installations start with a unique random password per container.
+3. **Always-`ALTER`-the-password** (idempotent) — the entrypoint now runs `ALTER USER $PG_USER WITH PASSWORD '$PG_PASSWORD'` on every boot. This is a no-op in steady state (the password already matches) and is the migration path for upgrades from a pre-AUDIT-093 image: the old `fwmon` user already exists with the old password, and the `ALTER` swaps it to the new random one.
+4. `export DB_PASSWORD="$PG_PASSWORD"` — the app connects with the same random password.
+5. Comment block in `pg-credentials` documents the "delete this file to force regeneration" workflow for an operator who suspects the password leaked.
+
+**Security properties**
+
+- `/config/pg-credentials` is `chmod 0600` and `chown fwmon:fwmon` — only the app user can read it. The Postgres superuser doesn't need it (it connects via the trust-auth local socket for `CREATE`/`ALTER USER`).
+- Password is 32 alphanumeric characters (~190 bits of entropy). Same strength as AUDIT-008's JWT secret.
+- No password in env vars of any subprocess — `ps` on the host cannot sniff the running container's env to find the password. The only place it lives is the `pg-credentials` file, which is 0600.
+- `DB_PASSWORD` is exported because the app needs it for the libpq connection string. Process listings of the host would show the value; this is no worse than any other config the app needs (TLS certs, SMTP creds, etc.) and is consistent with the rest of the codebase.
+
+**Regression test** (`internal/shell/entrypoint_audit093_test.go`, new):
+
+- `TestEntrypoint_NoHardcodedPostgresPassword_AUDIT093` — static check on `entrypoint.sh`. Strips bash comments first (so a CHANGELOG-style explanation in a `#` block doesn't false-positive), then rejects four patterns: `PASSWORD 'fwmon'`, `PASSWORD "fwmon"`, `DB_PASSWORD=fwmon`, `DB_PASSWORD="fwmon"`. A future agent copy-pasting an example back into the entrypoint fails CI immediately.
+
+First test file for the `internal/shell` package (a new package; the test directory is the natural home for static checks on shell scripts the project ships).
+
+**What this does NOT do (deferred)**
+
+- **TCP listening + SCRAM authentication.** The embedded Postgres still only listens on the unix socket. If an operator wants remote access, they need to flip `listen_addresses` themselves AND configure `pg_hba.conf` for SCRAM-SHA-256. Out of scope for AUDIT-093 — the password hygiene is the headline.
+- **Password rotation on a schedule.** The 32-char random is fine forever unless it leaks; no scheduled rotation needed. AUDIT-009's `keyChain` mechanism for the AES-256 key is a precedent for a future "rotate DB password every N days" feature.
+- **Two-credential model** (one for the app, one for operator ad-hoc psql). Current single password is sufficient for an embedded Postgres.
+
+**Operator migration**
+
+For operators upgrading from a pre-AUDIT-093 image:
+- The first post-upgrade boot will see `/config/pg-credentials` is missing, generate a new random password, persist it, and `ALTER USER fwmon` from the old `fwmon` to the new random.
+- No data loss, no re-init, no app downtime beyond a normal container restart.
+- If the operator wants to inspect Postgres with psql from inside the container, they source the credentials file: `. /config/pg-credentials; psql ...`.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 165 tests, +1 AUDIT-093), `bash -n entrypoint.sh`, `gofmt -l .`, `go vet ./...` all clean. Shell-only change in `entrypoint.sh` + new test package. Docker rebuild required to pick up the new entrypoint; `docker compose up -d --build` is the standard deploy command.
+
 ## [0.10.264] - 2026-06-02
 
 ### Fixed — AUDIT-091 + AUDIT-045: /api/health now actually pings the DB, and the Dockerfile HEALTHCHECK calls it

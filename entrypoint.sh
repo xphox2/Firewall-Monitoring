@@ -7,6 +7,58 @@ PGDATA="/data/pgdata"
 PGRUN="/run/postgresql"
 PG_DB="firewall_mon"
 PG_USER="fwmon"
+PG_CRED_FILE="/config/pg-credentials"
+
+# AUDIT-093: PostgreSQL password hygiene. The pre-fix script hardcoded
+# PASSWORD 'fwmon' for the fwmon DB user, and exported DB_PASSWORD=fwmon
+# for the app. With the embedded Postgres configured to listen only on
+# the unix socket AND initdb's --auth=trust setting, the password isn't
+# actually checked — but it IS still baked into the repo, and a future
+# operator who flips `listen_addresses = 'localhost'` to enable a
+# remote connection (a common production change for running the API
+# outside the container, or for adding pgAdmin access) would silently
+# ship a publicly-known credential.
+#
+# Fix: generate a random 32-character password on first init, persist
+# it to /config/pg-credentials mode 0600, and source it on every
+# subsequent boot. The init flow becomes:
+#   1. First ever boot: no /config/pg-credentials -> generate, persist,
+#      then CREATE USER with the random password.
+#   2. Subsequent boots: source /config/pg-credentials, CREATE USER
+#      is a no-op (the user already exists from the first boot).
+#   3. Upgrades from a pre-AUDIT-093 image: the user already exists
+#      with the old hardcoded password. We ALTER it to the new random
+#      password on the first post-upgrade boot (idempotent re-ALTER).
+#
+# We don't try to detect the "user already has old password" case
+# separately — the ALTER is a no-op if the new password matches, and
+# always succeeds because we have superuser access via the trust-auth
+# local socket.
+if [ ! -f "$PG_CRED_FILE" ]; then
+    echo "Generating new PostgreSQL credentials..."
+    mkdir -p /config
+    # 24 random bytes -> base64 -> strip non-alphanumeric -> first 32
+    # chars. The trim handles the case where base64 padding would
+    # otherwise leak '=' into a password and into shell variables.
+    # /dev/urandom is the right entropy source for a one-shot secret
+    # in a fresh container.
+    local_random=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+    cat > "$PG_CRED_FILE" <<CREDEOF
+# Firewall Monitor PostgreSQL credentials
+# AUDIT-093: auto-generated on first init. Do not edit by hand.
+# Delete this file to force regeneration on next boot (the existing
+# Postgres user keeps the OLD password until you also run:
+#   su-exec postgres psql -c "ALTER USER fwmon WITH PASSWORD '\$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)';"
+# under the entrypoint before deleting this file).
+PG_USER=$PG_USER
+PG_PASSWORD=$local_random
+CREDEOF
+    chmod 0600 "$PG_CRED_FILE"
+    chown fwmon:fwmon "$PG_CRED_FILE" 2>/dev/null || true
+fi
+# shellcheck disable=SC1090
+. "$PG_CRED_FILE"
+export PG_USER PG_PASSWORD
 
 # ---- PostgreSQL Setup ----
 echo "Initializing PostgreSQL..."
@@ -48,7 +100,13 @@ su-exec postgres pg_ctl -D "$PGDATA" -l "$PGDATA/postgresql.log" -w start > /dev
 
 # Create database and user if they don't exist
 su-exec postgres psql -h "$PGRUN" -c "SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'" | grep -q 1 || \
-    su-exec postgres psql -h "$PGRUN" -c "CREATE USER $PG_USER WITH PASSWORD 'fwmon';" > /dev/null
+    su-exec postgres psql -h "$PGRUN" -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
+# AUDIT-093: always ALTER the password to the current /config/pg-credentials
+# value. This is a no-op on steady-state (the password already matches) and
+# the migration path for upgrades from a pre-AUDIT-093 image (the user
+# already existed with the hardcoded 'fwmon' password; ALTER swaps it).
+# Idempotent and safe under trust-auth local-socket access.
+su-exec postgres psql -h "$PGRUN" -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
 su-exec postgres psql -h "$PGRUN" -tc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" | grep -q 1 || \
     su-exec postgres psql -h "$PGRUN" -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null
 
@@ -60,7 +118,7 @@ export DB_HOST="$PGRUN"
 export DB_PORT=5432
 export DB_NAME="$PG_DB"
 export DB_USER="$PG_USER"
-export DB_PASSWORD="fwmon"
+export DB_PASSWORD="$PG_PASSWORD"
 
 # Create config from environment or use default
 if [ ! -f /config/config.env ]; then
