@@ -134,4 +134,11 @@ Recommended intervals to avoid overloading devices:
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Third-party components and their licenses are inventoried in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Contributing & community
+
+- [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, QA requirements, PR workflow.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
+- [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.

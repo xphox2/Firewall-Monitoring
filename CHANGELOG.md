@@ -1,4 +1,27 @@
 # Changelog
+## [0.10.254] - 2026-06-02
+
+### Added — AUDIT-002 (LICENSE doc reference) + AUDIT-003 + AUDIT-011: public-release governance documents
+
+Six new top-level docs covering the open-source housekeeping the audit called out as deployment blockers. Pure documentation; no binary rebuild required.
+
+- **`THIRD-PARTY-NOTICES.md`** (AUDIT-003) — inventories every vendored browser-side asset (Chart.js 4.4.7, chartjs-plugin-zoom 2.0.1, uPlot 1.6.31, Cytoscape.js 3.30.4, cytoscape-fcose 2.2.0, cose-base 2.2.0, layout-base 3.1.0, Gridstack.js 10.3.1, Tailwind CSS, Inter font, JetBrains Mono font) and every direct Go dependency from `go.mod` with version, license (MIT / BSD-2 / BSD-3 / Apache-2.0 / OFL-1.1), copyright line, source URL, and (where vendored) the file path. Includes the full text of every license that applies — required by the attribution clauses of MIT / BSD / OFL.
+- **`SECURITY.md`** (AUDIT-011 part 1) — GitHub-recognized vulnerability disclosure policy with the standard "don't open public issues" preamble, response-time SLOs (5 business days to ack, 10 for assessment, 30 for HIGH/CRITICAL fix), 90-day default disclosure, supported-versions table, scope/out-of-scope sections, operator hardening guidance pointing at the audit doc, and a hall-of-fame stub.
+- **`CONTRIBUTING.md`** (AUDIT-011 part 2) — dev environment requirements (Go 1.24, Postgres 14+ optional, Node 20 for Tailwind only), in-scope vs out-of-scope work, branch + PR workflow, the **mandatory QA gate** (`go build` / `go test -count=1` / `gofmt -l` / `go vet` — and optional `-race`), CHANGELOG / version-bump / AUDIT.md update steps, commit message style with a working example from v0.10.246, code-style rules (no new global state, no new browser libraries without `THIRD-PARTY-NOTICES.md` update), and a dedicated security-sensitive-contributions section pointing back at `SECURITY.md`.
+- **`CODE_OF_CONDUCT.md`** (AUDIT-011 part 3) — Contributor Covenant v2.1 verbatim, with the contact-method placeholder pointed at `SECURITY.md`.
+- **`README.md`** — replaced the bare `MIT` license line with proper links to `LICENSE`, `THIRD-PARTY-NOTICES.md`, plus a new "Contributing & community" section linking the four new docs and the audit doc.
+
+This unblocks the AUDIT-011 deployment-blocker (no security disclosure path, no contributor on-ramp, no Code of Conduct) and the AUDIT-003 deployment-blocker (8 vendored libraries + 2 fonts carry attribution clauses that were not honoured).
+
+Still open from the AUDIT-011 fix list (deferred — different scope):
+
+- `.well-known/security.txt` route (AUDIT-112).
+- `.github/ISSUE_TEMPLATE/*.yml` and `PULL_REQUEST_TEMPLATE.md` (AUDIT-163).
+- `.github/CODEOWNERS` (AUDIT-163).
+- `docs/OPERATIONS.md` runbook (AUDIT-111).
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Docs-only change → no rebuild required. Server-repo only.
+
 ## [0.10.253] - 2026-06-02
 
 ### Fixed — AUDIT-005: trap-receiver and poller now have a real DB + matching ENC key
