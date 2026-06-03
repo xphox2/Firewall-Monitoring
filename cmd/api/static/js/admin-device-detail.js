@@ -1626,12 +1626,30 @@
     }
 
     function switchTab(name) {
+        // AUDIT-061: free the per-tab Chart.js canvas contexts when their tab is
+        // not visible, and recreate them from the current control values on
+        // re-entry. loadProcessMonitorData / loadInterfaceErrorsData each
+        // destroy any prior instance before creating a new one, and the
+        // change-listeners are wired once (renderProcessMonitor /
+        // renderInterfaceErrors at init), so nothing leaks here.
+        if (name !== 'processes-ssh' && procSshChart) { procSshChart.destroy(); procSshChart = null; }
+        if (name !== 'iface-err' && ifaceErrChart) { ifaceErrChart.destroy(); ifaceErrChart = null; }
+
         document.querySelectorAll('.tab-item').forEach(function(t) { t.classList.remove('active'); });
         document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
         var tab = document.querySelector('.tab-item[data-tab="' + name + '"]');
         if (tab) tab.classList.add('active');
         var content = document.getElementById('tab-' + name);
         if (content) content.classList.add('active');
+
+        if (name === 'processes-ssh') {
+            var prRange = document.getElementById('proc-ssh-range');
+            if (prRange) loadProcessMonitorData(prRange.value);
+        } else if (name === 'iface-err') {
+            var ieRange = document.getElementById('iface-err-range');
+            var ieIface = document.getElementById('iface-err-interface');
+            if (ieRange) loadInterfaceErrorsData(ieRange.value, ieIface ? ieIface.value : '');
+        }
     }
 
     function formatBytes(bytes) {
