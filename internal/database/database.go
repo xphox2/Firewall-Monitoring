@@ -2155,9 +2155,20 @@ func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]Sys
 
 	out := make([]SystemStatusBucket, 0, len(rows))
 	for _, r := range rows {
+		millis := parseBucketToMillis(r.Bucket)
+		// AUDIT-145: skip rows whose bucket string we couldn't
+		// parse. Pre-fix these would render as 1970 datapoints in
+		// the chart. Filtering at the data layer (vs. letting the
+		// chart deal with the sentinel) means the API response
+		// itself is clean — `bucket_ms` is always a real epoch
+		// value, never -1.
+		if millis == bucketUnparseableMillis {
+			log.Printf("system_status time-series: skipping row with unparseable bucket %q", r.Bucket)
+			continue
+		}
 		out = append(out, SystemStatusBucket{
 			Bucket:         r.Bucket,
-			BucketMillis:   parseBucketToMillis(r.Bucket),
+			BucketMillis:   millis,
 			CPUUsage:       r.CPUUsage,
 			MemoryUsage:    r.MemoryUsage,
 			DiskUsage:      r.DiskUsage,
@@ -2180,7 +2191,31 @@ func (d *Database) GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]Sys
 // epoch milliseconds for the chart x-axis. Postgres date_trunc returns ISO
 // timestamps; SQLite strftime returns "2006-01-02 15:04" or "2006-01-02"
 // depending on the bucket size. Both forms are parsed here.
+//
+// AUDIT-145: the pre-fix return value for an unparseable input was 0
+// (Jan 1 1970 epoch ms), which the chart then rendered as a literal
+// "1970" datapoint. The pre-fix assumption was that the bucket
+// string is always well-formed (database produced it, the format
+// is known) — but a future migration that changes the bucket format
+// without updating this function, or a corrupted row that lost the
+// bucket column, would surface as a 1970 spike in every chart. The
+// fix: return the sentinel `bucketUnparseableMillis = -1` for
+// unparseable inputs, and have the consuming code skip the
+// row entirely. -1 is a fine sentinel here because the input set
+// (year >= 2000, anything after the platform epoch) never
+// legitimately produces a negative UnixMilli.
+const bucketUnparseableMillis int64 = -1
+
+// BucketMillisUnparseableSentinel is the value parseBucketToMillis
+// returns for an input it can't parse. Exposed (with a doc comment
+// rather than as a public const) so the regression test can pin
+// the contract without re-reading the implementation.
+func BucketMillisUnparseableSentinel() int64 { return bucketUnparseableMillis }
+
 func parseBucketToMillis(bucket string) int64 {
+	if strings.TrimSpace(bucket) == "" {
+		return bucketUnparseableMillis
+	}
 	formats := []string{
 		"2006-01-02 15:04:05",
 		"2006-01-02 15:04",
@@ -2193,7 +2228,7 @@ func parseBucketToMillis(bucket string) int64 {
 			return t.UnixMilli()
 		}
 	}
-	return 0
+	return bucketUnparseableMillis
 }
 
 // GetPingResultHistory returns time-series ping results for a device

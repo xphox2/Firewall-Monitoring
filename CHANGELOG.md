@@ -1,4 +1,41 @@
 # Changelog
+## [0.10.274] - 2026-06-02
+
+### Fixed — AUDIT-145: parseBucketToMillis no longer returns 0 (1970 datapoint) for unparseable inputs
+
+`parseBucketToMillis` in `internal/database/database.go` returned `0` (Jan 1 1970 epoch ms) for any input it couldn't parse. The chart then rendered `0` as a literal "1970" datapoint — a real failure mode whenever:
+
+- A future migration changes the bucket format without updating this function (e.g. switching from SQLite `strftime` to Postgres `date_trunc` and back).
+- A corrupted row loses the bucket column.
+- A bug in the upstream SQL produces an empty string (empty result of `TimeBucket('')`).
+
+**The fix** (`database.go`):
+
+1. **New sentinel** `bucketUnparseableMillis int64 = -1` for the function to return on unparseable inputs. -1 is a fine sentinel because the legitimate input set (year ≥ 2000) never produces a negative UnixMilli.
+2. **Updated `parseBucketToMillis`** to:
+   - Trim whitespace; return sentinel for empty input.
+   - Return sentinel for any string that doesn't match the documented formats.
+3. **Updated the consumer** in `GetSystemStatusHistory` to filter rows with `millis == bucketUnparseableMillis` and log a warning. The API response never contains a `-1` `bucket_ms`.
+4. **Exposed the sentinel** via `BucketMillisUnparseableSentinel() int64` for the test to pin the contract without reading the unexported constant directly.
+
+**Wire format / migration**
+
+- `bucket_ms` was already a JSON int64 in the response; it remains so. The change is the sentinel value semantics, not the type. Pre-existing API consumers don't see a new shape.
+- Empty-bucket rows are dropped from the response, not rendered. Operators who relied on a "row exists" signal to detect corruption will need to look at server logs (`system_status time-series: skipping row with unparseable bucket %q`).
+
+**Regression tests** (`internal/database/parsebucket_audit145_test.go`, new — 2 tests, 17 subtests):
+
+- `TestParseBucketToMillis_AUDIT145` (10 subtests) — pins the output for every shape the function accepts: 4 unparseable inputs (empty / whitespace / random text / bad ISO month) all return the sentinel; 5 valid inputs (one per documented format) return real epoch ms computed via `time.Parse` (so the test isn't fragile to a future Go release changing how the format string is interpreted).
+- `TestParseBucketToMillis_NeverReturnsZero_AUDIT145` (7 subtests) — the defense-in-depth contract: regardless of input, the function must never return 0. A future refactor that returns 0 for some new edge case slips past the format-specific assertions but fails here.
+
+**What this does NOT do (deferred)**
+
+- **Audit the other `time.Parse` call sites in `database.go`** (lines 2677, 2959 in the grep output) that do their own bucket parsing instead of going through `parseBucketToMillis`. They're separate concerns; consolidating them is a refactor that should be its own commit.
+- **Backfill the audit fix into the `GetPingResultHistory` and other time-series endpoints.** Those don't use `parseBucketToMillis` at all (they use raw `timestamp` columns), so the audit didn't flag them. The same NaN-via-empty-string risk is mitigated by the `Where("timestamp > ?", cutoff)` filter.
+- **Surface the skipped rows in a `/api/system/health` or `/metrics` counter.** A future observability improvement would expose the skip count so operators know to investigate.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 211 tests, +17 AUDIT-145 subtests), `gofmt -l .`, `go vet ./...` all clean. Code-only change in `internal/database/database.go` + new test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.273] - 2026-06-02
 
 ### Fixed — AUDIT-133: formatBytes now returns em-dash for non-finite inputs
