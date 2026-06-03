@@ -1,4 +1,40 @@
 # Changelog
+## [0.10.266] - 2026-06-02
+
+### Fixed — AUDIT-096: docker-compose.yml now has an explicit healthcheck block
+
+Pre-AUDIT, `docker-compose.yml` declared the `firewall-mon` service without a `healthcheck:` block. The Dockerfile had its own `HEALTHCHECK` (added in v0.10.264, AUDIT-091), but the compose-level healthcheck was missing. Two real consequences:
+
+1. **`docker compose ps` doesn't show a health status column.** It shows "Up" with no "healthy/unhealthy" qualifier. An operator looking at the running stack can't tell at a glance whether the API is actually serving traffic or whether the process is wedged on a wedged DB. They have to read JSON (`docker inspect`) to figure it out.
+2. **`depends_on: condition: service_healthy` is not available to dependent services.** A future split-out compose that puts a reverse proxy (Caddy, nginx, Traefik) in front of `firewall-mon` would want to wait for the API to be live before bringing the proxy up. The `condition: service_healthy` form requires an explicit `healthcheck:` block in the depended-on service's definition. Without it, the proxy would race the API and fail to start on a slow boot.
+
+**The fix** (`docker-compose.yml`):
+
+New `healthcheck:` block on the `firewall-mon` service, mirroring the Dockerfile's `HEALTHCHECK` (v0.10.264) so the two paths agree:
+
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+  interval: 30s
+  timeout: 3s
+  retries: 3
+  start_period: 20s
+```
+
+The values are deliberately identical to the Dockerfile (same interval, timeout, retries, start_period). Diverging the two would create a subtle race where the image's healthcheck and the compose healthcheck disagree on liveness — the static check in the test file does not enforce parity, so a future agent who edits one but not the other will get a "compose says healthy, image says unhealthy" inconsistency that surfaces as a confusing `docker compose ps` output rather than a test failure.
+
+**Regression test** (`internal/shell/docker_compose_audit096_test.go`, new):
+
+- `TestDockerCompose_HasHealthcheck_AUDIT096` — static check on `docker-compose.yml`. Strips YAML comments first, then asserts (a) the file contains a `healthcheck:` block at all, and (b) the block probes `/api/health` (matches the Dockerfile's endpoint). The fail message points the future agent at the audit and the CHANGELOG entry for the recommended shape.
+
+**What this does NOT do (deferred)**
+
+- **Parity enforcement between the Dockerfile `HEALTHCHECK` and the compose `healthcheck`.** A future improvement could parse both and diff the relevant fields. The current test pins both independently, so a divergence would not break CI today; it would break `docker compose ps` semantically. Adding the parity check requires a real YAML parser (e.g. `gopkg.in/yaml.v3`) as a new dependency — out of scope for this commit.
+- **`docker-compose.proxy.yml` audit.** The proxy compose file is a deployment-shape variant, not currently in active use, and gets its own audit pass in a future commit if a real deployment starts using it.
+- **Readiness vs liveness probes** (related to AUDIT-091 deferred). Both compose and the Dockerfile would need to be updated to split these.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 166 tests, +1 AUDIT-096), `gofmt -l .`, `go vet ./...` all clean. YAML-only change. No rebuild required to pick it up — `docker compose up -d` (without `--build`) is enough to apply the new healthcheck, but a full `docker compose up -d --build` is recommended to keep the image label and the healthcheck in sync.
+
 ## [0.10.265] - 2026-06-02
 
 ### Fixed — AUDIT-093: PostgreSQL password is now auto-generated, not hardcoded

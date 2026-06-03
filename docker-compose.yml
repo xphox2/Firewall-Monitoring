@@ -25,3 +25,33 @@ services:
       # can grow into the GB range. See `.env.example` and CHANGELOG v0.10.201.
       - ${DATA_DIR:-./data}:/data
       - ./config:/config
+    # AUDIT-096: explicit healthcheck in compose, redundant with the
+    # HEALTHCHECK directive baked into the Dockerfile (v0.10.264). We
+    # duplicate it here for two reasons:
+    #
+    #   1. `docker compose ps` shows the health status as a column
+    #      ("healthy" / "unhealthy" / "starting"). If the healthcheck
+    #      is only in the Dockerfile, the status shows "Up" without
+    #      the health qualifier and operators have to read JSON to
+    #      figure out what's going on.
+    #   2. The compose `depends_on: condition: service_healthy` form
+    #      requires an explicit healthcheck in this file. We don't
+    #      currently depend on `firewall-mon` from any other service
+    #      in this compose file (it's the only one), but a future
+    #      split-out compose that runs an external reverse proxy
+    #      would want `depends_on: firewall-mon: condition:
+    #      service_healthy` to wait for the API to be live before
+    #      bringing the proxy up. Declaring it now means that future
+    #      change is a one-line edit.
+    #
+    # The values mirror the Dockerfile HEALTHCHECK (see v0.10.264
+    # CHANGELOG). If you change them here, change them there too —
+    # the static check in `internal/shell/` does not currently
+    # enforce parity, so a future agent who diverges the two will
+    # get a subtle "compose says healthy, image says unhealthy" race.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
