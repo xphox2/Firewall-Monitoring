@@ -5,9 +5,6 @@ bin/
 *.so
 *.dylib
 
-# Test files
-*_test.go
-
 # Vendor
 vendor/
 

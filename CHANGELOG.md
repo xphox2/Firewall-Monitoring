@@ -1,4 +1,14 @@
 # Changelog
+## [0.10.241] - 2026-06-02
+
+### Fixed — AUDIT-001: test files are now tracked in git
+
+`*_test.go` was excluded by `.gitignore:9`, which silently dropped **two regression-net test files** (`internal/configdiff/normalize_test.go`, `internal/report/report_test.go`) from every public clone. Recent CHANGELOG entries (v0.10.236, 0.10.238, 0.10.239) all cited those tests as the regression net — but downstream clones got an empty net.
+
+Removed the `*_test.go` line from `.gitignore` and added the two formerly-hidden files. After this commit, `git ls-files | grep _test.go` returns 11 tracked test files (was 9).
+
+Per the audit doc workflow: AUDIT-001 marked Resolved in `docs/AUDIT.md`. No code changes, no rebuild required (tracked tests do not affect runtime binaries). Server-repo only.
+
 ## [0.10.240] - 2026-06-02
 
 ### Added — public-release audit document (`docs/AUDIT.md`)

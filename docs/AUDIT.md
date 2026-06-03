@@ -1119,6 +1119,7 @@ By leverage × risk × fit with existing architecture:
 
 | ID | Title | Version | Commit | Notes |
 |----|-------|---------|--------|-------|
+| AUDIT-001 | Untrack `*_test.go` from `.gitignore` | 0.10.241 | (pending) | Removed line 9 of `.gitignore`; added `internal/configdiff/normalize_test.go` (631 LOC) and `internal/report/report_test.go` (192 LOC) so the regression net cited in v0.10.236/0.10.238/0.10.239 actually ships with public clones. |
 
 ---
 
@@ -1128,6 +1129,7 @@ Append a one-line entry per resolved finding in chronological order.
 
 ```
 # Format: YYYY-MM-DD — AUDIT-NNN — short title — version — commit SHA — author
+2026-06-02 — AUDIT-001 — untrack *_test.go — v0.10.241 — (pending) — opencode
 ```
 
 ---
