@@ -455,6 +455,21 @@ func (h *Handler) TestIRCServer(c *gin.Context) {
 	if req.ServerPort == 0 {
 		req.ServerPort = 6667
 	}
+	if req.ServerPort < 1 || req.ServerPort > 65535 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid server port"))
+		return
+	}
+
+	// AUDIT-013: validate the server host against the SSRF allow-list before
+	// dialing. Without this, an admin (or anyone who phished an admin
+	// session) can use this endpoint to probe internal services on the
+	// monitor's LAN (loopback / RFC 1918 / link-local). Same check that
+	// TestProbeConnection (handlers_probes.go:351) and TestEmail
+	// (handlers_settings.go:667) have used since v0.10.140.
+	if !isValidExternalIP(req.ServerHost) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed server host"))
+		return
+	}
 
 	bot := irc.NewTestBot(req.ServerHost, req.ServerPort, req.Nick, req.Username, req.UseTLS, req.Password, req.SASLEnabled, req.SASLUsername, req.SASLPassword)
 

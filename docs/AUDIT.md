@@ -1131,7 +1131,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-027 | `decryptField` returns ciphertext on decrypt failure (v0.10.226 bug class) | 0.10.245 | 41cd6ae | Every failure path inside `decryptField` after the `{enc}` prefix check now returns `""` and logs at ERROR (no key, bad base64, AES init, GCM init, short ciphertext, GCM auth failure). Legacy plaintext (no prefix) still passes through unchanged. 9 regression tests in `internal/database/crypto_test.go` cover round-trip, legacy passthrough, no-key, wrong-key, bad-base64, tamper, short ciphertext, double-encrypt idempotency, encrypt-empty passthrough. `internal/database` now has its first test file. |
 | AUDIT-016 | Probe registration key compared with `!=` not `hmac.Equal` | 0.10.246 | 90afae6 | `validateProbe` (`handlers_probes.go:606`) now uses `subtle.ConstantTimeCompare` for the post-PK-lookup token check. `authenticateProbeByBearer`'s SQL `WHERE registration_key = ?` lookup is a separate timing channel that needs the AUDIT-017 hashed-token refactor; this fix covers the high-leverage path used by 18 ingestion handlers. 9-case regression test in `handlers_probes_audit016_test.go`. |
 | AUDIT-015 | CORS `*` allowed with `Allow-Credentials: true` | 0.10.247 | 210d4a8 | New `parseCORSAllowedOrigins` helper rejects `*` (anywhere in the list, after trim) with a clear error. `CORS()` calls `log.Fatalf` so the server refuses to start with an unsafe config. 14-case test suite in `internal/api/middleware/cors_test.go` (5 wildcard-rejection scenarios + 9 happy-path edge cases). First test file for the middleware package. |
-| AUDIT-086 | `cmd/api/main.go` listen goroutine uses `log.Fatal` | 0.10.248 | (pending) | Listener goroutine now surfaces errors on a buffered `errCh`. Main goroutine `select`s on either the signal channel or `errCh`, then runs the graceful-shutdown sequence so the deferred `ircManager.Stop` / `snmpClient.Close` / `cancel` run before exit. `server.Shutdown` failure also no longer `log.Fatal`s. No automated test — would need integration-level harness. |
+| AUDIT-086 | `cmd/api/main.go` listen goroutine uses `log.Fatal` | 0.10.248 | b8357db | Listener goroutine now surfaces errors on a buffered `errCh`. Main goroutine `select`s on either the signal channel or `errCh`, then runs the graceful-shutdown sequence so the deferred `ircManager.Stop` / `snmpClient.Close` / `cancel` run before exit. `server.Shutdown` failure also no longer `log.Fatal`s. No automated test — would need integration-level harness. |
+| AUDIT-013 | `TestIRCServer` SSRF — odd one out among Test* endpoints | 0.10.249 | (pending) | `handlers_irc.go:TestIRCServer` now runs the server host through `isValidExternalIP` (same helper used by `TestProbeConnection` and `TestEmail`) and validates the port range. 16-case regression test in `handlers_irc_audit013_test.go` covers IPv4/IPv6 loopback, unspecified, link-local (incl. AWS metadata), RFC 1918, RFC 4193, `localhost` name, unresolvable hosts, and bad ports. First test file for the IRC handlers. |
 
 ---
 
@@ -1153,7 +1154,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-02 — AUDIT-027 — decryptField fail-closed (returns empty on any decrypt error) — v0.10.245 — 41cd6ae — opencode
 2026-06-02 — AUDIT-016 — probe key constant-time compare in validateProbe — v0.10.246 — 90afae6 — opencode
 2026-06-02 — AUDIT-015 — reject CORS=* at startup (Allow-Credentials always true) — v0.10.247 — 210d4a8 — opencode
-2026-06-02 — AUDIT-086 — HTTP listener errors no longer bypass graceful shutdown — v0.10.248 — (pending) — opencode
+2026-06-02 — AUDIT-086 — HTTP listener errors no longer bypass graceful shutdown — v0.10.248 — b8357db — opencode
+2026-06-02 — AUDIT-013 — TestIRCServer SSRF check (isValidExternalIP) — v0.10.249 — (pending) — opencode
 ```
 
 ---

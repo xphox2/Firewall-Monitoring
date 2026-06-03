@@ -1,4 +1,25 @@
 # Changelog
+## [0.10.249] - 2026-06-02
+
+### Fixed — AUDIT-013: `TestIRCServer` now SSRF-gated (and validates port)
+
+`POST /admin/api/irc/test` accepted an arbitrary `server_host` from the request body and dialed it via `irc.NewTestBot(...).Connect()` with **no** SSRF allow-list — even though sibling `TestProbeConnection` (`handlers_probes.go:351`) and `TestEmail` (`handlers_settings.go:667`) have called `isValidExternalIP` since v0.10.140. An admin (or anyone who phished an admin session cookie) could turn the endpoint into an internal port-scanner against the monitor's LAN — loopback, RFC 1918, link-local, the AWS metadata endpoint at `169.254.169.254`, etc.
+
+Changes (`internal/api/handlers/handlers_irc.go:437`):
+
+- Reject ports `< 1` or `> 65535` with 400 (mirrors the validation in `TestProbeConnection`).
+- Run the host through `isValidExternalIP` and 400 with "Invalid or disallowed server host" if it resolves to a blocked range.
+
+Regression tests (`internal/api/handlers/handlers_irc_audit013_test.go`, new):
+
+- `TestTestIRCServer_RejectsSSRFTargets_AUDIT013` — 13 sub-cases covering IPv4/IPv6 loopback, unspecified, link-local (incl. `169.254.169.254`), RFC 1918 / RFC 4193, `localhost` name, and an unresolvable `.invalid` host. All must return 400 and mention "disallowed" or "invalid" in the body.
+- `TestTestIRCServer_RejectsInvalidPort` — 2 sub-cases (negative, > 65535) must return 400.
+- `TestTestIRCServer_RejectsMissingHost` — `binding:"required"` catches the empty case.
+
+Side-effect on the package: this is the first test file for the IRC handler family (previously 0% coverage on `handlers_irc.go` — closes part of AUDIT-117).
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.248] - 2026-06-02
 
 ### Fixed — AUDIT-086: HTTP listener errors no longer skip graceful shutdown
