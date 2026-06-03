@@ -21,6 +21,7 @@ import (
 	"firewall-mon/internal/irc"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
+	"firewall-mon/internal/secrets"
 	"firewall-mon/internal/snmp"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.251"
+const ServerVersion = "0.10.252"
 
 func main() {
 	cfg := config.Load()
@@ -39,12 +40,27 @@ func main() {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
-	if cfg.Server.JWTSecretKey == "" {
-		secret, err := auth.GenerateSecureToken(32)
-		if err != nil {
-			log.Fatal("Failed to generate JWT secret")
-		}
-		cfg.Server.JWTSecretKey = secret
+	// AUDIT-008: persist auto-generated JWT secret to disk so subsequent
+	// restarts use the SAME key. Otherwise every restart (a) invalidates
+	// every existing JWT login token and (b) derives a different AES-256
+	// key for the {enc}<base64> ENC fields (SNMP / IRC / SMTP creds),
+	// making them permanently unreadable. The secrets dir defaults to
+	// /data (the Docker volume mount); set SECRETS_DIR to override for
+	// non-Docker installs.
+	secretsDir := os.Getenv("SECRETS_DIR")
+	if secretsDir == "" {
+		secretsDir = "/data"
+	}
+	jwtSecret, jwtSource, err := secrets.LoadOrGenerate(cfg.Server.JWTSecretKey, secretsDir, ".jwt-secret")
+	if err != nil {
+		log.Fatalf("JWT secret: %v (set JWT_SECRET_KEY env, or ensure %s is writable)", err, secretsDir)
+	}
+	cfg.Server.JWTSecretKey = jwtSecret
+	switch jwtSource {
+	case secrets.FromFile:
+		log.Printf("JWT secret loaded from %s/.jwt-secret (chmod 600)", secretsDir)
+	case secrets.Generated:
+		log.Printf("JWT secret auto-generated and persisted to %s/.jwt-secret (chmod 600); set JWT_SECRET_KEY env to override", secretsDir)
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -84,6 +100,40 @@ func main() {
 
 	authManager := auth.NewAuthManager(cfg, db)
 
+	// AUDIT-008: admin password persistence. The previous code generated a
+	// fresh random password on every restart if ADMIN_PASSWORD was unset
+	// — but only persisted it to /data/.admin-password if the write
+	// succeeded, and InitAdmin only sets the hash on FIRST run. Result:
+	// on restart, the operator saw a NEW password printed that did NOT
+	// match the bcrypt hash already in the DB → permanently locked out.
+	//
+	// New flow when ADMIN_PASSWORD is unset:
+	//   1. If /data/.admin-password exists, load it (this is what the DB
+	//      hash was computed from on first run).
+	//   2. Otherwise, persist the just-generated value to disk so future
+	//      restarts can find it.
+	//   3. Any I/O failure is fatal — silently continuing recreates the
+	//      bug we're closing.
+	if cfg.IsGeneratedPassword() {
+		if existing, ok, err := secrets.LoadPassword(secretsDir, ".admin-password"); err != nil {
+			log.Fatalf("admin password: cannot read persisted file: %v", err)
+		} else if ok {
+			cfg.Auth.AdminPassword = existing
+			log.Printf("Admin password loaded from %s/.admin-password (chmod 600); set ADMIN_PASSWORD env to override", secretsDir)
+		} else {
+			// First run — pin the config-generated password to disk.
+			if _, err := secrets.PersistGeneratedPassword(cfg.Auth.AdminPassword, secretsDir, ".admin-password"); err != nil {
+				log.Fatalf("admin password: failed to persist auto-generated password to %s/.admin-password: %v (set ADMIN_PASSWORD env, or ensure %s is writable)", secretsDir, err, secretsDir)
+			}
+			log.Println("========================================")
+			log.Println("AUTO-GENERATED ADMIN PASSWORD")
+			log.Printf("Username: %s", cfg.Auth.AdminUsername)
+			log.Printf("Password file: %s/.admin-password (chmod 600)", secretsDir)
+			log.Println("Set ADMIN_PASSWORD env var to override on next start.")
+			log.Println("========================================")
+		}
+	}
+
 	// Initialize admin in database (skips if admin already exists from migration)
 	if db != nil {
 		hashedPassword, err := authManager.HashPassword(cfg.Auth.AdminPassword)
@@ -101,24 +151,6 @@ func main() {
 			authManager.PruneExpiredAttempts()
 		}
 	}()
-
-	if cfg.IsGeneratedPassword() {
-		pw := cfg.Auth.AdminPassword
-		masked := "***"
-		if len(pw) >= 6 {
-			masked = pw[:3] + "***" + pw[len(pw)-3:]
-		}
-		log.Println("========================================")
-		log.Println("AUTO-GENERATED ADMIN PASSWORD")
-		log.Printf("Username: %s", cfg.Auth.AdminUsername)
-		log.Printf("Password: %s (set ADMIN_PASSWORD env var to override)", masked)
-		log.Println("========================================")
-		// Write full password to a file in data directory, readable only by the process owner
-		pwFile := "/data/.admin-password"
-		if err := os.WriteFile(pwFile, []byte(pw+"\n"), 0600); err == nil {
-			log.Printf("Full password written to %s", pwFile)
-		}
-	}
 
 	// Clear plaintext password from memory after initialization
 	cfg.Auth.AdminPassword = ""

@@ -1,4 +1,40 @@
 # Changelog
+## [0.10.252] - 2026-06-02
+
+### Fixed — AUDIT-008: JWT secret and admin password now persist across restarts
+
+`cmd/api/main.go` previously regenerated both the JWT signing secret and the auto-generated admin password on every restart if their env vars were unset. The downstream damage:
+
+- **JWT secret**: a new in-memory secret on each start invalidates every existing login JWT. Worse, the AES-256 key for `{enc}<base64>` stored credentials (SNMP, IRC, SMTP) is derived from the same secret via SHA-256 (`internal/database/database.go:82` `deriveKey(cfg.Server.JWTSecretKey)`), so a regenerated key made **every encrypted credential in the DB permanently unreadable**.
+- **Admin password**: `getDefaultPassword()` cached a fresh random per `config.Load()` call, but `db.InitAdmin` only sets the bcrypt hash on the FIRST run. Result: on restart the operator saw a brand-new "AUTO-GENERATED ADMIN PASSWORD" printed in the logs that did NOT match the existing DB hash — and got locked out with no recovery path.
+
+The previous `os.WriteFile("/data/.admin-password", ...)` attempt at persistence was best-effort — if the write failed, the code silently continued with an in-memory-only password the operator could never recover.
+
+**New package** `internal/secrets` (10 unit tests):
+
+- `LoadOrGenerate(envValue, baseDir, filename) (value, source, err)` — env > file > generate+persist, with fatal-on-IO-error semantics.
+- `PersistGeneratedPassword(pw, baseDir, filename) (written, err)` — write-once helper for the admin-password flow (existing files are NEVER overwritten so a manually-edited file is honoured).
+- `LoadPassword(baseDir, filename) (pw, ok, err)` — read-only counterpart for the load-side.
+
+**`cmd/api/main.go` wiring**:
+
+- `SECRETS_DIR` env (default `/data`) chooses where secrets live. Override for non-Docker installs.
+- JWT secret: `LoadOrGenerate("", "/data", ".jwt-secret")` runs at startup. First run generates + persists chmod 0600. Subsequent runs reload the same value.
+- Admin password: if env empty, attempt to load `/data/.admin-password`. If present, override the config-generated default. If absent (true first run), persist the just-generated default with `PersistGeneratedPassword`. Any I/O failure is `log.Fatal` — no silent fallback.
+- Stopped logging the masked password (`pw[:3] + "***" + pw[len(pw)-3:]`) — that was a separate finding (AUDIT-137: 6 chars of the auto-generated password leaked into container logs narrowed brute-force space). Now the log directs operators to the chmod-0600 file instead.
+
+`config.env.example` updated to explain both env vars + `SECRETS_DIR`.
+
+QA: `go build ./...`, `go test -count=1 ./...` (8 packages, 95 tests), `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`.
+
+**Operator action required** on upgrade:
+
+- If `JWT_SECRET_KEY` was previously unset and the volume `/data` survives the upgrade: existing `{enc}` ciphertext was already broken by the regenerate-on-restart bug — the new `.jwt-secret` file generated on first run after upgrade will be a fresh key, so any existing `{enc}` values stored under previous random keys remain unreadable. Re-enter SMTP / SNMP credentials in the admin UI after upgrade.
+- If `JWT_SECRET_KEY` IS set in env: nothing changes — env value still wins.
+- For brand-new installs: `/data/.jwt-secret` and `/data/.admin-password` will be created chmod 0600 on first start. Treat them like SSH host keys: back them up, don't share them.
+
+Server-repo only. Also collaterally closes AUDIT-137 (no longer logs masked password).
+
 ## [0.10.251] - 2026-06-02
 
 ### Fixed — AUDIT-083: per-IP rate limiter is now capped + has a Stop() hook
