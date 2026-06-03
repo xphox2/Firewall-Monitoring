@@ -1,4 +1,32 @@
 # Changelog
+## [0.10.272] - 2026-06-02
+
+### Fixed — AUDIT-169: documented the layering decision for `cmd/api/static.go`
+
+The audit's recommendation was "Acceptable as-is. Document the choice." The "choice" is whether a 2-line `//go:embed` wrapper belongs in `cmd/` or in an `internal/` package:
+
+- **Layering purist view:** `internal/` is the canonical home for an `embed.FS` used by a binary. It keeps `cmd/` purely a "main" and makes the embed reusable.
+- **Pragmatic view:** `staticFiles` is consumed only by the gin router in `cmd/api/main.go`. The `//go:embed static` directive resolves paths relative to the source file, so moving it would also require reorganizing the `static/` directory, which buys nothing today.
+
+**The fix** (`cmd/api/static.go`):
+
+A multi-paragraph package-level doc comment that names the audit, the two views, the choice we made, and the trigger that would justify migrating the embed to `internal/webassets/`:
+
+> If a second binary in the project ever needs the same embed (e.g. a `cmd/admin-tools/` that ships a CLI version of the admin UI), the right move is to lift `static/` and the `staticFiles` declaration to `internal/webassets/`. The directory layout should follow the second consumer, not the first.
+
+This is the kind of decision that lives in commit messages today and gets lost the next time someone `git blame`s the file. Putting it in the source means the next person who looks at the embed finds the rationale immediately.
+
+**Regression test** (`internal/shell/staticgo_audit169_test.go`, new):
+
+`TestStaticGo_HasLayeringDocComment_AUDIT169` — three-signal static check on the file: it must contain the string `"AUDIT-169"` (so the decision is traceable), the string `"staticFiles"` (so the doc is about *this* file, not a copy-paste from elsewhere), and the string `"internal/"` (the migration target if a second consumer ever appears). The test doesn't pin the full text — a future clarifying edit doesn't fail — but the three signals are the load-bearing pieces. A future agent who deletes the comment fails immediately, with a failure message pointing at the audit.
+
+**What this does NOT do (deferred)**
+
+- **Move the embed to `internal/`.** The audit explicitly accepted the current location. Moving would require reorganizing the `static/` directory and is only worth the cost when a second consumer appears (none today).
+- **Add a `static_test.go` that exercises the embed.** The embed is exercised transitively by every page-render in the integration tests; an explicit unit test would just re-verify Go's stdlib `embed` package. Out of scope.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 193 tests, +1 AUDIT-169), `gofmt -l .`, `go vet ./...` all clean. Doc-only change in `cmd/api/static.go` + new test file. No code path affected. Static-binary change → requires rebuild. Server-repo only.
+
 ## [0.10.271] - 2026-06-02
 
 ### Fixed — AUDIT-159: probe binary's banner output now uses log.* like the rest of the codebase
