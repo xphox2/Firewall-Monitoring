@@ -61,7 +61,11 @@
             </div>
 
             <!-- System Status Cards -->
-            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4" id="systemStats">
+            <!-- AUDIT-068: overflow-x-auto so the auto-fit stat grids scroll
+                 instead of bursting the layout on sub-200px viewports (or when
+                 a long firmware/value string makes a card wider than the
+                 viewport). The data tables below are already wrapped. -->
+            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4 overflow-x-auto" id="systemStats">
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">CPU Usage</div>
                     <div class="gauge relative w-20 h-20 mx-auto" id="cpuGauge"></div>
@@ -85,7 +89,7 @@
             </div>
 
             <!-- Extended System Status Cards (shown when data exists) -->
-            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 mb-4" id="extendedStats" style="display:none">
+            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 mb-4 overflow-x-auto" id="extendedStats" style="display:none"><!-- AUDIT-068 -->
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardFirmware">
                     <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Firmware</div>
                     <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="firmwareValue">-</div>

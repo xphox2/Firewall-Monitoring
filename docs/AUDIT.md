@@ -1202,6 +1202,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-056 | Inline `<label>` without `for=""` (~60 inputs) | 0.10.312 | 41c6836 | Swept probes/sites/irc/probe-pending/admin.html and added `for="<input id>"` to 88 non-wrapping labels (wrapping + header labels left alone; id-less inputs skipped, not guessed). Transform in `scripts/audit056_labels.py`. `TestLabelFor_AUDIT056` in `internal/shell/` pins that every `<label for>` resolves to an id + per-page minimum counts. |
 | AUDIT-066 | Color contrast `#484f58` on `#161b22` fails WCAG AA | 0.10.313 | 9b09dc7 | Brightened every foreground-text use of `#484f58` to `#8b949e` across source CSS, the bundled tailwind.css, admin/public HTML, and inline-style-building JS. Decorative uses (chart ticks `'#484f58'`, borders) left as-is. Sweep in `scripts/audit_brighten_color.py`. `TestColorContrast_NoDarkText484_AUDIT066` in `internal/shell/` pins no text `#484f58` remains. |
 | AUDIT-067 | Color contrast `#6e7681` on `#0d1117` passes AA only for large text | 0.10.314 | d04a4e3 | Lifted every foreground-text use of `#6e7681` (≈4.07:1) to `#8b949e` (≈5.3:1) so small stat-labels/muted text pass AA. Same scoped equal-length swap as AUDIT-066 (`scripts/audit_brighten_color.py`). `TestColorContrast_NoDarkText6e_AUDIT067` in `internal/shell/` pins no text `#6e7681` remains. |
+| AUDIT-068 | Mobile chart/table overflow on device-detail | 0.10.315 | (pending) | Made `#systemStats` / `#extendedStats` `overflow-x-auto` scroll containers. All 7 data tables were already wrapped; the audit's "15-col processes table" doesn't exist (that tab renders a chart). `TestDeviceDetailOverflow_AUDIT068` in `internal/shell/` pins both grids are scroll containers. |
 
 ---
 
@@ -1292,6 +1293,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-056 — add for= to 88 form labels (screen-reader association) — v0.10.312 — 41c6836 — opencode
 2026-06-03 — AUDIT-066 — brighten #484f58 foreground text to #8b949e (WCAG AA) — v0.10.313 — 9b09dc7 — opencode
 2026-06-03 — AUDIT-067 — lift #6e7681 foreground text to #8b949e (small-text AA) — v0.10.314 — d04a4e3 — opencode
+2026-06-03 — AUDIT-068 — overflow-x-auto on device-detail stat grids — v0.10.315 — (pending) — opencode
 ```
 
 ---
