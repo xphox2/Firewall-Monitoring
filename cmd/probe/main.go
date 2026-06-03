@@ -148,24 +148,31 @@ func NewProbe(cfg *ProbeConfig) *Probe {
 }
 
 func (p *Probe) Start() error {
-	fmt.Println("========================================")
-	fmt.Println("  Firewall Monitor Probe Starting")
-	fmt.Println("========================================")
-	fmt.Printf("  Probe Name:      %s\n", p.Config.Name)
-	fmt.Printf("  Site ID:         %d\n", p.Config.SiteID)
-	fmt.Printf("  Server URL:      %s\n", p.Config.ServerURL)
-	fmt.Printf("  Sync Interval:   %v\n", p.Config.SyncInterval)
-	fmt.Println("========================================")
-	fmt.Println()
+	// AUDIT-159: banner / status output uses log.* instead of fmt.*
+	// so the probe's stdout matches the rest of the codebase (the
+	// rest of this file already uses log.Printf for error paths).
+	// The "log" import was already present in this file; we just
+	// swap the call sites. fmt.Errorf in the error returns below
+	// is left alone — wrapping errors with %w is a different concern
+	// from output formatting.
+	log.Println("========================================")
+	log.Println("  Firewall Monitor Probe Starting")
+	log.Println("========================================")
+	log.Printf("  Probe Name:      %s", p.Config.Name)
+	log.Printf("  Site ID:         %d", p.Config.SiteID)
+	log.Printf("  Server URL:      %s", p.Config.ServerURL)
+	log.Printf("  Sync Interval:   %v", p.Config.SyncInterval)
+	log.Println("========================================")
+	log.Println()
 
-	fmt.Println("[1/4] Registering with central server...")
+	log.Println("[1/4] Registering with central server...")
 	if err := p.RelayClient.Register(); err != nil {
 		return fmt.Errorf("registration failed: %w", err)
 	}
-	fmt.Printf("  -> Probe registered successfully (ID: %d)\n", p.RelayClient.GetProbeID())
-	fmt.Println()
+	log.Printf("  -> Probe registered successfully (ID: %d)", p.RelayClient.GetProbeID())
+	log.Println()
 
-	fmt.Println("[2/4] Starting SNMP Trap listener...")
+	log.Println("[2/4] Starting SNMP Trap listener...")
 	snmpConfig := &config.Config{
 		SNMP: config.SNMPConfig{
 			TrapListenAddr: p.Config.ListenTrap,
@@ -188,10 +195,10 @@ func (p *Probe) Start() error {
 	if err := trapReceiver.Start(trapHandler); err != nil {
 		return fmt.Errorf("failed to start trap receiver: %w", err)
 	}
-	fmt.Printf("  -> Listening on %s\n", p.Config.ListenTrap)
-	fmt.Println()
+	log.Printf("  -> Listening on %s", p.Config.ListenTrap)
+	log.Println()
 
-	fmt.Println("[3/4] Starting Syslog listener...")
+	log.Println("[3/4] Starting Syslog listener...")
 	syslogCfg := &syslog.Config{
 		ListenAddr:       "0.0.0.0",
 		Port:             514,
@@ -220,17 +227,17 @@ func (p *Probe) Start() error {
 	if err := p.SyslogTCPServer.Start(); err != nil {
 		log.Printf("Warning: TCP syslog server failed to start: %v", err)
 	} else {
-		fmt.Printf("  -> TCP listening on 0.0.0.0:514\n")
+		log.Printf("  -> TCP listening on 0.0.0.0:514")
 	}
 
 	if err := p.SyslogUDPServer.Start(); err != nil {
 		log.Printf("Warning: UDP syslog server failed to start: %v", err)
 	} else {
-		fmt.Printf("  -> UDP listening on 0.0.0.0:514\n")
+		log.Printf("  -> UDP listening on 0.0.0.0:514")
 	}
-	fmt.Println()
+	log.Println()
 
-	fmt.Println("[4/4] Starting sFlow listener...")
+	log.Println("[4/4] Starting sFlow listener...")
 	parts := splitHostPort(p.Config.ListenSFlow)
 	port := 6343
 	if len(parts) > 1 {
@@ -265,8 +272,8 @@ func (p *Probe) Start() error {
 	if err := sflowReceiver.Start(); err != nil {
 		return fmt.Errorf("failed to start sFlow receiver: %w", err)
 	}
-	fmt.Printf("  -> Listening on %s\n", p.Config.ListenSFlow)
-	fmt.Println()
+	log.Printf("  -> Listening on %s", p.Config.ListenSFlow)
+	log.Println()
 
 	if err := p.RelayClient.Start(); err != nil {
 		p.cleanup()
@@ -276,10 +283,10 @@ func (p *Probe) Start() error {
 	go p.startHeartbeat()
 	go p.startSNMPPolling()
 
-	fmt.Println("========================================")
-	fmt.Println("  Probe is running")
-	fmt.Println("========================================")
-	fmt.Println()
+	log.Println("========================================")
+	log.Println("  Probe is running")
+	log.Println("========================================")
+	log.Println()
 
 	return nil
 }
@@ -432,12 +439,12 @@ func (p *Probe) cleanup() {
 }
 
 func (p *Probe) Stop() error {
-	fmt.Println()
-	fmt.Println("Shutting down probe...")
+	log.Println()
+	log.Println("Shutting down probe...")
 
 	p.cleanup()
 
-	fmt.Println("Probe stopped")
+	log.Println("Probe stopped")
 	return nil
 }
 

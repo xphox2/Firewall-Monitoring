@@ -1,4 +1,31 @@
 # Changelog
+## [0.10.271] - 2026-06-02
+
+### Fixed — AUDIT-159: probe binary's banner output now uses log.* like the rest of the codebase
+
+`cmd/probe/main.go` shipped banner / status output via `fmt.Println` and `fmt.Printf` while every other log call in the same file (and every other binary in the project) used `log.*`. The pre-fix output went to stdout with no timestamp and no prefix, which made it inconsistent with the rest of the codebase's logs and impossible to grep with a uniform pattern (`grep "INFO probe:" log.txt` would have missed the banner lines entirely).
+
+**The fix** (`cmd/probe/main.go`):
+
+Every `fmt.Println(...)` and `fmt.Printf(...)` in the banner / status path (lines 151-289 and 442-448) is now `log.Println(...)` / `log.Printf(...)`. The "log" import was already present in this file (it was used for the `log.Printf("Failed to send trap: ...")` error paths), so no import changes were needed.
+
+`fmt.Errorf(...)` is left alone in the same function — wrapping errors with `%w` for the caller to inspect is a different concern from formatting output, and the existing pattern is correct.
+
+The fix also covers a `Stop()` method (lines 442-448) that was using `fmt.Println` for shutdown messages — now consistent with the rest of the file.
+
+**Regression tests** (`internal/shell/probe_audit159_test.go`, new — 2 tests):
+
+- `TestProbe_NoFmtPrintln_AUDIT159` — regex-scans `cmd/probe/main.go` for any `fmt.Print` call (catches both `Println` and `Printf`). A future agent who copy-pastes a `fmt.Println("starting up...")` back into the file fails here immediately.
+- `TestProbe_HasLogImport_AUDIT159` — defensive sibling: confirms `"log"` is still imported. A future agent who removes the import "because the file doesn't use log" would fail compilation, but this test catches the intent more loudly.
+
+**What this does NOT do (deferred)**
+
+- **Migrate to a structured logger** (logrus / zap / slog). The codebase uses stdlib `log` everywhere; switching to structured logging is a project-wide change, not a probe-specific one. AUDIT-076 is the deferred MEDIUM for "no structured logging" — same scope, larger surface.
+- **Add a `[probe]` prefix to every log line.** Some operators like a uniform `[component]` prefix so they can grep for `\[probe\]` to isolate the probe's logs from the rest of the deployment. Not done here because the rest of the codebase doesn't use that pattern; adding it to the probe alone would be inconsistent.
+- **Capture stdout vs stderr routing.** `log.*` writes to stderr by default (with the default logger); `fmt.*` writes to stdout. Operators who split the two streams in a log pipeline will see the probe's banner output move from stdout to stderr. This is a behavior change, but it's the right behavior — the audit was about consistency with the rest of the codebase, and the rest of the codebase writes to stderr via `log.*`.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 192 tests, +2 AUDIT-159), `gofmt -l .`, `go vet ./...` all clean. Probe-binary change in `cmd/probe/main.go` + new test file. Static-binary change → requires rebuild. Server-repo only.
+
 ## [0.10.270] - 2026-06-02
 
 ### Fixed — AUDIT-101: Dockerfile OCI labels now come from build-args (no more stale version)
