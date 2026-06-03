@@ -77,41 +77,69 @@ func (p *Poller) Start() error {
 	for {
 		select {
 		case <-ticker.C:
-			p.pollAllDevices()
+			// AUDIT-007: per-tick advisory lock so two poller processes
+			// don't both run the same work. If another poller is active,
+			// skip this tick and try again on the next one.
+			p.runUnderLeaderLock("poll cycle", p.pollAllDevices)
 		case <-rollupTicker.C:
-			if p.db != nil {
-				p.db.RunFlowRollupCycle()
-				p.db.RunSyslogAggregationCycle(p.cfg.Retention)
-			}
+			p.runUnderLeaderLock("rollup", func() {
+				if p.db != nil {
+					p.db.RunFlowRollupCycle()
+					p.db.RunSyslogAggregationCycle(p.cfg.Retention)
+				}
+			})
 		case <-cleanupTicker.C:
-			if p.db != nil {
-				if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
-					log.Printf("Data cleanup error: %v", err)
-				} else {
-					log.Println("Old data cleanup completed")
+			p.runUnderLeaderLock("cleanup", func() {
+				if p.db != nil {
+					if err := p.db.CleanupOldData(p.cfg.Retention); err != nil {
+						log.Printf("Data cleanup error: %v", err)
+					} else {
+						log.Println("Old data cleanup completed")
+					}
+					if err := p.db.CleanupConfigRevisions(); err != nil {
+						log.Printf("Config revision cleanup error: %v", err)
+					} else {
+						log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
+					}
+					// Ensure future partitions exist (creates ahead partitions if needed)
+					if err := p.db.EnsurePartitions(); err != nil {
+						log.Printf("Partition check error: %v", err)
+					}
+					// Ensure autovacuum is configured (no-op if already configured)
+					if err := p.db.ConfigureAutovacuum(); err != nil {
+						log.Printf("Autovacuum config error: %v", err)
+					}
 				}
-				if err := p.db.CleanupConfigRevisions(); err != nil {
-					log.Printf("Config revision cleanup error: %v", err)
-				} else {
-					log.Println("Config revision retention cleanup completed (top 50 + last 90d, run-collapsed)")
+				if p.alertManager != nil {
+					p.alertManager.PruneExpiredCooldowns()
 				}
-				// Ensure future partitions exist (creates ahead partitions if needed)
-				if err := p.db.EnsurePartitions(); err != nil {
-					log.Printf("Partition check error: %v", err)
-				}
-				// Ensure autovacuum is configured (no-op if already configured)
-				if err := p.db.ConfigureAutovacuum(); err != nil {
-					log.Printf("Autovacuum config error: %v", err)
-				}
-			}
-			if p.alertManager != nil {
-				p.alertManager.PruneExpiredCooldowns()
-			}
+			})
 		case <-p.stopChan:
 			log.Println("Poller stopped")
 			return nil
 		}
 	}
+}
+
+// runUnderLeaderLock acquires the AUDIT-007 cross-process advisory lock,
+// runs fn while holding it, and releases on return. If the lock cannot
+// be acquired (another poller is doing this work), logs a skip message
+// and returns without invoking fn.
+//
+// SQLite (tests / single-process deployments) always acquires (no-op
+// lock), so fn runs every tick.
+func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
+	if p.db == nil {
+		// No DB to lock against; just run.
+		fn()
+		return
+	}
+	if !p.db.TryAcquirePollerWorkLock() {
+		log.Printf("Skipping %s: another poller holds the work lock", taskName)
+		return
+	}
+	defer p.db.ReleasePollerWorkLock()
+	fn()
 }
 
 func (p *Poller) pollAllDevices() {

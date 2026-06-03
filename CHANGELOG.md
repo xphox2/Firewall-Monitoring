@@ -1,4 +1,33 @@
 # Changelog
+## [0.10.256] - 2026-06-02
+
+### Fixed — AUDIT-007: cross-process poller leader lock
+
+`cmd/poller/main.go`'s 3 cron tickers — `pollAllDevices` (every `SNMP.PollInterval`, default 60s), the 5-minute rollup of `RunFlowRollupCycle` + `RunSyslogAggregationCycle`, and the 24-hour `CleanupOldData` + `CleanupConfigRevisions` + `EnsurePartitions` + `ConfigureAutovacuum` + `PruneExpiredCooldowns` block — all ran without coordination across processes. Under a 2-poller deployment (the "I want HA" or "I have a rolling deploy in flight" case) both processes did all the work: 2× SNMP load on every device, 2× alerts (the cooldown map is per-process so dedup fails across processes), 2× daily report emails, 2× row-lock contention on the cleanup cron.
+
+Mirroring the existing `tryAcquireStartupLock` pattern (`internal/database/database.go:170`), I added a per-tick Postgres advisory lock:
+
+- **New methods**: `Database.TryAcquirePollerWorkLock() bool` and `Database.ReleasePollerWorkLock()`. Both use a stable int64 key (`0x504f4c4c45525357` — visible as "POLLERSW" in `pg_locks` if an operator inspects it). On SQLite (tests / single-process dev) the methods are no-ops returning true / no-op respectively.
+- **New helper in cmd/poller**: `runUnderLeaderLock(taskName, fn)` wraps a tick handler: try the lock, log `"Skipping <task>: another poller holds the work lock"` if it fails, otherwise `defer ReleasePollerWorkLock()` and run `fn`. All three ticker branches now go through it.
+
+Failure semantics:
+
+- Lock acquired → work runs, lock released on return (defer covers panic).
+- Lock contested → tick skipped; next tick retries. Net behaviour: exactly one of N pollers does each work cycle.
+- Lock-probe SQL error → bias toward DOING the work (duplicate poll cycle is recoverable; missed one is not). Logged.
+- Process crash between acquire and release → session-scoped lock auto-released at `SetConnMaxLifetime` (5 min) — one tick window of degraded service.
+
+Regression tests (`internal/database/poller_lock_test.go`, new):
+
+- `TestPollerWorkLock_SQLiteAlwaysAcquires` — on SQLite both Acquire calls return true (no actual lock); Release is a no-op and safe to double-call.
+- `TestPollerWorkLock_ReleaseAfterAcquireDoesNotPanic` — exercises the documented `defer db.ReleasePollerWorkLock()` pattern.
+
+Cross-process Postgres semantics are NOT directly unit-tested here because the test harness runs in SQLite (AUDIT-118's production/test parity gap). The functional contract is in the doc comments on `TryAcquirePollerWorkLock`; integration coverage will land with AUDIT-118's testcontainers-go harness.
+
+Operator action: none. The single-poller deployment is unaffected (no other poller contends, every lock acquires). Two-poller deployments now self-resolve to one effective poller.
+
+QA: `go build ./...`, `go test -count=1 ./...` (8 pkgs, 99 tests), `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.255] - 2026-06-02
 
 ### Added — AUDIT-004 (partial): CI workflow + Makefile

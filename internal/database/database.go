@@ -182,6 +182,61 @@ func (d *Database) tryAcquireStartupLock() bool {
 	return acquired
 }
 
+// pollerWorkLockKey is a stable int64 keyed to the ASCII bytes of
+// "POLLERWORK"-ish content packed into a uint64 — chosen so it's visible
+// in pg_locks if an operator ever inspects it. AUDIT-007: shared by all
+// poller-process cron ticks (pollAllDevices, rollup, cleanup) so two
+// poller instances don't run the same work twice.
+const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
+
+// TryAcquirePollerWorkLock attempts a non-blocking Postgres advisory lock
+// shared by all poller processes. Returns true if this caller owns the
+// lock and should proceed with work; false if another poller already holds
+// it (caller should skip the cron tick and try again on the next one).
+//
+// AUDIT-007: under a 2-poller deployment, both processes' cron tickers
+// fire roughly concurrently. Without this lock both pollers poll every
+// device on every tick (2× SNMP load), both fire alerts (cooldown map is
+// in-memory and per-process, so dedup fails across processes), both email
+// the daily report, and both contend on the 24h cleanup's row-lock
+// schedule.
+//
+// Pair every call with `defer db.ReleasePollerWorkLock()`. If the caller
+// crashes between acquire and release, the lock is dropped at session
+// close (5 min `SetConnMaxLifetime` boundary or sooner) — a minor
+// availability hit (one cron tick skipped) but not stuck forever.
+//
+// SQLite (tests) returns true unconditionally — single-process there.
+func (d *Database) TryAcquirePollerWorkLock() bool {
+	if !d.dialect.IsPostgres() {
+		return true
+	}
+	var acquired bool
+	if err := d.db.Raw("SELECT pg_try_advisory_lock(?)", pollerWorkLockKey).Scan(&acquired).Error; err != nil {
+		// Probe failure: bias toward DOING the work over skipping it.
+		// A duplicate poll cycle is recoverable; a missed one is not.
+		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
+		return true
+	}
+	return acquired
+}
+
+// ReleasePollerWorkLock releases the lock obtained by TryAcquirePollerWorkLock.
+// Call via defer immediately after a successful acquire so the lock is
+// released on any return path (including panic).
+//
+// SQLite (tests) is a no-op.
+func (d *Database) ReleasePollerWorkLock() {
+	if !d.dialect.IsPostgres() {
+		return
+	}
+	if err := d.db.Exec("SELECT pg_advisory_unlock(?)", pollerWorkLockKey).Error; err != nil {
+		// Best-effort release. On error the session-close fallback
+		// (SetConnMaxLifetime) eventually drops the lock.
+		log.Printf("Poller work lock release failed (%v); will auto-release on connection close.", err)
+	}
+}
+
 func (d *Database) migrate() error {
 	allModels := []interface{}{
 		&models.SystemStatus{},

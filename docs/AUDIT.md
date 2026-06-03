@@ -1140,7 +1140,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-005 | Trap-receiver drops every trap silently | 0.10.253 | c0ae1f4 | `cmd/trap-receiver/main.go` now constructs a real `*database.Database` and passes it to `AlertManager`. Also wired AUDIT-008 secrets-loading to `cmd/trap-receiver` AND `cmd/poller` so all three processes derive the same AES key from `/data/.jwt-secret`. `secrets.LoadOrGenerate` updated to use `O_CREATE\|O_EXCL` for safe concurrent first-start. New race-safe test verifies 16 concurrent callers converge on identical secret. |
 | AUDIT-003 | `THIRD-PARTY-NOTICES.md` missing | 0.10.254 | 4743ca7 | Top-level `THIRD-PARTY-NOTICES.md` inventories 10 vendored browser assets + 10 direct Go deps with version / license / copyright / source URL, plus full license texts for MIT / BSD-2 / BSD-3 / Apache-2.0 / OFL-1.1. README links to it. |
 | AUDIT-011 | No SECURITY.md / no runbook / no CONTRIBUTING.md | 0.10.254 | 4743ca7 | Added `SECURITY.md` (private disclosure policy, response-SLOs, scope), `CONTRIBUTING.md` (dev env, QA gate, PR workflow), `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1). README now links all four governance docs + the audit doc. Deferred: `.well-known/security.txt` route (AUDIT-112), GitHub issue templates (AUDIT-163), `docs/OPERATIONS.md` runbook (AUDIT-111). |
-| AUDIT-004 | No git tags, no CI, no release flow | 0.10.255 | (pending) | Partial: `.github/workflows/ci.yml` (build-test job + vuln-scan job — closes AUDIT-018, AUDIT-075/AUDIT-152, AUDIT-121 gates in CI), `Makefile` with `qa`/`test`/`test-race`/`build`/`vet`/`fmt`/`tidy`/`vuln`/`docker` targets. Deferred (separate commits): release.yml, goreleaser, golangci.yml linter (would surface waivers needing triage), backfill git tags, build-flags (`-trimpath -buildvcs=false`). |
+| AUDIT-004 | No git tags, no CI, no release flow | 0.10.255 | 6be86a0 | Partial: `.github/workflows/ci.yml` (build-test job + vuln-scan job — closes AUDIT-018, AUDIT-075/AUDIT-152, AUDIT-121 gates in CI), `Makefile` with `qa`/`test`/`test-race`/`build`/`vet`/`fmt`/`tidy`/`vuln`/`docker` targets. Deferred (separate commits): release.yml, goreleaser, golangci.yml linter (would surface waivers needing triage), backfill git tags, build-flags (`-trimpath -buildvcs=false`). |
+| AUDIT-007 | No leader lock for the poller | 0.10.256 | (pending) | New `Database.TryAcquirePollerWorkLock` / `ReleasePollerWorkLock` (Postgres advisory lock keyed `0x504f4c4c45525357`). New `Poller.runUnderLeaderLock(name, fn)` wrapper in `cmd/poller` — all 3 cron ticks (pollAllDevices, rollup, cleanup) now skip cleanly when another poller is active. 2 SQLite no-op tests in `poller_lock_test.go`. Cross-process Postgres semantics covered by doc contract until AUDIT-118 lands. |
 
 ---
 
@@ -1171,7 +1172,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-02 — AUDIT-005 — trap-receiver real DB + race-safe multi-process JWT secret — v0.10.253 — c0ae1f4 — opencode
 2026-06-02 — AUDIT-003 — THIRD-PARTY-NOTICES.md — v0.10.254 — 4743ca7 — opencode
 2026-06-02 — AUDIT-011 — SECURITY.md + CONTRIBUTING.md + CODE_OF_CONDUCT.md — v0.10.254 — 4743ca7 — opencode
-2026-06-02 — AUDIT-004 — CI workflow + Makefile (partial) — v0.10.255 — (pending) — opencode
+2026-06-02 — AUDIT-004 — CI workflow + Makefile (partial) — v0.10.255 — 6be86a0 — opencode
+2026-06-02 — AUDIT-007 — cross-process poller leader lock (pg_try_advisory_lock) — v0.10.256 — (pending) — opencode
 ```
 
 ---
