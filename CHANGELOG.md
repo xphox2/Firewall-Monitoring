@@ -1,4 +1,29 @@
 # Changelog
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- **KNOWN-ISSUES.md** (AUDIT-110): new top-level file cataloguing operator-known limitations that don't yet have a fix. Each entry cross-links to its `docs/AUDIT.md` row so the operator can navigate from a known issue to the audit doc and back. Covers AUDIT-040 (single-binary Docker port binding), AUDIT-118 (SQLite test backend vs production Postgres), AUDIT-093 (embedded Postgres random password), AUDIT-105 (default `ADMIN_USERNAME=admin` warning), and AUDIT-029 (orphan tables grow between cleanup ticks).
+
+### Changed
+- nothing yet
+
+### Deprecated
+- nothing yet
+
+### Removed
+- nothing yet
+
+### Fixed
+- **CHANGELOG.md now strictly Keep-A-Changelog 1.1.0** (AUDIT-110): added a header that links to the Keep-A-Changelog and Semantic Versioning specs (so a future agent knows which version of the conventions to follow), and an `## [Unreleased]` section at the top with the standard sub-section placeholders (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). The pre-fix file was free-form and not machine-readable; the post-fix file follows the spec to the letter.
+
+### Security
+- nothing yet
+
 ## [0.10.281] - 2026-06-02
 
 ### Wontfix — AUDIT-154, AUDIT-155, AUDIT-156: audit was wrong, the helpers are used
