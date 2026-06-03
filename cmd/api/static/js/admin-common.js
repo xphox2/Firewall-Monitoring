@@ -1,9 +1,57 @@
 // admin-common.js — Shared utilities for admin pages
+//
+// AUDIT-151: this file owns the `fwmonLog` wrapper. The audit
+// flagged 100+ `console.*` calls across the admin JS as "no
+// level control, no prod silencing, no structured output".
+// The wrapper is the single source of truth: every call site
+// should use `fwmonLog.debug` / `.info` / `.warn` / `.error`
+// instead of `console.log` / etc. directly. The wrapper
+// supports a per-session toggle (so an operator can enable
+// debug logging for a single session without restarting the
+// browser) and a future build step (AUDIT-139's esbuild
+// migration) can minify / tree-shake the .debug calls
+// entirely for production.
+//
+// Currently the wrapper just forwards to console.*. The
+// migration to fwmonLog.* in other files is deferred (the
+// audit's call-site count is the source of truth for the
+// migration's progress; see
+// TestConsoleCalls_DeferringToFwmonLog_AUDIT151 in
+// internal/shell/).
 (function() {
     'use strict';
 
     var API_BASE = '/admin/api';
     var csrfTokenCache = '';
+
+    // fwmonLog is the only blessed path for log output from
+    // the admin JS. Levels: debug (silenced unless explicitly
+    // enabled), info (always on), warn (always on), error
+    // (always on). The debug switch is read from
+    // localStorage on every call so a reload picks up changes.
+    var fwmonLog = {
+        debug: function() {
+            if (typeof localStorage !== 'undefined' && localStorage.getItem('fwmonLog.debug') === '1') {
+                console.log.apply(console, ['[fwmon:debug]'].concat(Array.prototype.slice.call(arguments)));
+            }
+        },
+        info: function() {
+            console.log.apply(console, ['[fwmon:info]'].concat(Array.prototype.slice.call(arguments)));
+        },
+        warn: function() {
+            console.warn.apply(console, ['[fwmon:warn]'].concat(Array.prototype.slice.call(arguments)));
+        },
+        error: function() {
+            console.error.apply(console, ['[fwmon:error]'].concat(Array.prototype.slice.call(arguments)));
+        },
+    };
+    // Expose globally so other admin JS files can use it
+    // without re-defining. (No `AC.log` namespace — keeping the
+    // name short to match existing conventions like
+    // `window.AdminCommon`.)
+    if (typeof window !== 'undefined') {
+        window.fwmonLog = fwmonLog;
+    }
 
     function fetchCsrfToken() {
         return fetch(API_BASE + '/csrf-token', { credentials: 'same-origin' })
@@ -12,7 +60,7 @@
                 csrfTokenCache = data.csrf_token || '';
                 return csrfTokenCache;
             })['catch'](function(err) {
-                console.error('Failed to fetch CSRF token:', err);
+                fwmonLog.error('Failed to fetch CSRF token:', err);
                 return '';
             });
     }
@@ -384,7 +432,7 @@
 
         function safeFn() {
             lastRun = Date.now();
-            try { fn(); } catch (e) { console.error('pollWhenVisible callback threw:', e); }
+            try { fn(); } catch (e) { fwmonLog.error('pollWhenVisible callback threw:', e); }
         }
 
         function schedule() {
@@ -450,7 +498,7 @@
     // not rebuilt after the source pull.
     fetch('/api/version').then(function(r) { return r.json(); }).then(function(v) {
         if (v && v.version) {
-            console.log('%cFirewall-Mon v' + v.version, 'color:#58a6ff;font-weight:bold');
+            fwmonLog.info('%cFirewall-Mon v' + v.version, 'color:#58a6ff;font-weight:bold');
         }
     })['catch'](function() { /* version endpoint not exposed — old build */ });
 
