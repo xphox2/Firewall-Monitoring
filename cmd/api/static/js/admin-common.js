@@ -52,8 +52,18 @@
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // AUDIT-133: NaN / Infinity / non-numeric inputs used to fall
+    // through to `Math.log(NaN) / Math.log(1024) = NaN`, which the
+    // chart then rendered as "NaN.0 undefined" — a real failure mode
+    // when an upstream counter (e.g. a misbehaving device's interface
+    // byte count, or a freshly-reset probe that hasn't reported
+    // yet) returns a non-finite value. Guard at the top of the
+    // function so the operator sees an em-dash (consistent with the
+    // "no data" rendering style used elsewhere in the dashboards)
+    // rather than a NaN string.
     function formatBytes(bytes) {
-        if (bytes == null || bytes === 0) return '0 B';
+        if (!isFinite(bytes) || bytes == null) return '—';
+        if (bytes === 0) return '0 B';
         var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
         var i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024));
         if (i >= sizes.length) i = sizes.length - 1;

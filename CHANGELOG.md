@@ -1,4 +1,44 @@
 # Changelog
+## [0.10.273] - 2026-06-02
+
+### Fixed — AUDIT-133: formatBytes now returns em-dash for non-finite inputs
+
+`formatBytes(bytes)` in `cmd/api/static/js/admin-common.js` used to fall through to `Math.log(NaN) / Math.log(1024) = NaN` for non-finite inputs, and the chart rendered the result as "NaN.0 undefined" — a real failure mode when:
+
+- A misbehaving device's interface byte count overflows to `NaN` (or wraps a 32-bit counter to a negative value, which `Math.log` then treats as NaN).
+- A freshly-reset probe reports `Infinity` for a delta-vs-zero counter.
+- An API response includes a non-number in a field the chart assumed was numeric (a future regression on the server side).
+
+**The fix** (`admin-common.js`):
+
+```js
+function formatBytes(bytes) {
+    if (!isFinite(bytes) || bytes == null) return '—';
+    if (bytes === 0) return '0 B';
+    // ... existing algorithm
+}
+```
+
+The em-dash (`U+2014`) is the chosen "no data" marker — it's consistent with the rest of the dashboard's no-data rendering convention. A future agent who "improves" the fallback to `0 B` or `N/A` or `?` would break the design; the static regression test below pins the em-dash.
+
+The other `formatBytes` (in `admin-connection-detail.js:19`) is a separate local copy with a different (iterative-division) algorithm that already short-circuits on `!bytes` (which `!NaN` matches) — no fix needed there.
+
+**Regression test** (`internal/shell/admincommon_audit133_test.go`, new):
+
+`TestAdminCommon_FormatBytesHandlesNaN_AUDIT133` — three-signal static check:
+
+1. The file still defines `function formatBytes(bytes)` (the canonical home of the helper; a future move to a different file would break the test and force a deliberate update).
+2. The `!isFinite(bytes)` guard is present.
+3. The fallback return is `—` (em-dash). A future agent who changes the fallback to "0 B" or "N/A" fails here.
+
+**What this does NOT do (deferred)**
+
+- **Centralize the two `formatBytes` copies** (one in `admin-common.js`, one in `admin-connection-detail.js`) into a shared helper. Each is currently used in only one place; the duplication is intentional to keep the two pages decoupled. A future refactor that consolidates them gets this fix for free; a static check enforcing "only one formatBytes exists" would be over-fitting.
+- **Audit all dashboard numerics for NaN handling.** `formatNum` already does `n != null ? Number(n).toLocaleString() : '0'`, which is also NaN-vulnerable in a different way. The same pattern (`isFinite` guard) would be a one-liner per helper. Out of scope for AUDIT-133 (the audit was specific to `formatBytes`).
+- **Server-side NaN sanitization.** Even with the JS fix, a NaN in the data still represents a bug somewhere upstream (counter overflow, missing field). A separate audit would catch the server-side root cause. Out of scope for this commit.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 194 tests, +1 AUDIT-133), `gofmt -l .`, `go vet ./...` all clean. JS-only change in `cmd/api/static/js/admin-common.js` + new test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.272] - 2026-06-02
 
 ### Fixed — AUDIT-169: documented the layering decision for `cmd/api/static.go`
