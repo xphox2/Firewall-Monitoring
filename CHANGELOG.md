@@ -1,4 +1,51 @@
 # Changelog
+## [0.10.267] - 2026-06-02
+
+### Fixed — AUDIT-105: default ADMIN_USERNAME=admin now warns at startup
+
+Pre-AUDIT, `config.env.example` shipped with `ADMIN_USERNAME=admin` and the code accepted it silently. The default username is the most brute-forced string on the public internet (OWASP has had it in the top-3 for two decades running) and a public deploy with the default + a weak password is one targeted dictionary attack away from a full compromise. Operators who copy-pasted the example file got no signal that they were leaving the most-attacked surface open.
+
+**The fix** (`internal/config/config.go`):
+
+1. New `Auth.AdminUsernameExplicit bool` field, populated by `os.Getenv("ADMIN_USERNAME") != ""`.
+2. `Validate()` logs a multi-line, actionable warning when the operator kept the default (`!AdminUsernameExplicit && strings.EqualFold(AdminUsername, "admin")`):
+   ```
+   WARNING: ADMIN_USERNAME is the default 'admin'. This is the most
+            brute-forced username on the internet; consider setting
+            ADMIN_USERNAME to a unique value in config.env. Example:
+                ADMIN_USERNAME=ops-jane
+            (or any non-default value you can remember). The warning
+            only fires when ADMIN_USERNAME is unset; explicitly setting
+            it to 'admin' is treated as a conscious operator choice.
+   ```
+3. The warning is intentionally not fatal — operators behind a SSO portal or VPN have their own brute-force protection and the in-app username is unguessable to anyone who can reach the login page. The point is to make the default-exposed case *visible*, not to break a valid topology.
+4. **Case-insensitive comparison** — `Admin`, `ADMIN`, `aDmIn` all trigger the warning when inherited from the default, since an attacker who tries case variants against a host that only set "admin" will get through.
+
+**Behavior matrix**
+
+| ADMIN_USERNAME in config.env | AdminUsernameExplicit | Warning fires? |
+|---|---|---|
+| unset (default to "admin") | false | YES — log loud |
+| `admin` | true | no — operator made a conscious choice |
+| `Admin` / `ADMIN` / `aDmIn` | false | YES — case-insensitive default-match |
+| `Admin` / `ADMIN` / `aDmIn` | true | no — same as above |
+| any other value (e.g. `ops-jane`) | true or false | no |
+
+**Regression tests** (`internal/config/config_audit105_test.go`, new — 4 tests, 6 subtests):
+
+- `TestValidate_DefaultAdminUsernameWarns_AUDIT105` — the headline: `!Explicit && AdminUsername=="admin"` does not error and the warning fires.
+- `TestValidate_ExplicitAdminUsernameDoesNotWarn_AUDIT105` — `Explicit && AdminUsername=="admin"` does not error and the warning does NOT fire.
+- `TestValidate_NonDefaultAdminUsernameSilent_AUDIT105` — any non-"admin" value is silent.
+- `TestValidate_DefaultAdminUsernameCaseInsensitive_AUDIT105` — three subtests for `Admin`, `ADMIN`, `aDmIn` confirm the case-insensitive match. A regression on the case-fold (e.g. someone replaces `strings.EqualFold` with `==`) would fail at least one of these.
+
+**What this does NOT do (deferred)**
+
+- **Disallow "admin" entirely.** Some operators have integrations that depend on the literal string. The warning is the right level — they get a clear, actionable message at startup and can confirm with a one-line edit.
+- **Top-N common-username list.** "admin" / "root" / "test" / "user" are all bad defaults, but adding a list to maintain is more work than the warning is worth. The single case catches the OWASP #1; a future audit could add more.
+- **Pre-install `secrets.json` content check** (a separate concept — the README could ship a checklist of "things to change from defaults before going to production" with ADMIN_USERNAME at the top). AUDIT-105 is the in-process equivalent.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 170 tests, +4 AUDIT-105 with 6 subtests), `gofmt -l .`, `go vet ./...` all clean. Config-only change in `internal/config/config.go` + new test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.266] - 2026-06-02
 
 ### Fixed — AUDIT-096: docker-compose.yml now has an explicit healthcheck block

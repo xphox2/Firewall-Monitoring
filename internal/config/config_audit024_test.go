@@ -13,7 +13,10 @@ import (
 // inline.
 //
 // Defaults match config.env.example: postgres DB, plain HTTP, V2c SNMP,
-// BcryptCost 12.
+// BcryptCost 12. ADMIN_USERNAME is set to "ops-test" by default to
+// avoid triggering the AUDIT-105 warning; tests that want to exercise
+// the default-mismatch path set it back to "admin" with
+// AdminUsernameExplicit=false.
 func validConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -34,7 +37,9 @@ func validConfig() *Config {
 			Host: "",
 		},
 		Auth: AuthConfig{
-			BcryptCost: 12,
+			BcryptCost:            12,
+			AdminUsername:         "ops-test", // see comment above re: AUDIT-105
+			AdminUsernameExplicit: true,
 		},
 	}
 }

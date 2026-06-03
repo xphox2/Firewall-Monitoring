@@ -96,6 +96,17 @@ type AuthConfig struct {
 	TokenExpiry      time.Duration
 	MaxLoginAttempts int
 	LockoutDuration  time.Duration
+	// AdminUsernameExplicit tracks whether the operator explicitly
+	// set ADMIN_USERNAME in config.env, as opposed to inheriting the
+	// default. AUDIT-105: when AdminUsername is the well-known
+	// "admin" default (case-insensitive), the operator gets a
+	// startup warning pointing at the brute-force surface. The
+	// warning only fires when the value was inherited from the
+	// default AND that default is the dangerous one — an operator
+	// who explicitly set ADMIN_USERNAME=admin and KNOWS they're
+	// doing it doesn't get nagged. (They might still want to
+	// change it, but they made a conscious choice.)
+	AdminUsernameExplicit bool
 }
 
 type AlertsConfig struct {
@@ -213,12 +224,13 @@ func Load() *Config {
 			AlertDays:          getIntEnv("RETENTION_ALERT_DAYS", 0),
 		},
 		Auth: AuthConfig{
-			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:    getEnv("ADMIN_PASSWORD", getDefaultPassword()),
-			BcryptCost:       getIntEnv("BCRYPT_COST", 12),
-			TokenExpiry:      getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
-			MaxLoginAttempts: getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
-			LockoutDuration:  getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
+			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),
+			AdminUsernameExplicit: os.Getenv("ADMIN_USERNAME") != "",
+			AdminPassword:         getEnv("ADMIN_PASSWORD", getDefaultPassword()),
+			BcryptCost:            getIntEnv("BCRYPT_COST", 12),
+			TokenExpiry:           getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
+			MaxLoginAttempts:      getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
+			LockoutDuration:       getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
 		},
 		Alerts: AlertsConfig{
 			EmailEnabled:             getBoolEnv("EMAIL_ENABLED", false),
@@ -347,6 +359,31 @@ func (c *Config) Validate() error {
 	// Bcrypt cost bounds
 	if c.Auth.BcryptCost < 4 || c.Auth.BcryptCost > 31 {
 		return fmt.Errorf("BCRYPT_COST must be 4-31, got %d", c.Auth.BcryptCost)
+	}
+
+	// AUDIT-105: default ADMIN_USERNAME=admin is the textbook brute-
+	// force target. The pre-fix behavior was to silently ship the
+	// default. We warn loudly when the operator kept the default
+	// (i.e. didn't set ADMIN_USERNAME at all) and that default is
+	// exactly the well-known "admin" string. An operator who
+	// explicitly set ADMIN_USERNAME=admin and KNOWS they're doing
+	// it is not nagged (but they should still reconsider).
+	//
+	// The warning is intentionally not fatal — some operators run
+	// Firewall Mon behind a SSO portal / VPN that has its own
+	// brute-force protection, in which case the in-app username
+	// is unguessable to anyone who can reach the login page. But
+	// the default-exposed case is a real and common misconfig
+	// (it's the OWASP #1 for 20 years running) and the operator
+	// should be told.
+	if !c.Auth.AdminUsernameExplicit && strings.EqualFold(c.Auth.AdminUsername, "admin") {
+		log.Println("WARNING: ADMIN_USERNAME is the default 'admin'. This is the most")
+		log.Println("         brute-forced username on the internet; consider setting")
+		log.Println("         ADMIN_USERNAME to a unique value in config.env. Example:")
+		log.Println("             ADMIN_USERNAME=ops-jane")
+		log.Println("         (or any non-default value you can remember). The warning")
+		log.Println("         only fires when ADMIN_USERNAME is unset; explicitly setting")
+		log.Println("         it to 'admin' is treated as a conscious operator choice.")
 	}
 
 	// PostgreSQL requires DB_HOST
