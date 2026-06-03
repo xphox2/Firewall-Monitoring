@@ -86,6 +86,16 @@ type RetentionConfig struct {
 	StatusDays         int
 	PingDays           int
 	AlertDays          int
+	// AUDIT-029: the four tables that previously had no retention
+	// knob and grew unbounded. Defaults below match the audit's
+	// recommendation: 30 days for errors / processor / process
+	// stats, 7 days for IRC message logs. The IRC logs are higher-
+	// volume (one row per chat line) and lower-signal than the
+	// alerting tables, so they get the shorter retention.
+	InterfaceErrorsDays int // interface_errors (default 30)
+	ProcessorStatsDays  int // processor_stats  (default 30)
+	ProcessStatsDays    int // process_stats    (default 30)
+	IRCMessageLogDays   int // irc_message_logs (default 7)
 }
 
 type AuthConfig struct {
@@ -220,6 +230,16 @@ func Load() *Config {
 			StatusDays:         getIntEnv("RETENTION_STATUS_DAYS", 0),
 			PingDays:           getIntEnv("RETENTION_PING_DAYS", 0),
 			AlertDays:          getIntEnv("RETENTION_ALERT_DAYS", 0),
+			// AUDIT-029: the four tables that previously had no
+			// retention knob. Defaults match the audit's
+			// recommendation: 30 days for error / processor /
+			// process stats, 7 days for IRC message logs. The
+			// IRC logs are higher-volume and lower-signal than
+			// the alerting tables.
+			InterfaceErrorsDays: getIntEnv("RETENTION_INTERFACE_ERRORS_DAYS", 30),
+			ProcessorStatsDays:  getIntEnv("RETENTION_PROCESSOR_STATS_DAYS", 30),
+			ProcessStatsDays:    getIntEnv("RETENTION_PROCESS_STATS_DAYS", 30),
+			IRCMessageLogDays:   getIntEnv("RETENTION_IRC_MESSAGE_LOG_DAYS", 7),
 		},
 		Auth: AuthConfig{
 			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),

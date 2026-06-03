@@ -48,6 +48,18 @@ func NewDatabaseForTesting(t interface {
 		&models.SiteAlertConfig{},
 		&models.MaintenanceWindow{},
 		&models.PingResult{},
+		// AUDIT-029: the four tables that the cleanup regression
+		// tests exercise. They were previously missing from
+		// this list, which made the test discover the missing
+		// AutoMigrate as a "no such table" failure rather than
+		// the actual audit-029 row-preservation failure.
+		&models.InterfaceErrors{},
+		&models.ProcessStats{},
+		&models.InterfaceAddress{},
+		&models.LoginAttempt{},
+		&models.IRCMessageLog{},
+		&models.SyslogSummary{},
+		&models.UptimeRecord{},
 	}
 
 	for _, m := range testModels {

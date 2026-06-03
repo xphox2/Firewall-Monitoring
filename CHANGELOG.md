@@ -1,4 +1,49 @@
 # Changelog
+## [0.10.277] - 2026-06-02
+
+### Fixed — AUDIT-029: four previously-unbounded tables now have retention knobs
+
+`CleanupOldData` (`internal/database/database.go`) was missing entries for `interface_errors`, `processor_stats` (the new per-table field), `process_stats`, and `irc_message_logs`. Every probe poll appended a row to each, forever, on long-running deployments this would OOM the DB.
+
+**The fix** (three parts):
+
+1. **`internal/config/config.go`** — four new fields on `RetentionConfig`:
+   - `InterfaceErrorsDays int` (default 30)
+   - `ProcessorStatsDays int` (default 30)
+   - `ProcessStatsDays int` (default 30)
+   - `IRCMessageLogDays int` (default 7, shorter because IRC logs are higher-volume and lower-signal)
+
+   Plus four new env vars in `Load()`: `RETENTION_INTERFACE_ERRORS_DAYS`, `RETENTION_PROCESSOR_STATS_DAYS`, `RETENTION_PROCESS_STATS_DAYS`, `RETENTION_IRC_MESSAGE_LOG_DAYS`.
+
+2. **`internal/database/database.go`** — `CleanupOldData`'s `entries` slice now includes the four models:
+   - `&models.InterfaceErrors{}` → `ret.Days(ret.InterfaceErrorsDays)`
+   - `&models.ProcessorStats{}` → `ret.Days(ret.ProcessorStatsDays)`
+   - `&models.ProcessStats{}` → `ret.Days(ret.ProcessStatsDays)`
+   - `&models.IRCMessageLog{}` → `ret.Days(ret.IRCMessageLogDays)`
+
+   `ret.Days(0)` falls back to `DefaultDays` (90), so operators who don't set the new env vars get a sane default rather than the unbounded behavior.
+
+3. **`config.env.example`** — four new commented env vars documenting the defaults and the fallback to `RETENTION_DEFAULT_DAYS` if the operator sets them to 0.
+
+**Operator migration**
+
+No action required for existing deployments. The new fields default to 30/30/30/7, which is what the audit recommended. Operators who want longer retention (e.g. a long-retention reporting use case for processor stats) can bump the corresponding `RETENTION_*_DAYS` env var.
+
+**Regression tests** (`internal/database/cleanup_audit029_test.go`, new — 2 tests):
+
+- `TestCleanupOldData_CoversAllFourOrphanTables_AUDIT029` — seeds one backdated row in each of the four tables, runs `CleanupOldData` with the AUDIT-029 defaults, asserts all four tables are empty. A pre-fix run would leave every row in place.
+- `TestCleanupOldData_RespectsPerTableRetention_AUDIT029` — defensive sibling: seeds one 60-day-old and one 10-day-old row in `processor_stats`, configures a 30-day retention, asserts only the 60-day-old row is deleted. A regression that hardcodes one retention for all four tables (or that uses the wrong field) would fail here.
+
+`internal/database/testing.go` was updated to also `AutoMigrate` the four newly-tested models (plus a few others that were missing from the test list — `LoginAttempt`, `UptimeRecord`, `SyslogSummary`, `InterfaceAddress`). Without this, the test would have failed with "no such table" rather than the actual AUDIT-029 row-preservation failure.
+
+**What this does NOT do (deferred)**
+
+- **Per-device or per-tag retention.** The knobs are global. A future enhancement could read a `retention_class` field on the Device/Site model and select from a per-class set of knobs. Out of scope for AUDIT-029 (the audit was about ending unbounded growth, not per-class tuning).
+- **Backfill cleanup.** A long-running deployment that already accumulated millions of orphan-table rows will see one large DELETE on the next retention tick. This is the desired behavior (the rows are deleted eventually), but the first run could be slow. A future "one-shot backfill" cron could be added if operators report slow first-run issues.
+- **Retention for the `login_attempt` and `uptime_record` tables.** Those were in `entries` already (the audit's complaint was about the four specific orphan tables). They're covered.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 215 tests, +2 AUDIT-029), `gofmt -l .`, `go vet ./...` all clean. Code + config + test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.276] - 2026-06-02
 
 ### Fixed — AUDIT-127: documented the back-button / filter-state limitation in admin-controls.js

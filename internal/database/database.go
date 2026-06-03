@@ -974,13 +974,26 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	entries := []cleanupEntry{
 		{&models.SystemStatus{}, "system_status", statusDays},
 		{&models.InterfaceStats{}, "interface_stats", statusDays},
-		{&models.ProcessorStats{}, "processor_stats", statusDays},
+		{&models.ProcessorStats{}, "processor_stats", ret.Days(ret.ProcessorStatsDays)},
 		{&models.HardwareSensor{}, "hardware_sensors", statusDays},
 		{&models.TrapEvent{}, "trap_event", trapDays},
 		{&models.LoginAttempt{}, "login_attempt", defaultDays},
 		{&models.FlowSample{}, "flow_sample", flowDays},
 		{&models.InterfaceAddress{}, "interface_addresses", statusDays},
 		{&models.PingResult{}, "ping_result", pingDays},
+		// AUDIT-029: the four tables that previously had no
+		// retention knob and grew unbounded on long-running
+		// deployments. Defaults are 30 days for the
+		// error/processor/process stats (configurable per table)
+		// and 7 days for IRC message logs (higher-volume,
+		// lower-signal). The fields are on the RetentionConfig
+		// struct and read from RETENTION_*_DAYS env vars (see
+		// config.env.example). The retention is per-table so
+		// operators can tune for their device mix without
+		// affecting the other tables.
+		{&models.InterfaceErrors{}, "interface_errors", ret.Days(ret.InterfaceErrorsDays)},
+		{&models.ProcessStats{}, "process_stats", ret.Days(ret.ProcessStatsDays)},
+		{&models.IRCMessageLog{}, "irc_message_logs", ret.Days(ret.IRCMessageLogDays)},
 	}
 
 	for _, e := range entries {
