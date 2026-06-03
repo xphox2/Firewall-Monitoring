@@ -1199,6 +1199,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-063 | Public dashboard "Reset Layout" wipes localStorage with no confirmation | 0.10.309 | 4941a8a | Added a `confirm()` guard to `resetLayout()`. Used a native `confirm()` deliberately rather than loading admin-common.js (~36 KB + a /admin/api fetch) onto the public wallboard, which would partly undo AUDIT-052. `TestResetConfirm_AUDIT063` in `internal/shell/` pins the confirm-before-clear ordering. |
 | AUDIT-065 | Unescaped `conn.status` in innerHTML (connection-detail) | 0.10.310 | b1c5483 | `statusEl.innerHTML` concatenated raw `conn.status` into the badge class + text. Server validates to an enum (defense-in-depth gap, not live XSS); wrapped with `AC.escapeHtml` (uppercase then escape). `TestConnStatusEscape_AUDIT065` in `internal/shell/` pins it. |
 | AUDIT-064 | N+1 in probes page loadProbeSummaryStats | 0.10.311 | ecefba0 | Added `GET /admin/api/probes/stats?ids=` (`GetProbesStatsBatch`) returning total + last-hour counts for all probes in 8 grouped queries (`WHERE probe_id IN (...) GROUP BY probe_id`), regardless of N; `admin-probes.js` makes one batched call instead of one per approved probe. Static route, sibling of `/api/probes/:id`. Tests: `TestGetProbesStatsBatch_AUDIT064` (+EmptyIDs) handler/DB, `TestProbesBatchStats_FrontendUsesBatch_AUDIT064` JS. |
+| AUDIT-056 | Inline `<label>` without `for=""` (~60 inputs) | 0.10.312 | (pending) | Swept probes/sites/irc/probe-pending/admin.html and added `for="<input id>"` to 88 non-wrapping labels (wrapping + header labels left alone; id-less inputs skipped, not guessed). Transform in `scripts/audit056_labels.py`. `TestLabelFor_AUDIT056` in `internal/shell/` pins that every `<label for>` resolves to an id + per-page minimum counts. |
 
 ---
 
@@ -1286,6 +1287,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-063 — confirm() before public dashboard layout reset — v0.10.309 — 4941a8a — opencode
 2026-06-03 — AUDIT-065 — escape conn.status before innerHTML (connection-detail) — v0.10.310 — b1c5483 — opencode
 2026-06-03 — AUDIT-064 — batch /probes/stats?ids= endpoint (kills probes N+1) — v0.10.311 — ecefba0 — opencode
+2026-06-03 — AUDIT-056 — add for= to 88 form labels (screen-reader association) — v0.10.312 — (pending) — opencode
 ```
 
 ---

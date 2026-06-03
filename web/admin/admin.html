@@ -215,6 +215,10 @@
         </div>
     </div>
 
+    <!-- AUDIT-056: form <label> elements carry for="<input id>" so screen
+         readers pair each label with its control. See scripts/audit056_labels.py
+         for the sweep; the invariant (every for= resolves to an id) is pinned by
+         TestLabelFor_AUDIT056 in internal/shell/. -->
     <main class="main" id="main-content" tabindex="-1">
         <div class="page-header">
             <h1 id="page-title">Dashboard</h1>
@@ -679,7 +683,7 @@
                             <button type="button" data-action="close-bulk-ack" class="bg-transparent border-none cursor-pointer text-2xl text-[#8b949e] hover:text-white" aria-label="Close dialog">&times;</button>
                         </div>
                         <div class="text-[0.82rem] text-[#8b949e] mb-3" id="alerts-bulk-ack-count">Acknowledging N alerts</div>
-                        <label class="block mb-1 text-[#8b949e] text-sm">Notes (optional)</label>
+                        <label for="alerts-bulk-ack-notes" class="block mb-1 text-[#8b949e] text-sm">Notes (optional)</label>
                         <textarea id="alerts-bulk-ack-notes" rows="3" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none" placeholder="Same notes will be applied to all selected alerts"></textarea>
                         <div class="flex justify-end gap-2 mt-4">
                             <button type="button" class="btn secondary sm" data-action="close-bulk-ack">Cancel</button>
@@ -814,16 +818,16 @@
             <div class="card">
                 <div class="card-header"><h2>Admin Password</h2></div>
                 <div class="form-group">
-                    <label>Current Password</label>
+                    <label for="current-password">Current Password</label>
                     <input type="password" id="current-password" autocomplete="current-password">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>New Password</label>
+                        <label for="new-password">New Password</label>
                         <input type="password" id="new-password" autocomplete="new-password">
                     </div>
                     <div class="form-group">
-                        <label>Confirm New Password</label>
+                        <label for="confirm-password">Confirm New Password</label>
                         <input type="password" id="confirm-password" autocomplete="new-password">
                     </div>
                 </div>
@@ -833,7 +837,7 @@
                 <div class="card-header"><h2>Display Timezone</h2></div>
                 <p style="color: #6e7681; margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
                 <div class="setting-item">
-                    <label>Timezone</label>
+                    <label for="display-timezone">Timezone</label>
                     <select id="display-timezone" name="display_timezone" style="width:100%;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.88rem;">
                     </select>
                 </div>
@@ -932,21 +936,21 @@
                 <input type="hidden" id="device-id">
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Name *</label>
+                        <label for="device-name">Name *</label>
                         <input type="text" id="device-name" required autocomplete="one-time-code">
                     </div>
                     <div class="form-group">
-                        <label>IP Address *</label>
+                        <label for="device-ip">IP Address *</label>
                         <input type="text" id="device-ip" required autocomplete="one-time-code">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>SNMP Port</label>
+                        <label for="device-snmp-port">SNMP Port</label>
                         <input type="number" id="device-snmp-port" value="161">
                     </div>
                     <div class="form-group">
-                        <label>SNMP Version</label>
+                        <label for="device-snmp-version">SNMP Version</label>
                         <select id="device-snmp-version">
                             <option value="1">v1</option>
                             <option value="2c" selected>v2c</option>
@@ -955,7 +959,7 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Vendor</label>
+                    <label for="device-vendor">Vendor</label>
                     <select id="device-vendor">
                         <option value="fortigate" selected>FortiGate</option>
                         <option value="paloalto">Palo Alto</option>
@@ -968,17 +972,17 @@
                     </select>
                 </div>
                 <div class="form-group" id="community-group">
-                    <label>SNMP Community</label>
+                    <label for="device-community">SNMP Community</label>
                     <input type="text" id="device-community" value="public" autocomplete="one-time-code">
                 </div>
                 <div id="snmpv3-fields" style="display:none">
                     <div class="form-row">
                         <div class="form-group">
-                            <label>SNMPv3 Username</label>
+                            <label for="device-v3-username">SNMPv3 Username</label>
                             <input type="text" id="device-v3-username" autocomplete="one-time-code">
                         </div>
                         <div class="form-group">
-                            <label>Auth Protocol</label>
+                            <label for="device-v3-auth-type">Auth Protocol</label>
                             <select id="device-v3-auth-type">
                                 <option value="">None</option>
                                 <option value="MD5">MD5</option>
@@ -991,12 +995,12 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label>Auth Password</label>
+                        <label for="device-v3-auth-pass">Auth Password</label>
                         <input type="password" id="device-v3-auth-pass" autocomplete="new-password">
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Privacy Protocol</label>
+                            <label for="device-v3-priv-type">Privacy Protocol</label>
                             <select id="device-v3-priv-type">
                                 <option value="">None</option>
                                 <option value="DES">DES</option>
@@ -1006,34 +1010,34 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Privacy Password</label>
+                            <label for="device-v3-priv-pass">Privacy Password</label>
                             <input type="password" id="device-v3-priv-pass" autocomplete="new-password">
                         </div>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Probe</label>
+                        <label for="device-probe">Probe</label>
                         <select id="device-probe"><option value="">None</option></select>
                     </div>
                     <div class="form-group">
-                        <label>Site</label>
+                        <label for="device-site">Site</label>
                         <select id="device-site"><option value="">None</option></select>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Location</label>
+                        <label for="device-location">Location</label>
                         <input type="text" id="device-location" autocomplete="one-time-code">
                     </div>
                     <div class="form-group">
-                        <label>Description</label>
+                        <label for="device-description">Description</label>
                         <input type="text" id="device-description" autocomplete="one-time-code">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>WAN Speed (Mbps)</label>
+                        <label for="device-wan-speed">WAN Speed (Mbps)</label>
                         <select id="device-wan-speed">
                             <option value="10">10 Mbps</option>
                             <option value="50">50 Mbps</option>
@@ -1056,21 +1060,21 @@
                     <h4 style="color:#8b949e;font-size:0.82rem;margin:0 0 10px 0;text-transform:uppercase;letter-spacing:0.5px">SSH Configuration (FortiGate)</h4>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>SSH Username</label>
+                            <label for="device-ssh-username">SSH Username</label>
                             <input type="text" id="device-ssh-username" autocomplete="one-time-code">
                         </div>
                         <div class="form-group">
-                            <label>SSH Password <span id="ssh-password-note" style="color:#8b949e;font-weight:normal">— leave blank to keep current password</span></label>
+                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:#8b949e;font-weight:normal">— leave blank to keep current password</span></label>
                             <input type="password" id="device-ssh-password" autocomplete="new-password" placeholder="Enter new SSH password only if changing">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>SSH Port</label>
+                            <label for="device-ssh-port">SSH Port</label>
                             <input type="number" id="device-ssh-port" value="22" min="1" max="65535">
                         </div>
                         <div class="form-group">
-                            <label>Poll Interval (seconds)</label>
+                            <label for="device-ssh-poll-interval">Poll Interval (seconds)</label>
                             <input type="number" id="device-ssh-poll-interval" value="900" min="60" max="86400">
                         </div>
                     </div>
@@ -1105,7 +1109,7 @@
                     </label>
                 </div>
                 <div class="form-group">
-                    <label>Alert Policy</label>
+                    <label for="device-alert-policy">Alert Policy</label>
                     <select id="device-alert-policy">
                         <option value="">— Inherit from site/global —</option>
                     </select>
@@ -1115,27 +1119,27 @@
                     <p style="color:#6e7681;font-size:0.78rem;margin:0 0 10px;">Leave blank to inherit from policy/site/global defaults.</p>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>CPU (%)</label>
+                            <label for="device-alert-cpu">CPU (%)</label>
                             <input type="number" id="device-alert-cpu" min="0" max="100" step="1" placeholder="inherit">
                         </div>
                         <div class="form-group">
-                            <label>Memory (%)</label>
+                            <label for="device-alert-memory">Memory (%)</label>
                             <input type="number" id="device-alert-memory" min="0" max="100" step="1" placeholder="inherit">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Disk (%)</label>
+                            <label for="device-alert-disk">Disk (%)</label>
                             <input type="number" id="device-alert-disk" min="0" max="100" step="1" placeholder="inherit">
                         </div>
                         <div class="form-group">
-                            <label>Sessions</label>
+                            <label for="device-alert-sessions">Sessions</label>
                             <input type="number" id="device-alert-sessions" min="0" step="1" placeholder="inherit">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label>Cooldown (min)</label>
+                            <label for="device-alert-cooldown">Cooldown (min)</label>
                             <input type="number" id="device-alert-cooldown" min="0" step="1" placeholder="inherit">
                         </div>
                         <div class="form-group"></div>
@@ -1160,22 +1164,22 @@
             <form id="connection-form">
                 <input type="hidden" id="connection-id">
                 <div class="form-group">
-                    <label>Connection Name *</label>
+                    <label for="connection-name">Connection Name *</label>
                     <input type="text" id="connection-name" required autocomplete="one-time-code">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Source Device</label>
+                        <label for="connection-source">Source Device</label>
                         <select id="connection-source" required></select>
                     </div>
                     <div class="form-group">
-                        <label>Destination Device</label>
+                        <label for="connection-dest">Destination Device</label>
                         <select id="connection-dest" required></select>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Connection Type</label>
+                        <label for="connection-type">Connection Type</label>
                         <select id="connection-type">
                             <option value="ipsec">IPSec</option>
                             <option value="vxlan">VXLAN</option>
@@ -1189,7 +1193,7 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Notes</label>
+                        <label for="connection-notes">Notes</label>
                         <input type="text" id="connection-notes" autocomplete="one-time-code">
                     </div>
                 </div>
@@ -1247,15 +1251,15 @@
                     <div class="policy-section-body">
                         <div class="form-row form-row-3">
                             <div class="form-group">
-                                <label>Policy Name *</label>
+                                <label for="policy-name">Policy Name *</label>
                                 <input type="text" id="policy-name" required autocomplete="one-time-code" placeholder="e.g. Critical Alerts">
                             </div>
                             <div class="form-group">
-                                <label>Description</label>
+                                <label for="policy-description">Description</label>
                                 <input type="text" id="policy-description" autocomplete="one-time-code" placeholder="Optional description">
                             </div>
                             <div class="form-group">
-                                <label>Default Policy</label>
+                                <label for="policy-is-default">Default Policy</label>
                                 <select id="policy-is-default">
                                     <option value="false">No</option>
                                     <option value="true">Yes</option>
@@ -1265,15 +1269,15 @@
                         </div>
                         <div class="form-row form-row-3">
                             <div class="form-group">
-                                <label>Cooldown (minutes)</label>
+                                <label for="policy-cooldown">Cooldown (minutes)</label>
                                 <input type="number" id="policy-cooldown" value="5" min="1" max="1440">
                             </div>
                             <div class="form-group">
-                                <label>Escalation After (minutes)</label>
+                                <label for="policy-escalation-minutes">Escalation After (minutes)</label>
                                 <input type="number" id="policy-escalation-minutes" value="30" min="5" max="1440">
                             </div>
                             <div class="form-group">
-                                <label>Max Escalation Repeats</label>
+                                <label for="policy-escalation-repeat">Max Escalation Repeats</label>
                                 <input type="number" id="policy-escalation-repeat" value="3" min="1" max="10">
                             </div>
                         </div>
@@ -1293,19 +1297,19 @@
                     <div class="policy-section-body">
                         <div class="channel-overrides">
                             <div class="form-group channel-override">
-                                <label>Email Recipients <span class="override-label">(override)</span></label>
+                                <label for="policy-email-recipients">Email Recipients <span class="override-label">(override)</span></label>
                                 <input type="text" id="policy-email-recipients" placeholder="user@example.com, user2@example.com" autocomplete="one-time-code">
                             </div>
                             <div class="form-group channel-override">
-                                <label>Slack Webhook URL <span class="override-label">(override)</span></label>
+                                <label for="policy-slack-url">Slack Webhook URL <span class="override-label">(override)</span></label>
                                 <input type="text" id="policy-slack-url" placeholder="https://hooks.slack.com/services/..." autocomplete="one-time-code">
                             </div>
                             <div class="form-group channel-override">
-                                <label>Discord Webhook URL <span class="override-label">(override)</span></label>
+                                <label for="policy-discord-url">Discord Webhook URL <span class="override-label">(override)</span></label>
                                 <input type="text" id="policy-discord-url" placeholder="https://discord.com/api/webhooks/..." autocomplete="one-time-code">
                             </div>
                             <div class="form-group channel-override">
-                                <label>Webhook URL <span class="override-label">(override)</span></label>
+                                <label for="policy-webhook-url">Webhook URL <span class="override-label">(override)</span></label>
                                 <input type="text" id="policy-webhook-url" placeholder="https://..." autocomplete="one-time-code">
                             </div>
                         </div>
@@ -1350,7 +1354,7 @@
             <form id="maint-form">
                 <input type="hidden" id="maint-id">
                 <div class="form-group">
-                    <label>Name *</label>
+                    <label for="maint-name">Name *</label>
                     <input type="text" id="maint-name" required autocomplete="one-time-code" placeholder="e.g. Monthly patching - Core switch">
                 </div>
                 <div class="form-group">
@@ -1362,20 +1366,20 @@
                     </div>
                 </div>
                 <div class="form-group" id="maint-scope-device" style="display:none">
-                    <label>Device</label>
+                    <label for="maint-device-id">Device</label>
                     <select id="maint-device-id"></select>
                 </div>
                 <div class="form-group" id="maint-scope-site" style="display:none">
-                    <label>Site</label>
+                    <label for="maint-site-id">Site</label>
                     <select id="maint-site-id"></select>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label>Start Time *</label>
+                        <label for="maint-start">Start Time *</label>
                         <input type="datetime-local" id="maint-start" required>
                     </div>
                     <div class="form-group">
-                        <label>End Time *</label>
+                        <label for="maint-end">End Time *</label>
                         <input type="datetime-local" id="maint-end" required>
                     </div>
                 </div>
@@ -1383,11 +1387,11 @@
                     <label><input type="checkbox" id="maint-suppress-all" checked> Suppress All Alert Types</label>
                 </div>
                 <div class="form-group" id="maint-alert-types-row" style="display:none">
-                    <label>Alert Types to Suppress (comma-separated)</label>
+                    <label for="maint-alert-types">Alert Types to Suppress (comma-separated)</label>
                     <input type="text" id="maint-alert-types" placeholder="CPU_HIGH,DEVICE_OFFLINE" autocomplete="one-time-code">
                 </div>
                 <div class="form-group">
-                    <label>Notes</label>
+                    <label for="maint-notes">Notes</label>
                     <textarea id="maint-notes" rows="3" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px" placeholder="Reason for maintenance, contact info, etc."></textarea>
                 </div>
                 <div class="modal-footer">
@@ -1408,7 +1412,7 @@
             <form id="ack-form">
                 <input type="hidden" id="ack-alert-id">
                 <div class="form-group">
-                    <label>Notes (optional)</label>
+                    <label for="ack-notes">Notes (optional)</label>
                     <textarea id="ack-notes" rows="3" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px" placeholder="Resolution notes..."></textarea>
                 </div>
                 <div class="modal-footer">

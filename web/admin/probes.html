@@ -86,21 +86,21 @@
             <form id="probe-form">
                 <input type="hidden" id="probe-id">
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-sm font-medium">Probe Name</label>
+                    <label for="probe-name" class="block mb-1 text-[#8b949e] text-sm font-medium">Probe Name</label>
                     <input type="text" id="probe-name" required placeholder="e.g. nyc-office-probe" autocomplete="one-time-code" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-sm font-medium">Site</label>
+                    <label for="probe-site" class="block mb-1 text-[#8b949e] text-sm font-medium">Site</label>
                     <select id="probe-site" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="">Select a site</option>
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-sm font-medium">Description</label>
+                    <label for="probe-description" class="block mb-1 text-[#8b949e] text-sm font-medium">Description</label>
                     <textarea id="probe-description" rows="3" placeholder="Optional description of this probe's purpose" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-sm font-medium">TFTP Server IP</label>
+                    <label for="probe-tftp-server-ip" class="block mb-1 text-[#8b949e] text-sm font-medium">TFTP Server IP</label>
                     <input type="text" id="probe-tftp-server-ip" placeholder="e.g. 192.168.1.10 (IP firewalls use to reach this collector)" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     <p class="text-xs text-[#8b949e] mt-1">Used as the TFTP server argument when triggering FortiGate config backups. Leave blank to fall back to per-device auto-detection.</p>
                 </div>

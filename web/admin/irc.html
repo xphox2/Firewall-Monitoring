@@ -103,19 +103,19 @@
             <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Send IRC Message</h2>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
+                    <label for="sendServerSelect" class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
                     <select id="sendServerSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Channel</label>
+                    <label for="sendChannelSelect" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel</label>
                     <select id="sendChannelSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm">
                         <option value="">Select a channel...</option>
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Message</label>
+                    <label for="sendMessage" class="block mb-1 text-[#8b949e] text-xs font-medium">Message</label>
                     <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm"></textarea>
                 </div>
                 <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="send-message">Send Message</button>
@@ -132,40 +132,40 @@
             <form id="serverForm">
                 <input type="hidden" id="serverId">
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Name</label>
+                    <label for="serverName" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Name</label>
                     <input type="text" id="serverName" required placeholder="e.g., My IRC Server" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Host</label>
+                        <label for="serverHost" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Host</label>
                         <input type="text" id="serverHost" required placeholder="e.g., irc.example.com" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Port</label>
+                        <label for="serverPort" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Port</label>
                         <input type="number" id="serverPort" value="6667" min="1" max="65535" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Nick</label>
+                        <label for="serverNick" class="block mb-1 text-[#8b949e] text-xs font-medium">Nick</label>
                         <input type="text" id="serverNick" required placeholder="BotNick" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">Username</label>
+                        <label for="serverUsername" class="block mb-1 text-[#8b949e] text-xs font-medium">Username</label>
                         <input type="text" id="serverUsername" placeholder="username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Real Name</label>
+                    <label for="serverRealName" class="block mb-1 text-[#8b949e] text-xs font-medium">Real Name</label>
                     <input type="text" id="serverRealName" placeholder="Real Name" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server Password (optional)</label>
+                    <label for="serverPassword" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Password (optional)</label>
                     <input type="password" id="serverPassword" placeholder="Server password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">NickServ Password (optional)</label>
+                        <label for="serverNickServPassword" class="block mb-1 text-[#8b949e] text-xs font-medium">NickServ Password (optional)</label>
                         <input type="password" id="serverNickServPassword" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                     <div>
@@ -194,11 +194,11 @@
                     <div id="saslFields" class="hidden">
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Username</label>
+                                <label for="serverSASLUsername" class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Username</label>
                                 <input type="text" id="serverSASLUsername" placeholder="SASL username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                             </div>
                             <div>
-                                <label class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Password</label>
+                                <label for="serverSASLPassword" class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Password</label>
                                 <input type="password" id="serverSASLPassword" placeholder="SASL password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                             </div>
                         </div>
@@ -234,26 +234,26 @@
             <form id="channelForm">
                 <input type="hidden" id="channelId">
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
+                    <label for="channelServerId" class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
                     <select id="channelServerId" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Name</label>
+                    <label for="channelName" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Name</label>
                     <input type="text" id="channelName" required placeholder="e.g., #mychannel" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Key (optional)</label>
+                    <label for="channelKey" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Key (optional)</label>
                     <input type="password" id="channelKey" placeholder="Channel password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Name (optional)</label>
+                        <label for="channelChanServName" class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Name (optional)</label>
                         <input type="text" id="channelChanServName" placeholder="NickServ" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                     <div>
-                        <label class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Password</label>
+                        <label for="channelChanServPass" class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Password</label>
                         <input type="password" id="channelChanServPass" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                     </div>
                 </div>
@@ -276,7 +276,7 @@
                     </label>
                 </div>
                 <div class="mb-3 hidden" id="statusIntervalGroup">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Status Interval (minutes)</label>
+                    <label for="channelStatusInterval" class="block mb-1 text-[#8b949e] text-xs font-medium">Status Interval (minutes)</label>
                     <input type="number" id="channelStatusInterval" min="1" max="1440" value="5" placeholder="Interval in minutes" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="mb-3">
@@ -302,15 +302,15 @@
             <form id="commandForm">
                 <input type="hidden" id="commandId">
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Command</label>
+                    <label for="commandCmd" class="block mb-1 text-[#8b949e] text-xs font-medium">Command</label>
                     <input type="text" id="commandCmd" required placeholder="e.g., !status" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Description</label>
+                    <label for="commandDescription" class="block mb-1 text-[#8b949e] text-xs font-medium">Description</label>
                     <input type="text" id="commandDescription" placeholder="What this command does" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                 </div>
                 <div class="mb-3">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Command Type</label>
+                    <label for="commandType" class="block mb-1 text-[#8b949e] text-xs font-medium">Command Type</label>
                     <select id="commandType" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="static">Static Response</option>
                         <option value="status">System Status</option>
@@ -319,7 +319,7 @@
                     </select>
                 </div>
                 <div class="mb-3" id="responseField">
-                    <label class="block mb-1 text-[#8b949e] text-xs font-medium">Response</label>
+                    <label for="commandResponse" class="block mb-1 text-[#8b949e] text-xs font-medium">Response</label>
                     <textarea id="commandResponse" rows="4" placeholder="Response text or script..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
                 <div class="mb-3">
