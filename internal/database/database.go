@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -20,7 +21,7 @@ import (
 
 type Database struct {
 	db          *gorm.DB
-	encKey      []byte
+	encKeys     keyChain
 	dialect     Dialect
 	syslogBatch *BatchInserter[models.SyslogMessage]
 	trapBatch   *BatchInserter[models.TrapEvent]
@@ -82,7 +83,30 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		encKey = deriveKey(cfg.Server.JWTSecretKey)
 	}
 
-	d := &Database{db: db, encKey: encKey, dialect: dial}
+	// AUDIT-009: load any legacy keys for decrypt-only fallback. Comma-
+	// separated list in ENCRYPTION_KEY_HISTORY env, ordered newest-historical
+	// first. Encrypt always uses the current key; decrypt tries current
+	// first then each legacy key. Operators rotate by:
+	//   1. Set new value of ENCRYPTION_KEY.
+	//   2. Move the previous ENCRYPTION_KEY value into ENCRYPTION_KEY_HISTORY.
+	//   3. Restart — new writes use the new key, old reads fall through.
+	//   4. (Optional) run a re-encryption migration to re-save every
+	//      {enc} row under the new key, then drop the entry from
+	//      ENCRYPTION_KEY_HISTORY.
+	var legacyKeys [][]byte
+	if history := os.Getenv("ENCRYPTION_KEY_HISTORY"); history != "" {
+		for _, k := range strings.Split(history, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				legacyKeys = append(legacyKeys, deriveKey(k))
+			}
+		}
+		if len(legacyKeys) > 0 {
+			log.Printf("Loaded %d legacy decryption key(s) from ENCRYPTION_KEY_HISTORY", len(legacyKeys))
+		}
+	}
+
+	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial}
 
 	// Initialize batch inserters
 	d.syslogBatch = NewBatchInserter[models.SyslogMessage](500, 2*time.Second, func(items []models.SyslogMessage) error {

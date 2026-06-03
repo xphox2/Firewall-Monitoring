@@ -1,4 +1,55 @@
 # Changelog
+## [0.10.258] - 2026-06-02
+
+### Fixed — AUDIT-009: encryption key rotation now possible (key chain)
+
+Pre-AUDIT the encryption layer held exactly one key (`Database.encKey []byte`). The first time an operator rotated the JWT secret — deliberately, or by accident via env-var typo — every `{enc}<base64>` stored credential (SNMP, IRC, SMTP) became permanently unreadable. AUDIT-008 closed the *accidental* case by persisting the auto-generated secret; AUDIT-009 closes the *deliberate* case by allowing multiple decryption keys to coexist.
+
+**New type** `keyChain` in `internal/database/crypto.go`:
+
+```go
+type keyChain struct {
+    current []byte   // used for encrypt; tried FIRST on decrypt
+    legacy  [][]byte // tried IN ORDER after current on decrypt
+}
+```
+
+**Refactor**: `Database.encKey []byte` → `Database.encKeys keyChain`. All Encrypt* helpers use `d.encKeys.current` (encrypt is always with the current key, never a legacy one). All Decrypt* helpers use `d.encKeys` and call the new `decryptFieldWithChain` — current key tried first (the common case for newly-encrypted data), then each legacy key in order. First successful GCM auth wins; if every key fails, the AUDIT-027 fail-closed contract holds and the function returns `""`.
+
+**Backward compatibility**:
+
+- The wire format is unchanged (`{enc}<base64>` — no version prefix). Single-key deployments behave identically to v0.10.257 (chain has 1 entry, decrypt tries once).
+- The single-key `decryptField(ciphertext, key)` function is retained as a thin shim over `decryptFieldWithChain` — every existing AUDIT-027 test exercises the chain through the single-key path with zero source changes.
+
+**Operator workflow for rotation** (documented in `config.env.example` and in code comments):
+
+1. Save the current `ENCRYPTION_KEY` value.
+2. Set `ENCRYPTION_KEY` to the new value.
+3. Set `ENCRYPTION_KEY_HISTORY` to the old value (comma-separated, newest historical first if multiple rotations stack).
+4. Restart — new writes use the new key; old reads fall through the chain.
+5. Optional: run `cmd/keyrotate` (planned, separate commit) or re-save each setting in the admin UI to re-encrypt under the new key, then drop the old entry from `ENCRYPTION_KEY_HISTORY`.
+
+Without step 5, the rotation is incomplete in the strict sense (old key still required for old data) but **operationally safe** — no data loss, no auth failures, gradual cutover.
+
+Regression tests (`internal/database/crypto_keychain_test.go`, new):
+
+- `TestDecryptFieldWithChain_LegacyKeyRotated_AUDIT009` — the canonical case: encrypt with key A, then decrypt under `keyChain{current: B, legacy: [A]}` → succeeds.
+- `TestDecryptFieldWithChain_CurrentKeyTriedFirst` — fast path stays fast.
+- `TestDecryptFieldWithChain_AllKeysFailReturnsEmpty` — AUDIT-027 fail-closed contract holds across multi-key.
+- `TestDecryptFieldWithChain_TriesAllLegacyKeysInOrder` — middle-of-chain key still reached.
+- `TestDecryptFieldWithChain_NoKeysReturnsEmpty` — empty chain fails closed.
+- `TestDecryptFieldWithChain_NonEncryptedPassThrough` — legacy plaintext rule preserved through chain.
+- `TestKeyChain_All_OrdersCurrentFirst` / `TestKeyChain_All_SkipsEmpty` / `TestKeyChain_HasAny` — chain primitives.
+
+All 9 pre-existing AUDIT-027 tests in `crypto_test.go` continue to pass via the single-key shim — exercised under both code paths.
+
+**What this does NOT do (deferred — separate commit):**
+
+- `cmd/keyrotate` one-shot re-encryption migration tool. Operators wanting to fully retire an old key today need to re-save each `{enc}` row through the admin UI. A bulk migration tool is queued.
+- Per-row `keyVersion` column in `models.SystemSetting`. Not strictly needed under the try-each-key strategy — the AUDIT recommended it as one option, this commit takes the other.
+
+QA: `go build ./...`, `go test -count=1 ./...` (8 pkgs, 116 tests, +9 keychain), `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.257] - 2026-06-02
 
 ### Fixed — AUDIT-006 (shutdown half): batcher no longer loses items at Stop, has a Dropped counter
