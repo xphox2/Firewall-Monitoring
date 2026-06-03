@@ -207,6 +207,69 @@ func TestLoadPassword_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestLoadOrGenerate_ConcurrentRaceSafe — three concurrent processes (or
+// in this case goroutines) all starting on the same fresh /data volume
+// must converge on the SAME secret. The TOCTOU between "file does not
+// exist" (read step) and "create + write" (write step) is closed by the
+// O_CREATE|O_EXCL atomic claim — the loser of the race re-reads the
+// winner's value.
+//
+// This is the cmd/api + cmd/poller + cmd/trap-receiver race that would
+// otherwise leave three processes with three different ENC keys, all
+// pointing at the same DB and all unable to read each other's writes.
+func TestLoadOrGenerate_ConcurrentRaceSafe(t *testing.T) {
+	dir := t.TempDir()
+	const procs = 16
+
+	type result struct {
+		value  string
+		source Source
+	}
+	results := make(chan result, procs)
+	for i := 0; i < procs; i++ {
+		go func() {
+			v, src, err := LoadOrGenerate("", dir, ".jwt-secret")
+			if err != nil {
+				t.Errorf("LoadOrGenerate: %v", err)
+				results <- result{}
+				return
+			}
+			results <- result{value: v, source: src}
+		}()
+	}
+
+	var (
+		seen      string
+		generated int
+		fromFile  int
+	)
+	for i := 0; i < procs; i++ {
+		r := <-results
+		if r.value == "" {
+			t.Fatal("got empty secret from a goroutine")
+		}
+		if seen == "" {
+			seen = r.value
+		} else if r.value != seen {
+			t.Fatalf("AUDIT-008 race regression: goroutines diverged on secret values (%q vs %q) — TOCTOU not closed", seen, r.value)
+		}
+		switch r.source {
+		case Generated:
+			generated++
+		case FromFile:
+			fromFile++
+		default:
+			t.Errorf("unexpected source %v", r.source)
+		}
+	}
+	if generated != 1 {
+		t.Errorf("Generated count = %d, want exactly 1 (only one process should win the race)", generated)
+	}
+	if fromFile != procs-1 {
+		t.Errorf("FromFile count = %d, want %d (the losers should all re-read)", fromFile, procs-1)
+	}
+}
+
 // TestSource_String — readable in logs.
 func TestSource_String(t *testing.T) {
 	cases := map[Source]string{

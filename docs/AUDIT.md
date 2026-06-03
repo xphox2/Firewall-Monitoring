@@ -1135,8 +1135,9 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-013 | `TestIRCServer` SSRF — odd one out among Test* endpoints | 0.10.249 | c23ed1b | `handlers_irc.go:TestIRCServer` now runs the server host through `isValidExternalIP` (same helper used by `TestProbeConnection` and `TestEmail`) and validates the port range. 16-case regression test in `handlers_irc_audit013_test.go` covers IPv4/IPv6 loopback, unspecified, link-local (incl. AWS metadata), RFC 1918, RFC 4193, `localhost` name, unresolvable hosts, and bad ports. First test file for the IRC handlers. |
 | AUDIT-012 | Trap receiver binds 0.0.0.0:162 with empty community string | 0.10.250 | 0a5a383 | (1) `TrapReceiver.Start` now fails closed if `SNMP_TRAP_COMMUNITY` is empty, (2) constant-time `subtle.ConstantTimeCompare` community check, (3) per-source-IP token-bucket rate limit (10/s sustained, burst 50, map capped at 10k IPs) applied BEFORE community check. 5 regression tests in `internal/snmp/trap_test.go` cover empty-community refusal, burst-then-refill, per-IP isolation, map cap, and concurrency-safe accounting. First test file for the SNMP package. |
 | AUDIT-083 | Rate limiter cleanup goroutine leaks, no map cap | 0.10.251 | 35a829b | `ipRateLimiter` map capped at 50,000 entries with `container/list`-backed LRU eviction (amortized O(1)). New `Stop()` method closes a `quit` channel that the cleanup goroutine selects on. Wired-through Stop on the public `RateLimiter/PublicRateLimiter/LoginRateLimiter` handlers is a follow-up (would change the public API). 7 regression tests in `ratelimit_test.go`. |
-| AUDIT-008 | Auto-generated JWT secret is in-memory only and breaks AES decrypt | 0.10.252 | (pending) | New `internal/secrets` package (10 tests). `cmd/api/main.go` now persists auto-generated JWT secret to `$SECRETS_DIR/.jwt-secret` (default `/data`) chmod 0600 on first run; subsequent runs reload. Same treatment for admin password. Any I/O failure is `log.Fatal`. Collaterally closes AUDIT-137 (masked password no longer logged). |
-| AUDIT-137 | Logs masked admin password | 0.10.252 | (pending) | Removed alongside AUDIT-008 — the rewritten flow logs the file path instead of any password characters. |
+| AUDIT-008 | Auto-generated JWT secret is in-memory only and breaks AES decrypt | 0.10.252 | 03d2e6e | New `internal/secrets` package (10 tests). `cmd/api/main.go` now persists auto-generated JWT secret to `$SECRETS_DIR/.jwt-secret` (default `/data`) chmod 0600 on first run; subsequent runs reload. Same treatment for admin password. Any I/O failure is `log.Fatal`. Collaterally closes AUDIT-137 (masked password no longer logged). |
+| AUDIT-137 | Logs masked admin password | 0.10.252 | 03d2e6e | Removed alongside AUDIT-008 — the rewritten flow logs the file path instead of any password characters. |
+| AUDIT-005 | Trap-receiver drops every trap silently | 0.10.253 | (pending) | `cmd/trap-receiver/main.go` now constructs a real `*database.Database` and passes it to `AlertManager`. Also wired AUDIT-008 secrets-loading to `cmd/trap-receiver` AND `cmd/poller` so all three processes derive the same AES key from `/data/.jwt-secret`. `secrets.LoadOrGenerate` updated to use `O_CREATE\|O_EXCL` for safe concurrent first-start. New race-safe test verifies 16 concurrent callers converge on identical secret. |
 
 ---
 
@@ -1162,8 +1163,9 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-02 — AUDIT-013 — TestIRCServer SSRF check (isValidExternalIP) — v0.10.249 — c23ed1b — opencode
 2026-06-02 — AUDIT-012 — trap receiver fail-closed community + per-IP rate limit — v0.10.250 — 0a5a383 — opencode
 2026-06-02 — AUDIT-083 — rate limiter LRU cap + Stop() hook — v0.10.251 — 35a829b — opencode
-2026-06-02 — AUDIT-008 — JWT secret + admin password persistence (new internal/secrets pkg) — v0.10.252 — (pending) — opencode
-2026-06-02 — AUDIT-137 — stop logging masked admin password (collateral with AUDIT-008) — v0.10.252 — (pending) — opencode
+2026-06-02 — AUDIT-008 — JWT secret + admin password persistence (new internal/secrets pkg) — v0.10.252 — 03d2e6e — opencode
+2026-06-02 — AUDIT-137 — stop logging masked admin password (collateral with AUDIT-008) — v0.10.252 — 03d2e6e — opencode
+2026-06-02 — AUDIT-005 — trap-receiver real DB + race-safe multi-process JWT secret — v0.10.253 — (pending) — opencode
 ```
 
 ---

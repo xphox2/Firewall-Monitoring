@@ -88,7 +88,11 @@ func LoadOrGenerate(envValue, baseDir, filename string) (value string, source So
 		if trimmed != "" {
 			return trimmed, FromFile, nil
 		}
-		// File exists but is empty — treat as if missing so we regenerate.
+		// File exists but is empty / whitespace-only — best-effort
+		// remove so the O_CREATE|O_EXCL claim below can succeed. Any
+		// races between our remove and another process's recreate
+		// resolve via the ErrExist branch (loser re-reads winner's value).
+		_ = os.Remove(path)
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return "", 0, fmt.Errorf("read existing secret %s: %w", path, readErr)
 	}
@@ -101,8 +105,34 @@ func LoadOrGenerate(envValue, baseDir, filename string) (value string, source So
 	if mkErr := os.MkdirAll(baseDir, 0o700); mkErr != nil {
 		return "", 0, fmt.Errorf("mkdir secrets dir %s: %w", baseDir, mkErr)
 	}
-	if wErr := os.WriteFile(path, []byte(token+"\n"), 0o600); wErr != nil {
-		return "", 0, fmt.Errorf("persist generated secret to %s: %w", path, wErr)
+	// Use O_CREATE|O_EXCL to defeat the TOCTOU race when multiple
+	// processes (cmd/api, cmd/poller, cmd/trap-receiver) start
+	// concurrently on a fresh /data volume and all see the file as
+	// missing. The winner writes the secret; everyone else hits
+	// os.ErrExist and re-reads the now-present file.
+	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if openErr != nil {
+		if errors.Is(openErr, os.ErrExist) {
+			// Another process won the race; re-read and use their value.
+			data, rErr := os.ReadFile(path)
+			if rErr != nil {
+				return "", 0, fmt.Errorf("re-read secret %s after race: %w", path, rErr)
+			}
+			trimmed := strings.TrimSpace(string(data))
+			if trimmed == "" {
+				return "", 0, fmt.Errorf("secret file %s is empty after concurrent write", path)
+			}
+			return trimmed, FromFile, nil
+		}
+		return "", 0, fmt.Errorf("create secret %s: %w", path, openErr)
+	}
+	if _, wErr := f.Write([]byte(token + "\n")); wErr != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return "", 0, fmt.Errorf("write secret to %s: %w", path, wErr)
+	}
+	if cErr := f.Close(); cErr != nil {
+		return "", 0, fmt.Errorf("close secret %s: %w", path, cErr)
 	}
 	return token, Generated, nil
 }

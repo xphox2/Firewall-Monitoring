@@ -18,6 +18,7 @@ import (
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/report"
+	"firewall-mon/internal/secrets"
 	"firewall-mon/internal/snmp"
 )
 
@@ -1373,6 +1374,27 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting SNMP Poller...")
+
+	// AUDIT-008: load the persisted JWT secret so we derive the same AES
+	// key as cmd/api and cmd/trap-receiver. Without this, the poller's
+	// DB instance has a DIFFERENT encKey and cannot decrypt SNMP creds
+	// / SMTP password saved through the admin UI — every poll cycle
+	// against an SNMPv3 device, and every alert email, would fail with
+	// the "wrong password" pattern v0.10.226 + v0.10.245 closed.
+	secretsDir := os.Getenv("SECRETS_DIR")
+	if secretsDir == "" {
+		secretsDir = "/data"
+	}
+	jwtSecret, jwtSource, err := secrets.LoadOrGenerate(cfg.Server.JWTSecretKey, secretsDir, ".jwt-secret")
+	if err != nil {
+		log.Fatalf("JWT secret: %v (set JWT_SECRET_KEY env, or ensure %s is writable)", err, secretsDir)
+	}
+	cfg.Server.JWTSecretKey = jwtSecret
+	if jwtSource == secrets.Generated {
+		log.Printf("poller generated JWT secret to %s/.jwt-secret (chmod 600) — won race with cmd/api/cmd/trap-receiver on first start", secretsDir)
+	} else if jwtSource == secrets.FromFile {
+		log.Printf("poller loaded JWT secret from %s/.jwt-secret (chmod 600)", secretsDir)
+	}
 
 	db, err := database.NewDatabase(cfg)
 	if err != nil {

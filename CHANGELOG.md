@@ -1,4 +1,27 @@
 # Changelog
+## [0.10.253] - 2026-06-02
+
+### Fixed — AUDIT-005: trap-receiver and poller now have a real DB + matching ENC key
+
+Two related fixes for the multi-process secret-derivation problem.
+
+**AUDIT-005**: `cmd/trap-receiver/main.go:29` passed `nil` to `alerts.NewAlertManager`. `am.saveAlert` (`alerts.go:532-539`) is a no-op when `db==nil`, so every trap that arrived was logged to stdout and immediately dropped on the floor. The trap-batcher's buffer in the API process was never written to either (the trap-receiver has its own process, not shared memory).
+
+Fix: trap-receiver now calls `database.NewDatabase(cfg)`, hands the result to the AlertManager, and `defer db.Close()`s on shutdown. `alertManager.RefreshThresholds(db.Gorm())` is called the same way `cmd/api` and `cmd/poller` do so threshold lookups don't hit the DB on every alert.
+
+**AUDIT-008 (multi-process completion)**: `cmd/trap-receiver` and `cmd/poller` opened DBs without first loading the persisted JWT secret. Each derived a DIFFERENT AES key — same DB, three keys. SMTP password / SNMP creds / IRC secrets saved through the admin UI were decryptable from `cmd/api` but garbage from the other two processes. The v0.10.252 fix only ran in `cmd/api`.
+
+Fix: hoisted the `secrets.LoadOrGenerate(cfg.Server.JWTSecretKey, secretsDir, ".jwt-secret")` call to the top of `main()` in both `cmd/trap-receiver` and `cmd/poller`. All three processes now derive identical ENC keys from `/data/.jwt-secret`.
+
+**Concurrent first-start race fix**: the three processes start in parallel from `entrypoint.sh:106-115`. On a fresh `/data` volume all three see the secret file as missing and would race to write three different secrets, then race to read whichever won the filesystem write — leaving two processes with mismatched in-memory copies. `secrets.LoadOrGenerate` now uses `os.OpenFile(..., O_CREATE|O_EXCL|O_WRONLY, 0o600)` so exactly one process wins; the others receive `os.ErrExist`, re-read the file, and use the winner's value. Best-effort empty-file cleanup (`_ = os.Remove(path)`) before the create attempt closes the "old empty file blocks new generate" footgun the AUDIT-008 test caught.
+
+Regression tests:
+
+- `internal/secrets/secrets_test.go::TestLoadOrGenerate_ConcurrentRaceSafe` — 16 goroutines all calling `LoadOrGenerate("", tmpdir, ".jwt-secret")`. Asserts exactly one returns `Generated`, the other 15 return `FromFile`, and all 16 values are identical. Fails loud with "AUDIT-008 race regression" if any pair diverges.
+- `internal/secrets/secrets_test.go::TestLoadOrGenerate_EmptyFileTreatedAsMissing` — existing-but-empty file regenerates cleanly (the empty-file cleanup path).
+
+QA: `go build ./...`, `go test -count=1 ./...` (8 pkgs, 96 tests), `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Operator action: same as v0.10.252 (re-enter encrypted creds after upgrade, since the new shared key replaces three previously-divergent random keys). Server-repo only.
+
 ## [0.10.252] - 2026-06-02
 
 ### Fixed — AUDIT-008: JWT secret and admin password now persist across restarts
