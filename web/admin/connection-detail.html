@@ -36,6 +36,12 @@
         .section-tab { display: inline-block; padding: 10px 20px; font-size: 0.875rem; color: #8b949e; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
         .section-tab:hover { color: #e6edf3; }
         .section-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        /* AUDIT-048: this inline .section-tab rule (display:inline-block) loads
+           after admin-shared.css, so it overrides the `.hidden { display:none }`
+           that admin-connection-detail.js toggles on #tab-phase2 / #tab-flows.
+           Without this, the v0.10.230 classList.toggle('hidden',...) fix was a
+           no-op. !important + the extra .section-tab specificity restores it. */
+        .section-tab.hidden { display: none !important; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .tunnel-table { width: 100%; border-collapse: collapse; }
