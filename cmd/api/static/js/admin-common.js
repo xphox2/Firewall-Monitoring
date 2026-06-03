@@ -862,7 +862,8 @@
         setTimezone: setTimezone,
         formatDate: formatDate,
         formatDateShort: formatDateShort,
-        renderSidebar: renderSidebar
+        renderSidebar: renderSidebar,
+        renderMobileChrome: renderMobileChrome
     };
 
     function renderSidebar(currentPage) {
@@ -910,6 +911,43 @@
         if (sidebarNav) {
             sidebarNav.innerHTML = navHtml;
         }
+    }
+
+    // AUDIT-055: inject the mobile header + sidebar overlay on every admin page
+    // and wire the open/close toggle. Previously only admin.html had this
+    // (inline markup + inline <script>); the other pages had a fixed 240px
+    // sidebar covering half a phone viewport with no way to collapse it. The
+    // CSS lives in admin-shared.css (the shared "Mobile chrome" section).
+    // Idempotent — safe to call once per page after renderSidebar().
+    function renderMobileChrome() {
+        if (document.querySelector('.mobile-header')) return;
+        var sidebar = document.querySelector('.sidebar');
+        if (!sidebar || !sidebar.parentNode) return;
+        if (!sidebar.id) sidebar.id = 'sidebar';
+
+        var overlay = document.createElement('div');
+        overlay.className = 'sidebar-overlay';
+        overlay.id = 'sidebar-overlay';
+
+        var header = document.createElement('div');
+        header.className = 'mobile-header';
+        header.innerHTML = '<button class="mobile-menu-btn" id="mobile-menu-btn" type="button" ' +
+            'aria-label="Open navigation menu" aria-expanded="false" aria-controls="' + sidebar.id + '">&#9776;</button>' +
+            '<span class="text-[#58a6ff] font-semibold">Firewall Monitor</span>';
+
+        sidebar.parentNode.insertBefore(overlay, sidebar);
+        sidebar.parentNode.insertBefore(header, sidebar);
+
+        var menuBtn = header.querySelector('#mobile-menu-btn');
+        function setOpen(open) {
+            sidebar.classList.toggle('open', open);
+            overlay.classList.toggle('open', open);
+            menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        menuBtn.addEventListener('click', function() {
+            setOpen(!sidebar.classList.contains('open'));
+        });
+        overlay.addEventListener('click', function() { setOpen(false); });
     }
 
     // ---- FortiGate Log Parser ----

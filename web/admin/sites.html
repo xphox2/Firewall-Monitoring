@@ -489,6 +489,7 @@
     <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
+        AdminCommon.renderMobileChrome(); // AUDIT-055
     });
     </script>
     <script defer src="/static/js/admin-sites.js"></script>
