@@ -1,4 +1,49 @@
 # Changelog
+## [0.10.263] - 2026-06-02
+
+### Fixed — AUDIT-026: system_settings encryption is now gated on IsSecret
+
+Pre-AUDIT, `UpdateSettings` called `db.EncryptField(s.Value)` on **every** setting row, regardless of whether the row held a secret. Every `cpu_threshold`, `memory_threshold`, `display_timezone`, `public_show_vpn` save paid the AES-GCM cost and persisted a `{enc}<base64>` blob to disk. Two real problems:
+
+1. **Wasteful** — the bulk of system_settings are not secrets (thresholds, display prefs, webhook URLs, boolean toggles). Encrypting them on every write cost CPU on the API path and made the DB rows harder to read for operators debugging their own config.
+2. **Footgun** — it invited the v0.10.226 bug class. A consumer (handler, dashboard widget, audit-log formatter) that reads the row back as plaintext and doesn't expect the `{enc}` prefix surfaces `{enc}<base64>` to the operator as "the setting". A future field added to `allowedKeys` would inherit the same bug.
+
+**The fix**
+
+`internal/api/handlers/handlers_settings.go` — the encryption line in the `smtp_password` switch case is now gated on `secretKeys[s.Key]` (the same source-of-truth map that drives the `IsSecret = true` line two lines below):
+
+```go
+// Before
+if s.Value != "" && h.db != nil {
+    s.Value = h.db.EncryptField(s.Value)
+}
+
+// After
+if secretKeys[s.Key] && s.Value != "" && h.db != nil {
+    s.Value = h.db.EncryptField(s.Value)
+}
+```
+
+The semantics for the only current secret (`smtp_password`) are unchanged — the membership test is true. The semantics for every other `allowedKeys` entry flip from "always encrypted" to "never encrypted", which is the right default for non-secret config.
+
+The other call sites of `db.EncryptField` are already correctly gated:
+- `handlers_devices.go:217` and `:225` — iterate over an explicit list of secret fields (`snmp_community`, `snmpv3_auth_pass`, `snmpv3_priv_pass`, `ssh_password`)
+- `handlers_irc.go:126` and `:300` — same explicit list pattern (IRC server credentials)
+
+No changes needed at those sites.
+
+**Regression tests** (`internal/api/handlers/handlers_settings_audit026_test.go`, new — 2 tests):
+
+- `TestSettingsSecretKeys_AUDIT026` — pins the source-of-truth map: `smtp_password` is in it, 25 known non-secrets (thresholds, display prefs, webhook URLs, boolean toggles) are explicitly NOT in it. A future agent who adds a key to `allowedKeys` without also adding it to `settingsSecretKeys` gets a test failure on the non-secret check.
+- `TestSettingsSecretKeys_NoOverlapWithNonSecrets_AUDIT026` — belt-and-suspenders: the two curated lists share no element, so a future agent can't accidentally reclassify a threshold as a secret (or vice versa) without a hard failure.
+
+**What this does NOT do (deferred)**
+
+- A compile-time reflection check that flags new `Device` / `Probe` fields with names containing `Pass|Secret|Key|Community` but no `IsSecret` annotation. The audit doc suggested this as an alternative; the explicit map is simpler and easier to reason about for the current schema size.
+- A migration that re-decrypts the historical `{enc}` blobs for the rows that were never secret. Such rows are not actually secret — they round-trip through `DecryptField` to the same value they had before encryption (since `DecryptField` is idempotent for ciphertext that fails the GCM auth, returning ""), so a re-decryption would silently zero out every threshold. **Do not** write a backfill migration without reading the CHANGELOG entry for v0.10.226 first.
+
+QA: `go build ./...`, `go test -count=1 ./...` (10 pkgs, 161 tests, +2 AUDIT-026), `gofmt -l .`, `go vet ./...` all clean. Code-only change in `internal/api/handlers/handlers_settings.go` + new test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.262] - 2026-06-02
 
 ### Fixed — AUDIT-024: COOKIE_SECURE / SERVER_ENABLE_TLS mismatch is now caught at startup

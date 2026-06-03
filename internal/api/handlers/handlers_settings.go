@@ -217,8 +217,26 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				warnings = append(warnings, "Trimmed leading/trailing whitespace from smtp_password before encrypting — re-run the SMTP test to confirm the trim fixed the auth failure")
 				s.Value = trimmed
 			}
-			// Encrypt secret values before storage
-			if s.Value != "" && h.db != nil {
+			// Encrypt secret values before storage. AUDIT-026: gate on
+			// the secretKeys membership (the same source of truth that
+			// drives `s.IsSecret = true` below) rather than running
+			// the encryption unconditionally. The pre-fix behavior
+			// encrypted EVERY system_setting row on save, including
+			// non-secret thresholds / display preferences / boolean
+			// toggles. That was:
+			//   (a) wasteful — every write paid the AES-GCM cost
+			//       (CPU on the API path), and
+			//   (b) a footgun — it invited the v0.10.226 class of bug
+			//       where a non-secret row would surface as
+			//       `{enc}<base64>` from a consumer that didn't expect
+			//       it. With this gate, a future field added to
+			//       allowedKeys but NOT to secretKeys is stored as
+			//       plaintext (the right default) and a future field
+			//       added to BOTH is encrypted.
+			// The empty-value short-circuit is preserved: encrypting ""
+			// would round-trip a fixed `{enc}...` blob for every blank
+			// input, which is noise.
+			if secretKeys[s.Key] && s.Value != "" && h.db != nil {
 				s.Value = h.db.EncryptField(s.Value)
 			}
 		}
