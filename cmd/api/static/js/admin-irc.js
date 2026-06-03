@@ -1,6 +1,13 @@
-let servers = [];
-let channels = [];
-let commands = [];
+// AUDIT-050: IIFE-wrapped so module state (servers/channels/commands) and
+// every function stay out of the global window scope, matching every other
+// admin-*.js file (see lessons.md "Blank Admin Pages"). Full ES6->ES5
+// conversion of the function bodies is tracked separately as AUDIT-131.
+(function () {
+    'use strict';
+
+var servers = [];
+var channels = [];
+var commands = [];
 
 async function apiCall(url, options = {}) {
     await AdminCommon.fetchCsrfToken();
@@ -621,3 +628,5 @@ function escapeHtml(text) {
 }
 
 loadServers();
+
+})(); // AUDIT-050: end IIFE
