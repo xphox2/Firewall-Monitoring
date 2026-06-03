@@ -1193,7 +1193,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-057 | JS-rendered nav has no `aria-current`/`aria-hidden` | 0.10.303 | 9eddf4b | `renderSidebar` marked the active item with only a `.active` class and left nav-icon glyphs readable by AT. Added `aria-current="page"` to the active link and `aria-hidden="true"` to all 16 `<span class="nav-icon">`. `TestSidebarAria_AUDIT057` in `internal/shell/` pins both attributes. |
 | AUDIT-058 | `apiFetch` 401 redirect fires inside iframes | 0.10.304 | 4cf18fe | The 401/302 handler did `window.location.href = '/admin/login'`, navigating the Reports preview iframe to /login. Changed to `(window.top \|\| window).location.href`. `TestApiFetch401_TopFrame_AUDIT058` in `internal/shell/` pins the top-frame redirect. |
 | AUDIT-059 | `escapeHtml` short-circuits on falsy incl. numeric 0 | 0.10.305 | 419baf4 | `if (!str)`/`if (!text)` blanked `0`, `false`, `''` alike (admin-common.js + admin-irc.js). Changed to nullish-only (`== null`). `TestEscapeHtml_NullishGuard_AUDIT059` in `internal/shell/` pins both files. |
-| AUDIT-060 | No `@media print` rule, `.no-print` is dead | 0.10.306 | (pending) | Added a `@media print` block to admin-shared.css hiding `.sidebar`, `.mobile-header`, `.sidebar-overlay`, `.toast-container`, `.no-print` and zeroing the `.main`/`.main-content` margin. Ctrl+P now prints just page content. `TestPrintCss_AUDIT060` in `internal/shell/` pins the rule and selectors. |
+| AUDIT-060 | No `@media print` rule, `.no-print` is dead | 0.10.306 | ffa440b | Added a `@media print` block to admin-shared.css hiding `.sidebar`, `.mobile-header`, `.sidebar-overlay`, `.toast-container`, `.no-print` and zeroing the `.main`/`.main-content` margin. Ctrl+P now prints just page content. `TestPrintCss_AUDIT060` in `internal/shell/` pins the rule and selectors. |
 
 ---
 
@@ -1275,7 +1275,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-057 — aria-current + aria-hidden on rendered sidebar nav — v0.10.303 — 9eddf4b — opencode
 2026-06-03 — AUDIT-058 — apiFetch 401 redirects top frame (iframe-safe) — v0.10.304 — 4cf18fe — opencode
 2026-06-03 — AUDIT-059 — escapeHtml nullish guard (no longer blanks numeric 0) — v0.10.305 — 419baf4 — opencode
-2026-06-03 — AUDIT-060 — @media print hides admin chrome (.no-print now works) — v0.10.306 — (pending) — opencode
+2026-06-03 — AUDIT-060 — @media print hides admin chrome (.no-print now works) — v0.10.306 — ffa440b — opencode
 ```
 
 ---
