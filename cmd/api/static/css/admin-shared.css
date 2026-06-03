@@ -1630,3 +1630,21 @@ td .actions,
     font-size: 0.85rem;
     color: #c9d1d9;
 }
+
+/* AUDIT-060: print stylesheet — Ctrl+P on an admin page previously printed the
+   sidebar, mobile header, toasts and any element tagged `.no-print` (which had
+   no effect because no @media print rule existed). Hide all interactive chrome
+   so a printout is just the page content. */
+@media print {
+    .sidebar,
+    .mobile-header,
+    .sidebar-overlay,
+    .toast-container,
+    .no-print {
+        display: none !important;
+    }
+    .main,
+    .main-content {
+        margin-left: 0 !important;
+    }
+}
