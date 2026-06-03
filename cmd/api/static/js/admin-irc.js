@@ -27,12 +27,17 @@ async function apiCall(url, options = {}) {
     return data;
 }
 
+var alertTimer = null;
 function showAlert(message, isError = true) {
     const alertDiv = document.getElementById('alertMessage');
+    // AUDIT-062: toggle the shared .hidden class instead of inline
+    // style.display, and clear any pending hide-timer first so back-to-back
+    // alerts don't hide each other early. Setting className (error/success)
+    // also drops .hidden, making the alert visible.
     alertDiv.className = isError ? 'error' : 'success';
     alertDiv.textContent = message;
-    alertDiv.style.display = 'block';
-    setTimeout(() => alertDiv.style.display = 'none', 5000);
+    if (alertTimer) clearTimeout(alertTimer);
+    alertTimer = setTimeout(function() { alertDiv.classList.add('hidden'); }, 5000);
 }
 
 function switchTab(tabName, clickedBtn) {

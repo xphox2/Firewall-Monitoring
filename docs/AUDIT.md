@@ -1195,6 +1195,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-059 | `escapeHtml` short-circuits on falsy incl. numeric 0 | 0.10.305 | 419baf4 | `if (!str)`/`if (!text)` blanked `0`, `false`, `''` alike (admin-common.js + admin-irc.js). Changed to nullish-only (`== null`). `TestEscapeHtml_NullishGuard_AUDIT059` in `internal/shell/` pins both files. |
 | AUDIT-060 | No `@media print` rule, `.no-print` is dead | 0.10.306 | ffa440b | Added a `@media print` block to admin-shared.css hiding `.sidebar`, `.mobile-header`, `.sidebar-overlay`, `.toast-container`, `.no-print` and zeroing the `.main`/`.main-content` margin. Ctrl+P now prints just page content. `TestPrintCss_AUDIT060` in `internal/shell/` pins the rule and selectors. |
 | AUDIT-061 | Per-tab Chart.js instances not destroyed on tab leave | 0.10.307 | 46e9c54 | `proc-ssh-chart` / `iface-err-chart` held canvas contexts for the whole page session. `switchTab` now destroys + nulls each chart when leaving its tab and recreates it from current controls on re-entry. `TestChartTeardown_AUDIT061` in `internal/shell/` pins the teardown. |
+| AUDIT-062 | `admin-irc.js` showAlert uses inline `style.display` | 0.10.308 | (pending) | showAlert toggled inline `style.display` and scheduled an uncleared 5s `setTimeout` each call, so back-to-back alerts hid each other early. Now toggles the shared `.hidden` class and `clearTimeout`s a tracked `alertTimer`; `#alertMessage` starts with `class="hidden"`. `TestIRCShowAlert_AUDIT062` in `internal/shell/` pins the change. |
 
 ---
 
@@ -1278,6 +1279,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-059 — escapeHtml nullish guard (no longer blanks numeric 0) — v0.10.305 — 419baf4 — opencode
 2026-06-03 — AUDIT-060 — @media print hides admin chrome (.no-print now works) — v0.10.306 — ffa440b — opencode
 2026-06-03 — AUDIT-061 — destroy per-tab Chart.js on tab leave (device-detail) — v0.10.307 — 46e9c54 — opencode
+2026-06-03 — AUDIT-062 — irc showAlert uses .hidden class + clears timer — v0.10.308 — (pending) — opencode
 ```
 
 ---
