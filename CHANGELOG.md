@@ -1,4 +1,35 @@
 # Changelog
+## [0.10.264] - 2026-06-02
+
+### Fixed — AUDIT-091 + AUDIT-045: /api/health now actually pings the DB, and the Dockerfile HEALTHCHECK calls it
+
+Pre-AUDIT, `GetHealth` (`handlers.go:82`) was a textbook no-op: it returned `{"status":"healthy", "snmp_connected":..., "database":...}` with no actual probe of either dependency. A container running with a wedged Postgres would still report healthy. The Dockerfile didn't have a `HEALTHCHECK` directive either, so Docker, compose, k8s, Portainer, and Uptime Kuma all saw "container is up" == "ready to serve" — which is wrong for a 3-process entrypoint + embedded Postgres where startup order matters and the API can be listening on `:8080` while Postgres is still recovering.
+
+**The fix** (two parts, both required for the headline to land):
+
+1. **`internal/api/handlers/handlers.go`** — `GetHealth` now actually pings the DB with a 1-second bounded context. On success, returns `200 {"status":"healthy","database":true,...}`. On any failure (DB nil, ping timeout, SQL error), returns `503 {"status":"unhealthy","database":false,"db_error":"<reason>",...}`. The SNMP client is NOT probed — a target device being down is not a reason to mark the API unhealthy and trigger a container restart loop; the boolean is informational only. The constant `healthCheckDBTimeout = 1 * time.Second` is exported-by-comment so the Dockerfile timeout (3s) can be reasoned about.
+
+2. **`Dockerfile`** — new `HEALTHCHECK` directive after the `EXPOSE` block:
+   ```
+   HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+       CMD wget -qO- http://localhost:8080/api/health || exit 1
+   ```
+   The 30s interval is fast enough that a failed container is detected within a minute; the 3s timeout is 1s (DB ping) + 2s (HTTP overhead); the 20s `start-period` covers embedded-Postgres cold start on the smallest supported instance; 3 retries means 60-90s of consistent failure before Docker marks unhealthy (matches the systemd `RestartSec=10` cadence on the native path).
+
+**Regression tests** (`internal/api/handlers/handlers_health_audit091_test.go`, new — 3 cases):
+
+- `TestGetHealth_HealthyDB_Returns200_AUDIT091` — the happy path: a working SQLite in-memory DB returns 200 with `status:healthy` and `database:true`.
+- `TestGetHealth_NilDB_Returns503_AUDIT091` — a Handler constructed without a DB (startup race / test harness) returns 503 with `status:unhealthy` and a non-empty `db_error` string. Pre-fix this returned 200 with a lie.
+- `TestGetHealth_DBPingFails_Returns503_AUDIT091` — a Handler with a DB whose underlying connection is force-closed returns 503 with `status:unhealthy` and the actual SQL error in `db_error`. This is the scenario AUDIT-045 was specifically about: pre-fix, this would have reported healthy with no warning.
+
+**What this does NOT do (deferred)**
+
+- **Readiness vs liveness probes split.** K8s convention is two endpoints — `/healthz/live` (process is up) and `/healthz/ready` (deps are up). The current single endpoint conflates them. For a single-binary Docker deploy this doesn't matter, but a future K8s manifest would want them split. Out of scope for AUDIT-091.
+- **Probe additional dependencies** (IRC bot liveness, batcher dropped count, alert-queue depth). The audit explicitly called out the DB as the only critical dep; SNMP is informational, and the rest have their own observability metrics.
+- **Reconcile the `/api/version` endpoint** (returns version string) with `/api/health`. Future commit could include the version in the health response so operators don't need two requests to confirm "what's deployed AND is it alive".
+
+QA: `go build ./...`, `go test -count=1 ./...` (10 pkgs, 164 tests, +3 AUDIT-091), `gofmt -l .`, `go vet ./...` all clean. Static-binary change + Dockerfile change → requires `docker compose up -d --build` to pick up the new HEALTHCHECK directive (existing containers will keep running but won't have a health status until rebuilt).
+
 ## [0.10.263] - 2026-06-02
 
 ### Fixed — AUDIT-026: system_settings encryption is now gated on IsSecret

@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/auth"
@@ -79,6 +81,15 @@ func (h *Handler) SetVersion(v string) {
 	h.version = v
 }
 
+// healthCheckDBTimeout caps the time the /api/health endpoint will wait
+// for a DB ping. AUDIT-091: the previous GetHealth was a no-op (just
+// returned {"status":"healthy"} with no actual check), so a container
+// running with a dead Postgres would still report healthy. With this
+// timeout, a hung DB makes the endpoint return 503 inside ~1 second,
+// and Docker's HEALTHCHECK (which uses `--timeout=3s` in the Dockerfile)
+// reports "unhealthy" in time for a restart loop to kick in.
+const healthCheckDBTimeout = 1 * time.Second
+
 func (h *Handler) GetHealth(c *gin.Context) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -88,7 +99,36 @@ func (h *Handler) GetHealth(c *gin.Context) {
 		"snmp_connected": h.snmpClient != nil,
 		"database":       h.db != nil,
 	}
-
+	// AUDIT-091 (collocated with AUDIT-045): actually ping the DB with a
+	// bounded timeout. The 1-second deadline is tight enough that a
+	// wedged DB doesn't keep the health endpoint slow (which would mask
+	// the failure in a longer Docker HEALTHCHECK timeout), and loose
+	// enough that a normal Postgres roundtrip completes with margin.
+	//
+	// We intentionally do NOT also test the SNMP client here. SNMP
+	// connectivity is by definition a polling concern, not a startup
+	// concern — a target device being down is not a reason to mark the
+	// API unhealthy and trigger a container restart loop. The
+	// "snmp_connected" boolean above is informational for operators
+	// reading the JSON, not a health gate.
+	dbOK := true
+	if h.db != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), healthCheckDBTimeout)
+		defer cancel()
+		if err := h.db.Gorm().WithContext(ctx).Exec("SELECT 1").Error; err != nil {
+			dbOK = false
+			health["db_error"] = err.Error()
+		}
+	} else {
+		dbOK = false
+		health["db_error"] = "database not initialized"
+	}
+	health["database"] = dbOK
+	if !dbOK {
+		health["status"] = "unhealthy"
+		c.JSON(http.StatusServiceUnavailable, models.SuccessResponse(health))
+		return
+	}
 	c.JSON(http.StatusOK, models.SuccessResponse(health))
 }
 

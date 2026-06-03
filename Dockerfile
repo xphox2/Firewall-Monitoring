@@ -44,7 +44,34 @@ RUN chown -R fwmon:fwmon /app
 
 EXPOSE 8080 162/udp 514/udp 6343/udp 8089
 
+# AUDIT-091: HEALTHCHECK drives Docker's `container is ready` vs
+# `container is alive` distinction. The 3-process entrypoint (api,
+# poller, trap-receiver) plus embedded Postgres means "the process is
+# running" is not the same as "the service is ready to serve requests"
+# — a Postgres that's still recovering from a crash, for example,
+# would have a healthy-looking container that returns 500 on the first
+# API call. The endpoint we hit (/api/health) is now meaningful as of
+# the same commit (see CHANGELOG v0.10.264): it pings the DB with a
+# 1-second timeout and returns 503 if anything is wrong, so the wget
+# exit code propagates correctly.
+#
+# --interval=30s: how often to check. 30s is a reasonable default —
+#   fast enough that an unhealthy container is detected within a
+#   minute, slow enough that the DB isn't hammered with SELECT 1.
+# --timeout=3s: 1s DB deadline + 2s for HTTP / TCP overhead. If this
+#   fires, the API itself is wedged (Postgres ping would have
+#   returned in 1s).
+# --start-period=20s: the entrypoint starts Postgres, the schema
+#   migrates, the API binary boots. 20s is a safe lower bound for
+#   embedded-Postgres cold start on the smallest supported instance
+#   type.
+# --retries=3: three consecutive failures = unhealthy. With the 30s
+#   interval, that's a 60-90 second unhealthy-to-restart window,
+#   which matches the systemd RestartSec on the native path.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD wget -qO- http://localhost:8080/api/health || exit 1
+
 LABEL org.opencontainers.image.title="Firewall Mon" \
-      org.opencontainers.image.version="0.10.263"
+      org.opencontainers.image.version="0.10.264"
 
 ENTRYPOINT ["./entrypoint.sh"]
