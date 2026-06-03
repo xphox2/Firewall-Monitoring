@@ -1,4 +1,37 @@
 # Changelog
+## [0.10.275] - 2026-06-02
+
+### Fixed — AUDIT-115: AI agent session-memory files removed from the public tree
+
+`lessons.md`, `tasks/lessons.md`, and `tasks/todo.md` were tracked in the public repo. They contained AI agent session memory — internal process artifacts like "Lesson: ask about the collector repo before changing SNMP code" and "Tasks for this session: TODO list of the AI's pending work." These notes are not for human contributors, pollute the public tree with private process state, and confuse a `git clone` + `find . -name "*.md"` operator who isn't expecting to read AI coaching material.
+
+**The fix**:
+
+```
+git rm -f lessons.md tasks/lessons.md tasks/todo.md
+rmdir tasks
+```
+
+Three files removed. The `tasks/` directory was already empty after the third `git rm` (the `rmdir` was a no-op since `git rm` of the last file in a directory doesn't always remove the dir — defensive cleanup).
+
+The audit's alternative was to move the files to `.claude/` (already gitignored). We chose full removal because:
+
+1. The content is re-derivable from the codebase at any time (the lessons are about the codebase, not novel insights).
+2. The AI agent can keep session memory outside the repo entirely (e.g. in a per-developer working directory).
+3. Operators who do want to keep the content can create a private fork with `lessons.md` excluded via `.git/info/exclude` — no need to ship it to everyone.
+
+**Regression test** (`internal/shell/agentmemory_audit115_test.go`, new):
+
+`TestNoTrackedAgentMemoryFiles_AUDIT115` — runs `git ls-files` and asserts that none of `lessons.md`, `tasks/lessons.md`, `tasks/todo.md`, or the `tasks` directory itself appear in the tracked-file list. A future agent who `git add`s any of these files fails here immediately, with a message pointing at the audit and the alternative (move under `.claude/`).
+
+**What this does NOT do (deferred)**
+
+- **Maintain an in-repo `lessons.md` for human contributors.** The audit's framing — "AI agent session memory, not for human contributors" — is correct. A separate `docs/lessons.md` (or `docs/CHANGELOG-style-incident-log.md`) could capture post-mortem content for the human audience, but that's a content project, not a code-fix project. Out of scope for AUDIT-115.
+- **Audit other "internal-process" files** (e.g. `tasks/`, hidden directories, dotfiles). The current sweep is targeted at the three known cases. A future broader sweep would enumerate the working tree for any file that looks like session memory (heuristics: short files, all-caps headers like "TODO", "Lesson:", "Plan:").
+- **Add a pre-commit hook that blocks `git add` of common agent-memory file names.** Rejected — the static test in the codebase is the right enforcement point (it runs in CI), and a pre-commit hook is per-developer config that wouldn't reach the public.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 212 tests, +1 AUDIT-115), `gofmt -l .`, `go vet ./...` all clean. Removal-only change + new test file. No code path affected. Static-binary change → requires rebuild, but no source files changed so the binary is bit-identical. Server-repo only.
+
 ## [0.10.274] - 2026-06-02
 
 ### Fixed — AUDIT-145: parseBucketToMillis no longer returns 0 (1970 datapoint) for unparseable inputs
