@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.281] - 2026-06-02
+
+### Wontfix — AUDIT-154, AUDIT-155, AUDIT-156: audit was wrong, the helpers are used
+
+The audit flagged `httputil.ParseHours`, `httputil.FilterAllowedFields`, and the `validVendors` map (via `isValidVendor`) as "unused" / "dead code". All three claims are factually wrong. The audit appears to have been a quick grep that missed call sites in other files.
+
+**The actual usage** (verified by `git grep` in the regression tests):
+
+- **`httputil.ParseHours`** is called in 7 places: `handlers_analytics.go:294,332,350,368` and `handlers_connections.go:60,331` (plus one in the comment for the migration story at `:59`). Used by every analytics endpoint and the connections-history endpoint.
+- **`httputil.FilterAllowedFields`** is called in `handlers_connections.go:193` (and any future handler that does partial-update on a PATCH endpoint).
+- **`validVendors` / `isValidVendor`** are called in `handlers_devices.go:69` (the device create handler validates the vendor on every request) and `:207` (the device update handler does the same on partial updates).
+
+**The fix**
+
+1. **No code change** — the helpers are correct, used, and shouldn't be removed.
+2. **Three regression tests** in `internal/shell/deadhelpers_audit154_155_156_test.go` that pin the call sites via `git grep`. Each test counts the number of distinct files using the symbol (excluding the definition site). A future refactor that genuinely orphans any of the three would drop the count below the threshold and fail the test, alerting the next agent that the function should be removed (and the test updated) — or that the call sites should be re-wired.
+3. **Audit doc updated** to `[!] wontfix` for all three, with the same explanation as this CHANGELOG entry, so the next audit pass doesn't re-flag them.
+
+**The "wrong audit" pattern is worth pausing on**
+
+The original audit's claim that these are "unused" is a class of bug that's easy to fall into when reviewing a large codebase quickly. The right verification is `git grep -n <symbol>`, which gives a complete list of call sites (modulo `.gitignore`, which is what we want). A future audit that flags "this function isn't used" should cite the `git grep` output as evidence; the test now enforces that.
+
+**Regression tests** (`internal/shell/deadhelpers_audit154_155_156_test.go`, new — 3 tests):
+
+- `TestParseHours_IsUsed_AUDIT154` — uses `git grep` to count distinct files calling `ParseHours(` (excluding the definition). Threshold: ≥ 2. Currently: 2.
+- `TestFilterAllowedFields_IsUsed_AUDIT155` — same pattern. Threshold: ≥ 1. Currently: 1.
+- `TestIsValidVendor_IsUsed_AUDIT156` — same pattern. Threshold: ≥ 1. Currently: 1.
+
+Each test's failure message points the next agent at the audit doc's `[!] wontfix` entry, so a future refactor that genuinely orphans the function gets the full context (audit + explanation + correct action).
+
+**What this does NOT do (deferred)**
+
+- **Remove the `validVendors` map for the truly-unused vendors.** The map has 8 entries; the codebase supports 8 vendors via the `vendor` field. The map is the authoritative "which vendors do we support" list. Removing entries that are "currently not used" would break the partial-update path's vendor validation. Not a fix to do.
+- **Centralize vendor validation in `internal/`.** A future refactor could move `validVendors` and `isValidVendor` to `internal/vendors/` for reuse from the probe binary. Out of scope for AUDIT-156 (the audit was wrong; the code is correct as-is).
+- **Audit the rest of `internal/httputil/` for the same "wrong-audit" pattern.** The audit's claim about `ParseHours` and `FilterAllowedFields` was wrong; the rest of the package is also probably fine. A future broader sweep would systematically `git grep` every exported symbol. Out of scope for this commit.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 228 tests, +3 wontfix tests), `gofmt -l .`, `go vet ./...` all clean. Test-only change. No code path affected. Static-binary change not required.
+
 ## [0.10.280] - 2026-06-02
 
 ### Fixed — AUDIT-037: per-connection statement_timeout enforced server-side (default 30s)
