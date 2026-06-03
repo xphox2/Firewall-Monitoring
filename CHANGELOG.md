@@ -1,4 +1,41 @@
 # Changelog
+## [0.10.245] - 2026-06-02
+
+### Fixed — AUDIT-027: `decryptField` no longer returns ciphertext on decryption failure
+
+This is the **v0.10.226 bug class** patched at its other doorway. v0.10.226 stopped `UpdateSettings` from gating decrypt on a never-persisted `IsSecret` flag, so the *normal* read path stopped sending `"{enc}<base64>"` to remote servers as a credential. But the failure paths inside `decryptField` itself still leaked the ciphertext back to the caller: if the JWT key changed, the DB was tampered with, or the ciphertext was truncated, the function dutifully returned the raw `"{enc}<base64>"` string and any caller (SMTP, IRC, SNMP) then transmitted it verbatim to the remote server. Postfix logged it; Dovecot logged "Password mismatch"; the operator chased their tail for days.
+
+**Behavior change** (`internal/database/crypto.go:57`):
+
+| Condition | Before | After |
+|-----------|--------|-------|
+| No `{enc}` prefix (legacy plaintext) | return unchanged | return unchanged *(unchanged)* |
+| `{enc}` prefix, no key configured | return ciphertext + (no log) | return `""` + ERROR log |
+| `{enc}` prefix, bad base64 | return ciphertext + (no log) | return `""` + ERROR log |
+| `{enc}` prefix, AES setup error | return ciphertext + (no log) | return `""` + ERROR log |
+| `{enc}` prefix, GCM setup error | return ciphertext + (no log) | return `""` + ERROR log |
+| `{enc}` prefix, ciphertext shorter than nonce | return ciphertext + (no log) | return `""` + ERROR log |
+| `{enc}` prefix, GCM auth failure | return ciphertext + WARNING log | return `""` + ERROR log |
+| `{enc}` prefix, decrypt success | return plaintext | return plaintext *(unchanged)* |
+
+A caller that previously logged "535 wrong password" and stayed up will now log "no password / empty credential" instead, which is loud and points the operator at the underlying DB / key issue. The ciphertext bytes never leave the process under any failure mode.
+
+**Regression tests** (`internal/database/crypto_test.go` — new):
+
+- `TestDecryptField_RoundTrip` — 7 inputs (empty / single char / words / 4 KiB / Unicode / control chars) round-trip cleanly. This is the startup-test the audit asked for.
+- `TestDecryptField_LegacyPlaintextPassthrough` — 6 non-prefixed inputs pass through unchanged so the v0.10.226 idempotency contract still holds.
+- `TestDecryptField_NoKeyReturnsEmpty` — both `nil` and `[]byte{}` keys with a real ciphertext yield `""` and never the `{enc}` prefix.
+- `TestDecryptField_WrongKeyReturnsEmpty` — encrypt with key A, decrypt with key B → `""` (the AUDIT-027 primary case).
+- `TestDecryptField_BadBase64ReturnsEmpty` — 4 malformed payloads (illegal bytes, padding errors, control chars, embedded whitespace).
+- `TestDecryptField_TamperedCiphertextReturnsEmpty` — flip a byte in valid ciphertext → `""`.
+- `TestDecryptField_ShortCiphertextReturnsEmpty` — `{enc}YWJj` (3 bytes < 12-byte nonce) → `""` (no panic).
+- `TestEncryptField_AlreadyEncryptedIsIdempotent` — double-encrypt is a no-op.
+- `TestEncryptField_EmptyOrNoKeyPassthrough` — empty plaintext and nil key both pass through.
+
+Database package now has its first test file (was 0% coverage — closes part of AUDIT-117).
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.244] - 2026-06-02
 
 ### Fixed — AUDIT-014: SMTP critical-alert subject is now sanitized at build time

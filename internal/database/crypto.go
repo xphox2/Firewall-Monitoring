@@ -52,42 +52,61 @@ func encryptField(plaintext string, key []byte) string {
 	return encPrefix + base64.StdEncoding.EncodeToString(ciphertext)
 }
 
-// decryptField decrypts a "{enc}"-prefixed string. Returns the value unchanged
-// if it is not encrypted (legacy plaintext) or if the key is not available.
+// decryptField decrypts a "{enc}"-prefixed string and returns the plaintext.
+//
+// Behavior:
+//   - No "{enc}" prefix → legacy plaintext, returned unchanged (idempotent
+//     for callers that decrypt unconditionally).
+//   - Has "{enc}" prefix but decryption fails for ANY reason (no key, bad
+//     base64, AES setup error, GCM auth failure, short ciphertext) → returns
+//     "" and logs at error level.
+//
+// AUDIT-027: returning the raw ciphertext on failure is the v0.10.226 bug
+// class — any caller that uses the value as a credential then transmits the
+// ciphertext bytes to a remote server (Postfix logged the literal
+// "{enc}<base64>" string in that incident). Returning "" guarantees the
+// failure is loud and the secret never leaves the process.
 func decryptField(ciphertext string, key []byte) string {
 	if !strings.HasPrefix(ciphertext, encPrefix) {
 		return ciphertext
 	}
+	// From here on the field IS marked as encrypted — any failure must
+	// resolve to "" so the broken ciphertext never reaches a caller.
 	if len(key) == 0 {
-		return ciphertext
+		log.Printf("ERROR: decryptField: encrypted field present but no key available (JWT_SECRET_KEY / ENCRYPTION_KEY missing?) — returning empty")
+		return ""
 	}
 
 	encoded := ciphertext[len(encPrefix):]
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return ciphertext
+		log.Printf("ERROR: decryptField: base64 decode failed (%v) — returning empty", err)
+		return ""
 	}
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return ciphertext
+		log.Printf("ERROR: decryptField: AES cipher init failed (%v) — returning empty", err)
+		return ""
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return ciphertext
+		log.Printf("ERROR: decryptField: GCM init failed (%v) — returning empty", err)
+		return ""
 	}
 
 	nonceSize := gcm.NonceSize()
 	if len(data) < nonceSize {
-		return ciphertext
+		log.Printf("ERROR: decryptField: ciphertext shorter than nonce (got %d, want >= %d) — returning empty", len(data), nonceSize)
+		return ""
 	}
 
 	nonce, encrypted := data[:nonceSize], data[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, encrypted, nil)
 	if err != nil {
-		log.Printf("WARNING: Failed to decrypt field (wrong key or tampered data): %v", err)
-		return ciphertext
+		log.Printf("ERROR: decryptField: GCM auth failed (wrong key, key rotation, or tampered data) — returning empty: %v", err)
+		return ""
 	}
 
 	return string(plaintext)
