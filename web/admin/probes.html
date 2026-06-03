@@ -10,7 +10,11 @@
     <style nonce="{{ .Nonce }}">
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .animate-fadeIn { animation: fadeIn 0.2s ease-out; }
-        .modal:not(.hidden) { display: flex; }
+        /* AUDIT-046: modals are shown by AdminCommon.openModal() toggling .active
+           (admin-shared.css convention), NOT by a .hidden class. The previous
+           negated-hidden selector (no .hidden ever present on these modals)
+           forced both #probe-modal and #deploy-modal visible on first paint. */
+        .modal.active { display: flex; }
     </style>
 </head>
 <body>
