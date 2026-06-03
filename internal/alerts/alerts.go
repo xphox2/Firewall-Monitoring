@@ -507,12 +507,26 @@ func (am *AlertManager) sendRecovery(key, alertType, message string, deviceID ui
 		return
 	}
 
-	// Set ResolvedAt on unresolved alerts of this type for this device
+	// Set ResolvedAt on unresolved alerts of this type for this device.
+	// AUDIT-144: also clear the snooze fields, so a snoozed alert
+	// that just resolved doesn't linger in the "snoozed" view as
+	// if it were still active. The auto-resnooze semantic: when the
+	// underlying issue clears, the operator no longer needs to
+	// manually unsnooze — the recovery event does it for them.
+	// (The intent is documented at the WHERE clause: we're
+	// touching only the alerts that the recovery event resolves,
+	// not the historical record. Snoozed + acknowledged alerts
+	// that have already been resolved_at'd are unaffected.)
 	if am.db != nil {
 		now := time.Now()
 		am.db.Gorm().Model(&models.Alert{}).
 			Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL AND acknowledged = ?", deviceID, alertType, false).
-			Update("resolved_at", now)
+			Updates(map[string]interface{}{
+				"resolved_at":    now,
+				"snoozed_until":  nil,
+				"snoozed_by":     "",
+				"snoozed_reason": "",
+			})
 	}
 
 	alert := models.Alert{
