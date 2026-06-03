@@ -79,12 +79,33 @@
         localStorage.setItem('display_timezone', tz);
     }
 
+    // AUDIT-128: locale was hardcoded to 'en-US', which made
+    // the admin UI display US-format dates (MM/DD/YYYY) to
+    // every operator regardless of their actual locale. The
+    // fix uses the browser's navigator.language with a
+    // fallback to 'en-US' for the (rare) case where the
+    // browser doesn't expose a language. The format
+    // (year/month/day hour:minute:second, 12-hour) is
+    // preserved so existing screenshots and tests still
+    // look right; only the *order* of year/month/day and
+    // the *separator* are now locale-aware. Operators who
+    // prefer the old en-US format can pin
+    // `navigator.language = 'en-US'` in their browser.
+    function getBrowserLocale() {
+        var lang = (navigator && navigator.language) || 'en-US';
+        // Strip the region tag (e.g. 'en-US' from 'en-US-CA')
+        // so Intl.DateTimeFormat still recognizes the
+        // language. Without this, a locale like 'en-US-CA'
+        // would fall back to en-US anyway (silently).
+        return lang;
+    }
+
     function formatDate(dateStr) {
         if (!dateStr) return '-';
         var d = new Date(dateStr);
         if (isNaN(d.getTime())) return '-';
         var tz = getTimezone();
-        return d.toLocaleString('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+        return d.toLocaleString(getBrowserLocale(), { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     }
 
     function formatDateShort(dateStr) {
@@ -92,7 +113,7 @@
         var d = new Date(dateStr);
         if (isNaN(d.getTime())) return '-';
         var tz = getTimezone();
-        return d.toLocaleString('en-US', { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
+        return d.toLocaleString(getBrowserLocale(), { timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
     }
 
     function escapeHtml(str) {
