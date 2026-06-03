@@ -1,4 +1,24 @@
 # Changelog
+## [0.10.240] - 2026-06-02
+
+### Added — public-release audit document (`docs/AUDIT.md`)
+
+Comprehensive pre-release audit covering security, stability, code quality, frontend, database/architecture, testing/CI, docs/operations, and feature recommendations. **170 findings** (11 CRITICAL deployment blockers, ~70 HIGH-priority, ~25 MEDIUM/LOW) and **89 feature recommendations** (top 10 for v0.11.0 called out separately).
+
+Each finding has a stable ID in the form `AUDIT-NNN` for commit-message tracking and a "Resolved findings" table at the bottom of `docs/AUDIT.md` for progress tracking. Workflow: fix the issue, reference the ID in the commit message, add a row to the Resolved table, append to the Progress log.
+
+**Top 3 fixes to land first** (each unblocks downstream work):
+
+- **AUDIT-001** — remove `*_test.go` from `.gitignore` and `git add -f` the two regression-net test files: `internal/configdiff/normalize_test.go` (631 LOC) and `internal/report/report_test.go` (192 LOC). Public clones currently lose them silently. Recent CHANGELOG entries (v0.10.236, 0.10.238, 0.10.239) cite these as the regression net; the net doesn't exist for downstream users.
+- **AUDIT-002** — add `LICENSE` (MIT text). README claims MIT but no license file ships, so the project is "All Rights Reserved" by default under Berne Convention.
+- **AUDIT-010** — change `PROBE_SERVER_URL` default to `""` (currently hardcodes `https://stats.technicallabs.org`).
+
+**Other critical findings called out:** no CI / no git tags (AUDIT-004), trap-receiver drops every trap silently (AUDIT-005), batcher not crash-durable (AUDIT-006), no poller leader lock (AUDIT-007), auto-generated JWT secret breaks AES decrypt on restart (AUDIT-008), crypto key rotation impossible (AUDIT-009), no SECURITY.md / no runbook (AUDIT-011).
+
+**Notable high-priority frontend bugs confirmed reproducible:** `probes.html` modals render on first paint (AUDIT-046), Logout link dead on `/admin/irc` (AUDIT-047), `.section-tab` redefines display nullifying the v0.10.230 `.hidden` fix (AUDIT-048), IRC tab nav active state never updates (AUDIT-049), `admin-irc.js` not IIFE-wrapped (AUDIT-050), CSP allows `'unsafe-inline'` for script+style (AUDIT-022).
+
+Docs-only change → no rebuild required. Server-repo only.
+
 ## [0.10.239] - 2026-05-30
 
 ### Improved — traffic spikes are now summarized by interface, not listed per event
