@@ -7,6 +7,8 @@ INSTALL_DIR="/opt/${APP_NAME}"
 DATA_DIR="/var/lib/${APP_NAME}"
 CONFIG_DIR="/etc/${APP_NAME}"
 SYSTEMD_DIR="/etc/systemd/system"
+SVC_USER="fwmon"
+SVC_GROUP="fwmon"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -121,6 +123,15 @@ install_local() {
 
     log_info "Installing Firewall Monitor..."
 
+    # AUDIT-021: create the dedicated system user the systemd unit will run
+    # as. Previously the unit ran as root, which is the worst-case blast
+    # radius for any future RCE — the binary would land on a public-facing
+    # network port (8080, 162/udp, 6343/udp), and a single memory-corruption
+    # bug would give the attacker root. The Docker path already runs as the
+    # non-root `fwmon` user (Dockerfile USER); the native systemd path now
+    # matches.
+    create_service_user
+
     mkdir -p ${INSTALL_DIR}
     mkdir -p ${DATA_DIR}
     mkdir -p ${CONFIG_DIR}
@@ -144,6 +155,22 @@ install_local() {
         chmod +x ${INSTALL_DIR}/*.sh
     fi
 
+    # AUDIT-021: fix ownership after copy so the fwmon user can read its
+    # own binaries / web assets / scripts. The data dir must also be
+    # writable so the AUDIT-008 secrets flow (which writes
+    # /var/lib/firewall-mon/.jwt-secret) and the SQLite database can
+    # live there. Config files are 0640 fwmon:fwmon — fwmon must read
+    # JWT_SECRET_KEY, ENCRYPTION_KEY, etc., but other system users
+    # should not.
+    chown -R ${SVC_USER}:${SVC_GROUP} ${INSTALL_DIR}
+    chown -R ${SVC_USER}:${SVC_GROUP} ${DATA_DIR}
+    chown -R ${SVC_USER}:${SVC_GROUP} ${CONFIG_DIR}
+    chmod 0750 ${CONFIG_DIR}
+    find ${CONFIG_DIR} -type f -exec chmod 0640 {} \;
+    if [ -f ${CONFIG_DIR}/config.env ]; then
+        chmod 0640 ${CONFIG_DIR}/config.env
+    fi
+
     log_info "Creating systemd services..."
     create_systemd_service "api" "${INSTALL_DIR}/fwmon-api" "Firewall Monitor API Server"
     create_systemd_service "poller" "${INSTALL_DIR}/fwmon-poller" "Firewall Monitor SNMP Poller"
@@ -165,18 +192,101 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=${SVC_USER}
+Group=${SVC_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${CONFIG_DIR}/config.env
 ExecStart=${binary}
 Restart=always
 RestartSec=10
 
+# AUDIT-021: systemd hardening directives. These match what the Docker
+# path already gets for free from the container runtime (seccomp, dropped
+# caps, read-only rootfs when applicable) and bring the native deploy
+# path up to parity. Each line is sourced from the systemd.exec(5) man
+# page; see the rationale next to each directive.
+#
+# NoNewPrivileges=yes - prevents SUID/SGID bit acquisition. A future
+#   bug that drops a binary in /tmp and chmods it 4755 will not get the
+#   root it expected.
+# ProtectSystem=strict - mounts /, /usr, /boot, /etc read-only. The
+#   binary can only write to /var/lib/firewall-mon (and an explicit
+#   /tmp via PrivateTmp; see below).
+# ReadWritePaths=/var/lib/firewall-mon - the explicit write allow-list
+#   for the data directory (secrets file, SQLite, WAL, IRC logs).
+# PrivateTmp=yes - dedicated /tmp namespace; no surprises from other
+#   services' temp files and no /tmp-confusion attacks.
+# ProtectHome=yes - /home, /root, /run/user are inaccessible.
+# ProtectKernelTunables=yes - /proc and /sys are protected from writes
+#   (e.g. the binary cannot disable ASLR by writing to /proc/self/maps).
+# ProtectKernelModules=yes - cannot load kernel modules.
+# ProtectControlGroups=yes - cannot manipulate cgroups.
+# RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 - only the socket
+#   families the binary actually needs. No AF_NETLINK (no routing
+#   socket), no AF_PACKET (no raw packet), no AF_KEY (no IPsec).
+# RestrictNamespaces=yes - cannot unshare / clone namespaces.
+# RestrictRealtime=yes - no SCHED_RR/SCHED_FIFO scheduling.
+# RestrictSUIDSGID=yes - no SUID/SGID bit flips.
+# LockPersonality=yes - no personality(2) syscalls.
+# MemoryDenyWriteExecute=yes - mmap / mprotect cannot create WX pages
+#   (defense-in-depth against JIT-based shellcode in a future XSS
+#   chain that gains local code execution).
+# SystemCallArchitectures=native - no i386 / x32 syscalls.
+# SystemCallFilter=@system-service ~@privileged @resources - explicit
+#   allow-list, not a deny-list. Denies @privileged (mount, kexec,
+#   reboot, swapon, etc.) and @resources (ioperm, iopl, etc.).
+#   The trailing ~ prefix subtracts the listed sets from @system-service.
+#   Edit the allow-list after the first prod deploy by running:
+#     systemd-analyze syscall-filter ${binary}
+#   and adding any syscalls the binary legitimately needs that aren't
+#   in @system-service.
+# CapabilityBoundingSet= - drop ALL Linux capabilities. The binary
+#   needs no caps — it talks UDP/TCP via standard sockets, reads files,
+#   writes to its data dir, and that's it.
+# AmbientCapabilities= - none. (Empty by default; explicit for clarity.)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=${DATA_DIR}
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service ~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
     log_info "Created fwmon-${name}.service"
+}
+
+create_service_user() {
+    if id -u ${SVC_USER} >/dev/null 2>&1; then
+        log_info "Service user ${SVC_USER} already exists"
+        return 0
+    fi
+    log_info "Creating service user ${SVC_USER}..."
+    # --system: uid from SYS_UID_MAX range (no login, no expiry)
+    # --no-create-home: we use /var/lib/firewall-mon, not /home/fwmon
+    # --shell /usr/sbin/nologin: cannot log in interactively even if
+    #   some future misconfiguration sets a password
+    useradd --system \
+            --home-dir ${DATA_DIR} \
+            --no-create-home \
+            --shell /usr/sbin/nologin \
+            --comment "Firewall Monitor service account" \
+            ${SVC_USER}
+    log_info "Service user ${SVC_USER} created (uid=$(id -u ${SVC_USER}))"
 }
 
 start_services() {

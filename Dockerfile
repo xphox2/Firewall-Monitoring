@@ -45,6 +45,6 @@ RUN chown -R fwmon:fwmon /app
 EXPOSE 8080 162/udp 514/udp 6343/udp 8089
 
 LABEL org.opencontainers.image.title="Firewall Mon" \
-      org.opencontainers.image.version="0.10.260"
+      org.opencontainers.image.version="0.10.261"
 
 ENTRYPOINT ["./entrypoint.sh"]

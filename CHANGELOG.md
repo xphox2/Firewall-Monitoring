@@ -1,4 +1,49 @@
 # Changelog
+## [0.10.261] - 2026-06-02
+
+### Fixed — AUDIT-021: systemd units now run as non-root with full hardening
+
+Pre-AUDIT, `deploy.sh` generated `fwmon-{api,poller,trap}.service` units that ran as `User=root` with no hardening directives. The Docker path already ran as the non-root `fwmon` user (the Dockerfile's `USER fwmon`), so the two deployment shapes were inconsistent — and the systemd shape was the worse one. Concretely:
+
+- The API binary listens on a public-facing TCP port (8080) plus three UDP ports (162/514/6343). A future memory-corruption RCE in any of those listeners would give the attacker root on the host — not a hypothetical, this is a firewall-monitoring tool that talks to untrusted networks by design.
+- The trap receiver binds `0.0.0.0:162` (SNMP TRAP). Even with the AUDIT-012 community check in place, a future bug in the SNMP parser would land the attacker in the root namespace.
+- The poller talks to the DB and to remote firewalls; a process-compromise gets the entire DB and the cluster of managed devices' credentials.
+
+This is exactly the threat model where systemd's sandbox directives pay for themselves.
+
+**The fix** (`deploy.sh`):
+
+1. **`create_service_user`** — new function that creates the `fwmon` system user with `--system --no-create-home --shell /usr/sbin/nologin --home-dir /var/lib/firewall-mon`. Idempotent: skips if the user already exists (preserves upgrades).
+2. **`create_systemd_service`** — the unit template now runs as `User=fwmon Group=fwmon`, with the following hardening directives (each line carries a comment explaining the threat it addresses):
+   - `NoNewPrivileges=yes`
+   - `ProtectSystem=strict` + `ReadWritePaths=/var/lib/firewall-mon` (the only writable mount is the data dir)
+   - `PrivateTmp=yes`
+   - `ProtectHome=yes`
+   - `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectControlGroups=yes`
+   - `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` (no AF_PACKET, no AF_NETLINK, no AF_KEY)
+   - `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`
+   - `MemoryDenyWriteExecute=yes` (defense-in-depth against JIT-shellcode)
+   - `SystemCallArchitectures=native`, `SystemCallFilter=@system-service ~@privileged @resources`
+   - `CapabilityBoundingSet=` and `AmbientCapabilities=` both empty — drop ALL Linux capabilities
+3. **Ownership fix-up after install** — `chown -R fwmon:fwmon` on `${INSTALL_DIR}`, `${DATA_DIR}`, `${CONFIG_DIR}`. Config files go to `0640` (readable by fwmon only) — `JWT_SECRET_KEY` and `ENCRYPTION_KEY` should not be world-readable.
+4. **Bash syntax validated** with `bash -n deploy.sh` (CI gate in the next commit will do the same).
+
+**What this does NOT do (deferred)**
+
+- **Socket activation** (`Type=notify` + `sd_notify`). The current `Type=simple` works but doesn't give systemd the crash signal. Low-priority hardening; the service is already covered by `Restart=always` with a 10s backoff.
+- **DynamicUser=yes**. Would create a per-boot ephemeral user. We use a stable system user instead so the SQLite WAL survives reboots without ownership fixups.
+- **systemd credential support** (`LoadCredential=`) for the JWT secret. Currently the secret is read from `/etc/firewall-mon/config.env` which is `0640 fwmon:fwmon`. The credentials framework is cleaner but requires switching to a credential-loading helper in `cmd/api/main.go` — out of scope.
+- **Run a fresh `systemd-analyze syscall-filter`** against the binaries to discover any missing syscalls not in `@system-service`. Operators can run this after the first prod deploy and report any startup failures; the comment in `deploy.sh` points them at the right command.
+
+**Operator migration**
+
+After `deploy.sh install_local`:
+- Three new files exist: `/etc/systemd/system/fwmon-{api,poller,trap}.service` (overwriting the old root-running ones).
+- A new system user `fwmon` exists.
+- `systemctl daemon-reload && systemctl restart fwmon-{api,poller,trap}` picks up the new units. The secrets file at `/var/lib/firewall-mon/.jwt-secret` (AUDIT-008) is preserved through the chown.
+
+QA: `go build ./...`, `go test -count=1 ./...` (9 pkgs, 155 tests, unchanged for this commit — the change is shell-only), `bash -n deploy.sh`, `gofmt -l .`, `go vet ./...` all clean. Native-deploy only — Docker path was already non-root.
+
 ## [0.10.260] - 2026-06-02
 
 ### Fixed — AUDIT-019: IRC bot admin commands now have a real per-channel allow-list
