@@ -38,6 +38,15 @@ type ServerConfig struct {
 	EncryptionKey  string
 	CookieSecure   bool
 	CookieSameSite string
+	// CookieSecureExplicit tracks whether the operator explicitly set
+	// COOKIE_SECURE=true in config.env, as opposed to inheriting the
+	// default from SERVER_ENABLE_TLS. AUDIT-024: when CookieSecure is
+	// true but EnableTLS is false, browsers silently drop the session
+	// cookie on every response and the operator gets a "login button
+	// does nothing" report. The startup warning in Validate() keys off
+	// this flag to fire only when the mismatch is the operator's own
+	// doing, not the safe default.
+	CookieSecureExplicit bool
 }
 
 type SNMPConfig struct {
@@ -152,19 +161,20 @@ func Load() *Config {
 
 	return &Config{
 		Server: ServerConfig{
-			Host:           getEnv("SERVER_HOST", "0.0.0.0"),
-			Port:           getEnv("SERVER_PORT", "8080"),
-			ReadTimeout:    getDurationEnv("SERVER_READ_TIMEOUT", 30*time.Second),
-			WriteTimeout:   getDurationEnv("SERVER_WRITE_TIMEOUT", 30*time.Second),
-			IdleTimeout:    getDurationEnv("SERVER_IDLE_TIMEOUT", 120*time.Second),
-			EnableTLS:      getBoolEnv("SERVER_ENABLE_TLS", false),
-			TLSCertFile:    getEnv("SERVER_TLS_CERT", "/etc/firewall-mon/tls.crt"),
-			TLSKeyFile:     getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
-			AdminSecretKey: getEnv("ADMIN_SECRET_KEY", ""),
-			JWTSecretKey:   getEnv("JWT_SECRET_KEY", ""),
-			EncryptionKey:  getEnv("ENCRYPTION_KEY", ""),
-			CookieSecure:   getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
-			CookieSameSite: getEnv("COOKIE_SAMESITE", "Strict"),
+			Host:                 getEnv("SERVER_HOST", "0.0.0.0"),
+			Port:                 getEnv("SERVER_PORT", "8080"),
+			ReadTimeout:          getDurationEnv("SERVER_READ_TIMEOUT", 30*time.Second),
+			WriteTimeout:         getDurationEnv("SERVER_WRITE_TIMEOUT", 30*time.Second),
+			IdleTimeout:          getDurationEnv("SERVER_IDLE_TIMEOUT", 120*time.Second),
+			EnableTLS:            getBoolEnv("SERVER_ENABLE_TLS", false),
+			TLSCertFile:          getEnv("SERVER_TLS_CERT", "/etc/firewall-mon/tls.crt"),
+			TLSKeyFile:           getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
+			AdminSecretKey:       getEnv("ADMIN_SECRET_KEY", ""),
+			JWTSecretKey:         getEnv("JWT_SECRET_KEY", ""),
+			EncryptionKey:        getEnv("ENCRYPTION_KEY", ""),
+			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
+			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
+			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
 		},
 		SNMP: SNMPConfig{
 			SNMPHost:       getEnv("SNMP_HOST", "192.168.1.1"),
@@ -301,6 +311,24 @@ func (c *Config) Validate() error {
 		if c.Server.TLSCertFile == "" || c.Server.TLSKeyFile == "" {
 			return fmt.Errorf("SERVER_ENABLE_TLS=true but TLS cert/key files not configured")
 		}
+	}
+
+	// AUDIT-024: COOKIE_SECURE=true over a non-TLS connection is a
+	// silent-login-break — the browser drops the Secure cookie on every
+	// response, the operator sees "click login, nothing happens", and
+	// the only fix is to either flip COOKIE_SECURE=false or put a TLS
+	// terminator in front. We warn loudly (and refuse to fail — some
+	// operators run a reverse proxy in front and only need this app
+	// to be plain HTTP) but make the message explicit. The warning
+	// only fires when the operator EXPLICITLY set COOKIE_SECURE in
+	// config.env, not when it was inherited from the SERVER_ENABLE_TLS
+	// default (which would be a self-consistent config).
+	if c.Server.CookieSecure && !c.Server.EnableTLS && c.Server.CookieSecureExplicit {
+		log.Println("WARNING: COOKIE_SECURE=true is set explicitly, but SERVER_ENABLE_TLS=false.")
+		log.Println("         Browsers will silently drop the session cookie over plain HTTP, so")
+		log.Println("         login will appear to do nothing. Either set COOKIE_SECURE=false")
+		log.Println("         (recommended for plain-HTTP deployments), or enable TLS by setting")
+		log.Println("         SERVER_ENABLE_TLS=true and configuring SERVER_TLS_CERT / SERVER_TLS_KEY.")
 	}
 
 	// Secrets warnings

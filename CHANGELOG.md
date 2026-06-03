@@ -1,4 +1,46 @@
 # Changelog
+## [0.10.262] - 2026-06-02
+
+### Fixed — AUDIT-024: COOKIE_SECURE / SERVER_ENABLE_TLS mismatch is now caught at startup
+
+Pre-AUDIT the example file (`config.env.example`) shipped with `COOKIE_SECURE=true` and `SERVER_ENABLE_TLS=false` as defaults. The runtime code path was actually smarter — `CookieSecure` falls back to `EnableTLS` when `COOKIE_SECURE` is unset — but the example was still wrong: a copy-paste of the example file would lock the operator into the exact mismatch that produces a silent-login-break.
+
+The failure mode: with `COOKIE_SECURE=true` over plain HTTP, the browser drops the `Secure` cookie on every response. The operator clicks "Login", the form posts, the server returns a Set-Cookie with the `Secure` flag, the browser refuses to store it, the next request carries no session, the user lands back on the login page. The JavaScript console shows nothing. The server logs show a successful login. The operator files a bug saying "login button does nothing".
+
+**The fix** (two parts):
+
+1. **`config.env.example`** — the `COOKIE_SECURE=true` line is now commented out (`# COOKIE_SECURE=`) with a comment block explaining the inheritance rule and the failure mode. The default is to inherit from `SERVER_ENABLE_TLS`; operators who really want to override have to remove the `#` and consciously set a value.
+
+2. **`internal/config/config.go`** — new field `Server.CookieSecureExplicit bool`, populated by checking `os.Getenv("COOKIE_SECURE") != ""`. `Validate()` now logs a multi-line, actionable warning when `CookieSecure && !EnableTLS && CookieSecureExplicit`:
+
+   ```
+   WARNING: COOKIE_SECURE=true is set explicitly, but SERVER_ENABLE_TLS=false.
+            Browsers will silently drop the session cookie over plain HTTP, so
+            login will appear to do nothing. Either set COOKIE_SECURE=false
+            (recommended for plain-HTTP deployments), or enable TLS by setting
+            SERVER_ENABLE_TLS=true and configuring SERVER_TLS_CERT / SERVER_TLS_KEY.
+   ```
+
+   The warning is intentionally not a `log.Fatal` — a reverse-proxy-in-front setup is a legitimate reason to run plain HTTP on the app and TLS at the edge. The point is to make the operator **consciously confirm** the mismatch, not to break a valid topology.
+
+3. **Code-path detail** — the audit's third suggestion ("send HSTS with `max-age=0`") was rejected. `max-age=0` actively tells browsers to *un-learn* HSTS, which is wrong for a public release; a server that briefly served HTTPS shouldn't punish later HTTPS-only sessions.
+
+**Regression tests** (`internal/config/config_audit024_test.go`, new — 4 cases):
+
+- `TestValidate_CookieSecureMismatch_AUDIT024` — broken config (explicit `true` over plain HTTP) doesn't error; the warning fires.
+- `TestValidate_CookieSecureInheritedFromTLS_AUDIT024` — consistent config (TLS on, Secure inherited) doesn't error; the warning does NOT fire.
+- `TestValidate_CookieSecureExplicitlyFalseOverPlainHTTP_AUDIT024` — explicit `false` over plain HTTP is the correct plain-HTTP config; warning does NOT fire.
+- `TestConfigExample_HasNoCookieSecureMismatch_AUDIT024` — static check on `config.env.example`: rejects `COOKIE_SECURE=true` when the file also contains `SERVER_ENABLE_TLS=false`. Comments are stripped first to avoid false-positives on a commented-out `#COOKIE_SECURE=true` line. The test will catch a future agent re-introducing the misleading example.
+
+First test file for the `internal/config` package.
+
+**What this does NOT do (deferred)**
+
+- **Auto-correction** (silently flip `COOKIE_SECURE` to match `EnableTLS`). Rejected — a config that looks wrong but is intentional (e.g. `EnableTLS` flipped off for a brief debug session, with `COOKIE_SECURE` flipped off separately to match) shouldn't be silently mutated.
+- **Strict-dynamic on the HSTS path** (related but out of scope for AUDIT-024; would touch the `SecureHeaders` middleware).
+
+QA: `go build ./...`, `go test -count=1 ./...` (10 pkgs, 159 tests, +4 AUDIT-024), `gofmt -l .`, `go vet ./...` all clean. Config-only change, no static-binary rebuild needed unless `go build` is the deployment vector — Docker rebuild still recommended to keep the version label in sync.
+
 ## [0.10.261] - 2026-06-02
 
 ### Fixed — AUDIT-021: systemd units now run as non-root with full hardening
