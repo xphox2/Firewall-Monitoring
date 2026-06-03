@@ -137,6 +137,14 @@ type AuthConfig struct {
 	// doing it doesn't get nagged. (They might still want to
 	// change it, but they made a conscious choice.)
 	AdminUsernameExplicit bool
+	// AdminPasswordGenerated tracks whether the admin password was
+	// auto-generated (i.e. ADMIN_PASSWORD was not set in the
+	// environment). AUDIT-136: pre-fix, callers did
+	// `os.LookupEnv("ADMIN_PASSWORD")` at every decision point,
+	// which is fragile (the env could change between calls) and
+	// duplicated work. The flag is captured once at config-load
+	// time and read by every consumer.
+	AdminPasswordGenerated bool
 }
 
 type AlertsConfig struct {
@@ -276,10 +284,23 @@ func Load() *Config {
 			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),
 			AdminUsernameExplicit: os.Getenv("ADMIN_USERNAME") != "",
 			AdminPassword:         getEnv("ADMIN_PASSWORD", getDefaultPassword()),
-			BcryptCost:            getIntEnv("BCRYPT_COST", 12),
-			TokenExpiry:           getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
-			MaxLoginAttempts:      getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
-			LockoutDuration:       getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
+			// AUDIT-136: capture "was ADMIN_PASSWORD set in the env"
+			// once at config-load time, so every consumer
+			// (`IsGeneratedPassword`, the secrets-persistence
+			// flow in `cmd/api/main.go`, the startup-warning
+			// logic) reads the same authoritative value rather
+			// than re-querying the env and risking TOCTOU. We
+			// use `LookupEnv` (not `Getenv == ""`) because an
+			// operator who explicitly sets ADMIN_PASSWORD=""
+			// has made a deliberate choice — "I want an
+			// empty admin password" — and that should NOT
+			// trigger the auto-generated-password flow. The
+			// distinction is the whole point of the fix.
+			AdminPasswordGenerated: func() bool { _, ok := os.LookupEnv("ADMIN_PASSWORD"); return !ok }(),
+			BcryptCost:             getIntEnv("BCRYPT_COST", 12),
+			TokenExpiry:            getDurationEnv("TOKEN_EXPIRY", 24*time.Hour),
+			MaxLoginAttempts:       getIntEnv("MAX_LOGIN_ATTEMPTS", 5),
+			LockoutDuration:        getDurationEnv("LOCKOUT_DURATION", 15*time.Minute),
 		},
 		Alerts: AlertsConfig{
 			EmailEnabled:             getBoolEnv("EMAIL_ENABLED", false),
@@ -533,10 +554,14 @@ func generateRandomPassword(length int) string {
 	return string(b)
 }
 
-// IsGeneratedPassword returns true if the admin password was auto-generated (not set via env)
+// IsGeneratedPassword returns true if the admin password was auto-generated
+// (ADMIN_PASSWORD was not set in the env at config-load time). AUDIT-136:
+// pre-fix this re-queried `os.LookupEnv` on every call, which is fragile
+// (TOCTOU: the env could change between config-load and a later call
+// to `IsGeneratedPassword()`). Post-fix the answer is captured once
+// in `Auth.AdminPasswordGenerated` at config-load time and read here.
 func (c *Config) IsGeneratedPassword() bool {
-	_, exists := os.LookupEnv("ADMIN_PASSWORD")
-	return !exists
+	return c.Auth.AdminPasswordGenerated
 }
 
 func getIntEnv(key string, defaultValue int) int {
