@@ -1,4 +1,43 @@
 # Changelog
+## [0.10.278] - 2026-06-02
+
+### Fixed — AUDIT-030: interface_addresses UPSERTs on (device_id, ip_address) instead of appending
+
+`SaveInterfaceAddresses` was a plain `Create` that appended a row on every probe poll, even when the `(device_id, ip_address)` pair was unchanged. With 50 devices × 4 polls/min × 90 days the table grew to ~25M rows of mostly-redundant data — the table's growth rate was unbounded and would OOM the DB on a long-running deployment.
+
+**The fix** (two parts):
+
+1. **`internal/models/models.go`** — added `uniqueIndex:idx_ifaddr_dev_ip` to the `DeviceID` and `IPAddress` fields on `InterfaceAddress`. The unique index is the conflict target for the UPSERT. A pre-existing deployment with duplicate rows would fail the AutoMigrate; the cleanest migration is a one-shot dedup query (see deferred).
+
+2. **`internal/database/database.go`** — `SaveInterfaceAddresses` now uses GORM's `clause.OnConflict` to emit `INSERT ... ON CONFLICT (device_id, ip_address) DO UPDATE SET timestamp, if_index, net_mask = EXCLUDED.*` on Postgres (and the equivalent UPSERT syntax on SQLite). The `id` field is left to GORM's insert-vs-update machinery.
+
+**Wire format / migration**
+
+- `interface_addresses` table gains a unique index on `(device_id, ip_address)`. Existing rows with duplicate `(device, ip)` pairs would cause the AutoMigrate to fail on first boot.
+- **Migration for existing deployments**: a one-shot `DELETE FROM interface_addresses WHERE id NOT IN (SELECT MIN(id) FROM interface_addresses GROUP BY device_id, ip_address)` deduplicates the table, after which the unique index can be created. (The `MIN(id)` keeps the earliest row, but you may prefer to keep the latest with a `MAX(id)` query — depends on which timestamp you want to preserve.) Documented in the deferred section; not part of this commit.
+- The new unique index is a composite (two-column), so it doesn't slow the existing single-column index on `ip_address` (which is used for the IP-lookup path).
+
+**Behavioral change**
+
+- Pre-fix: a row existed per `(device, interface, IP, timestamp)`. A device that had the same IP on three interfaces would produce three rows that all aged out independently.
+- Post-fix: a row exists per `(device, IP)`. The `if_index` and `net_mask` are updated in place to the latest values from the most recent poll. A device that has the same IP on three interfaces (uncommon but legal in some topologies) collapses to one row, with the latest `if_index` and `net_mask`.
+
+This is a deliberate trade-off — the table's intent is current-state, not history. Operators who relied on the historical "this device had this IP at this time" view (forensics) will see only the latest state. A separate audit-log table for historical IP changes is a future project (see deferred).
+
+**Regression tests** (`internal/database/ifaddr_audit030_test.go`, new — 3 tests):
+
+- `TestSaveInterfaceAddresses_DedupsOnPoll_AUDIT030` — seeds the same address twice (15s apart, with `if_index` moving from 0 to 1), asserts the table has exactly one row with the latest values.
+- `TestSaveInterfaceAddresses_PerDeviceDedup_AUDIT030` — defensive sibling: same IP on two different devices must produce two rows (the unique index is `(device_id, ip_address)`, not `ip_address` alone).
+- `TestSaveInterfaceAddresses_MultipleAddressesSameCall_AUDIT030` — a single `Save` with three distinct `(device, ip)` tuples produces three rows. Defends against a future "optimization" that drops the unique-index and replaces it with in-process dedup.
+
+**What this does NOT do (deferred)**
+
+- **Migration for existing deployments with duplicate rows.** As noted above, the unique-index addition will fail AutoMigrate on a deployment that already has millions of rows. The one-shot dedup query is documented in the CHANGELOG; running it is the operator's responsibility for a one-version upgrade. A future commit could add it to the entrypoint script (similar to how AUDIT-008's secrets flow handles "first init" / "subsequent boot").
+- **Historical IP audit log.** A separate table recording "this device had this IP at this time" with a real time-series structure (partitioned, retention-bounded) would be the right home for forensics queries. Out of scope for AUDIT-030 (the audit was about ending unbounded growth, not adding a new feature).
+- **Switching the `idx_ifaddr_ip` single-column index to a covering index** (include `device_id`). The current single-column index is used for IP-lookup queries, and the composite `idx_ifaddr_device_ts` covers the device-lookup path. A future index-tuning pass could merge them. Out of scope for AUDIT-030.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 218 tests, +3 AUDIT-030), `gofmt -l .`, `go vet ./...` all clean. Code + model + test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.277] - 2026-06-02
 
 ### Fixed — AUDIT-029: four previously-unbounded tables now have retention knobs

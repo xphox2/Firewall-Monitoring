@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -626,7 +627,37 @@ func (d *Database) SaveInterfaceAddresses(addrs []models.InterfaceAddress) error
 	if len(addrs) == 0 {
 		return nil
 	}
-	return d.db.Create(&addrs).Error
+	// AUDIT-030: pre-fix this was a plain `Create` that appended
+	// a row on every probe poll, even when the (device_id,
+	// ip_address) pair was unchanged. With 50 devices × 4
+	// polls/min × 90 days that's ~25M rows of mostly-redundant
+	// data — the table grew unbounded.
+	//
+	// The fix is a portable UPSERT: GORM's `clause.OnConflict`
+	// emits `INSERT ... ON CONFLICT (device_id, ip_address) DO
+	// UPDATE SET ...` on Postgres, and the equivalent UPSERT
+	// syntax on SQLite. The unique index `idx_ifaddr_dev_ip`
+	// (declared on the InterfaceAddress model) is the conflict
+	// target. We update `timestamp` (so the row reflects the
+	// most recent poll), `if_index` (in case the IP moved
+	// interfaces), and `net_mask` (in case the subnet was
+	// reconfigured). The `id` field is left alone — GORM handles
+	// the insert-vs-update distinction via the conflict clause.
+	//
+	// Operators who relied on the historical "this device had
+	// this IP at this time" view (e.g. for forensics) will see
+	// only the latest state. The intent of the table is current-
+	// state, not history — historical IP data was always
+	// effectively a time series, and the audit's "rows: 25M"
+	// estimate showed that the original design was unusable at
+	// scale. The proper historical view belongs in a separate
+	// audit-log table if/when it's needed.
+	return d.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "device_id"}, {Name: "ip_address"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"timestamp", "if_index", "net_mask",
+		}),
+	}).Create(&addrs).Error
 }
 
 // GetLatestInterfaceAddresses returns the latest interface address snapshot per device.
