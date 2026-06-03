@@ -951,6 +951,9 @@
         function setOpen(open) {
             sidebar.classList.toggle('open', open);
             overlay.classList.toggle('open', open);
+            // AUDIT-070: keep the hamburger's aria-expanded in sync with the
+            // sidebar state (the old inline admin.html toggle never updated it;
+            // this centralized handler, added in AUDIT-055, does).
             menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
         }
         menuBtn.addEventListener('click', function() {
