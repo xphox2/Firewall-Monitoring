@@ -884,27 +884,30 @@
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
             'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;'
         };
+        // AUDIT-057: the active link gets aria-current="page" (so screen readers
+        // announce the current page) and every nav icon gets aria-hidden="true"
+        // (so the Unicode glyph isn't read out as gibberish before the label).
         var navHtml = '<div class="nav-section"><div class="nav-section-title">Monitoring</div>' +
-            '<a class="nav-item' + (currentPage === 'dashboard' ? ' active' : '') + '" href="/admin"><span class="nav-icon">' + pageIcons['dashboard'] + '</span> Dashboard</a>' +
-            '<a class="nav-item' + (currentPage === 'devices' ? ' active' : '') + '" href="/admin/devices"><span class="nav-icon">' + pageIcons['devices'] + '</span> Devices</a>' +
-            '<a class="nav-item' + (currentPage === 'connections' ? ' active' : '') + '" href="/admin/connections"><span class="nav-icon">' + pageIcons['connections'] + '</span> Connections</a>' +
-            '<a class="nav-item' + (currentPage === 'interfaces' ? ' active' : '') + '" href="/admin/interfaces"><span class="nav-icon">' + pageIcons['interfaces'] + '</span> Interfaces</a>' +
+            '<a class="nav-item' + (currentPage === 'dashboard' ? ' active" aria-current="page' : '') + '" href="/admin"><span class="nav-icon" aria-hidden="true">' + pageIcons['dashboard'] + '</span> Dashboard</a>' +
+            '<a class="nav-item' + (currentPage === 'devices' ? ' active" aria-current="page' : '') + '" href="/admin/devices"><span class="nav-icon" aria-hidden="true">' + pageIcons['devices'] + '</span> Devices</a>' +
+            '<a class="nav-item' + (currentPage === 'connections' ? ' active" aria-current="page' : '') + '" href="/admin/connections"><span class="nav-icon" aria-hidden="true">' + pageIcons['connections'] + '</span> Connections</a>' +
+            '<a class="nav-item' + (currentPage === 'interfaces' ? ' active" aria-current="page' : '') + '" href="/admin/interfaces"><span class="nav-icon" aria-hidden="true">' + pageIcons['interfaces'] + '</span> Interfaces</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Data</div>' +
-            '<a class="nav-item' + (currentPage === 'syslog' ? ' active' : '') + '" href="/admin/syslog"><span class="nav-icon">' + pageIcons['syslog'] + '</span> Syslog</a>' +
-            '<a class="nav-item' + (currentPage === 'flows' ? ' active' : '') + '" href="/admin/flows"><span class="nav-icon">' + pageIcons['flows'] + '</span> Flows</a>' +
-            '<a class="nav-item' + (currentPage === 'alerts' ? ' active' : '') + '" href="/admin/alerts"><span class="nav-icon">' + pageIcons['alerts'] + '</span> Alerts</a>' +
-            '<a class="nav-item' + (currentPage === 'traps' ? ' active' : '') + '" href="/admin/traps"><span class="nav-icon">' + pageIcons['traps'] + '</span> Traps</a>' +
+            '<a class="nav-item' + (currentPage === 'syslog' ? ' active" aria-current="page' : '') + '" href="/admin/syslog"><span class="nav-icon" aria-hidden="true">' + pageIcons['syslog'] + '</span> Syslog</a>' +
+            '<a class="nav-item' + (currentPage === 'flows' ? ' active" aria-current="page' : '') + '" href="/admin/flows"><span class="nav-icon" aria-hidden="true">' + pageIcons['flows'] + '</span> Flows</a>' +
+            '<a class="nav-item' + (currentPage === 'alerts' ? ' active" aria-current="page' : '') + '" href="/admin/alerts"><span class="nav-icon" aria-hidden="true">' + pageIcons['alerts'] + '</span> Alerts</a>' +
+            '<a class="nav-item' + (currentPage === 'traps' ? ' active" aria-current="page' : '') + '" href="/admin/traps"><span class="nav-icon" aria-hidden="true">' + pageIcons['traps'] + '</span> Traps</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +
-            '<a class="nav-item' + (currentPage === 'probes' ? ' active' : '') + '" href="/admin/probes"><span class="nav-icon">' + pageIcons['probes'] + '</span> Probes</a>' +
-            '<a class="nav-item' + (currentPage === 'sites' ? ' active' : '') + '" href="/admin/sites"><span class="nav-icon">' + pageIcons['sites'] + '</span> Sites</a>' +
-            '<a class="nav-item' + (currentPage === 'probe-pending' ? ' active' : '') + '" href="/admin/probe-pending"><span class="nav-icon">' + pageIcons['probe-pending'] + '</span> Pending</a>' +
+            '<a class="nav-item' + (currentPage === 'probes' ? ' active" aria-current="page' : '') + '" href="/admin/probes"><span class="nav-icon" aria-hidden="true">' + pageIcons['probes'] + '</span> Probes</a>' +
+            '<a class="nav-item' + (currentPage === 'sites' ? ' active" aria-current="page' : '') + '" href="/admin/sites"><span class="nav-icon" aria-hidden="true">' + pageIcons['sites'] + '</span> Sites</a>' +
+            '<a class="nav-item' + (currentPage === 'probe-pending' ? ' active" aria-current="page' : '') + '" href="/admin/probe-pending"><span class="nav-icon" aria-hidden="true">' + pageIcons['probe-pending'] + '</span> Pending</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Configuration</div>' +
-            '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active' : '') + '" href="/admin/alert-policies"><span class="nav-icon">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
-            '<a class="nav-item' + (currentPage === 'maintenance' ? ' active' : '') + '" href="/admin/maintenance"><span class="nav-icon">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +
+            '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active" aria-current="page' : '') + '" href="/admin/alert-policies"><span class="nav-icon" aria-hidden="true">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
+            '<a class="nav-item' + (currentPage === 'maintenance' ? ' active" aria-current="page' : '') + '" href="/admin/maintenance"><span class="nav-icon" aria-hidden="true">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">System</div>' +
-            '<a class="nav-item' + (currentPage === 'reports' ? ' active' : '') + '" href="/admin/reports"><span class="nav-icon">' + pageIcons['reports'] + '</span> Reports</a>' +
-            '<a class="nav-item' + (currentPage === 'settings' ? ' active' : '') + '" href="/admin/settings"><span class="nav-icon">' + pageIcons['settings'] + '</span> Settings</a>' +
-            '<a class="nav-item' + (currentPage === 'irc' ? ' active' : '') + '" href="/admin/irc"><span class="nav-icon">' + pageIcons['irc'] + '</span> IRC</a>' +
+            '<a class="nav-item' + (currentPage === 'reports' ? ' active" aria-current="page' : '') + '" href="/admin/reports"><span class="nav-icon" aria-hidden="true">' + pageIcons['reports'] + '</span> Reports</a>' +
+            '<a class="nav-item' + (currentPage === 'settings' ? ' active" aria-current="page' : '') + '" href="/admin/settings"><span class="nav-icon" aria-hidden="true">' + pageIcons['settings'] + '</span> Settings</a>' +
+            '<a class="nav-item' + (currentPage === 'irc' ? ' active" aria-current="page' : '') + '" href="/admin/irc"><span class="nav-icon" aria-hidden="true">' + pageIcons['irc'] + '</span> IRC</a>' +
             '</div>';
 
         var sidebarNav = document.querySelector('.sidebar-nav');
