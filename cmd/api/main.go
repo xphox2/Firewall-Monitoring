@@ -31,7 +31,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.245"
+const ServerVersion = "0.10.246"
 
 func main() {
 	cfg := config.Load()

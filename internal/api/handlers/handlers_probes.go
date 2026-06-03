@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"log"
 	"net"
@@ -603,7 +604,13 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 		return nil, false
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == "" || token != probe.RegistrationKey {
+	// AUDIT-016: constant-time compare against the stored registration key
+	// after the indexed PK lookup above. A naive `token != probe.Registration
+	// Key` is a byte-by-byte compare that an attacker on the LAN can use as
+	// a single-character oracle (Go strings short-circuit on first mismatch).
+	// subtle.ConstantTimeCompare returns 1 only if both lengths and all bytes
+	// match; it does not short-circuit on content.
+	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(probe.RegistrationKey)) != 1 {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
 		return nil, false
 	}

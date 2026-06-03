@@ -1,4 +1,22 @@
 # Changelog
+## [0.10.246] - 2026-06-02
+
+### Fixed — AUDIT-016: probe registration key compared in constant time
+
+`validateProbe` in `handlers_probes.go:606` compared the presented Bearer token to the stored registration key with a plain Go `!=`. Go string comparison short-circuits at the first mismatching byte, so a network attacker on the LAN can in principle reduce the key search space by measuring how long the server takes to reject a wrong token. We replaced the comparison with `subtle.ConstantTimeCompare`, which (a) returns `0` if the lengths differ and (b) compares all bytes of equal-length inputs without short-circuiting.
+
+Changes:
+
+- `internal/api/handlers/handlers_probes.go`: added `crypto/subtle` import; `validateProbe`'s post-PK-lookup token check now uses `subtle.ConstantTimeCompare([]byte(token), []byte(probe.RegistrationKey)) != 1` with an explanatory comment referencing AUDIT-016.
+
+Scope note: `authenticateProbeByBearer` (the only other key-check site, used by `ProbeHeartbeat`) looks the probe up directly by `WHERE registration_key = ?` against an indexed column. The DB engine's hash-bucket compare for that lookup is constant-ish, but the underlying lookup is still a timing channel for "token exists" vs "token does not exist". A complete fix requires restructuring the heartbeat protocol to carry an explicit probe ID (so we can fetch by PK and then constant-time-compare). That is tracked under AUDIT-017 (probe key stored in plaintext) and will be addressed when the at-rest encryption / hashed-token refactor lands. The validateProbe path patched here is the higher-leverage one — it is invoked by **18 ingestion handlers** vs. heartbeat's single call site.
+
+Regression tests (`handlers_probes_audit016_test.go`, new):
+
+- `TestValidateProbe_ConstantTimeKeyCompare_AUDIT016` — 9 sub-cases asserting the behavioral contract: correct key accepted; same-length flipped-byte (last/first/middle) all rejected; shorter-by-one / longer-by-one rejected; uppercase-cased rejected; empty rejected; whitespace-padded rejected. Timing assertion is not feasible in CI but every variant a naive `==` could short-circuit on is covered.
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.245] - 2026-06-02
 
 ### Fixed — AUDIT-027: `decryptField` no longer returns ciphertext on decryption failure

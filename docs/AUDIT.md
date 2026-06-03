@@ -1128,7 +1128,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-025 | `Permissions-Policy` header missing | 0.10.243 | 0f5ac25 | `SecureHeaders` middleware now sends `Permissions-Policy: camera=(), microphone=(), geolocation=(), usb=(), payment=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), sync-xhr=()`. The admin panel uses none of these APIs. |
 | AUDIT-122 | Dead `_unused_legacy_top50_test` orphan | 0.10.243 | 0f5ac25 | Deleted the 60-line dead test function (originally retained with a leading underscore when the legacy retention policy was removed). |
 | AUDIT-014 | SMTP critical-alert subject built from `device.Name` without CRLF sanitisation | 0.10.244 | 813a452 | New `notifier.SanitizeHeader` exported helper; `report/email.go:94` now sanitises `alert.AlertType`, `device.Name`, `device.IPAddress` before `fmt.Sprintf`. Defense-in-depth — `notifier.SendHTMLEmail` already sanitised the final header value, this closes the construction-site gap. Tests: `notifier/notifier_test.go` (11-case table + fuzz) and `report/email_test.go` (CRLF-laden device name produces sanitized subject). |
-| AUDIT-027 | `decryptField` returns ciphertext on decrypt failure (v0.10.226 bug class) | 0.10.245 | (pending) | Every failure path inside `decryptField` after the `{enc}` prefix check now returns `""` and logs at ERROR (no key, bad base64, AES init, GCM init, short ciphertext, GCM auth failure). Legacy plaintext (no prefix) still passes through unchanged. 9 regression tests in `internal/database/crypto_test.go` cover round-trip, legacy passthrough, no-key, wrong-key, bad-base64, tamper, short ciphertext, double-encrypt idempotency, encrypt-empty passthrough. `internal/database` now has its first test file. |
+| AUDIT-027 | `decryptField` returns ciphertext on decrypt failure (v0.10.226 bug class) | 0.10.245 | 41cd6ae | Every failure path inside `decryptField` after the `{enc}` prefix check now returns `""` and logs at ERROR (no key, bad base64, AES init, GCM init, short ciphertext, GCM auth failure). Legacy plaintext (no prefix) still passes through unchanged. 9 regression tests in `internal/database/crypto_test.go` cover round-trip, legacy passthrough, no-key, wrong-key, bad-base64, tamper, short ciphertext, double-encrypt idempotency, encrypt-empty passthrough. `internal/database` now has its first test file. |
+| AUDIT-016 | Probe registration key compared with `!=` not `hmac.Equal` | 0.10.246 | (pending) | `validateProbe` (`handlers_probes.go:606`) now uses `subtle.ConstantTimeCompare` for the post-PK-lookup token check. `authenticateProbeByBearer`'s SQL `WHERE registration_key = ?` lookup is a separate timing channel that needs the AUDIT-017 hashed-token refactor; this fix covers the high-leverage path used by 18 ingestion handlers. 9-case regression test in `handlers_probes_audit016_test.go`. |
 
 ---
 
@@ -1147,7 +1148,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-02 — AUDIT-025 — Permissions-Policy header — v0.10.243 — 0f5ac25 — opencode
 2026-06-02 — AUDIT-122 — delete dead _unused_legacy_top50_test — v0.10.243 — 0f5ac25 — opencode
 2026-06-02 — AUDIT-014 — SMTP subject CRLF sanitization at build site — v0.10.244 — 813a452 — opencode
-2026-06-02 — AUDIT-027 — decryptField fail-closed (returns empty on any decrypt error) — v0.10.245 — (pending) — opencode
+2026-06-02 — AUDIT-027 — decryptField fail-closed (returns empty on any decrypt error) — v0.10.245 — 41cd6ae — opencode
+2026-06-02 — AUDIT-016 — probe key constant-time compare in validateProbe — v0.10.246 — (pending) — opencode
 ```
 
 ---
