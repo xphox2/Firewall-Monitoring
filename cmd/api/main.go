@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.282"
+const ServerVersion = "0.10.283"
 
 func main() {
 	cfg := config.Load()
@@ -68,6 +68,17 @@ func main() {
 	router.SetTrustedProxies(nil) // Do not trust proxy headers for client IP
 
 	// API versioning aliases (v0.10.219, bundle H1).
+	//
+	// AUDIT-138: hand-coded path-rewrite, not a generic middleware.
+	// Safe today because the slice math is `p[len(prefix):]` — the
+	// prefix is consumed exactly, and a `..` in the path can't
+	// escape into admin paths because the prefix check fails for
+	// anything that doesn't start with the literal `/api/v1/` or
+	// `/admin/api/v1/`. Fragile in the sense that adding a third
+	// version (e.g. `/api/v2/`) is a code change, not a config
+	// change. The right next step is the real versioning work
+	// tracked in AUDIT-090; until that lands, this is the
+	// intentional interim design.
 	//
 	// Mount /api/v1/* as a synonym for /api/* (and /admin/api/v1/* for
 	// /admin/api/*) via a path-rewrite middleware. /api/ stays the

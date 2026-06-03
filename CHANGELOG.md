@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **CHANGELOG.md now strictly Keep-A-Changelog 1.1.0** (AUDIT-110): added a header that links to the Keep-A-Changelog and Semantic Versioning specs (so a future agent knows which version of the conventions to follow), and an `## [Unreleased]` section at the top with the standard sub-section placeholders (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`). The pre-fix file was free-form and not machine-readable; the post-fix file follows the spec to the letter.
+- **`cmd/api/main.go` path-rewrite is now explicitly tagged with `AUDIT-138`** (AUDIT-138): the doc block for the `/api/v1/` → `/api/` and `/admin/api/v1/` → `/admin/api/` rewrites now states the fragility (hand-coded, not config-driven), the design constraints (the slice math is `p[len(prefix):]`, which is safe against `..` escapes), and the upgrade path (real versioning per AUDIT-090). Pre-fix the comment was a one-liner that didn't flag the design risk. The behavior is unchanged; only the documentation is more complete. `TestAPIVersioningRewrite_BehaviorPinned_AUDIT138` in `internal/shell/` pins the four invariants (both prefixes present, both rewrites use the safe slice form, mounted via `router.Use`, audit ID referenced in a comment) so a future refactor that drops the rewrite without addressing AUDIT-090 fails the test.
 
 ### Security
 - nothing yet
