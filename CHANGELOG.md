@@ -1,4 +1,53 @@
 # Changelog
+## [0.10.270] - 2026-06-02
+
+### Fixed — AUDIT-101: Dockerfile OCI labels now come from build-args (no more stale version)
+
+Pre-AUDIT, the Dockerfile's `org.opencontainers.image.version="0.10.X"` was a hardcoded literal. Past releases (v0.10.237, v0.10.239) shipped with the label stuck on a stale version, because the build process never updated the literal — only `cmd/api/main.go`'s `ServerVersion` constant. Operators using `docker inspect` to verify "is this the right image" would see a label that said one version while the binary inside reported another, breaking the most basic image-provenance check.
+
+**The fix** (`Dockerfile`):
+
+1. New `ARG VERSION=dev`, `ARG REVISION=unknown`, `ARG CREATED="1970-01-01T00:00:00Z"` declarations before the `LABEL` block. The defaults are sensible — a bare `docker build .` still produces a working image labeled "dev", which is a clear signal that the build wasn't tagged.
+2. `LABEL org.opencontainers.image.version="${VERSION}"` (and `.revision`, `.created`) — the three most versioned labels are now sourced from build-args.
+3. **Additional OCI labels** for the rest of the OCI image-spec annotations (https://github.com/opencontainers/image-spec/blob/main/annotations.md):
+   - `.description` — short human-readable one-liner
+   - `.source` — the GitHub repo URL
+   - `.url` — same URL (the spec allows both; different consumers read different keys)
+   - `.licenses` — `MIT` (SPDX expression, matches the LICENSE file)
+   - `.vendor` — `Firewall-Mon Contributors` (the project umbrella)
+   - `maintainer` — same
+4. Title and description stay hardcoded — they're not versioned, so making them ARGs would be ceremony with no benefit.
+
+**Build invocation change** (when the CI workflow lands — AUDIT-004 deferred):
+
+```sh
+docker build \
+  --build-arg VERSION="${GITHUB_REF_NAME}" \
+  --build-arg REVISION="${GITHUB_SHA}" \
+  --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t ghcr.io/xphox2/firewall-mon:${GITHUB_REF_NAME} .
+```
+
+For local dev (`docker build .`), all three args default and the image is labeled `dev` / `unknown` / `1970-01-01T00:00:00Z`. The `1970-01-01` default for `CREATED` is intentionally ugly — it's a hint to anyone using `docker inspect` on a local build that this isn't a tagged release.
+
+**Regression test** (`internal/shell/dockerfile_audit101_test.go`, new):
+
+`TestDockerfile_OCILabelsUseBuildArgs_AUDIT101` — three-axis static check on the Dockerfile:
+
+1. **ARG declarations** must be present (`ARG VERSION=`, `ARG REVISION=`, `ARG CREATED=`).
+2. **LABEL block** must reference the build-args via `${VERSION}` / `${REVISION}` / `${CREATED}` (not literals).
+3. **No hardcoded `org.opencontainers.image.version="..."` literal** survives anywhere. A regex scan that explicitly excludes the `${VERSION}` form fails if a future agent re-introduces a literal. Caught a literal version here: `<actual>`.
+
+A future agent who copy-pastes a working version number back into the LABEL block (the obvious "fix" when the build-arg approach looks unfamiliar) fails at (3) before the change can ship.
+
+**What this does NOT do (deferred)**
+
+- **CI workflow that actually passes the build-args.** AUDIT-004 deferred halves (release.yml / goreleaser) is the place. The Dockerfile change is the prerequisite; the CI change is the trigger. Until CI lands, the version label is `dev` for local builds and will need a manual `--build-arg` override for tagged images.
+- **`-trimpath -buildvcs=false` build flags** (AUDIT-102). Separate concern; the labels don't depend on the build flags, only on the build context.
+- **Per-architecture image variants** (e.g. arm64 for Raspberry Pi firewall appliances). The current Dockerfile is amd64-only. Out of scope for AUDIT-101.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 190 tests, +1 AUDIT-101), `gofmt -l .`, `go vet ./...` all clean. Dockerfile-only change. No code rebuild required — the next `docker build` picks up the new LABEL block.
+
 ## [0.10.269] - 2026-06-02
 
 ### Fixed — AUDIT-157: dead ADMIN_SECRET_KEY env var removed

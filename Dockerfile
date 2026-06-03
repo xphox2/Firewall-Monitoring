@@ -71,7 +71,40 @@ EXPOSE 8080 162/udp 514/udp 6343/udp 8089
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
     CMD wget -qO- http://localhost:8080/api/health || exit 1
 
+# AUDIT-101: OCI image labels were hardcoded (the version was caught
+# stale at v0.10.237 and v0.10.239 in past releases). The fix is to
+# declare the version (and other labels) as ARG values that the
+# build can override, with sensible defaults so a `docker build .`
+# without --build-arg still produces a working image labeled "dev".
+#
+# The CI workflow (Makefile / .github/workflows/release.yml — AUDIT-004
+# deferred halves) passes --build-arg VERSION=<tag> so the published
+# image carries the right metadata. .source / .revision / .created
+# follow the OCI image-spec annotations spec:
+#   https://github.com/opencontainers/image-spec/blob/main/annotations.md
+#
+# .licenses pins the SPDX expression for the project (MIT per
+# LICENSE), and .vendor is the org name. The title and description
+# stay hardcoded — they're not versioned, so making them ARGs would
+# be ceremony with no benefit.
+#
+# Build-arg order matters: ARG before the first FROM is in a global
+# scope; the same ARG re-declared in the second stage is what makes
+# it available to LABEL. ARG defaults are what `docker build .` gets
+# when no --build-arg is passed.
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED="1970-01-01T00:00:00Z"
+
 LABEL org.opencontainers.image.title="Firewall Mon" \
-      org.opencontainers.image.version="0.10.269"
+      org.opencontainers.image.description="Self-hosted firewall monitoring with SNMP, sFlow, syslog, and IRC alerting" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.source="https://github.com/xphox2/Firewall-Monitoring" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="Firewall-Mon Contributors" \
+      org.opencontainers.image.url="https://github.com/xphox2/Firewall-Monitoring" \
+      maintainer="Firewall-Mon Contributors"
 
 ENTRYPOINT ["./entrypoint.sh"]
