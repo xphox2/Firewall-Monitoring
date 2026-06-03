@@ -470,6 +470,124 @@ func (h *Handler) UnsnoozeAlert(c *gin.Context) {
 	c.JSON(http.StatusOK, models.MessageResponse("Alert unsnoozed"))
 }
 
+// BulkSnoozeAlerts snoozes every alert whose ID is in the request body.
+// AUDIT-143: mirror of BulkAcknowledgeAlerts for the snooze flow.
+// Body: { "ids": [1, 2, 3], "hours": 4, "reason": "..." }
+func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	var body struct {
+		IDs    []uint `json:"ids"`
+		Hours  int    `json:"hours"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		return
+	}
+	if len(body.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("ids is required"))
+		return
+	}
+	if len(body.IDs) > maxBulkAckIDs {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("too many ids (max %d per request)", maxBulkAckIDs)))
+		return
+	}
+
+	hours := body.Hours
+	if hours < 1 {
+		hours = 1
+	}
+	if hours > 720 {
+		hours = 720
+	}
+	until := time.Now().Add(time.Duration(hours) * time.Hour)
+
+	user, _ := c.Get("username")
+	username, _ := user.(string)
+
+	affected, err := h.db.SnoozeAlertsBulk(body.IDs, until, username, body.Reason)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to snooze alerts"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"snoozed":       affected,
+		"snoozed_until": until,
+		"hours":         hours,
+	}))
+}
+
+// BulkSnoozeAlertsByFilter snoozes every alert matching the filter.
+// AUDIT-143: mirror of BulkAcknowledgeAlertsByFilter. Same filter
+// semantics (device_id, alert_type, severity, acknowledged). At
+// least one filter is required to prevent accidental "snooze
+// everything" calls.
+func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
+	if !httputil.RequireDB(c, h.db) {
+		return
+	}
+
+	var body struct {
+		Hours  int    `json:"hours"`
+		Reason string `json:"reason"`
+	}
+	c.ShouldBindJSON(&body) // body is optional
+
+	hours := body.Hours
+	if hours < 1 {
+		hours = 1
+	}
+	if hours > 720 {
+		hours = 720
+	}
+	until := time.Now().Add(time.Duration(hours) * time.Hour)
+
+	filter := database.AlertFilter{}
+	hasAnyFilter := false
+	if v := c.Query("device_id"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 32); err == nil && id > 0 {
+			filter.DeviceID = uint(id)
+			hasAnyFilter = true
+		}
+	}
+	if v := c.Query("alert_type"); v != "" {
+		filter.AlertType = v
+		hasAnyFilter = true
+	}
+	if v := c.Query("severity"); v != "" {
+		filter.Severity = v
+		hasAnyFilter = true
+	}
+	if v := c.Query("acknowledged"); v != "" {
+		ack := v == "true"
+		filter.Acknowledged = &ack
+		hasAnyFilter = true
+	}
+	if !hasAnyFilter {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
+		return
+	}
+
+	user, _ := c.Get("username")
+	username, _ := user.(string)
+
+	affected, err := h.db.SnoozeAlertsByFilter(filter, until, username, body.Reason)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to snooze alerts"))
+		return
+	}
+
+	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		"snoozed":       affected,
+		"snoozed_until": until,
+		"hours":         hours,
+	}))
+}
+
 // maxBulkAckIDs caps how many alerts can be acked in a single bulk request.
 // Picked to keep SQL parameter lists comfortable across SQLite and Postgres.
 const maxBulkAckIDs = 500

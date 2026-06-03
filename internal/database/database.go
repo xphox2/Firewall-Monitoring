@@ -4464,6 +4464,66 @@ func (d *Database) AcknowledgeAlertsByFilter(f AlertFilter, notes string) (int64
 	return res.RowsAffected, res.Error
 }
 
+// SnoozeAlertsBulk sets snoozed_until to `until` (with audit fields
+// `by` and `reason`) for every alert whose ID is in `ids`, in a single
+// UPDATE. AUDIT-143: the audit complained that bulk-ack had both an
+// ID-list form and a filter form, but bulk-snooze only had a single-
+// alert form. This brings bulk-snooze to parity.
+//
+// Caller is responsible for capping len(ids); the handler enforces
+// the same 500-row limit that AcknowledgeAlertsBulk uses.
+//
+// `until` is the snooze-expiry timestamp; the handler clamps the
+// `hours` value to [1, 720] before calling here.
+func (d *Database) SnoozeAlertsBulk(ids []uint, until time.Time, by, reason string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := d.db.Model(&models.Alert{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{
+			"snoozed_until":  until,
+			"snoozed_by":     by,
+			"snoozed_reason": reason,
+		})
+	return res.RowsAffected, res.Error
+}
+
+// SnoozeAlertsByFilter sets snoozed_until on every alert matching
+// the filter. AUDIT-143: mirror of AcknowledgeAlertsByFilter for
+// the snooze flow. Used by the admin UI's "Select all N matching"
+// → "Snooze for 4h" flow.
+//
+// Same filter semantics as AcknowledgeAlertsByFilter (DeviceID,
+// AlertType, Severity, Acknowledged). The Acknowledged filter
+// is especially useful here — an operator who wants to snooze
+// only the unacked alerts can pass `acknowledged=false` to skip
+// already-handled rows.
+//
+// `until` is the snooze-expiry timestamp; the handler clamps
+// the `hours` value to [1, 720] before calling here.
+func (d *Database) SnoozeAlertsByFilter(f AlertFilter, until time.Time, by, reason string) (int64, error) {
+	q := d.db.Model(&models.Alert{})
+	if f.DeviceID > 0 {
+		q = q.Where("device_id = ?", f.DeviceID)
+	}
+	if f.AlertType != "" {
+		q = q.Where("alert_type = ?", f.AlertType)
+	}
+	if f.Severity != "" {
+		q = q.Where("severity = ?", f.Severity)
+	}
+	if f.Acknowledged != nil {
+		q = q.Where("acknowledged = ?", *f.Acknowledged)
+	}
+	res := q.Updates(map[string]interface{}{
+		"snoozed_until":  until,
+		"snoozed_by":     by,
+		"snoozed_reason": reason,
+	})
+	return res.RowsAffected, res.Error
+}
+
 func (d *Database) UpdateAlertNotes(id uint, notes string) error {
 	return d.db.Model(&models.Alert{}).Where("id = ?", id).Update("notes", notes).Error
 }

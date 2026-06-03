@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.286"
+const ServerVersion = "0.10.287"
 
 func main() {
 	cfg := config.Load()
@@ -528,6 +528,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/alerts/:id/unsnooze", handler.UnsnoozeAlert)
 		admin.POST("/api/alerts/bulk-acknowledge", handler.BulkAcknowledgeAlerts)
 		admin.POST("/api/alerts/bulk-acknowledge-filter", handler.BulkAcknowledgeAlertsByFilter)
+		// AUDIT-143: bulk-snooze endpoints, mirroring the bulk-ack shape.
+		admin.POST("/api/alerts/bulk-snooze", handler.BulkSnoozeAlerts)
+		admin.POST("/api/alerts/bulk-snooze-filter", handler.BulkSnoozeAlertsByFilter)
 		admin.POST("/api/alerts/:id/notes", handler.UpdateAlertNotes)
 		admin.GET("/api/alerts/:id", handler.GetAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
