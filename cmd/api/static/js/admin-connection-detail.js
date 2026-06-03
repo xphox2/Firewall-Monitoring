@@ -138,7 +138,11 @@
             var tunnelCount = (data.source_tunnels ? data.source_tunnels.length : 0) + (data.dest_tunnels ? data.dest_tunnels.length : 0);
             document.getElementById('stat-tunnel-count').textContent = tunnelCount;
             var statusEl = document.getElementById('stat-status');
-            statusEl.innerHTML = '<span class="badge ' + conn.status + '">' + (conn.status || 'unknown').toUpperCase() + '</span>';
+            // AUDIT-065: escape conn.status before it lands in innerHTML (both the
+            // class attribute and the text). The server validates it to an enum,
+            // but this closes the defense-in-depth gap. Uppercase first, then
+            // escape, so an entity can't be split by toUpperCase().
+            statusEl.innerHTML = '<span class="badge ' + AC.escapeHtml(conn.status) + '">' + AC.escapeHtml((conn.status || 'unknown').toUpperCase()) + '</span>';
 
             // Show/hide flows tab. v0.10.230: was setting style.display = '',
             // which can't override the .hidden { display: none } class on
