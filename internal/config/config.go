@@ -96,6 +96,15 @@ type RetentionConfig struct {
 	ProcessorStatsDays  int // processor_stats  (default 30)
 	ProcessStatsDays    int // process_stats    (default 30)
 	IRCMessageLogDays   int // irc_message_logs (default 7)
+	// AUDIT-031: unacknowledged alerts have a separate, longer
+	// retention than acked alerts. Pre-fix the cleanup query
+	// had `WHERE acknowledged = true AND timestamp < ?`, which
+	// meant a critical device that pages off-hours and goes
+	// unacked accumulated alert rows forever. 90 days gives an
+	// operator plenty of time to ack, after which the row is
+	// auto-archived with a warning log so the operator can
+	// reconstruct the "stale unack" event from the logs.
+	UnackAlertDays int // unack alerts (default 90)
 }
 
 type AuthConfig struct {
@@ -240,6 +249,12 @@ func Load() *Config {
 			ProcessorStatsDays:  getIntEnv("RETENTION_PROCESSOR_STATS_DAYS", 30),
 			ProcessStatsDays:    getIntEnv("RETENTION_PROCESS_STATS_DAYS", 30),
 			IRCMessageLogDays:   getIntEnv("RETENTION_IRC_MESSAGE_LOG_DAYS", 7),
+			// AUDIT-031: see the field doc above. 0 = use
+			// DefaultDays (90) via ret.Days(); we set the
+			// explicit default here so a `RETENTION_DEFAULT_DAYS=30`
+			// operator doesn't accidentally shorten unack
+			// alert retention to 30 days.
+			UnackAlertDays: getIntEnv("RETENTION_UNACK_ALERT_DAYS", 90),
 		},
 		Auth: AuthConfig{
 			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),

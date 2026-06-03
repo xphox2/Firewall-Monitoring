@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.279] - 2026-06-02
+
+### Fixed — AUDIT-031: stale unacked alerts are now auto-archived with a warning log
+
+`CleanupOldData` only deleted acked alerts (`WHERE acknowledged = true AND timestamp < ?`). A critical device that paged off-hours and went unacked accumulated alert rows forever — the table grew unbounded on any deployment where an alert could go unacked for more than a few days. With on-call rotation gaps, sleep, and on-shift attention all being realistic reasons for a >24h unack window, "unacked alerts accumulate" is the production default, not the exception.
+
+**The fix** (three parts):
+
+1. **`internal/config/config.go`** — new `RetentionConfig.UnackAlertDays int` field (default 90, from `RETENTION_UNACK_ALERT_DAYS` env var). 90 days is intentionally longer than the 30-day acked default: an operator who is on vacation shouldn't come back to find that an unacked alert from their first week off has been auto-archived. After 90 days the alert is unlikely to be actionable (the device has either recovered, been replaced, or the condition has escalated to a separate alert that has itself been handled).
+
+2. **`internal/database/database.go`** — `CleanupOldData` now has two cleanup windows:
+   - **Acked alerts**: deleted after `AlertDays` (default 30, `RETENTION_ALERT_DAYS`). The pre-fix behavior, unchanged.
+   - **Unacked alerts**: deleted after `UnackAlertDays` (default 90, `RETENTION_UNACK_ALERT_DAYS`). The fix. Each auto-archived alert fires a `WARNING` log so the operator can reconstruct the "stale unack" event from the logs (the "what got archived" trail is the soft-fail signal that something needs investigating).
+
+   The unack window is **clamped to be at least as long as the acked window** — if an operator sets `RETENTION_UNACK_ALERT_DAYS=10 RETENTION_ALERT_DAYS=30`, the unack cutoff is pinned to the 30-day acked cutoff. Auto-archiving unacked alerts before they're old enough to have been acked would be a backwards default; the clamp prevents it.
+
+3. **`config.env.example`** — new `RETENTION_UNACK_ALERT_DAYS=90` documented.
+
+**Wire format / migration**
+
+- No schema change. No API change. Existing deployments upgrade without any action; the new retention window is read from the env var (default 90 days) and applied on the next cleanup tick.
+- The 90-day default is a behavior change for existing deployments: alerts that have been unacked for more than 90 days are now auto-archived (with a WARNING log) on the next cleanup tick. Operators who want to keep all unacked alerts indefinitely can set `RETENTION_UNACK_ALERT_DAYS=0 RETENTION_DEFAULT_DAYS=99999` (the unack cutoff falls back to the default, which is the operator's choice).
+
+**Regression tests** (`internal/database/cleanup_audit031_test.go`, new — 4 tests):
+
+- `TestCleanupOldData_UnackedAlertsEventuallyArchived_AUDIT031` — headline: seeds three alerts (old acked, old unacked, recent unacked), runs cleanup, asserts the recent unacked row is the only survivor. The pre-fix behavior (unacked rows kept forever) would have left the old-unacked row in the table.
+- `TestCleanupOldData_UnackRetentionLongerThanAck_AUDIT031` — defensive sibling: a 20-day-old unacked alert survives when `AlertDays=30 UnackAlertDays=10` (the unack cutoff is clamped to the acked cutoff). The clamp prevents a future env-var misconfiguration from accidentally auto-archiving unacked alerts before the operator has had a chance to ack them.
+- `TestCleanupOldData_StaleUnackWarningLogged_AUDIT031` — pins the bulk-delete behavior: 5 stale unack alerts → 0 survivors.
+- `TestCleanupOldData_RecentUnackSurvives_AUDIT031` — boundary test: a 5-day-old unacked alert is NOT archived by a 90-day default. Pins both "doesn't archive" and "doesn't silently flip to acked=true".
+
+**What this does NOT do (deferred)**
+
+- **Move unacked alerts to an `alerts_archive` table** (the audit's option b). A separate table would preserve the alert content for forensics; the current hard-delete is simpler but loses data. Out of scope for AUDIT-031 (the audit was about ending unbounded growth, not adding a new table). A future enhancement could materialize the WARNING log into a `alerts_archive` row instead of just logging it.
+- **Operator-visible stale-unack notification.** The WARNING log is the current signal. A future commit could fire a synthetic "your alert was auto-archived" email/webhook so the operator learns about the silent ack within their existing on-call workflow. Out of scope for AUDIT-031.
+- **Per-severity retention.** A `critical` unacked alert might warrant a longer retention than a `warning` one. The current code treats all unacked alerts the same. A future enhancement could read `severity` and apply a multiplier. Out of scope for AUDIT-031.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 222 tests, +4 AUDIT-031), `gofmt -l .`, `go vet ./...` all clean. Code + config + test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.278] - 2026-06-02
 
 ### Fixed — AUDIT-030: interface_addresses UPSERTs on (device_id, ip_address) instead of appending

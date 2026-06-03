@@ -1072,10 +1072,67 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		}
 	}
 
-	// Alerts: only delete acknowledged alerts
+	// Alerts: AUDIT-031
+	//
+	// Two separate cleanup windows, both of which used to be a
+	// single query that ignored unacked alerts entirely:
+	//
+	//   1. AcKed alerts: deleted after `alertDays` (default 30,
+	//      from `RETENTION_ALERT_DAYS`). The pre-fix behavior.
+	//
+	//   2. UnACKed alerts: deleted after `unackDays` (default
+	//      90, from `RETENTION_UNACK_ALERT_DAYS`). Pre-fix
+	//      these were left in the table forever — a critical
+	//      device that paged off-hours and went unacked would
+	//      accumulate alert rows indefinitely. The auto-delete
+	//      fires a warning log so the operator can reconstruct
+	//      the "stale unack" event from the logs (and so the
+	//      table growth stops being unbounded).
+	//
+	// The 90-day default is intentionally longer than the
+	// 30-day acked default: an operator who is on vacation
+	// shouldn't come back to find that an unacked alert from
+	// their first week off has been auto-archived. After 90
+	// days, though, the alert is unlikely to be actionable
+	// (the device has either recovered, been replaced, or the
+	// condition has escalated to a separate alert that has
+	// itself been handled).
 	alertCutoff := time.Now().AddDate(0, 0, -alertDays)
 	if err := d.db.Where("acknowledged = true AND timestamp < ?", alertCutoff).Delete(&models.Alert{}).Error; err != nil {
-		return fmt.Errorf("failed to cleanup alert: %w", err)
+		return fmt.Errorf("failed to cleanup acked alert: %w", err)
+	}
+	unackCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.UnackAlertDays))
+	if unackCutoff.After(alertCutoff) {
+		// Defensive: the unack window should always be at
+		// least as long as the acked window, otherwise we'd
+		// auto-archive unacked alerts before acked ones
+		// (which would be a backwards default). When the
+		// unack window is shorter, we pin it to the acked
+		// window (deleting more, not less). The semantics:
+		// "unack window >= ack window, always".
+		unackCutoff = alertCutoff
+	}
+	// Find first, log a warning per row, then bulk-delete.
+	// The find-then-log-then-delete is two queries instead of
+	// one, but it gives us the "what got archived" trace for
+	// free. The alternative (a single DELETE...RETURNING) is
+	// not portable across SQLite.
+	var staleUnack []models.Alert
+	if err := d.db.Where("acknowledged = false AND timestamp < ?", unackCutoff).Find(&staleUnack).Error; err != nil {
+		return fmt.Errorf("failed to query stale unack alerts: %w", err)
+	}
+	for _, a := range staleUnack {
+		log.Printf("WARNING: AUDIT-031 auto-archiving stale unacked alert ID=%d device_id=%d severity=%s message=%q timestamp=%s (older than %d days; an operator should have acked this)",
+			a.ID, a.DeviceID, a.Severity, a.Message, a.Timestamp.Format(time.RFC3339), ret.Days(ret.UnackAlertDays))
+	}
+	if len(staleUnack) > 0 {
+		var ids []uint
+		for _, a := range staleUnack {
+			ids = append(ids, a.ID)
+		}
+		if err := d.db.Where("id IN ?", ids).Delete(&models.Alert{}).Error; err != nil {
+			return fmt.Errorf("failed to cleanup stale unack alerts: %w", err)
+		}
 	}
 
 	return nil
