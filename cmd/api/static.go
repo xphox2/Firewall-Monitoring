@@ -24,6 +24,16 @@
 // `staticFiles` declaration to `internal/webassets/`. The
 // directory layout should follow the second consumer, not the
 // first.
+//
+// AUDIT-139: the `//go:embed static` directive ships JS as-is.
+// Pre-minification, `admin-main.js` is 213 KB. The audit's
+// recommendation is an `esbuild` step that minifies into
+// `cmd/api/static/js/dist/` and has the embed point there.
+// That fix is a build-pipeline project (esbuild as a Makefile
+// dev-dep, CI step, dist directory layout, source-map
+// shipping), deferred. The current `//go:embed static` is
+// correct as long as the source-of-truth layout is
+// `cmd/api/static/`.
 package main
 
 import "embed"
