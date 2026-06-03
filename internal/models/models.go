@@ -611,17 +611,23 @@ type FlowSample struct {
 	SamplerAddress string    `json:"sampler_address"`
 	SequenceNumber uint32    `json:"sequence_number"`
 	SamplingRate   uint32    `json:"sampling_rate"`
-	SrcAddr        string    `json:"src_addr"`
-	DstAddr        string    `json:"dst_addr"`
-	SrcPort        uint16    `json:"src_port"`
-	DstPort        uint16    `json:"dst_port"`
-	Protocol       uint8     `json:"protocol"`
-	Bytes          uint64    `json:"bytes"`
-	Packets        uint64    `json:"packets"`
-	InputIfIndex   uint32    `json:"input_if_index"`
-	OutputIfIndex  uint32    `json:"output_if_index"`
-	TCPFlags       uint8     `json:"tcp_flags"`
-	CreatedAt      time.Time `json:"created_at"`
+	// AUDIT-034: idx_flow_src_addr / idx_flow_dst_addr back the connection
+	// flow-stats queries, which filter with `src_addr LIKE ? OR dst_addr LIKE ?`
+	// (cidrToLikePattern builds `192.168.1.%`-style prefixes). Without these
+	// btree indexes every connection stats click was a full scan of
+	// flow_samples. A prefix `LIKE 'x%'` is sargable on a btree, so these help
+	// on both Postgres and SQLite.
+	SrcAddr       string    `json:"src_addr" gorm:"index:idx_flow_src_addr"`
+	DstAddr       string    `json:"dst_addr" gorm:"index:idx_flow_dst_addr"`
+	SrcPort       uint16    `json:"src_port"`
+	DstPort       uint16    `json:"dst_port"`
+	Protocol      uint8     `json:"protocol"`
+	Bytes         uint64    `json:"bytes"`
+	Packets       uint64    `json:"packets"`
+	InputIfIndex  uint32    `json:"input_if_index"`
+	OutputIfIndex uint32    `json:"output_if_index"`
+	TCPFlags      uint8     `json:"tcp_flags"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }
