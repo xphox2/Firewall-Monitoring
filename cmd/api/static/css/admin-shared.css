@@ -4,7 +4,7 @@
 .loading, .empty, .empty-state {
     text-align: center;
     padding: 30px;
-    color: #484f58;
+    color: #8b949e;
 }
 
 .empty-icon {
@@ -939,7 +939,7 @@ tr:hover {
 }
 
 .sidebar-header .subtitle {
-    color: #484f58;
+    color: #8b949e;
     font-size: 0.7rem;
     margin-top: 2px;
 }
@@ -959,7 +959,7 @@ tr:hover {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: #484f58;
+    color: #8b949e;
     padding: 4px 12px 6px;
 }
 

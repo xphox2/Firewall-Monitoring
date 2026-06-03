@@ -471,7 +471,7 @@
             body.innerHTML = '<div class="vpn-grid">' + all.map(function(v) {
                 return '<div class="vpn-card"><div class="vpn-name">' + escapeHtml(v.tunnel_name) + '</div>' +
                     '<span class="vpn-status ' + (v.status || 'down') + '">' + (v.status || 'down').toUpperCase() + '</span> ' +
-                    '<span style="color:#484f58;font-size:0.6rem;">' + escapeHtml(v.deviceName) + '</span></div>';
+                    '<span style="color:#8b949e;font-size:0.6rem;">' + escapeHtml(v.deviceName) + '</span></div>';
             }).join('') + '</div>';
         });
     }
