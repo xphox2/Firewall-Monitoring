@@ -16,6 +16,12 @@
         .btn.secondary:hover { background: #30363d; }
         tr:hover { background: #1c2128; }
         .tab-btn:hover { color: #e6edf3; }
+        /* AUDIT-049: no .tab-btn.active rule existed, so switchTab()'s
+           classList.add('active') had no visual effect and the active
+           highlight was hardcoded as Tailwind utilities on the Servers
+           button (broken once another tab was clicked). This rule drives
+           the highlight for whichever tab carries .active. */
+        .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
     </style>
 </head>
 <body>
@@ -42,7 +48,7 @@
         <div id="alertMessage"></div>
 
         <div class="flex gap-1 mb-5 border-b border-[#30363d]">
-            <button class="tab-btn active bg-none border-none text-[#58a6ff] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-[#58a6ff] mb-[-1px]" data-tab="servers">Servers</button>
+            <button class="tab-btn active bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="servers">Servers</button>
             <button class="tab-btn bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="channels">Channels</button>
             <button class="tab-btn bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="commands">Commands</button>
             <button class="tab-btn bg-none border-none text-[#8b949e] px-2.5 py-2.5 cursor-pointer text-sm border-b-2 border-transparent mb-[-1px]" data-tab="send">Send Message</button>

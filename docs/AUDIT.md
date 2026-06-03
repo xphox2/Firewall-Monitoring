@@ -1183,6 +1183,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-046 | `probes.html` modals render on first paint | 0.10.293 | 64efad9 | Inline `.modal:not(.hidden) { display: flex; }` replaced with `.modal.active { display: flex; }`. Neither `#probe-modal` nor `#deploy-modal` ever carries a `.hidden` class (`AdminCommon.openModal()` toggles `.active`, the admin-shared.css convention), so the old rule (specificity 0,2,0) beat the base `.modal { display: none }` and forced both modals visible on first paint — dormant only because the operator immediately closes them. `TestProbesModal_UsesActiveClass_AUDIT046` in `internal/shell/` pins the `:not(.hidden)` form is gone, the `.active` form is present, and the audit ID is referenced. |
 | AUDIT-047 | Logout link is dead on `/admin/irc` | 0.10.294 | db0b62f | `admin-irc.js` delegated-click `switch` had no `case 'logout'`, so the sidebar Logout link (`data-action="logout"`) navigated to `#` and stayed on the page. Added `case 'logout': AdminCommon.doLogout(); return;` — this file uses the full `AdminCommon` reference (no `AC` alias defined here). `TestIRCLogout_HasLogoutCase_AUDIT047` in `internal/shell/` pins the case, the reference, and the audit ID. |
 | AUDIT-048 | `.section-tab` redefines display, nullifying `.hidden` fix | 0.10.295 | 25ad013 | Inline `.section-tab { display: inline-block }` (loaded after admin-shared.css) overrode `.hidden { display: none }` on `#tab-phase2` / `#tab-flows`, so the v0.10.230 `classList.toggle('hidden', ...)` fix was a no-op. Added `.section-tab.hidden { display: none !important; }` to the same inline `<style>` block. `TestSectionTab_HiddenOverride_AUDIT048` in `internal/shell/` pins the rule and the audit ID. |
+| AUDIT-049 | IRC tab nav active state never updates | 0.10.296 | (pending) | No `.tab-btn.active` rule existed, so `switchTab()`'s `classList.add('active')` had no visual effect; the highlight was hardcoded as Tailwind utilities on the Servers button and never moved. Added `.tab-btn.active { color:#58a6ff; border-bottom-color:#58a6ff; }` and normalized the Servers button to the same class list as the other tabs. `TestIRCTab_ActiveRuleExists_AUDIT049` in `internal/shell/` pins the rule, the removal of the hardcoded border utility, and the audit ID. |
 
 ---
 
@@ -1254,6 +1255,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-046 — probes.html modals use .modal.active (no longer render on first paint) — v0.10.293 — 64efad9 — opencode
 2026-06-03 — AUDIT-047 — add logout case to admin-irc.js delegated switch (dead Logout link) — v0.10.294 — db0b62f — opencode
 2026-06-03 — AUDIT-048 — .section-tab.hidden override so JS toggle hides tabs — v0.10.295 — 25ad013 — opencode
+2026-06-03 — AUDIT-049 — add .tab-btn.active rule + normalize Servers button — v0.10.296 — (pending) — opencode
 ```
 
 ---
