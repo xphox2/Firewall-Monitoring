@@ -1,4 +1,37 @@
 # Changelog
+## [0.10.269] - 2026-06-02
+
+### Fixed — AUDIT-157: dead ADMIN_SECRET_KEY env var removed
+
+Pre-AUDIT, `config.env.example` documented `ADMIN_SECRET_KEY=` as a configuration knob, and `internal/config/config.go` loaded it into a `ServerConfig.AdminSecretKey` field. **No code path in the entire codebase ever read that field.** It was set, persisted, and ignored — pure dead state.
+
+This was a small but real footgun: an operator reading the example file would set `ADMIN_SECRET_KEY=somevalue`, expect the system to use it, and find that it does nothing. The bug-class it invited is "I thought I configured X but actually X isn't wired up" — a configuration-tried-but-silent failure that's hard to debug.
+
+**The fix** (two parts):
+
+1. `internal/config/config.go` — removed `AdminSecretKey string` from `ServerConfig` and the `getEnv("ADMIN_SECRET_KEY", "")` line from the `Load()` struct literal. Future agents who reference `cfg.Server.AdminSecretKey` will get a compile error, which is the right kind of failure.
+2. `config.env.example` — removed the `ADMIN_SECRET_KEY=` line (and the comment block that introduced it).
+
+**Why the field was there in the first place**
+
+The audit doc describes it as a leftover from an earlier "admin secret" concept that got replaced by the AUDIT-008 secrets flow (`SECRETS_DIR/.jwt-secret` for the JWT key, `SECRETS_DIR/.admin-password` for the admin password). The leftover variable in the example file was the only surviving artifact.
+
+**Regression test** (`internal/config/config_audit157_test.go`, new):
+
+`TestNoDeadAdminSecretKey_AUDIT157` — two-axis regression:
+
+- **Static check** — reads `config.go` and asserts neither `"ADMIN_SECRET_KEY"` nor `"AdminSecretKey"` appears in the source. A future agent who copy-pastes an example back into the file (or a future handler that resurrects the field) fails here immediately, before the change can ship.
+- **Runtime check** — sets `ADMIN_SECRET_KEY` to a unique sentinel value, calls `Load()`, and asserts the sentinel doesn't surface in the rendered `Server` block. This catches the subtle case where a future agent re-adds the field and wires it up to *something* (e.g. logs it, includes it in a debug dump) but the value is still effectively unused from the operator's perspective.
+
+The two axes are complementary: the static check is the strict gate (the field/env var must not exist), the runtime check is the defense-in-depth (if a future agent re-adds them in a non-load path, the sentinel test catches it).
+
+**What this does NOT do (deferred)**
+
+- **Re-introduce ADMIN_SECRET_KEY as a real knob** (e.g. for a future SSO callback HMAC). The deferred feature would re-add the field, and this test would need to be updated to reflect the new contract. The test name and the comment in the file are the place to make that change.
+- **Audit other dead-config candidates.** AUDIT-154 (`ParseHours`), AUDIT-155 (`FilterAllowedFields`), AUDIT-156 (`validVendors`) are similar — env vars / fields / maps that may be set-but-unused. They get their own audit commits in a future batch.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 189 tests, +1 AUDIT-157), `gofmt -l .`, `go vet ./...` all clean. Config-only change in `internal/config/config.go` + `config.env.example` + new test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.268] - 2026-06-02
 
 ### Fixed — AUDIT-148: LIKE clauses now carry ESCAPE '\' modifier (defense in depth)

@@ -33,7 +33,6 @@ type ServerConfig struct {
 	EnableTLS      bool
 	TLSCertFile    string
 	TLSKeyFile     string
-	AdminSecretKey string
 	JWTSecretKey   string
 	EncryptionKey  string
 	CookieSecure   bool
@@ -180,7 +179,6 @@ func Load() *Config {
 			EnableTLS:            getBoolEnv("SERVER_ENABLE_TLS", false),
 			TLSCertFile:          getEnv("SERVER_TLS_CERT", "/etc/firewall-mon/tls.crt"),
 			TLSKeyFile:           getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
-			AdminSecretKey:       getEnv("ADMIN_SECRET_KEY", ""),
 			JWTSecretKey:         getEnv("JWT_SECRET_KEY", ""),
 			EncryptionKey:        getEnv("ENCRYPTION_KEY", ""),
 			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
