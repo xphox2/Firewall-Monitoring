@@ -74,6 +74,18 @@ type DatabaseConfig struct {
 	User     string
 	Password string
 	SSLMode  string
+	// AUDIT-037: per-connection statement timeout (Postgres
+	// only). Pre-fix a single slow query could hold a
+	// connection for tens of seconds, blocking other
+	// handlers from getting one. The Postgres-side
+	// `statement_timeout` (set via the connection string's
+	// `options=-c statement_timeout=...`) is the right place
+	// to enforce this — it's enforced by the server, not the
+	// client, so it survives slow application code that
+	// forgets to set a `context.WithTimeout`. Default 30s,
+	// configurable via DB_STATEMENT_TIMEOUT. Set to 0 to
+	// disable (not recommended for production).
+	StatementTimeout time.Duration
 }
 
 type RetentionConfig struct {
@@ -228,6 +240,10 @@ func Load() *Config {
 			User:     getEnv("DB_USER", "firewall_mon"),
 			Password: getEnv("DB_PASSWORD", ""),
 			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
+			// AUDIT-037: per-connection statement timeout
+			// (Postgres only). 0 = disabled. See the field
+			// doc for the rationale.
+			StatementTimeout: getDurationEnv("DB_STATEMENT_TIMEOUT", 30*time.Second),
 		},
 		Retention: RetentionConfig{
 			DefaultDays:        getIntEnv("RETENTION_DEFAULT_DAYS", 90),

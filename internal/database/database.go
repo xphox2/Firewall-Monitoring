@@ -61,6 +61,22 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		cfg.Database.Host, cfg.Database.Port,
 		pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),
 		pgQuote(cfg.Database.Name), cfg.Database.SSLMode)
+	// AUDIT-037: enforce a per-connection statement timeout
+	// server-side. The timeout is set via the connection
+	// string's `options=-c statement_timeout=...` so it
+	// applies to every connection the pool opens (not just
+	// the first one). The server-side enforcement survives
+	// application code that forgets to set a
+	// `context.WithTimeout` — AUDIT-032's
+	// `WithContext(c.Request.Context())` rollout covers the
+	// in-application side; this is the belt-and-suspenders
+	// backstop. 0 disables the timeout (not recommended for
+	// production; useful for migrations that need to run
+	// large DDL).
+	if cfg.Database.StatementTimeout > 0 {
+		dsn = fmt.Sprintf("%s options='-c statement_timeout=%dms'",
+			dsn, cfg.Database.StatementTimeout.Milliseconds())
+	}
 	db, err = gorm.Open(postgres.Open(dsn), gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)

@@ -1,4 +1,36 @@
 # Changelog
+## [0.10.280] - 2026-06-02
+
+### Fixed — AUDIT-037: per-connection statement_timeout enforced server-side (default 30s)
+
+`NewDatabase` opened a Postgres pool with no per-connection statement timeout. A single slow query (an accidental full-table scan, a misbehaving chart endpoint, a lock wait) could hold a connection for tens of seconds, blocking other handlers from getting one and eventually exhausting the pool.
+
+**The fix** (two parts):
+
+1. **`internal/config/config.go`** — new `DatabaseConfig.StatementTimeout time.Duration` field (default 30s, from `DB_STATEMENT_TIMEOUT` env var). 0 = disabled (documented escape hatch for migrations that need to run large DDL).
+
+2. **`internal/database/database.go`** — when `StatementTimeout > 0`, the DSN is suffixed with `options='-c statement_timeout=NNNms'` so the timeout is enforced by the Postgres server for every connection the pool opens. Server-side enforcement survives application code that forgets to set a `context.WithTimeout` (the AUDIT-032 `WithContext(c.Request.Context())` rollout covers the in-application side; this is the backstop).
+
+**Wire format / migration**
+
+- No schema change. No API change. Existing deployments upgrade without any action; the new 30s default applies on the next connection.
+- Operators who set `DB_STATEMENT_TIMEOUT=0` get a pool with no statement timeout. The CHANGELOG and `config.env.example` both note "not recommended for production" — useful for one-shot migrations that need a long DDL window.
+
+**Regression tests** (`internal/database/statementtimeout_audit037_test.go`, new — 3 tests):
+
+- `TestNewDatabaseStatementTimeout_Default30s_AUDIT037` — pins the DSN-construction behavior: 30s config → DSN contains `options=...statement_timeout=30000ms...`. (The test replicates the DSN-formatting code in isolation rather than calling `NewDatabase` directly, because `NewDatabase` opens a real Postgres connection and the package's tests run against sqlite. A future refactor that changes the DSN format fails here loudly.)
+- `TestNewDatabaseStatementTimeout_DisabledWhenZero_AUDIT037` — `StatementTimeout=0` must NOT carry the `options=` clause. The 0-means-disabled semantic is documented and tested; a future "0 means default" change would fail this test.
+- `TestNewDatabaseStatementTimeout_CustomDuration_AUDIT037` — the value flows through end-to-end: 5s → 5000ms. Catches a future refactor that drops the `.Milliseconds()` conversion.
+
+**What this does NOT do (deferred)**
+
+- **`WithContext(c.Request.Context())` rollout on every chart query** (AUDIT-032). The two are complementary: `WithContext` cancels a query when the HTTP client disconnects (a browser tab close); `statement_timeout` cancels a query after a fixed wall-clock deadline regardless of client state. The audit doc said "covered by AUDIT-032", so we don't double up here.
+- **Per-query deadline differentiation** (e.g. 5s for chart endpoints, 30s for admin endpoints, 5min for cleanup). The single-knob design is the right starting point; per-route tuning is a future enhancement.
+- **Statement timeout for SQLite.** SQLite's `?mode=ro` + busy_timeout are different knobs. The audit was Postgres-specific. SQLite is the test backend only; production uses Postgres.
+- **Per-transaction vs per-statement timeout.** `statement_timeout` is per-statement; `idle_in_transaction_session_timeout` is a different knob for a different problem (a connection that holds a transaction open without running queries). Out of scope for AUDIT-037.
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 225 tests, +3 AUDIT-037), `gofmt -l .`, `go vet ./...` all clean. Code + config + test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.279] - 2026-06-02
 
 ### Fixed — AUDIT-031: stale unacked alerts are now auto-archived with a warning log
