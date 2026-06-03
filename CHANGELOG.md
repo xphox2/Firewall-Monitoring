@@ -1,4 +1,43 @@
 # Changelog
+## [0.10.257] - 2026-06-02
+
+### Fixed — AUDIT-006 (shutdown half): batcher no longer loses items at Stop, has a Dropped counter
+
+The pre-AUDIT batcher had a subtle shutdown race documented in `docs/AUDIT.md`:
+
+> `Stop()` calls `Flush()` after `<-b.doneCh` returns, racing with concurrent `Add()` from handlers.
+
+The trace: HTTP handler in flight → handler calls `b.Add()` → concurrent `b.Stop()` closes `stopCh` → goroutine sees `stopCh`, immediately closes `doneCh`, exits → `Stop()`'s `<-doneCh` unblocks → handler's `Add` runs (appends to buf) → `Stop()` calls `Flush()` (flushes) → `Stop()` returns. Then a SECOND handler calls `Add` AFTER Stop returned and the goroutine is gone — the items sit in `buf` until process exit and are lost.
+
+Two changes close the race:
+
+1. **`stopped atomic.Bool` set BEFORE close(stopCh).** `Add` checks the atomic on entry (fast path) AND under the lock (re-check to defeat the read-then-stop interleave). Items added after `Stop()` is called are rejected and counted on `Dropped`. The handler always returns quickly — no infinite waits.
+2. **Final Flush runs inside the goroutine BEFORE close(doneCh).** `Stop()` blocks on `<-doneCh` and so returns only after the final flush has completed. The post-`<-doneCh` Flush in `Stop` is gone — that's what was racing with concurrent Add.
+
+Plus three operational features:
+
+- `Stop()` is now idempotent via `CompareAndSwap` — double-Stop never panics on close-of-closed-channel.
+- New `Dropped() int64` method returns the count of items rejected after Stop. Wired into the future `/metrics` endpoint (AUDIT-077).
+- The atomic-recheck-under-lock pattern is documented inline because it's a common subtle mistake (single fast-path check leaks items past Stop's "everything flushed" guarantee).
+
+Regression tests (`internal/database/batcher_test.go`, new — replaces the no-tests-at-all state for this file):
+
+- `TestBatcher_AddFlushesAtMaxSize` — buffer triggers immediate flush at maxSize.
+- `TestBatcher_StopDrainsBuffer_AUDIT006` — 10 items added then Stop → all 10 reach flushFn before Stop returns.
+- `TestBatcher_AddAfterStopRejected_AUDIT006` — 3 items added post-Stop → none reach flushFn, all counted in Dropped.
+- `TestBatcher_StopIdempotent` — second + third Stop calls don't panic.
+- `TestBatcher_ConcurrentAddDuringStop_AUDIT006` — 10 goroutines × 100 items × Stop mid-stride → conservation invariant: `len(flushed) + Dropped() == total`. Some items will land in flushed, some in dropped depending on interleave; none are silently lost.
+- `TestBatcher_FlushOnTick` — items below maxSize get flushed by the ticker.
+- `TestBatcher_FlushErrorLoggedNotPropagated` — flushFn returning error doesn't crash the batcher.
+- `TestBatcher_DroppedReflectsExactCount` — 47 post-Stop adds → Dropped() == 47.
+
+**What this does NOT do (deferred — AUDIT-006 durability half):**
+
+- No write-ahead log to disk. SIGKILL / OOM still loses the unflushed in-memory buffer (up to `maxSize` × `flushInterval` worth of data). The fix requires designing an on-disk format with fsync and a recovery-on-startup path; that's a separate, larger commit. For now the shutdown-race window is closed (the realistic data-loss case under graceful shutdown / restart), and operators can avoid the SIGKILL case by not using SIGKILL.
+- No `maxBytes` cap. Currently the buffer can grow without bound if flushFn is failing — by `maxSize` items per iteration. Less urgent than the shutdown race; tracked separately.
+
+QA: `go build ./...`, `go test -count=1 ./...` (8 pkgs, 107 tests, +8 batcher), `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.256] - 2026-06-02
 
 ### Fixed — AUDIT-007: cross-process poller leader lock
