@@ -1,4 +1,33 @@
 # Changelog
+## [0.10.251] - 2026-06-02
+
+### Fixed — AUDIT-083: per-IP rate limiter is now capped + has a Stop() hook
+
+`internal/api/middleware/middleware.go`'s `ipRateLimiter` had two scaling defects:
+
+1. **Map had no size cap.** An attacker spraying unique source IPs (trivial with X-Forwarded-For when behind an untrusted proxy, or an IPv6 /64 walk) could grow `limiters` to millions of entries and OOM the process. The 5-minute stale-prune loop took 5 minutes to react, far longer than any flood.
+2. **Cleanup goroutine had no shutdown hook.** Started with `go rl.cleanup()` at construction, never stopped. Process exit terminated it (via OS), but tests that constructed-and-discarded limiters leaked one goroutine per test — and any future code that wants to recycle a limiter at runtime had no way to release the resource.
+
+Both fixed:
+
+- New `maxRateLimiterEntries = 50000` cap (≈ 7.5 MiB headroom). `getLimiter` evicts the LRU entry when at cap, before inserting the new one. The LRU is a `container/list` doubly-linked list — `MoveToFront` on access, `Back()` is the eviction target. Amortized O(1).
+- New `Stop()` method closes `rl.quit`; the cleanup goroutine `select`s on `ticker.C` or `quit` and returns cleanly.
+- Reworked stale-prune loop to walk the LRU from the back (oldest first) and stop on the first not-expired entry, instead of scanning the whole map — O(stale-count) instead of O(map-size).
+
+Wire-through note: `RateLimiter`, `PublicRateLimiter`, and `LoginRateLimiter` still return raw `gin.HandlerFunc`s and do not expose Stop. The cap addresses the OOM half of the audit; surfacing Stop on the public API requires returning a struct that bundles handler + stop, which is a larger refactor not in scope here. Tracked as a follow-up.
+
+Regression tests (`internal/api/middleware/ratelimit_test.go`, new):
+
+- `TestIPRateLimiter_GetLimiter_NewIPCreatesLimiter` — basic happy path.
+- `TestIPRateLimiter_GetLimiter_SameIPReusesLimiter` — repeated calls share state (rate limits accumulate).
+- `TestIPRateLimiter_LRUEviction_AUDIT083` — fills cap, touches one IP to make it MRU, asserts the LRU (not the touched one) is evicted on overflow.
+- `TestIPRateLimiter_LRUEviction_ManyOverflow` — 3 × cap inserts; map size never exceeds cap; last `cap` IPs survive.
+- `TestIPRateLimiter_Cleanup_RemovesStale` — back-dates 3 entries, drives a cleanup pass inline, asserts the fresh entry survives and the 3 stale ones are gone.
+- `TestIPRateLimiter_Stop_TerminatesGoroutine` — second `Stop()` panics on close-of-closed-channel (proves the first Stop actually closed it).
+- `TestIPRateLimiter_Concurrent` — 100 goroutines × 100 calls under cap=50; final size ≤ cap; lru length == map length (no divergence under race).
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.250] - 2026-06-02
 
 ### Fixed — AUDIT-012: trap receiver is no longer an open relay

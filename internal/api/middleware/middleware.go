@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"container/list"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,23 +20,39 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// maxRateLimiterEntries caps the per-IP table size. AUDIT-083: without a
+// cap, an attacker spraying unique source IPs (trivially done from an EC2
+// metadata-style address pool or via X-Forwarded-For spoofing when behind
+// an untrusted proxy) grows the table to millions of entries and OOMs the
+// process. 50,000 entries × ~150 bytes = 7.5 MiB, comfortable headroom for
+// any reasonable fleet.
+const maxRateLimiterEntries = 50000
+
 type ipRateLimiter struct {
-	limiters map[string]*rateLimiterEntry
-	mu       sync.RWMutex
-	rate     rate.Limit
-	burst    int
+	limiters   map[string]*rateLimiterEntry
+	lru        *list.List // doubly-linked LRU: front = most recent, back = oldest
+	mu         sync.Mutex
+	rate       rate.Limit
+	burst      int
+	maxEntries int
+	quit       chan struct{}
 }
 
 type rateLimiterEntry struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
+	ip       string
+	elem     *list.Element // pointer to this entry's node in rl.lru
 }
 
 func newIPRateLimiter(r rate.Limit, burst int) *ipRateLimiter {
 	rl := &ipRateLimiter{
-		limiters: make(map[string]*rateLimiterEntry),
-		rate:     r,
-		burst:    burst,
+		limiters:   make(map[string]*rateLimiterEntry),
+		lru:        list.New(),
+		rate:       r,
+		burst:      burst,
+		maxEntries: maxRateLimiterEntries,
+		quit:       make(chan struct{}),
 	}
 	go rl.cleanup()
 	return rl
@@ -45,28 +62,72 @@ func (rl *ipRateLimiter) getLimiter(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	entry, exists := rl.limiters[ip]
-	if !exists {
-		limiter := rate.NewLimiter(rl.rate, rl.burst)
-		rl.limiters[ip] = &rateLimiterEntry{limiter: limiter, lastSeen: time.Now()}
-		return limiter
+	if entry, exists := rl.limiters[ip]; exists {
+		entry.lastSeen = time.Now()
+		rl.lru.MoveToFront(entry.elem)
+		return entry.limiter
 	}
-	entry.lastSeen = time.Now()
-	return entry.limiter
+
+	// AUDIT-083: cap the map. When full, evict the least-recently-used
+	// entry (back of the LRU list) before adding the new one. Single-eviction
+	// per insert keeps amortized O(1); the next call from the evicted IP
+	// will simply get a fresh limiter (with full burst), which is the
+	// "fail-open for an unknown IP" semantics this middleware already had.
+	if len(rl.limiters) >= rl.maxEntries {
+		if oldest := rl.lru.Back(); oldest != nil {
+			oldEntry := oldest.Value.(*rateLimiterEntry)
+			delete(rl.limiters, oldEntry.ip)
+			rl.lru.Remove(oldest)
+		}
+	}
+
+	limiter := rate.NewLimiter(rl.rate, rl.burst)
+	entry := &rateLimiterEntry{
+		limiter:  limiter,
+		lastSeen: time.Now(),
+		ip:       ip,
+	}
+	entry.elem = rl.lru.PushFront(entry)
+	rl.limiters[ip] = entry
+	return limiter
 }
 
 func (rl *ipRateLimiter) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for ip, entry := range rl.limiters {
-			if time.Since(entry.lastSeen) > 10*time.Minute {
-				delete(rl.limiters, ip)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-10 * time.Minute)
+			// Walk from back (oldest). Stop on first entry newer than
+			// cutoff — LRU order guarantees no older entries remain after it.
+			for elem := rl.lru.Back(); elem != nil; {
+				entry := elem.Value.(*rateLimiterEntry)
+				if entry.lastSeen.After(cutoff) {
+					break
+				}
+				prev := elem.Prev()
+				delete(rl.limiters, entry.ip)
+				rl.lru.Remove(elem)
+				elem = prev
 			}
+			rl.mu.Unlock()
+		case <-rl.quit:
+			return
 		}
-		rl.mu.Unlock()
 	}
+}
+
+// Stop terminates the background cleanup goroutine. AUDIT-083: pre-fix this
+// goroutine ran for the lifetime of the process with no shutdown hook. Now
+// it respects quit so tests don't leak goroutines and production can release
+// the limiter resources at graceful shutdown.
+//
+// Safe to call once. A second call panics on close-of-closed-channel — by
+// design (matches container/list's idiom of "Stop is final").
+func (rl *ipRateLimiter) Stop() {
+	close(rl.quit)
 }
 
 func RateLimiter(cfg *config.Config) gin.HandlerFunc {

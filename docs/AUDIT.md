@@ -1133,7 +1133,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-015 | CORS `*` allowed with `Allow-Credentials: true` | 0.10.247 | 210d4a8 | New `parseCORSAllowedOrigins` helper rejects `*` (anywhere in the list, after trim) with a clear error. `CORS()` calls `log.Fatalf` so the server refuses to start with an unsafe config. 14-case test suite in `internal/api/middleware/cors_test.go` (5 wildcard-rejection scenarios + 9 happy-path edge cases). First test file for the middleware package. |
 | AUDIT-086 | `cmd/api/main.go` listen goroutine uses `log.Fatal` | 0.10.248 | b8357db | Listener goroutine now surfaces errors on a buffered `errCh`. Main goroutine `select`s on either the signal channel or `errCh`, then runs the graceful-shutdown sequence so the deferred `ircManager.Stop` / `snmpClient.Close` / `cancel` run before exit. `server.Shutdown` failure also no longer `log.Fatal`s. No automated test — would need integration-level harness. |
 | AUDIT-013 | `TestIRCServer` SSRF — odd one out among Test* endpoints | 0.10.249 | c23ed1b | `handlers_irc.go:TestIRCServer` now runs the server host through `isValidExternalIP` (same helper used by `TestProbeConnection` and `TestEmail`) and validates the port range. 16-case regression test in `handlers_irc_audit013_test.go` covers IPv4/IPv6 loopback, unspecified, link-local (incl. AWS metadata), RFC 1918, RFC 4193, `localhost` name, unresolvable hosts, and bad ports. First test file for the IRC handlers. |
-| AUDIT-012 | Trap receiver binds 0.0.0.0:162 with empty community string | 0.10.250 | (pending) | (1) `TrapReceiver.Start` now fails closed if `SNMP_TRAP_COMMUNITY` is empty, (2) constant-time `subtle.ConstantTimeCompare` community check, (3) per-source-IP token-bucket rate limit (10/s sustained, burst 50, map capped at 10k IPs) applied BEFORE community check. 5 regression tests in `internal/snmp/trap_test.go` cover empty-community refusal, burst-then-refill, per-IP isolation, map cap, and concurrency-safe accounting. First test file for the SNMP package. |
+| AUDIT-012 | Trap receiver binds 0.0.0.0:162 with empty community string | 0.10.250 | 0a5a383 | (1) `TrapReceiver.Start` now fails closed if `SNMP_TRAP_COMMUNITY` is empty, (2) constant-time `subtle.ConstantTimeCompare` community check, (3) per-source-IP token-bucket rate limit (10/s sustained, burst 50, map capped at 10k IPs) applied BEFORE community check. 5 regression tests in `internal/snmp/trap_test.go` cover empty-community refusal, burst-then-refill, per-IP isolation, map cap, and concurrency-safe accounting. First test file for the SNMP package. |
+| AUDIT-083 | Rate limiter cleanup goroutine leaks, no map cap | 0.10.251 | (pending) | `ipRateLimiter` map capped at 50,000 entries with `container/list`-backed LRU eviction (amortized O(1)). New `Stop()` method closes a `quit` channel that the cleanup goroutine selects on. Wired-through Stop on the public `RateLimiter/PublicRateLimiter/LoginRateLimiter` handlers is a follow-up (would change the public API). 7 regression tests in `ratelimit_test.go`. |
 
 ---
 
@@ -1157,7 +1158,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-02 — AUDIT-015 — reject CORS=* at startup (Allow-Credentials always true) — v0.10.247 — 210d4a8 — opencode
 2026-06-02 — AUDIT-086 — HTTP listener errors no longer bypass graceful shutdown — v0.10.248 — b8357db — opencode
 2026-06-02 — AUDIT-013 — TestIRCServer SSRF check (isValidExternalIP) — v0.10.249 — c23ed1b — opencode
-2026-06-02 — AUDIT-012 — trap receiver fail-closed community + per-IP rate limit — v0.10.250 — (pending) — opencode
+2026-06-02 — AUDIT-012 — trap receiver fail-closed community + per-IP rate limit — v0.10.250 — 0a5a383 — opencode
+2026-06-02 — AUDIT-083 — rate limiter LRU cap + Stop() hook — v0.10.251 — (pending) — opencode
 ```
 
 ---
