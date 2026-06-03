@@ -110,9 +110,12 @@
         </div>
     </div>
 
-    <script src="/static/js/chart.umd.min.js"></script>
-    <script src="/static/js/chartjs-plugin-zoom.min.js"></script>
-    <script src="/static/js/gridstack-all.min.js"></script>
+    <!-- AUDIT-052: defer the ~290 KB of libs so they don't block first paint
+         on the public wallboard. defer scripts execute in document order, and
+         public-dashboard.js (also defer, below) still runs after all three. -->
+    <script defer src="/static/js/chart.umd.min.js"></script>
+    <script defer src="/static/js/chartjs-plugin-zoom.min.js"></script>
+    <script defer src="/static/js/gridstack-all.min.js"></script>
     <script defer src="/static/js/public-dashboard.js"></script>
 </body>
 </html>
