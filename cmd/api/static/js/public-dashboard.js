@@ -232,6 +232,13 @@
     }
 
     function resetLayout() {
+        // AUDIT-063: confirm before wiping the operator's saved widget layout —
+        // a single misclick previously destroyed it. A native confirm() is used
+        // deliberately instead of pulling admin-common.js (AdminCommon.confirm)
+        // into the public wallboard: that 36 KB + its /admin/api load-time fetch
+        // would partly undo the AUDIT-052 first-paint optimization on a page
+        // that is often an unattended TV.
+        if (!window.confirm('Reset dashboard layout? This clears your saved widget arrangement and cannot be undone.')) return;
         localStorage.removeItem(LAYOUT_KEY);
         localStorage.removeItem(HIDDEN_KEY);
         location.reload();
