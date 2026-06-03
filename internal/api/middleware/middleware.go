@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -262,15 +263,41 @@ func SecureHeaders() gin.HandlerFunc {
 	}
 }
 
+// parseCORSAllowedOrigins parses the comma-separated CORS_ALLOWED_ORIGINS
+// env value into a lookup set. AUDIT-015: returns an error if the wildcard
+// "*" is present, because this server always sends
+// `Access-Control-Allow-Credentials: true` and the combination is forbidden
+// by the CORS spec (browsers drop the response) and unsafe (reflecting an
+// arbitrary origin while allowing credentials lets any third-party site
+// issue authenticated cross-origin requests against the cookie-based
+// admin session). Exported for unit-test access.
+func parseCORSAllowedOrigins(raw string) (map[string]bool, error) {
+	origins := make(map[string]bool)
+	if raw == "" {
+		return origins, nil
+	}
+	for _, o := range strings.Split(raw, ",") {
+		origin := strings.TrimSpace(o)
+		if origin == "" {
+			continue
+		}
+		if origin == "*" {
+			return nil, fmt.Errorf("CORS_ALLOWED_ORIGINS contains '*' but this server always sends Access-Control-Allow-Credentials: true; the combination is forbidden by the CORS spec and would let any third-party site issue authenticated cross-origin requests. Set CORS_ALLOWED_ORIGINS to an explicit comma-separated allow-list of scheme+host[:port] origins, or unset it to disable cross-origin entirely")
+		}
+		origins[origin] = true
+	}
+	return origins, nil
+}
+
 // CORS restricts cross-origin requests. By default only same-origin is allowed.
 // Set CORS_ALLOWED_ORIGINS env var to a comma-separated list to allow specific origins.
+//
+// AUDIT-015: a wildcard "*" entry is REJECTED at startup because this handler
+// always sends `Access-Control-Allow-Credentials: true`. See parseCORSAllowedOrigins.
 func CORS(cfg *config.Config) gin.HandlerFunc {
-	allowedOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
-	origins := make(map[string]bool)
-	if allowedOrigins != "" {
-		for _, o := range strings.Split(allowedOrigins, ",") {
-			origins[strings.TrimSpace(o)] = true
-		}
+	origins, err := parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	if err != nil {
+		log.Fatalf("config error: %v", err)
 	}
 
 	return func(c *gin.Context) {
@@ -287,7 +314,7 @@ func CORS(cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		if origins[origin] || origins["*"] {
+		if origins[origin] {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")

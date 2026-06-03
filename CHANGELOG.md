@@ -1,4 +1,26 @@
 # Changelog
+## [0.10.247] - 2026-06-02
+
+### Fixed — AUDIT-015: CORS `*` rejected at startup when Allow-Credentials=true
+
+The CORS middleware always sends `Access-Control-Allow-Credentials: true` (cookie-based admin session). Combining that with a wildcard `Access-Control-Allow-Origin: *` is forbidden by the CORS spec (browsers drop the response) AND is dangerous because the old code reflected the requesting origin verbatim when the configured list contained `*` — letting any third-party site issue authenticated cross-origin requests against the admin API once an operator was logged in.
+
+Changes:
+
+- Extracted origin parsing into `parseCORSAllowedOrigins(raw string) (map[string]bool, error)` for testability.
+- The helper returns an error if any entry in `CORS_ALLOWED_ORIGINS` is `*` (after `strings.TrimSpace`).
+- `CORS()` calls `log.Fatalf` on that error so the server refuses to start with an unsafe config.
+- Removed the `origins["*"]` short-circuit from the per-request path (no longer reachable, but defense-in-depth).
+
+Regression tests (`internal/api/middleware/cors_test.go`, new):
+
+- `TestParseCORSAllowedOrigins_WildcardRejected` — 5 sub-cases (bare `*`, `*` mixed with a real origin, `*` with leading/surrounding whitespace, `*` in the middle of a list) all return an error mentioning both `*` and `credentials`.
+- `TestParseCORSAllowedOrigins_ValidInputs` — 9 sub-cases for happy paths and edge cases (empty / whitespace-only / one origin / two origins / surrounding whitespace trimmed / empty entries skipped / trailing comma / port suffix / http vs https as distinct origins) returning the expected map.
+
+`internal/api/middleware` now has its first test file (was 0% coverage — closes part of AUDIT-117).
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Operator action required if they had `CORS_ALLOWED_ORIGINS=*`: replace with an explicit comma-separated allow-list. Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.246] - 2026-06-02
 
 ### Fixed — AUDIT-016: probe registration key compared in constant time
