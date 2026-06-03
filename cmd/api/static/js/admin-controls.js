@@ -17,6 +17,23 @@
  *
  * Every helper is idempotent + safe to call when the target elements are
  * absent (e.g. before a page first renders). No-op rather than throwing.
+ *
+ * AUDIT-127: history.back() doesn't restore the previous filter state.
+ * Each page is a separate URL (e.g. /admin/syslog, /admin/alerts) and the
+ * browser's back button navigates BETWEEN pages, not between filter
+ * states within a page. The choice to use `replaceState` (vs `pushState`)
+ * for filter changes was deliberate — it keeps the back button useful for
+ * page-level navigation and avoids polluting the back stack with a new
+ * entry per slider drag. The trade-off is that filter history is
+ * session-only; reloading the page resets to the URL-default state.
+ *
+ * A future improvement would be a minimal hash-based router that listens
+ * to `hashchange` and re-runs the page's load() callback. The current
+ * shape of admin-main.js (one IIFE per page, each binding its own
+ * filter chip events) would need to lift the load() callbacks out of
+ * the page IIFE into a per-page registry the router can dispatch to.
+ * That's a meaningful refactor and a separate concern from the
+ * filter-pill machinery here.
  */
 (function() {
     'use strict';

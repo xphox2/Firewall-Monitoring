@@ -1,4 +1,42 @@
 # Changelog
+## [0.10.276] - 2026-06-02
+
+### Fixed — AUDIT-127: documented the back-button / filter-state limitation in admin-controls.js
+
+`cmd/api/static/js/admin-controls.js` uses `history.replaceState` for filter changes. The browser back button therefore doesn't restore the previous filter state — each page is a separate URL (`/admin/syslog`, `/admin/alerts`, etc.) and back navigates between pages, not between filter states within a page.
+
+The pre-fix code had a one-line comment ("URL sync is `history.replaceState` (no back-stack pollution).") that didn't explain the back-button behavior. Operators reporting "I changed a filter, hit back, and lost my work" had to read the JS to understand why.
+
+**The fix** (`admin-controls.js`):
+
+A new paragraph in the file-level doc comment explains:
+
+1. **The limitation** — `history.back()` doesn't restore the previous filter state.
+2. **The design intent** — `replaceState` (vs `pushState`) was a deliberate choice: it keeps the back button useful for page-level navigation and avoids polluting the back stack with a new entry per slider drag.
+3. **The trade-off** — filter history is session-only; reloading the page resets to the URL-default state.
+4. **The upgrade path** — a future improvement would be a minimal hash-based router that listens to `hashchange` and re-runs the page's `load()` callback. The note explains what that refactor would entail (lifting the `load()` callbacks out of the per-page IIFE into a per-page registry the router can dispatch to).
+
+The audit's first option ("Implement minimal hash-based or History API router") was a meaningful refactor — its own work — so we chose the second ("accept the limitation and document"). The documentation is in the file itself so a future agent who picks up the router work has a starting point.
+
+**Regression test** (`internal/shell/admincontrols_audit127_test.go`, new):
+
+`TestAdminControls_DocumentsRouterLimitation_AUDIT127` — four-signal static check on the file's doc block:
+
+1. `"AUDIT-127"` — the decision is traceable to the audit doc.
+2. `"history.back"` — the limitation is named.
+3. `"replaceState"` — the design choice is named.
+4. `"minimal hash-based"` — the upgrade path is named.
+
+A future agent who shortens the doc back to the pre-fix one-liner fails here immediately, with a message pointing at the audit.
+
+**What this does NOT do (deferred)**
+
+- **Build the hash-based router.** The audit's first option. Out of scope for AUDIT-127 (the audit doc said "Implement... or accept the limitation and document"). The doc block describes the work; a future commit can implement it. The implementation would lift `load()` callbacks out of per-page IIFEs into a registry — a 200-300 LOC refactor.
+- **Add a `popstate` listener that catches back-button presses.** A partial fix that would update the URL but not re-run the filter. Not worth the complexity without the full router.
+- **Switch to `pushState` for filter changes.** This would fix the back-button case (back would restore the previous filter) but pollute the back stack with one entry per slider drag — a worse UX in the common case (operator just wants to back out of the page, not undo 5 filter changes).
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 213 tests, +1 AUDIT-127), `gofmt -l .`, `go vet ./...` all clean. Doc-only change in `cmd/api/static/js/admin-controls.js` + new test file. No code path affected. Static-binary change → requires rebuild. Server-repo only.
+
 ## [0.10.275] - 2026-06-02
 
 ### Fixed — AUDIT-115: AI agent session-memory files removed from the public tree
