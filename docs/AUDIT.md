@@ -1187,6 +1187,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-050 | `admin-irc.js` is not IIFE-wrapped | 0.10.297 | cacca59 | The file declared `let servers/channels/commands` and every function at top level, leaking them onto `window`. Wrapped the whole file in `(function () { 'use strict'; ... })();` and converted the three top-level declarations to `var`. Minimal body diff (no re-indent); full ES6→ES5 conversion is tracked as AUDIT-131. Safe because irc.html has zero inline `onclick` (all handlers are data-action delegated). `TestIRCIife_Wrapped_AUDIT050` in `internal/shell/` pins the IIFE, strict mode, the `var` conversion, and the audit ID. |
 | AUDIT-051 | `probes.html` Reject uses native `window.prompt()` | 0.10.298 | 1e94946 | `admin-probes.js` rejected via `prompt('Enter rejection reason:')`. Added a `#reject-modal` to probes.html (matching the page's modal styling, labelled textarea) and routed rejection through `AC.openModal` + a `#reject-form` submit handler, with `close-reject-modal` wired into the existing event delegation — mirroring the /admin/probe-pending flow. `TestProbesReject_UsesModal_AUDIT051` in `internal/shell/` pins the removal of `prompt()`, the modal-based JS path, and the modal markup. |
 | AUDIT-052 | Public dashboard libs load WITHOUT `defer` | 0.10.299 | 8b1686f | `chart.umd.min.js`, `chartjs-plugin-zoom.min.js`, `gridstack-all.min.js` (~290 KB) blocked first paint on the public wallboard. Added `defer` to all three; `defer` executes in document order so `public-dashboard.js` (already `defer`) still runs after the libs. `TestPublicDashboard_LibsDeferred_AUDIT052` in `internal/shell/` pins each lib's `defer` and the audit marker. |
+| AUDIT-053 | Dynamic `onclick="..."` in admin-device-detail | 0.10.300 | (pending) | Config-history row buttons (View/Download/Delete) and the two config-modal close buttons used inline `onclick` (only valid under `script-src 'unsafe-inline'`). Converted all five to `data-action` + `data-id`, handled by the existing `AC.delegateEvent` block; the file now has zero inline event attributes. `TestDeviceDetail_NoInlineOnclick_AUDIT053` in `internal/shell/` pins the absence of `onclick=` and the delegated handlers. |
 
 ---
 
@@ -1262,6 +1263,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-050 — IIFE-wrap admin-irc.js (no more global scope leak) — v0.10.297 — cacca59 — opencode
 2026-06-03 — AUDIT-051 — probes.html reject uses styled modal (no window.prompt) — v0.10.298 — 1e94946 — opencode
 2026-06-03 — AUDIT-052 — defer public dashboard libs (chart/zoom/gridstack) — v0.10.299 — 8b1686f — opencode
+2026-06-03 — AUDIT-053 — data-action delegation replaces inline onclick in device-detail — v0.10.300 — (pending) — opencode
 ```
 
 ---

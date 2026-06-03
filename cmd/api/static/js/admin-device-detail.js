@@ -1115,9 +1115,9 @@
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + qualityColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(quality) + '</span></td>' +
                         '<td>' + formatBytes(r.length) + '</td>' +
                         '<td>' +
-                        '<button class="btn secondary text-[0.78rem] mr-1" onclick="viewConfigRevision(' + r.id + ')">View</button>' +
-                        '<button class="btn secondary text-[0.78rem] mr-1" onclick="downloadConfigRevision(' + r.id + ')">Download</button>' +
-                        '<button class="btn secondary text-[0.78rem]" onclick="deleteConfigRevision(' + r.id + ')" style="color:#f85149">Delete</button>' +
+                        '<button class="btn secondary text-[0.78rem] mr-1" data-action="view-config-revision" data-id="' + r.id + '">View</button>' +
+                        '<button class="btn secondary text-[0.78rem] mr-1" data-action="download-config-revision" data-id="' + r.id + '">Download</button>' +
+                        '<button class="btn secondary text-[0.78rem]" data-action="delete-config-revision" data-id="' + r.id + '" style="color:#f85149">Delete</button>' +
                         '</td>' +
                     '</tr>';
                 }).join('');
@@ -1439,11 +1439,11 @@
         modal.innerHTML = '<div class="modal-content" style="width:95vw;max-width:1400px;">' +
             '<div class="modal-header">' +
             '<h2 id="config-modal-title">Configuration</h2>' +
-            '<button class="modal-close" aria-label="Close dialog" onclick="window.AdminCommon&&window.AdminCommon.closeModal(\'config-modal\')">&times;</button>' +
+            '<button class="modal-close" aria-label="Close dialog" data-action="close-config-modal">&times;</button>' +
             '</div>' +
             '<div class="config-modal-body" style="max-height:75vh;overflow-y:auto;"></div>' +
             '<div class="modal-footer">' +
-            '<button type="button" class="btn secondary" onclick="window.AdminCommon&&window.AdminCommon.closeModal(\'config-modal\')">Close</button>' +
+            '<button type="button" class="btn secondary" data-action="close-config-modal">Close</button>' +
             '</div></div>';
         document.body.appendChild(modal);
         var style = document.createElement('style');
@@ -1740,6 +1740,22 @@
             } else {
                 loadNetworkThroughputChartLegacy(el.dataset.range);
             }
+        },
+        // AUDIT-053: config-history row buttons and the config modal close
+        // buttons used inline click attributes (worked only under script-src
+        // 'unsafe-inline'). Now data-action + data-id, delegated here, so the
+        // page no longer blocks a future CSP tightening.
+        'view-config-revision': function(el) {
+            window.viewConfigRevision(parseInt(el.dataset.id, 10));
+        },
+        'download-config-revision': function(el) {
+            window.downloadConfigRevision(parseInt(el.dataset.id, 10));
+        },
+        'delete-config-revision': function(el) {
+            window.deleteConfigRevision(parseInt(el.dataset.id, 10));
+        },
+        'close-config-modal': function() {
+            AC.closeModal('config-modal');
         }
     });
 
