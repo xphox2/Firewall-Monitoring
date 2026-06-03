@@ -1,4 +1,29 @@
 # Changelog
+## [0.10.268] - 2026-06-02
+
+### Fixed — AUDIT-148: LIKE clauses now carry ESCAPE '\' modifier (defense in depth)
+
+`GetConnectionFlowStats` filters VPN flows by CIDR-derived LIKE patterns (e.g. `10.0.1.%` for a `/24`). The patterns are built by `cidrToLikePattern` from `net.ParseIP` / `net.ParseCIDR`-validated input, so today's output never contains a user-controlled `%` or `_` — only an intentional trailing `%` as the "any" wildcard. The audit was correct, though, that the SQL didn't carry an `ESCAPE` clause, which is defense-in-depth worth adding:
+
+1. **Call site** (`database.go:3819-3820`) — the four `LIKE ?` conditions now read `LIKE ? ESCAPE '\' AND dst_addr LIKE ? ESCAPE '\'`. The escape character `\` itself is never emitted by `cidrToLikePattern`, so no double-escape is needed; this is a strict additive change.
+2. **Helper docstring** (`cidrToLikePattern` at `database.go:3724`) — added a comment block explaining why the function's output is safe by construction (input is IP-validated) and where the defense-in-depth actually lives (the `ESCAPE` at the call site).
+
+**Why this matters**
+
+A future refactor that drops the `net.ParseIP` / `net.ParseCIDR` validation (e.g. someone refactoring to accept arbitrary user input — a `device.local_subnet` text field that an admin can set via the API, for instance) would, without the `ESCAPE` clause, silently widen the match. With it, an attacker who controls the input can put a literal `%` in the pattern by prefixing `\%`, and the rest of the LIKE syntax becomes attacker-controlled only at the same scope as the surrounding SQL. The new test below pins the current "no escapable literal in the output" contract.
+
+**Regression tests** (`internal/database/cidr_audit148_test.go`, new — 2 tests, 20 subtests):
+
+- `TestCIDRToLikePattern_AUDIT148` (14 subtests) — pins the helper's output for every shape the function accepts: empty / whitespace / default route / invalid CIDR / non-CIDR text / unparseable IP range / `/32` (exact match) / `/24`, `/16`, `/8` (trailing `%`) / `/4` (too-broad, returns "") / IP range format / single IP / IPv6 (rejected). A regression on the output (e.g. someone "fixes" the helper to return `10.0.0._%` thinking `_` is part of an IP notation) would fail at least one of these.
+- `TestCIDRToLikePattern_NeverEmitsEscapableLiteral_AUDIT148` (6 subtests) — the defense-in-depth contract: regardless of input, the output never contains a literal `_`, never contains more than one `%`, and any `%` is in the trailing position. A future change that adds literal `%` or `_` to the pattern (which would be a LIKE-injection vector) fails here before it can ship.
+
+**What this does NOT do (deferred)**
+
+- **Escape the input explicitly inside cidrToLikePattern.** Rejected — the function's contract is "valid IP → LIKE pattern", and the IP validation is the gate. Adding a second escape layer would be belt-and-suspenders noise that suggests the validation isn't trustworthy.
+- **Refactor the broader `GetConnectionFlowStats` query.** The function is 100+ lines and uses GORM `Raw()` with a hand-built query string. A future refactor could parameterize it more cleanly, but that's a separate concern (and AUDIT-072's "split the 4,210-line database.go" is a prerequisite for most of that work).
+
+QA: `go build ./...`, `go test -count=1 ./...` (11 pkgs, 188 tests, +20 AUDIT-148 subtests), `gofmt -l .`, `go vet ./...` all clean. Code-only change in `internal/database/database.go` + new test file. Static-binary change → requires `docker compose up -d --build` or rebuild the binary. Server-repo only.
+
 ## [0.10.267] - 2026-06-02
 
 ### Fixed — AUDIT-105: default ADMIN_USERNAME=admin now warns at startup

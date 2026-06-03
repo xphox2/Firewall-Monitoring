@@ -3724,6 +3724,14 @@ type ConnectionFlowResult struct {
 // cidrToLikePattern converts a CIDR subnet to a SQL LIKE pattern.
 // Works for /8, /16, /24 which cover ~99% of real VPN subnets.
 // Returns empty string for invalid, too-broad (e.g. 0.0.0.0/0), or unsupported prefix lengths.
+//
+// AUDIT-148: the output of this function is fed verbatim into a SQL
+// LIKE clause (with the `ESCAPE '\'` modifier at the call site).
+// The patterns only ever contain digits, dots, and an intentional
+// trailing `%` (the wildcard), so today's input set is safe by
+// construction — `net.ParseIP` and `net.ParseCIDR` reject anything
+// that isn't a valid IP literal. The defense-in-depth is the ESCAPE
+// clause at the call site, not anything in this function.
 func cidrToLikePattern(cidr string) string {
 	cidr = strings.TrimSpace(cidr)
 	if cidr == "" || cidr == "0.0.0.0/0" {
@@ -3814,10 +3822,17 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 		if localPattern == "" || remotePattern == "" {
 			continue
 		}
-		// Bidirectional: src in local AND dst in remote, OR vice versa
+		// Bidirectional: src in local AND dst in remote, OR vice versa.
+		// AUDIT-148: the `ESCAPE '\'` clause makes the LIKE evaluator
+		// treat `\%` and `\_` as literal `%` / `_` rather than wildcards.
+		// Today's patterns (built by cidrToLikePattern) never contain
+		// literal `%` or `_` in user-controlled positions — only an
+		// intentional trailing `%` as the "any" wildcard — so this is
+		// defense-in-depth. The escape character `\` itself is never
+		// emitted by cidrToLikePattern, so no double-escape is needed.
 		subnetConditions = append(subnetConditions,
-			"(src_addr LIKE ? AND dst_addr LIKE ?)",
-			"(src_addr LIKE ? AND dst_addr LIKE ?)")
+			"(src_addr LIKE ? ESCAPE '\\' AND dst_addr LIKE ? ESCAPE '\\')",
+			"(src_addr LIKE ? ESCAPE '\\' AND dst_addr LIKE ? ESCAPE '\\')")
 		subnetArgs = append(subnetArgs, localPattern, remotePattern, remotePattern, localPattern)
 	}
 

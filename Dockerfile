@@ -72,6 +72,6 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
     CMD wget -qO- http://localhost:8080/api/health || exit 1
 
 LABEL org.opencontainers.image.title="Firewall Mon" \
-      org.opencontainers.image.version="0.10.267"
+      org.opencontainers.image.version="0.10.268"
 
 ENTRYPOINT ["./entrypoint.sh"]
