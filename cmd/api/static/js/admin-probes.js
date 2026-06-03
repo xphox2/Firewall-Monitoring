@@ -321,14 +321,30 @@
         });
     }
 
+    // AUDIT-051: reject now uses the styled #reject-modal instead of the
+    // native window.prompt() (lessons.md: AdminCommon modals are the standard,
+    // matching the /admin/probe-pending reject flow).
     function rejectProbe(id) {
-        var reason = prompt('Enter rejection reason:');
+        document.getElementById('reject-probe-id').value = id;
+        document.getElementById('reject-reason').value = '';
+        AC.openModal('reject-modal');
+    }
+
+    function closeRejectModal() {
+        AC.closeModal('reject-modal');
+    }
+
+    function submitReject(e) {
+        e.preventDefault();
+        var id = parseInt(document.getElementById('reject-probe-id').value, 10);
+        var reason = document.getElementById('reject-reason').value.trim();
         if (!reason) return;
         AC.apiFetch(API_BASE + '/probes/' + id + '/reject', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reason: reason })
         }).then(function() {
+            closeRejectModal();
             loadProbes();
             AC.showSuccess('Probe rejected');
         })['catch'](function(err) {
@@ -362,6 +378,7 @@
         'deploy-info': function(el) { showDeployInfo(parseInt(el.dataset.id)); },
         'approve-probe': function(el) { approveProbe(parseInt(el.dataset.id)); },
         'reject-probe': function(el) { rejectProbe(parseInt(el.dataset.id)); },
+        'close-reject-modal': function() { closeRejectModal(); },
         'copy-deploy-key': function() { copyDeployKey(); },
         'regenerate-key': function() { regenerateKey(); },
         'copy-env': function() { copyEnvBlock(); },
@@ -370,6 +387,7 @@
 
     // Form submit
     document.getElementById('probe-form').addEventListener('submit', saveProbe);
+    document.getElementById('reject-form').addEventListener('submit', submitReject); // AUDIT-051
 
     // Init
     AC.fetchCsrfToken().then(function() {
