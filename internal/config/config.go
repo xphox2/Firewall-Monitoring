@@ -205,9 +205,17 @@ type ProbeConfig struct {
 }
 
 func Load() *Config {
-	// Clear the module-level default password after building the config
-	defer func() { defaultPassword = "" }()
-
+	// AUDIT-158: the pre-fix code had a `defer func() { defaultPassword = "" }()`
+	// here to scrub the module-level cache after Load returned. That was
+	// defense-in-depth against the module-level cache (which we've now
+	// removed — see getDefaultPassword), but it also implied the
+	// zeroing was sufficient, which it wasn't: the string's underlying
+	// bytes had already been copied into `cfg.Auth.AdminPassword` and
+	// the bcrypt hash, and those copies are what the post-Load
+	// lifecycle sees. The new code (no module-level cache) means
+	// the only copy of the password in memory is the one we hand
+	// to the caller; the caller is now responsible for zeroing it
+	// after use (handled in `cmd/api/main.go`).
 	return &Config{
 		Server: ServerConfig{
 			Host:                 getEnv("SERVER_HOST", "0.0.0.0"),
@@ -531,13 +539,18 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-var defaultPassword string
-
+// getDefaultPassword returns a freshly-generated 16-character random
+// password. AUDIT-158: the pre-fix implementation cached the
+// generated password in a module-level `var defaultPassword string`,
+// which lingered in GC until the next collection and could
+// surface in core dumps even after the caller zeroed
+// `cfg.Auth.AdminPassword` (the password bytes are duplicated by
+// the Go runtime in unpredictable places). The fix: don't store
+// the password anywhere. The caller is responsible for zeroing
+// the returned string's underlying byte slice after the password
+// has been hashed (see the AUDIT-158 fix in `cmd/api/main.go`).
 func getDefaultPassword() string {
-	if defaultPassword == "" {
-		defaultPassword = generateRandomPassword(16)
-	}
-	return defaultPassword
+	return generateRandomPassword(16)
 }
 
 func generateRandomPassword(length int) string {
