@@ -333,7 +333,7 @@
 
             if (!Array.isArray(data) || data.length === 0) {
                 if (trafficChart) { trafficChart.destroy(); trafficChart = null; }
-                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#6e7681;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
+                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#8b949e;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
                 return;
             }
 

@@ -54,7 +54,7 @@
     /* Text */
     --fwmon-text:       #e6edf3;
     --fwmon-text-dim:   #8b949e;
-    --fwmon-text-faint: #6e7681;
+    --fwmon-text-faint: #8b949e; /* AUDIT-067: was #6e7681 (~4.07:1, fails small-text AA). Lifted so every `color: var(--fwmon-text-faint)` rule passes AA. */
 
     /* Axes / grids (chart use) */
     --fwmon-axis-stroke: #6b7280;

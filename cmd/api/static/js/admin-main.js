@@ -332,11 +332,11 @@
                         var alertsCell = r.alerts > 0
                             ? AC.filterLink('alerts', { device_id: d.id, hours: hours }, r.alerts.toLocaleString(),
                                 { title: 'Show alerts from this device' })
-                            : '<span style="color:#6e7681;">0</span>';
+                            : '<span style="color:#8b949e;">0</span>';
                         var syslogCell = r.syslog > 0
                             ? AC.filterLink('syslog', { device_id: d.id, hours: hours }, r.syslog.toLocaleString(),
                                 { title: 'Show syslog from this device' })
-                            : '<span style="color:#6e7681;">0</span>';
+                            : '<span style="color:#8b949e;">0</span>';
                         return '<tr>' +
                             '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
                                 AC.deviceLink(d.id, d.name) +
@@ -2711,7 +2711,7 @@
                 statusColor = '#f85149'; statusBg = 'rgba(248,81,73,0.15)'; statusLabel = 'FAIL';
             }
             var responseRow = s.response
-                ? '<div style="color:#8b949e;font-size:0.78rem;margin-top:4px;"><span style="color:#6e7681;">response:</span> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(s.response) + '</span></div>'
+                ? '<div style="color:#8b949e;font-size:0.78rem;margin-top:4px;"><span style="color:#8b949e;">response:</span> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(s.response) + '</span></div>'
                 : '';
             var errorRow = s.error
                 ? '<div style="color:#f85149;font-size:0.82rem;margin-top:4px;font-family:monospace;background:rgba(248,81,73,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #f85149;">' + escapeHtml(s.error) + '</div>'

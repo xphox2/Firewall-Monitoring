@@ -13,6 +13,7 @@ var servedStyleFiles = []string{
 	"../../cmd/api/static/css/admin-design-system.css",
 	"../../cmd/api/static/css/styles.css",
 	"../../cmd/api/static/css/tailwind.css",
+	"../../cmd/api/static/css/admin-device-detail.css",
 	"../../web/admin/admin.html",
 	"../../web/admin/device-detail.html",
 	"../../web/admin/connection-detail.html",
