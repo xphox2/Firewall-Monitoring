@@ -91,6 +91,9 @@ func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentH
 		return "", "", nil, fmt.Errorf("render critical template: %w", err)
 	}
 
-	subject := fmt.Sprintf("[CRITICAL] %s — %s (%s)", alert.AlertType, device.Name, device.IPAddress)
+	subject := fmt.Sprintf("[CRITICAL] %s — %s (%s)",
+		notifier.SanitizeHeader(alert.AlertType),
+		notifier.SanitizeHeader(device.Name),
+		notifier.SanitizeHeader(device.IPAddress))
 	return subject, buf.String(), attachments, nil
 }

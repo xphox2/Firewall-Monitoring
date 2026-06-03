@@ -23,6 +23,17 @@ type Attachment struct {
 	MIMEType  string // e.g. "image/png"
 }
 
+// SanitizeHeader strips CR and LF characters from a value so it cannot be
+// folded into another SMTP/HTTP header. AUDIT-014 — every caller that
+// constructs a header value from user/device-controlled input must run it
+// through this helper. Strips bytes; does not encode. Callers that need
+// non-ASCII (RFC 2047) should encode first, then sanitize.
+func SanitizeHeader(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
 // NotifyConfig is a snapshot of notification-related configuration fields.
 // It is passed by value to avoid data races with concurrent config updates.
 type NotifyConfig struct {
@@ -280,12 +291,9 @@ func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachm
 		return fmt.Errorf("no recipients configured")
 	}
 
-	// Sanitize header values
-	sanitize := func(s string) string {
-		s = strings.ReplaceAll(s, "\r", "")
-		s = strings.ReplaceAll(s, "\n", "")
-		return s
-	}
+	// Sanitize header values via the package-level SanitizeHeader so the
+	// same rule applies to every caller (see also report.BuildCriticalAlertEmail).
+	sanitize := SanitizeHeader
 
 	var buf bytes.Buffer
 

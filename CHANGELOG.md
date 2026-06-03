@@ -1,4 +1,25 @@
 # Changelog
+## [0.10.244] - 2026-06-02
+
+### Fixed — AUDIT-014: SMTP critical-alert subject is now sanitized at build time
+
+`BuildCriticalAlertEmail` (`internal/report/email.go:94`) formatted the Subject directly from `device.Name`, `device.IPAddress`, and `alert.AlertType` with no CR/LF sanitization. The downstream `notifier.SendHTMLEmail` did sanitize the final header values (line 299 of `notifier.go`), so a header-injection escape was *already blocked* in production — but the audit's defense-in-depth recommendation is to also sanitize at the **construction** site so that any future caller (or any future `Send*Email` path that forgets the sanitize step) cannot fold attacker-controlled CRLF into mail headers.
+
+Changes:
+
+- New `notifier.SanitizeHeader(s string) string` exported helper (`internal/notifier/notifier.go:25`). Strips CR and LF bytes — the only characters that fold an SMTP/HTTP header into two.
+- `notifier.go:283` replaces the inline closure with a reference to the exported helper, so there is exactly one definition of "what does sanitize do" across the project.
+- `report/email.go:94` now calls `notifier.SanitizeHeader` on `alert.AlertType`, `device.Name`, and `device.IPAddress` before `fmt.Sprintf`.
+
+Regression tests:
+
+- `internal/notifier/notifier_test.go` — `TestSanitizeHeader_StripsCRLF` (11 table cases including a literal `Bcc: attacker@evil.com` payload) + `FuzzSanitizeHeader` (property: result never contains CR or LF, ~180k execs in 3s).
+- `internal/report/email_test.go` — `TestBuildCriticalAlertEmail_SubjectSanitizesCRLF` builds a critical alert with CRLF-laden `Device.Name`, `Device.IPAddress`, `Alert.AlertType` and asserts the returned subject contains none of `\r`/`\n` while still preserving the visible substrings (`CPU_HIGH`, `router-1`, `10.0.0.1`).
+
+QA: `go build ./...`, `go test -count=1 ./...`, `go vet ./...`, `gofmt -l .` all clean. Notifier package now has its first test file (previously 0% coverage — closes part of AUDIT-117).
+
+Static-binary change → requires `docker compose up -d --build`. Server-repo only.
+
 ## [0.10.243] - 2026-06-02
 
 ### Added — `LICENSE` (MIT) + AUDIT-002 / AUDIT-010 / AUDIT-023 / AUDIT-025 / AUDIT-122
