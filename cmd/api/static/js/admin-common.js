@@ -117,7 +117,9 @@
     }
 
     function escapeHtml(str) {
-        if (!str) return '';
+        // AUDIT-059: nullish check, not falsy — `if (!str)` blanked numeric 0,
+        // false, and '' alike, so a "0 bytes" field rendered empty.
+        if (str == null) return '';
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 

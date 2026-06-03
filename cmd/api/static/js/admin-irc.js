@@ -621,7 +621,8 @@ async function sendMessage() {
 }
 
 function escapeHtml(text) {
-    if (!text) return '';
+    // AUDIT-059: nullish check, not falsy — `if (!text)` blanked numeric 0.
+    if (text == null) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
