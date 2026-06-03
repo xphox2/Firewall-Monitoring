@@ -54,7 +54,27 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	var err error
 
 	gormCfg := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		// AUDIT-149: pre-fix this was `logger.Silent`, which
+		// swallowed every GORM-internal log (slow-query
+		// warnings, transaction lifecycle, errors that GORM
+		// recovered from). The audit's concern was twofold:
+		//   1. Production deployments had no visibility into
+		//      slow queries (no `>200ms` warnings, no query
+		//      plan logs).
+		//   2. Errors that GORM catches and recovers from
+		//      (e.g. transient connection drops) were
+		//      completely invisible.
+		//
+		// The fix: `logger.Warn` is the right minimum-noise
+		// setting. It logs slow queries, errors, and
+		// migration warnings, but NOT every successful
+		// statement (which would flood the log). Operators
+		// who want more visibility can switch to `logger.Info`
+		// (every statement) via the `DB_LOG_LEVEL` env var.
+		// The level-to-mode mapping is a small helper in
+		// `internal/database/logging.go` (kept in this package
+		// so it's testable).
+		Logger: logger.Default.LogMode(dbLogLevelFromEnv()),
 	}
 
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
