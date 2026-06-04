@@ -1206,6 +1206,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-069 | Focus management on modals | 0.10.316 | 2f0f847 | Baked `role="dialog"` / `aria-modal="true"` / `aria-labelledby` into the 10 static modals in admin.html + device-detail.html (injecting title ids where missing), so modals are accessible without waiting for `tagStaticModals()`. `scripts/audit069_modal_aria.py`. `TestModalAria_AUDIT069` in `internal/shell/` pins the attributes + labelledby resolution. |
 | AUDIT-070 | `mobile-menu-btn aria-expanded` never updates | 0.10.317 | 7033abd | Resolved by AUDIT-055 (v0.10.302): `renderMobileChrome` creates the hamburger with `aria-expanded="false"` and its open/close handler keeps it in sync. This commit adds the explicit `AUDIT-070` reference + `TestAriaExpanded_AUDIT070` in `internal/shell/` to pin it against regression. |
 | AUDIT-034 | `cidrToLikePattern` → un-indexable LIKE on `flow_samples` | 0.10.318 | a450ad1 | Added `idx_flow_src_addr` / `idx_flow_dst_addr` btree indexes (gorm struct tags, created by AutoMigrate). The flow-stats `src_addr LIKE 'x%'` prefix match is sargable on a btree, so connection-stats queries no longer full-scan `flow_samples`. `TestFlowSampleIndexes_AUDIT034` in `internal/database/` verifies both exist after migration. |
+| AUDIT-035 | `GetLatestVPNStatuses` does a per-peer sequential scan | 0.10.319 | (pending) | Replaced the per-peer loop (N `WHERE device_id = ?` scans) with a single `WHERE device_id IN (...) AND (local_subnet != '' OR remote_subnet != '')` query (subnet filter in SQL, `ORDER BY device_id, timestamp DESC` preserves the cross-fill result). Chosen over a Postgres `ROW_NUMBER()` window because the single `IN` query fixes the N+1 with identical, cross-dialect, testable semantics. `TestGetLatestVPNStatuses_PeerCrossFill_AUDIT035` in `internal/database/` proves the peer subnet + RemoteDeviceID cross-fill still works. |
 
 ---
 
@@ -1300,6 +1301,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-03 — AUDIT-069 — bake role/aria-modal/aria-labelledby into modal markup — v0.10.316 — 2f0f847 — opencode
 2026-06-03 — AUDIT-070 — pin mobile-menu aria-expanded sync (done in AUDIT-055) — v0.10.317 — 7033abd — opencode
 2026-06-03 — AUDIT-034 — btree indexes on flow_samples src_addr/dst_addr — v0.10.318 — a450ad1 — opencode
+2026-06-03 — AUDIT-035 — single IN-query for VPN peer cross-fill (kills N+1) — v0.10.319 — (pending) — opencode
 ```
 
 ---

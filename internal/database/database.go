@@ -793,17 +793,31 @@ func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, erro
 	// A tunnel on device A with RemoteIP=X matched to device B means device B likely has
 	// a tunnel with RemoteIP pointing back to A. Match by IP, not name.
 	peerTunnelsByRemoteIP := make(map[string]models.VPNStatus) // remoteIP -> latest tunnel with subnets
-	for peerID := range peerIDs {
+	// AUDIT-035: previously this ran one `WHERE device_id = ? ORDER BY
+	// timestamp DESC` full scan PER peer (e.g. 30 peers = 30 scans per
+	// connection-map click). Now a single `device_id IN (...)` query covering
+	// all peers, with the subnet filter pushed into SQL (the loop already
+	// skipped rows without a subnet, so this also fetches fewer rows than the
+	// original). `ORDER BY device_id, timestamp DESC` reproduces the original
+	// per-peer / newest-first processing order, so the "first row per remote_ip,
+	// preferring one that carries a LocalSubnet" result is unchanged — and more
+	// deterministic than before (the old peer loop iterated a Go map in random
+	// order). Cross-dialect; no window function required.
+	if len(peerIDs) > 0 {
+		ids := make([]uint, 0, len(peerIDs))
+		for id := range peerIDs {
+			ids = append(ids, id)
+		}
 		var peerVPNs []models.VPNStatus
-		d.db.Where("device_id = ?", peerID).Order("timestamp DESC").Find(&peerVPNs)
+		d.db.Where("device_id IN ? AND (local_subnet != '' OR remote_subnet != '')", ids).
+			Order("device_id, timestamp DESC").Find(&peerVPNs)
 		for _, pv := range peerVPNs {
-			if pv.LocalSubnet != "" || pv.RemoteSubnet != "" {
-				if pv.RemoteIP != "" {
-					existing, exists := peerTunnelsByRemoteIP[pv.RemoteIP]
-					if !exists || (pv.LocalSubnet != "" && existing.LocalSubnet == "") {
-						peerTunnelsByRemoteIP[pv.RemoteIP] = pv
-					}
-				}
+			if pv.RemoteIP == "" {
+				continue
+			}
+			existing, exists := peerTunnelsByRemoteIP[pv.RemoteIP]
+			if !exists || (pv.LocalSubnet != "" && existing.LocalSubnet == "") {
+				peerTunnelsByRemoteIP[pv.RemoteIP] = pv
 			}
 		}
 	}
