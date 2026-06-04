@@ -352,6 +352,12 @@ func (d *Database) migrate() error {
 		}
 	}
 
+	// Repair the interface_addresses unique index that AutoMigrate cannot
+	// create on a deployment carrying legacy duplicate rows. Must run after
+	// the AutoMigrate loop (the table has to exist) and before any probe
+	// ingestion, since SaveInterfaceAddresses' UPSERT depends on the index.
+	d.ensureInterfaceAddrUniqueIndex()
+
 	// One-time fix: if IRC tables have wrong column names from prior migrations,
 	// drop and recreate them. Detect by checking for the correct server_password column.
 	m := d.db.Migrator()
@@ -663,6 +669,60 @@ func (d *Database) GetInterfaceStats(limit int) ([]models.InterfaceStats, error)
 	var stats []models.InterfaceStats
 	err := d.db.Order("timestamp DESC").Limit(limit).Find(&stats).Error
 	return stats, err
+}
+
+// ensureInterfaceAddrUniqueIndex repairs the unique index that
+// SaveInterfaceAddresses' UPSERT targets.
+//
+// AUDIT-030 added an `INSERT ... ON CONFLICT (device_id, ip_address)`
+// UPSERT whose conflict target is the unique index `idx_ifaddr_dev_ip`
+// declared on the InterfaceAddress model. On a deployment that predates
+// AUDIT-030, the table accumulated duplicate (device_id, ip_address)
+// rows under the old plain-INSERT path, so GORM's AutoMigrate cannot
+// create the unique index — `CREATE UNIQUE INDEX` fails on duplicate
+// values, and AutoMigrate only logs that failure as a warning and moves
+// on. The index ends up absent, and from then on every UPSERT fails with
+// SQLSTATE 42P10 ("there is no unique or exclusion constraint matching
+// the ON CONFLICT specification"). That 500s POST /api/probes/:id/
+// interface-addresses on every poll, leaving interface IP data stale and
+// burning ~4-6s per device per cycle on the probe's retry/backoff.
+//
+// This migration is idempotent: it no-ops when the index already exists
+// (the common case — fresh installs get it from AutoMigrate), and
+// otherwise deduplicates the table (keeping the highest id per pair, i.e.
+// the most recent row) before creating the index. Failures are logged,
+// not fatal, so a startup race or permission issue degrades to the
+// pre-existing broken-but-running state rather than crashing the server.
+func (d *Database) ensureInterfaceAddrUniqueIndex() {
+	if d.db.Migrator().HasIndex(&models.InterfaceAddress{}, "idx_ifaddr_dev_ip") {
+		return
+	}
+	log.Println("Migrating interface_addresses: unique index idx_ifaddr_dev_ip is missing (legacy duplicate rows); deduplicating and creating it — /interface-addresses ingestion is failing with SQLSTATE 42P10 until this completes")
+
+	// Keep the highest id per (device_id, ip_address). The Postgres
+	// self-join form is fast on large tables; SQLite (test) lacks
+	// DELETE ... USING, so fall back to the portable subquery.
+	var dedup string
+	if d.dialect.IsPostgres() {
+		dedup = `DELETE FROM interface_addresses a USING interface_addresses b
+		         WHERE a.device_id = b.device_id AND a.ip_address = b.ip_address AND a.id < b.id`
+	} else {
+		dedup = `DELETE FROM interface_addresses
+		         WHERE id NOT IN (SELECT MAX(id) FROM interface_addresses GROUP BY device_id, ip_address)`
+	}
+	res := d.db.Exec(dedup)
+	if res.Error != nil {
+		log.Printf("WARNING: interface_addresses dedup failed; idx_ifaddr_dev_ip not created, ingestion still broken: %v", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("interface_addresses: removed %d duplicate (device_id, ip_address) row(s) before indexing", res.RowsAffected)
+	}
+	if err := d.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ifaddr_dev_ip ON interface_addresses (device_id, ip_address)`).Error; err != nil {
+		log.Printf("WARNING: failed to create idx_ifaddr_dev_ip after dedup: %v", err)
+		return
+	}
+	log.Println("interface_addresses: idx_ifaddr_dev_ip created — UPSERT ingestion restored")
 }
 
 func (d *Database) SaveInterfaceAddresses(addrs []models.InterfaceAddress) error {
