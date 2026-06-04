@@ -1530,13 +1530,43 @@ func (d *Database) UpdateDeviceSSLVPN(id uint, users, tunnels int) error {
 	}).Error
 }
 
-// MarkStaleProbeDevicesOffline marks probe-assigned devices as "offline" if their
-// last_polled timestamp is older than the given threshold. Returns the count of affected rows.
-func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) (int64, error) {
-	result := d.db.Model(&models.Device{}).
+// MarkStaleProbeDevicesOffline marks probe-assigned devices as "offline" if
+// their last_polled timestamp is older than the given threshold, and returns
+// the devices that transitioned online -> offline on this call.
+//
+// It returns the flipped devices (not just a count) so the caller can fire a
+// DEVICE_OFFLINE alert + critical email per transition — the same notification
+// path that updateDeviceStatus drives for directly-polled devices. The WHERE
+// clause already restricts to rows currently `status = 'online'`, so the
+// selected set IS the online->offline transition set: a device that is already
+// offline is not re-selected, which keeps this to one alert per offline
+// episode (recovery is handled by the poller calling CheckDeviceOnline on the
+// devices that come back fresh).
+//
+// Implemented as SELECT-then-UPDATE rather than a bare UPDATE so the caller
+// gets the affected rows; the two statements are not wrapped in a transaction
+// because a probe device that flips back to online between them simply isn't
+// alerted this cycle (the next cycle re-evaluates), which is the desired
+// fail-safe — we would rather miss a flap than emit a spurious offline alert.
+func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) ([]models.Device, error) {
+	var stale []models.Device
+	if err := d.db.
 		Where("probe_id IS NOT NULL AND enabled = ? AND status = ? AND last_polled < ?", true, "online", staleThreshold).
-		Update("status", "offline")
-	return result.RowsAffected, result.Error
+		Find(&stale).Error; err != nil {
+		return nil, err
+	}
+	if len(stale) == 0 {
+		return nil, nil
+	}
+	ids := make([]uint, len(stale))
+	for i := range stale {
+		ids[i] = stale[i].ID
+		stale[i].Status = "offline"
+	}
+	if err := d.db.Model(&models.Device{}).Where("id IN ?", ids).Update("status", "offline").Error; err != nil {
+		return nil, err
+	}
+	return stale, nil
 }
 
 func (d *Database) DeleteDevice(id uint) error {

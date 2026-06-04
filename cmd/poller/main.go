@@ -189,15 +189,51 @@ func (p *Poller) pollAllDevices() {
 
 	// Mark probe-assigned devices offline if their last_polled is stale.
 	// Uses 3× poll interval as the threshold (minimum 5 minutes).
+	//
+	// Probe devices are polled by the remote collector, not this poller, so
+	// they never flow through updateDeviceStatus — which means they would
+	// silently flip offline in the UI with NO DEVICE_OFFLINE alert and NO
+	// critical email. We close that gap here: MarkStaleProbeDevicesOffline
+	// returns the devices that transitioned online -> offline, and for each we
+	// fire the same alert + email path updateDeviceStatus uses. Recovery is
+	// handled by calling CheckDeviceOnline on every probe device that is back
+	// to reporting fresh data — sendRecovery is a no-op unless an offline
+	// alert is actually active, so this clears exactly the devices that were
+	// alerted, exactly once.
 	staleAfter := 3 * p.cfg.SNMP.PollInterval
 	if staleAfter < 5*time.Minute {
 		staleAfter = 5 * time.Minute
 	}
 	threshold := time.Now().Add(-staleAfter)
-	if count, err := p.db.MarkStaleProbeDevicesOffline(threshold); err != nil {
+	staleDevices, err := p.db.MarkStaleProbeDevicesOffline(threshold)
+	if err != nil {
 		log.Printf("Stale device check error: %v", err)
-	} else if count > 0 {
-		log.Printf("Marked %d probe-assigned device(s) offline (no data for >%v)", count, staleAfter)
+	} else if len(staleDevices) > 0 {
+		log.Printf("Marked %d probe-assigned device(s) offline (no data for >%v)", len(staleDevices), staleAfter)
+		for i := range staleDevices {
+			dev := &staleDevices[i]
+			if p.alertManager != nil {
+				p.alertManager.CheckDeviceOffline(dev)
+				p.sendCriticalAlertEmail(dev, "DEVICE_OFFLINE",
+					fmt.Sprintf("Device %s (%s) is offline (no data from its probe for >%v)", dev.Name, dev.IPAddress, staleAfter))
+			}
+		}
+	}
+
+	// Recovery: any probe device that is reporting fresh data clears its
+	// (possibly) active offline alert. CheckDeviceOnline -> sendRecovery
+	// returns immediately when no offline alert is active, so iterating every
+	// fresh probe device each cycle is cheap.
+	if p.alertManager != nil {
+		for i := range devices {
+			dev := &devices[i]
+			if dev.ProbeID == nil || !dev.Enabled {
+				continue
+			}
+			if dev.LastPolled.After(threshold) {
+				p.alertManager.CheckDeviceOnline(dev)
+			}
+		}
 	}
 
 	// Auto-detect connections — record cycle start BEFORE all detectors
