@@ -19,14 +19,22 @@ the entire audit.
 >
 > **Session 14 (2026-06-03) completed all 10 of AUDIT-056 through 065,
 > v0.10.303 → v0.10.312** (incl. the AUDIT-064 batch-stats backend endpoint).
-> See the "Session 14 completion log". The next accessible batch is Session 15
-> (AUDIT-066 through 070, plus 034/035; note 081/155/156 are wontfix).
+> See the "Session 14 completion log".
+>
+> **Session 15 (2026-06-03) completed AUDIT-066–070 + 034 + 035,
+> v0.10.313 → v0.10.319** (two WCAG color sweeps, mobile overflow, modal ARIA,
+> two DB N+1/index fixes). The wontfix trio in the Session-15 table needed no
+> action: **155/156 were already resolved (wontfix) at v0.10.281**, and the
+> "AUDIT-081 ParseHours" row is a mislabel of AUDIT-154 (also done at
+> v0.10.281) — the real AUDIT-081 is a Session-19 item. See the "Session 15
+> completion log". Next accessible: Session 16 (security-adjacent: AUDIT-017,
+> 020, 018, 085, 042).
 
 **Remaining scope:**
 
 | Bucket | Count | Effort to complete |
 |---|---|---|
-| Open bug audits (HIGH severity) | 64 | ~20 XS/S + 35 M + 9 L |
+| Open bug audits (HIGH severity) | 58 | ~14 XS/S + 35 M + 9 L |
 | Open bug audits (MEDIUM severity) | 13 | ~8 XS/S + 5 M |
 | Open bug audits (LOW severity) | 12 | ~12 XS/S |
 | Feature recommendations (F01–F89) | 89 | Mostly M/L; not in scope for "complete the audit" |
@@ -131,7 +139,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-064 | N+1 in probes page loadProbeSummaryStats | S | Add a `?ids=` IN-clause to the underlying `GetProbes` call. |
 | AUDIT-065 | `cmd/api/static/js/admin-connection-detail.js:141` unescaped `conn.status` in innerHTML | S | Wrap with `AC.escapeHtml`. |
 
-### Session 15: HIGH quick wins (S) — 10 audits
+### Session 15: HIGH quick wins (S) — 10 audits ✅ DONE (v0.10.313–319, 2026-06-03)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -453,6 +461,50 @@ backend endpoint with a DB-level test.
   settings inputs (`public_show_vpn`, `public_show_connections`,
   `public_refresh_interval`) have only `name=`, no `id=`, so their labels were
   left unassociated — a tiny follow-up could add ids if desired.
+
+## Session 15 completion log (2026-06-03)
+
+Resolved AUDIT-066–070 (HIGH) + 034 (HIGH) + 035 (MEDIUM), one commit +
+one SHA-backfill commit each. Versions **v0.10.313 → v0.10.319**.
+Resolved-audit count **81 → 88**. Full suite green throughout; JS edits
+validated with `node --check`. The wontfix trio (081/155/156) needed no
+action — see the note in the executive summary.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-066 | 0.10.313 | 9b09dc7 | `#484f58` foreground text → `#8b949e` (WCAG AA); scripted, decorative chart/border uses left dark |
+| AUDIT-067 | 0.10.314 | d04a4e3 | `#6e7681` foreground text → `#8b949e`; the bulk via the `--fwmon-text-faint` token |
+| AUDIT-068 | 0.10.315 | 818a69e | device-detail `#systemStats`/`#extendedStats` made `overflow-x-auto` (tables were already wrapped) |
+| AUDIT-069 | 0.10.316 | 2f0f847 | `role`/`aria-modal`/`aria-labelledby` baked into the 10 modals in admin.html + device-detail.html |
+| AUDIT-070 | 0.10.317 | 7033abd | pinned the mobile-menu `aria-expanded` sync (already fixed by AUDIT-055's renderMobileChrome) |
+| AUDIT-034 | 0.10.318 | a450ad1 | `idx_flow_src_addr`/`idx_flow_dst_addr` btree indexes (gorm tags) — flow-stats LIKE no longer full-scans |
+| AUDIT-035 | 0.10.319 | 6a45065 | `GetLatestVPNStatuses` peer cross-fill: N per-peer scans → one `device_id IN (...)` query |
+
+**Discoveries / decisions for the next session:**
+
+- **Color sweeps had to touch the bundled `tailwind.css`** — it's the
+  *last-linked* stylesheet and re-declares custom classes (e.g.
+  `.nav-section-title{color:#484f58}`), so editing only the source CSS would
+  be shadowed. The `scripts/audit_brighten_color.py` sweep is safe on the
+  minified bundle because it's an equal-length hex swap scoped to the `color:`
+  property + `text-[…]` utilities (never `*-color:` or quoted chart values).
+  **No build step regenerates `tailwind.css`** (esbuild migration is AUDIT-139),
+  so source + bundle must be kept in sync by hand.
+- **AUDIT-035 deviates from the audit's prescription on purpose:** a single
+  `WHERE device_id IN (...)` query fixes the N+1 with identical, cross-dialect,
+  testable semantics, whereas the suggested Postgres `ROW_NUMBER()` window
+  would be Postgres-only + untestable on the SQLite harness + a subtle
+  behavior change (latest-per-tunnel vs scan-all-history). The window remains a
+  possible future row-reduction enhancement.
+- **`internal/database` tests:** `NewDatabaseForTesting` does NOT migrate every
+  model — `DeviceConnection` (and likely others) must be `AutoMigrate`d in the
+  test itself. Two helper-style scripts now live under `scripts/`
+  (`audit_brighten_color.py`, `audit069_modal_aria.py`, plus
+  `audit056_labels.py` from Session 14) — committed for provenance/reuse.
+- **Next: Session 16** is the security-adjacent batch (AUDIT-017 hash the probe
+  registration key, 020 SSRF DNS-rebinding TOCTOU, 018 stale deps + govulncheck,
+  085 probe-auth transaction, 042 relay idempotency key). Note `docs/SCAN.md`
+  (untracked govulncheck output) already flags GO-2026-5039 for the 018 work.
 
 ## Closing
 
