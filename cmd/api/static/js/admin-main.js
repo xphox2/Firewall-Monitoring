@@ -332,11 +332,11 @@
                         var alertsCell = r.alerts > 0
                             ? AC.filterLink('alerts', { device_id: d.id, hours: hours }, r.alerts.toLocaleString(),
                                 { title: 'Show alerts from this device' })
-                            : '<span style="color:#8b949e;">0</span>';
+                            : '<span style="color:#6e7681;">0</span>';
                         var syslogCell = r.syslog > 0
                             ? AC.filterLink('syslog', { device_id: d.id, hours: hours }, r.syslog.toLocaleString(),
                                 { title: 'Show syslog from this device' })
-                            : '<span style="color:#8b949e;">0</span>';
+                            : '<span style="color:#6e7681;">0</span>';
                         return '<tr>' +
                             '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
                                 AC.deviceLink(d.id, d.name) +
@@ -584,13 +584,13 @@
             var tbody = document.querySelector('#devices-table tbody');
             tbody.innerHTML = currentDevices.map(function(d) {
                 return '<tr>' +
-                    '<td><a href="/admin/devices/' + d.id + '" style="color:#58a6ff;text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:#8b949e;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
+                    '<td><a href="/admin/devices/' + d.id + '" style="color:#58a6ff;text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:#484f58;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
                     '<td class="mono">' + escapeHtml(d.ip_address) + '</td>' +
-                    '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:#8b949e">-</span>') + '</td>' +
-                    '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:#8b949e">-</span>') + '</td>' +
-                    '<td id="dev-cpu-' + d.id + '" style="color:#8b949e">-</td>' +
-                    '<td id="dev-mem-' + d.id + '" style="color:#8b949e">-</td>' +
-                    '<td id="dev-sess-' + d.id + '" style="color:#8b949e">-</td>' +
+                    '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:#484f58">-</span>') + '</td>' +
+                    '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:#484f58">-</span>') + '</td>' +
+                    '<td id="dev-cpu-' + d.id + '" style="color:#484f58">-</td>' +
+                    '<td id="dev-mem-' + d.id + '" style="color:#484f58">-</td>' +
+                    '<td id="dev-sess-' + d.id + '" style="color:#484f58">-</td>' +
                     '<td><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td>' +
@@ -2711,7 +2711,7 @@
                 statusColor = '#f85149'; statusBg = 'rgba(248,81,73,0.15)'; statusLabel = 'FAIL';
             }
             var responseRow = s.response
-                ? '<div style="color:#8b949e;font-size:0.78rem;margin-top:4px;"><span style="color:#8b949e;">response:</span> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(s.response) + '</span></div>'
+                ? '<div style="color:#8b949e;font-size:0.78rem;margin-top:4px;"><span style="color:#6e7681;">response:</span> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(s.response) + '</span></div>'
                 : '';
             var errorRow = s.error
                 ? '<div style="color:#f85149;font-size:0.82rem;margin-top:4px;font-family:monospace;background:rgba(248,81,73,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #f85149;">' + escapeHtml(s.error) + '</div>'
@@ -2837,7 +2837,7 @@
                 '<td>' + escapeHtml(p.description || '') + '</td>' +
                 '<td>' + (p.is_default ? '<span class="badge info">DEFAULT</span>' : '') + '</td>' +
                 '<td>' + ruleCount + '</td>' +
-                '<td>' + (channels.length ? channels.join(', ') : '<span style="color:#8b949e">Dashboard only</span>') + '</td>' +
+                '<td>' + (channels.length ? channels.join(', ') : '<span style="color:#484f58">Dashboard only</span>') + '</td>' +
                 '<td>' + p.cooldown_minutes + 'm</td>' +
                 '<td>' + (p.escalation_enabled ? p.escalation_minutes + 'm (' + p.escalation_repeat + 'x)' : 'Off') + '</td>' +
                 '<td>' +

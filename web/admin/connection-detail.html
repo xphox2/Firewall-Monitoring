@@ -21,7 +21,7 @@
          * the ► glyph stayed pointing right instead of becoming ▼. */
         .tunnel-row { cursor: pointer; }
         .tunnel-row:hover td { background: #1c2128; }
-        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #8b949e; margin-right: 4px; }
+        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #6e7681; margin-right: 4px; }
         .chevron.open { transform: rotate(90deg); }
         /* v0.10.228: same display reset as admin.html — admin-shared.css's
          * .stat-card { display: flex } was leaking through because this
@@ -31,7 +31,7 @@
          * without further CSS surgery. */
         .stat-card { display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
         .stat-card:has(.stat-icon) { display: flex; align-items: center; gap: 14px; }
-        .stat-card .stat-label { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .stat-card .stat-label { font-size: 0.72rem; color: #6e7681; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
         .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
         .section-tab { display: inline-block; padding: 10px 20px; font-size: 0.875rem; color: #8b949e; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
         .section-tab:hover { color: #e6edf3; }
@@ -188,9 +188,9 @@
                 <div id="flow-empty" class="hidden bg-[rgba(56,139,253,0.08)] border border-[rgba(56,139,253,0.2)] text-[#58a6ff] p-3.5 rounded-lg text-sm mb-4">sFlow is enabled but no traffic samples match this connection's tunnel interfaces yet.</div>
                 <div id="flow-content">
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#8b949e] mb-2">Total Bytes</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-bytes">-</div></div>
-                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#8b949e] mb-2">Total Packets</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-packets">-</div></div>
-                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#8b949e] mb-2">Total Flows</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-flows">-</div></div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#6e7681] mb-2">Total Bytes</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-bytes">-</div></div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#6e7681] mb-2">Total Packets</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-packets">-</div></div>
+                        <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center"><div class="text-xs uppercase tracking-wider text-[#6e7681] mb-2">Total Flows</div><div class="text-3xl font-bold text-[#e6edf3] tabular-nums" id="flow-total-flows">-</div></div>
                     </div>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div class="bg-[#0d1117] border border-[#30363d] rounded-lg p-4">
