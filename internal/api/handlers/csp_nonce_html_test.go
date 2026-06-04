@@ -99,8 +99,19 @@ func TestAllHTMLFiles_StampNonceOnEveryInlineScriptAndStyle_AUDIT022(t *testing.
 				if csp == "" {
 					t.Fatal("Content-Security-Policy header missing")
 				}
-				if strings.Contains(csp, "'unsafe-inline'") {
-					t.Errorf("CSP still contains 'unsafe-inline' (AUDIT-022 regression): %s", csp)
+				// script-src must stay strict (no inline-script execution); only
+				// style-src is allowed 'unsafe-inline' (AUDIT-022b) so runtime
+				// libraries like GridStack/Chart.js can size widgets via inline
+				// style attributes. Scope the check to the script-src directive.
+				scriptDir := csp
+				if i := strings.Index(scriptDir, "script-src"); i >= 0 {
+					scriptDir = scriptDir[i:]
+					if j := strings.Index(scriptDir, ";"); j >= 0 {
+						scriptDir = scriptDir[:j]
+					}
+					if strings.Contains(scriptDir, "'unsafe-inline'") {
+						t.Errorf("script-src must not contain 'unsafe-inline' (AUDIT-022 regression): %s", csp)
+					}
 				}
 				// Extract the nonce from the CSP header for comparison.
 				cspNonce := extractNonceFromCSP(t, csp)

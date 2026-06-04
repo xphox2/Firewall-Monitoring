@@ -375,11 +375,11 @@ func SecureHeaders() gin.HandlerFunc {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		// AUDIT-022: per-request nonce replaces 'unsafe-inline' in script-src
-		// and style-src. The nonce is generated above, stored on the gin
-		// context, and exposed to templates via RenderHTML — every inline
-		// <script> and <style> tag in web/**/*.html must carry
-		// nonce="{{ .Nonce }}", or the browser will refuse to execute the
-		// inline block.
+		// (the XSS-critical directive). The nonce is generated above, stored on
+		// the gin context, and exposed to templates via RenderHTML — every
+		// inline <script> tag in web/**/*.html must carry nonce="{{ .Nonce }}",
+		// or the browser will refuse to execute it. style-src is NOT nonce-locked
+		// (see AUDIT-022b below) because runtime libraries set inline styles.
 		nonce := newCSPNonce()
 		if nonce != "" {
 			c.Set(cspNonceKey, nonce)
@@ -387,7 +387,19 @@ func SecureHeaders() gin.HandlerFunc {
 		c.Header("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self' 'nonce-"+nonce+"'; "+
-				"style-src 'self' 'nonce-"+nonce+"'; "+
+				// AUDIT-022b: style-src allows 'unsafe-inline'. The original
+				// AUDIT-022 also nonce-locked style-src, but that BROKE the
+				// public GridStack dashboard (and any inline-style rendering):
+				// GridStack and Chart.js size their widgets/canvases by setting
+				// inline `style=""` ATTRIBUTES at runtime, which can't carry a
+				// nonce — so every cell collapsed to height 0 and charts fell
+				// back to the 300x150 default ("tiny graphs"). Note a nonce on
+				// style-src would have made 'unsafe-inline' be IGNORED, so the
+				// nonce is dropped here. The XSS-critical directive is script-src,
+				// which stays strict (nonce, no unsafe-inline) — inline <script>
+				// is still refused. CSS injection (the only thing this re-opens)
+				// can't execute JS.
+				"style-src 'self' 'unsafe-inline'; "+
 				"connect-src 'self'; "+
 				"img-src 'self' data:; "+
 				"font-src 'self'; "+

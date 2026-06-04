@@ -33,28 +33,31 @@ func TestSecureHeaders_CSPNoLongerAllowsUnsafeInline_AUDIT022(t *testing.T) {
 	if csp == "" {
 		t.Fatal("Content-Security-Policy header missing")
 	}
-	if strings.Contains(csp, "'unsafe-inline'") {
-		t.Errorf("CSP must not contain 'unsafe-inline' (AUDIT-022); got: %s", csp)
-	}
-	// The nonce must be present in BOTH script-src and style-src.
+	// script-src is the XSS-critical directive: it MUST carry a per-request
+	// nonce and MUST NOT allow 'unsafe-inline' — no inline <script> may run.
 	scriptSrc := extractDirective(t, csp, "script-src")
 	if !strings.Contains(scriptSrc, "'nonce-") {
 		t.Errorf("script-src must carry a nonce; got: %s", scriptSrc)
 	}
+	if strings.Contains(scriptSrc, "'unsafe-inline'") {
+		t.Errorf("script-src must NOT contain 'unsafe-inline' (AUDIT-022); got: %s", scriptSrc)
+	}
+	if extractNonce(scriptSrc) == "" {
+		t.Errorf("could not extract a nonce from script-src=%q", scriptSrc)
+	}
+	// style-src allows 'unsafe-inline' (AUDIT-022b): GridStack and Chart.js
+	// size their widgets/canvases by setting inline style ATTRIBUTES at runtime
+	// (which can't carry a nonce) — nonce-locking style-src collapsed every
+	// dashboard widget to height 0. A nonce on style-src would make
+	// 'unsafe-inline' be ignored, so style-src must NOT carry one. CSS injection
+	// (the only thing this re-opens) cannot execute JS, so the XSS posture is
+	// unchanged — script-src above is what matters.
 	styleSrc := extractDirective(t, csp, "style-src")
-	if !strings.Contains(styleSrc, "'nonce-") {
-		t.Errorf("style-src must carry a nonce; got: %s", styleSrc)
+	if !strings.Contains(styleSrc, "'unsafe-inline'") {
+		t.Errorf("style-src must allow 'unsafe-inline' so runtime libraries (GridStack/Chart.js) can size widgets (AUDIT-022b); got: %s", styleSrc)
 	}
-	// The nonces for script-src and style-src must be the same value (we
-	// emit one nonce per request, not two — and both directives reference
-	// the same string).
-	sNonce := extractNonce(scriptSrc)
-	styleNonce := extractNonce(styleSrc)
-	if sNonce == "" || styleNonce == "" {
-		t.Fatalf("could not extract nonce from script-src=%q or style-src=%q", scriptSrc, styleSrc)
-	}
-	if sNonce != styleNonce {
-		t.Errorf("script-src nonce %q != style-src nonce %q (should be the same per-request value)", sNonce, styleNonce)
+	if strings.Contains(styleSrc, "'nonce-") {
+		t.Errorf("style-src must NOT carry a nonce — it silently disables the 'unsafe-inline' allowance (AUDIT-022b); got: %s", styleSrc)
 	}
 }
 
