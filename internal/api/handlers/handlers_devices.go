@@ -210,18 +210,34 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
-	// Encrypt SNMP secrets before database write
+	// Encrypt SNMP secrets before database write.
+	//
+	// CRITICAL: the GET endpoints mask these fields as RedactedMask ("********").
+	// A client that loads a device and saves it back resends the mask. We must
+	// treat the mask (and an empty string) as "leave unchanged" and drop the
+	// field — persisting the mask would overwrite the real secret with
+	// "********", which silently breaks SNMP polling for that device (the
+	// collector then polls with "********" and every request times out).
 	for _, field := range []string{"snmp_community", "snmpv3_auth_pass", "snmpv3_priv_pass"} {
-		if val, ok := filteredUpdates[field]; ok {
-			if str, isStr := val.(string); isStr && str != "" {
-				filteredUpdates[field] = h.db.EncryptField(str)
-			}
+		val, ok := filteredUpdates[field]
+		if !ok {
+			continue
 		}
+		str, isStr := val.(string)
+		if !isStr || str == "" || str == httputil.RedactedMask {
+			delete(filteredUpdates, field)
+			continue
+		}
+		filteredUpdates[field] = h.db.EncryptField(str)
 	}
 
-	// Encrypt SSH password if present
+	// Encrypt SSH password if present (ssh_password is not redacted on GET, but
+	// guard the mask anyway for consistency and future-proofing).
 	if sshPw, ok := filteredUpdates["ssh_password"]; ok {
-		if str, isStr := sshPw.(string); isStr && str != "" {
+		str, isStr := sshPw.(string)
+		if !isStr || str == "" || str == httputil.RedactedMask {
+			delete(filteredUpdates, "ssh_password")
+		} else {
 			filteredUpdates["ssh_password"] = h.db.EncryptField(str)
 		}
 	}

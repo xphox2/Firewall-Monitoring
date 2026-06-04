@@ -2,16 +2,24 @@ package httputil
 
 import "firewall-mon/internal/models"
 
+// RedactedMask is the placeholder the API substitutes for secret values in GET
+// responses. Write handlers MUST treat an incoming field equal to this mask as
+// "unchanged" and never persist it — otherwise a client that GETs a redacted
+// record and saves it back destroys the real secret. That is exactly the bug
+// that overwrote a device's SNMP community with "********" and silently broke
+// SNMP polling for that device.
+const RedactedMask = "********"
+
 // RedactDevice masks SNMP secrets on a single device.
 func RedactDevice(d *models.Device) {
 	if d.SNMPCommunity != "" {
-		d.SNMPCommunity = "********"
+		d.SNMPCommunity = RedactedMask
 	}
 	if d.SNMPV3AuthPass != "" {
-		d.SNMPV3AuthPass = "********"
+		d.SNMPV3AuthPass = RedactedMask
 	}
 	if d.SNMPV3PrivPass != "" {
-		d.SNMPV3PrivPass = "********"
+		d.SNMPV3PrivPass = RedactedMask
 	}
 }
 
@@ -24,11 +32,11 @@ func RedactDevices(devices []models.Device) {
 
 // RedactProbe masks sensitive paths on a single probe.
 func RedactProbe(p *models.Probe) {
-	p.TLSCertPath = "********"
-	p.TLSKeyPath = "********"
-	p.ServerTLSCert = "********"
+	p.TLSCertPath = RedactedMask
+	p.TLSKeyPath = RedactedMask
+	p.ServerTLSCert = RedactedMask
 	if p.RegistrationKey != "" {
-		p.RegistrationKey = "********"
+		p.RegistrationKey = RedactedMask
 	}
 }
 
