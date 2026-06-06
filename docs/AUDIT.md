@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.360** |
-| Bug findings resolved | **133 / 170  (78%)** |
+| Server version | **v0.10.362** |
+| Bug findings resolved | **135 / 170  (79%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **37** |
+| Open bug findings | **35** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -20,6 +20,7 @@
 - ✅ Build/repo hygiene + operator documentation — resolved (Sessions 18–19)
 - ✅ Mid-size code/config cleanups (`errors.Is`, autovacuum coverage, security.txt, apiFetch retry, …) — resolved (Session 20)
 - ✅ Operator docs — runbook + architecture diagrams + vendor guide (Session 21)
+- ✅ Request-ID log correlation + JS-standard decision (Session 22)
 - ⏳ Remaining 37: large refactors, observability, test infrastructure, a few docs
 
 ## 🧭 How to read this file
@@ -31,21 +32,22 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 37 open findings)
+## ⏳ What's left (the 35 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
-- **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-135` (request-ID middleware), `AUDIT-150` (OpenTelemetry tracing).
+- **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-150` (OpenTelemetry tracing).
 - **Test infrastructure** — `AUDIT-117`–`124` (per-package coverage, Postgres CI matrix, fuzz / property / integration / benchmark tests), `AUDIT-140`/`142`.
 - **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-114` (fresh-Ubuntu build steps), `AUDIT-164`/`165`/`166` (FUNDING / release automation / community channel).
-- **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `081` (wrap `return err`), `094` (entrypoint supervision), `129` (Sentry), `131` (admin-irc.js ES5), `132` (drop `['catch']` ES5 workaround).
+- **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `081` (wrap `return err`), `094` (entrypoint supervision), `129` (Sentry), `132` (drop `['catch']` ES5 workaround).
 
 ## 🗓 Recent activity
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 22** (v0.10.361–362) | Observability + JS standard | `RequestID` middleware (X-Request-ID log correlation, log-forge guard) (135); declared ES2020 the frontend JS standard (131) |
 | **Session 21** (v0.10.358–360) | Operator documentation | confirmed the vendor guide covers both sides (113), `docs/OPERATIONS.md` runbook (111), `docs/architecture.md` Mermaid component + sequence diagrams (108) |
 | **Session 20** (v0.10.352–357) | Mid-size code/config cleanups | `errors.Is` for gorm sentinels, autovacuum covers `interface_stats`/`system_status` + `DB_AUTOVACUUM_TABLES`, RFC 9116 `security.txt`, `apiFetch` 5xx retry, dropped stale `package.json` version, prune goroutine graceful shutdown |
 | **Session 19** (v0.10.343–351) | Build hygiene + operator docs | drop unused Docker C-toolchain, reproducible builds, `make install`/`tarball` (+ fixed a binary-naming bug), `CODEOWNERS`, README test/feature/env/browser docs, custom-vendor tutorial |
@@ -1299,7 +1301,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-111 | No RUNBOOK.md / OPERATIONS.md | 0.10.359 | 7c2d000 | Added `docs/OPERATIONS.md` (first-24h, failure-mode table, debug logging, admin reset, JWT rotation, backup/restore, upgrade, scale, DR), grounded in real mechanisms (verified vs code — e.g. admin reset = `DELETE FROM admins`+restart since `InitAdmin` is create-when-absent; no `GIN_MODE` toggle). README-linked. `TestOperationsRunbook_AUDIT111` pins the sections + link. |
 | AUDIT-108 | No architecture diagram | 0.10.360 | 40c68df | Added `docs/architecture.md`: Mermaid component flowchart + 3 sequence diagrams (probe registration, poll cycle, alert firing) + package map. README-linked. `TestArchitectureDiagram_AUDIT108` pins the Mermaid blocks, ≥3 sequence diagrams, README link. |
 | AUDIT-135 | No request-ID middleware | 0.10.361 | a2c6d7f | New `RequestID` middleware: reuses a safe inbound `X-Request-ID` (`^[A-Za-z0-9._-]{1,64}$`, log-forge guarded) or mints a 128-bit hex one, stores it on the context + echoes the `X-Request-ID` response header; `RequestLogger` logs `req=<id>`. Unit tests cover generate/reuse/reject-hostile. Full slog migration is AUDIT-076 (open). |
-| AUDIT-131 | `admin-irc.js` ES6 amid ES5 (pick one) | 0.10.362 | (pending) | Added `cmd/api/static/js/README.md` declaring **ES2020** the standard (justified by the AUDIT-168 browser baseline), so the ES6 code is correct; legacy `['catch']` flagged as not-to-be-extended (cleanup = AUDIT-132). `TestJSStandardDocumented_AUDIT131` pins it. |
+| AUDIT-131 | `admin-irc.js` ES6 amid ES5 (pick one) | 0.10.362 | 139c3a9 | Added `cmd/api/static/js/README.md` declaring **ES2020** the standard (justified by the AUDIT-168 browser baseline), so the ES6 code is correct; legacy `['catch']` flagged as not-to-be-extended (cleanup = AUDIT-132). `TestJSStandardDocumented_AUDIT131` pins it. |
 
 ---
 
@@ -1442,7 +1444,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-111 — docs/OPERATIONS.md runbook (grounded in real mechanisms) — v0.10.359 — 7c2d000 — opencode
 2026-06-06 — AUDIT-108 — docs/architecture.md Mermaid component + sequence diagrams — v0.10.360 — 40c68df — opencode
 2026-06-06 — AUDIT-135 — RequestID middleware (X-Request-ID, log correlation, log-forge guard) — v0.10.361 — a2c6d7f — opencode
-2026-06-06 — AUDIT-131 — declare ES2020 the JS standard (cmd/api/static/js/README.md) — v0.10.362 — (pending) — opencode
+2026-06-06 — AUDIT-131 — declare ES2020 the JS standard (cmd/api/static/js/README.md) — v0.10.362 — 139c3a9 — opencode
 ```
 
 ---
@@ -2335,6 +2337,36 @@ green throughout.
   community channel — the last two need a maintainer decision). The bulk of the
   remaining 37 is large refactors (028/032/040/044/072), observability
   (076/077/078/135/150), and test-infra (117–124/140/142) — each its own session.
+
+## Session 22 completion log (2026-06-06) — observability + JS standard
+
+**2 shipped** (v0.10.361 → v0.10.362), resolved count **133 → 135**. Full suite
+green. (This session also reconciled the stale by-session HIGH/MEDIUM/LOW
+planning lists above — see the ⚠ banners.)
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-135 | 0.10.361 | a2c6d7f | `RequestID` middleware — reuses a safe inbound `X-Request-ID` or mints a 128-bit hex one, echoes the response header, `RequestLogger` logs `req=<id>`; inbound is charset/length-guarded against log forging |
+| AUDIT-131 | 0.10.362 | 139c3a9 | `cmd/api/static/js/README.md` declares ES2020 the JS standard (justified by the AUDIT-168 browser baseline); legacy `['catch']` flagged, cleanup tracked as AUDIT-132 |
+
+**Discoveries / decisions for the next session:**
+
+- **AUDIT-131 resolved by decision, not code change:** the evergreen browser
+  baseline (AUDIT-168) makes ES2020 fine, so `admin-irc.js`'s ES6 is *correct* —
+  the audit's "maybe downgrade to ES5" framing is obsolete. Documenting the
+  standard is the resolution; the `['catch']` removal is the separate AUDIT-132.
+- **AUDIT-135 shipped with the current logger, not slog:** the audit suggested
+  `slog.With("request_id", …)`, but the slog migration is AUDIT-076 (open). The
+  request-ID is on the gin context (`RequestIDKey`) ready for slog to pick up
+  later; for now `RequestLogger` includes it. **Security caught in design:** an
+  inbound `X-Request-ID` must be charset/length-validated or a client can inject
+  newlines into the logs — the regex guard + a test cover that.
+- **AUDIT-081 STILL deferred (with reason):** the 25 bare `return err` in
+  `database.go` need `%w` context, but wrapping changes `err.Error()` strings —
+  and some of those errors reach API clients via `models.ErrorResponse`, so a
+  blanket wrap could leak internal function names into responses. It needs
+  per-site analysis of which errors are user-facing vs internal-only. Genuinely
+  its own careful pass, not a mechanical sweep.
 
 ## Closing
 
