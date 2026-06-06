@@ -48,6 +48,8 @@ firewall-mon/
 └── deploy.sh        # Deployment script
 ```
 
+See [docs/architecture.md](docs/architecture.md) for component **data-flow and sequence diagrams** (probe registration, poll cycle, alert firing).
+
 ## Quick Start
 
 ### Prerequisites
