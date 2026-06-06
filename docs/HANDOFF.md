@@ -8,13 +8,13 @@ updated in lockstep with each resolved finding).
 
 The public-release audit at v0.10.239 produced **170 bug findings** (AUDIT-001
 through AUDIT-170) and **89 feature recommendations** (AUDIT-F01 through F89).
-After the audit-resolution effort through v0.10.329, **91 of the 170 bug
+After the audit-resolution effort through v0.10.333, **95 of the 170 bug
 findings are resolved** and **0 are still in CRITICAL status**. (Session 15
-reached 88, v0.10.320 reverted AUDIT-066/067 → 86, then Session 16 added 5 →
-**91**.) Three production hotfixes (v0.10.322–324, 2026-06-04) shipped outside
-the audit cadence — see the "Production hotfix interlude". This document catalogs
-the remaining work so a future session can pick up without re-reading the entire
-audit.
+reached 88, v0.10.320 reverted AUDIT-066/067 → 86, Session 16 added 5 → 91,
+Session 17 added 4 → **95**.) Three production hotfixes (v0.10.322–324,
+2026-06-04) shipped outside the audit cadence — see the "Production hotfix
+interlude". This document catalogs the remaining work so a future session can
+pick up without re-reading the entire audit.
 
 > **Session 13 (2026-06-03) completed all 10 of its HIGH frontend quick wins
 > (AUDIT-046 through 055), v0.10.293 → v0.10.302.** See the "Session 13
@@ -45,8 +45,8 @@ audit.
 
 | Bucket | Count | Notes |
 |---|---|---|
-| **Resolved bug audits** | **91** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); 0 remain CRITICAL |
-| **Open bug audits** | **79** | 170 total − 91 resolved |
+| **Resolved bug audits** | **95** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); 0 remain CRITICAL |
+| **Open bug audits** | **75** | 170 total − 95 resolved |
 | Feature recommendations (F01–F89) | 89 | out of scope for "complete the audit"; future v0.11.0+ work |
 
 > **Per-severity split:** the earlier hand-maintained HIGH/MEDIUM/LOW open counts
@@ -591,6 +591,55 @@ throughout (`go build`, `go test ./...`, `go vet`).
   SQLite window-function gating, 044 schema-version migrations, 036 per-process
   DB pool, 038 batched cleanup deletes, 039 batcher-per-daemon, 033 GetDashboardAll
   N+1). Mostly S–M; AUDIT-044 (adopt golang-migrate/goose) is the larger one.
+
+## Session 17 completion log (2026-06-06)
+
+Targeted the DB-performance batch (AUDIT-041/043/044/036/038/039/033). **4
+shipped** (v0.10.330 → v0.10.333), resolved count **91 → 95**. Three of the
+seven turned out to have premises that no longer hold against the current code —
+documented below rather than implemented as written (implementing them would
+have been a regression or a no-op).
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-036 | 0.10.330 | 34304df | Per-process DB pool sizing: api/poller/trap mains set 15/10/5 (DB_MAX_OPEN_CONNS overrides); `NewDatabase` reads `cfg.Database.MaxOpenConns`. Was a flat 25 × 3 daemons = 75 conns/host. |
+| AUDIT-038 | 0.10.331 | 28d81ab | Retention cleanup deletes in 10k-row batches (`id IN (SELECT id … LIMIT N)`, portable PG+SQLite); PG batches in a txn with `SET LOCAL lock_timeout='5s'` + 100ms sleep. AUDIT-029/031 tests still pass (semantics unchanged). |
+| AUDIT-043 | 0.10.332 | b6f8a23 | The `LAG()/WINDOW w AS` chart queries **run fine on the modernc SQLite backend AND Postgres** — premise ("SQLite-unsupported") is outdated, so NO gating was added. Resolved the real gap (untested in CI) with `TestGetVPNChartData_WindowDeltas_AUDIT043` (delta + counter-reset math). |
+| AUDIT-033 | 0.10.333 | 8be35f3 | `GetDashboardAll` N+1 (~13 queries × N) → ~7 batched aggregates via the max-timestamp self-join; O(1) in device count, same output shape. |
+
+**Audits NOT implemented (stale/incorrect premise — verified against code):**
+
+- **AUDIT-041 (ping write not batched) — ALREADY DONE.** `pingBatch` exists and
+  `SavePingResult` uses it (`if d.pingBatch != nil { d.pingBatch.Add(...) }`).
+  Nothing to do; the code evolved since the audit.
+- **AUDIT-039 (batchers only used by API) — premise INVERTED.** In reality the
+  API uses the *plural* `Save…s` methods (direct `Create`); the *singular*
+  batchers are used by `cmd/probe` (ping/syslog) and `cmd/trap-receiver` (trap
+  via `ProcessTrap → SaveTrapEvent`). The poller is the only daemon that builds
+  batchers it never uses. The audit's prescribed `NewDatabaseForAPI` fix is
+  backwards — it would make trap/probe writes synchronous. **Do not implement as
+  written.** The only valid kernel is "skip batcher creation in the poller"
+  (minor); re-scope before touching.
+
+**Deferred (correctly L-sized, own session needed):**
+
+- **AUDIT-044** — adopt golang-migrate/goose, drop startup AutoMigrate, remove
+  the IRC drop-and-recreate heuristic, run migrations only on explicit operator
+  command. Changes migration strategy on a live prod DB — a platform change with
+  a planning step, not a quick win.
+
+**Discoveries for the next session:**
+
+- **A corrupted Go build cache** surfaced mid-session ("package X is not in std" /
+  "cannot find the path" errors), likely a leftover from the AUDIT-018 toolchain
+  juggling. `go clean -cache` fixed it (one file may be locked by gopls — harmless).
+- **Per-table batched-delete table names:** `batchedDeleteOlderThan` uses gorm's
+  model resolution, so it's immune to the `e.name` singular/plural mismatch in the
+  cleanup `entries` list (those names are display-only).
+- **Next accessible: Session 18** (HIGH critical-feature — AUDIT-040 two-instance
+  state, 028 partition interface_stats/system_status, 006 crash-durable batcher,
+  004 release flow, 032 ctx propagation) — all L-sized. Or pick remaining S/M
+  wins from sessions 19-23. AUDIT-039 (re-scoped) and AUDIT-044 still open here.
 
 ## Closing
 

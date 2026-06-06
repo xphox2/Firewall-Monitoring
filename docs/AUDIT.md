@@ -1212,7 +1212,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-036 | DB pool sized for one process, not three daemons | 0.10.330 | 34304df | Pool size now per-process: api/poller/trap mains set 15/10/5 (DB_MAX_OPEN_CONNS overrides); NewDatabase reads cfg.Database.MaxOpenConns (fallback 25), idle capped at open limit. Was a flat SetMaxOpenConns(25) on each of 3 daemons = 75 conns/host. TestDBPoolPerProcess_AUDIT036. |
 | AUDIT-038 | CleanupOldData does N full DELETEs serially | 0.10.331 | 28d81ab | Each table deleted in 10k-row batches (`id IN (SELECT id ... LIMIT N)`, portable PG+SQLite); on PG each batch in a txn with `SET LOCAL lock_timeout='5s'`, 100ms sleep between. Retention semantics unchanged (AUDIT-029/031 tests pass). TestBatchedDeleteOlderThan_AUDIT038. Deferred: leader lock (AUDIT-007). |
 | AUDIT-043 | Time-series chart SQL uses window functions unsupported by SQLite | 0.10.332 | b6f8a23 | Premise outdated: the `LAG() OVER w`/`WINDOW w AS` queries (GetVPNChartData, GetConnectionTraffic) run correctly on the modernc SQLite test backend AND Postgres — no gating needed. Closed the real gap (untested in CI) with TestGetVPNChartData_WindowDeltas_AUDIT043 (delta + counter-reset math on SQLite); documented dialect-safety in-code. |
-| AUDIT-033 | GetDashboardAll is textbook N+1 | 0.10.333 | (pending) | Per-device enrichment loop (~13 queries x N devices, ~650 at 50 devices) replaced with ~7 batched aggregates (one per data type) via the max-timestamp self-join (portable PG+SQLite). O(1) in device count, same output shape. TestGetDashboardAll_BatchedEnrichments_AUDIT033 verifies latest-timestamp selection + up/alive counts. |
+| AUDIT-033 | GetDashboardAll is textbook N+1 | 0.10.333 | 8be35f3 | Per-device enrichment loop (~13 queries x N devices, ~650 at 50 devices) replaced with ~7 batched aggregates (one per data type) via the max-timestamp self-join (portable PG+SQLite). O(1) in device count, same output shape. TestGetDashboardAll_BatchedEnrichments_AUDIT033 verifies latest-timestamp selection + up/alive counts. |
 | AUDIT-085 | Probe auth key rotation not transactional | 0.10.325 | ccd602f | `RegenerateProbeKey` deleted the old key's `SystemSetting` first and only logged a warning if the new setting failed to write — a mid-sequence failure could rotate the key but leave no usable registration setting, locking the probe out. Now generates the new key before any write and wraps update-probe → delete-old → create-new in one `gorm.Transaction` (rollback keeps the working key). `TestRegenerateProbeKey_Atomic_AUDIT085` in `internal/api/handlers/` pins the success contract. |
 
 ---
@@ -1316,7 +1316,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-036 — per-process DB pool sizing (15/10/5, DB_MAX_OPEN_CONNS override) — v0.10.330 — 34304df — opencode
 2026-06-06 — AUDIT-038 — batched retention deletes (10k LIMIT, PG lock_timeout, 100ms sleep) — v0.10.331 — 28d81ab — opencode
 2026-06-06 — AUDIT-043 — verify window-chart queries SQLite-safe + regression test (no gating) — v0.10.332 — b6f8a23 — opencode
-2026-06-06 — AUDIT-033 — batch GetDashboardAll enrichment (kills ~13xN query N+1) — v0.10.333 — (pending) — opencode
+2026-06-06 — AUDIT-033 — batch GetDashboardAll enrichment (kills ~13xN query N+1) — v0.10.333 — 8be35f3 — opencode
 ```
 
 ---
