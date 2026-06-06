@@ -1285,6 +1285,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-107 | Documented env vars are 6 lines | 0.10.349 | dc1b01d | Added a README env-var defaults table (verified against `internal/config`, not guessed) + a cross-link naming `config.env.example` as authoritative; covers ENCRYPTION_KEY / RETENTION_* / PROBE_* / REPORT_* / DB_MAX_OPEN_CONNS / SERVER_*_TIMEOUT. `TestReadmeEnvVarDocs_AUDIT107` pins the cross-link + families. |
 | AUDIT-168 | No browser support baseline documented | 0.10.350 | 4f30ff2 | Added a README **Browser Support** section: Chrome/Edge 105+, Safari 15.4+, Firefox 121+ (the `:has()`/ES2020 floor), no legacy support. `TestReadmeBrowserBaseline_AUDIT168` pins the section + the three engines. |
 | AUDIT-170 | No example of a custom vendor profile | 0.10.351 | 3e5d3ad | Added `docs/custom-vendor.md`: end-to-end tutorial (full `VendorProfile` interface, copy-pasteable shallow profile, `init()`/`RegisterVendor`, the `validVendors` edit, optional `configdiff` normalizer, checklist). Code verified against the real API (`gosnmp.ToBigInt`, real float64 fields). README-linked. `TestCustomVendorDoc_AUDIT170` pins the doc + extension points + README link. |
+| AUDIT-080 | `== gorm.ErrRecordNotFound` instead of `errors.Is` | 0.10.352 | (pending) | Swept all 15 direct `==`/`!=` comparisons against `gorm.ErrRecordNotFound` in `database.go` to `errors.Is` (unwraps `%w`-wrapped errors; future-proof against AUDIT-081 wrapping). Cited auth/notifier sites had since moved (no sentinel compare there now). `TestErrorsIsForGormSentinels_AUDIT080` pins no direct comparison remains. |
 
 ---
 
@@ -1417,6 +1418,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-107 — README env-var defaults table + config.env.example cross-link — v0.10.349 — dc1b01d — opencode
 2026-06-06 — AUDIT-168 — document browser support baseline (Chrome 105+/Safari 15.4+/Firefox 121+) — v0.10.350 — 4f30ff2 — opencode
 2026-06-06 — AUDIT-170 — docs/custom-vendor.md tutorial (add an SNMP vendor profile) — v0.10.351 — 3e5d3ad — opencode
+2026-06-06 — AUDIT-080 — sweep gorm.ErrRecordNotFound == to errors.Is in database.go (15 sites) — v0.10.352 — (pending) — opencode
 ```
 
 ---

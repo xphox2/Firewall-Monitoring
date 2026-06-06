@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -807,7 +808,7 @@ func (d *Database) GetAllLatestInterfaces() ([]models.InterfaceStats, error) {
 func (d *Database) GetLatestSystemStatus() (*models.SystemStatus, error) {
 	var status models.SystemStatus
 	err := d.db.Order("timestamp DESC").First(&status).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
@@ -820,7 +821,7 @@ func (d *Database) GetLatestInterfaceStats() ([]models.InterfaceStats, error) {
 	// Get the most recent timestamp
 	var latest models.InterfaceStats
 	if err := d.db.Order("timestamp DESC").First(&latest).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -842,7 +843,7 @@ func (d *Database) SaveVPNStatuses(statuses []models.VPNStatus) error {
 func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error) {
 	var latest models.VPNStatus
 	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latest).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return []models.VPNStatus{}, nil
 		}
 		return nil, err
@@ -1107,7 +1108,7 @@ func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
 func (d *Database) GetLatestConfigRevision(deviceID uint) (*models.DeviceConfigRevision, error) {
 	var rev models.DeviceConfigRevision
 	err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&rev).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &rev, err
@@ -1864,7 +1865,7 @@ func (d *Database) FindConnectionByDevicePairAndType(deviceA, deviceB uint, conn
 		"((source_device_id = ? AND dest_device_id = ?) OR (source_device_id = ? AND dest_device_id = ?)) AND connection_type = ?",
 		deviceA, deviceB, deviceB, deviceA, connType,
 	).First(&conn).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &conn, err
@@ -1979,7 +1980,7 @@ func (d *Database) UpsertSetting(setting *models.SystemSetting) error {
 func (d *Database) GetAdmin() (*models.Admin, error) {
 	var admin models.Admin
 	err := d.db.First(&admin).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &admin, err
@@ -2008,7 +2009,7 @@ func (d *Database) InitAdmin(username, password string) error {
 func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) {
 	var admin models.Admin
 	err := d.db.Where("username = ?", username).First(&admin).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
@@ -2058,7 +2059,7 @@ func (d *Database) GetSite(id uint) (*models.Site, error) {
 func (d *Database) GetSiteByName(name string) (*models.Site, error) {
 	var site models.Site
 	err := d.db.Where("name = ?", name).First(&site).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &site, err
@@ -2102,7 +2103,7 @@ func (d *Database) GetProbe(id uint) (*models.Probe, error) {
 func (d *Database) GetProbeByName(name string) (*models.Probe, error) {
 	var probe models.Probe
 	err := d.db.Where("name = ?", name).First(&probe).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &probe, err
@@ -2130,7 +2131,7 @@ func (d *Database) GetProbeByRegistrationKey(key string) (*models.Probe, error) 
 	var probe models.Probe
 	// AUDIT-017: keys are stored hashed; hash the supplied plaintext to match.
 	err := d.db.Where("registration_key = ?", HashProbeKey(key)).First(&probe).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &probe, err
@@ -2191,7 +2192,7 @@ func (d *Database) GetApprovedProbes() ([]models.Probe, error) {
 func (d *Database) UpdateProbeHeartbeat(heartbeat *models.ProbeHeartbeat) error {
 	var existing models.ProbeHeartbeat
 	err := d.db.Where("probe_id = ?", heartbeat.ProbeID).First(&existing).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return d.db.Create(heartbeat).Error
 	}
 	existing.Status = heartbeat.Status
@@ -2239,7 +2240,7 @@ func (d *Database) SavePingStats(stats *models.PingStats) error {
 func (d *Database) GetPingStatsByTarget(deviceID uint, probeID uint, targetIP string) (*models.PingStats, error) {
 	var stats models.PingStats
 	err := d.db.Where("device_id = ? AND probe_id = ? AND target_ip = ?", deviceID, probeID, targetIP).First(&stats).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	return &stats, err
@@ -2255,7 +2256,7 @@ func (d *Database) SaveProcessorStats(stats []models.ProcessorStats) error {
 func (d *Database) GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error) {
 	var latest models.ProcessorStats
 	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latest).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -4558,7 +4559,7 @@ func (d *Database) UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error 
 		cfg.ID = existing.ID
 		return d.db.Save(cfg).Error
 	}
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 	return d.db.Create(cfg).Error
@@ -4592,7 +4593,7 @@ func (d *Database) UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error {
 		cfg.ID = existing.ID
 		return d.db.Save(cfg).Error
 	}
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 	return d.db.Create(cfg).Error
