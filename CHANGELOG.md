@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`docs/CERT-ROTATION.md`** (closes AUDIT-074): full TLS certificate rotation policy for the central server. Covers (1) **public TLS** (dashboard + API) via Let's Encrypt with certbot (recommended 90-day rotation, SIGHUP-reload), self-signed fallback, manual renewal, and the certbot `post-renew` hook to restart the server; (2) **internal mTLS** (probe ↔ server) with 1-year rotation cadence, per-probe certs, SIGHUP-reload on the probe side, the corporate-CA workflow, and a fast interim fix (`PROBE_FORCE_REREGISTER=true`) for revocation when CRL support is not yet available (tracked as AUDIT-067 follow-up); (3) **incident response** for a compromised server private key (CA revocation → cert replacement → forced re-registration → audit-log triage → tenant notification per the data-retention doc). Cross-references the collector-side `SECURITY.md`. Documentation only.
 - **KNOWN-ISSUES.md** (AUDIT-110): new top-level file cataloguing operator-known limitations that don't yet have a fix. Each entry cross-links to its `docs/AUDIT.md` row so the operator can navigate from a known issue to the audit doc and back. Covers AUDIT-040 (single-binary Docker port binding), AUDIT-118 (SQLite test backend vs production Postgres), AUDIT-093 (embedded Postgres random password), AUDIT-105 (default `ADMIN_USERNAME=admin` warning), and AUDIT-029 (orphan tables grow between cleanup ticks).
 
 ### Changed
