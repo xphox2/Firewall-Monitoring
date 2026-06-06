@@ -1,0 +1,31 @@
+# CODEOWNERS — default reviewers for pull requests (AUDIT-163).
+#
+# GitHub requests a review from the matching owner(s) automatically when a PR
+# touches a path. The LAST matching pattern wins, so order matters: the
+# catch-all is first, more specific paths below override it.
+#
+# Replace @xphox2 with the actual maintainer handle(s) / a team
+# (e.g. @org/maintainers) as the project grows.
+
+# Default owner for everything in the repo.
+*                       @xphox2
+
+# --- Security-sensitive surfaces: auth, crypto, secrets, middleware. ---
+/internal/auth/         @xphox2
+/internal/secrets/      @xphox2
+/internal/api/middleware/ @xphox2
+/internal/httputil/ssrf.go @xphox2
+
+# --- Database schema / migrations (data-integrity blast radius). ---
+/internal/database/     @xphox2
+
+# --- Build / deploy / CI surface. ---
+/Dockerfile             @xphox2
+/Makefile               @xphox2
+/entrypoint.sh          @xphox2
+/deploy.sh              @xphox2
+/.github/               @xphox2
+
+# --- The public-release audit + handoff docs. ---
+/docs/AUDIT.md          @xphox2
+/docs/HANDOFF.md        @xphox2
