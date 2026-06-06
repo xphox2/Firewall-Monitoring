@@ -99,6 +99,27 @@ sudo ./deploy.sh start
 3. Set strong admin credentials
 4. Configure alert thresholds
 
+**[`config.env.example`](config.env.example) is the authoritative reference for every setting** — it lists all ~70 variables with inline comments and defaults. The most important ones:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SERVER_HOST` / `SERVER_PORT` | `0.0.0.0` / `8080` | HTTP listen address |
+| `SERVER_ENABLE_TLS` | `false` | Terminate TLS in-process (cert/key via `SERVER_TLS_CERT`/`_KEY`) |
+| `JWT_SECRET_KEY` | _(auto-generated + persisted)_ | Signs login JWTs **and** derives the AES-256 key for stored secrets — leave empty to auto-persist to `<SECRETS_DIR>/.jwt-secret` |
+| `ENCRYPTION_KEY` | _(derived from JWT secret)_ | Optional explicit key for encrypting device/probe secrets at rest |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / _(set me)_ | Initial admin login (a non-default username is strongly recommended) |
+| `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / `public` | Default directly-polled device |
+| `SNMP_POLL_INTERVAL` | `60s` | Poll cadence (keep ≥ 60s to avoid overloading devices) |
+| `CPU_THRESHOLD` / `MEMORY_THRESHOLD` / `DISK_THRESHOLD` / `SESSION_THRESHOLD` | `80` / `80` / `90` / `100000` | Alert thresholds |
+| `EMAIL_ENABLED` + `SMTP_*` | `false` | Email alerting + scheduled reports |
+| `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | _(empty)_ | Chat alerting |
+| `DB_TYPE` / `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` (prod) | Database connection (SQLite is used for tests) |
+| `DB_MAX_OPEN_CONNS` | per-process (15/10/5) | Connection-pool ceiling per daemon |
+| `RETENTION_*_DAYS` | varies | Per-table data retention (e.g. `RETENTION_SYSLOG_CRITICAL_DAYS`) |
+| `PROBE_*` | _(empty)_ | Remote-probe identity/listeners (see the probe section of `config.env.example`) |
+| `REPORT_*` | _(empty)_ | Scheduled-report recipients/cadence |
+| `SERVER_READ_TIMEOUT` / `SERVER_WRITE_TIMEOUT` | `30s` / `30s` | HTTP server timeouts |
+
 ## SNMP OIDs Monitored
 
 ### System Status (FortiGate enterprise OIDs)
