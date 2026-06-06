@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`docs/DATA-RETENTION.md`** (closes AUDIT-066): per-table default retention windows, the PII surface for each telemetry type, the data subject rights the operator can honor (GDPR Art. 15-17, CCPA §1798.100-130), what is NOT in the data flow (no packet captures, no app-layer payload, no DNS query names, no certificate private keys), and the new env-var knobs (`PROBE_STATUS_RETENTION_DAYS`, `PROBE_VPN_RETENTION_DAYS`, etc.) for tuning the per-table retention. Specifically calls out that `ConfigRevision` data (full firewall configs) may contain `set password <plaintext>` for LDAP/RADIUS bind passwords, IPSec PSKs, and admin recovery passwords on FortiOS < 7.2.1 — and that FortiOS 7.2.1+ with the "mask sensitive fields" backup option tags the revision as `backup_quality: "masked"`, which the server now surfaces as a filter (`?quality=full|masked|suspect|unknown`, AUDIT-069). No code change — documentation only.
 - **KNOWN-ISSUES.md** (AUDIT-110): new top-level file cataloguing operator-known limitations that don't yet have a fix. Each entry cross-links to its `docs/AUDIT.md` row so the operator can navigate from a known issue to the audit doc and back. Covers AUDIT-040 (single-binary Docker port binding), AUDIT-118 (SQLite test backend vs production Postgres), AUDIT-093 (embedded Postgres random password), AUDIT-105 (default `ADMIN_USERNAME=admin` warning), and AUDIT-029 (orphan tables grow between cleanup ticks).
 
 ### Changed
