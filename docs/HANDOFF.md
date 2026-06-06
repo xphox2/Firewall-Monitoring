@@ -731,6 +731,57 @@ tests, `gofmt -l`, `go vet`).
   092-sibling 094 (re-scope first). The large refactors (028/032/044/072/076) each
   still need their own planning session.
 
+## Session 19 completion log (2026-06-06) — build-hygiene + docs batch
+
+Continued the small-S-wins sweep: build/repo hygiene (Sessions 20/21) + repo
+docs (Session 23). **9 shipped** (v0.10.343 → v0.10.351), resolved count
+**115 → 124**. Full suite green throughout (14 packages).
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-103 | 0.10.343 | 8c24348 | drop unused `gcc musl-dev` from the Dockerfile builder (CGO_ENABLED=0) |
+| AUDIT-102 | 0.10.344 | 3923924 | `-trimpath -buildvcs=false` on all Dockerfile builds + the Makefile `build` target |
+| AUDIT-104 | 0.10.345 | 6f0631a | `make install`/`uninstall`/`tarball` + **fixed a latent bug** — `build` now emits canonical `fwmon-*` names (was naming them after dirs) |
+| AUDIT-163 | 0.10.346 | aadfbfb | real `.github/CODEOWNERS` (the sweep had found a stray CHANGELOG ref to a non-existent file) |
+| AUDIT-162 | 0.10.347 | b1d394b | README **Test** + native-**Install** subsections (`go test ./...`, `make qa/test-race`, `make install/tarball`) |
+| AUDIT-109 | 0.10.348 | 3056a84 | refreshed the stale README Features list (reports/sites/policies/maintenance/IRC/sFlow-syslog-ICMP/probes/multi-vendor) |
+| AUDIT-107 | 0.10.349 | dc1b01d | README env-var defaults table (values **verified against `internal/config`**, not guessed) + `config.env.example` cross-link |
+| AUDIT-168 | 0.10.350 | 4f30ff2 | README **Browser Support** baseline (Chrome 105+/Safari 15.4+/Firefox 121+, the `:has()` floor) |
+| AUDIT-170 | 0.10.351 | 3e5d3ad | `docs/custom-vendor.md` — end-to-end "add an SNMP vendor profile" tutorial (code verified against the real API) |
+
+**Discoveries / decisions for the next session:**
+
+- **AUDIT-104 surfaced a real latent bug, not just a doc gap:** the Makefile
+  `build` target used `go build -o bin/ ./cmd/...`, which names binaries after
+  their directories (`api`/`poller`/`trap-receiver`/`probe`) — mismatching the
+  canonical `fwmon-*` names every other surface uses (Dockerfile, deploy.sh,
+  systemd `ExecStart`). `make install` would have referenced non-existent
+  files. The build target now emits `fwmon-*`. If anything depended on the bare
+  names, check it. (`make` isn't installed on the Windows dev box; the install/
+  tarball recipes were validated by running their commands directly against a
+  staged DESTDIR — they work. CI/Linux has make.)
+- **AUDIT-107 verify-first paid off:** several env vars the audit/README would
+  document (`DB_MAX_OPEN_CONNS`, `SERVER_*_TIMEOUT`, `REPORT_*`,
+  `RETENTION_SYSLOG_CRITICAL_DAYS`) are **not** in `config.env.example` but ARE
+  read by `internal/config` — so `config.env.example` is itself incomplete
+  (a latent follow-up: sync the example to the code). The README table was
+  written against the code, with the two specific defaults (`30s`, per-process
+  15/10/5) checked at the source.
+- **AUDIT-170/113 overlap:** `docs/custom-vendor.md` is a hands-on tutorial; the
+  still-open **AUDIT-113** ("How to add a vendor" doc) is largely satisfied by
+  it — a future session can likely close 113 by verifying coverage rather than
+  writing a second doc. There's already a `vendor_sonicwall.go`, so the tutorial
+  uses a hypothetical "acme" shallow profile and points at `pfsense`/`sonicwall`
+  as real worked examples.
+- **Still-open easy-ish S/M docs wins:** AUDIT-106 (M — full README endpoint
+  sweep, 100+ routes), 108 (M — Mermaid architecture diagram), 164
+  (FUNDING.yml — only if the org wants Sponsors), 166 (community channel —
+  needs a real channel to link), 113 (verify vs 170). Larger refactors
+  (028/032/044/072/076/077/078) still each need a planning session.
+- **Comment-quotes-the-bug-token gotcha struck again** (AUDIT-103): a comment
+  saying "no `gcc musl-dev`" tripped the absence check — reworded to "no C
+  toolchain". Standing lesson for the `internal/shell` static tests.
+
 ## Closing
 
 The 61 resolutions made in v0.10.241 → v0.10.292 (May–June 2026) cover
