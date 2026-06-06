@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.362"
+const ServerVersion = "0.10.363"
 
 func main() {
 	cfg := config.Load()
@@ -392,6 +392,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	api.Use(middleware.RateLimiter(cfg))
 	{
 		api.GET("/health", handler.GetHealth)
+		// AUDIT-070: Prometheus text-format scrape endpoint
+		// (probe_batch_dedup_total{endpoint=...}). Unauthenticated
+		// and uncached so a scraper sees fresh values on every
+		// poll — matches the standard Prometheus scrape contract.
+		api.GET("/metrics", handler.GetMetrics)
 
 		public := api.Group("/public")
 		public.Use(middleware.PublicRateLimiter())

@@ -1222,15 +1222,26 @@ func (d *Database) migrateProbeKeysToHash() {
 }
 
 // BatchAlreadyProcessed reports whether a (probeID, batchID) idempotency key
-// has already been recorded (AUDIT-042). batchID == "" is never considered
-// processed (no idempotency requested).
-func (d *Database) BatchAlreadyProcessed(probeID uint, batchID string) bool {
+// has already been recorded (AUDIT-042) within the last `ttl` (AUDIT-070). A
+// key older than `ttl` is treated as not-yet-seen, so a retry that arrives
+// after the collector's retry window has fully closed will re-ingest the
+// batch instead of being silently dropped — that's the desired behaviour
+// because the collector's batch ID is deterministic and the same data
+// legitimately re-arrives. batchID == "" is never considered processed (no
+// idempotency requested). ttl <= 0 falls back to the AUDIT-070 default of
+// 5 minutes (matches the collector's retry window) so a misconfigured
+// caller can't accidentally disable dedup or dedupe-forever.
+func (d *Database) BatchAlreadyProcessed(probeID uint, batchID string, ttl time.Duration) bool {
 	if batchID == "" {
 		return false
 	}
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	cutoff := time.Now().Add(-ttl)
 	var count int64
 	if err := d.db.Model(&models.ProcessedBatch{}).
-		Where("probe_id = ? AND batch_id = ?", probeID, batchID).
+		Where("probe_id = ? AND batch_id = ? AND timestamp >= ?", probeID, batchID, cutoff).
 		Count(&count).Error; err != nil {
 		// Fail open: a dedup-store read error must not drop a legitimate batch.
 		log.Printf("BatchAlreadyProcessed: probe %d batch %s: %v", probeID, batchID, err)
@@ -1331,9 +1342,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.InterfaceErrors{}, "interface_errors", ret.Days(ret.InterfaceErrorsDays)},
 		{&models.ProcessStats{}, "process_stats", ret.Days(ret.ProcessStatsDays)},
 		{&models.IRCMessageLog{}, "irc_message_logs", ret.Days(ret.IRCMessageLogDays)},
-		// AUDIT-042: idempotency keys only matter for the probe's retry window
-		// (seconds); 2 days is far more than enough and keeps the table tiny.
-		{&models.ProcessedBatch{}, "processed_batches", 2},
+		// AUDIT-042/AUDIT-070: idempotency keys only matter for the
+		// probe's retry window (default 5 minutes, configurable via
+		// BATCH_DEDUP_TTL). The dedup read itself is now
+		// time-bounded (`timestamp >= now - ttl` in
+		// BatchAlreadyProcessed), so this 1-day retention is just a
+		// backstop to keep the table from growing unboundedly if
+		// the cleanup tick is ever skipped.
+		{&models.ProcessedBatch{}, "processed_batches", 1},
 	}
 
 	for _, e := range entries {

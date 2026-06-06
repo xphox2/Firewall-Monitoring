@@ -37,6 +37,19 @@ type ServerConfig struct {
 	EncryptionKey  string
 	CookieSecure   bool
 	CookieSameSite string
+	// AUDIT-070: server-side dedup TTL for the probe
+	// `X-Probe-Batch-ID` idempotency key. The collector v1.2.74+
+	// sends a stable per-batch header and reuses it across its
+	// retry attempts; the server records the (probe_id, batch_id)
+	// pair after a 2xx save and short-circuits any repeat request
+	// that arrives within this TTL. 5 minutes comfortably covers
+	// the collector's 3-attempt retry window with margin; a much
+	// shorter value risks dropping a retry that legitimately
+	// arrives just after the TTL expires, a much longer value
+	// keeps stale keys in the table unnecessarily. Configurable
+	// via BATCH_DEDUP_TTL (Go duration: "5m", "10m", "1h"; 0 falls
+	// back to the 5-minute default).
+	BatchDedupTTL time.Duration
 	// CookieSecureExplicit tracks whether the operator explicitly set
 	// COOKIE_SECURE=true in config.env, as opposed to inheriting the
 	// default from SERVER_ENABLE_TLS. AUDIT-024: when CookieSecure is
@@ -239,6 +252,13 @@ func Load() *Config {
 			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
+			// AUDIT-070: see the field doc. 5m default
+			// matches the collector's retry window. 0 falls
+			// through to the same default in the consumer
+			// (so a misconfigured BATCH_DEDUP_TTL=0 still
+			// dedupes for 5 minutes rather than forever or
+			// never).
+			BatchDedupTTL: getDurationEnv("BATCH_DEDUP_TTL", 5*time.Minute),
 		},
 		SNMP: SNMPConfig{
 			SNMPHost:       getEnv("SNMP_HOST", "192.168.1.1"),

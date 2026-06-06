@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/configdiff"
+	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
 
@@ -17,20 +18,66 @@ import (
 )
 
 // batchDedupCheck implements the AUDIT-042 idempotency check for probe batch
-// endpoints. If the request carries an `X-Probe-Batch-ID` already recorded for
-// this probe, it writes a 200 "deduped" response and returns dup=true (the
-// caller must return immediately). Otherwise it returns the batch id (possibly
-// "") for the caller to pass to markBatchIfOK via defer.
-func (h *Handler) batchDedupCheck(c *gin.Context, probeID uint) (batchID string, dup bool) {
+// endpoints, extended in AUDIT-070 to:
+//   - set X-Probe-Server-Batch-Status: new|duplicate on the response
+//     (so the collector can short-circuit retry accounting);
+//   - bump probe_batch_dedup_total{endpoint=...} on a dedup hit;
+//   - emit a WARN log line "Duplicate batch X from probe Y, dropped." on
+//     a dedup hit (operator visibility — a spike in this log is a
+//     signal that the central server is flaky and the collector is
+//     retrying);
+//   - honor the configurable BATCH_DEDUP_TTL (default 5 minutes) so a
+//     retry that arrives after the collector's retry window has fully
+//     closed re-ingests the batch instead of being silently dropped
+//     (the collector's batch ID is deterministic and the same data
+//     legitimately re-arrives).
+//
+// `endpoint` is the short path-suffix label used for the metric
+// (syslog/traps/flows/pings) — must be one of those four so the counter
+// cardinality stays bounded.
+//
+// If the request carries an `X-Probe-Batch-ID` already recorded for
+// this probe within the TTL, it writes a 200 "deduped" response and
+// returns dup=true (the caller must return immediately). Otherwise it
+// returns the batch id (possibly "") for the caller to pass to
+// markBatchIfOK via defer.
+func (h *Handler) batchDedupCheck(c *gin.Context, probeID uint, endpoint string) (batchID string, dup bool) {
 	batchID = c.GetHeader("X-Probe-Batch-ID")
 	if batchID == "" || h.db == nil {
+		// No batch id header → no dedup, no status header (the
+		// collector opted out of idempotency by omitting the
+		// header; echoing a status back would be misleading).
 		return "", false
 	}
-	if h.db.BatchAlreadyProcessed(probeID, batchID) {
+	ttl := h.dedupTTL()
+	if h.db.BatchAlreadyProcessed(probeID, batchID, ttl) {
+		c.Header("X-Probe-Server-Batch-Status", "duplicate")
+		metrics.DefaultRegistry.IncBatchDedup(endpoint)
+		log.Printf("WARN: Duplicate batch %s from probe %d (endpoint %s, ttl=%s), dropped.",
+			batchID, probeID, endpoint, ttl)
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"deduped": true, "saved": 0}))
 		return "", true
 	}
+	c.Header("X-Probe-Server-Batch-Status", "new")
 	return batchID, false
+}
+
+// dedupTTL returns the configured batch-dedup TTL, falling back to the
+// AUDIT-070 default (5 minutes) when the config is nil or the value is
+// non-positive. The default is duplicated in BatchAlreadyProcessed so a
+// misconfigured caller (e.g. a test that forgot to set Config) still
+// gets safe behavior — the dedup window doesn't silently become "0"
+// (which would let every duplicate through) or "MaxDuration" (which
+// would dedupe-forever).
+func (h *Handler) dedupTTL() time.Duration {
+	const defaultTTL = 5 * time.Minute
+	if h.config == nil {
+		return defaultTTL
+	}
+	if h.config.Server.BatchDedupTTL <= 0 {
+		return defaultTTL
+	}
+	return h.config.Server.BatchDedupTTL
 }
 
 // markBatchIfOK records the idempotency key, but ONLY if the response was a 2xx
@@ -47,12 +94,31 @@ func (h *Handler) markBatchIfOK(c *gin.Context, probeID uint, batchID string) {
 	}
 }
 
+// GetMetrics exposes the in-process metrics registry in Prometheus text
+// exposition format (AUDIT-070). Currently emits just
+// `probe_batch_dedup_total{endpoint=...}`, which is the single AUDIT-070
+// counter; future audits can register more metrics against
+// `metrics.DefaultRegistry` and they'll show up here without further
+// wiring. The endpoint is unauthenticated and uncached so a scraper sees
+// fresh values on every poll, matching the standard Prometheus scrape
+// contract.
+func (h *Handler) GetMetrics(c *gin.Context) {
+	c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	if err := metrics.DefaultRegistry.WritePrometheusText(c.Writer); err != nil {
+		// We can't change the status code now (headers already
+		// flushed) — log and let the client see a truncated
+		// body, which Prometheus treats as a failed scrape and
+		// retries on the next interval.
+		log.Printf("GetMetrics: write error: %v", err)
+	}
+}
+
 func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
 		return
 	}
-	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	batchID, dup := h.batchDedupCheck(c, probe.ID, "syslog")
 	if dup {
 		return
 	}
@@ -104,7 +170,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	batchID, dup := h.batchDedupCheck(c, probe.ID, "traps")
 	if dup {
 		return
 	}
@@ -147,7 +213,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	if !ok {
 		return
 	}
-	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	batchID, dup := h.batchDedupCheck(c, probe.ID, "flows")
 	if dup {
 		return
 	}
@@ -191,7 +257,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	if !ok {
 		return
 	}
-	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	batchID, dup := h.batchDedupCheck(c, probe.ID, "pings")
 	if dup {
 		return
 	}
