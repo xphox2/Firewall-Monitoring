@@ -15,6 +15,7 @@ import (
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) GetProbes(c *gin.Context) {
@@ -468,35 +469,42 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 		return
 	}
 
-	// Delete old SystemSetting for the previous key
-	if probe.RegistrationKey != "" {
-		h.db.Gorm().Where("key = ?", "probe_registration_"+probe.RegistrationKey).Delete(&models.SystemSetting{})
-	}
-
-	// Generate new key
+	// AUDIT-085: generate the new key BEFORE any DB write, then do every
+	// write (update probe → delete old setting → create new setting) in a
+	// single transaction. The pre-fix code deleted the old key's
+	// SystemSetting first and only *logged a warning* if the new setting
+	// failed to write — so a mid-sequence failure could leave the probe with
+	// a rotated key but no usable registration setting, locking it out
+	// permanently. Generating first + transacting means any failure rolls the
+	// whole thing back and the probe keeps its existing, working key.
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate key"))
 		return
 	}
 	newKey := hex.EncodeToString(keyBytes)
+	oldKey := probe.RegistrationKey
 
-	// Update probe record
-	if err := h.db.Gorm().Model(probe).Update("registration_key", newKey).Error; err != nil {
+	if err := h.db.Gorm().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(probe).Update("registration_key", newKey).Error; err != nil {
+			return err
+		}
+		if oldKey != "" {
+			if err := tx.Where("key = ?", "probe_registration_"+oldKey).Delete(&models.SystemSetting{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&models.SystemSetting{
+			Key:      "probe_registration_" + newKey,
+			Value:    probe.Name,
+			Type:     "string",
+			Label:    "Probe Registration Key for " + probe.Name,
+			Category: "probes",
+		}).Error
+	}); err != nil {
+		log.Printf("RegenerateProbeKey: rollback for probe %s (key unchanged): %v", probe.Name, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to regenerate key"))
 		return
-	}
-
-	// Create new SystemSetting
-	setting := models.SystemSetting{
-		Key:      "probe_registration_" + newKey,
-		Value:    probe.Name,
-		Type:     "string",
-		Label:    "Probe Registration Key for " + probe.Name,
-		Category: "probes",
-	}
-	if err := h.db.Gorm().Create(&setting).Error; err != nil {
-		log.Printf("Warning: Failed to create registration setting for probe %s: %v", probe.Name, err)
 	}
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
