@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.356"
+const ServerVersion = "0.10.357"
 
 func main() {
 	cfg := config.Load()
@@ -158,12 +158,23 @@ func main() {
 		db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword)
 	}
 
+	// AUDIT-084: background workers get a cancellable context so they exit on
+	// graceful shutdown instead of relying on process death (which skips
+	// deferred cleanup if the shutdown path ever changes). bgCancel is called
+	// from the shutdown block below.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+
 	// Periodically prune expired login attempts to prevent unbounded map growth
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			authManager.PruneExpiredAttempts()
+		for {
+			select {
+			case <-ticker.C:
+				authManager.PruneExpiredAttempts()
+			case <-bgCtx.Done():
+				return
+			}
 		}
 	}()
 
@@ -299,6 +310,10 @@ func main() {
 	case err := <-errCh:
 		log.Printf("HTTP listener failed: %v — initiating graceful shutdown", err)
 	}
+
+	// AUDIT-084: stop background workers (login-attempt pruner) before the
+	// server drains, so their tickers don't fire mid-shutdown.
+	bgCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
