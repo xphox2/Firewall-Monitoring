@@ -1288,7 +1288,8 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-080 | `== gorm.ErrRecordNotFound` instead of `errors.Is` | 0.10.352 | e31d677 | Swept all 15 direct `==`/`!=` comparisons against `gorm.ErrRecordNotFound` in `database.go` to `errors.Is` (unwraps `%w`-wrapped errors; future-proof against AUDIT-081 wrapping). Cited auth/notifier sites had since moved (no sentinel compare there now). `TestErrorsIsForGormSentinels_AUDIT080` pins no direct comparison remains. |
 | AUDIT-147 | `ConfigureAutovacuum` table list hard-coded | 0.10.353 | f67dfaa | Default list now includes the omitted `interface_stats`/`system_status` (+ processor/process/vpn/ha/ifaddr) and is overridable via `DB_AUTOVACUUM_TABLES`; resolution moved to a testable `autovacuumTables()`. Table names verified vs `TableName()` (`vpn_status`/`ha_status` are singular). `TestAutovacuumTables_AUDIT147` pins coverage + override. |
 | AUDIT-112 | No `.well-known/security.txt` route | 0.10.354 | d77cad1 | Added RFC 9116 `security.txt` at `/.well-known/security.txt` (+ `/security.txt`) with `Contact`/`Policy`/`Preferred-Languages` and a request-time `Expires` (6 months out, never stale). `TestSecurityTxtRoute_AUDIT112` pins the route + required fields. |
-| AUDIT-130 | No retry on transient API failures | 0.10.355 | (pending) | `apiFetch` now retries 502/503/504 up to 3 attempts with exponential backoff + jitter before erroring; 401/403/`!ok` handling unchanged. `TestApiFetchRetriesTransient_AUDIT130` pins the statuses + jittered backoff. |
+| AUDIT-130 | No retry on transient API failures | 0.10.355 | d7c6fcd | `apiFetch` now retries 502/503/504 up to 3 attempts with exponential backoff + jitter before erroring; 401/403/`!ok` handling unchanged. `TestApiFetchRetriesTransient_AUDIT130` pins the statuses + jittered backoff. |
+| AUDIT-134 | Hardcoded `package.json` version | 0.10.356 | (pending) | Removed the stale unused `"version": "0.10.157"` (read by nothing; app version lives in `ServerVersion`) and marked the package `"private": true` so no version is needed and none can go stale. `TestPackageJsonNoStaleVersion_AUDIT134` pins no version field + private. |
 
 ---
 
@@ -1424,7 +1425,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-080 — sweep gorm.ErrRecordNotFound == to errors.Is in database.go (15 sites) — v0.10.352 — e31d677 — opencode
 2026-06-06 — AUDIT-147 — autovacuum: add interface_stats/system_status + DB_AUTOVACUUM_TABLES override — v0.10.353 — f67dfaa — opencode
 2026-06-06 — AUDIT-112 — RFC 9116 security.txt route (/.well-known/security.txt) — v0.10.354 — d77cad1 — opencode
-2026-06-06 — AUDIT-130 — apiFetch retry 502/503/504 with backoff+jitter — v0.10.355 — (pending) — opencode
+2026-06-06 — AUDIT-130 — apiFetch retry 502/503/504 with backoff+jitter — v0.10.355 — d7c6fcd — opencode
+2026-06-06 — AUDIT-134 — remove stale unused package.json version + mark private — v0.10.356 — (pending) — opencode
 ```
 
 ---

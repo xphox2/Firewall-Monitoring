@@ -1,7 +1,7 @@
 {
   "name": "firewall-mon",
-  "version": "0.10.157",
-  "description": "Firewall monitoring system",
+  "private": true,
+  "description": "Firewall monitoring system — Tailwind CSS build tooling only (the app version lives in cmd/api/main.go ServerVersion). AUDIT-134: no version field here; it was unused and went stale.",
   "scripts": {
     "tailwind": "tailwindcss -i ./cmd/api/static/css/styles.css -o ./cmd/api/static/css/tailwind.css --minify",
     "tailwind:watch": "tailwindcss -i ./cmd/api/static/css/styles.css -o ./cmd/api/static/css/tailwind.css --watch",
