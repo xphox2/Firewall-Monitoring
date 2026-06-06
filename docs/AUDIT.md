@@ -1302,7 +1302,8 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-108 | No architecture diagram | 0.10.360 | 40c68df | Added `docs/architecture.md`: Mermaid component flowchart + 3 sequence diagrams (probe registration, poll cycle, alert firing) + package map. README-linked. `TestArchitectureDiagram_AUDIT108` pins the Mermaid blocks, ≥3 sequence diagrams, README link. |
 | AUDIT-135 | No request-ID middleware | 0.10.361 | a2c6d7f | New `RequestID` middleware: reuses a safe inbound `X-Request-ID` (`^[A-Za-z0-9._-]{1,64}$`, log-forge guarded) or mints a 128-bit hex one, stores it on the context + echoes the `X-Request-ID` response header; `RequestLogger` logs `req=<id>`. Unit tests cover generate/reuse/reject-hostile. Full slog migration is AUDIT-076 (open). |
 | AUDIT-131 | `admin-irc.js` ES6 amid ES5 (pick one) | 0.10.362 | 139c3a9 | Added `cmd/api/static/js/README.md` declaring **ES2020** the standard (justified by the AUDIT-168 browser baseline), so the ES6 code is correct; legacy `['catch']` flagged as not-to-be-extended (cleanup = AUDIT-132). `TestJSStandardDocumented_AUDIT131` pins it. |
-| AUDIT-119 | No fuzz tests for untrusted network parsers | 0.10.363 | (pending) | Added `FuzzParseRFC5424` (syslog) + `FuzzParseSFlowDatagram` (sflow) with malformed seeds. Active fuzzing: 3.3M execs (sflow) + 267k (syslog), **zero crashes** — durable no-panic guard. First tests in `internal/syslog`/`internal/sflow` (also chips at AUDIT-117). |
+| AUDIT-119 | No fuzz tests for untrusted network parsers | 0.10.363 | 12c896b | Added `FuzzParseRFC5424` (syslog) + `FuzzParseSFlowDatagram` (sflow) with malformed seeds. Active fuzzing: 3.3M execs (sflow) + 267k (syslog), **zero crashes** — durable no-panic guard. First tests in `internal/syslog`/`internal/sflow` (also chips at AUDIT-117). |
+| AUDIT-124 | No benchmark tests | 0.10.364 | (pending) | Added `BenchmarkParseRFC5424`/`ParsePriority` (syslog) + `BenchmarkParseSFlowDatagram` (sflow) — per-packet CPU hot paths, no DB fixtures. `b.ReportAllocs()`+`SetBytes()`. Deferred: DB-bound hot paths (BatchInserter/GetConnectionFlowStats) need a seeded test DB. |
 
 ---
 
@@ -1446,7 +1447,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-108 — docs/architecture.md Mermaid component + sequence diagrams — v0.10.360 — 40c68df — opencode
 2026-06-06 — AUDIT-135 — RequestID middleware (X-Request-ID, log correlation, log-forge guard) — v0.10.361 — a2c6d7f — opencode
 2026-06-06 — AUDIT-131 — declare ES2020 the JS standard (cmd/api/static/js/README.md) — v0.10.362 — 139c3a9 — opencode
-2026-06-06 — AUDIT-119 — Go fuzz tests for syslog + sflow parsers (no crashes in 3.5M+ execs) — v0.10.363 — (pending) — opencode
+2026-06-06 — AUDIT-119 — Go fuzz tests for syslog + sflow parsers (no crashes in 3.5M+ execs) — v0.10.363 — 12c896b — opencode
+2026-06-06 — AUDIT-124 — benchmarks for syslog + sflow parser hot paths — v0.10.364 — (pending) — opencode
 ```
 
 ---
