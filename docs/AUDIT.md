@@ -8,17 +8,18 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.351** |
-| Bug findings resolved | **124 / 170  (73%)** |
+| Server version | **v0.10.357** |
+| Bug findings resolved | **130 / 170  (76%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **46** |
+| Open bug findings | **40** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
 - ✅ All 11 CRITICAL deployment blockers — resolved (v0.10.241–292)
 - ✅ Security, DB-performance, and frontend/accessibility quick wins — resolved
 - ✅ Build/repo hygiene + operator documentation — resolved (Sessions 18–19)
-- ⏳ Remaining 46: large refactors, observability, test infrastructure, a few docs
+- ✅ Mid-size code/config cleanups (`errors.Is`, autovacuum coverage, security.txt, apiFetch retry, …) — resolved (Session 20)
+- ⏳ Remaining 40: large refactors, observability, test infrastructure, a few docs
 
 ## 🧭 How to read this file
 
@@ -29,7 +30,7 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 46 open findings)
+## ⏳ What's left (the 40 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
@@ -37,13 +38,14 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-135` (request-ID middleware), `AUDIT-150` (OpenTelemetry tracing).
 - **Test infrastructure** — `AUDIT-117`–`124` (per-package coverage, Postgres CI matrix, fuzz / property / integration / benchmark tests), `AUDIT-140`/`142`.
-- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-108` (architecture diagram), `AUDIT-111`–`114`, `AUDIT-164`/`165`/`166`.
-- **Smaller code cleanups** — `AUDIT-071`, `073`, `079`, `080`, `081`, `084`, `094`, `129`, `130`, `131`, `132`, `134`, `147`.
+- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-108` (architecture diagram), `AUDIT-111`/`113`/`114`, `AUDIT-164`/`165`/`166`.
+- **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `081` (wrap `return err`), `094` (entrypoint supervision), `129` (Sentry), `131` (admin-irc.js ES5), `132` (drop `['catch']` ES5 workaround).
 
 ## 🗓 Recent activity
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 20** (v0.10.352–357) | Mid-size code/config cleanups | `errors.Is` for gorm sentinels, autovacuum covers `interface_stats`/`system_status` + `DB_AUTOVACUUM_TABLES`, RFC 9116 `security.txt`, `apiFetch` 5xx retry, dropped stale `package.json` version, prune goroutine graceful shutdown |
 | **Session 19** (v0.10.343–351) | Build hygiene + operator docs | drop unused Docker C-toolchain, reproducible builds, `make install`/`tarball` (+ fixed a binary-naming bug), `CODEOWNERS`, README test/feature/env/browser docs, custom-vendor tutorial |
 | **Session 18** (v0.10.336–342) | Deploy safety + probe robustness | `.dockerignore`, deploy.sh config-guard + backup + `--dry-run`, hardened nginx companion, jittered backoffs, probe poll context + bounded drain |
 | **Prod hotfixes** (v0.10.320–324) | Firefighting | color-sweep revert + 3 prod bugs (42P10 index, probe-offline alerting, redacted-secret write-back) |
@@ -2238,6 +2240,44 @@ docs (Session 23). **9 shipped** (v0.10.343 → v0.10.351), resolved count
 - **Comment-quotes-the-bug-token gotcha struck again** (AUDIT-103): a comment
   saying "no `gcc musl-dev`" tripped the absence check — reworded to "no C
   toolchain". Standing lesson for the `internal/shell` static tests.
+
+## Session 20 completion log (2026-06-06) — mid-size code/config cleanups
+
+**6 shipped** (v0.10.352 → v0.10.357), resolved count **124 → 130**. Plus a
+`chore:` gofmt fix for pre-existing whitespace drift in `ssrf_test.go`. Full
+suite green throughout (14 packages).
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-080 | 0.10.352 | e31d677 | `database.go`: 15 direct `==`/`!=` vs `gorm.ErrRecordNotFound` → `errors.Is` (future-proof against `%w` wrapping) |
+| AUDIT-147 | 0.10.353 | f67dfaa | autovacuum default set now includes `interface_stats`/`system_status` (+5 more) + `DB_AUTOVACUUM_TABLES` override; testable `autovacuumTables()` |
+| AUDIT-112 | 0.10.354 | d77cad1 | RFC 9116 `security.txt` route (`/.well-known/security.txt` + legacy) with request-time `Expires` |
+| AUDIT-130 | 0.10.355 | d7c6fcd | `apiFetch` retries 502/503/504 ×3 with backoff + jitter before erroring |
+| AUDIT-134 | 0.10.356 | 2aedf38 | removed stale unused `package.json` version (0.10.157), marked package `private` |
+| AUDIT-084 | 0.10.357 | 6eb0c1f | login-attempt prune goroutine exits via a cancellable `bgCtx` on graceful shutdown |
+
+**Discoveries / decisions for the next session:**
+
+- **Verify-first paid off (again):** AUDIT-080's cited `auth.go:75`/`notifier.go:112`
+  sites had moved (no sentinel compare there now) — only `database.go` had them.
+  AUDIT-147's audit example (`AlertPolicy`/`AlertRule`) was wrong — those are
+  low-volume config tables; the real omissions were the high-volume time-series
+  tables `interface_stats`/`system_status`. AUDIT-134's version was ~200 releases
+  stale and read by nothing.
+- **Table-name correctness matters** (AUDIT-147): GORM `TableName()` overrides make
+  `VPNStatus`→`vpn_status` and `HAStatus`→`ha_status` (singular). I initially wrote
+  the plural and caught it against `internal/models`. The `ALTER` is failure-tolerant
+  so a wrong name is only a harmless log line, but verify names against `TableName()`.
+- **AUDIT-132 is bigger than the audit implied:** the ES5 `['catch']` bracket-notation
+  workaround is **pervasive** (dozens of sites across many JS files), not the single
+  `admin-login.js:40` the audit named. Its "document the baseline" half is already done
+  (AUDIT-168). Closing it means a full `['catch']`→`.catch` sweep (mechanical, but a
+  large diff) — left for its own focused pass.
+- **AUDIT-081 is the natural follow-up to 080** — now that not-found checks use
+  `errors.Is`, wrapping `return err` raws in `database.go` with `%w` is safe and
+  won't break callers.
+- **`bgCtx` is now available in `cmd/api/main.go`** for any future background worker
+  that needs graceful-shutdown cancellation (AUDIT-084).
 
 ## Closing
 
