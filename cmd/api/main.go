@@ -15,6 +15,7 @@ import (
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/handlers"
 	"firewall-mon/internal/api/middleware"
+	"firewall-mon/internal/audit"
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
@@ -33,7 +34,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.373"
+const ServerVersion = "0.10.374"
 
 func main() {
 	cfg := config.Load()
@@ -276,7 +277,7 @@ func main() {
 	handler.SetIRCManager(ircManager)
 	defer ircManager.Stop()
 
-	setupRoutes(router, cfg, handler, authManager)
+	setupRoutes(router, cfg, handler, authManager, db)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
@@ -334,7 +335,7 @@ func main() {
 	log.Println("Server exited")
 }
 
-func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handler, authManager *auth.AuthManager) {
+func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handler, authManager *auth.AuthManager, db *database.Database) {
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.CORS(cfg))
 	router.Use(middleware.RequestID()) // AUDIT-135: before RequestLogger so the ID is logged
@@ -454,6 +455,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	admin := router.Group("/admin")
 	admin.Use(middleware.AdminAuth(authManager))
 	admin.Use(middleware.CSRFProtection(cfg))
+	// AUDIT-078: record authenticated admin mutations. After auth+CSRF so it
+	// only fires for genuine admin actions and the actor is on the context.
+	admin.Use(audit.Middleware(db))
 	{
 		admin.GET("", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
@@ -538,6 +542,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/traps", handler.GetTraps)
 		admin.GET("/api/uptime", handler.GetUptime)
 		admin.POST("/api/uptime/reset", handler.ResetUptime)
+
+		admin.GET("/api/audit", handler.GetAuditLogs) // AUDIT-078: admin-action trail
 
 		admin.GET("/api/devices", handler.GetDevices)
 		admin.POST("/api/devices", handler.CreateDevice)

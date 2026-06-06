@@ -57,6 +57,7 @@ func NewDatabaseForTesting(t interface {
 		&models.ProcessStats{},
 		&models.InterfaceAddress{},
 		&models.LoginAttempt{},
+		&models.AuditLog{},
 		&models.IRCMessageLog{},
 		&models.SyslogSummary{},
 		&models.UptimeRecord{},

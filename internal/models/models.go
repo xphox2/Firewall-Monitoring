@@ -360,6 +360,25 @@ type LoginAttempt struct {
 	UserAgent string    `json:"user_agent"`
 }
 
+// AuditLog records a privileged admin mutation (AUDIT-078): who did what, to
+// which target, from where, and whether it succeeded. The audit middleware
+// writes one row per authenticated POST/PUT/DELETE/PATCH under /admin. It is
+// append-only — there is no update or delete path in the application, so the
+// trail can't be silently rewritten through the API. `login_attempts` already
+// covers authentication; this covers everything an authenticated admin changes.
+type AuditLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	CreatedAt time.Time `json:"created_at" gorm:"index"`
+	Actor     string    `json:"actor" gorm:"index"`  // username from the JWT
+	ActorID   uint      `json:"actor_id"`            // admin user id
+	Method    string    `json:"method"`              // POST / PUT / DELETE / PATCH
+	Action    string    `json:"action" gorm:"index"` // matched route template, e.g. /admin/api/devices/:id
+	Target    string    `json:"target"`              // concrete path params, e.g. id=5
+	Status    int       `json:"status"`              // HTTP status the handler returned
+	IPAddress string    `json:"ip_address"`
+	UserAgent string    `json:"user_agent"`
+}
+
 type Device struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
 	Name            string    `json:"name" gorm:"uniqueIndex;not null"`

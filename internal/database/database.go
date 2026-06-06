@@ -324,6 +324,7 @@ func (d *Database) migrate() error {
 		&models.Alert{},
 		&models.UptimeRecord{},
 		&models.LoginAttempt{},
+		&models.AuditLog{},
 		&models.Device{},
 		&models.DeviceTunnel{},
 		&models.DeviceConnection{},
@@ -1110,6 +1111,42 @@ func (d *Database) GetLoginAttempts(since time.Time, limit int) ([]models.LoginA
 	var attempts []models.LoginAttempt
 	err := d.db.Where("timestamp > ?", since).Order("timestamp DESC").Limit(limit).Find(&attempts).Error
 	return attempts, err
+}
+
+// SaveAuditLog appends one admin-action record (AUDIT-078). Append-only — there
+// is intentionally no Update/Delete counterpart.
+func (d *Database) SaveAuditLog(entry *models.AuditLog) error {
+	if err := d.db.Create(entry).Error; err != nil {
+		return fmt.Errorf("save audit log: %w", err)
+	}
+	return nil
+}
+
+// GetAuditLogs returns admin-action records newest-first with optional filters
+// (actor, action route-template, and a since cutoff) plus pagination. Returns
+// the page and the unpaginated total so the caller can render counts.
+func (d *Database) GetAuditLogs(actor, action string, since time.Time, limit, offset int) ([]models.AuditLog, int64, error) {
+	q := d.db.Model(&models.AuditLog{})
+	if actor != "" {
+		q = q.Where("actor = ?", actor)
+	}
+	if action != "" {
+		q = q.Where("action = ?", action)
+	}
+	if !since.IsZero() {
+		q = q.Where("created_at >= ?", since)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count audit logs: %w", err)
+	}
+
+	var logs []models.AuditLog
+	if err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&logs).Error; err != nil {
+		return nil, 0, fmt.Errorf("list audit logs: %w", err)
+	}
+	return logs, total, nil
 }
 
 func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
