@@ -1216,6 +1216,44 @@ func (d *Database) MarkBatchProcessed(probeID uint, batchID string) error {
 	return err
 }
 
+// cleanupDeleteBatchSize is the row cap per cleanup DELETE. A package var (not
+// a const) so tests can shrink it to exercise the multi-batch loop without
+// seeding 10k+ rows.
+var cleanupDeleteBatchSize = 10000
+
+// batchedDeleteOlderThan deletes rows with `timestamp < cutoff` in bounded
+// batches instead of one giant DELETE (AUDIT-038). A single
+// `DELETE FROM interface_stats WHERE timestamp < ?` on a 100M-row table takes a
+// long row lock, bloats the table, and blocks concurrent writes. Each batch
+// deletes at most cleanupDeleteBatchSize rows (`id IN (SELECT id ... LIMIT N)`,
+// a form valid on both Postgres and SQLite) so locks stay short; on Postgres a
+// per-batch `SET LOCAL lock_timeout` bounds lock waits, and a 100ms sleep
+// between batches yields to other writers.
+func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) error {
+	batchSize := cleanupDeleteBatchSize
+	for {
+		var affected int64
+		err := d.db.Transaction(func(tx *gorm.DB) error {
+			if d.dialect.IsPostgres() {
+				if e := tx.Exec("SET LOCAL lock_timeout = '5s'").Error; e != nil {
+					return e
+				}
+			}
+			sub := tx.Model(model).Select("id").Where("timestamp < ?", cutoff).Limit(batchSize)
+			res := tx.Where("id IN (?)", sub).Delete(model)
+			affected = res.RowsAffected
+			return res.Error
+		})
+		if err != nil {
+			return err
+		}
+		if affected < int64(batchSize) {
+			return nil // last (partial) batch — nothing more to delete
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}
@@ -1260,7 +1298,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 
 	for _, e := range entries {
 		cutoff := time.Now().AddDate(0, 0, -e.days)
-		if err := d.db.Where("timestamp < ?", cutoff).Delete(e.model).Error; err != nil {
+		if err := d.batchedDeleteOlderThan(e.model, cutoff); err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
 		}
 	}
