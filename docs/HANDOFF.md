@@ -681,6 +681,56 @@ overwhelmingly large refactors (028/032/044/072/076), structured-logging/metrics
 but the file does **not** exist on disk — AUDIT-163 is correctly still open; the
 CHANGELOG mention is a stray/aspirational reference, not a completed change.
 
+## Session 18 completion log (2026-06-06) — Session-20 docs/deploy + probe batch
+
+Picked off the accessible S-sized wins from the "Session 20" (docs/deploy)
+bucket plus the two Go items (AUDIT-087/088). **7 shipped**
+(v0.10.336 → v0.10.342), resolved count **108 → 115** (per
+`grep -c '^| AUDIT-' docs/AUDIT.md`). Full suite green throughout
+(`go build`, `go test ./...` — now **14** packages since `cmd/probe` gained
+tests, `gofmt -l`, `go vet`).
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-092 | 0.10.336 | a673c9c | `.dockerignore` adds cookies.txt/interfaces.json/IRC-FORMAT.txt/node_modules/tasks/.claude/lessons.md/*.csv (durable guard against a future broad COPY) |
+| AUDIT-095 | 0.10.337 | e25299d | entrypoint.sh in-config comment: `logging_collector = off` is fine — PG stderr is redirected to `$PGDATA/postgresql.log` (bind-mounted, survives restarts). Doc-only, no runtime change |
+| AUDIT-099 | 0.10.338 | b5c2019 | deploy.sh guards the `config.env.example` copy with `[ ! -f ]` so deploys never clobber the operator's live config |
+| AUDIT-098 | 0.10.339 | 2983f73 | deploy.sh `--dry-run` flag + timestamped pre-deploy backup tarball to `${REMOTE_DIR}-backups/` before the destructive rm |
+| AUDIT-097 | 0.10.340 | 252d114 | shipped `docs/nginx.conf` (TLS/HSTS/gzip/WS-upgrade/real-ip) + commented `nginx` service in docker-compose.proxy.yml |
+| AUDIT-088 | 0.10.341 | 84b13e2 | `crypto/rand` `jitter(d)` on relay sendBatch retries + IRC reconnect (thundering-herd de-sync); idle poll left alone |
+| AUDIT-087 | 0.10.342 | e25ee81 | probe `pollDevice(ctx, ...)` + `pollWG` tracking + `cleanup()` cancels & drains in-flight polls (bounded 5s) before stopping the relay client |
+
+**Discoveries / decisions for the next session:**
+
+- **Several "Session 20" premises were half-stale (verify-first paid off again):**
+  AUDIT-095's "crash forensics lost" is wrong here — PG logs to `postgresql.log`
+  via `pg_ctl -l` on the bind mount, so the fix is documentation, not a risky
+  `logging_collector = on` flip on the live prod DB. AUDIT-088's `relay.go:370`
+  is an **idle 100 ms poll loop**, not a server retry — jitter there only slows
+  shutdown detection, so it was deliberately left unchanged (only the two
+  `sendBatch` backoffs + the IRC reconnect got jitter).
+- **AUDIT-097 has a deferred app-side half:** `cmd/api/main.go` sets
+  `router.SetTrustedProxies(nil)` (the safe default — X-Forwarded-For ignored).
+  The nginx example forwards the real client IP, but the app won't honor it
+  until trusted-proxy config is wired — that's a deliberate security-loosening
+  change for its own commit, documented inline in `docs/nginx.conf`.
+- **AUDIT-094 still OPEN (deliberately deferred):** the entrypoint already traps
+  signals (the S-scope), but the real value (per-process supervision/restart via
+  s6/supervisord, or a `wait -n` fail-fast loop) is an L-sized change to the
+  **live production entrypoint** — left for a careful dedicated pass given the
+  v0.10.322-324 prod-hotfix history.
+- **The comment-quotes-the-bug-token gotcha bit again** (AUDIT-098): an
+  explanatory comment that quoted `rm -rf ${REMOTE_DIR}/*` tripped the test's
+  backup-before-rm ordering check. Reword marker comments to avoid the literal
+  bug token (same lesson as Sessions 13/15).
+- **`cmd/probe` is now a tested package** (first tests: `probe_ctx_audit087_test.go`).
+  The 5s bounded-drain test runs in real time (~5s) but is `testing.Short()`-gated.
+- **Next accessible:** the rest of the "Session 20"/21/23 S-sized docs+repo-hygiene
+  wins (AUDIT-092-style): 102 (`-trimpath`), 103 (drop gcc/musl-dev), 104
+  (`make install`), 107 (env-var cross-link), 109 (README), 162/163/168/170 (docs),
+  092-sibling 094 (re-scope first). The large refactors (028/032/044/072/076) each
+  still need their own planning session.
+
 ## Closing
 
 The 61 resolutions made in v0.10.241 → v0.10.292 (May–June 2026) cover
