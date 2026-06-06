@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -60,19 +61,24 @@ func TestRegenerateProbeKey_Atomic_AUDIT085(t *testing.T) {
 		t.Fatalf("new key not generated (got %q)", newKey)
 	}
 
-	// Probe row must carry the new key.
+	// Probe row must carry the HASH of the revealed plaintext (AUDIT-017:
+	// stored hashed; the response returns the plaintext once).
 	var after models.Probe
 	if err := db.Gorm().First(&after, probe.ID).Error; err != nil {
 		t.Fatalf("reload probe: %v", err)
 	}
-	if after.RegistrationKey != newKey {
-		t.Errorf("probe.RegistrationKey = %q, want %q (response and row must agree)", after.RegistrationKey, newKey)
+	wantHash := database.HashProbeKey(newKey)
+	if after.RegistrationKey != wantHash {
+		t.Errorf("probe.RegistrationKey = %q, want hash %q of the revealed key", after.RegistrationKey, wantHash)
+	}
+	if after.RegistrationKey == newKey {
+		t.Error("probe row stored the PLAINTEXT key — AUDIT-017 requires it hashed at rest")
 	}
 
-	// Old setting gone, new setting present — exactly once each.
+	// Old setting gone, new (hashed) setting present — exactly once each.
 	var oldCount, newCount int64
 	db.Gorm().Model(&models.SystemSetting{}).Where("key = ?", "probe_registration_OLDKEY123").Count(&oldCount)
-	db.Gorm().Model(&models.SystemSetting{}).Where("key = ?", "probe_registration_"+newKey).Count(&newCount)
+	db.Gorm().Model(&models.SystemSetting{}).Where("key = ?", "probe_registration_"+wantHash).Count(&newCount)
 	if oldCount != 0 {
 		t.Errorf("old registration setting not deleted (count=%d)", oldCount)
 	}

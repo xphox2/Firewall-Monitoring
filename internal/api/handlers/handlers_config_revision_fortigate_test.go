@@ -7,6 +7,7 @@ import (
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 )
 
@@ -146,15 +147,17 @@ end
 func setupFortiGateProbeDevice(t *testing.T) (*Handler, *models.Probe, *models.Device) {
 	t.Helper()
 	h, db := setupTestHandler(t)
+	const probeKey = "test-key-abc123"
 	probe := &models.Probe{
 		Name:            "test-probe",
-		RegistrationKey: "test-key-abc123",
+		RegistrationKey: database.HashProbeKey(probeKey), // AUDIT-017: stored hashed
 		ApprovalStatus:  "approved",
 		Status:          "online",
 	}
 	if err := db.Gorm().Create(probe).Error; err != nil {
 		t.Fatalf("create probe: %v", err)
 	}
+	probe.RegistrationKey = probeKey // expose plaintext for the Bearer token
 	device := &models.Device{
 		Name:      "fgt-1",
 		IPAddress: "192.168.5.2",

@@ -28,15 +28,21 @@ func setupTestHandler(t *testing.T) (*Handler, *database.Database) {
 
 func setupProbeAndDevice(t *testing.T, db *database.Database) (probe *models.Probe, device *models.Device) {
 	t.Helper()
+	// AUDIT-017: keys are stored HASHED at rest, but probes authenticate with
+	// the plaintext token. Seed the hash, then expose the plaintext on the
+	// returned struct so callers send the real token (validateProbe hashes it
+	// and matches the stored hash).
+	const probeKey = "test-key-abc123"
 	probe = &models.Probe{
 		Name:            "test-probe",
-		RegistrationKey: "test-key-abc123",
+		RegistrationKey: database.HashProbeKey(probeKey),
 		ApprovalStatus:  "approved",
 		Status:          "online",
 	}
 	if err := db.Gorm().Create(probe).Error; err != nil {
 		t.Fatalf("create probe: %v", err)
 	}
+	probe.RegistrationKey = probeKey
 	device = &models.Device{
 		Name:      "test-fw",
 		IPAddress: "192.168.1.1",

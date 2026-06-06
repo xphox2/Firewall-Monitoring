@@ -359,6 +359,12 @@ func (d *Database) migrate() error {
 	// ingestion, since SaveInterfaceAddresses' UPSERT depends on the index.
 	d.ensureInterfaceAddrUniqueIndex()
 
+	// AUDIT-017: hash any plaintext probe registration keys at rest. Must run
+	// at startup BEFORE the HTTP server accepts requests, so probe auth (which
+	// now hashes the incoming token and compares to the stored hash) matches
+	// from the first request. Idempotent via the sha256: prefix.
+	d.migrateProbeKeysToHash()
+
 	// One-time fix: if IRC tables have wrong column names from prior migrations,
 	// drop and recreate them. Detect by checking for the correct server_password column.
 	m := d.db.Migrator()
@@ -1103,6 +1109,63 @@ func (d *Database) SaveInterfaceErrors(errs []models.InterfaceErrors) error {
 		return nil
 	}
 	return d.db.Create(&errs).Error
+}
+
+// migrateProbeKeysToHash converts any plaintext probe registration keys (and
+// the plaintext embedded in their `probe_registration_<key>` SystemSetting) to
+// the hashed at-rest form (AUDIT-017). Idempotent: rows/settings already in the
+// `sha256:` form are skipped, so it is safe to run on every startup.
+//
+// Safety for a live probe: the collector keeps sending the SAME plaintext token
+// from its config; after this runs, the probe row holds HashProbeKey(token), and
+// validateProbe hashes the incoming token to the same value — so a probe that
+// was authenticating before the upgrade keeps authenticating after it. The
+// probe-row pass is what auth depends on; the SystemSetting pass (registration
+// flow, cold path) is independent, so a partial run never locks out an
+// already-approved probe.
+func (d *Database) migrateProbeKeysToHash() {
+	var probes []models.Probe
+	if err := d.db.Where("registration_key <> ''").Find(&probes).Error; err != nil {
+		log.Printf("migrateProbeKeysToHash: load probes: %v", err)
+	}
+	hashedRows := 0
+	for i := range probes {
+		if IsHashedProbeKey(probes[i].RegistrationKey) {
+			continue
+		}
+		hashed := HashProbeKey(probes[i].RegistrationKey)
+		if err := d.db.Model(&models.Probe{}).Where("id = ?", probes[i].ID).
+			Update("registration_key", hashed).Error; err != nil {
+			log.Printf("migrateProbeKeysToHash: hash probe %d: %v", probes[i].ID, err)
+			continue
+		}
+		hashedRows++
+	}
+
+	var settings []models.SystemSetting
+	if err := d.db.Where("key LIKE ?", "probe_registration_%").Find(&settings).Error; err != nil {
+		log.Printf("migrateProbeKeysToHash: load registration settings: %v", err)
+	}
+	hashedSettings := 0
+	for i := range settings {
+		embedded := strings.TrimPrefix(settings[i].Key, "probe_registration_")
+		if IsHashedProbeKey(embedded) {
+			continue
+		}
+		newKey := "probe_registration_" + HashProbeKey(embedded)
+		// Drop any pre-existing hashed setting with the target key (avoids a
+		// unique-key collision if this somehow ran half-way before).
+		d.db.Where("key = ?", newKey).Delete(&models.SystemSetting{})
+		if err := d.db.Model(&models.SystemSetting{}).Where("id = ?", settings[i].ID).
+			Update("key", newKey).Error; err != nil {
+			log.Printf("migrateProbeKeysToHash: rehash setting %d: %v", settings[i].ID, err)
+			continue
+		}
+		hashedSettings++
+	}
+	if hashedRows > 0 || hashedSettings > 0 {
+		log.Printf("AUDIT-017: hashed %d plaintext probe key(s) and %d registration setting(s) at rest", hashedRows, hashedSettings)
+	}
 }
 
 // BatchAlreadyProcessed reports whether a (probeID, batchID) idempotency key
@@ -2014,7 +2077,8 @@ func (d *Database) GetProbesBySite(siteID uint) ([]models.Probe, error) {
 
 func (d *Database) GetProbeByRegistrationKey(key string) (*models.Probe, error) {
 	var probe models.Probe
-	err := d.db.Where("registration_key = ?", key).First(&probe).Error
+	// AUDIT-017: keys are stored hashed; hash the supplied plaintext to match.
+	err := d.db.Where("registration_key = ?", HashProbeKey(key)).First(&probe).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, nil
 	}

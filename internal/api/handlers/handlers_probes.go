@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -103,11 +104,15 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	probe.LastSeen = time.Time{}
 	probe.RegistrationKey = ""
 
+	// AUDIT-017: store the key HASHED at rest. The plaintext is never persisted
+	// (and these endpoints always redact it — RegenerateProbeKey is the
+	// show-once reveal path, unchanged), so a DB compromise yields no usable
+	// probe tokens.
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
 		log.Printf("Failed to generate registration key: %v", err)
 	} else {
-		probe.RegistrationKey = hex.EncodeToString(keyBytes)
+		probe.RegistrationKey = database.HashProbeKey(hex.EncodeToString(keyBytes))
 	}
 
 	if err := h.db.CreateProbe(&probe); err != nil {
@@ -115,7 +120,9 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		return
 	}
 
-	// Create SystemSetting so RegisterProbe can look up this probe by key
+	// Create SystemSetting so RegisterProbe can look up this probe by key.
+	// The setting key embeds the HASHED key (RegisterProbe hashes the presented
+	// token before looking it up), so no plaintext lands in the settings table.
 	if probe.RegistrationKey != "" {
 		setting := models.SystemSetting{
 			Key:      "probe_registration_" + probe.RegistrationKey,
@@ -409,7 +416,8 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	}
 
 	var setting models.SystemSetting
-	err := h.db.Gorm().Where("key = ?", "probe_registration_"+req.RegistrationKey).First(&setting).Error
+	// AUDIT-017: keys are stored hashed; hash the presented key to look it up.
+	err := h.db.Gorm().Where("key = ?", "probe_registration_"+database.HashProbeKey(req.RegistrationKey)).First(&setting).Error
 	if err != nil || setting.Value == "" {
 		probeErr(c, http.StatusUnauthorized, "Invalid registration key")
 		return
@@ -482,11 +490,14 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate key"))
 		return
 	}
-	newKey := hex.EncodeToString(keyBytes)
+	newKey := hex.EncodeToString(keyBytes) // plaintext — returned once below
+	// AUDIT-017: store the HASH at rest; the stored old key is already hashed,
+	// so the old setting's key (probe_registration_<hash>) matches for deletion.
+	hashedNew := database.HashProbeKey(newKey)
 	oldKey := probe.RegistrationKey
 
 	if err := h.db.Gorm().Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(probe).Update("registration_key", newKey).Error; err != nil {
+		if err := tx.Model(probe).Update("registration_key", hashedNew).Error; err != nil {
 			return err
 		}
 		if oldKey != "" {
@@ -495,7 +506,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 			}
 		}
 		return tx.Create(&models.SystemSetting{
-			Key:      "probe_registration_" + newKey,
+			Key:      "probe_registration_" + hashedNew,
 			Value:    probe.Name,
 			Type:     "string",
 			Label:    "Probe Registration Key for " + probe.Name,
@@ -573,9 +584,9 @@ func (h *Handler) authenticateProbeByBearer(c *gin.Context) (*models.Probe, bool
 		return nil, false
 	}
 
-	// Look up probe by registration key
+	// Look up probe by registration key (AUDIT-017: stored hashed).
 	var probe models.Probe
-	if err := h.db.Gorm().Where("registration_key = ?", token).First(&probe).Error; err != nil {
+	if err := h.db.Gorm().Where("registration_key = ?", database.HashProbeKey(token)).First(&probe).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
 		return nil, false
 	}
@@ -618,7 +629,9 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	// a single-character oracle (Go strings short-circuit on first mismatch).
 	// subtle.ConstantTimeCompare returns 1 only if both lengths and all bytes
 	// match; it does not short-circuit on content.
-	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(probe.RegistrationKey)) != 1 {
+	// AUDIT-017: stored key is hashed; hash the presented token and compare the
+	// digests in constant time (preserves the AUDIT-016 timing-safety property).
+	if token == "" || subtle.ConstantTimeCompare([]byte(database.HashProbeKey(token)), []byte(probe.RegistrationKey)) != 1 {
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
 		return nil, false
 	}
