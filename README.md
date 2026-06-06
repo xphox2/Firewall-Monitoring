@@ -18,6 +18,44 @@ A comprehensive, vendor-agnostic firewall monitoring system with SNMP polling, t
 - **Uptime Tracking**: 99.99999% (five nines) uptime calculation
 - **Secure**: CSRF protection, secure headers (HSTS/CSP), rate limiting, account lockout, encrypted-at-rest device/probe secrets
 
+## Who is this for
+
+Self-hosted network/security teams and small-to-mid MSPs running a **firewall
+fleet across multiple sites** — primarily FortiGate today, with Palo Alto and
+Cisco ASA profiles and a generic SNMP profile for anything else. It gives you
+one pane of glass (status, interfaces, VPN tunnels, syslog, sFlow, alerts,
+reports) with **lightweight remote probes** that relay SNMP/syslog/sFlow/ICMP
+from sites you can't poll directly — without standing up a heavyweight NMS.
+
+## When NOT to use this
+
+- **General-purpose infrastructure monitoring** (servers, switches, apps, DBs) →
+  LibreNMS, Zabbix, or Checkmk are built for that breadth.
+- **Agentless website / synthetic / SSL-expiry checks** → Uptime Kuma or
+  StatusCake are simpler and purpose-built.
+- **A single firewall with no remote sites** → an SNMP exporter + Grafana, or
+  the vendor's own GUI, is lighter than running this stack.
+- **Vendor-supported enterprise NMS with SLAs and pro services** → PRTG or
+  SolarWinds. This is OSS you self-host and operate yourself.
+
+## How it compares
+
+| | Firewall Monitor | PRTG | Nagios | Zabbix | LibreNMS | Checkmk | Uptime Kuma | StatusCake |
+|---|---|---|---|---|---|---|---|---|
+| Focus | **Firewall fleets** | General NMS | General NMS | General NMS | General NMS | General NMS | Uptime/synthetic | Uptime/synthetic |
+| License | OSS (MIT) | Commercial | OSS + paid | OSS | OSS | OSS + paid | OSS | SaaS |
+| Self-hosted | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✗ (SaaS) |
+| Multi-site relay probes | ✅ built-in | sensors/remote probes | distributed pollers | proxies | distributed pollers | distributed | ✗ | n/a |
+| Multi-vendor firewall SNMP profiles | ✅ (Forti/Palo/ASA/+generic) | generic SNMP | generic SNMP | generic SNMP | generic SNMP | generic SNMP | ✗ | ✗ |
+| Config-change tracking | ✅ (per-vendor normalized) | partial | plugins | partial | ✅ (Oxidized) | partial | ✗ | ✗ |
+| Syslog + sFlow ingest | ✅ | add-on | plugins | add-on | partial | add-on | ✗ | ✗ |
+| Footprint | Light (4 Go binaries) | Heavy | Medium | Medium | Medium | Medium | Light | n/a |
+
+This project is intentionally **narrow and firewall-first**: it does a few
+things (firewall health, VPN/connection mapping, config drift, alerting) well,
+rather than being a general NMS. If you need breadth, reach for one of the tools
+above; many teams run this *alongside* a general NMS.
+
 ## Architecture
 
 ```
@@ -154,21 +192,43 @@ sudo ./deploy.sh start
 
 ## API Endpoints
 
-### Public
-- `GET /` - Public dashboard
-- `GET /api/public/dashboard` - System status JSON
-- `GET /api/public/interfaces` - Interface stats JSON
-- `GET /api/health` - Health check
+The server registers ~170 routes across four groups. The authoritative list is
+the route table in [`cmd/api/main.go`](cmd/api/main.go); the grouped overview
+below covers every category. Path bases: `api` → `/api`, public → `/api/public`,
+admin → `/admin`.
 
-### Admin (Protected)
-- `GET /admin` - Admin dashboard
-- `POST /api/auth/login` - Login
-- `POST /admin/api/logout` - Logout
-- `GET /admin/api/dashboard` - Full dashboard data
-- `GET /admin/api/devices` - Device management
-- `GET /admin/api/alerts` - Alert history
-- `GET /admin/api/uptime` - Uptime stats
-- `POST /admin/api/uptime/reset` - Reset uptime tracking
+### Public — no authentication (safe to expose on a wallboard)
+- `GET /` — public GridStack dashboard
+- `GET /api/health` — liveness/readiness check
+- `GET /api/version` — build version (JSON)
+- `GET /api/public/{dashboard,devices,interfaces,interfaces/chart,connections,vpn,status-history,display-settings}` — read-only status JSON behind the public dashboard
+- `GET /security.txt`, `GET /.well-known/security.txt` — RFC 9116 contact; `GET /favicon.ico`
+
+### Authentication
+- `POST /api/auth/login` — obtain the JWT cookie
+- `POST /admin/api/logout` — clear the session
+- `GET /admin/api/csrf-token` — fetch the CSRF token for mutating requests
+
+### Admin UI pages (HTML, auth-gated)
+`GET /admin` and `/admin/{dashboard,devices,devices/:id,connections,connections/:id,sites,probes,probe-pending,interfaces,syslog,flows,traps,network,maintenance,reports,settings,irc,alerts,alert-policies}`
+
+### Admin API (JSON, auth + CSRF) — base `/admin/api`
+- **Devices:** `GET/POST /devices`, `GET/PUT/DELETE /devices/:id`, `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
+- **Sites:** `GET/POST /sites`, `GET/PUT/DELETE /sites/:id`, `GET/PUT/DELETE /sites/:id/alert-config`
+- **Probes:** `GET/POST /probes`, `GET/PUT/DELETE /probes/:id`, `GET /probes/pending`, `GET /probes/stats`, `GET /probes/:id/stats`, `POST /probes/:id/{approve,reject,regenerate-key}`, `POST /probes/test`
+- **Connections:** `GET/POST /connections`, `GET/PUT/DELETE /connections/:id`, `GET /connections/:id/{detail,events,flows,traffic}`, `GET /connections/{status-summary,vpn-map}`
+- **Alerts:** `GET /alerts`, `/alerts/:id`, `/alerts/stats`; `POST /alerts/:id/{acknowledge,snooze,unsnooze,notes}`; bulk `POST /alerts/bulk-{acknowledge,snooze}[-filter]`
+- **Alert policies:** `GET/POST /alert-policies`, `GET/PUT/DELETE /alert-policies/:id`, `POST /alert-policies/:id/clone`, `PUT /alert-policies/:id/rules`
+- **Maintenance windows:** `GET/POST /maintenance-windows`, `GET/PUT/DELETE /maintenance-windows/:id`, `GET /maintenance-windows/active`
+- **Telemetry queries:** `GET /syslog`, `/syslog/:id`, `/syslog/stats`, `/flows`, `/flows/stats`, `/traps`, `/traps/stats`, `/interfaces`
+- **IRC:** `GET/POST /irc/{servers,channels,commands}`, `PUT/DELETE /irc/{servers,channels,commands}/:id`, `POST /irc/servers/:id/{connect,disconnect}`, `POST /irc/{send,servers/test}`
+- **Reports:** `GET /reports/preview`, `POST /reports/send`
+- **Settings:** `GET/POST /settings`, `POST /settings/{password,test-email,test-webhook}`, `GET /display-settings`
+- **Dashboard / uptime:** `GET /dashboard[/:id|/stats|/diag]`, `GET /uptime`, `POST /uptime/reset`
+
+### Probe ingestion (probe → server, per-probe key auth) — base `/api/probes`
+- `POST /register`, `POST /heartbeat`, `GET /:id/devices`
+- `POST /:id/{system-status,interface-stats,interface-addresses,interface-errors,processor-stats,process-snapshot,hardware-sensors,sensor-details,vpn-status,ha-status,sdwan-health,security-stats,license-info,license-details,config-revision,syslog,traps,flows,pings}`
 
 ## Monitoring Intervals
 
