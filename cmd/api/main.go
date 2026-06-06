@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.329"
+const ServerVersion = "0.10.330"
 
 func main() {
 	cfg := config.Load()
@@ -102,6 +102,10 @@ func main() {
 		c.Next()
 	})
 
+	// AUDIT-036: per-process DB pool default (DB_MAX_OPEN_CONNS overrides).
+	if cfg.Database.MaxOpenConns == 0 {
+		cfg.Database.MaxOpenConns = 15
+	}
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)

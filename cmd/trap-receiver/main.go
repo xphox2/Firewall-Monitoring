@@ -51,6 +51,10 @@ func main() {
 	// Previously this passed nil, which made am.saveAlert a no-op
 	// (alerts.go:532-539) — every trap arrived, was logged to stdout, and
 	// vanished. The trap-batcher's buffer was never written to either.
+	// AUDIT-036: per-process DB pool default (DB_MAX_OPEN_CONNS overrides).
+	if cfg.Database.MaxOpenConns == 0 {
+		cfg.Database.MaxOpenConns = 5
+	}
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
 		log.Fatalf("trap-receiver: failed to initialize database: %v", err)

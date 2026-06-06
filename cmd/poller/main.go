@@ -1460,6 +1460,10 @@ func main() {
 		log.Printf("poller loaded JWT secret from %s/.jwt-secret (chmod 600)", secretsDir)
 	}
 
+	// AUDIT-036: per-process DB pool default (DB_MAX_OPEN_CONNS overrides).
+	if cfg.Database.MaxOpenConns == 0 {
+		cfg.Database.MaxOpenConns = 10
+	}
 	db, err := database.NewDatabase(cfg)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)

@@ -105,10 +105,23 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	if dbErr != nil {
 		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", dbErr)
 	}
-	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(10)
+	// AUDIT-036: per-process pool size. cfg.Database.MaxOpenConns is set by the
+	// daemon's main (15 api / 10 poller / 5 trap), overridable via
+	// DB_MAX_OPEN_CONNS; 0 falls back to the legacy 25. Idle is capped at the
+	// open limit (never larger) and at 10.
+	maxOpen := cfg.Database.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 25
+	}
+	maxIdle := maxOpen
+	if maxIdle > 10 {
+		maxIdle = 10
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(1 * time.Minute)
+	log.Printf("Database: pool max_open=%d max_idle=%d", maxOpen, maxIdle)
 	dial = postgresDialect{}
 	log.Printf("Database: connected to PostgreSQL at %s:%d/%s", cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
 

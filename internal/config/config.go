@@ -86,6 +86,14 @@ type DatabaseConfig struct {
 	// configurable via DB_STATEMENT_TIMEOUT. Set to 0 to
 	// disable (not recommended for production).
 	StatementTimeout time.Duration
+
+	// AUDIT-036: max open connections for THIS process's pool. The container
+	// runs three daemons (api/poller/trap-receiver), each with its own pool,
+	// so a single hardcoded 25 meant a 75-conn/host ceiling that saturates a
+	// busy Postgres. 0 means "use the caller's per-process default" (set in
+	// each daemon's main: 15 api / 10 poller / 5 trap-receiver); the
+	// DB_MAX_OPEN_CONNS env var overrides for all processes.
+	MaxOpenConns int
 }
 
 type RetentionConfig struct {
@@ -260,6 +268,8 @@ func Load() *Config {
 			// (Postgres only). 0 = disabled. See the field
 			// doc for the rationale.
 			StatementTimeout: getDurationEnv("DB_STATEMENT_TIMEOUT", 30*time.Second),
+			// AUDIT-036: 0 => the daemon's main picks a per-process default.
+			MaxOpenConns: getIntEnv("DB_MAX_OPEN_CONNS", 0),
 		},
 		Retention: RetentionConfig{
 			DefaultDays:        getIntEnv("RETENTION_DEFAULT_DAYS", 90),
