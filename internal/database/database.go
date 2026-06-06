@@ -3695,6 +3695,10 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
 	// First row per partition (LAG is NULL) returns NULL and is filtered by the outer WHERE.
 	// Counter resets (new value < old value) use the raw value as the delta.
+	// AUDIT-043: the named `WINDOW w AS (...)` clause runs on BOTH Postgres
+	// (prod) and the modernc SQLite test backend — no dialect gating needed.
+	// `vpnchart_window_audit043_test.go` exercises this path on SQLite (the
+	// audit flagged it as untested in CI) and pins the delta + reset-clamp math.
 	query := fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
 		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
