@@ -1233,6 +1233,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-098 | `deploy.sh` is destructive | 0.10.339 | (pending) | The unconditional `rm -rf ${REMOTE_DIR}/*` had no backup/rollback. Added (1) a `--dry-run` flag that makes zero remote changes, and (2) a timestamped backup tarball to `${REMOTE_DIR}-backups/` taken before the wipe. `TestDeploy_BackupAndDryRun_AUDIT098` pins both + backup-before-rm ordering. Deferred: post-start healthcheck (this script hands off to install.sh; healthcheck belongs there, with AUDIT-096). |
 | AUDIT-097 | `docker-compose.proxy.yml` is stock | 0.10.340 | (pending) | Shipped `docs/nginx.conf`: a hardened plain-nginx example with TLS termination, HSTS, gzip, WebSocket upgrade for `/admin/connections` + `/admin/irc`, and real-client-IP from the Docker subnets. `docker-compose.proxy.yml` now references it + carries a commented `nginx` service that mounts it. `TestNginxCompanionConfig_AUDIT097` pins the features + compose reference. Deferred: app-side `SetTrustedProxies` (currently `nil` — the safe default; honoring X-Forwarded-For weakens it and needs config wiring). |
 | AUDIT-088 | `time.Sleep` in retry loops without jitter | 0.10.341 | (pending) | Added a `crypto/rand`-backed `jitter(d)` (returns `d + [0,d)`) in `internal/relay` and `internal/irc`; applied to relay `sendBatch` retry backoffs (both error + non-2xx paths) and the IRC bot restart delay, so a shared recovery doesn't retry in lock-step. `TestJitter_BoundsAndSpread_AUDIT088` (relay unit) + `TestBackoffJitter_CallSites_AUDIT088` (shell pin). `runCollectorHandler`'s 100 ms idle poll left unchanged (not a server retry). |
+| AUDIT-087 | `cmd/probe/main.go` pollDevice no ctx | 0.10.342 | (pending) | `go p.pollDevice(dev)` was untracked + context-less, so polls ran unbounded after `Stop()`. `pollDevice` now takes a `context.Context` and checkpoints between stages; the probe holds `ctx`/`cancel`/`pollWG`, tracks each poll, and `cleanup()` cancels then drains in-flight polls bounded to 5s (before stopping the relay client). `cmd/probe` unit tests (cancel+drain + 5s ceiling) + `TestProbePollDeviceContext_AUDIT087` shell pin. Deferred: ctx into gosnmp ops (lib uses its own timeout). |
 
 ---
 
@@ -1355,6 +1356,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-098 — deploy.sh pre-deploy backup tarball + --dry-run flag before destructive rm — v0.10.339 — (pending) — opencode
 2026-06-06 — AUDIT-097 — ship hardened docs/nginx.conf companion + compose reference — v0.10.340 — (pending) — opencode
 2026-06-06 — AUDIT-088 — jittered relay retry + IRC reconnect backoffs (crypto/rand) — v0.10.341 — (pending) — opencode
+2026-06-06 — AUDIT-087 — probe pollDevice ctx + tracked goroutines + bounded drain on Stop — v0.10.342 — (pending) — opencode
 ```
 
 ---

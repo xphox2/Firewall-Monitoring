@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -126,6 +128,16 @@ type Probe struct {
 	SyslogUDPServer *syslog.UDPSyslogReceiver
 	SFlowReceiver   *sflow.SFlowReceiver
 	stopChan        chan struct{}
+
+	// AUDIT-087: device polls run as `go p.pollDevice(...)`. Without a
+	// context they were untracked — after Stop() closed stopChan, in-flight
+	// polls kept running unbounded. ctx is cancelled on Stop so polls bail
+	// at their next checkpoint, and pollWG lets cleanup() wait (bounded) for
+	// in-flight polls to drain before tearing down the relay client they
+	// write through.
+	ctx    context.Context
+	cancel context.CancelFunc
+	pollWG sync.WaitGroup
 }
 
 func NewProbe(cfg *ProbeConfig) *Probe {
@@ -140,10 +152,13 @@ func NewProbe(cfg *ProbeConfig) *Probe {
 		SyncInterval:    cfg.SyncInterval,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Probe{
 		Config:      cfg,
 		stopChan:    make(chan struct{}),
 		RelayClient: relay.NewRelayClient(relayConfig),
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
@@ -341,13 +356,25 @@ func (p *Probe) startSNMPPolling() {
 				if !dev.Enabled {
 					continue
 				}
-				go p.pollDevice(dev)
+				// AUDIT-087: track each poll so cleanup() can wait for
+				// in-flight polls, and pass the cancellable ctx so a poll
+				// bails promptly once Stop() is called.
+				p.pollWG.Add(1)
+				go func(d relay.DeviceInfo) {
+					defer p.pollWG.Done()
+					p.pollDevice(p.ctx, d)
+				}(dev)
 			}
 		}
 	}
 }
 
-func (p *Probe) pollDevice(dev relay.DeviceInfo) {
+func (p *Probe) pollDevice(ctx context.Context, dev relay.DeviceInfo) {
+	// AUDIT-087: bail before doing any work if shutdown already started.
+	if ctx.Err() != nil {
+		return
+	}
+
 	cfg := &config.Config{
 		SNMP: config.SNMPConfig{
 			SNMPHost:   dev.IPAddress,
@@ -383,6 +410,11 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 		log.Printf("Failed to send system status for %s: %v", dev.Name, err)
 	}
 
+	// AUDIT-087: stop here if shutdown started during the system-status poll.
+	if ctx.Err() != nil {
+		return
+	}
+
 	ifaces, err := client.GetInterfaceStats()
 	if err != nil {
 		log.Printf("SNMP interface poll failed for %s: %v", dev.Name, err)
@@ -396,6 +428,11 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 	}
 	if err := p.RelayClient.SendInterfaceStats(ifaces); err != nil {
 		log.Printf("Failed to send interface stats for %s: %v", dev.Name, err)
+	}
+
+	// AUDIT-087: stop here if shutdown started during the interface poll.
+	if ctx.Err() != nil {
+		return
 	}
 
 	// Collect VPN tunnel status (IPSec + dialup + SSL-VPN + GRE)
@@ -416,6 +453,25 @@ func (p *Probe) pollDevice(dev relay.DeviceInfo) {
 
 func (p *Probe) cleanup() {
 	close(p.stopChan)
+
+	// AUDIT-087: signal in-flight device polls to stop, then wait (bounded)
+	// for them to drain before tearing down the relay client they write
+	// through. The 5s ceiling guarantees shutdown can't hang on a poll stuck
+	// in a slow SNMP timeout; a poll that outlives it only issues a couple of
+	// harmless HTTP POSTs (the relay Send* methods are stateless).
+	if p.cancel != nil {
+		p.cancel()
+	}
+	pollsDrained := make(chan struct{})
+	go func() {
+		p.pollWG.Wait()
+		close(pollsDrained)
+	}()
+	select {
+	case <-pollsDrained:
+	case <-time.After(5 * time.Second):
+		log.Println("Timed out waiting for in-flight device polls to finish; proceeding with shutdown")
+	}
 
 	if p.TrapReceiver != nil {
 		p.TrapReceiver.Stop()
