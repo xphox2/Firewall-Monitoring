@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.362** |
-| Bug findings resolved | **135 / 170  (79%)** |
+| Server version | **v0.10.364** |
+| Bug findings resolved | **137 / 170  (81%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **35** |
+| Open bug findings | **33** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -21,7 +21,8 @@
 - ✅ Mid-size code/config cleanups (`errors.Is`, autovacuum coverage, security.txt, apiFetch retry, …) — resolved (Session 20)
 - ✅ Operator docs — runbook + architecture diagrams + vendor guide (Session 21)
 - ✅ Request-ID log correlation + JS-standard decision (Session 22)
-- ⏳ Remaining 37: large refactors, observability, test infrastructure, a few docs
+- ✅ Parser fuzz + benchmark tests, line-ending hygiene (Session 23)
+- ⏳ Remaining 33: large refactors, observability, the rest of test infrastructure, a few docs
 
 ## 🧭 How to read this file
 
@@ -32,14 +33,14 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 35 open findings)
+## ⏳ What's left (the 33 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-150` (OpenTelemetry tracing).
-- **Test infrastructure** — `AUDIT-117`–`124` (per-package coverage, Postgres CI matrix, fuzz / property / integration / benchmark tests), `AUDIT-140`/`142`.
+- **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
 - **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-114` (fresh-Ubuntu build steps), `AUDIT-164`/`165`/`166` (FUNDING / release automation / community channel).
 - **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `081` (wrap `return err`), `094` (entrypoint supervision), `129` (Sentry), `132` (drop `['catch']` ES5 workaround).
 
@@ -47,6 +48,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 23** (v0.10.363–364) | Test infra + repo hygiene | Go fuzz tests for the syslog + sFlow parsers — 3.5M+ execs, zero crashes (119); parser hot-path benchmarks (124); `.gitattributes` to stop CRLF/LF diff churn |
 | **Session 22** (v0.10.361–362) | Observability + JS standard | `RequestID` middleware (X-Request-ID log correlation, log-forge guard) (135); declared ES2020 the frontend JS standard (131) |
 | **Session 21** (v0.10.358–360) | Operator documentation | confirmed the vendor guide covers both sides (113), `docs/OPERATIONS.md` runbook (111), `docs/architecture.md` Mermaid component + sequence diagrams (108) |
 | **Session 20** (v0.10.352–357) | Mid-size code/config cleanups | `errors.Is` for gorm sentinels, autovacuum covers `interface_stats`/`system_status` + `DB_AUTOVACUUM_TABLES`, RFC 9116 `security.txt`, `apiFetch` 5xx retry, dropped stale `package.json` version, prune goroutine graceful shutdown |
@@ -1303,7 +1305,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-135 | No request-ID middleware | 0.10.361 | a2c6d7f | New `RequestID` middleware: reuses a safe inbound `X-Request-ID` (`^[A-Za-z0-9._-]{1,64}$`, log-forge guarded) or mints a 128-bit hex one, stores it on the context + echoes the `X-Request-ID` response header; `RequestLogger` logs `req=<id>`. Unit tests cover generate/reuse/reject-hostile. Full slog migration is AUDIT-076 (open). |
 | AUDIT-131 | `admin-irc.js` ES6 amid ES5 (pick one) | 0.10.362 | 139c3a9 | Added `cmd/api/static/js/README.md` declaring **ES2020** the standard (justified by the AUDIT-168 browser baseline), so the ES6 code is correct; legacy `['catch']` flagged as not-to-be-extended (cleanup = AUDIT-132). `TestJSStandardDocumented_AUDIT131` pins it. |
 | AUDIT-119 | No fuzz tests for untrusted network parsers | 0.10.363 | 12c896b | Added `FuzzParseRFC5424` (syslog) + `FuzzParseSFlowDatagram` (sflow) with malformed seeds. Active fuzzing: 3.3M execs (sflow) + 267k (syslog), **zero crashes** — durable no-panic guard. First tests in `internal/syslog`/`internal/sflow` (also chips at AUDIT-117). |
-| AUDIT-124 | No benchmark tests | 0.10.364 | (pending) | Added `BenchmarkParseRFC5424`/`ParsePriority` (syslog) + `BenchmarkParseSFlowDatagram` (sflow) — per-packet CPU hot paths, no DB fixtures. `b.ReportAllocs()`+`SetBytes()`. Deferred: DB-bound hot paths (BatchInserter/GetConnectionFlowStats) need a seeded test DB. |
+| AUDIT-124 | No benchmark tests | 0.10.364 | 2f58589 | Added `BenchmarkParseRFC5424`/`ParsePriority` (syslog) + `BenchmarkParseSFlowDatagram` (sflow) — per-packet CPU hot paths, no DB fixtures. `b.ReportAllocs()`+`SetBytes()`. Deferred: DB-bound hot paths (BatchInserter/GetConnectionFlowStats) need a seeded test DB. |
 
 ---
 
@@ -1448,7 +1450,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-135 — RequestID middleware (X-Request-ID, log correlation, log-forge guard) — v0.10.361 — a2c6d7f — opencode
 2026-06-06 — AUDIT-131 — declare ES2020 the JS standard (cmd/api/static/js/README.md) — v0.10.362 — 139c3a9 — opencode
 2026-06-06 — AUDIT-119 — Go fuzz tests for syslog + sflow parsers (no crashes in 3.5M+ execs) — v0.10.363 — 12c896b — opencode
-2026-06-06 — AUDIT-124 — benchmarks for syslog + sflow parser hot paths — v0.10.364 — (pending) — opencode
+2026-06-06 — AUDIT-124 — benchmarks for syslog + sflow parser hot paths — v0.10.364 — 2f58589 — opencode
 ```
 
 ---
@@ -2371,6 +2373,40 @@ planning lists above — see the ⚠ banners.)
   blanket wrap could leak internal function names into responses. It needs
   per-site analysis of which errors are user-facing vs internal-only. Genuinely
   its own careful pass, not a mechanical sweep.
+
+## Session 23 completion log (2026-06-06) — test infra + repo hygiene
+
+**2 audits shipped** (v0.10.363 → v0.10.364), resolved count **135 → 137**, plus
+a `.gitattributes` line-ending hygiene fix. Full suite green.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-119 | 0.10.363 | 12c896b | Go native fuzz tests for `syslog.ParseRFC5424` + `sflow.ParseSFlowDatagram`; active fuzzing 3.3M (sflow) + 267k (syslog) execs, **zero crashes** |
+| AUDIT-124 | 0.10.364 | 2f58589 | benchmarks for the syslog + sFlow parser hot paths (`ReportAllocs`/`SetBytes`) |
+
+**Discoveries / decisions for the next session:**
+
+- **The wire parsers are robust:** millions of fuzz executions found no panic in
+  either the text (syslog) or binary (sFlow) parser. The fuzz seed corpus now
+  runs under plain `go test` as a permanent no-panic regression guard — these
+  are also the **first tests** in `internal/syslog` and `internal/sflow` (toward
+  AUDIT-117).
+- **Line-ending root cause fixed:** `CHANGELOG.md` had drifted to CRLF in the
+  git index, so every LF edit produced a whole-file flip in the diff. Added
+  `.gitattributes` (`text=auto eol=lf`) and renormalized — only CHANGELOG was
+  affected; the rest of the tree was already LF. Future diffs stay clean.
+- **Process note:** test files slipped through unformatted twice this stretch
+  (135 test, 119 fuzz test) because the per-commit `gofmt -l` check listed only
+  the non-test files. Run `gofmt -l` over **all** staged files (incl. `*_test.go`)
+  before committing.
+- **Parser quirk worth knowing:** `syslog.ParseRFC5424` treats PRI and VERSION as
+  **separate** space-delimited tokens (`<165> 1 <ts> …`), not the glued RFC 5424
+  `<165>1`. Any future syslog fixture/test must use the space-separated form to
+  hit the happy path.
+- **AUDIT-081 still the top deferred code item** (per-site `%w` wrapping with
+  user-facing-vs-internal analysis). Remaining work is now dominated by the big
+  refactors (028/032/040/044/072), observability (076/077/078/150), and the
+  heavier test-infra (117/118/120/122/123).
 
 ## Closing
 
