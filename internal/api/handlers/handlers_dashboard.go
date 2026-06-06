@@ -11,6 +11,7 @@ import (
 	"firewall-mon/internal/uptime"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h *Handler) GetPublicDevices(c *gin.Context) {
@@ -591,74 +592,143 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		SDWANAlive   int        `json:"sdwan_alive,omitempty"`
 	}
 
+	// AUDIT-033: pre-fix this ran ~13 queries PER device (count + latest +
+	// per-metric counts for status/iface/vpn/ha/sdwan) — ~650 queries at 50
+	// devices. Replaced with a fixed set of batched aggregate queries (one per
+	// data type) that compute every device's summary at once using the
+	// codebase's max-timestamp self-join pattern (portable across Postgres and
+	// the SQLite test backend). Query count is now O(1) in the device count.
 	enrichments := make(map[uint]*DeviceEnrichment)
-	if h.db != nil {
-		for _, dev := range devices {
-			e := &DeviceEnrichment{DeviceID: dev.ID}
-			// Count total system_status rows for this device
-			if err := h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&e.StatusRows).Error; err != nil {
-				log.Printf("Device %d: failed to count status rows: %v", dev.ID, err)
+	if h.db != nil && len(devices) > 0 {
+		ids := make([]uint, len(devices))
+		for i, dev := range devices {
+			ids[i] = dev.ID
+			enrichments[dev.ID] = &DeviceEnrichment{DeviceID: dev.ID}
+		}
+		g := h.db.Gorm()
+
+		// latest builds "the row(s) at MAX(timestamp) per device" subquery for
+		// a given time-series table, scoped to the dashboard's device set.
+		latest := func(table string) *gorm.DB {
+			return g.Table(table).Select("device_id, MAX(timestamp) AS mx").
+				Where("device_id IN ?", ids).Group("device_id")
+		}
+
+		// 1. system_status total row counts per device.
+		type cntRow struct {
+			DeviceID uint
+			C        int64
+		}
+		var statusCounts []cntRow
+		if err := g.Model(&models.SystemStatus{}).Select("device_id, COUNT(*) AS c").
+			Where("device_id IN ?", ids).Group("device_id").Scan(&statusCounts).Error; err != nil {
+			log.Printf("dashboard: status counts: %v", err)
+		}
+		for _, r := range statusCounts {
+			if e := enrichments[r.DeviceID]; e != nil {
+				e.StatusRows = r.C
 			}
-			// Latest system status
-			var ss models.SystemStatus
-			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
+		}
+
+		// 2. latest system_status values per device.
+		type statusRow struct {
+			DeviceID     uint
+			Timestamp    time.Time
+			CPUUsage     float64
+			MemoryUsage  float64
+			SessionCount int
+		}
+		var statusLatest []statusRow
+		if err := g.Table("system_status AS s").
+			Joins("JOIN (?) AS l ON s.device_id = l.device_id AND s.timestamp = l.mx", latest("system_status")).
+			Where("s.device_id IN ?", ids).
+			Select("s.device_id AS device_id, s.timestamp AS timestamp, s.cpu_usage AS cpu_usage, s.memory_usage AS memory_usage, s.session_count AS session_count").
+			Scan(&statusLatest).Error; err != nil {
+			log.Printf("dashboard: latest status: %v", err)
+		}
+		for i := range statusLatest {
+			r := statusLatest[i]
+			if e := enrichments[r.DeviceID]; e != nil {
 				e.HasStatus = true
-				e.StatusTime = &ss.Timestamp
-				e.CPUUsage = ss.CPUUsage
-				e.MemoryUsage = ss.MemoryUsage
-				e.SessionCount = ss.SessionCount
+				ts := r.Timestamp
+				e.StatusTime = &ts
+				e.CPUUsage = r.CPUUsage
+				e.MemoryUsage = r.MemoryUsage
+				e.SessionCount = r.SessionCount
 			}
-			// Interface summary
-			var latestIface models.InterfaceStats
-			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
-				var total, up int64
-				if err := h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestIface.Timestamp).Count(&total).Error; err != nil {
-					log.Printf("Device %d: failed to count interfaces: %v", dev.ID, err)
-				}
-				if err := h.db.Gorm().Model(&models.InterfaceStats{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestIface.Timestamp).Count(&up).Error; err != nil {
-					log.Printf("Device %d: failed to count up interfaces: %v", dev.ID, err)
-				}
-				e.IfaceTotal = int(total)
-				e.IfaceUp = int(up)
-				e.IfaceDown = int(total - up)
+		}
+
+		// 3+4. interface and VPN summaries (total + up at the latest timestamp).
+		type upAgg struct {
+			DeviceID uint
+			Total    int64
+			Up       int64
+		}
+		runUpAgg := func(table string) []upAgg {
+			var rows []upAgg
+			if err := g.Table(table+" AS s").
+				Joins("JOIN (?) AS l ON s.device_id = l.device_id AND s.timestamp = l.mx", latest(table)).
+				Where("s.device_id IN ?", ids).Group("s.device_id").
+				Select("s.device_id AS device_id, COUNT(*) AS total, SUM(CASE WHEN s.status = 'up' THEN 1 ELSE 0 END) AS up").
+				Scan(&rows).Error; err != nil {
+				log.Printf("dashboard: %s summary: %v", table, err)
 			}
-			// VPN summary
-			var latestVPN models.VPNStatus
-			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestVPN).Error; err == nil {
-				var vpnTotal, vpnUp int64
-				if err := h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestVPN.Timestamp).Count(&vpnTotal).Error; err != nil {
-					log.Printf("Device %d: failed to count VPN statuses: %v", dev.ID, err)
-				}
-				if err := h.db.Gorm().Model(&models.VPNStatus{}).Where("device_id = ? AND timestamp = ? AND status = 'up'", dev.ID, latestVPN.Timestamp).Count(&vpnUp).Error; err != nil {
-					log.Printf("Device %d: failed to count up VPN statuses: %v", dev.ID, err)
-				}
-				e.VPNTotal = int(vpnTotal)
-				e.VPNUp = int(vpnUp)
+			return rows
+		}
+		for _, r := range runUpAgg("interface_stats") {
+			if e := enrichments[r.DeviceID]; e != nil {
+				e.IfaceTotal = int(r.Total)
+				e.IfaceUp = int(r.Up)
+				e.IfaceDown = int(r.Total - r.Up)
 			}
-			// HA status summary
-			var latestHA models.HAStatus
-			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestHA).Error; err == nil {
-				e.HAMode = latestHA.SystemMode
-				var memberCount int64
-				if err := h.db.Gorm().Model(&models.HAStatus{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestHA.Timestamp).Count(&memberCount).Error; err != nil {
-					log.Printf("Device %d: failed to count HA members: %v", dev.ID, err)
-				}
-				e.HAMembers = int(memberCount)
+		}
+		for _, r := range runUpAgg("vpn_status") {
+			if e := enrichments[r.DeviceID]; e != nil {
+				e.VPNTotal = int(r.Total)
+				e.VPNUp = int(r.Up)
 			}
-			// SD-WAN health summary
-			var latestSDWAN models.SDWANHealth
-			if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&latestSDWAN).Error; err == nil {
-				var sdTotal, sdAlive int64
-				if err := h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ?", dev.ID, latestSDWAN.Timestamp).Count(&sdTotal).Error; err != nil {
-					log.Printf("Device %d: failed to count SD-WAN health: %v", dev.ID, err)
-				}
-				if err := h.db.Gorm().Model(&models.SDWANHealth{}).Where("device_id = ? AND timestamp = ? AND state = 'alive'", dev.ID, latestSDWAN.Timestamp).Count(&sdAlive).Error; err != nil {
-					log.Printf("Device %d: failed to count alive SD-WAN: %v", dev.ID, err)
-				}
-				e.SDWANTotal = int(sdTotal)
-				e.SDWANAlive = int(sdAlive)
+		}
+
+		// 5. HA summary: mode + member count at the latest timestamp.
+		type haRow struct {
+			DeviceID uint
+			Mode     string
+			Members  int64
+		}
+		var haAgg []haRow
+		if err := g.Table("ha_status AS s").
+			Joins("JOIN (?) AS l ON s.device_id = l.device_id AND s.timestamp = l.mx", latest("ha_status")).
+			Where("s.device_id IN ?", ids).Group("s.device_id").
+			Select("s.device_id AS device_id, MAX(s.system_mode) AS mode, COUNT(*) AS members").
+			Scan(&haAgg).Error; err != nil {
+			log.Printf("dashboard: ha summary: %v", err)
+		}
+		for _, r := range haAgg {
+			if e := enrichments[r.DeviceID]; e != nil {
+				e.HAMode = r.Mode
+				e.HAMembers = int(r.Members)
 			}
-			enrichments[dev.ID] = e
+		}
+
+		// 6. SD-WAN summary: total + alive at the latest timestamp.
+		type sdRow struct {
+			DeviceID uint
+			Total    int64
+			Alive    int64
+		}
+		var sdAgg []sdRow
+		if err := g.Table("sdwan_health AS s").
+			Joins("JOIN (?) AS l ON s.device_id = l.device_id AND s.timestamp = l.mx", latest("sdwan_health")).
+			Where("s.device_id IN ?", ids).Group("s.device_id").
+			Select("s.device_id AS device_id, COUNT(*) AS total, SUM(CASE WHEN s.state = 'alive' THEN 1 ELSE 0 END) AS alive").
+			Scan(&sdAgg).Error; err != nil {
+			log.Printf("dashboard: sdwan summary: %v", err)
+		}
+		for _, r := range sdAgg {
+			if e := enrichments[r.DeviceID]; e != nil {
+				e.SDWANTotal = int(r.Total)
+				e.SDWANAlive = int(r.Alive)
+			}
 		}
 	}
 
