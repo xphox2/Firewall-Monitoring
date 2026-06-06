@@ -11,6 +11,7 @@ import (
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/irc"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
@@ -132,12 +133,11 @@ func (h *Handler) GetHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, models.SuccessResponse(health))
 }
 
-// isBlockedIP checks if an IP address is loopback, unspecified, link-local, or private (RFC 1918/4193).
+// isBlockedIP reports whether an IP is a forbidden SSRF target. Delegates to
+// httputil.IsBlockedIP, which (AUDIT-020) also covers multicast, CGNAT
+// (100.64.0.0/10) and 0.0.0.0/8 — ranges the raw net.IP predicates miss.
 func isBlockedIP(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
-		return true
-	}
-	return false
+	return httputil.IsBlockedIP(ip)
 }
 
 // isValidExternalIP validates that the IP/hostname does not resolve to a blocked address

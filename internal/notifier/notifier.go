@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 )
 
@@ -65,9 +66,17 @@ type Notifier struct {
 
 func NewNotifier(cfg *config.Config) *Notifier {
 	_ = cfg // retained for API compat; config is now passed per-call via NotifyConfig
+	// AUDIT-020: webhooks dial an operator-supplied URL. Pin the dial to a
+	// validated IP (SafeDialContext) so DNS rebinding can't redirect the
+	// connection to a private/loopback/link-local target after the pre-flight
+	// check passed. Clone DefaultTransport so proxy/TLS/idle-pool defaults are
+	// preserved — we only override DialContext.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = httputil.SafeDialContext(10 * time.Second)
 	return &Notifier{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:   10 * time.Second,
+			Transport: tr,
 		},
 	}
 }
