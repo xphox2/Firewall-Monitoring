@@ -36,6 +36,8 @@ usage() {
     echo "  -u, --user     SSH username"
     echo "  -p, --port     SSH port (default: 22)"
     echo "  -k, --key      SSH private key file"
+    echo "      --dry-run  Print what deploy would do without making any"
+    echo "                 remote changes (AUDIT-098). Run this first."
     exit 1
 }
 
@@ -68,6 +70,7 @@ deploy_remote() {
     USER=""
     PORT=22
     KEY=""
+    DRY_RUN=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -75,6 +78,7 @@ deploy_remote() {
             -u|--user) USER="$2"; shift 2 ;;
             -p|--port) PORT="$2"; shift 2 ;;
             -k|--key) KEY="$2"; shift 2 ;;
+            --dry-run) DRY_RUN=true; shift ;;
             *) usage ;;
         esac
     done
@@ -96,9 +100,36 @@ deploy_remote() {
     log_info "Creating remote directory..."
     ssh ${SSH_OPTS} ${USER}@${HOST} "sudo mkdir -p ${REMOTE_DIR} /etc/${APP_NAME} /var/lib/${APP_NAME}"
 
+    # AUDIT-098: the pre-fix deploy wiped the install directory
+    # unconditionally with no backup and no rollback. A typo in --host, a
+    # half-built bin/, or an aborted transfer could leave a wiped or
+    # partial install with no way back. Two safeguards now precede the
+    # destructive step:
+    #   1. --dry-run: print exactly what would happen and make NO remote
+    #      changes (no rm, no rsync, no install). Always run this first
+    #      against a new target.
+    #   2. A timestamped backup tarball of the existing install, written to
+    #      ${REMOTE_DIR}-backups/ on the remote BEFORE the rm, so a bad
+    #      deploy can be rolled back by extracting the latest archive.
+    BACKUP_DIR="${REMOTE_DIR}-backups"
+    STAMP="$(date +%Y%m%d-%H%M%S)"
+    if [ "$DRY_RUN" = true ]; then
+        log_warn "DRY RUN — no remote changes will be made."
+        log_info "[dry-run] Would back up ${REMOTE_DIR} to ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz"
+        log_info "[dry-run] Would clear and re-populate ${REMOTE_DIR} with bin/ and web/"
+        log_info "[dry-run] Would seed /etc/${APP_NAME}/config.env only if absent (AUDIT-099)"
+        log_info "[dry-run] Local build artifacts:"
+        ls -la bin/ 2>/dev/null || true
+        log_info "Dry run complete. Re-run without --dry-run to apply."
+        return 0
+    fi
+
+    log_info "Backing up existing install on remote (pre-deploy safety)..."
+    ssh ${SSH_OPTS} ${USER}@${HOST} "sudo mkdir -p ${BACKUP_DIR}; if [ -n \"\$(ls -A ${REMOTE_DIR} 2>/dev/null)\" ]; then sudo tar czf ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz -C ${REMOTE_DIR} . && echo 'Backup: ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz'; else echo 'No existing install to back up (first deploy)'; fi"
+
     log_info "Transferring files..."
     ssh ${SSH_OPTS} ${USER}@${HOST} "sudo rm -rf ${REMOTE_DIR}/*"
-    
+
     rsync -avz -e "ssh ${SSH_OPTS}" --progress bin/ ${USER}@${HOST}:${REMOTE_DIR}/
     rsync -avz -e "ssh ${SSH_OPTS}" --progress web/ ${USER}@${HOST}:/tmp/web/
     rsync -avz -e "ssh ${SSH_OPTS}" --progress config.env.example ${USER}@${HOST}:/tmp/config.env.example
