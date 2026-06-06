@@ -59,7 +59,7 @@ func TestRequestID_ReusesSafeInbound_AUDIT135(t *testing.T) {
 // fresh ID minted instead.
 func TestRequestID_RejectsHostileInbound_AUDIT135(t *testing.T) {
 	for _, bad := range []string{
-		"evil\nINJECTED 200 GET /admin",          // newline injection
+		"evil\nINJECTED 200 GET /admin",                                           // newline injection
 		"01234567890123456789012345678901234567890123456789012345678901234567890", // >64 chars
 		"has space",
 		"semi;colon",
