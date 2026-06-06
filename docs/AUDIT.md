@@ -1227,6 +1227,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-153 | `MODEL.go` LastUpAt is dead | (verified) | 2026-06-06 | Verification sweep — already resolved: `LastUpAt` is now populated by GetLatestVPNStatuses and consumed by the VPN-status UI — no longer dead. |
 | AUDIT-167 | No "Known Issues" doc | (verified) | 2026-06-06 | Verification sweep — already resolved: `KNOWN-ISSUES.md` exists at the repo root (added v0.10.282, AUDIT-110). |
 | AUDIT-085 | Probe auth key rotation not transactional | 0.10.325 | ccd602f | `RegenerateProbeKey` deleted the old key's `SystemSetting` first and only logged a warning if the new setting failed to write — a mid-sequence failure could rotate the key but leave no usable registration setting, locking the probe out. Now generates the new key before any write and wraps update-probe → delete-old → create-new in one `gorm.Transaction` (rollback keeps the working key). `TestRegenerateProbeKey_Atomic_AUDIT085` in `internal/api/handlers/` pins the success contract. |
+| AUDIT-092 | `.dockerignore` missing many entries | 0.10.336 | (pending) | Added `cookies.txt`, `interfaces.json`, `IRC-FORMAT.txt`, `node_modules/`, `tasks/`, `.claude/`, `lessons.md`, `*.csv` to the build-context ignore list. Nothing leaks today (the Dockerfile COPYs specific paths), but a future `COPY . .`-style broadening would otherwise ship these working-tree artifacts. `TestDockerignore_CoversWorkingTreeArtifacts_AUDIT092` pins each required entry. |
 
 ---
 
@@ -1343,6 +1344,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-152 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
 2026-06-06 — AUDIT-153 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
 2026-06-06 — AUDIT-167 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-092 — add missing .dockerignore entries (working-tree artifacts) — v0.10.336 — (pending) — opencode
 ```
 
 ---
