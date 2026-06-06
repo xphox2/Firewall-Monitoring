@@ -15,22 +15,22 @@ func TestIsBlockedIP_AUDIT020(t *testing.T) {
 		ip      string
 		blocked bool
 	}{
-		{"127.0.0.1", true},      // loopback
-		{"0.0.0.0", true},        // unspecified
-		{"0.1.2.3", true},        // 0.0.0.0/8 (NEW)
-		{"10.1.2.3", true},       // RFC1918
-		{"172.16.5.4", true},     // RFC1918
-		{"192.168.1.1", true},    // RFC1918
-		{"169.254.1.1", true},    // link-local
-		{"100.64.0.1", true},     // CGNAT (NEW)
+		{"127.0.0.1", true},       // loopback
+		{"0.0.0.0", true},         // unspecified
+		{"0.1.2.3", true},         // 0.0.0.0/8 (NEW)
+		{"10.1.2.3", true},        // RFC1918
+		{"172.16.5.4", true},      // RFC1918
+		{"192.168.1.1", true},     // RFC1918
+		{"169.254.1.1", true},     // link-local
+		{"100.64.0.1", true},      // CGNAT (NEW)
 		{"100.127.255.254", true}, // CGNAT upper edge (NEW)
-		{"224.0.0.1", true},      // multicast (NEW)
-		{"fc00::1", true},        // ULA (IsPrivate)
-		{"::1", true},            // IPv6 loopback
-		{"8.8.8.8", false},       // public
-		{"1.1.1.1", false},       // public
+		{"224.0.0.1", true},       // multicast (NEW)
+		{"fc00::1", true},         // ULA (IsPrivate)
+		{"::1", true},             // IPv6 loopback
+		{"8.8.8.8", false},        // public
+		{"1.1.1.1", false},        // public
 		{"100.63.255.255", false}, // just below CGNAT — must NOT be blocked
-		{"99.84.0.1", false},     // public
+		{"99.84.0.1", false},      // public
 	}
 	for _, tc := range cases {
 		ip := net.ParseIP(tc.ip)
