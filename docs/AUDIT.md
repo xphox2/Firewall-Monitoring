@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.368** |
-| Bug findings resolved | **141 / 170  (83%)** |
+| Server version | **v0.10.372** |
+| Bug findings resolved | **145 / 170  (85%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **29** |
+| Open bug findings | **25** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -24,7 +24,8 @@
 - ✅ Parser fuzz + benchmark tests, line-ending hygiene (Session 23)
 - ✅ Code-quality cleanups: ES5 `['catch']` sweep, `database.go` error wrapping, release-notes automation (Session 24)
 - ✅ Handler 500s now log their cause via `httputil.InternalError` (133-site sweep) (Session 25)
-- ⏳ Remaining 29: large refactors, observability, the rest of test infrastructure, a few docs
+- ✅ Docs & repo hygiene theme cleared: README endpoint sweep + positioning, build prereqs, support channel, FUNDING decision (Session 26)
+- ⏳ Remaining 25: large refactors, observability, the rest of test infrastructure
 
 ## 🧭 How to read this file
 
@@ -35,7 +36,7 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 29 open findings)
+## ⏳ What's left (the 25 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
@@ -43,13 +44,14 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-150` (OpenTelemetry tracing).
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
-- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-114` (fresh-Ubuntu build steps), `AUDIT-164`/`166` (FUNDING / community channel). *(165 release automation now done.)*
+- **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
 - **Smaller code cleanups** — `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision), `129` (Sentry). *(071 JSONError helper + 081 `return err` wrapping + 132 ES5 `['catch']` sweep now done.)*
 
 ## 🗓 Recent activity
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 26** (v0.10.369–372) | Docs & repo hygiene (theme cleared) | README endpoint sweep — ~170 routes grouped, base paths spelled out — plus "Who is this for"/"When NOT to use this"/comparison-table positioning (106); fresh-Ubuntu build prereqs + network-ports table (114); Support & community section pointing at Issues/Discussions (166); FUNDING accept/wontfix decision (164) |
 | **Session 25** (v0.10.368) | Handler error observability | added `httputil.InternalError(c, msg, err)` (logs cause + method/route/`X-Request-ID`, writes clean 500 JSON) and swept all 133 `c.JSON(500, ErrorResponse(…))` sites across 13 handler files (071); 4 of them had been leaking `err.Error()` to the client — now logged, not leaked |
 | **Session 24** (v0.10.365–367) | Code-quality cleanups + release automation | swept the ES5 `['catch']`/`['finally']` bracket workaround to dot notation across 121 sites/14 JS files (132); wrapped 25 raw `return err` in `database.go` with `%w` so callers keep operation context + `errors.Is` (081); tag-triggered CHANGELOG-driven `release.yml` GitHub-Release automation (165) |
 | **Session 23** (v0.10.363–364) | Test infra + repo hygiene | Go fuzz tests for the syslog + sFlow parsers — 3.5M+ execs, zero crashes (119); parser hot-path benchmarks (124); `.gitattributes` to stop CRLF/LF diff churn |
@@ -1317,6 +1319,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-106 | README documents 12 of ~170 endpoints | 0.10.369 | (pending) | Replaced the 12-route stub with an accurate grouped reference (Public / Auth / Admin UI pages / Admin API by resource / probe ingestion), base paths spelled out, `cmd/api/main.go` named authoritative. Added "Who is this for", "When NOT to use this", and a "How it compares" table vs PRTG/Nagios/Zabbix/LibreNMS/Checkmk/Uptime Kuma/StatusCake. `TestReadmeDocumentsEndpoints_AUDIT106` pins the families + sections + alternatives. |
 | AUDIT-114 | README build steps may fail on fresh Ubuntu | 0.10.370 | (pending) | Expanded Prerequisites: exact `apt install golang-go git make rsync bash` (+`build-essential` for `-race`), systemd-only installer note, and a network-ports table (8080/161/162/514/6343/5432) with the probes-need-only-outbound fact. `TestReadmePrereqs_AUDIT114` pins the tools + trap/syslog/sFlow ports. Did not test on a literal fresh box, but every tool/port is verified against the scripts + `config.env.example`. |
 | AUDIT-166 | No community/support channel linked | 0.10.371 | (pending) | Added a README "Support & community" section: bugs → GitHub Issues, Q&A → GitHub Discussions, security → SECURITY.md; stated there is no dedicated chat server (accept) and that the IRC bot is a monitoring feature, not project support. `TestReadmeSupportChannel_AUDIT166` pins it. |
+| AUDIT-164 | No FUNDING | 0.10.372 | (pending) | **Accept/wontfix** — not soliciting donations, so no `FUNDING.yml` shipped (an empty one is clutter; inventing a sponsor account is wrong). Decision documented in CHANGELOG; adding `.github/FUNDING.yml` later is a one-liner GitHub auto-detects. No code/test change. |
 
 ---
 
@@ -1469,6 +1472,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-106 — README endpoint sweep (~170 routes grouped) + who-is-this-for/when-not/comparison sections — v0.10.369 — (pending) — opencode
 2026-06-06 — AUDIT-114 — README build prereqs (apt deps, systemd note, network-ports table) — v0.10.370 — (pending) — opencode
 2026-06-06 — AUDIT-166 — README Support & community section (Issues/Discussions; IRC bot ≠ support) — v0.10.371 — (pending) — opencode
+2026-06-06 — AUDIT-164 — FUNDING: documented accept/wontfix (not soliciting donations) — v0.10.372 — (pending) — opencode
 ```
 
 ---
@@ -2508,6 +2512,46 @@ green.
   warned: those types are referenced in ~120 files, so it's a large import-churn
   commit (a `gofmt`-able mechanical move, but big). Might pair better with the
   AUDIT-076 logging work than with a quick-win batch.
+
+## Session 26 completion log (2026-06-06) — docs & repo hygiene (theme cleared)
+
+**4 audits shipped** (v0.10.369 → v0.10.372), resolved count **141 → 145**. This
+**clears the entire "Docs & repo hygiene" theme** (with 165 from Session 24). All
+docs/no-runtime changes; full suite green.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-106 | 0.10.369 | afac8ad | README endpoint sweep: ~170 routes grouped (Public/Auth/Admin-pages/Admin-API-by-resource/probe-ingestion), base paths, `cmd/api/main.go` authoritative; + "Who is this for"/"When NOT to use this"/"How it compares" sections. |
+| AUDIT-114 | 0.10.370 | 901dffe | Fresh-Ubuntu prereqs: `apt install` line, `build-essential`-only-for-`-race`, systemd-only installer note, network-ports table (8080/161/162/514/6343/5432) + probes-only-outbound. |
+| AUDIT-166 | 0.10.371 | 268b40b | Support & community section (Issues/Discussions/SECURITY.md); no chat server (accept); IRC bot clarified as a monitoring feature, not project support. |
+| AUDIT-164 | 0.10.372 | (pending) | FUNDING accept/wontfix — not soliciting donations, no `FUNDING.yml` shipped; decision documented. |
+
+**Discoveries / decisions for the next session:**
+
+- **The README route reference is hand-maintained, not generated.** AUDIT-106
+  suggested auto-generating from the route table; I hand-swept instead (grouped
+  by resource for readability) and added `TestReadmeDocumentsEndpoints_AUDIT106`
+  to catch drift at the *family* level. A future change that adds a whole new
+  resource group should add it to the README + the test's `families` list. True
+  auto-generation (a `go generate` that walks the gin route tree) is a possible
+  follow-up but wasn't worth the machinery for ~170 fairly stable routes.
+- **Two findings were honest "accepts," not builds.** 164 (FUNDING) and the
+  no-chat-server half of 166 are documented decisions, not artifacts — the right
+  call when inventing a sponsor account / standing up a Discord would be
+  presumptuous. They're flippable in one commit if the maintainer's stance
+  changes. (Precedent: 155/156 wontfix at v0.10.281.)
+- **Ports doc is verified, not copied.** The audit hinted "162/514/6343/8089";
+  I documented 162/514/6343 (verified: `SNMP_TRAP_LISTEN` + the standard
+  syslog/sFlow ports) but **dropped 8089** — it isn't a listener this stack
+  actually binds (`config.env.example` has no such port; probes relay over the
+  `8080` HTTP port). Accuracy over copying the hint.
+- **The remaining 25 are the hard core:** the 5 large refactors (072/032/044/028/040),
+  observability (076 slog / 077 metrics / 078 audit-log / 150 OTel), and the
+  test-infra block (117/118/120/122/123/140/142), plus a few smaller code items
+  (073 transport-type move, 079 ctx, 094 entrypoint supervision, 129 Sentry).
+  No more pure quick wins — each remaining item needs real design or is a
+  multi-file change. **AUDIT-076 (slog) is the highest-leverage next pick** now
+  that AUDIT-071 gave the 500 path a single logging chokepoint.
 
 ## Closing
 
