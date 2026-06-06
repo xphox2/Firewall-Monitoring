@@ -176,6 +176,18 @@ Recommended intervals to avoid overloading devices:
 - Hardware sensors: 300 seconds
 - Full system walk: 300 seconds
 
+## Browser Support
+
+The admin panel and public dashboard target **evergreen browsers**. The baseline is set by the use of the CSS `:has()` selector and ES2020 JavaScript:
+
+| Browser | Minimum version |
+|---|---|
+| Chrome / Edge (Chromium) | 105+ |
+| Safari (macOS / iOS) | 15.4+ |
+| Firefox | 121+ |
+
+Older browsers may render the dashboard with degraded layout. There is no IE11 / legacy support, and none is planned.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Third-party components and their licenses are inventoried in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
