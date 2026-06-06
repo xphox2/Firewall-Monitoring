@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.357** |
-| Bug findings resolved | **130 / 170  (76%)** |
+| Server version | **v0.10.360** |
+| Bug findings resolved | **133 / 170  (78%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **40** |
+| Open bug findings | **37** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -19,7 +19,8 @@
 - ✅ Security, DB-performance, and frontend/accessibility quick wins — resolved
 - ✅ Build/repo hygiene + operator documentation — resolved (Sessions 18–19)
 - ✅ Mid-size code/config cleanups (`errors.Is`, autovacuum coverage, security.txt, apiFetch retry, …) — resolved (Session 20)
-- ⏳ Remaining 40: large refactors, observability, test infrastructure, a few docs
+- ✅ Operator docs — runbook + architecture diagrams + vendor guide (Session 21)
+- ⏳ Remaining 37: large refactors, observability, test infrastructure, a few docs
 
 ## 🧭 How to read this file
 
@@ -30,7 +31,7 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 40 open findings)
+## ⏳ What's left (the 37 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
@@ -38,13 +39,14 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-135` (request-ID middleware), `AUDIT-150` (OpenTelemetry tracing).
 - **Test infrastructure** — `AUDIT-117`–`124` (per-package coverage, Postgres CI matrix, fuzz / property / integration / benchmark tests), `AUDIT-140`/`142`.
-- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-108` (architecture diagram), `AUDIT-111`/`113`/`114`, `AUDIT-164`/`165`/`166`.
+- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-114` (fresh-Ubuntu build steps), `AUDIT-164`/`165`/`166` (FUNDING / release automation / community channel).
 - **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `081` (wrap `return err`), `094` (entrypoint supervision), `129` (Sentry), `131` (admin-irc.js ES5), `132` (drop `['catch']` ES5 workaround).
 
 ## 🗓 Recent activity
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 21** (v0.10.358–360) | Operator documentation | confirmed the vendor guide covers both sides (113), `docs/OPERATIONS.md` runbook (111), `docs/architecture.md` Mermaid component + sequence diagrams (108) |
 | **Session 20** (v0.10.352–357) | Mid-size code/config cleanups | `errors.Is` for gorm sentinels, autovacuum covers `interface_stats`/`system_status` + `DB_AUTOVACUUM_TABLES`, RFC 9116 `security.txt`, `apiFetch` 5xx retry, dropped stale `package.json` version, prune goroutine graceful shutdown |
 | **Session 19** (v0.10.343–351) | Build hygiene + operator docs | drop unused Docker C-toolchain, reproducible builds, `make install`/`tarball` (+ fixed a binary-naming bug), `CODEOWNERS`, README test/feature/env/browser docs, custom-vendor tutorial |
 | **Session 18** (v0.10.336–342) | Deploy safety + probe robustness | `.dockerignore`, deploy.sh config-guard + backup + `--dry-run`, hardened nginx companion, jittered backoffs, probe poll context + bounded drain |
@@ -2284,6 +2286,36 @@ suite green throughout (14 packages).
   won't break callers.
 - **`bgCtx` is now available in `cmd/api/main.go`** for any future background worker
   that needs graceful-shutdown cancellation (AUDIT-084).
+
+## Session 21 completion log (2026-06-06) — operator documentation
+
+**3 shipped** (v0.10.358 → v0.10.360), resolved count **130 → 133**. Full suite
+green throughout.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-113 | 0.10.358 | 1ec0457 | confirmed `docs/custom-vendor.md` is the "adding a vendor" guide; test now pins it covers BOTH the SNMP profile + the `internal/configdiff` normalizer |
+| AUDIT-111 | 0.10.359 | 7c2d000 | `docs/OPERATIONS.md` runbook (first-24h, failure modes, debug logging, admin reset, JWT rotation, backup/restore, upgrade, scale, DR) |
+| AUDIT-108 | 0.10.360 | 40c68df | `docs/architecture.md` Mermaid component flowchart + 3 sequence diagrams + package map |
+
+**Discoveries / decisions for the next session:**
+
+- **AUDIT-111 was grounded in the real code, not generic ops boilerplate:** admin
+  reset is `DELETE FROM admins` + restart (because `InitAdmin` only *creates* when
+  no admin exists — it never overwrites); there is **no `GIN_MODE=debug` toggle**
+  (gin is hardcoded to release mode in `main.go`), so debug logging is via
+  `DB_LOG_LEVEL` + `postgresql.log`; JWT rotation is flagged destructive because
+  `.jwt-secret` seeds the at-rest AES key (AUDIT-008). Verify these before editing.
+- **AUDIT-081 is the next obvious code item but deserves its own pass:** 25 bare
+  `return err` sites in `database.go` (mapped to their functions during Session 20
+  triage). Wrapping them with `%w` is now *safe* (the 080 `errors.Is` sweep means
+  no caller breaks), but doing it *well* means 25 per-site context messages — a
+  focused session, not a blanket function-name wrap.
+- **Remaining docs are now thin:** 106 (full README endpoint sweep, M), 114
+  (fresh-Ubuntu build verification), 164/165/166 (FUNDING / release-please /
+  community channel — the last two need a maintainer decision). The bulk of the
+  remaining 37 is large refactors (028/032/040/044/072), observability
+  (076/077/078/135/150), and test-infra (117–124/140/142) — each its own session.
 
 ## Closing
 
