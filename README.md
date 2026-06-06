@@ -4,13 +4,19 @@ A comprehensive, vendor-agnostic firewall monitoring system with SNMP polling, t
 
 ## Features
 
-- **Public Dashboard**: Display firewall status without authentication
-- **Secure Admin Panel**: Protected by JWT authentication with rate limiting
+- **Public Dashboard**: Display firewall status without authentication (drag-and-drop GridStack wallboard)
+- **Secure Admin Panel**: Protected by JWT authentication with rate limiting and account lockout
+- **Multi-vendor SNMP**: FortiGate, Palo Alto, and Cisco ASA profiles today, with a generic profile for any SNMP-capable firewall (`VendorProfile` interface)
 - **SNMP Polling**: Comprehensive monitoring with configurable intervals (default 60s to avoid firewall overload)
 - **SNMP Trap Receiver**: Listen for SNMP traps and generate alerts
-- **Alerting System**: Email, Slack, Discord, and webhook notifications
+- **Remote Probe / Collector Architecture**: Deploy lightweight probes at remote sites that relay SNMP polls, SNMP traps, syslog, sFlow, and ICMP ping back to the central server (multi-tenant, per-probe registration keys)
+- **Syslog / sFlow / ICMP collection**: TCP+UDP syslog receiver, sFlow flow sampling, and ping-based reachability — directly or via a probe
+- **Sites & Connection Map**: Group devices into sites and visualize the physical → VLAN → tunnel → overlay network topology between them
+- **Alerting System**: Email, Slack, Discord, and webhook notifications, with configurable **alert policies** and **maintenance windows** (suppress alerts during planned work)
+- **Reports**: Image-free executive HTML reports (view in-browser, export PDF, download, or email on a schedule) at `/admin/reports`
+- **IRC Bot**: Per-server IRC bots that post alerts and answer status queries from a channel
 - **Uptime Tracking**: 99.99999% (five nines) uptime calculation
-- **Secure**: CSRF protection, secure headers, rate limiting, account lockout
+- **Secure**: CSRF protection, secure headers (HSTS/CSP), rate limiting, account lockout, encrypted-at-rest device/probe secrets
 
 ## Architecture
 
