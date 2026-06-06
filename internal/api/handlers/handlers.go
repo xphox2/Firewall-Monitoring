@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"firewall-mon/internal/alerts"
@@ -22,16 +23,17 @@ import (
 )
 
 type Handler struct {
-	config       *config.Config
-	authManager  *auth.AuthManager
-	snmpClient   *snmp.SNMPClient
-	uptimeTrack  *uptime.UptimeTracker
-	alertManager *alerts.AlertManager
-	ircManager   *irc.Manager
-	notifier     *notifier.Notifier
-	version      string
-	db           *database.Database
-	mu           sync.RWMutex
+	config                *config.Config
+	authManager           *auth.AuthManager
+	snmpClient            *snmp.SNMPClient
+	uptimeTrack           *uptime.UptimeTracker
+	alertManager          *alerts.AlertManager
+	ircManager            *irc.Manager
+	notifier              *notifier.Notifier
+	version               string
+	db                    *database.Database
+	mu                    sync.RWMutex
+	backupQualityCounters sync.Map
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
@@ -177,4 +179,21 @@ var validVendors = map[string]bool{
 
 func isValidVendor(vendor string) bool {
 	return validVendors[vendor]
+}
+
+func (h *Handler) incBackupQuality(quality string) {
+	if quality == "" {
+		quality = "unknown"
+	}
+	actual, _ := h.backupQualityCounters.LoadOrStore(quality, new(uint64))
+	atomic.AddUint64(actual.(*uint64), 1)
+}
+
+func (h *Handler) backupQualitySnapshot() map[string]uint64 {
+	out := map[string]uint64{}
+	h.backupQualityCounters.Range(func(k, v interface{}) bool {
+		out[k.(string)] = atomic.LoadUint64(v.(*uint64))
+		return true
+	})
+	return out
 }

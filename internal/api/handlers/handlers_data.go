@@ -835,6 +835,8 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		}
 	}
 
+	h.incBackupQuality(rev.BackupQuality)
+
 	h.db.Gorm().Model(&models.Device{}).Where("id = ?", rev.DeviceID).Updates(map[string]interface{}{
 		"status":      "online",
 		"last_polled": time.Now(),

@@ -778,12 +778,23 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 	// older clients but is now a no-op (every row is already distinct).
 	const displayLimit = 100
 
+	qualityFilter := c.Query("quality")
+	allowedQualities := map[string]bool{"full": true, "masked": true, "suspect": true, "unknown": true}
+	if qualityFilter != "" && !allowedQualities[qualityFilter] {
+		qualityFilter = ""
+	}
+
+	base := h.db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", uint(id))
 	var totalAll int64
-	h.db.Gorm().Model(&models.DeviceConfigRevision{}).Where("device_id = ?", uint(id)).Count(&totalAll)
+	base.Count(&totalAll)
+
+	query := h.db.Gorm().Where("device_id = ?", uint(id))
+	if qualityFilter != "" {
+		query = query.Where("backup_quality = ?", qualityFilter)
+	}
 
 	var revisions []models.DeviceConfigRevision
-	if err := h.db.Gorm().Where("device_id = ?", uint(id)).
-		Order("first_seen_at DESC").Limit(displayLimit).Find(&revisions).Error; err != nil {
+	if err := query.Order("first_seen_at DESC").Limit(displayLimit).Find(&revisions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get config history"))
 		return
 	}
@@ -793,6 +804,7 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 		"distinct":    true, // legacy field name; every row is already distinct now
 		"total_all":   totalAll,
 		"total_shown": len(revisions),
+		"quality":     qualityFilter,
 	}))
 }
 

@@ -976,8 +976,8 @@ type DeviceConfigRevision struct {
 	NormalizedChecksum string    `json:"normalized_checksum" gorm:"index"`
 	ConfigText         string    `json:"config_text"`
 	Length             int       `json:"length"`
-	BackupQuality      string    `json:"backup_quality"`              // full | masked | suspect | unknown
-	TriggerSource      string    `json:"trigger_source" gorm:"index"` // syslog | poll | manual
+	BackupQuality      string    `json:"backup_quality,omitempty"`              // full | masked | suspect | unknown
+	TriggerSource      string    `json:"trigger_source,omitempty" gorm:"index"` // syslog | poll | manual
 
 	// Merge-into-latest model (v0.10.198+): one row per logical config state.
 	// FirstSeenAt is when this state was first observed; LastVerifiedAt is the
