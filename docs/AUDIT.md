@@ -1313,7 +1313,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-132 | ES5 `['catch']` bracket workaround | 0.10.365 | a372758 | Swept the legacy IE11 reserved-word bracket form (`promise['catch']`/`['finally']`, `searchParams['delete']`) to dot notation across **all 121 sites / 14 files** in `cmd/api/static/js`; vendored bundles untouched. Baseline is ES2020 (AUDIT-168/131) so `.catch`/`.finally`/`.delete` are valid. All files pass `node --check`. `TestNoES5BracketWorkaround_AUDIT132` guards `*.js` (README excluded — it quotes the syntax). Completes the AUDIT-131 deferred cleanup. |
 | AUDIT-081 | 46× raw `return err` in database.go | 0.10.366 | 9666eb6 | Wrapped all **25 remaining** bare `return err` (GORM `tx.Error`) in `database.go` with `fmt.Errorf("operation: %w", err)`, naming the operation + entity id; `%w` preserves the `errors.Is(err, gorm.ErrRecordNotFound)` checks from AUDIT-080. Two trailing returns where `err` could be nil (`CreateDevice`, `MarkBatchProcessed`) converted to guarded wraps so success never yields a non-nil error. `TestNoBareReturnErrInDatabase_AUDIT081` statically asserts zero bare returns remain + a `%w` wrap exists. Handler-side `models.ErrorResponse` boilerplate (AUDIT-071) stays open. |
 | AUDIT-165 | No GitHub release-notes automation | 0.10.367 | 7b62ac0 | Added `.github/workflows/release.yml`: tag-triggered (`v*`), lifts the matching `## [X.Y.Z]` block out of `CHANGELOG.md` (falls back to `## [Unreleased]`) and publishes it via `gh release create`/`edit` (idempotent). CHANGELOG-driven by design (repo is direct-to-master, not labelled PRs, so release-drafter doesn't fit). `contents: write` scoped to the job; dormant until the first tag. `TestReleaseWorkflow_AUDIT165` pins the trigger/permission/extraction/publish and that it's not branch-triggered. `.goreleaser.yml` artifact build (AUDIT-004) still open. |
-| AUDIT-071 | 134× silent `c.JSON(500, ErrorResponse)` | 0.10.368 | (pending) | Added `httputil.InternalError(c, msg, err)` (logs `err` + method/route/`X-Request-ID`, writes standard 500 JSON with only `msg`) and swept **all 133 sites** across 13 handler files. Bonus: 4 sites were leaking `err.Error()` into the client body (IRC connect/send, report build) — now logged not leaked. Edge cases by hand: nil-err sites pass `nil`, `DeleteConnection`/`ReceiveConfigRevision` pass `result.Error`/`txErr`. `TestInternalError_AUDIT071` (behaviour) + `TestInternalErrorSweep_AUDIT071` (static guard). 4xx left as-is; `slog` migration is AUDIT-076. |
+| AUDIT-071 | 134× silent `c.JSON(500, ErrorResponse)` | 0.10.368 | cbaf898 | Added `httputil.InternalError(c, msg, err)` (logs `err` + method/route/`X-Request-ID`, writes standard 500 JSON with only `msg`) and swept **all 133 sites** across 13 handler files. Bonus: 4 sites were leaking `err.Error()` into the client body (IRC connect/send, report build) — now logged not leaked. Edge cases by hand: nil-err sites pass `nil`, `DeleteConnection`/`ReceiveConfigRevision` pass `result.Error`/`txErr`. `TestInternalError_AUDIT071` (behaviour) + `TestInternalErrorSweep_AUDIT071` (static guard). 4xx left as-is; `slog` migration is AUDIT-076. |
 
 ---
 
@@ -1462,7 +1462,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-132 — sweep ES5 ['catch']/['finally']/['delete'] bracket workaround to dot notation (121 sites/14 files) — v0.10.365 — a372758 — opencode
 2026-06-06 — AUDIT-081 — wrap 25 raw `return err` in database.go with fmt.Errorf %w (errors.Is-preserving) — v0.10.366 — 9666eb6 — opencode
 2026-06-06 — AUDIT-165 — tag-triggered CHANGELOG-driven release-notes workflow (.github/workflows/release.yml) — v0.10.367 — 7b62ac0 — opencode
-2026-06-06 — AUDIT-071 — httputil.InternalError helper + sweep 133 silent handler 500s (now log err; stop leaking err to 4 clients) — v0.10.368 — (pending) — opencode
+2026-06-06 — AUDIT-071 — httputil.InternalError helper + sweep 133 silent handler 500s (now log err; stop leaking err to 4 clients) — v0.10.368 — cbaf898 — opencode
 ```
 
 ---
@@ -2468,7 +2468,7 @@ green.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-071 | 0.10.368 | (pending) | `httputil.InternalError(c, msg, err)` logging 500 helper + swept all 133 `c.JSON(http.StatusInternalServerError, models.ErrorResponse(…))` sites in `internal/api/handlers` (13 files). |
+| AUDIT-071 | 0.10.368 | cbaf898 | `httputil.InternalError(c, msg, err)` logging 500 helper + swept all 133 `c.JSON(http.StatusInternalServerError, models.ErrorResponse(…))` sites in `internal/api/handlers` (13 files). |
 
 **Discoveries / decisions for the next session:**
 
