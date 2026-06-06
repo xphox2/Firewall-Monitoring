@@ -283,7 +283,22 @@ Older browsers may render the dashboard with degraded layout. There is no IE11 /
 
 MIT — see [LICENSE](LICENSE). Third-party components and their licenses are inventoried in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-## Contributing & community
+## Support & community
+
+- **Bug reports & feature requests** → open a **GitHub Issue** on this
+  repository. Include version (`GET /api/version`), platform, and relevant log
+  lines (every server-side 500 is logged with an `X-Request-ID`).
+- **Questions, setup help, "how do I…"** → use **GitHub Discussions** on this
+  repository.
+- **Security vulnerabilities** → do **not** open a public issue; follow
+  [SECURITY.md](SECURITY.md) (also published at `/.well-known/security.txt`).
+
+There is no dedicated chat server (Discord/Matrix/IRC) for the project — GitHub
+Issues/Discussions are the support channels. Note that the built-in **IRC bot**
+is a *monitoring feature* (it posts alerts and answers status queries in **your**
+ops channel); it is not a support channel for this project.
+
+## Contributing & docs
 
 - [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, QA requirements, PR workflow.
