@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/report"
@@ -90,7 +91,7 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 	period := c.DefaultQuery("period", "daily")
 	subject, html, err := h.buildReportHTML(period, true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to build report: "+err.Error()))
+		httputil.InternalError(c, "Failed to build report", err)
 		return
 	}
 
@@ -148,7 +149,7 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 
 	subject, html, err := h.buildReportHTML(req.Period, false)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to build report: "+err.Error()))
+		httputil.InternalError(c, "Failed to build report", err)
 		return
 	}
 

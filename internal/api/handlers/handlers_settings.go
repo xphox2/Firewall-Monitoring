@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 
@@ -40,7 +41,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	// schema.
 	var settings []models.SystemSetting
 	if err := h.db.Gorm().Limit(1000).Find(&settings).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get settings"))
+		httputil.InternalError(c, "Failed to get settings", err)
 		return
 	}
 
@@ -279,7 +280,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	if len(failedKeys) > 0 {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse(fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys))))
+		httputil.InternalError(c, fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys)), nil)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -791,7 +792,7 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to build payload"))
+		httputil.InternalError(c, "Failed to build payload", err)
 		return
 	}
 

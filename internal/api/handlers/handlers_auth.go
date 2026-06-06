@@ -8,6 +8,7 @@ import (
 
 	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,7 @@ func parseSameSite(s string) http.SameSite {
 
 func (h *Handler) Login(c *gin.Context) {
 	if h.authManager == nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Authentication not configured"))
+		httputil.InternalError(c, "Authentication not configured", nil)
 		return
 	}
 
@@ -105,7 +106,7 @@ func (h *Handler) Login(c *gin.Context) {
 
 	token, err := h.authManager.GenerateToken(creds.Username, adminID, tokenVersion)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate token"))
+		httputil.InternalError(c, "Failed to generate token", err)
 		return
 	}
 
@@ -264,12 +265,12 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 
 	usernameStr, ok := username.(string)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Invalid session data"))
+		httputil.InternalError(c, "Invalid session data", nil)
 		return
 	}
 	userIDUint, ok := userID.(uint)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Invalid session data"))
+		httputil.InternalError(c, "Invalid session data", nil)
 		return
 	}
 
@@ -286,13 +287,13 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 
 	hashedPassword, err := h.authManager.HashPassword(req.NewPassword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to process password"))
+		httputil.InternalError(c, "Failed to process password", err)
 		return
 	}
 
 	err = h.db.UpdateAdminPassword(userIDUint, hashedPassword)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update password"))
+		httputil.InternalError(c, "Failed to update password", err)
 		return
 	}
 

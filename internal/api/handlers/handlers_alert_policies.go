@@ -17,7 +17,7 @@ func (h *Handler) ListAlertPolicies(c *gin.Context) {
 
 	policies, err := h.db.GetAlertPolicies()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get alert policies"))
+		httputil.InternalError(c, "Failed to get alert policies", err)
 		return
 	}
 
@@ -64,7 +64,7 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 
 	policy.ID = 0
 	if err := h.db.CreateAlertPolicy(&policy); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create alert policy"))
+		httputil.InternalError(c, "Failed to create alert policy", err)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 	policy.ID = existing.ID
 	policy.CreatedAt = existing.CreatedAt
 	if err := h.db.UpdateAlertPolicy(&policy); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update alert policy"))
+		httputil.InternalError(c, "Failed to update alert policy", err)
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
 		if err.Error() == "cannot delete the default alert policy" {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 		} else {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete alert policy"))
+			httputil.InternalError(c, "Failed to delete alert policy", err)
 		}
 		return
 	}
@@ -145,7 +145,7 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 	clone.Rules = nil
 
 	if err := h.db.CreateAlertPolicy(&clone); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to clone policy"))
+		httputil.InternalError(c, "Failed to clone policy", err)
 		return
 	}
 
@@ -158,7 +158,7 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 			rules[i].PolicyID = clone.ID
 		}
 		if err := h.db.BatchUpsertAlertRules(clone.ID, rules); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to clone rules"))
+			httputil.InternalError(c, "Failed to clone rules", err)
 			return
 		}
 	}
@@ -190,7 +190,7 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 	}
 
 	if err := h.db.BatchUpsertAlertRules(id, rules); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save rules"))
+		httputil.InternalError(c, "Failed to save rules", err)
 		return
 	}
 
@@ -258,7 +258,7 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 	}
 
 	if err := h.db.UpsertDeviceAlertConfig(cfg); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save device alert config"))
+		httputil.InternalError(c, "Failed to save device alert config", err)
 		return
 	}
 
@@ -296,7 +296,7 @@ func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteDeviceAlertConfig(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete device alert config"))
+		httputil.InternalError(c, "Failed to delete device alert config", err)
 		return
 	}
 
@@ -354,7 +354,7 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 	}
 
 	if err := h.db.UpsertSiteAlertConfig(cfg); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save site alert config"))
+		httputil.InternalError(c, "Failed to save site alert config", err)
 		return
 	}
 
@@ -371,7 +371,7 @@ func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteSiteAlertConfig(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete site alert config"))
+		httputil.InternalError(c, "Failed to delete site alert config", err)
 		return
 	}
 

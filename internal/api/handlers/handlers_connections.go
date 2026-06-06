@@ -22,13 +22,13 @@ func (h *Handler) GetConnectionStatusSummary(c *gin.Context) {
 
 	conns, err := h.db.GetConnectionStatuses()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get connection statuses"))
+		httputil.InternalError(c, "Failed to get connection statuses", err)
 		return
 	}
 
 	devs, err := h.db.GetDeviceStatuses()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get device statuses"))
+		httputil.InternalError(c, "Failed to get device statuses", err)
 		return
 	}
 
@@ -64,7 +64,7 @@ func (h *Handler) GetConnectionEvents(c *gin.Context) {
 
 	events, err := h.db.GetConnectionEvents(conn.SourceDeviceID, conn.DestDeviceID, hours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get events"))
+		httputil.InternalError(c, "Failed to get events", err)
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *Handler) GetDeviceConnections(c *gin.Context) {
 
 	connections, err := h.db.GetAllConnections()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get connections"))
+		httputil.InternalError(c, "Failed to get connections", err)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 	conn.Status = "unknown"
 	conn.AutoDetected = false
 	if err := h.db.CreateConnection(&conn); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create connection"))
+		httputil.InternalError(c, "Failed to create connection", err)
 		return
 	}
 
@@ -216,7 +216,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Model(&conn).Updates(filteredUpdates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update connection"))
+		httputil.InternalError(c, "Failed to update connection", err)
 		return
 	}
 
@@ -241,7 +241,7 @@ func (h *Handler) DeleteDeviceConnection(c *gin.Context) {
 
 	result := h.db.Gorm().Delete(&models.DeviceConnection{}, id)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete connection"))
+		httputil.InternalError(c, "Failed to delete connection", result.Error)
 		return
 	}
 	if result.RowsAffected == 0 {
@@ -284,7 +284,7 @@ func (h *Handler) GetConnectionTraffic(c *gin.Context) {
 	data, err := h.db.GetConnectionTraffic(id, rangeStr)
 	if err != nil {
 		log.Printf("GetConnectionTraffic(%d, %s) error: %v", id, rangeStr, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get traffic data"))
+		httputil.InternalError(c, "Failed to get traffic data", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(data))
@@ -311,7 +311,7 @@ func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
 	data, err := h.db.GetVPNChartData(id, tunnel, rangeStr)
 	if err != nil {
 		log.Printf("GetVPNChartData(%d, %s, %s) error: %v", id, tunnel, rangeStr, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get VPN chart data"))
+		httputil.InternalError(c, "Failed to get VPN chart data", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(data))
@@ -334,7 +334,7 @@ func (h *Handler) GetConnectionFlows(c *gin.Context) {
 	}
 	data, err := h.db.GetConnectionFlowStats(id, hours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow stats"))
+		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(data))
@@ -349,7 +349,7 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 
 	devices, err := h.db.GetAllDevices()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
 
@@ -380,7 +380,7 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 
 	vpnStatuses, err := h.db.GetAllLatestVPNStatuses()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get VPN statuses"))
+		httputil.InternalError(c, "Failed to get VPN statuses", err)
 		return
 	}
 

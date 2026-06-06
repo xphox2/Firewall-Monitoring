@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/configdiff"
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
 
@@ -83,7 +84,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	}
 	if err := h.db.SaveSyslogMessages(messages); err != nil {
 		log.Printf("Failed to batch save syslog messages: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save syslog messages"))
+		httputil.InternalError(c, "Failed to save syslog messages", err)
 		return
 	}
 	// Fire alerts for critical syslog messages (severity 0-2)
@@ -136,7 +137,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 	}
 	if err := h.db.SaveTrapEvents(filtered); err != nil {
 		log.Printf("Failed to batch save trap events: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save trap events"))
+		httputil.InternalError(c, "Failed to save trap events", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -180,7 +181,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	}
 	if err := h.db.SaveFlowSamples(filtered); err != nil {
 		log.Printf("ReceiveFlowSamples: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save flow samples"))
+		httputil.InternalError(c, "Failed to save flow samples", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -221,7 +222,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	}
 	if err := h.db.SavePingResults(filtered); err != nil {
 		log.Printf("Failed to batch save ping results: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save ping results"))
+		httputil.InternalError(c, "Failed to save ping results", err)
 		return
 	}
 	// Aggregate into PingStats
@@ -297,7 +298,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 	}
 	if err := h.db.SaveInterfaceAddresses(filtered); err != nil {
 		log.Printf("ReceiveInterfaceAddresses: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface addresses"))
+		httputil.InternalError(c, "Failed to save interface addresses", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -330,7 +331,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	}
 	if err := h.db.SaveProcessorStats(filtered); err != nil {
 		log.Printf("ReceiveProcessorStats: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save processor stats"))
+		httputil.InternalError(c, "Failed to save processor stats", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -367,7 +368,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	}
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveHardwareSensors: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save hardware sensors"))
+		httputil.InternalError(c, "Failed to save hardware sensors", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -455,7 +456,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	}
 	if err := h.db.SaveInterfaceStats(filtered); err != nil {
 		log.Printf("ReceiveInterfaceStats: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface stats"))
+		httputil.InternalError(c, "Failed to save interface stats", err)
 		return
 	}
 
@@ -501,7 +502,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 	}
 	if err := h.db.SaveVPNStatuses(filtered); err != nil {
 		log.Printf("ReceiveVPNStatuses: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save VPN statuses"))
+		httputil.InternalError(c, "Failed to save VPN statuses", err)
 		return
 	}
 
@@ -543,7 +544,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 	}
 	if err := h.db.SaveHAStatuses(filtered); err != nil {
 		log.Printf("ReceiveHAStatuses: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save HA statuses"))
+		httputil.InternalError(c, "Failed to save HA statuses", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -576,7 +577,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 	}
 	if err := h.db.SaveSecurityStats(filtered); err != nil {
 		log.Printf("ReceiveSecurityStats: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save security stats"))
+		httputil.InternalError(c, "Failed to save security stats", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -609,7 +610,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 	}
 	if err := h.db.SaveSDWANHealth(filtered); err != nil {
 		log.Printf("ReceiveSDWANHealth: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save SD-WAN health"))
+		httputil.InternalError(c, "Failed to save SD-WAN health", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -642,7 +643,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	}
 	if err := h.db.SaveLicenseInfo(filtered); err != nil {
 		log.Printf("ReceiveLicenseInfo: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save license info"))
+		httputil.InternalError(c, "Failed to save license info", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
@@ -812,7 +813,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	})
 	if txErr != nil {
 		log.Printf("ReceiveConfigRevision: tx error for device %d: %v", rev.DeviceID, txErr)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save config revision"))
+		httputil.InternalError(c, "Failed to save config revision", txErr)
 		return
 	}
 
@@ -872,7 +873,7 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 
 	if err := h.db.Gorm().Create(&snap).Error; err != nil {
 		log.Printf("ReceiveProcessSnapshot: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save process snapshot"))
+		httputil.InternalError(c, "Failed to save process snapshot", err)
 		return
 	}
 
@@ -908,7 +909,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveInterfaceErrors: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save interface errors"))
+		httputil.InternalError(c, "Failed to save interface errors", err)
 		return
 	}
 
@@ -949,7 +950,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveSensorDetails: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save sensor details"))
+		httputil.InternalError(c, "Failed to save sensor details", err)
 		return
 	}
 
@@ -985,7 +986,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
 		log.Printf("ReceiveLicenseDetails: DB save error: %v", err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to save license details"))
+		httputil.InternalError(c, "Failed to save license details", err)
 		return
 	}
 

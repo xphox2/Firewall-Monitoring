@@ -27,7 +27,7 @@ func (h *Handler) GetProbes(c *gin.Context) {
 
 	probes, err := h.db.GetAllProbes()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to fetch probes"))
+		httputil.InternalError(c, "Failed to fetch probes", err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	}
 
 	if err := h.db.CreateProbe(&probe); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create probe"))
+		httputil.InternalError(c, "Failed to create probe", err)
 		return
 	}
 
@@ -211,7 +211,7 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Model(probe).Updates(filteredUpdates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update probe"))
+		httputil.InternalError(c, "Failed to update probe", err)
 		return
 	}
 
@@ -236,7 +236,7 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteProbe(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete probe"))
+		httputil.InternalError(c, "Failed to delete probe", err)
 		return
 	}
 
@@ -251,7 +251,7 @@ func (h *Handler) GetPendingProbes(c *gin.Context) {
 
 	probes, err := h.db.GetPendingProbes()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to fetch pending probes"))
+		httputil.InternalError(c, "Failed to fetch pending probes", err)
 		return
 	}
 
@@ -287,12 +287,12 @@ func (h *Handler) ApproveProbe(c *gin.Context) {
 	}
 	adminID, ok := userID.(uint)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Invalid session data"))
+		httputil.InternalError(c, "Invalid session data", nil)
 		return
 	}
 
 	if err := h.db.ApproveProbe(id, adminID); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to approve probe"))
+		httputil.InternalError(c, "Failed to approve probe", err)
 		return
 	}
 
@@ -325,7 +325,7 @@ func (h *Handler) RejectProbe(c *gin.Context) {
 	}
 
 	if err := h.db.RejectProbe(id, req.Reason); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to reject probe"))
+		httputil.InternalError(c, "Failed to reject probe", err)
 		return
 	}
 
@@ -449,7 +449,7 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		"approved_at":     now,
 		"last_seen":       now,
 	}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update probe status"))
+		httputil.InternalError(c, "Failed to update probe status", err)
 		return
 	}
 
@@ -487,7 +487,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 	// whole thing back and the probe keeps its existing, working key.
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to generate key"))
+		httputil.InternalError(c, "Failed to generate key", err)
 		return
 	}
 	newKey := hex.EncodeToString(keyBytes) // plaintext — returned once below
@@ -514,7 +514,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 		}).Error
 	}); err != nil {
 		log.Printf("RegenerateProbeKey: rollback for probe %s (key unchanged): %v", probe.Name, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to regenerate key"))
+		httputil.InternalError(c, "Failed to regenerate key", err)
 		return
 	}
 
@@ -674,19 +674,19 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 	// Total counts
 	var syslogCount, trapCount, flowCount, pingCount int64
 	if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", id).Count(&syslogCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count syslog messages"))
+		httputil.InternalError(c, "Failed to count syslog messages", err)
 		return
 	}
 	if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ?", id).Count(&trapCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count trap events"))
+		httputil.InternalError(c, "Failed to count trap events", err)
 		return
 	}
 	if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ?", id).Count(&flowCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count flow samples"))
+		httputil.InternalError(c, "Failed to count flow samples", err)
 		return
 	}
 	if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ?", id).Count(&pingCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to count ping results"))
+		httputil.InternalError(c, "Failed to count ping results", err)
 		return
 	}
 
@@ -861,7 +861,7 @@ func (h *Handler) GetProbeDevices(c *gin.Context) {
 	}
 	devices, err := h.db.GetDevicesByProbe(probe.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{

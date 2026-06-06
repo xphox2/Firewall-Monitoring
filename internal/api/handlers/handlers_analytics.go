@@ -112,7 +112,7 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 
 	var alerts []models.Alert
 	if err := query.Find(&alerts).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get alerts"))
+		httputil.InternalError(c, "Failed to get alerts", err)
 		return
 	}
 
@@ -161,7 +161,7 @@ func (h *Handler) GetTraps(c *gin.Context) {
 
 	var traps []models.TrapEvent
 	if err := query.Find(&traps).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get traps"))
+		httputil.InternalError(c, "Failed to get traps", err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 
 	var messages []models.SyslogMessage
 	if err := query.Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get syslog messages"))
+		httputil.InternalError(c, "Failed to get syslog messages", err)
 		return
 	}
 
@@ -279,7 +279,7 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 
 	var samples []models.FlowSample
 	if err := query.Find(&samples).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow samples"))
+		httputil.InternalError(c, "Failed to get flow samples", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(samples))
@@ -301,7 +301,7 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 
 	stats, err := h.db.GetFlowStats(hours, deviceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get flow stats"))
+		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
 	}
 
@@ -334,7 +334,7 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 
 	stats, err := h.db.GetAlertStats(hours, deviceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get alert stats"))
+		httputil.InternalError(c, "Failed to get alert stats", err)
 		return
 	}
 
@@ -352,7 +352,7 @@ func (h *Handler) GetTrapStats(c *gin.Context) {
 
 	stats, err := h.db.GetTrapStats(hours, deviceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get trap stats"))
+		httputil.InternalError(c, "Failed to get trap stats", err)
 		return
 	}
 
@@ -370,7 +370,7 @@ func (h *Handler) GetSyslogStats(c *gin.Context) {
 
 	stats, err := h.db.GetSyslogStats(hours, deviceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get syslog stats"))
+		httputil.InternalError(c, "Failed to get syslog stats", err)
 		return
 	}
 
@@ -394,7 +394,7 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 	c.ShouldBindJSON(&body)
 
 	if err := h.db.AcknowledgeAlertEnhanced(id, body.Notes); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alert"))
+		httputil.InternalError(c, "Failed to acknowledge alert", err)
 		return
 	}
 
@@ -440,7 +440,7 @@ func (h *Handler) SnoozeAlert(c *gin.Context) {
 	username, _ := user.(string)
 
 	if err := h.db.SnoozeAlert(id, until, username, body.Reason); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to snooze alert"))
+		httputil.InternalError(c, "Failed to snooze alert", err)
 		return
 	}
 
@@ -463,7 +463,7 @@ func (h *Handler) UnsnoozeAlert(c *gin.Context) {
 	}
 
 	if err := h.db.UnsnoozeAlert(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to unsnooze alert"))
+		httputil.InternalError(c, "Failed to unsnooze alert", err)
 		return
 	}
 
@@ -510,7 +510,7 @@ func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
 
 	affected, err := h.db.SnoozeAlertsBulk(body.IDs, until, username, body.Reason)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to snooze alerts"))
+		httputil.InternalError(c, "Failed to snooze alerts", err)
 		return
 	}
 
@@ -577,7 +577,7 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 
 	affected, err := h.db.SnoozeAlertsByFilter(filter, until, username, body.Reason)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to snooze alerts"))
+		httputil.InternalError(c, "Failed to snooze alerts", err)
 		return
 	}
 
@@ -619,7 +619,7 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 
 	affected, err := h.db.AcknowledgeAlertsBulk(body.IDs, body.Notes)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alerts"))
+		httputil.InternalError(c, "Failed to acknowledge alerts", err)
 		return
 	}
 
@@ -676,7 +676,7 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 
 	affected, err := h.db.AcknowledgeAlertsByFilter(filter, body.Notes)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to acknowledge alerts"))
+		httputil.InternalError(c, "Failed to acknowledge alerts", err)
 		return
 	}
 
@@ -709,7 +709,7 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 	}
 
 	if err := h.db.UpdateAlertNotes(id, body.Notes); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update alert notes"))
+		httputil.InternalError(c, "Failed to update alert notes", err)
 		return
 	}
 
@@ -738,7 +738,7 @@ func (h *Handler) GetUptime(c *gin.Context) {
 
 func (h *Handler) ResetUptime(c *gin.Context) {
 	if err := h.uptimeTrack.Reset(); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to reset uptime"))
+		httputil.InternalError(c, "Failed to reset uptime", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.MessageResponse("Uptime tracking reset successfully"))

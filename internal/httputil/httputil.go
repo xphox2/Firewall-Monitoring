@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -9,6 +10,35 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// InternalError writes the standard HTTP 500 response (models.ErrorResponse(msg))
+// and — unlike the bare `c.JSON(500, models.ErrorResponse(...))` it replaces —
+// LOGS the underlying err with operation context, so a 500 leaves an
+// operator-visible trail instead of vanishing (AUDIT-071). The audit found 134
+// handler sites that returned a 500 without logging the cause, so production
+// failures were invisible in the server log.
+//
+// The client still sees only msg; err (which may carry internal detail — SQL
+// text, file paths) is never written to the response body, so this is safe to
+// pass a raw db/driver error. err may be nil for 500s that have no underlying
+// Go error, in which case only msg is logged.
+//
+// The log line carries the request method, matched route, and the
+// X-Request-ID set by the RequestID middleware (AUDIT-135) when present, so a
+// logged 500 correlates with the access-log line for the same request.
+func InternalError(c *gin.Context, msg string, err error) {
+	reqID := c.Writer.Header().Get("X-Request-ID")
+	prefix := "HTTP 500"
+	if reqID != "" {
+		prefix = "HTTP 500 [req=" + reqID + "]"
+	}
+	if err != nil {
+		log.Printf("%s %s %s: %s: %v", prefix, c.Request.Method, c.FullPath(), msg, err)
+	} else {
+		log.Printf("%s %s %s: %s", prefix, c.Request.Method, c.FullPath(), msg)
+	}
+	c.JSON(http.StatusInternalServerError, models.ErrorResponse(msg))
+}
 
 // ParsePagination extracts limit and offset from query parameters.
 // Default limit is 100, max is 500. Default offset is 0.

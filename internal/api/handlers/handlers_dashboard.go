@@ -22,7 +22,7 @@ func (h *Handler) GetPublicDevices(c *gin.Context) {
 
 	var devices []models.Device
 	if err := h.db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Find(&devices).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
 
@@ -269,7 +269,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	err = h.db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
 		Order("timestamp ASC").Find(&stats).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface data"))
+		httputil.InternalError(c, "Failed to get interface data", err)
 		return
 	}
 
@@ -416,7 +416,7 @@ func (h *Handler) GetPublicConnections(c *gin.Context) {
 
 	var connections []models.DeviceConnection
 	if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(100).Find(&connections).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get connections"))
+		httputil.InternalError(c, "Failed to get connections", err)
 		return
 	}
 
@@ -462,7 +462,7 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 
 	statuses, err := h.db.GetSystemStatusHistory(deviceID, hours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get status history"))
+		httputil.InternalError(c, "Failed to get status history", err)
 		return
 	}
 
@@ -755,7 +755,7 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 	// Defensive cap (v0.10.217, bundle D3).
 	var devices []models.Device
 	if err := h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Limit(1000).Find(&devices).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
 
@@ -810,7 +810,7 @@ func (h *Handler) GetDashboardStats(c *gin.Context) {
 
 	stats, err := h.db.GetDashboardTimeSeries(hours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get dashboard stats"))
+		httputil.InternalError(c, "Failed to get dashboard stats", err)
 		return
 	}
 

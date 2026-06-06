@@ -19,7 +19,7 @@ func (h *Handler) GetSites(c *gin.Context) {
 
 	sites, err := h.db.GetAllSites()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to fetch sites"))
+		httputil.InternalError(c, "Failed to fetch sites", err)
 		return
 	}
 
@@ -78,7 +78,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 
 	existing, err := h.db.GetSiteByName(site.Name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check existing site"))
+		httputil.InternalError(c, "Failed to check existing site", err)
 		return
 	}
 	if existing != nil {
@@ -100,7 +100,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 
 	site.ID = 0
 	if err := h.db.CreateSite(&site); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create site"))
+		httputil.InternalError(c, "Failed to create site", err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 		if nameStr, isStr := nameVal.(string); isStr {
 			existing, err := h.db.GetSiteByName(nameStr)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check existing site"))
+				httputil.InternalError(c, "Failed to check existing site", err)
 				return
 			}
 			if existing != nil && existing.ID != id {
@@ -208,7 +208,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Model(site).Updates(filteredUpdates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update site"))
+		httputil.InternalError(c, "Failed to update site", err)
 		return
 	}
 
@@ -232,7 +232,7 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 
 	var children []models.Site
 	if err := h.db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to check child sites"))
+		httputil.InternalError(c, "Failed to check child sites", err)
 		return
 	}
 	if len(children) > 0 {
@@ -241,7 +241,7 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteSite(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete site"))
+		httputil.InternalError(c, "Failed to delete site", err)
 		return
 	}
 

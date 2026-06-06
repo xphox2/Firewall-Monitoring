@@ -16,7 +16,7 @@ func (h *Handler) ListMaintenanceWindows(c *gin.Context) {
 
 	windows, err := h.db.GetMaintenanceWindows()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get maintenance windows"))
+		httputil.InternalError(c, "Failed to get maintenance windows", err)
 		return
 	}
 
@@ -30,7 +30,7 @@ func (h *Handler) GetActiveMaintenanceWindows(c *gin.Context) {
 
 	windows, err := h.db.GetActiveMaintenanceWindows()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get active maintenance windows"))
+		httputil.InternalError(c, "Failed to get active maintenance windows", err)
 		return
 	}
 
@@ -63,7 +63,7 @@ func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
 
 	window.ID = 0
 	if err := h.db.CreateMaintenanceWindow(&window); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create maintenance window"))
+		httputil.InternalError(c, "Failed to create maintenance window", err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 	}
 
 	if err := h.db.UpdateMaintenanceWindow(&window); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update maintenance window"))
+		httputil.InternalError(c, "Failed to update maintenance window", err)
 		return
 	}
 
@@ -129,7 +129,7 @@ func (h *Handler) DeleteMaintenanceWindow(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteMaintenanceWindow(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete maintenance window"))
+		httputil.InternalError(c, "Failed to delete maintenance window", err)
 		return
 	}
 

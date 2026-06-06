@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/irc"
 	"firewall-mon/internal/models"
 
@@ -16,7 +17,7 @@ func (h *Handler) GetIRCServer(c *gin.Context) {
 	// a handful of servers; 200 leaves headroom for accidental dupes.
 	var servers []models.IRCServer
 	if err := h.db.Gorm().Preload("Channels").Limit(200).Find(&servers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get IRC servers"))
+		httputil.InternalError(c, "Failed to get IRC servers", err)
 		return
 	}
 	for i := range servers {
@@ -66,7 +67,7 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 	h.db.EncryptIRCServerSecrets(&server)
 
 	if err := h.db.Gorm().Create(&server).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create server"))
+		httputil.InternalError(c, "Failed to create server", err)
 		return
 	}
 
@@ -129,7 +130,7 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 
 	if err := h.db.Gorm().Model(&server).Updates(updates).Error; err != nil {
 		log.Printf("Failed to update IRC server %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update server"))
+		httputil.InternalError(c, "Failed to update server", err)
 		return
 	}
 
@@ -169,7 +170,7 @@ func (h *Handler) DeleteIRCServer(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Delete(&models.IRCServer{}, id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete server"))
+		httputil.InternalError(c, "Failed to delete server", err)
 		return
 	}
 
@@ -196,7 +197,7 @@ func (h *Handler) ConnectIRCServer(c *gin.Context) {
 
 	if mgr := h.GetIRCManager(); mgr != nil {
 		if err := mgr.RestartBot(uint(id)); err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to connect: "+err.Error()))
+			httputil.InternalError(c, "Failed to connect", err)
 			return
 		}
 	}
@@ -230,12 +231,12 @@ func (h *Handler) GetIRCChannels(c *gin.Context) {
 	// typically under 100; 500 is comfortable headroom.
 	if serverID != "" {
 		if err := h.db.Gorm().Where("server_id = ?", serverID).Limit(500).Find(&channels).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get channels"))
+			httputil.InternalError(c, "Failed to get channels", err)
 			return
 		}
 	} else {
 		if err := h.db.Gorm().Limit(500).Find(&channels).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get channels"))
+			httputil.InternalError(c, "Failed to get channels", err)
 			return
 		}
 	}
@@ -260,7 +261,7 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 	h.db.EncryptIRCChannelSecrets(&channel)
 
 	if err := h.db.Gorm().Create(&channel).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create channel"))
+		httputil.InternalError(c, "Failed to create channel", err)
 		return
 	}
 
@@ -302,7 +303,7 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Model(&channel).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update channel"))
+		httputil.InternalError(c, "Failed to update channel", err)
 		return
 	}
 
@@ -332,7 +333,7 @@ func (h *Handler) DeleteIRCChannel(c *gin.Context) {
 	serverID := channel.ServerID
 
 	if err := h.db.Gorm().Delete(&channel).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete channel"))
+		httputil.InternalError(c, "Failed to delete channel", err)
 		return
 	}
 
@@ -347,7 +348,7 @@ func (h *Handler) GetIRCCommands(c *gin.Context) {
 	// Defensive cap (v0.10.217, bundle D3).
 	var commands []models.IRCCommand
 	if err := h.db.Gorm().Limit(500).Find(&commands).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get commands"))
+		httputil.InternalError(c, "Failed to get commands", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(commands))
@@ -370,7 +371,7 @@ func (h *Handler) CreateIRCCommand(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Create(&cmd).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create command"))
+		httputil.InternalError(c, "Failed to create command", err)
 		return
 	}
 
@@ -404,7 +405,7 @@ func (h *Handler) UpdateIRCCommand(c *gin.Context) {
 	delete(updates, "created_at")
 
 	if err := h.db.Gorm().Model(&cmd).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update command"))
+		httputil.InternalError(c, "Failed to update command", err)
 		return
 	}
 
@@ -423,7 +424,7 @@ func (h *Handler) DeleteIRCCommand(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Delete(&models.IRCCommand{}, id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete command"))
+		httputil.InternalError(c, "Failed to delete command", err)
 		return
 	}
 
@@ -510,7 +511,7 @@ func (h *Handler) SendIRCMessage(c *gin.Context) {
 
 	err := mgr.SendToChannel(req.ServerID, req.Channel, req.Message)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to send message: "+err.Error()))
+		httputil.InternalError(c, "Failed to send message", err)
 		return
 	}
 

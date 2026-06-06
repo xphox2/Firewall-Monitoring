@@ -26,7 +26,7 @@ func (h *Handler) GetDevices(c *gin.Context) {
 
 	devices, err := h.db.GetAllDevices()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 	device.UpdatedAt = time.Time{}
 	device.LastPolled = time.Time{}
 	if err := h.db.CreateDevice(&device); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to create device"))
+		httputil.InternalError(c, "Failed to create device", err)
 		return
 	}
 
@@ -243,7 +243,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	}
 
 	if err := h.db.Gorm().Model(device).Updates(filteredUpdates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to update device"))
+		httputil.InternalError(c, "Failed to update device", err)
 		return
 	}
 
@@ -269,7 +269,7 @@ func (h *Handler) DeleteDevice(c *gin.Context) {
 	}
 
 	if err := h.db.DeleteDevice(id); err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete device"))
+		httputil.InternalError(c, "Failed to delete device", err)
 		return
 	}
 
@@ -408,7 +408,7 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 	if rangeStr := c.Query("range"); rangeStr != "" {
 		buckets, err := h.db.GetSystemStatusBuckets(id, rangeStr)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get status history"))
+			httputil.InternalError(c, "Failed to get status history", err)
 			return
 		}
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
@@ -422,7 +422,7 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 
 	statuses, err := h.db.GetSystemStatusHistory(id, hours)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get status history"))
+		httputil.InternalError(c, "Failed to get status history", err)
 		return
 	}
 
@@ -466,7 +466,7 @@ func (h *Handler) GetInterfaceHistory(c *gin.Context) {
 	err = h.db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceIDUint, ifIndexInt, since).
 		Order("timestamp ASC").Limit(500).Find(&stats).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface history"))
+		httputil.InternalError(c, "Failed to get interface history", err)
 		return
 	}
 
@@ -502,7 +502,7 @@ func (h *Handler) GetInterfaceChart(c *gin.Context) {
 
 	buckets, err := h.db.GetInterfaceChartData(uint(deviceIDUint), ifIndexInt, rangeStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get chart data"))
+		httputil.InternalError(c, "Failed to get chart data", err)
 		return
 	}
 
@@ -517,7 +517,7 @@ func (h *Handler) GetAllInterfaces(c *gin.Context) {
 	// Get all enabled devices
 	var devices []models.Device
 	if err := h.db.Gorm().Where("enabled = ?", true).Find(&devices).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get devices"))
+		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
 
@@ -736,7 +736,7 @@ func (h *Handler) GetDeviceSDWANHealth(c *gin.Context) {
 
 	health, err := h.db.GetLatestSDWANHealth(uint(id))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get SD-WAN health"))
+		httputil.InternalError(c, "Failed to get SD-WAN health", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"health": health}))
@@ -755,7 +755,7 @@ func (h *Handler) GetDeviceHAStatus(c *gin.Context) {
 
 	ha, err := h.db.GetLatestHAStatus(uint(id))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get HA status"))
+		httputil.InternalError(c, "Failed to get HA status", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"ha_status": ha}))
@@ -784,7 +784,7 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 	var revisions []models.DeviceConfigRevision
 	if err := h.db.Gorm().Where("device_id = ?", uint(id)).
 		Order("first_seen_at DESC").Limit(displayLimit).Find(&revisions).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get config history"))
+		httputil.InternalError(c, "Failed to get config history", err)
 		return
 	}
 
@@ -941,7 +941,7 @@ func (h *Handler) DeleteDeviceConfigRevision(c *gin.Context) {
 
 	result := h.db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).Delete(&models.DeviceConfigRevision{})
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to delete config revision"))
+		httputil.InternalError(c, "Failed to delete config revision", err)
 		return
 	}
 	if result.RowsAffected == 0 {
@@ -984,7 +984,7 @@ func (h *Handler) GetDeviceProcessHistory(c *gin.Context) {
 
 	var stats []models.ProcessStats
 	if err := query.Find(&stats).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get process history"))
+		httputil.InternalError(c, "Failed to get process history", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"process_stats": stats}))
@@ -1026,7 +1026,7 @@ func (h *Handler) GetDeviceInterfaceErrors(c *gin.Context) {
 
 	var errs []models.InterfaceErrors
 	if err := query.Find(&errs).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse("Failed to get interface errors"))
+		httputil.InternalError(c, "Failed to get interface errors", err)
 		return
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"interface_errors": errs}))
