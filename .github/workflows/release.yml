@@ -1,0 +1,89 @@
+name: Release
+
+# AUDIT-165: GitHub release-notes automation.
+#
+# Why CHANGELOG-driven (and not release-drafter): release-drafter builds notes
+# by categorising merged *pull requests* by label. This project is developed
+# direct-to-master (the audit-resolution effort is a long series of
+# `vX.Y.Z: AUDIT-NNN ...` commits, not labelled PRs), and it already maintains a
+# rigorous Keep-A-Changelog file. So the source of truth for "what changed in a
+# release" is CHANGELOG.md, not the PR stream — this workflow lifts the section
+# for the pushed tag straight out of it.
+#
+# Trigger: pushing a tag of the form `vX.Y.Z` (the one-time backfill / cutover
+# tags discussed in AUDIT-004). The job extracts the matching CHANGELOG block
+# and publishes a GitHub Release with those notes. It is dormant until the first
+# tag is pushed, so it changes nothing about the current flow.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # required to create a GitHub Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Extract CHANGELOG section for the tag
+        id: notes
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}" # strip leading 'v' -> 0.10.366
+          echo "Tag=$TAG Version=$VERSION"
+
+          # Pull the body between '## [VERSION]' and the next '## [' header.
+          # If the version hasn't been cut into its own section yet, fall back
+          # to the '## [Unreleased]' block so the release is never note-less.
+          notes="$(awk -v ver="[$VERSION]" '
+            index($0, "## " ver) == 1 { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md)"
+
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            echo "::warning::No '## [$VERSION]' section in CHANGELOG.md; falling back to [Unreleased]."
+            notes="$(awk '
+              index($0, "## [Unreleased]") == 1 { flag=1; next }
+              flag && /^## \[/ { exit }
+              flag { print }
+            ' CHANGELOG.md)"
+          fi
+
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            notes="Release $TAG. See CHANGELOG.md for details."
+          fi
+
+          {
+            echo "body<<__RELEASE_NOTES__"
+            printf '%s\n' "$notes"
+            echo "__RELEASE_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create / update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          NOTES: ${{ steps.notes.outputs.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NOTES" > release-notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
+          fi

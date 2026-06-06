@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.364** |
-| Bug findings resolved | **137 / 170  (81%)** |
+| Server version | **v0.10.367** |
+| Bug findings resolved | **140 / 170  (82%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **33** |
+| Open bug findings | **30** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -22,7 +22,8 @@
 - ✅ Operator docs — runbook + architecture diagrams + vendor guide (Session 21)
 - ✅ Request-ID log correlation + JS-standard decision (Session 22)
 - ✅ Parser fuzz + benchmark tests, line-ending hygiene (Session 23)
-- ⏳ Remaining 33: large refactors, observability, the rest of test infrastructure, a few docs
+- ✅ Code-quality cleanups: ES5 `['catch']` sweep, `database.go` error wrapping, release-notes automation (Session 24)
+- ⏳ Remaining 30: large refactors, observability, the rest of test infrastructure, a few docs
 
 ## 🧭 How to read this file
 
@@ -33,7 +34,7 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 33 open findings)
+## ⏳ What's left (the 30 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
@@ -41,13 +42,14 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-150` (OpenTelemetry tracing).
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
-- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-114` (fresh-Ubuntu build steps), `AUDIT-164`/`165`/`166` (FUNDING / release automation / community channel).
-- **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `081` (wrap `return err`), `094` (entrypoint supervision), `129` (Sentry), `132` (drop `['catch']` ES5 workaround).
+- **Docs & repo hygiene** — `AUDIT-106` (README endpoint sweep), `AUDIT-114` (fresh-Ubuntu build steps), `AUDIT-164`/`166` (FUNDING / community channel). *(165 release automation now done.)*
+- **Smaller code cleanups** — `AUDIT-071` (JSONError helper), `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision), `129` (Sentry). *(081 `return err` wrapping + 132 ES5 `['catch']` sweep now done.)*
 
 ## 🗓 Recent activity
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 24** (v0.10.365–367) | Code-quality cleanups + release automation | swept the ES5 `['catch']`/`['finally']` bracket workaround to dot notation across 121 sites/14 JS files (132); wrapped 25 raw `return err` in `database.go` with `%w` so callers keep operation context + `errors.Is` (081); tag-triggered CHANGELOG-driven `release.yml` GitHub-Release automation (165) |
 | **Session 23** (v0.10.363–364) | Test infra + repo hygiene | Go fuzz tests for the syslog + sFlow parsers — 3.5M+ execs, zero crashes (119); parser hot-path benchmarks (124); `.gitattributes` to stop CRLF/LF diff churn |
 | **Session 22** (v0.10.361–362) | Observability + JS standard | `RequestID` middleware (X-Request-ID log correlation, log-forge guard) (135); declared ES2020 the frontend JS standard (131) |
 | **Session 21** (v0.10.358–360) | Operator documentation | confirmed the vendor guide covers both sides (113), `docs/OPERATIONS.md` runbook (111), `docs/architecture.md` Mermaid component + sequence diagrams (108) |
@@ -1308,6 +1310,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-124 | No benchmark tests | 0.10.364 | 2f58589 | Added `BenchmarkParseRFC5424`/`ParsePriority` (syslog) + `BenchmarkParseSFlowDatagram` (sflow) — per-packet CPU hot paths, no DB fixtures. `b.ReportAllocs()`+`SetBytes()`. Deferred: DB-bound hot paths (BatchInserter/GetConnectionFlowStats) need a seeded test DB. |
 | AUDIT-132 | ES5 `['catch']` bracket workaround | 0.10.365 | (pending) | Swept the legacy IE11 reserved-word bracket form (`promise['catch']`/`['finally']`, `searchParams['delete']`) to dot notation across **all 121 sites / 14 files** in `cmd/api/static/js`; vendored bundles untouched. Baseline is ES2020 (AUDIT-168/131) so `.catch`/`.finally`/`.delete` are valid. All files pass `node --check`. `TestNoES5BracketWorkaround_AUDIT132` guards `*.js` (README excluded — it quotes the syntax). Completes the AUDIT-131 deferred cleanup. |
 | AUDIT-081 | 46× raw `return err` in database.go | 0.10.366 | (pending) | Wrapped all **25 remaining** bare `return err` (GORM `tx.Error`) in `database.go` with `fmt.Errorf("operation: %w", err)`, naming the operation + entity id; `%w` preserves the `errors.Is(err, gorm.ErrRecordNotFound)` checks from AUDIT-080. Two trailing returns where `err` could be nil (`CreateDevice`, `MarkBatchProcessed`) converted to guarded wraps so success never yields a non-nil error. `TestNoBareReturnErrInDatabase_AUDIT081` statically asserts zero bare returns remain + a `%w` wrap exists. Handler-side `models.ErrorResponse` boilerplate (AUDIT-071) stays open. |
+| AUDIT-165 | No GitHub release-notes automation | 0.10.367 | (pending) | Added `.github/workflows/release.yml`: tag-triggered (`v*`), lifts the matching `## [X.Y.Z]` block out of `CHANGELOG.md` (falls back to `## [Unreleased]`) and publishes it via `gh release create`/`edit` (idempotent). CHANGELOG-driven by design (repo is direct-to-master, not labelled PRs, so release-drafter doesn't fit). `contents: write` scoped to the job; dormant until the first tag. `TestReleaseWorkflow_AUDIT165` pins the trigger/permission/extraction/publish and that it's not branch-triggered. `.goreleaser.yml` artifact build (AUDIT-004) still open. |
 
 ---
 
@@ -1455,6 +1458,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-124 — benchmarks for syslog + sflow parser hot paths — v0.10.364 — 2f58589 — opencode
 2026-06-06 — AUDIT-132 — sweep ES5 ['catch']/['finally']/['delete'] bracket workaround to dot notation (121 sites/14 files) — v0.10.365 — (pending) — opencode
 2026-06-06 — AUDIT-081 — wrap 25 raw `return err` in database.go with fmt.Errorf %w (errors.Is-preserving) — v0.10.366 — (pending) — opencode
+2026-06-06 — AUDIT-165 — tag-triggered CHANGELOG-driven release-notes workflow (.github/workflows/release.yml) — v0.10.367 — (pending) — opencode
 ```
 
 ---
@@ -2411,6 +2415,46 @@ a `.gitattributes` line-ending hygiene fix. Full suite green.
   user-facing-vs-internal analysis). Remaining work is now dominated by the big
   refactors (028/032/040/044/072), observability (076/077/078/150), and the
   heavier test-infra (117/118/120/122/123).
+
+## Session 24 completion log (2026-06-06) — code-quality cleanups + release automation
+
+**3 audits shipped** (v0.10.365 → v0.10.367), resolved count **137 → 140**.
+Full suite green; every modified JS file passes `node --check`.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-132 | 0.10.365 | (pending) | Swept the ES5/IE11 reserved-word bracket member-access workaround (`['catch']`×117, `['finally']`×2, `searchParams['delete']`×2 = 121 sites / 14 files) to dot notation. README baseline (ES2020) was already documented in Session 22, so this was the deferred code half of AUDIT-131. |
+| AUDIT-081 | 0.10.366 | (pending) | Wrapped all 25 remaining bare `return err` in `database.go` with `fmt.Errorf("op: %w", err)`. `%w` keeps the AUDIT-080 `errors.Is(gorm.ErrRecordNotFound)` checks working. |
+| AUDIT-165 | 0.10.367 | (pending) | Tag-triggered, CHANGELOG-driven `release.yml` that publishes a GitHub Release from the matching changelog section (Unreleased fallback). |
+
+**Discoveries / decisions for the next session:**
+
+- **The `['catch']` sweep had a doc trap:** `cmd/api/static/js/README.md`
+  *intentionally* quotes the literal `['catch']` syntax (and `TestJSStandardDocumented_AUDIT131`
+  asserts that quote stays present). A naive directory-wide sed rewrote the doc
+  too — the AUDIT-132 guard therefore scopes to `*.js` and the README keeps a
+  literal `['catch']` reference (reframed from "to be cleaned up" → "cleaned up
+  in v0.10.365"). **Lesson:** when sweeping a token, exclude docs that document
+  the token.
+- **Not every `return err` is in a guaranteed-error path.** Two sites
+  (`CreateDevice`, `MarkBatchProcessed`) were *trailing* returns where `err`
+  could be `nil` on success — blindly wrapping with `fmt.Errorf("…: %w", nil)`
+  would have manufactured a non-nil error and broken every happy path. Those
+  were converted to guarded `if err != nil { return fmt.Errorf(...) }; return nil`.
+  A future bulk error-wrapping pass (e.g. AUDIT-071's handler sweep) must make
+  the same distinction.
+- **Release automation is CHANGELOG-driven, not PR-driven.** `release-drafter`
+  (the audit's first suggestion) keys off labelled PRs; this repo is
+  direct-to-master, so it would produce empty notes. `release.yml` reads the
+  CHANGELOG instead. It's **dormant until the first `vX.Y.Z` tag** — the
+  one-time tag backfill/cutover is still AUDIT-004's open half, as is the
+  `.goreleaser.yml` artifact build.
+- **AUDIT-071 is the natural next code cleanup** — the handler-side
+  `c.JSON(500, models.ErrorResponse(...))` boilerplate (~hundreds of sites)
+  that, like the old `database.go` returns, *drops the underlying `err`*. It
+  wants an `httputil.InternalError(c, "op", err)` helper that logs `err`, then a
+  careful sweep (the err-variable name differs per site, so it's not a blind
+  find/replace). Bigger than a one-session quick win.
 
 ## Closing
 
