@@ -357,6 +357,11 @@ func (d *Database) migrate() error {
 		&models.ProcessStats{},
 		&models.InterfaceErrors{},
 		&models.ProcessedBatch{},
+		// AUDIT-067: per-request probe-token audit log. See models.ProbeTokenAudit
+		// for the schema rationale (narrow fields tuned for "find every request
+		// this probe/token made" + "find every request this source IP made" +
+		// timeline reconstruction after a token compromise).
+		&models.ProbeTokenAudit{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -440,6 +445,34 @@ func (d *Database) migrate() error {
 			log.Printf("migrate: add Probe.TFTPServerIP: %v", err)
 		} else {
 			log.Printf("migrate: added Probe.TFTPServerIP")
+		}
+	}
+
+	// AUDIT-067: add tenant_id column on Probe. Existing rows backfill to
+	// "default" so the v0.10.363 cross-tenant 403 is a no-op for pre-existing
+	// single-tenant deployments (every probe has the same tenant → the
+	// per-tenant check always passes). The column default in the Probe model
+	// tag (`gorm:"default:default"`) handles new INSERTs, but the manual
+	// ALTER above does NOT backfill the default into existing rows on every
+	// backend (GORM's AddColumn emits a plain `ADD COLUMN … TYPE` on
+	// Postgres/SQLite; the DEFAULT clause is part of the column definition
+	// for new rows only). So we explicitly UPDATE here for the rare case the
+	// default is empty. The index is added by AutoMigrate above (the
+	// `index` tag in models.Probe); the AddColumn path here is for
+	// pre-existing tables that predate the column entirely.
+	if m.HasTable(&models.Probe{}) && !m.HasColumn(&models.Probe{}, "tenant_id") {
+		if err := m.AddColumn(&models.Probe{}, "TenantID"); err != nil {
+			log.Printf("migrate: add Probe.TenantID: %v", err)
+		} else {
+			log.Printf("migrate: added Probe.TenantID")
+			// Backfill any existing rows (including those that might have
+			// somehow ended up with a NULL or empty value, even though
+			// the column DEFAULT applies to new INSERTs only).
+			if err := d.db.Model(&models.Probe{}).
+				Where("tenant_id IS NULL OR tenant_id = ''").
+				Update("tenant_id", models.DefaultTenantID).Error; err != nil {
+				log.Printf("migrate: backfill Probe.TenantID: %v", err)
+			}
 		}
 	}
 

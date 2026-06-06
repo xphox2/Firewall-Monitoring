@@ -496,8 +496,46 @@ type Probe struct {
 	ServerTLSCert    string     `json:"server_tls_cert"`
 	Description      string     `json:"description"`
 	TFTPServerIP     string     `json:"tftp_server_ip"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	// AUDIT-067: per-tenant scoping. Every probe belongs to exactly one tenant,
+	// and the server refuses (403) any request whose presented token resolves
+	// to a probe in a different tenant than the probe named in the URL path.
+	// The default "default" tenant preserves pre-AUDIT-067 behavior for existing
+	// deployments (all probes in the same tenant → cross-tenant check is a
+	// no-op). Splitting tenants is a later operator action (set tenant_id
+	// explicitly when creating a probe).
+	TenantID  string    `json:"tenant_id" gorm:"size:64;default:default;index"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// DefaultTenantID is the tenant every pre-AUDIT-067 probe is automatically
+// assigned by the column-default + startup migration. Operators that want
+// multi-tenant isolation explicitly set a different value on probe creation
+// (CreateProbe accepts tenant_id in the payload; the value is bound on the
+// Probe struct in the same path as every other field). Cross-tenant requests
+// are only meaningful once operators have given two probes DIFFERENT tenant
+// values, so this default also makes the v0.10.363 cross-tenant 403 a true
+// no-op for existing single-tenant deployments.
+const DefaultTenantID = "default"
+
+// ProbeTokenAudit records every authenticated probe request for forensic
+// review. AUDIT-067 ships this as a basic per-request log (probe_id, tenant_id,
+// endpoint, method, remote IP, status code, timestamp). It is intentionally
+// narrow: just the fields needed to (a) attribute a request to a probe/tenant
+// pair, (b) spot an unexpected source IP for a known probe (compromise signal),
+// and (c) reconstruct the timeline of a stolen-token incident. The same data
+// already lands in the HTTP request log (status, latency, path) — the
+// per-probe ID and tenant ID are the new fields that let an operator pivot
+// from "weird traffic" to "this probe's token" without grepping device logs.
+type ProbeTokenAudit struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	TenantID   string    `json:"tenant_id" gorm:"size:64;index"`
+	ProbeID    uint      `json:"probe_id" gorm:"index"`
+	Endpoint   string    `json:"endpoint" gorm:"size:255;index"`
+	Method     string    `json:"method" gorm:"size:16"`
+	RemoteIP   string    `json:"remote_ip" gorm:"size:64"`
+	StatusCode int       `json:"status_code" gorm:"index"`
+	Timestamp  time.Time `json:"timestamp" gorm:"index"`
 }
 
 type ProbeSite struct {

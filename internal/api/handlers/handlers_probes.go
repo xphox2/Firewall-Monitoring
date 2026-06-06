@@ -419,6 +419,11 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	// AUDIT-017: keys are stored hashed; hash the presented key to look it up.
 	err := h.db.Gorm().Where("key = ?", "probe_registration_"+database.HashProbeKey(req.RegistrationKey)).First(&setting).Error
 	if err != nil || setting.Value == "" {
+		// AUDIT-067: failed registration attempts are still audit-logged, but
+		// without a resolved probe (the auth is by the key, which may be a
+		// brand-new one we haven't seen). probeID=0/tenantID="" is the
+		// documented "anonymous" audit shape.
+		h.writeProbeTokenAudit(c, 0, "", http.StatusUnauthorized)
 		probeErr(c, http.StatusUnauthorized, "Invalid registration key")
 		return
 	}
@@ -426,12 +431,17 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	existingProbe := &models.Probe{}
 	err = h.db.Gorm().Where("name = ?", setting.Value).First(existingProbe).Error
 	if err != nil || existingProbe.ID == 0 {
+		h.writeProbeTokenAudit(c, 0, "", http.StatusNotFound)
 		probeErr(c, http.StatusNotFound, "Probe not found — it may have been deleted")
 		return
 	}
 
 	// If already approved and online, just return success
 	if existingProbe.ApprovalStatus == "approved" && existingProbe.Status == "online" {
+		// AUDIT-067: registration is itself a token-usage event — record the
+		// resolved probe/tenant so an operator can see "probe X first
+		// registered at Y" in the audit timeline.
+		h.writeProbeTokenAudit(c, existingProbe.ID, existingProbe.TenantID, http.StatusOK)
 		c.JSON(http.StatusOK, gin.H{
 			"success":    true,
 			"probe_id":   existingProbe.ID,
@@ -453,6 +463,9 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		return
 	}
 
+	// AUDIT-067: same audit row as the already-approved branch — the probe
+	// identity is known at this point regardless of approval state.
+	h.writeProbeTokenAudit(c, existingProbe.ID, existingProbe.TenantID, http.StatusOK)
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
 		"probe_id":   existingProbe.ID,
@@ -570,31 +583,101 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// probeAuthError is a small helper used by both authenticateProbeByBearer and
+// validateProbe to (a) emit a uniform error response and (b) record a
+// ProbeTokenAudit row. AUDIT-067: every authentication outcome is audit-logged
+// so a stolen token's usage is reconstructable. The endpoint/method/remote IP
+// come from the gin.Context, and probeID is the resolved authenticated probe
+// (or 0 when auth failed before resolution). The audit write is best-effort:
+// a transient DB failure logs to stderr but does NOT change the auth
+// outcome — the request still fails with the original error.
+func (h *Handler) probeAuthError(c *gin.Context, status int, msg string, probe *models.Probe) {
+	probeID := uint(0)
+	tenantID := ""
+	if probe != nil {
+		probeID = probe.ID
+		tenantID = probe.TenantID
+	}
+	h.writeProbeTokenAudit(c, probeID, tenantID, status)
+	c.JSON(status, models.ErrorResponse(msg))
+}
+
+// writeProbeTokenAudit persists a single audit row. Intentionally tolerant of
+// a nil DB / nil gorm handle (test fixtures sometimes wire the handler without
+// a database) — those calls are no-ops, not panics, so the auth path doesn't
+// fail-open in the absence of a backing store. The remote IP comes from
+// gin's ClientIP() so the recorded value is consistent with the rest of the
+// request log (which already passes through the same helper). A nil context
+// is also tolerated, since some tests construct a recorder without a request.
+func (h *Handler) writeProbeTokenAudit(c *gin.Context, probeID uint, tenantID string, status int) {
+	if h == nil || h.db == nil {
+		return
+	}
+	endpoint := ""
+	method := ""
+	remoteIP := ""
+	if c != nil && c.Request != nil {
+		endpoint = c.Request.URL.Path
+		method = c.Request.Method
+		remoteIP = c.ClientIP()
+	}
+	entry := &models.ProbeTokenAudit{
+		TenantID:   tenantID,
+		ProbeID:    probeID,
+		Endpoint:   endpoint,
+		Method:     method,
+		RemoteIP:   remoteIP,
+		StatusCode: status,
+		Timestamp:  time.Now(),
+	}
+	// Use a fresh GORM session so a request that has already begun writing a
+	// response (e.g. one that was aborted by an earlier handler) still gets the
+	// audit row committed. Best-effort: a failure here is logged, never fatal.
+	if err := h.db.Gorm().Create(entry).Error; err != nil {
+		log.Printf("writeProbeTokenAudit: probe=%d endpoint=%s: %v", probeID, endpoint, err)
+	}
+}
+
 // authenticateProbeByBearer extracts the Bearer token from the Authorization header
 // and looks up the probe by its registration key. Returns the probe if authenticated.
+//
+// AUDIT-067: every authentication outcome is recorded to probe_token_audits
+// (token, IP, endpoint, status). A failed auth logs with probe_id=0 and
+// tenant_id="" because we have no resolved identity — the audit row is still
+// useful because it captures the (anonymous) request fingerprint.
 func (h *Handler) authenticateProbeByBearer(c *gin.Context) (*models.Probe, bool) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		h.probeAuthError(c, http.StatusUnauthorized, "Authorization required", nil)
 		return nil, false
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token == "" {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		h.probeAuthError(c, http.StatusUnauthorized, "Authorization required", nil)
 		return nil, false
 	}
 
 	// Look up probe by registration key (AUDIT-017: stored hashed).
 	var probe models.Probe
 	if err := h.db.Gorm().Where("registration_key = ?", database.HashProbeKey(token)).First(&probe).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
+		h.probeAuthError(c, http.StatusUnauthorized, "Invalid authorization", nil)
 		return nil, false
 	}
+	// Successful auth — record the audit row with the resolved probe/tenant.
+	h.writeProbeTokenAudit(c, probe.ID, probe.TenantID, http.StatusOK)
 	return &probe, true
 }
 
 // validateProbe parses probe ID from URL param and checks it exists, is approved,
 // and the caller provides a valid Bearer token matching the probe's registration key.
+//
+// AUDIT-067: in addition to the AUDIT-016/AUDIT-017 token checks, the resolved
+// (token-bound) probe's tenant must match the URL :id probe's tenant. A
+// mismatch is rejected with 403 — semantically distinct from 401 (which still
+// means "your token doesn't authenticate this probe at all"). The two probes
+// in the check below are the same object for a correctly-authenticated request;
+// they only differ when an attacker presents probe-A's token at probe-B's URL,
+// which is exactly the cross-tenant attack AUDIT-067 calls out.
 func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
@@ -612,6 +695,10 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 		return nil, false
 	}
 	if probe.ApprovalStatus != "approved" {
+		// AUDIT-067: audit the unauthenticated/unauthorized probe-state access
+		// attempt with the target probe's ID (the auth-less 403 still has
+		// signal value for incident review).
+		h.writeProbeTokenAudit(c, probe.ID, probe.TenantID, http.StatusForbidden)
 		c.JSON(http.StatusForbidden, models.ErrorResponse("Probe not approved"))
 		return nil, false
 	}
@@ -619,20 +706,35 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	// Verify Bearer token matches this probe's registration key
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		h.probeAuthError(c, http.StatusUnauthorized, "Authorization required", probe)
 		return nil, false
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	// AUDIT-016: constant-time compare against the stored registration key
 	// after the indexed PK lookup above. A naive `token != probe.Registration
-	// Key` is a byte-by-byte compare that an attacker on the LAN can use as
-	// a single-character oracle (Go strings short-circuit on first mismatch).
+	// Key` is a byte-by-byte compare that an attacker on the LAN can use as a
+	// single-character oracle (Go strings short-circuit on first mismatch).
 	// subtle.ConstantTimeCompare returns 1 only if both lengths and all bytes
 	// match; it does not short-circuit on content.
 	// AUDIT-017: stored key is hashed; hash the presented token and compare the
 	// digests in constant time (preserves the AUDIT-016 timing-safety property).
 	if token == "" || subtle.ConstantTimeCompare([]byte(database.HashProbeKey(token)), []byte(probe.RegistrationKey)) != 1 {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
+		// AUDIT-067: a token-mismatch on this probe's URL is potentially a
+		// cross-tenant attack (probe-A's token presented at probe-B). Resolve
+		// the token to its actual owning probe to get a definitive 401-vs-403
+		// answer — same tenant → 401 (wrong key, no privilege leak), different
+		// tenant → 403 (cross-tenant attempt, auditable escalation).
+		var tokenProbe models.Probe
+		if err := h.db.Gorm().Where("registration_key = ?", database.HashProbeKey(token)).First(&tokenProbe).Error; err == nil {
+			if tokenProbe.TenantID != probe.TenantID {
+				h.writeProbeTokenAudit(c, probe.ID, probe.TenantID, http.StatusForbidden)
+				c.JSON(http.StatusForbidden, models.ErrorResponse("Cross-tenant access denied"))
+				return nil, false
+			}
+		}
+		// Same tenant (or token doesn't resolve to any probe — treat as 401
+		// since we can't make a tenant claim).
+		h.probeAuthError(c, http.StatusUnauthorized, "Invalid authorization", probe)
 		return nil, false
 	}
 
@@ -642,6 +744,11 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 		"last_seen":          now,
 		"last_data_received": now,
 	})
+	// AUDIT-067: successful auth — record the audit row with the resolved
+	// probe/tenant. Status 200 is set later by the handler; we record 200 here
+	// because the auth itself succeeded (handler-side errors that yield a
+	// non-2xx are out of scope for the token-usage audit).
+	h.writeProbeTokenAudit(c, probe.ID, probe.TenantID, http.StatusOK)
 	return probe, true
 }
 

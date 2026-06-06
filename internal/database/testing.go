@@ -61,6 +61,9 @@ func NewDatabaseForTesting(t interface {
 		&models.SyslogSummary{},
 		&models.UptimeRecord{},
 		&models.ProcessedBatch{},
+		// AUDIT-067: per-request probe-token audit log table. New tests that
+		// exercise the audit-log writer need it migrated on the test backend.
+		&models.ProbeTokenAudit{},
 	}
 
 	for _, m := range testModels {
