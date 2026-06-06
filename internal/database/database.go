@@ -1116,12 +1116,12 @@ func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
 	tx := d.db.Begin()
 	if err := tx.Create(rev).Error; err != nil {
 		tx.Rollback()
-		return err
+		return fmt.Errorf("save config revision: insert: %w", err)
 	}
 	var count int64
 	if err := tx.Model(&models.DeviceConfigRevision{}).Where("device_id = ?", rev.DeviceID).Count(&count).Error; err != nil {
 		tx.Rollback()
-		return err
+		return fmt.Errorf("save config revision: count existing: %w", err)
 	}
 	if count > 5 {
 		deleteCount := count - 5
@@ -1132,12 +1132,12 @@ func (d *Database) SaveConfigRevision(rev *models.DeviceConfigRevision) error {
 			Limit(int(deleteCount)).
 			Pluck("id", &toDelete).Error; err != nil {
 			tx.Rollback()
-			return err
+			return fmt.Errorf("save config revision: select stale revisions to prune: %w", err)
 		}
 		if len(toDelete) > 0 {
 			if err := tx.Where("device_id = ? AND id IN ?", rev.DeviceID, toDelete).Delete(&models.DeviceConfigRevision{}).Error; err != nil {
 				tx.Rollback()
-				return err
+				return fmt.Errorf("save config revision: prune stale revisions: %w", err)
 			}
 		}
 	}
@@ -1253,7 +1253,10 @@ func (d *Database) MarkBatchProcessed(probeID uint, batchID string) error {
 	if err != nil && (strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "duplicate")) {
 		return nil // already recorded — that's the desired state
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("mark batch processed: %w", err)
+	}
+	return nil
 }
 
 // cleanupDeleteBatchSize is the row cap per cleanup DELETE. A package var (not
@@ -1285,7 +1288,7 @@ func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) e
 			return res.Error
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("batched delete (batch size %d): %w", batchSize, err)
 		}
 		if affected < int64(batchSize) {
 			return nil // last (partial) batch — nothing more to delete
@@ -1656,7 +1659,7 @@ func (d *Database) Close() error {
 
 	sqlDB, err := d.db.DB()
 	if err != nil {
-		return err
+		return fmt.Errorf("close database: get underlying sql.DB: %w", err)
 	}
 	return sqlDB.Close()
 }
@@ -1700,7 +1703,10 @@ func (d *Database) CreateDevice(device *models.Device) error {
 	err := d.db.Create(device).Error
 	// Decrypt back so the caller sees plaintext
 	d.DecryptDeviceSecrets(device)
-	return err
+	if err != nil {
+		return fmt.Errorf("create device: %w", err)
+	}
+	return nil
 }
 
 func (d *Database) UpdateDevice(device *models.Device) error {
@@ -1779,11 +1785,11 @@ func (d *Database) DeleteDevice(id uint) error {
 			&models.InterfaceAddress{},
 		} {
 			if err := tx.Where("device_id = ?", id).Delete(model).Error; err != nil {
-				return err
+				return fmt.Errorf("delete device %d: delete related %T: %w", id, model, err)
 			}
 		}
 		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
-			return err
+			return fmt.Errorf("delete device %d: delete connections: %w", id, err)
 		}
 		return tx.Delete(&models.Device{}, id).Error
 	})
@@ -1924,7 +1930,7 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 
 	existing, err := d.FindConnectionByDevicePairAndType(sourceID, destID, connType)
 	if err != nil {
-		return err
+		return fmt.Errorf("upsert auto connection: lookup existing pair: %w", err)
 	}
 
 	if existing != nil {
@@ -2006,7 +2012,7 @@ func (d *Database) GetAllSettings() ([]models.SystemSetting, error) {
 func (d *Database) UpsertSetting(setting *models.SystemSetting) error {
 	existing := models.SystemSetting{Key: setting.Key}
 	if err := d.db.FirstOrCreate(&existing, models.SystemSetting{Key: setting.Key}).Error; err != nil {
-		return err
+		return fmt.Errorf("upsert setting %q: %w", setting.Key, err)
 	}
 	existing.Value = setting.Value
 	existing.Label = setting.Label
@@ -2036,7 +2042,7 @@ func (d *Database) UpdateAdmin(admin *models.Admin) error {
 func (d *Database) InitAdmin(username, password string) error {
 	admin, err := d.GetAdmin()
 	if err != nil {
-		return err
+		return fmt.Errorf("init admin: load existing admin: %w", err)
 	}
 	if admin == nil {
 		return d.CreateAdmin(&models.Admin{Username: username, Password: password})
@@ -2115,10 +2121,10 @@ func (d *Database) UpdateSite(site *models.Site) error {
 func (d *Database) DeleteSite(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("site_id = ?", id).Delete(&models.Probe{}).Error; err != nil {
-			return err
+			return fmt.Errorf("delete site %d: delete probes: %w", id, err)
 		}
 		if err := tx.Where("site_id = ?", id).Delete(&models.Device{}).Error; err != nil {
-			return err
+			return fmt.Errorf("delete site %d: delete devices: %w", id, err)
 		}
 		return tx.Delete(&models.Site{}, id).Error
 	})
@@ -2184,7 +2190,7 @@ func (d *Database) ApproveProbe(probeID uint, approvedBy uint) error {
 		"approved_at":     now,
 		"approved_by":     approvedBy,
 	}).Error; err != nil {
-		return err
+		return fmt.Errorf("approve probe %d: update probe row: %w", probeID, err)
 	}
 	approval := &models.ProbeApproval{
 		ProbeID:     probeID,
@@ -2204,7 +2210,7 @@ func (d *Database) RejectProbe(probeID uint, reason string) error {
 		"rejected_at":     now,
 		"rejected_reason": reason,
 	}).Error; err != nil {
-		return err
+		return fmt.Errorf("reject probe %d: update probe row: %w", probeID, err)
 	}
 	approval := &models.ProbeApproval{
 		ProbeID:        probeID,
@@ -3199,7 +3205,7 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		// Wrap insert+delete in a transaction for atomicity
 		if err := d.db.Transaction(func(tx *gorm.DB) error {
 			if err := batchInsertRollups(tx, rows, intervalType, "2006-01-02 15:04"); err != nil {
-				return err
+				return fmt.Errorf("flow rollup: insert %s rollups: %w", intervalType, err)
 			}
 			return nil
 		}); err != nil {
@@ -3256,7 +3262,7 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	// Wrap insert+delete in a transaction for atomicity
 	if err := d.db.Transaction(func(tx *gorm.DB) error {
 		if err := batchInsertRollups(tx, rows, dstInterval, bucketFmt); err != nil {
-			return err
+			return fmt.Errorf("aggregate rollups %s→%s: insert: %w", srcInterval, dstInterval, err)
 		}
 		// Delete consumed source rollups within the same transaction
 		if err := tx.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
@@ -3360,7 +3366,7 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 		// If this page fails, messages will be re-aggregated on next cycle (potential duplicates, but safe).
 		if err := d.db.Transaction(func(tx *gorm.DB) error {
 			if err := batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt); err != nil {
-				return err
+				return fmt.Errorf("syslog aggregation: insert %s summaries: %w", intervalType, err)
 			}
 			// Delete informational messages older than cutoff
 			if err := tx.Where("timestamp < ? AND severity >= 6", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
@@ -3447,7 +3453,7 @@ func (d *Database) promoteSyslogSummaries(srcInterval, dstInterval string, cutof
 
 		if err := d.db.Transaction(func(tx *gorm.DB) error {
 			if err := batchInsertSyslogSummaries(tx, rows, dstInterval, bucketFmt); err != nil {
-				return err
+				return fmt.Errorf("syslog aggregation: promote %s→%s summaries: insert: %w", srcInterval, dstInterval, err)
 			}
 			if err := tx.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
 				Delete(&models.SyslogSummary{}).Error; err != nil {
@@ -4554,7 +4560,7 @@ func (d *Database) DeleteAlertPolicy(id uint) error {
 	// Prevent deleting default policy
 	var policy models.AlertPolicy
 	if err := d.db.First(&policy, id).Error; err != nil {
-		return err
+		return fmt.Errorf("delete alert policy %d: load policy: %w", id, err)
 	}
 	if policy.IsDefault {
 		return fmt.Errorf("cannot delete the default alert policy")
@@ -4567,7 +4573,7 @@ func (d *Database) DeleteAlertPolicy(id uint) error {
 func (d *Database) BatchUpsertAlertRules(policyID uint, rules []models.AlertRule) error {
 	// Delete existing rules for this policy
 	if err := d.db.Where("policy_id = ?", policyID).Delete(&models.AlertRule{}).Error; err != nil {
-		return err
+		return fmt.Errorf("batch upsert alert rules for policy %d: delete existing: %w", policyID, err)
 	}
 	// Insert new rules
 	for i := range rules {
@@ -4599,7 +4605,7 @@ func (d *Database) UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error 
 		return d.db.Save(cfg).Error
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
+		return fmt.Errorf("upsert device alert config (device %d): lookup existing: %w", cfg.DeviceID, err)
 	}
 	return d.db.Create(cfg).Error
 }
@@ -4633,7 +4639,7 @@ func (d *Database) UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error {
 		return d.db.Save(cfg).Error
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
+		return fmt.Errorf("upsert site alert config (site %d): lookup existing: %w", cfg.SiteID, err)
 	}
 	return d.db.Create(cfg).Error
 }

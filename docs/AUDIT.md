@@ -1307,6 +1307,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-119 | No fuzz tests for untrusted network parsers | 0.10.363 | 12c896b | Added `FuzzParseRFC5424` (syslog) + `FuzzParseSFlowDatagram` (sflow) with malformed seeds. Active fuzzing: 3.3M execs (sflow) + 267k (syslog), **zero crashes** — durable no-panic guard. First tests in `internal/syslog`/`internal/sflow` (also chips at AUDIT-117). |
 | AUDIT-124 | No benchmark tests | 0.10.364 | 2f58589 | Added `BenchmarkParseRFC5424`/`ParsePriority` (syslog) + `BenchmarkParseSFlowDatagram` (sflow) — per-packet CPU hot paths, no DB fixtures. `b.ReportAllocs()`+`SetBytes()`. Deferred: DB-bound hot paths (BatchInserter/GetConnectionFlowStats) need a seeded test DB. |
 | AUDIT-132 | ES5 `['catch']` bracket workaround | 0.10.365 | (pending) | Swept the legacy IE11 reserved-word bracket form (`promise['catch']`/`['finally']`, `searchParams['delete']`) to dot notation across **all 121 sites / 14 files** in `cmd/api/static/js`; vendored bundles untouched. Baseline is ES2020 (AUDIT-168/131) so `.catch`/`.finally`/`.delete` are valid. All files pass `node --check`. `TestNoES5BracketWorkaround_AUDIT132` guards `*.js` (README excluded — it quotes the syntax). Completes the AUDIT-131 deferred cleanup. |
+| AUDIT-081 | 46× raw `return err` in database.go | 0.10.366 | (pending) | Wrapped all **25 remaining** bare `return err` (GORM `tx.Error`) in `database.go` with `fmt.Errorf("operation: %w", err)`, naming the operation + entity id; `%w` preserves the `errors.Is(err, gorm.ErrRecordNotFound)` checks from AUDIT-080. Two trailing returns where `err` could be nil (`CreateDevice`, `MarkBatchProcessed`) converted to guarded wraps so success never yields a non-nil error. `TestNoBareReturnErrInDatabase_AUDIT081` statically asserts zero bare returns remain + a `%w` wrap exists. Handler-side `models.ErrorResponse` boilerplate (AUDIT-071) stays open. |
 
 ---
 
@@ -1453,6 +1454,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-119 — Go fuzz tests for syslog + sflow parsers (no crashes in 3.5M+ execs) — v0.10.363 — 12c896b — opencode
 2026-06-06 — AUDIT-124 — benchmarks for syslog + sflow parser hot paths — v0.10.364 — 2f58589 — opencode
 2026-06-06 — AUDIT-132 — sweep ES5 ['catch']/['finally']/['delete'] bracket workaround to dot notation (121 sites/14 files) — v0.10.365 — (pending) — opencode
+2026-06-06 — AUDIT-081 — wrap 25 raw `return err` in database.go with fmt.Errorf %w (errors.Is-preserving) — v0.10.366 — (pending) — opencode
 ```
 
 ---
