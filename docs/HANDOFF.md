@@ -8,13 +8,14 @@ updated in lockstep with each resolved finding).
 
 The public-release audit at v0.10.239 produced **170 bug findings** (AUDIT-001
 through AUDIT-170) and **89 feature recommendations** (AUDIT-F01 through F89).
-After the audit-resolution effort through v0.10.333, **95 of the 170 bug
+After the audit-resolution effort through v0.10.333, **106 of the 170 bug
 findings are resolved** and **0 are still in CRITICAL status**. (Session 15
 reached 88, v0.10.320 reverted AUDIT-066/067 → 86, Session 16 added 5 → 91,
-Session 17 added 4 → **95**.) Three production hotfixes (v0.10.322–324,
-2026-06-04) shipped outside the audit cadence — see the "Production hotfix
-interlude". This document catalogs the remaining work so a future session can
-pick up without re-reading the entire audit.
+Session 17 added 4 → 95, then a **2026-06-06 verification sweep** reclassified 11
+already-fixed-but-unmarked audits → **106**.) Three production hotfixes
+(v0.10.322–324, 2026-06-04) shipped outside the audit cadence — see the
+"Production hotfix interlude". This document catalogs the remaining work so a
+future session can pick up without re-reading the entire audit.
 
 > **Session 13 (2026-06-03) completed all 10 of its HIGH frontend quick wins
 > (AUDIT-046 through 055), v0.10.293 → v0.10.302.** See the "Session 13
@@ -45,8 +46,8 @@ pick up without re-reading the entire audit.
 
 | Bucket | Count | Notes |
 |---|---|---|
-| **Resolved bug audits** | **95** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); 0 remain CRITICAL |
-| **Open bug audits** | **75** | 170 total − 95 resolved |
+| **Resolved bug audits** | **106** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); includes 11 verification-sweep reclassifications; 0 remain CRITICAL |
+| **Open bug audits** | **64** | 170 total − 106 resolved |
 | Feature recommendations (F01–F89) | 89 | out of scope for "complete the audit"; future v0.11.0+ work |
 
 > **Per-severity split:** the earlier hand-maintained HIGH/MEDIUM/LOW open counts
@@ -640,6 +641,45 @@ have been a regression or a no-op).
   state, 028 partition interface_stats/system_status, 006 crash-durable batcher,
   004 release flow, 032 ctx propagation) — all L-sized. Or pick remaining S/M
   wins from sessions 19-23. AUDIT-039 (re-scoped) and AUDIT-044 still open here.
+
+## Verification sweep (2026-06-06)
+
+Because the audit was written at v0.10.239 and the code is now v0.10.333 (~94
+versions on), all 75 then-open audits were re-verified against the current code
+(5 parallel review agents, read-only). Result: **11 were already resolved**
+(fixed by later commits/other audits but never reclassified) and several more are
+partial/changed. **Do not spend effort on the 11 below — they're done.**
+
+**Reclassified to RESOLVED (now in the AUDIT.md resolved table, marked `(verified)`):**
+AUDIT-041 (ping batcher exists), 082 (relay unlocks before HTTP), 089 (superseded
+by 154/155/156/157), 100 (deploy.sh User=fwmon, via AUDIT-021), 116 (test gitignore
+removed, via AUDIT-001), 121 (`-race` in ci.yml, via AUDIT-004), 125 (admin-device-
+detail inline onclick gone, via AUDIT-053), 141 (`t.TempDir` adopted), 152 (gofmt CI
+gate), 153 (LastUpAt now wired), 167 (KNOWN-ISSUES.md exists).
+
+**PARTIAL — some of the fix landed, a remainder is still open (re-scope, don't redo):**
+- **AUDIT-045** — DB-ping health check landed (AUDIT-091); no separate `/live`+`/ready`, no batcher/notifier checks.
+- **AUDIT-073** — the dead `LastUpAt` field is now used; the gorm-vs-DTO struct split is NOT done.
+- **AUDIT-117** — 7 packages gained a first test; `auth/syslog/sflow/uptime/relay/ping/models` still at 0.
+- **AUDIT-126** — file was split (213KB→~100KB, `admin-device-detail-charts.js`); the esbuild-minify migration (AUDIT-139) is not done.
+- **AUDIT-160** — vendored libs are inventoried in `THIRD-PARTY-NOTICES.md` (AUDIT-003) but not pinned in `package.json`.
+- **AUDIT-161** — nav links centralized in `AdminCommon.renderSidebar()`; a ~11-line per-page sidebar shell + duplicated `<script>` lists remain.
+
+**CHANGED — premise no longer matches the code:**
+- **AUDIT-066** — `#484f58` is now only a decorative `border-left` (admin.html), not text, so the WCAG-text-contrast premise is gone. (Its sibling **AUDIT-067** is genuinely OPEN — `#6e7681` is still used for sub-18px text; both were reverted+reopened by v0.10.320.) Worth a quick close of 066.
+- **AUDIT-090** — no OpenAPI/versioning was added; the `/api/v1` path-rewrite was documented + test-pinned under AUDIT-138. Premise (no versioning) technically still holds; treat as "documented, not solved".
+
+**Confirmed GENUINELY OPEN (the real backlog — premises hold, cited file:line in agent reports):**
+028, 032, 039 (re-scope per Session-17 note), 040, 044, 067, 071, 072, 073(transport),
+076, 077, 078, 079, 080, 081, 084, 087, 088, 092, 094, 095, 097, 098, 099, 102, 103,
+104, 106, 107, 108, 109, 111, 112, 113, 114, 118, 119, 120, 123, 124, 129, 130, 131,
+132, 134, 135, 140, 142, 147, 150, 162, 163, 164, 165, 166, 168, 170. These are
+overwhelmingly large refactors (028/032/044/072/076), structured-logging/metrics/audit
+(076/077/078), test-infra (117–124/140/142), and docs/CI/repo-hygiene (the 1xx block).
+
+**Data-integrity note:** the CHANGELOG references `.github/CODEOWNERS` under AUDIT-163,
+but the file does **not** exist on disk — AUDIT-163 is correctly still open; the
+CHANGELOG mention is a stray/aspirational reference, not a completed change.
 
 ## Closing
 

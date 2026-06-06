@@ -1213,6 +1213,17 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-038 | CleanupOldData does N full DELETEs serially | 0.10.331 | 28d81ab | Each table deleted in 10k-row batches (`id IN (SELECT id ... LIMIT N)`, portable PG+SQLite); on PG each batch in a txn with `SET LOCAL lock_timeout='5s'`, 100ms sleep between. Retention semantics unchanged (AUDIT-029/031 tests pass). TestBatchedDeleteOlderThan_AUDIT038. Deferred: leader lock (AUDIT-007). |
 | AUDIT-043 | Time-series chart SQL uses window functions unsupported by SQLite | 0.10.332 | b6f8a23 | Premise outdated: the `LAG() OVER w`/`WINDOW w AS` queries (GetVPNChartData, GetConnectionTraffic) run correctly on the modernc SQLite test backend AND Postgres — no gating needed. Closed the real gap (untested in CI) with TestGetVPNChartData_WindowDeltas_AUDIT043 (delta + counter-reset math on SQLite); documented dialect-safety in-code. |
 | AUDIT-033 | GetDashboardAll is textbook N+1 | 0.10.333 | 8be35f3 | Per-device enrichment loop (~13 queries x N devices, ~650 at 50 devices) replaced with ~7 batched aggregates (one per data type) via the max-timestamp self-join (portable PG+SQLite). O(1) in device count, same output shape. TestGetDashboardAll_BatchedEnrichments_AUDIT033 verifies latest-timestamp selection + up/alive counts. |
+| AUDIT-041 | Probe ping write path is not batched | (verified) | 2026-06-06 | Verification sweep — already resolved: Already done — `pingBatch` exists (database.go) and `SavePingResult` routes through it; code evolved after the v0.10.239 audit. |
+| AUDIT-082 | Mutex held across HTTP call in relay | (verified) | 2026-06-06 | Verification sweep — already resolved: `relay.go syncData()` snapshots the queues under the lock then `mu.Unlock()` BEFORE `sendBatch`/HTTP — no HTTP under lock. |
+| AUDIT-089 | Dead code | (verified) | 2026-06-06 | Verification sweep — already resolved: Superseded — split into AUDIT-154/155/156 (those symbols ARE used → wontfix) + AUDIT-157 (ADMIN_SECRET_KEY removed, v0.10.269); `LastUpAt` now used. |
+| AUDIT-100 | `deploy.sh` systemd units run as `User=root` | (verified) | 2026-06-06 | Verification sweep — already resolved: Fixed by AUDIT-021 (v0.10.261): deploy.sh systemd unit uses `User=fwmon` + hardening directives. |
+| AUDIT-116 | `*_test.go` in `.gitignore` | (verified) | 2026-06-06 | Verification sweep — already resolved: Fixed by AUDIT-001 (v0.10.241): the `.gitignore` entry was removed; 30+ `_test.go` files are tracked. |
+| AUDIT-121 | No race detector in CI | (verified) | 2026-06-06 | Verification sweep — already resolved: Fixed by AUDIT-004: `.github/workflows/ci.yml` runs `go test -race -count=1 ./...`. |
+| AUDIT-125 | Inline event handler generation in admin-device-detail | (verified) | 2026-06-06 | Verification sweep — already resolved: Fixed by AUDIT-053 (v0.10.300): `admin-device-detail.js` has 0 inline `onclick`, uses `addEventListener`. |
+| AUDIT-141 | No `t.TempDir()` / `t.Cleanup()` | (verified) | 2026-06-06 | Verification sweep — already resolved: Adopted — `internal/secrets/secrets_test.go` uses `t.TempDir()` at 6 sites. |
+| AUDIT-152 | No `gofmt` enforcement in CI | (verified) | 2026-06-06 | Verification sweep — already resolved: Fixed by AUDIT-075/004: `ci.yml` runs `gofmt -l .` and fails the build on any output. |
+| AUDIT-153 | `MODEL.go` LastUpAt is dead | (verified) | 2026-06-06 | Verification sweep — already resolved: `LastUpAt` is now populated by GetLatestVPNStatuses and consumed by the VPN-status UI — no longer dead. |
+| AUDIT-167 | No "Known Issues" doc | (verified) | 2026-06-06 | Verification sweep — already resolved: `KNOWN-ISSUES.md` exists at the repo root (added v0.10.282, AUDIT-110). |
 | AUDIT-085 | Probe auth key rotation not transactional | 0.10.325 | ccd602f | `RegenerateProbeKey` deleted the old key's `SystemSetting` first and only logged a warning if the new setting failed to write — a mid-sequence failure could rotate the key but leave no usable registration setting, locking the probe out. Now generates the new key before any write and wraps update-probe → delete-old → create-new in one `gorm.Transaction` (rollback keeps the working key). `TestRegenerateProbeKey_Atomic_AUDIT085` in `internal/api/handlers/` pins the success contract. |
 
 ---
@@ -1317,6 +1328,17 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-038 — batched retention deletes (10k LIMIT, PG lock_timeout, 100ms sleep) — v0.10.331 — 28d81ab — opencode
 2026-06-06 — AUDIT-043 — verify window-chart queries SQLite-safe + regression test (no gating) — v0.10.332 — b6f8a23 — opencode
 2026-06-06 — AUDIT-033 — batch GetDashboardAll enrichment (kills ~13xN query N+1) — v0.10.333 — 8be35f3 — opencode
+2026-06-06 — AUDIT-041 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-082 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-089 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-100 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-116 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-121 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-125 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-141 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-152 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-153 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
+2026-06-06 — AUDIT-167 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
 ```
 
 ---
