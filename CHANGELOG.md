@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.10.363 - 2026-06-06
+
+### Added
+- **Probe↔server `schema_version` handshake on `/api/probes/register`** (AUDIT-065): the relay handshake between the probe and the server had no version field, no `Accept`-style content-type, and no per-DTO compatibility matrix — a server-side change that added a required field, shifted `BackupQuality` semantics, or removed an endpoint could brick every deployed collector with no graceful fallback. Added a `schema_version` field to the register request and response (`internal/relay/relay.go`): the probe advertises the version it speaks, the server validates against `[SchemaVersionMin, SchemaVersionMax]` (currently `1-1`, defined as exported consts in `internal/relay/relay.go`). A pre-AUDIT-065 collector that doesn't send the field is treated as v1 (backward compat — the field is `omitempty` on the request and the handler defaults the zero value to `1`). An out-of-range version is rejected with **HTTP 426 (Upgrade Required)** and the supported range in the `X-Probe-Schema-Version-Supported` response header so a too-new or too-old probe can self-report why it can't register. Three unit tests pin the new contract: `TestRegister_OldSchemaVersion_Returns426`, `TestRegister_UnsupportedVersion_Returns426_WithSupportedRange`, `TestSchemaVersion_DefaultsTo1_WhenAbsent`. The supported range is deliberately narrow (v1 only) — the consts are the single source of truth and a future v2 only needs to bump `SchemaVersionMax` in `internal/relay/relay.go` and add a row to `MIGRATING.md`.
+- **`MIGRATING.md`** (AUDIT-065): a new top-level doc that names the probe↔server wire-format version, lists the supported range, and gives the field-by-field compatibility matrix the audit asked for. Lives next to `README.md` / `CHANGELOG.md` and is linked from the CHANGELOG entry. Covers: (1) what the version number means (probe-relay wire format, NOT the on-wire `BackupQuality`/device data DTOs which are still loosely-versioned per field), (2) the supported range and the consts that back it, (3) the matrix tying collector versions ↔ server versions (e.g. "v1.2.x collectors require server v0.10.18X+", "v1.3.x collectors require server v0.11.0+ once TFTP source-IP allowlist + size cap ship"), (4) the upgrade-rollout order (server first, then collector — and what the error looks like if you do it backwards).
+
+### Changed
+- **`POST /api/probes/register` request DTO accepts `schema_version`** (AUDIT-065): the inline request struct in `RegisterProbe` grew a `SchemaVersion int` field. Old collectors that don't send it are unaffected (zero value defaults to `1` internally). New collectors that send a supported version are accepted unchanged. New collectors that send an unsupported version are rejected with 426 before any auth or DB lookup runs (cheap, no probe-state side effects). The response now also echoes `schema_version` so a probe can learn the version the server has selected for it — and the server stamps the value on every successful register so a future v2-rollout can compare "what the server said it supports" against "what the probe asked for".
+- **`internal/relay.RelayClient.Register` advertises its schema version** (AUDIT-065): the relay client now sends `SchemaVersion: SchemaVersionMax` in the registration request. A pre-AUDIT-065 server ignores the unknown field, so the change is wire-compatible; a post-AUDIT-065 server gets a clean version number to validate against.
+
+### Deprecated
+- nothing yet
+
+### Removed
+- nothing yet
+
+### Fixed
+- nothing yet
+
 ## [Unreleased]
 
 ### Added

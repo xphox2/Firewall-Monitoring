@@ -244,6 +244,11 @@ func (r *RelayClient) Register() error {
 		RegistrationKey: r.Config.RegistrationKey,
 		ProbeName:       r.Config.ProbeName,
 		SiteID:          r.Config.SiteID,
+		// AUDIT-065: advertise the wire-format version this probe speaks.
+		// Pre-AUDIT-065 servers ignore unknown fields, so this stays
+		// backward-compatible. A post-AUDIT-065 server can 426 us if we
+		// are too old / too new.
+		SchemaVersion: SchemaVersionMax,
 	}
 
 	jsonData, err := json.Marshal(regReq)
@@ -507,16 +512,36 @@ func (r *RelayClient) flushQueues() {
 	r.syncData()
 }
 
+// SchemaVersionMin / SchemaVersionMax pin the probe↔server wire-format
+// range. Bump in lockstep with MIGRATING.md when the relay handshake
+// changes shape (AUDIT-065).
+const (
+	SchemaVersionMin = 1
+	SchemaVersionMax = 1
+)
+
 type RegistrationRequest struct {
 	RegistrationKey string `json:"registration_key"`
 	ProbeName       string `json:"probe_name"`
 	SiteID          uint   `json:"site_id"`
+	// SchemaVersion is the relay-wire-format version the probe speaks.
+	// Zero / absent is treated as v1 (the pre-AUDIT-065 format) so
+	// already-deployed collectors keep working unchanged. The server
+	// rejects anything outside [SchemaVersionMin, SchemaVersionMax]
+	// with HTTP 426 (AUDIT-065).
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 type RegistrationResponse struct {
 	Approved bool   `json:"approved"`
 	ProbeID  uint   `json:"probe_id"`
 	Message  string `json:"message"`
+	// SchemaVersion is the version the server has *selected* for this
+	// probe. Pre-AUDIT-065 servers may not return it at all (zero
+	// value), in which case collectors must assume v1. The
+	// /api/probes/register endpoint also advertises the supported
+	// range in the X-Probe-Schema-Version-Supported response header.
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 type HeartbeatRequest struct {

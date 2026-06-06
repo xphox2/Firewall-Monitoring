@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/relay"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -404,6 +406,15 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 
 	var req struct {
 		RegistrationKey string `json:"registration_key"`
+		// AUDIT-065: wire-format version the probe speaks. *int (not int)
+		// so we can distinguish "field absent" (a pre-AUDIT-065 collector)
+		// from "field present and set to 0" (a probe that explicitly
+		// claimed a too-old version). Absent defaults to v1 for backward
+		// compat; any other value outside [SchemaVersionMin,
+		// SchemaVersionMax] is rejected with HTTP 426 (Upgrade Required)
+		// and the supported range in the X-Probe-Schema-Version-Supported
+		// response header.
+		SchemaVersion *int `json:"schema_version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		probeErr(c, http.StatusBadRequest, "Invalid request")
@@ -413,6 +424,23 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	if req.RegistrationKey == "" {
 		probeErr(c, http.StatusBadRequest, "Registration key required")
 		return
+	}
+
+	// AUDIT-065: resolve the effective schema version. nil pointer means
+	// "field absent" → default to v1. Any other value is validated
+	// against the supported range. The selected version is echoed back
+	// in the response so the probe can self-report what the server chose.
+	selectedVersion := 1
+	if req.SchemaVersion != nil {
+		if *req.SchemaVersion < relay.SchemaVersionMin || *req.SchemaVersion > relay.SchemaVersionMax {
+			c.Header("X-Probe-Schema-Version-Supported",
+				fmt.Sprintf("%d-%d", relay.SchemaVersionMin, relay.SchemaVersionMax))
+			probeErr(c, http.StatusUpgradeRequired,
+				fmt.Sprintf("Probe schema_version %d not supported (server supports %d-%d); see MIGRATING.md",
+					*req.SchemaVersion, relay.SchemaVersionMin, relay.SchemaVersionMax))
+			return
+		}
+		selectedVersion = *req.SchemaVersion
 	}
 
 	var setting models.SystemSetting
@@ -433,10 +461,11 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	// If already approved and online, just return success
 	if existingProbe.ApprovalStatus == "approved" && existingProbe.Status == "online" {
 		c.JSON(http.StatusOK, gin.H{
-			"success":    true,
-			"probe_id":   existingProbe.ID,
-			"probe_name": existingProbe.Name,
-			"approved":   true,
+			"success":        true,
+			"probe_id":       existingProbe.ID,
+			"probe_name":     existingProbe.Name,
+			"approved":       true,
+			"schema_version": selectedVersion,
 		})
 		return
 	}
@@ -454,10 +483,11 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":    true,
-		"probe_id":   existingProbe.ID,
-		"probe_name": existingProbe.Name,
-		"approved":   true,
+		"success":        true,
+		"probe_id":       existingProbe.ID,
+		"probe_name":     existingProbe.Name,
+		"approved":       true,
+		"schema_version": selectedVersion,
 	})
 }
 
