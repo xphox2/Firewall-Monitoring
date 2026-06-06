@@ -1584,10 +1584,19 @@ Effort legend:
 - **L** = multi-commit, many files, real refactor (1-2 days)
 - **XL** = multi-session, breaks the API or schema (project-scale)
 
-## Remaining HIGH-priority bug audits (by session)
+## Original execution plan — HIGH-priority buckets (HISTORICAL)
 
-Sorted by recommended execution order. The "Defer reason" column is for
-audits where a future commit can defer cleanly without an in-progress fix.
+> ⚠ **This is the original forward plan (written ~v0.10.333), kept for the
+> per-audit fix hints.** It is **not** a current open-work list — execution
+> diverged from it and most buckets are now resolved. For the authoritative
+> current state use the **Status dashboard** and **What's left** at the top of
+> this file, and the **Resolved findings** table for per-finding truth.
+>
+> **Naming caveat:** the "Session N" labels below are this plan's *bucket*
+> numbers and do **not** correspond to the "Session N" completion logs further
+> down (those record what was actually shipped, which mixed items across these
+> buckets). Status markers (✅/⏳) on each bucket header below reflect the
+> 2026-06-06 reconciliation.
 
 ### Session 13: HIGH quick wins (S) — 10 audits ✅ DONE (v0.10.293–302, 2026-06-03)
 
@@ -1634,7 +1643,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-155 | `FilterAllowedFields` unused | **Wontfix** | Wrong audit; already covered by v0.10.281. |
 | AUDIT-156 | `validVendors` map unused | **Wontfix** | Wrong audit; already covered by v0.10.281. |
 
-### Session 16: HIGH security-adjacent quick wins (S) — 5 audits
+### Session 16: HIGH security-adjacent quick wins (S) — 5 audits ✅ DONE (all 5: 017/020/018/085/042, v0.10.325–329)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1644,7 +1653,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-085 | Probe auth handler not transactional | S | Wrap in a single transaction. |
 | AUDIT-042 | Relay client has no idempotency key | M | Add `X-Probe-Batch-ID` UUID. ~50 LOC. |
 
-### Session 17: HIGH DB performance quick wins (S–M) — 8 audits
+### Session 17: HIGH DB performance quick wins (S–M) — 8 audits ✅ MOSTLY DONE (041/043/036/038/033/045 done; ⏳ 044, 039 still open)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1657,7 +1666,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-033 | `GetDashboardAll` is textbook N+1 | M | 6 batched aggregate queries. |
 | AUDIT-045 | `GetHealth` is a no-op | **Already done** | Fixed by v0.10.264 (AUDIT-091/045). |
 
-### Session 18: HIGH critical-feature quick wins (S–M) — 5 audits
+### Session 18: HIGH critical-feature quick wins (S–M) — 5 audits ⏳ MOSTLY OPEN (004/006 done; ⏳ 040, 028, 032 are the big refactors, still open)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1667,7 +1676,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-004 | No git tags, no CI, no release flow | L | Already half-done (v0.10.255: Makefile, ci.yml). Deferred: release.yml, goreleaser. |
 | AUDIT-032 | `c.Request.Context()` is never passed to DB calls | L | **188 sites** to touch. The right approach is a middleware-injection wrapper, not a hand-edit. |
 
-### Session 19: HIGH frontend polish (S) — 10 audits
+### Session 19: HIGH frontend polish (S) — 10 audits ⏳ MOSTLY OPEN (080/082 done; ⏳ 071, 072, 073, 076, 077, 078, 079, 081 still open)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1682,7 +1691,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-081 | Many `return err` raw in `internal/database/database.go` | S | Wrap with context. Mostly mechanical. |
 | AUDIT-082 | Mutex held across HTTP call in relay | S | Restructure the relay client to release the lock before the HTTP call. |
 
-### Session 20: HIGH docs (S) — 10 audits
+### Session 20: HIGH docs (S) — 10 audits ✅ MOSTLY DONE (087/088/089/092/095/097/098/099 done; ⏳ 094 open, 090 documented-not-solved)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1697,7 +1706,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-098 | `deploy.sh:98` is destructive | S | Add a `--dry-run` flag. |
 | AUDIT-099 | `deploy.sh:64-114` overwrites live config | S | Add a backup step before overwriting. |
 
-### Session 21: HIGH test/CI (S–M) — 7 audits
+### Session 21: HIGH test/CI (S–M) — 7 audits ✅ MOSTLY DONE (100/102/103/104/107/108/109 done; ⏳ 106 open)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1710,7 +1719,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-108 | No architecture diagram | M | Add a `docs/architecture.md` with a Mermaid diagram. |
 | AUDIT-109 | README feature list stale | S | Update. |
 
-### Session 22: HIGH testing — 5 audits (XS–S)
+### Session 22: HIGH testing — 5 audits (XS–S) ⏳ MOSTLY OPEN (116/121 done; ⏳ 117, 118, 119, 120, 123, 124 — the test-infra block — still open)
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1723,7 +1732,7 @@ audits where a future commit can defer cleanly without an in-progress fix.
 | AUDIT-123 | No integration tests | L | Spin up a real Postgres in CI. |
 | AUDIT-124 | No benchmark tests | S | `go test -bench=.` on hot paths (BatchInserter, GetConnectionFlowStats). |
 
-### Session 23: HIGH docs (S) — already done mostly
+### Session 23: HIGH docs (S) ✅ MOSTLY DONE (111/112/113/115 done; ⏳ 114 open; 117/118 = the test-infra items in Session 22)
 
 - AUDIT-111: No RUNBOOK.md / OPERATIONS.md (S)
 - AUDIT-112: No `.well-known/security.txt` route (S)
@@ -1733,9 +1742,13 @@ audits where a future commit can defer cleanly without an in-progress fix.
 - AUDIT-117: covered above
 - AUDIT-118: covered above
 
-## 13 remaining MEDIUM-priority bug audits
+## MEDIUM-priority bug audits (original list — partially RESOLVED)
 
-Section starts at `docs/AUDIT.md:742`. Most are JS / frontend / accessibility.
+> ⚠ **Stale as a "remaining" list.** Since this was written, **125, 130, 134,
+> 141, 147 are RESOLVED** (see the Resolved findings table). Genuinely still
+> open: **126, 129, 131, 132, 135, 140, 142, 150** (132's "document the
+> baseline" half is done via AUDIT-168, but the `['catch']` ES5-workaround
+> sweep is not — so it stays open). The full per-finding detail is in Part II.
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
@@ -1753,9 +1766,11 @@ Section starts at `docs/AUDIT.md:742`. Most are JS / frontend / accessibility.
 | AUDIT-147 | `ConfigureAutovacuum` table list hard-coded | S | Make it configurable. |
 | AUDIT-150 | No OpenTelemetry tracing | L | Bigger project. |
 
-## 12 remaining LOW-priority bug audits
+## LOW-priority bug audits (original list — partially RESOLVED)
 
-Section starts at `docs/AUDIT.md:874`. Mostly cosmetic.
+> ⚠ **Stale as a "remaining" list.** Since this was written, **152, 153, 162,
+> 163, 167, 168, 170 are RESOLVED** (see the Resolved findings table).
+> Genuinely still open: **160, 161, 164, 165, 166**. Full detail in Part II.
 
 | Audit | Title | Effort | Notes |
 |---|---|---|---|
