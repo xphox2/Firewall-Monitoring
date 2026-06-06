@@ -54,7 +54,7 @@
     /* Text */
     --fwmon-text:       #e6edf3;
     --fwmon-text-dim:   #8b949e;
-    --fwmon-text-faint: #6e7681;
+    --fwmon-text-faint: #8b949e;
 
     /* Axes / grids (chart use) */
     --fwmon-axis-stroke: #6b7280;
@@ -151,7 +151,7 @@
 
 .filter-btn:hover {
     background: rgba(255, 255, 255, 0.05);
-    border-color: var(--fwmon-text-faint);
+    border-color: #6e7681;
     color: var(--fwmon-text);
 }
 
@@ -607,7 +607,7 @@
 
 .fwmon-confirm-btn:hover {
     background: rgba(255, 255, 255, 0.08);
-    border-color: var(--fwmon-text-faint);
+    border-color: #6e7681;
 }
 
 .fwmon-confirm-btn:focus-visible {

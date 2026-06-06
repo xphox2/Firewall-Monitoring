@@ -656,7 +656,7 @@ tr:hover {
 }
 
 .override-label {
-    color: #6e7681;
+    color: #8b949e;
     font-weight: 400;
 }
 
@@ -723,7 +723,7 @@ tr:hover {
 
 .field-hint {
     font-size: 0.7rem;
-    color: #6e7681;
+    color: #8b949e;
     margin-top: 4px;
     line-height: 1.3;
 }

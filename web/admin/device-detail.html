@@ -40,7 +40,7 @@
     </div>
 
     <main class="main-content p-6" id="main-content" tabindex="-1">
-        <div id="loading" class="loading text-center p-[30px] text-[#6e7681]">Loading device details...</div>
+        <div id="loading" class="loading text-center p-[30px] text-[#8b949e]">Loading device details...</div>
         <div id="error" class="error bg-[rgba(248,81,73,0.1)] border border-[rgba(248,81,73,0.3)] text-[#f85149] p-4 rounded-lg mb-5 hidden"></div>
 
         <div id="content" class="hidden">
@@ -67,23 +67,23 @@
                  viewport). The data tables below are already wrapped. -->
             <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4 overflow-x-auto" id="systemStats">
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">CPU Usage</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">CPU Usage</div>
                     <div class="gauge relative w-20 h-20 mx-auto" id="cpuGauge"></div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">Memory Usage</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Memory Usage</div>
                     <div class="gauge relative w-20 h-20 mx-auto" id="memGauge"></div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">Disk Usage</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Disk Usage</div>
                     <div class="gauge relative w-20 h-20 mx-auto" id="diskGauge"></div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">Sessions</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Sessions</div>
                     <div class="stat-value text-[1.8rem] font-bold text-[#e6edf3]" id="sessionCount">-</div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">Uptime</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Uptime</div>
                     <div class="stat-value text-[1.2rem] font-bold text-[#e6edf3]" id="uptimeValue">-</div>
                 </div>
             </div>
@@ -91,27 +91,27 @@
             <!-- Extended System Status Cards (shown when data exists) -->
             <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 mb-4 overflow-x-auto" id="extendedStats" style="display:none"><!-- AUDIT-068 -->
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardFirmware">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">Firmware</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Firmware</div>
                     <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="firmwareValue">-</div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardSessionRate" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">Session Rate</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Session Rate</div>
                     <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="sessionRateValue">-</div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardIPv6" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">IPv6 Sessions</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">IPv6 Sessions</div>
                     <div class="stat-value font-bold text-[#e6edf3]" id="ipv6SessionValue">-</div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardSSLVPN" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">SSL-VPN</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">SSL-VPN</div>
                     <div class="stat-value text-[0.95rem] font-bold text-[#e6edf3]" id="sslvpnValue">-</div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardAVSig" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">AV Signature</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">AV Signature</div>
                     <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="avSigValue">-</div>
                 </div>
                 <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardIPSSig" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#6e7681] mb-2">IPS Signature</div>
+                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">IPS Signature</div>
                     <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="ipsSigValue">-</div>
                 </div>
             </div>

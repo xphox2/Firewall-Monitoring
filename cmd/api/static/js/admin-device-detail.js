@@ -739,7 +739,7 @@
                     : (v.last_up_at
                         ? '<span title="Last observed up: ' + esc(formatTime(v.last_up_at)) +
                           '" style="color:#8b949e;font-size:0.85rem;">last up ' + esc(formatRelative(v.last_up_at)) + '</span>'
-                        : '<span style="color:#6e7681;">-</span>')) +
+                        : '<span style="color:#8b949e;">-</span>')) +
                 '</td>' +
             '</tr>';
         }).join('');
