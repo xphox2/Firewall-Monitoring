@@ -8,10 +8,12 @@ updated in lockstep with each resolved finding).
 
 The public-release audit at v0.10.239 produced **170 bug findings** (AUDIT-001
 through AUDIT-170) and **89 feature recommendations** (AUDIT-F01 through F89).
-After the audit-resolution effort through v0.10.302, **71 of the 170 bug
-findings are resolved** and **0 are still in CRITICAL status**. This document
-catalogs the remaining work so a future session can pick up without re-reading
-the entire audit.
+After the audit-resolution effort through v0.10.319, **86 of the 170 bug
+findings are resolved** and **0 are still in CRITICAL status**. (Session 15
+reached 88, but v0.10.320 reverted AUDIT-066/067 → **86**.) Three production
+hotfixes (v0.10.322–324, 2026-06-04) shipped outside the audit cadence — see the
+"Production hotfix interlude". This document catalogs the remaining work so a
+future session can pick up without re-reading the entire audit.
 
 > **Session 13 (2026-06-03) completed all 10 of its HIGH frontend quick wins
 > (AUDIT-046 through 055), v0.10.293 → v0.10.302.** See the "Session 13
@@ -27,22 +29,32 @@ the entire audit.
 > action: **155/156 were already resolved (wontfix) at v0.10.281**, and the
 > "AUDIT-081 ParseHours" row is a mislabel of AUDIT-154 (also done at
 > v0.10.281) — the real AUDIT-081 is a Session-19 item. See the "Session 15
-> completion log". Next accessible: Session 16 (security-adjacent: AUDIT-017,
-> 020, 018, 085, 042).
+> completion log".
+>
+> **⚠ After Session 15 (2026-06-04): AUDIT-066/067 were REVERTED and three
+> production hotfixes shipped — see the "Production hotfix interlude" below.**
+> v0.10.320 reverted the AUDIT-066/067 color sweep (it flattened the UI in
+> prod), reopening both → resolved count **86**. v0.10.321 = AUDIT-022b (CSP
+> style-src). v0.10.322–324 were production firefighting, not audit work.
+> Audit work still resumes at **Session 16 (security-adjacent: AUDIT-017, 020,
+> 018, 085, 042)**.
 
 **Remaining scope:**
 
-| Bucket | Count | Effort to complete |
+| Bucket | Count | Notes |
 |---|---|---|
-| Open bug audits (HIGH severity) | 58 | ~14 XS/S + 35 M + 9 L |
-| Open bug audits (MEDIUM severity) | 13 | ~8 XS/S + 5 M |
-| Open bug audits (LOW severity) | 12 | ~12 XS/S |
-| Feature recommendations (F01–F89) | 89 | Mostly M/L; not in scope for "complete the audit" |
-| **Total open bug audits** | **109** | See breakdown below |
-| **Total feature recommendations** | **89** | (out of scope for the audit; future v0.11.0+ work) |
+| **Resolved bug audits** | **86** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); 0 remain CRITICAL |
+| **Open bug audits** | **84** | 170 total − 86 resolved |
+| Feature recommendations (F01–F89) | 89 | out of scope for "complete the audit"; future v0.11.0+ work |
 
-**The realistic answer to "complete all issues" is multi-session.** The 109
-remaining bug audits break down into:
+> **Per-severity split:** the earlier hand-maintained HIGH/MEDIUM/LOW open counts
+> drifted (they were a pre-Session-13 snapshot and never reconciled — they summed
+> to 83 while the row claimed 109). Read the live split from `docs/AUDIT.md`'s
+> section headers (`## HIGH`, `## MEDIUM`, `## LOW`) rather than trusting a cached
+> number here. The per-session HIGH lists below remain the practical execution order.
+
+**The realistic answer to "complete all issues" is multi-session.** The 84
+remaining bug audits break down roughly into:
 
 - **~60 quick wins** (each ≤1 commit, ≤2 files). One focused session can
   knock out 10-20 of these. Three to four such sessions would clear the queue.
@@ -61,10 +73,11 @@ breaks the workflow that 61 prior commits established.
    `v0.X.Y: AUDIT-NNN - short description`. The body lists what's in/out of
    scope. Use a `.commit-msg.tmp` file and `git commit -F .commit-msg.tmp` to
    avoid bash glob expansion issues with `*_test.go` paths in the message body.
-2. **Version bump in every commit.** Update `cmd/api/main.go:34`
-   (`const ServerVersion`) and `Dockerfile:48`
-   (`org.opencontainers.image.version`) in the same commit. Match the
-   AUDIT-NNN's natural version (increment `.patch` from the previous version).
+2. **Version bump in every commit.** Update **`cmd/api/main.go:35`**
+   (`const ServerVersion`) — and ONLY that file. The Dockerfile bump is
+   **obsolete**: `Dockerfile` uses `ARG VERSION=dev` fed via `--build-arg` at
+   build time (AUDIT-101), so there is no version line to edit there. Increment
+   `.patch` from the previous version.
 3. **CHANGELOG entry at the top.** Add a new `## [X.Y.Z] - YYYY-MM-DD` block
    above the previous block. Per the AUDIT-110 fix (v0.10.282), the file
    now follows Keep-A-Changelog 1.1.0 — use the `### Fixed` / `### Added`
@@ -104,7 +117,7 @@ Effort legend:
 - **L** = multi-commit, many files, real refactor (1-2 days)
 - **XL** = multi-session, breaks the API or schema (project-scale)
 
-## 84 remaining HIGH-priority bug audits
+## Remaining HIGH-priority bug audits (by session)
 
 Sorted by recommended execution order. The "Defer reason" column is for
 audits where a future commit can defer cleanly without an in-progress fix.
@@ -364,7 +377,7 @@ git push origin master
 
 - `git log --oneline | head -20` — recent commit history
 - `grep -c "^| AUDIT-" docs/AUDIT.md` — count of resolved audits in the table
-  (currently 61; should grow as the next session commits)
+  (currently **86**; should grow as the next session commits)
 - `grep -E "^### AUDIT-" docs/AUDIT.md | wc -l` — count of total audit entries
   in the doc (170, plus 89 F-entries = 259)
 - `go test -v -count=1 ./... | grep -E "^--- (PASS|FAIL)" | wc -l` — test count
@@ -466,14 +479,16 @@ backend endpoint with a DB-level test.
 
 Resolved AUDIT-066–070 (HIGH) + 034 (HIGH) + 035 (MEDIUM), one commit +
 one SHA-backfill commit each. Versions **v0.10.313 → v0.10.319**.
-Resolved-audit count **81 → 88**. Full suite green throughout; JS edits
-validated with `node --check`. The wontfix trio (081/155/156) needed no
-action — see the note in the executive summary.
+Resolved-audit count **81 → 88** — but **AUDIT-066/067 were REVERTED the next
+day by v0.10.320** (the color sweep flattened the UI in prod), so the durable
+count is **86** and both are OPEN again. See the "Production hotfix interlude".
+Full suite green throughout; JS edits validated with `node --check`. The wontfix
+trio (081/155/156) needed no action — see the note in the executive summary.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-066 | 0.10.313 | 9b09dc7 | `#484f58` foreground text → `#8b949e` (WCAG AA); scripted, decorative chart/border uses left dark |
-| AUDIT-067 | 0.10.314 | d04a4e3 | `#6e7681` foreground text → `#8b949e`; the bulk via the `--fwmon-text-faint` token |
+| AUDIT-066 | 0.10.313 | 9b09dc7 | `#484f58`→`#8b949e` (WCAG AA) — **⚠ REVERTED by v0.10.320; AUDIT-066 is OPEN again** |
+| AUDIT-067 | 0.10.314 | d04a4e3 | `#6e7681`→`#8b949e` via `--fwmon-text-faint` — **⚠ REVERTED by v0.10.320; AUDIT-067 is OPEN again** |
 | AUDIT-068 | 0.10.315 | 818a69e | device-detail `#systemStats`/`#extendedStats` made `overflow-x-auto` (tables were already wrapped) |
 | AUDIT-069 | 0.10.316 | 2f0f847 | `role`/`aria-modal`/`aria-labelledby` baked into the 10 modals in admin.html + device-detail.html |
 | AUDIT-070 | 0.10.317 | 7033abd | pinned the mobile-menu `aria-expanded` sync (already fixed by AUDIT-055's renderMobileChrome) |
@@ -505,6 +520,33 @@ action — see the note in the executive summary.
   registration key, 020 SSRF DNS-rebinding TOCTOU, 018 stale deps + govulncheck,
   085 probe-auth transaction, 042 relay idempotency key). Note `docs/SCAN.md`
   (untracked govulncheck output) already flags GO-2026-5039 for the 018 work.
+
+## Production hotfix interlude (2026-06-04, v0.10.320–324)
+
+Between Session 15 and the next audit session, production issues pulled work
+outside the audit cadence. With the exception of AUDIT-022b these are **not**
+audit resolutions — they are logged here so the next agent understands the
+v0.10.320–324 version jump and doesn't mistake it for audit progress. (The next
+*audit* session is still "Session 16: security-adjacent", below — that name is
+unchanged.)
+
+| Version | What shipped | Audit? |
+|---|---|---|
+| v0.10.320 | **Reverted** the AUDIT-066/067 color sweep — it flattened the text hierarchy and looked worse in prod. **AUDIT-066/067 are reopened.** | reopens 066/067 |
+| v0.10.321 | **AUDIT-022b** — CSP `style-src` allows `'unsafe-inline'` again (the v0.10.259 nonce-lock broke the public GridStack dashboard; `script-src` stays strict). | yes (022b) |
+| v0.10.322 | `/api/probes/:id/interface-addresses` was 500ing with SQLSTATE 42P10 — AUDIT-030's UPSERT conflict-target unique index `idx_ifaddr_dev_ip` was never created on deployments with legacy duplicate rows (AutoMigrate logged the failure as a warning and continued). Added idempotent `ensureInterfaceAddrUniqueIndex()` (dedup + create). | no (audit-missed) |
+| v0.10.323 | Probe-monitored devices flipped offline with **zero** alerts/emails — they're polled by the collector, never reaching `updateDeviceStatus` (the only caller of `CheckDeviceOffline`). The poller now fires offline alert + recovery for probe devices via `MarkStaleProbeDevicesOffline` returning the transition set. | no (audit-missed) |
+| v0.10.324 | **Redacted-secret write-back**: GET masks SNMP secrets as `********`; `UpdateDevice` re-saved that mask as the real secret, so any device edit wiped its SNMP community → the collector then polled with `********` and the device went dark (root cause of a multi-hour prod outage). Guarded the write path against `httputil.RedactedMask`. | no (audit-missed) |
+
+**Why this matters for the audit:** v0.10.322–324 were three real production bugs
+the original 170-finding audit did **not** catch — the probe-offline alerting gap
+and the redacted write-back are exactly the kind of cross-process / data-integrity
+issues worth a dedicated future audit pass. The redacted-write-back pattern was
+checked against the probe update path and found **safe** there (`UpdateProbe`'s
+`allowedFields` allowlist strips the masked `registration_key`/TLS fields before
+write), so no further fix is pending. Root-cause detail lives in the project
+memory (`project_redacted_secret_writeback`, `project_alert_manager_process_split`,
+`project_automigrate_unique_index_gotcha`).
 
 ## Closing
 
