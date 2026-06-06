@@ -2,11 +2,13 @@ package relay
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"sync"
@@ -15,6 +17,22 @@ import (
 
 	"firewall-mon/internal/models"
 )
+
+// jitter returns d plus a uniformly random extra delay in [0, d). Retry and
+// reconnect backoffs use it so that many probes recovering from a shared
+// outage don't all hit the server in lock-step (AUDIT-088 — thundering
+// herd). On the practically-impossible crypto/rand failure it falls back to
+// the un-jittered duration.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(d)))
+	if err != nil {
+		return d
+	}
+	return d + time.Duration(n.Int64())
+}
 
 type RelayConfig struct {
 	ServerURL       string
@@ -447,7 +465,7 @@ func (r *RelayClient) sendBatch(endpoint string, data interface{}) {
 		resp, err := r.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
 			log.Printf("Failed to send %s batch (attempt %d): %v", endpoint, retries+1, err)
-			time.Sleep(time.Duration(retries+1) * time.Second)
+			time.Sleep(jitter(time.Duration(retries+1) * time.Second)) // AUDIT-088: jittered backoff
 			continue
 		}
 
@@ -466,7 +484,7 @@ func (r *RelayClient) sendBatch(endpoint string, data interface{}) {
 		}
 
 		log.Printf("Failed to send %s batch: status %d", endpoint, status)
-		time.Sleep(time.Duration(retries+1) * time.Second)
+		time.Sleep(jitter(time.Duration(retries+1) * time.Second)) // AUDIT-088: jittered backoff
 	}
 }
 

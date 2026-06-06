@@ -1,9 +1,11 @@
 package irc
 
 import (
+	crand "crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log"
+	"math/big"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +17,22 @@ import (
 	"github.com/thoj/go-ircevent"
 	"gorm.io/gorm"
 )
+
+// jitter returns d plus a uniformly random extra delay in [0, d). The bot
+// restart/reconnect path uses it so that a server-wide event that restarts
+// many bots at once doesn't reconnect them in lock-step (AUDIT-088 —
+// thundering herd). Falls back to d on the practically-impossible
+// crypto/rand failure.
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(d)))
+	if err != nil {
+		return d
+	}
+	return d + time.Duration(n.Int64())
+}
 
 type Bot struct {
 	ID       uint
@@ -961,7 +979,7 @@ func (m *Manager) RestartBot(serverID uint) error {
 
 	if bot != nil {
 		bot.Stop()
-		time.Sleep(1 * time.Second)
+		time.Sleep(jitter(1 * time.Second)) // AUDIT-088: jittered reconnect delay
 	}
 
 	var server models.IRCServer
