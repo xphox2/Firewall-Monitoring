@@ -8,12 +8,13 @@ updated in lockstep with each resolved finding).
 
 The public-release audit at v0.10.239 produced **170 bug findings** (AUDIT-001
 through AUDIT-170) and **89 feature recommendations** (AUDIT-F01 through F89).
-After the audit-resolution effort through v0.10.319, **86 of the 170 bug
+After the audit-resolution effort through v0.10.329, **91 of the 170 bug
 findings are resolved** and **0 are still in CRITICAL status**. (Session 15
-reached 88, but v0.10.320 reverted AUDIT-066/067 → **86**.) Three production
-hotfixes (v0.10.322–324, 2026-06-04) shipped outside the audit cadence — see the
-"Production hotfix interlude". This document catalogs the remaining work so a
-future session can pick up without re-reading the entire audit.
+reached 88, v0.10.320 reverted AUDIT-066/067 → 86, then Session 16 added 5 →
+**91**.) Three production hotfixes (v0.10.322–324, 2026-06-04) shipped outside
+the audit cadence — see the "Production hotfix interlude". This document catalogs
+the remaining work so a future session can pick up without re-reading the entire
+audit.
 
 > **Session 13 (2026-06-03) completed all 10 of its HIGH frontend quick wins
 > (AUDIT-046 through 055), v0.10.293 → v0.10.302.** See the "Session 13
@@ -36,15 +37,16 @@ future session can pick up without re-reading the entire audit.
 > v0.10.320 reverted the AUDIT-066/067 color sweep (it flattened the UI in
 > prod), reopening both → resolved count **86**. v0.10.321 = AUDIT-022b (CSP
 > style-src). v0.10.322–324 were production firefighting, not audit work.
-> Audit work still resumes at **Session 16 (security-adjacent: AUDIT-017, 020,
-> 018, 085, 042)**.
+> **Session 16 (security-adjacent: AUDIT-085, 020, 042, 018, 017) is now DONE**
+> (v0.10.325–329, 2026-06-05) — see its completion log below. Next: Session 17
+> (DB performance: AUDIT-041, 043, 044, 036, 038, 039, 033).
 
 **Remaining scope:**
 
 | Bucket | Count | Notes |
 |---|---|---|
-| **Resolved bug audits** | **86** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); 0 remain CRITICAL |
-| **Open bug audits** | **84** | 170 total − 86 resolved |
+| **Resolved bug audits** | **91** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); 0 remain CRITICAL |
+| **Open bug audits** | **79** | 170 total − 91 resolved |
 | Feature recommendations (F01–F89) | 89 | out of scope for "complete the audit"; future v0.11.0+ work |
 
 > **Per-severity split:** the earlier hand-maintained HIGH/MEDIUM/LOW open counts
@@ -547,6 +549,48 @@ checked against the probe update path and found **safe** there (`UpdateProbe`'s
 write), so no further fix is pending. Root-cause detail lives in the project
 memory (`project_redacted_secret_writeback`, `project_alert_manager_process_split`,
 `project_automigrate_unique_index_gotcha`).
+
+## Session 16 completion log (2026-06-05)
+
+All 5 security-adjacent audits resolved, one commit + one SHA-backfill commit
+each. Versions **v0.10.325 → v0.10.329** (server); collector **v1.2.74** for the
+AUDIT-042 probe half. Resolved-audit count **86 → 91**. Full suite green
+throughout (`go build`, `go test ./...`, `go vet`).
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-085 | 0.10.325 | ccd602f | Probe key rotation wrapped in a `gorm.Transaction` (generate-first); a mid-rotation failure rolls back instead of locking the probe out |
+| AUDIT-020 | 0.10.326 | 2c9f0a2 | SSRF DNS-rebinding TOCTOU closed via `httputil.SafeDialContext` (pinned-IP dial) on the webhook client; block list widened (CGNAT 100.64.0.0/10, 0.0.0.0/8, multicast) |
+| AUDIT-042 | 0.10.327 + collector v1.2.74 | 9790df6 | Probe batches idempotent: collector sends stable `X-Probe-Batch-ID`, server dedupes via `processed_batches` (recorded only after a 2xx save) |
+| AUDIT-018 | 0.10.328 | 56f3efd | Bumped gin 1.10.1 / jwt 5.2.2 / gosnmp 1.40.0 / x-net 0.38.0, conservatively (kept `go 1.23`); `govulncheck` CI job already present |
+| AUDIT-017 | 0.10.329 | dfba9c1 | Probe registration keys hashed at rest (sha256, show-once); idempotent live-probe-safe startup migration |
+
+**Discoveries / decisions for the next session:**
+
+- **AUDIT-017's audit text was wrong** ("encrypt with AES-GCM"). The key is
+  looked up BY VALUE (`WHERE registration_key = ?`), so it must be **hashed**,
+  not encrypted (non-deterministic AES-GCM can't be queried; a reversible store
+  still leaks on key+DB compromise). Implemented as hashing with a show-once
+  reveal. **Security subtlety:** `HashProbeKey` must ALWAYS hash (never
+  idempotent) or the stored hash replays as a valid token — caught by the auth
+  regression test. The startup migration is idempotent via the `sha256:` prefix
+  guard instead.
+- **AUDIT-018 was split.** The named module bumps shipped, pinned conservatively
+  to keep `go 1.23` (a blanket `@latest` pulls gin 1.12 + quic-go/mongo-driver
+  and forces go 1.25, breaking the `golang:1.23` Docker build). **Deferred:**
+  (a) the remaining `govulncheck` findings are Go **stdlib** CVEs fixed only in
+  go 1.25.2/1.25.3 — needs a build-toolchain bump (Dockerfile `golang:1.23`→
+  `golang:1.25` + the `go` directive), a platform change to schedule on its own;
+  (b) the `thoj/go-ircevent`→`girc` migration (full IRC-bot rewrite).
+- **AUDIT-020 deferred** pinning the SMTP/SNMP/IRC dials (admin-configured,
+  lower rebinding risk; `smtp.SendMail` resolves internally and needs a larger
+  refactor). Only the webhook client is pinned.
+- **AUDIT-042 deferred** the direct-send endpoints (system-status/interface-stats
+  etc. also retry, but are time-series or already UPSERT — lower duplicate harm).
+- **Next: Session 17** (HIGH DB performance — AUDIT-041 batched ping writes, 043
+  SQLite window-function gating, 044 schema-version migrations, 036 per-process
+  DB pool, 038 batched cleanup deletes, 039 batcher-per-daemon, 033 GetDashboardAll
+  N+1). Mostly S–M; AUDIT-044 (adopt golang-migrate/goose) is the larger one.
 
 ## Closing
 
