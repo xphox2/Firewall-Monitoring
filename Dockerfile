@@ -3,7 +3,10 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /build
 
-RUN apk add --no-cache gcc musl-dev
+# AUDIT-103: the builder installs no C toolchain. Every binary is compiled
+# with CGO_ENABLED=0 (see the go build lines below), so a C compiler was
+# never invoked — installing one only bloated the build stage and slowed
+# image builds. Pure-Go builds need nothing beyond the golang base image.
 
 COPY go.mod go.sum ./
 RUN go mod download
