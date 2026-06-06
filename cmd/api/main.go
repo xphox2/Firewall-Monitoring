@@ -19,6 +19,7 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/irc"
+	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/secrets"
@@ -32,7 +33,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.372"
+const ServerVersion = "0.10.373"
 
 func main() {
 	cfg := config.Load()
@@ -112,6 +113,12 @@ func main() {
 	}
 	defer db.Close()
 	log.Println("Database initialized")
+
+	// AUDIT-077: expose the database/sql connection-pool stats on /metrics so
+	// pool exhaustion is observable before it turns into request timeouts.
+	if sqlDB, dberr := db.Gorm().DB(); dberr == nil {
+		metrics.RegisterDBPool(sqlDB, "fwmon")
+	}
 
 	authManager := auth.NewAuthManager(cfg, db)
 
@@ -332,6 +339,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.Use(middleware.CORS(cfg))
 	router.Use(middleware.RequestID()) // AUDIT-135: before RequestLogger so the ID is logged
 	router.Use(middleware.RequestLogger())
+	router.Use(metrics.Middleware())              // AUDIT-077: record request latency by route/method/status
 	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
 	// Rate limiter applied per-group below instead of globally so authenticated
 	// admin users don't share buckets with unauthenticated requests.
@@ -361,6 +369,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.GET("/api/version", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"version": ServerVersion})
 	})
+
+	// AUDIT-077: Prometheus exposition. Intentionally unauthenticated — the
+	// convention is to protect /metrics at the network layer (firewall the
+	// scrape port / bind internally). It exposes only aggregate timings and
+	// route templates, no secrets.
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// Minimal SVG favicon to prevent 404
 	router.GET("/favicon.ico", func(c *gin.Context) {

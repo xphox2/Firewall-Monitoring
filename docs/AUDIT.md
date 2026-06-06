@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.372** |
-| Bug findings resolved | **145 / 170  (85%)** |
+| Server version | **v0.10.373** |
+| Bug findings resolved | **146 / 170  (86%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **25** |
+| Open bug findings | **24** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -25,7 +25,8 @@
 - ✅ Code-quality cleanups: ES5 `['catch']` sweep, `database.go` error wrapping, release-notes automation (Session 24)
 - ✅ Handler 500s now log their cause via `httputil.InternalError` (133-site sweep) (Session 25)
 - ✅ Docs & repo hygiene theme cleared: README endpoint sweep + positioning, build prereqs, support channel, FUNDING decision (Session 26)
-- ⏳ Remaining 25: large refactors, observability, the rest of test infrastructure
+- ✅ Prometheus `/metrics` for the API server: HTTP-latency histogram + DB-pool + Go runtime (Session 27)
+- ⏳ Remaining 24: large refactors, the rest of observability (076 slog / 078 audit-log / 150 OTel), test infrastructure
 
 ## 🧭 How to read this file
 
@@ -36,13 +37,13 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 25 open findings)
+## ⏳ What's left (the 24 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
 - **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
-- **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-077` (Prometheus `/metrics`), `AUDIT-078` (admin-action audit log), `AUDIT-150` (OpenTelemetry tracing).
+- **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-078` (admin-action audit log), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` now done for the API server.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
 - **Smaller code cleanups** — `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision), `129` (Sentry). *(071 JSONError helper + 081 `return err` wrapping + 132 ES5 `['catch']` sweep now done.)*
@@ -51,6 +52,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 27** (v0.10.373) | Observability — Prometheus metrics | new `internal/metrics`: `/metrics` endpoint with an HTTP request-latency histogram (route-template-labelled, 404→`unmatched` for cardinality safety), DB connection-pool gauges, and the free Go runtime/process collectors; `prometheus/client_golang` added (077). Poller-process counters deferred (separate binary) |
 | **Session 26** (v0.10.369–372) | Docs & repo hygiene (theme cleared) | README endpoint sweep — ~170 routes grouped, base paths spelled out — plus "Who is this for"/"When NOT to use this"/comparison-table positioning (106); fresh-Ubuntu build prereqs + network-ports table (114); Support & community section pointing at Issues/Discussions (166); FUNDING accept/wontfix decision (164) |
 | **Session 25** (v0.10.368) | Handler error observability | added `httputil.InternalError(c, msg, err)` (logs cause + method/route/`X-Request-ID`, writes clean 500 JSON) and swept all 133 `c.JSON(500, ErrorResponse(…))` sites across 13 handler files (071); 4 of them had been leaking `err.Error()` to the client — now logged, not leaked |
 | **Session 24** (v0.10.365–367) | Code-quality cleanups + release automation | swept the ES5 `['catch']`/`['finally']` bracket workaround to dot notation across 121 sites/14 JS files (132); wrapped 25 raw `return err` in `database.go` with `%w` so callers keep operation context + `errors.Is` (081); tag-triggered CHANGELOG-driven `release.yml` GitHub-Release automation (165) |
@@ -1320,6 +1322,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-114 | README build steps may fail on fresh Ubuntu | 0.10.370 | 901dffe | Expanded Prerequisites: exact `apt install golang-go git make rsync bash` (+`build-essential` for `-race`), systemd-only installer note, and a network-ports table (8080/161/162/514/6343/5432) with the probes-need-only-outbound fact. `TestReadmePrereqs_AUDIT114` pins the tools + trap/syslog/sFlow ports. Did not test on a literal fresh box, but every tool/port is verified against the scripts + `config.env.example`. |
 | AUDIT-166 | No community/support channel linked | 0.10.371 | 268b40b | Added a README "Support & community" section: bugs → GitHub Issues, Q&A → GitHub Discussions, security → SECURITY.md; stated there is no dedicated chat server (accept) and that the IRC bot is a monitoring feature, not project support. `TestReadmeSupportChannel_AUDIT166` pins it. |
 | AUDIT-164 | No FUNDING | 0.10.372 | a5026aa | **Accept/wontfix** — not soliciting donations, so no `FUNDING.yml` shipped (an empty one is clutter; inventing a sponsor account is wrong). Decision documented in CHANGELOG; adding `.github/FUNDING.yml` later is a one-liner GitHub auto-detects. No code/test change. |
+| AUDIT-077 | No Prometheus `/metrics` endpoint | 0.10.373 | (pending) | New `internal/metrics`: `fwmon_http_request_duration_seconds{method,route,status}` histogram (gin middleware, labelled by `c.FullPath()` template; 404→`unmatched` — cardinality-safe), DB-pool gauges (`collectors.NewDBStatsCollector`), + free Go/process collectors; served at `GET /metrics` via `promhttp` (unauth, ACL-protected per audit). Added `prometheus/client_golang` dep. `TestMetricsMiddlewareAndHandler_AUDIT077` scrapes real exposition; `TestMetricsWiring_AUDIT077` pins main.go wiring. Poller-process counters (poll_cycles/alerts_fired/batcher_queue) deferred — separate binary, no HTTP. |
 
 ---
 
@@ -1473,6 +1476,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-114 — README build prereqs (apt deps, systemd note, network-ports table) — v0.10.370 — 901dffe — opencode
 2026-06-06 — AUDIT-166 — README Support & community section (Issues/Discussions; IRC bot ≠ support) — v0.10.371 — 268b40b — opencode
 2026-06-06 — AUDIT-164 — FUNDING: documented accept/wontfix (not soliciting donations) — v0.10.372 — a5026aa — opencode
+2026-06-06 — AUDIT-077 — Prometheus /metrics (HTTP histogram + DB pool + Go runtime; internal/metrics) — v0.10.373 — (pending) — opencode
 ```
 
 ---
@@ -2552,6 +2556,45 @@ docs/no-runtime changes; full suite green.
   No more pure quick wins — each remaining item needs real design or is a
   multi-file change. **AUDIT-076 (slog) is the highest-leverage next pick** now
   that AUDIT-071 gave the 500 path a single logging chokepoint.
+
+## Session 27 completion log (2026-06-06) — observability: Prometheus metrics
+
+**1 audit shipped** (v0.10.373), resolved count **145 → 146**. First new
+runtime dependency in a while (`prometheus/client_golang`). Full suite green;
+`go mod tidy` idempotent.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-077 | 0.10.373 | (pending) | `internal/metrics` package + `GET /metrics`: HTTP request-latency histogram (`fwmon_http_request_duration_seconds`, route-template-labelled), DB-pool gauges, Go runtime/process collectors. Wired in `cmd/api/main.go` (middleware + route + `RegisterDBPool`). |
+
+**Discoveries / decisions for the next session:**
+
+- **Cardinality was the main design risk, and it's handled.** The histogram is
+  labelled by `c.FullPath()` (the route *template*, `/admin/api/devices/:id`),
+  not `c.Request.URL.Path`. Unmatched 404s collapse to `route="unmatched"` so a
+  path-scanning bot can't mint a new series per junk URL. A future metric that
+  adds a label must apply the same discipline — the test asserts the raw path
+  never appears.
+- **/metrics is unauthenticated by design** (Prometheus convention + the audit's
+  "network-ACL protected"). It exposes only aggregate timings and route
+  templates — no secrets. If a future deployment can't network-isolate the
+  scrape port, the follow-up is a `METRICS_ENABLED`/bind-address toggle, not
+  auth on the endpoint (auth breaks standard scrapers).
+- **This only covers the API-server process.** The poller counters the audit
+  named (`poll_cycles_total`, `alerts_fired_total`, `batcher_queue_depth`) live
+  in the `fwmon-poller` binary, which doesn't serve HTTP. Exposing them needs
+  the poller to stand up its own `/metrics` listener (or push to a
+  pushgateway) — a separate, larger piece deferred here.
+- **Couldn't full-server smoke-test in the sandbox:** `NewDatabase` is
+  Postgres-only at runtime (SQLite is test-only), and there's no Postgres here,
+  so the binary exits before serving. The metrics surface is instead verified by
+  a unit test that drives real requests through `Middleware()` and scrapes
+  `Handler()`'s actual exposition output. A real `curl /metrics` against a
+  Postgres-backed deploy is the one remaining manual check.
+- **Next observability pick is AUDIT-076 (slog)** — still the highest-leverage
+  remaining item, and now doubly attractive: the 071 chokepoint + this metrics
+  middleware are the two natural seams to thread a structured logger through. It
+  remains a ~150-site change that wants a planning pass.
 
 ## Closing
 
