@@ -1325,7 +1325,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-166 | No community/support channel linked | 0.10.371 | 268b40b | Added a README "Support & community" section: bugs → GitHub Issues, Q&A → GitHub Discussions, security → SECURITY.md; stated there is no dedicated chat server (accept) and that the IRC bot is a monitoring feature, not project support. `TestReadmeSupportChannel_AUDIT166` pins it. |
 | AUDIT-164 | No FUNDING | 0.10.372 | a5026aa | **Accept/wontfix** — not soliciting donations, so no `FUNDING.yml` shipped (an empty one is clutter; inventing a sponsor account is wrong). Decision documented in CHANGELOG; adding `.github/FUNDING.yml` later is a one-liner GitHub auto-detects. No code/test change. |
 | AUDIT-077 | No Prometheus `/metrics` endpoint | 0.10.373 | 1bfd651 | New `internal/metrics`: `fwmon_http_request_duration_seconds{method,route,status}` histogram (gin middleware, labelled by `c.FullPath()` template; 404→`unmatched` — cardinality-safe), DB-pool gauges (`collectors.NewDBStatsCollector`), + free Go/process collectors; served at `GET /metrics` via `promhttp` (unauth, ACL-protected per audit). Added `prometheus/client_golang` dep. `TestMetricsMiddlewareAndHandler_AUDIT077` scrapes real exposition; `TestMetricsWiring_AUDIT077` pins main.go wiring. Poller-process counters (poll_cycles/alerts_fired/batcher_queue) deferred — separate binary, no HTTP. |
-| AUDIT-078 | No admin-action audit log | 0.10.374 | (pending) | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
+| AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
 
 ---
 
@@ -1480,7 +1480,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-166 — README Support & community section (Issues/Discussions; IRC bot ≠ support) — v0.10.371 — 268b40b — opencode
 2026-06-06 — AUDIT-164 — FUNDING: documented accept/wontfix (not soliciting donations) — v0.10.372 — a5026aa — opencode
 2026-06-06 — AUDIT-077 — Prometheus /metrics (HTTP histogram + DB pool + Go runtime; internal/metrics) — v0.10.373 — 1bfd651 — opencode
-2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — (pending) — opencode
+2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
 ```
 
 ---
@@ -2608,7 +2608,7 @@ green.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-078 | 0.10.374 | (pending) | `models.AuditLog` (+AutoMigrate, prod & test), `internal/audit.Middleware`, `db.SaveAuditLog`/`GetAuditLogs`, `GET /admin/api/audit` handler, wired in `cmd/api/main.go` (middleware after auth+CSRF; `setupRoutes` gained a `db` param). |
+| AUDIT-078 | 0.10.374 | 510f01b | `models.AuditLog` (+AutoMigrate, prod & test), `internal/audit.Middleware`, `db.SaveAuditLog`/`GetAuditLogs`, `GET /admin/api/audit` handler, wired in `cmd/api/main.go` (middleware after auth+CSRF; `setupRoutes` gained a `db` param). |
 
 **Discoveries / decisions for the next session:**
 
