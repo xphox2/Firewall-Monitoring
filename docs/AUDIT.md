@@ -1295,7 +1295,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-084 | `PruneExpiredAttempts` goroutine leak | 0.10.357 | 6eb0c1f | The prune goroutine ran a bare `for range ticker.C` with no exit. Added a cancellable `bgCtx`; the pruner now `select`s on `<-bgCtx.Done()` and the shutdown path calls `bgCancel()` before draining the server. `TestPruneGoroutineHasShutdown_AUDIT084` pins the wiring. |
 | AUDIT-113 | No "How to add a vendor" doc | 0.10.358 | 1ec0457 | Covered by `docs/custom-vendor.md` (AUDIT-170), which documents both the SNMP profile side (`RegisterVendor`/`validVendors`) and the `internal/configdiff` normalizer (Step 5). `TestVendorDocCoversBothSides_AUDIT113` pins both-sided coverage so it can't be trimmed away. |
 | AUDIT-111 | No RUNBOOK.md / OPERATIONS.md | 0.10.359 | 7c2d000 | Added `docs/OPERATIONS.md` (first-24h, failure-mode table, debug logging, admin reset, JWT rotation, backup/restore, upgrade, scale, DR), grounded in real mechanisms (verified vs code — e.g. admin reset = `DELETE FROM admins`+restart since `InitAdmin` is create-when-absent; no `GIN_MODE` toggle). README-linked. `TestOperationsRunbook_AUDIT111` pins the sections + link. |
-| AUDIT-108 | No architecture diagram | 0.10.360 | (pending) | Added `docs/architecture.md`: Mermaid component flowchart + 3 sequence diagrams (probe registration, poll cycle, alert firing) + package map. README-linked. `TestArchitectureDiagram_AUDIT108` pins the Mermaid blocks, ≥3 sequence diagrams, README link. |
+| AUDIT-108 | No architecture diagram | 0.10.360 | 40c68df | Added `docs/architecture.md`: Mermaid component flowchart + 3 sequence diagrams (probe registration, poll cycle, alert firing) + package map. README-linked. `TestArchitectureDiagram_AUDIT108` pins the Mermaid blocks, ≥3 sequence diagrams, README link. |
 
 ---
 
@@ -1436,7 +1436,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-084 — prune goroutine exits on bgCtx cancel (graceful shutdown) — v0.10.357 — 6eb0c1f — opencode
 2026-06-06 — AUDIT-113 — how-to-add-a-vendor covered by docs/custom-vendor.md (both-sided test) — v0.10.358 — 1ec0457 — opencode
 2026-06-06 — AUDIT-111 — docs/OPERATIONS.md runbook (grounded in real mechanisms) — v0.10.359 — 7c2d000 — opencode
-2026-06-06 — AUDIT-108 — docs/architecture.md Mermaid component + sequence diagrams — v0.10.360 — (pending) — opencode
+2026-06-06 — AUDIT-108 — docs/architecture.md Mermaid component + sequence diagrams — v0.10.360 — 40c68df — opencode
 ```
 
 ---
