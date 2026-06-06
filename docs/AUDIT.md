@@ -1237,7 +1237,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-103 | Dockerfile installs unused `gcc musl-dev` | 0.10.343 | 8c24348 | Builder built with `CGO_ENABLED=0`, so the `apk add gcc musl-dev` C toolchain was never used — removed it (kept a comment). `TestDockerfile_NoUnusedCToolchain_AUDIT103` pins the packages stay out while `CGO_ENABLED=0` remains. |
 | AUDIT-102 | `go build` lacks `-trimpath -buildvcs=false` | 0.10.344 | 3923924 | Added `-trimpath -buildvcs=false` to all four Dockerfile build lines and the Makefile `build` target (`GOFLAGS_REPRO`), so binaries are byte-reproducible across hosts. `TestReproducibleBuildFlags_AUDIT102` pins both paths. Deferred: SOURCE_DATE_EPOCH + ldflags version injection (`ServerVersion` is a const, not ldflags-injectable). |
 | AUDIT-104 | No `make install` / native-binary path | 0.10.345 | 6f0631a | Added `make install`/`uninstall` (PREFIX/DESTDIR-aware) + `make tarball` (`dist/firewall-mon-$(VERSION).tar.gz`). Also fixed a latent bug: `build` named binaries after their dirs (`api`/`poller`/…) instead of the canonical `fwmon-*` the install/systemd paths expect — now emits `fwmon-*`. Validated via staged install + tarball. `TestMakefileNativeInstall_AUDIT104` pins targets + names + PREFIX/DESTDIR. |
-| AUDIT-163 | No CODEOWNERS | 0.10.346 | (pending) | Added `.github/CODEOWNERS` with a `*` catch-all + specific owners for security-sensitive code, schema/migrations, build/deploy/CI, and the audit docs. (The verification sweep had found the CHANGELOG referenced this file before it existed.) `TestCodeownersExists_AUDIT163` pins existence + catch-all + every-pattern-has-an-owner. |
+| AUDIT-163 | No CODEOWNERS | 0.10.346 | aadfbfb | Added `.github/CODEOWNERS` with a `*` catch-all + specific owners for security-sensitive code, schema/migrations, build/deploy/CI, and the audit docs. (The verification sweep had found the CHANGELOG referenced this file before it existed.) `TestCodeownersExists_AUDIT163` pins existence + catch-all + every-pattern-has-an-owner. |
+| AUDIT-162 | No README test instructions | 0.10.347 | (pending) | Added README **Test** (`go test ./...`, `make qa`, `make test-race`) + **Install Natively** (`make install`/`tarball`) subsections. `TestReadmeHasTestInstructions_AUDIT162` pins `go test ./...` stays documented. |
 
 ---
 
@@ -1364,7 +1365,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-103 — drop unused gcc/musl-dev from Dockerfile builder (CGO_ENABLED=0) — v0.10.343 — 8c24348 — opencode
 2026-06-06 — AUDIT-102 — reproducible builds: -trimpath -buildvcs=false (Dockerfile + Makefile) — v0.10.344 — 3923924 — opencode
 2026-06-06 — AUDIT-104 — make install/uninstall/tarball + canonical fwmon-* build names — v0.10.345 — 6f0631a — opencode
-2026-06-06 — AUDIT-163 — add .github/CODEOWNERS (catch-all + sensitive paths) — v0.10.346 — (pending) — opencode
+2026-06-06 — AUDIT-163 — add .github/CODEOWNERS (catch-all + sensitive paths) — v0.10.346 — aadfbfb — opencode
+2026-06-06 — AUDIT-162 — README Test + native-install instructions (go test ./...) — v0.10.347 — (pending) — opencode
 ```
 
 ---

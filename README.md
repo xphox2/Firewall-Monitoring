@@ -53,7 +53,24 @@ firewall-mon/
 ### Build
 
 ```bash
-./deploy.sh build
+./deploy.sh build          # build all binaries into ./bin via the deploy script
+# or, with the Makefile:
+make build                 # reproducible build of the four fwmon-* binaries
+```
+
+### Test
+
+```bash
+go test ./...              # run the full test suite
+make qa                    # the full pre-commit gate: tidy + gofmt + vet + build + test
+make test-race             # run the suite under the race detector (needs CGO)
+```
+
+### Install Natively (without Docker)
+
+```bash
+sudo make install          # installs to /usr/local (override PREFIX=/opt/firewall-mon)
+make tarball               # package dist/firewall-mon-<version>.tar.gz
 ```
 
 ### Deploy to Remote Server
