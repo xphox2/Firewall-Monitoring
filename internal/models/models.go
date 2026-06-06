@@ -338,6 +338,19 @@ type UptimeRecord struct {
 	DowntimeEvents int       `json:"downtime_events"`
 }
 
+// ProcessedBatch records the idempotency key of a probe data batch that has
+// been successfully ingested (AUDIT-042). The collector sends a stable
+// `X-Probe-Batch-ID` per batch and reuses it across its retry attempts; the
+// server records the (probe_id, batch_id) pair after a successful save and
+// short-circuits any later request carrying the same pair, so a response that
+// times out after the data was saved doesn't produce duplicate rows on retry.
+type ProcessedBatch struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	ProbeID   uint      `json:"probe_id" gorm:"uniqueIndex:idx_processed_batch,priority:1;not null"`
+	BatchID   string    `json:"batch_id" gorm:"uniqueIndex:idx_processed_batch,priority:2;not null"`
+	Timestamp time.Time `json:"timestamp" gorm:"index"`
+}
+
 type LoginAttempt struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	Timestamp time.Time `json:"timestamp"`
@@ -554,6 +567,7 @@ func (HardwareSensor) TableName() string   { return "hardware_sensors" }
 func (TrapEvent) TableName() string        { return "trap_events" }
 func (Alert) TableName() string            { return "alerts" }
 func (UptimeRecord) TableName() string     { return "uptime_records" }
+func (ProcessedBatch) TableName() string   { return "processed_batches" }
 func (LoginAttempt) TableName() string     { return "login_attempts" }
 func (Device) TableName() string           { return "devices" }
 func (DeviceTunnel) TableName() string     { return "device_tunnels" }

@@ -342,6 +342,7 @@ func (d *Database) migrate() error {
 		&models.DeviceConfigRevision{},
 		&models.ProcessStats{},
 		&models.InterfaceErrors{},
+		&models.ProcessedBatch{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -1104,6 +1105,41 @@ func (d *Database) SaveInterfaceErrors(errs []models.InterfaceErrors) error {
 	return d.db.Create(&errs).Error
 }
 
+// BatchAlreadyProcessed reports whether a (probeID, batchID) idempotency key
+// has already been recorded (AUDIT-042). batchID == "" is never considered
+// processed (no idempotency requested).
+func (d *Database) BatchAlreadyProcessed(probeID uint, batchID string) bool {
+	if batchID == "" {
+		return false
+	}
+	var count int64
+	if err := d.db.Model(&models.ProcessedBatch{}).
+		Where("probe_id = ? AND batch_id = ?", probeID, batchID).
+		Count(&count).Error; err != nil {
+		// Fail open: a dedup-store read error must not drop a legitimate batch.
+		log.Printf("BatchAlreadyProcessed: probe %d batch %s: %v", probeID, batchID, err)
+		return false
+	}
+	return count > 0
+}
+
+// MarkBatchProcessed records a (probeID, batchID) idempotency key after a batch
+// has been successfully ingested (AUDIT-042). A unique-index conflict (the key
+// was recorded concurrently) is treated as success — the goal state is "this
+// key is recorded".
+func (d *Database) MarkBatchProcessed(probeID uint, batchID string) error {
+	if batchID == "" {
+		return nil
+	}
+	err := d.db.Create(&models.ProcessedBatch{
+		ProbeID: probeID, BatchID: batchID, Timestamp: time.Now(),
+	}).Error
+	if err != nil && (strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "duplicate")) {
+		return nil // already recorded — that's the desired state
+	}
+	return err
+}
+
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}
@@ -1141,6 +1177,9 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.InterfaceErrors{}, "interface_errors", ret.Days(ret.InterfaceErrorsDays)},
 		{&models.ProcessStats{}, "process_stats", ret.Days(ret.ProcessStatsDays)},
 		{&models.IRCMessageLog{}, "irc_message_logs", ret.Days(ret.IRCMessageLogDays)},
+		// AUDIT-042: idempotency keys only matter for the probe's retry window
+		// (seconds); 2 days is far more than enough and keeps the table tiny.
+		{&models.ProcessedBatch{}, "processed_batches", 2},
 	}
 
 	for _, e := range entries {

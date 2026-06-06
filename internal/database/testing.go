@@ -60,6 +60,7 @@ func NewDatabaseForTesting(t interface {
 		&models.IRCMessageLog{},
 		&models.SyslogSummary{},
 		&models.UptimeRecord{},
+		&models.ProcessedBatch{},
 	}
 
 	for _, m := range testModels {

@@ -16,11 +16,47 @@ import (
 	"gorm.io/gorm"
 )
 
+// batchDedupCheck implements the AUDIT-042 idempotency check for probe batch
+// endpoints. If the request carries an `X-Probe-Batch-ID` already recorded for
+// this probe, it writes a 200 "deduped" response and returns dup=true (the
+// caller must return immediately). Otherwise it returns the batch id (possibly
+// "") for the caller to pass to markBatchIfOK via defer.
+func (h *Handler) batchDedupCheck(c *gin.Context, probeID uint) (batchID string, dup bool) {
+	batchID = c.GetHeader("X-Probe-Batch-ID")
+	if batchID == "" || h.db == nil {
+		return "", false
+	}
+	if h.db.BatchAlreadyProcessed(probeID, batchID) {
+		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"deduped": true, "saved": 0}))
+		return "", true
+	}
+	return batchID, false
+}
+
+// markBatchIfOK records the idempotency key, but ONLY if the response was a 2xx
+// (i.e. the batch actually saved). Recording on failure would dedupe-drop the
+// collector's legitimate retry of a batch that never persisted. Call via defer.
+func (h *Handler) markBatchIfOK(c *gin.Context, probeID uint, batchID string) {
+	if batchID == "" || h.db == nil {
+		return
+	}
+	if s := c.Writer.Status(); s >= 200 && s < 300 {
+		if err := h.db.MarkBatchProcessed(probeID, batchID); err != nil {
+			log.Printf("markBatchIfOK: probe %d batch %s: %v", probeID, batchID, err)
+		}
+	}
+}
+
 func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var messages []models.SyslogMessage
 	if err := c.ShouldBindJSON(&messages); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
@@ -68,6 +104,11 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var traps []models.TrapEvent
 	if err := c.ShouldBindJSON(&traps); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
@@ -106,6 +147,11 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var samples []models.FlowSample
 	if err := c.ShouldBindJSON(&samples); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
@@ -145,6 +191,11 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var results []models.PingResult
 	if err := c.ShouldBindJSON(&results); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
