@@ -1315,6 +1315,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-165 | No GitHub release-notes automation | 0.10.367 | 7b62ac0 | Added `.github/workflows/release.yml`: tag-triggered (`v*`), lifts the matching `## [X.Y.Z]` block out of `CHANGELOG.md` (falls back to `## [Unreleased]`) and publishes it via `gh release create`/`edit` (idempotent). CHANGELOG-driven by design (repo is direct-to-master, not labelled PRs, so release-drafter doesn't fit). `contents: write` scoped to the job; dormant until the first tag. `TestReleaseWorkflow_AUDIT165` pins the trigger/permission/extraction/publish and that it's not branch-triggered. `.goreleaser.yml` artifact build (AUDIT-004) still open. |
 | AUDIT-071 | 134× silent `c.JSON(500, ErrorResponse)` | 0.10.368 | cbaf898 | Added `httputil.InternalError(c, msg, err)` (logs `err` + method/route/`X-Request-ID`, writes standard 500 JSON with only `msg`) and swept **all 133 sites** across 13 handler files. Bonus: 4 sites were leaking `err.Error()` into the client body (IRC connect/send, report build) — now logged not leaked. Edge cases by hand: nil-err sites pass `nil`, `DeleteConnection`/`ReceiveConfigRevision` pass `result.Error`/`txErr`. `TestInternalError_AUDIT071` (behaviour) + `TestInternalErrorSweep_AUDIT071` (static guard). 4xx left as-is; `slog` migration is AUDIT-076. |
 | AUDIT-106 | README documents 12 of ~170 endpoints | 0.10.369 | (pending) | Replaced the 12-route stub with an accurate grouped reference (Public / Auth / Admin UI pages / Admin API by resource / probe ingestion), base paths spelled out, `cmd/api/main.go` named authoritative. Added "Who is this for", "When NOT to use this", and a "How it compares" table vs PRTG/Nagios/Zabbix/LibreNMS/Checkmk/Uptime Kuma/StatusCake. `TestReadmeDocumentsEndpoints_AUDIT106` pins the families + sections + alternatives. |
+| AUDIT-114 | README build steps may fail on fresh Ubuntu | 0.10.370 | (pending) | Expanded Prerequisites: exact `apt install golang-go git make rsync bash` (+`build-essential` for `-race`), systemd-only installer note, and a network-ports table (8080/161/162/514/6343/5432) with the probes-need-only-outbound fact. `TestReadmePrereqs_AUDIT114` pins the tools + trap/syslog/sFlow ports. Did not test on a literal fresh box, but every tool/port is verified against the scripts + `config.env.example`. |
 
 ---
 
@@ -1465,6 +1466,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-165 — tag-triggered CHANGELOG-driven release-notes workflow (.github/workflows/release.yml) — v0.10.367 — 7b62ac0 — opencode
 2026-06-06 — AUDIT-071 — httputil.InternalError helper + sweep 133 silent handler 500s (now log err; stop leaking err to 4 clients) — v0.10.368 — cbaf898 — opencode
 2026-06-06 — AUDIT-106 — README endpoint sweep (~170 routes grouped) + who-is-this-for/when-not/comparison sections — v0.10.369 — (pending) — opencode
+2026-06-06 — AUDIT-114 — README build prereqs (apt deps, systemd note, network-ports table) — v0.10.370 — (pending) — opencode
 ```
 
 ---

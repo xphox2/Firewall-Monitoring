@@ -92,9 +92,38 @@ See [docs/architecture.md](docs/architecture.md) for component **data-flow and s
 
 ### Prerequisites
 
-- Go 1.21+
-- Linux server (tested on Ubuntu/Debian)
-- SNMP-enabled firewall device
+- **Go 1.21+** (uses `log/slog`-era stdlib; `go.mod` pins the exact minor).
+- **Linux server** (tested on Ubuntu/Debian). The native installer uses
+  **systemd**; macOS/Windows can build and run the binaries but the
+  `make install` / `deploy.sh install` unit files are Linux-only.
+- An **SNMP-enabled firewall** (or a remote **probe** at a site you can't poll
+  directly).
+
+On a fresh Ubuntu 24.04 box, install the toolchain and the tools the
+build/deploy scripts shell out to:
+
+```bash
+sudo apt update
+sudo apt install -y golang-go git make rsync bash
+# 'rsync' is required by `deploy.sh deploy` (it rsyncs binaries to the remote).
+# 'make' drives the Makefile targets; 'git' is needed for the version stamp.
+# The race detector (`make test-race`) additionally needs a C toolchain:
+sudo apt install -y build-essential   # gcc — only for -race; normal builds are CGO-free
+```
+
+**Firewall / network ports** the stack uses (open only what you enable):
+
+| Port | Proto | Direction | Purpose |
+|---|---|---|---|
+| `8080` | TCP | inbound | HTTP UI + API (set by `SERVER_PORT`; put TLS or a reverse proxy in front for prod) |
+| `161` | UDP | outbound | SNMP polling to devices (`SNMP_PORT`) |
+| `162` | UDP | inbound | SNMP trap receiver (`SNMP_TRAP_LISTEN`, default `0.0.0.0:162`) |
+| `514` | UDP/TCP | inbound | syslog collector (when syslog ingest is enabled) |
+| `6343` | UDP | inbound | sFlow collector (when flow ingest is enabled) |
+| `5432` | TCP | outbound | PostgreSQL (`DB_PORT`; prod backend) |
+
+Probes relay back to the server over the same HTTP(S) port (`8080`), so a remote
+site only needs **outbound** reach to the server — no inbound ports at the site.
 
 ### Build
 
