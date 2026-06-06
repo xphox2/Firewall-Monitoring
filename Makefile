@@ -25,10 +25,14 @@ test: ## Run tests
 test-race: ## Run tests with the race detector (requires CGO)
 	CGO_ENABLED=1 $(GO) test -race -count=1 -timeout=5m ./...
 
+# AUDIT-102: -trimpath strips local filesystem paths and -buildvcs=false
+# keeps VCS state out of the binary, so builds are reproducible across hosts.
+GOFLAGS_REPRO ?= -trimpath -buildvcs=false
+
 .PHONY: build
-build: ## Build all binaries into ./bin
+build: ## Build all binaries into ./bin (reproducible)
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -o $(BIN_DIR)/ ./cmd/...
+	$(GO) build $(GOFLAGS_REPRO) -o $(BIN_DIR)/ ./cmd/...
 
 .PHONY: vet
 vet: ## go vet
