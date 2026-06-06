@@ -73,7 +73,7 @@
             initGrid();
             renderAllWidgets();
             startRefresh();
-        })['catch'](function(e) { console.error('Dashboard init failed:', e); });
+        }).catch(function(e) { console.error('Dashboard init failed:', e); });
     }
 
     function loadHiddenWidgets() {
@@ -142,7 +142,7 @@
                 return ifaces.map(function(i) {
                     return { deviceId: device.id, deviceName: device.name, name: i.name, index: i.index, status: i.status };
                 });
-            })['catch'](function() { return []; });
+            }).catch(function() { return []; });
         });
 
         return Promise.all(promises).then(function(results) {
@@ -348,7 +348,7 @@
                 var el = document.getElementById('uptime-' + wid);
                 if (el) el.textContent = 'UPTIME ' + data.uptime;
             }
-        })['catch'](function() {});
+        }).catch(function() {});
 
         apiFetch(API_BASE + '/public/status-history?device_id=' + def.deviceId + '&hours=' + dashRange).then(function(points) {
             if (!points || points.length === 0) return;
@@ -461,7 +461,7 @@
         var promises = allDevices.map(function(d) {
             return apiFetch(API_BASE + '/public/vpn?device_id=' + d.id).then(function(vpns) {
                 return (vpns || []).map(function(v) { v.deviceName = d.name; return v; });
-            })['catch'](function() { return []; });
+            }).catch(function() { return []; });
         });
 
         Promise.all(promises).then(function(results) {

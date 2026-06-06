@@ -13,7 +13,7 @@
         ]).then(function(results) {
             pendingProbes = (results[0] && results[0].data) || [];
             renderPending();
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Failed to load: ' + err.message);
         });
     }
@@ -60,7 +60,7 @@
             }).then(function() {
                 AC.showSuccess('Probe approved');
                 loadProbes();
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 AC.showError('Error: ' + err.message);
             });
         });
@@ -88,7 +88,7 @@
             closeRejectModal();
             AC.showSuccess('Probe rejected');
             loadProbes();
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Error: ' + err.message);
         });
     }

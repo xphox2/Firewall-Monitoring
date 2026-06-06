@@ -159,7 +159,7 @@
                 var v = state[k];
                 var dv = defaults[k];
                 if (v === '' || v == null || String(v) === String(dv)) {
-                    url.searchParams['delete'](k);
+                    url.searchParams.delete(k);
                 } else {
                     url.searchParams.set(k, String(v));
                 }

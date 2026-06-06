@@ -13,7 +13,7 @@
                 return (a.name || '').localeCompare(b.name || '');
             });
             renderSites();
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[Sites] Error loading sites:', err);
             AC.showError('Failed to load sites: ' + err.message);
         });
@@ -106,7 +106,7 @@
             closeModal();
             AC.showSuccess(editingId ? 'Site updated' : 'Site created');
             loadSites();
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[Sites] Save error:', err);
             AC.showError('Error saving site: ' + err.message);
         });
@@ -122,7 +122,7 @@
             AC.apiFetch(API_BASE + '/sites/' + id, { method: 'DELETE' }).then(function() {
                 AC.showSuccess('Site deleted');
                 loadSites();
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 AC.showError('Error deleting site: ' + err.message);
             });
         });

@@ -935,7 +935,7 @@
                     if (cy) { cy.resize(); cy.fit(undefined, 40); }
                     stopParticles(); startParticles();
                 }, 200);
-            })['catch'](function() {});
+            }).catch(function() {});
         }
     }
 

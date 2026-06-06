@@ -273,7 +273,7 @@
                 renderNetwork(buckets);
                 renderCPUBreakdown(buckets);
             })
-            ['catch'](function(e) {
+            .catch(function(e) {
                 if (e && e.name === 'AbortError') return;
                 console.error('Failed to load device status history:', e);
                 showEmpty('Error loading chart');

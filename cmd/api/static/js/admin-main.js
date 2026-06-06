@@ -287,8 +287,8 @@
         // device, parameterized by ?device_id=. Promise.all collects them.
         var promises = noisyDeviceListCache.map(function(d) {
             return Promise.all([
-                apiFetch(API_BASE + '/alerts/stats?hours=' + hours + '&device_id=' + d.id)['catch'](function() { return null; }),
-                apiFetch(API_BASE + '/syslog/stats?hours=' + hours + '&device_id=' + d.id)['catch'](function() { return null; })
+                apiFetch(API_BASE + '/alerts/stats?hours=' + hours + '&device_id=' + d.id).catch(function() { return null; }),
+                apiFetch(API_BASE + '/syslog/stats?hours=' + hours + '&device_id=' + d.id).catch(function() { return null; })
             ]).then(function(results) {
                 var alertTotal  = (results[0] && results[0].data && results[0].data.total) || 0;
                 var syslogTotal = (results[1] && results[1].data && results[1].data.total) || 0;
@@ -351,7 +351,7 @@
                     }).join('') +
                     '</tbody>' +
                 '</table>';
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Noisy-device leaderboard failed:', err);
             host.innerHTML = '<div class="error" style="padding:16px;color:#f85149;">Failed to load leaderboard</div>';
         });
@@ -428,7 +428,7 @@
                                 '<div class="probe-stat"><div class="lbl">Flows<div class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</div></div></div>' +
                                 '<div class="probe-stat"><div class="lbl">Pings<div class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</div></div></div>';
                         }
-                    })['catch'](function(err) {
+                    }).catch(function(err) {
                         console.error('Failed to load probe stats:', err);
                     });
                 });
@@ -486,7 +486,7 @@
                     }
 
                     document.getElementById('probe-detail-body').innerHTML = html;
-                })['catch'](function(err) {
+                }).catch(function(err) {
                     console.error('Failed to load probe detail:', err);
                     document.getElementById('probe-detail-body').innerHTML = '<div class="error">Failed to load stats</div>';
                     AC.showError('Failed to load probe statistics');
@@ -498,7 +498,7 @@
             };
 
             loadDashboardCharts();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load dashboard:', e);
         });
     }
@@ -541,7 +541,7 @@
             var devCounts = (d.device_status || []).map(function(s) { return s.count; });
             var devColors = devLabels.map(function(l) { return l === 'online' ? '#3fb950' : l === 'offline' ? '#f85149' : '#8b949e'; });
             createChart('dashboard-device-chart', 'doughnut', devLabels, [{data:devCounts,backgroundColor:devColors,borderWidth:0}]);
-        })['catch'](function(e) { console.error('Failed to load dashboard charts:', e); });
+        }).catch(function(e) { console.error('Failed to load dashboard charts:', e); });
     }
 
     function createChart(canvasId, type, labels, datasets, opts) {
@@ -604,7 +604,7 @@
 
             loadDeviceEnrichments();
             loadDeviceAlertIndicators();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load devices:', e);
         });
     }
@@ -629,7 +629,7 @@
                     indicator.title = 'Custom alert config';
                 }
                 nameCell.parentNode.insertBefore(indicator, nameCell.nextSibling);
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Failed to load device alert indicators:', err);
             });
         });
@@ -668,7 +668,7 @@
                     sessEl.title = polledInfo;
                 }
             });
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load device enrichments:', err);
         });
     }
@@ -713,7 +713,7 @@
             document.getElementById('iface-page-info').textContent = 'Page ' + ifacePage + ' of ' + totalPages + ' (' + total + ' interfaces)';
             document.getElementById('iface-prev').disabled = ifacePage <= 1;
             document.getElementById('iface-next').disabled = ifacePage >= totalPages;
-        })['catch'](function(e) { console.error('Failed to load interfaces:', e); });
+        }).catch(function(e) { console.error('Failed to load interfaces:', e); });
     }
 
     function ifacePrevPage() { if (ifacePage > 1) { ifacePage--; fetchInterfaces(); } }
@@ -738,7 +738,7 @@
                     return '<option value="' + encodeURIComponent(t) + '">' + escapeHtml(t) + '</option>';
                 }).join('');
             }
-        })['catch'](function(e) { console.error('Failed to populate interface filters:', e); });
+        }).catch(function(e) { console.error('Failed to populate interface filters:', e); });
     }
 
     function formatIfaceSpeed(iface) {
@@ -845,7 +845,7 @@
             drawConnectionDiagram();
             populateDeviceSelects();
             startConnRefresh();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load connections:', e);
         });
     }
@@ -908,7 +908,7 @@
                     currentVpnMap = vpnRes.data;
                     if (window.FWDiagram) FWDiagram.updateVPNBadges(currentVpnMap);
                 }
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Failed to refresh VPN badges:', err);
             });
 
@@ -935,7 +935,7 @@
                     }
                 }
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to poll connection statuses:', err);
         });
     }
@@ -964,7 +964,7 @@
             syslogOffset = messages.length;
             updateSyslogPagination(messages.length, total);
             loadSyslogCharts();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load syslog:', e);
         });
     }
@@ -1002,7 +1002,7 @@
             renderSyslogTable(messages, false);
             syslogOffset += messages.length;
             updateSyslogPagination(messages.length, total);
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load prev syslog:', e);
         });
     }
@@ -1018,7 +1018,7 @@
                 syslogOffset += messages.length;
                 updateSyslogPagination(messages.length, total);
             }
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load next syslog:', e);
         });
     }
@@ -1056,7 +1056,7 @@
                 return '#8b949e';
             });
             createChart('syslog-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors,borderWidth:0}]);
-        })['catch'](function(e) { console.error('Failed to load syslog charts:', e); });
+        }).catch(function(e) { console.error('Failed to load syslog charts:', e); });
     }
 
     function buildSyslogParams(limit) {
@@ -1132,7 +1132,7 @@
             }
             body.innerHTML = parsedHtml;
             AC.openModal('syslog-detail-modal');
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load syslog detail:', err);
             AC.showError('Failed to load syslog detail');
         });
@@ -1146,7 +1146,7 @@
                 renderSyslogTable(result.data, true);
                 syslogOffset += result.data.length;
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load more syslog:', err);
             AC.showError('Failed to load more syslog');
         });
@@ -1201,7 +1201,7 @@
             renderFlowsTable(samples, false);
             flowsOffset = samples.length;
             loadFlowCharts();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load flows:', e);
         });
     }
@@ -1324,7 +1324,7 @@
                     '</tr>';
                 }).join('') || '<tr><td colspan="7" class="empty-state">No conversations</td></tr>';
             }
-        })['catch'](function(e) { console.error('Failed to load flow charts:', e); });
+        }).catch(function(e) { console.error('Failed to load flow charts:', e); });
     }
 
     function buildFlowParams(limit) {
@@ -1367,7 +1367,7 @@
                 renderFlowsTable(result.data, true);
                 flowsOffset += result.data.length;
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load more flows:', err);
             AC.showError('Failed to load more flows');
         });
@@ -1433,7 +1433,7 @@
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load alerts:', e);
         });
     }
@@ -1464,7 +1464,7 @@
                 loadAlertCharts();
             });
         }
-        tryLoad(pageStart)['catch'](function(e) {
+        tryLoad(pageStart).catch(function(e) {
             console.error('Failed to refresh alerts at current page:', e);
         });
     }
@@ -1597,14 +1597,14 @@
             var n = (result && result.data && result.data.acknowledged) || 0;
             AC.showSuccess(n + ' alert' + (n === 1 ? '' : 's') + ' acknowledged');
             refreshAlertsAtCurrentPage();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Bulk ack failed:', e);
             // Surface the server's error message if apiFetch attached one to
             // the rejection (e.g. "at least one filter is required"). Falls
             // back to the generic toast for opaque network errors.
             var detail = (e && (e.message || e.error)) || '';
             AC.showError(detail ? 'Bulk acknowledge failed: ' + detail : 'Bulk acknowledge failed');
-        })['finally'](function() {
+        }).finally(function() {
             if (btn) btn.disabled = false;
         });
     }
@@ -1642,7 +1642,7 @@
             renderAlertsTable(alerts, false);
             alertsOffset += alerts.length;
             updateAlertPagination(alerts.length, total);
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load prev alerts:', e);
         });
     }
@@ -1658,7 +1658,7 @@
                 alertsOffset += alerts.length;
                 updateAlertPagination(alerts.length, total);
             }
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load next alerts:', e);
         });
     }
@@ -1886,7 +1886,7 @@
             body.innerHTML = headerHtml + metricHtml + msgHtml +
                 '<div style="margin-top:12px;">' + statusHtml + '</div>';
             AC.openModal('alert-detail-modal');
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load alert detail:', err);
             AC.showError('Failed to load alert detail');
         });
@@ -1910,7 +1910,7 @@
             // Stay on the user's current page rather than bouncing to page 1.
             refreshAlertsAtCurrentPage();
             AC.showSuccess('Alert acknowledged');
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to acknowledge alert:', e);
             AC.showError('Failed to acknowledge alert');
         });
@@ -1937,7 +1937,7 @@
             refreshAlertsAtCurrentPage();
             var until = res && res.data && res.data.snoozed_until;
             AC.showSuccess('Alert snoozed' + (until ? ' until ' + formatDate(until) : ''));
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to snooze alert:', e);
             AC.showError('Failed to snooze alert: ' + (e.message || ''));
         });
@@ -1948,7 +1948,7 @@
             closeAlertDetail();
             refreshAlertsAtCurrentPage();
             AC.showSuccess('Alert unsnoozed');
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to unsnooze alert:', e);
             AC.showError('Failed to unsnooze alert');
         });
@@ -1971,7 +1971,7 @@
                 renderAlertsTable(result.data, true);
                 alertsOffset += result.data.length;
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load more alerts:', err);
             AC.showError('Failed to load more alerts');
         });
@@ -2002,7 +2002,7 @@
             var typeCounts = (d.by_type || []).map(function(t) { return t.count; });
             var typeColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#bc8cff','#8b949e'];
             createChart('alerts-type-chart','doughnut',typeLabels,[{data:typeCounts,backgroundColor:typeColors.slice(0,typeLabels.length),borderWidth:0}]);
-        })['catch'](function(e) { console.error('Failed to load alert charts:', e); });
+        }).catch(function(e) { console.error('Failed to load alert charts:', e); });
     }
 
     // ---- Traps ----
@@ -2015,7 +2015,7 @@
             renderTrapsTable(traps, false);
             trapsOffset = traps.length;
             loadTrapCharts();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load traps:', e);
         });
     }
@@ -2061,7 +2061,7 @@
                 renderTrapsTable(result.data, true);
                 trapsOffset += result.data.length;
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load more traps:', err);
             AC.showError('Failed to load more traps');
         });
@@ -2092,7 +2092,7 @@
             var sevCounts = (d.by_severity || []).map(function(s) { return s.count; });
             var sevColors = ['#f85149','#d2992a','#58a6ff','#3fb950','#8b949e'];
             createChart('traps-severity-chart','doughnut',sevLabels,[{data:sevCounts,backgroundColor:sevColors.slice(0,sevLabels.length),borderWidth:0}]);
-        })['catch'](function(e) { console.error('Failed to load trap charts:', e); });
+        }).catch(function(e) { console.error('Failed to load trap charts:', e); });
     }
 
     // ---- Settings ----
@@ -2237,7 +2237,7 @@
                 var refreshInput = document.querySelector('#display-settings input[name="public_refresh_interval"]');
                 if (refreshInput && ds['public_refresh_interval']) refreshInput.value = ds['public_refresh_interval'];
             }
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load settings:', e);
         });
 
@@ -2338,7 +2338,7 @@
             } else {
                 alert('Failed: ' + (result && result.data ? result.data.message || 'Unknown error' : 'Unknown error'));
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Device connection test failed:', err);
             AC.showError('Error: ' + err.message);
         })
@@ -2410,7 +2410,7 @@
                 closeDeviceModal();
                 loadDevices();
                 AC.showSuccess(id ? 'Device updated' : 'Device created');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error saving device:', err);
                 AC.showError('Error saving device: ' + err.message);
             });
@@ -2429,7 +2429,7 @@
             apiFetch(API_BASE + '/devices/' + id, { method: 'DELETE' }).then(function() {
                 loadDevices();
                 AC.showSuccess('Device deleted');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error deleting device:', err);
                 AC.showError('Error deleting device: ' + err.message);
             });
@@ -2470,7 +2470,7 @@
                 function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
             );
             FWDiagram.render(currentDevices, currentConnections, deviceSiteMap, currentVpnMap, siteNames);
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load network diagram bundle:', err);
             if (diagramHost) {
                 diagramHost.innerHTML =
@@ -2533,7 +2533,7 @@
                 closeConnectionModal();
                 loadConnections();
                 AC.showSuccess(id ? 'Connection updated' : 'Connection created');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error saving connection:', err);
                 AC.showError('Error saving connection: ' + err.message);
             });
@@ -2550,7 +2550,7 @@
             apiFetch(API_BASE + '/connections/' + id, { method: 'DELETE' }).then(function() {
                 loadConnections();
                 AC.showSuccess('Connection deleted');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error deleting connection:', err);
                 AC.showError('Error deleting connection: ' + err.message);
             });
@@ -2575,7 +2575,7 @@
                 document.getElementById('new-password').value = '';
                 document.getElementById('confirm-password').value = '';
             } else { alert('Error: ' + (result && result.error ? result.error : 'Unknown error')); }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Password change failed:', err);
             AC.showError('Error: ' + err.message);
         });
@@ -2644,7 +2644,7 @@
             // save flow.
             var warnings = (result && result.data && Array.isArray(result.data.warnings)) ? result.data.warnings : [];
             warnings.forEach(function(w) { AC.showError(w); });
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Settings save failed:', err);
             AC.showError('Error: ' + err.message);
         });
@@ -2665,7 +2665,7 @@
         }).then(function(result) {
             var d = (result && result.data) || {};
             renderSMTPTrace(resultEl, d);
-        })['catch'](function(e) {
+        }).catch(function(e) {
             resultEl.innerHTML = '<div style="color:#f85149;font-weight:500;">Request failed: ' + escapeHtml(e.message || 'unknown') + '</div>';
         });
     }
@@ -2771,7 +2771,7 @@
                 resultEl.textContent = (result && result.data ? result.data.message : '') || 'Failed';
                 resultEl.style.color = '#f85149';
             }
-        })['catch'](function(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; });
+        }).catch(function(e) { resultEl.textContent = 'Error: ' + e.message; resultEl.style.color = '#f85149'; });
     }
 
     // ---- Logout ----
@@ -2781,7 +2781,7 @@
             e.preventDefault();
             apiFetch('/admin/api/logout', { method: 'POST' }).then(function() {
                 window.location.href = '/';
-            })['catch'](function() {
+            }).catch(function() {
                 window.location.href = '/';
             });
         });
@@ -2820,7 +2820,7 @@
             currentPolicies = result.data || [];
             document.getElementById('ap-total').textContent = currentPolicies.length;
             renderPoliciesTable(currentPolicies);
-        })['catch'](function(e) { console.error('Failed to load policies:', e); });
+        }).catch(function(e) { console.error('Failed to load policies:', e); });
     }
 
     function renderPoliciesTable(policies) {
@@ -2987,7 +2987,7 @@
                 closePolicyModal();
                 loadAlertPolicies();
                 AC.showSuccess(id ? 'Policy updated' : 'Policy created');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error saving policy:', err);
                 AC.showError('Error saving policy: ' + (err.message || err));
             });
@@ -2998,7 +2998,7 @@
         apiFetch(API_BASE + '/alert-policies/' + id + '/clone', {method: 'POST'}).then(function() {
             loadAlertPolicies();
             AC.showSuccess('Policy cloned');
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Clone failed:', e);
             AC.showError('Clone failed: ' + e.message);
         });
@@ -3014,7 +3014,7 @@
             apiFetch(API_BASE + '/alert-policies/' + id, {method: 'DELETE'}).then(function() {
                 loadAlertPolicies();
                 AC.showSuccess('Policy deleted');
-            })['catch'](function(e) {
+            }).catch(function(e) {
                 console.error('Delete policy failed:', e);
                 AC.showError('Delete failed: ' + e.message);
             });
@@ -3040,7 +3040,7 @@
             document.getElementById('mw-scheduled').textContent = scheduled;
             document.getElementById('mw-total').textContent = currentMaintenanceWindows.length;
             renderMaintenanceTable(currentMaintenanceWindows);
-        })['catch'](function(e) { console.error('Failed to load maintenance windows:', e); });
+        }).catch(function(e) { console.error('Failed to load maintenance windows:', e); });
     }
 
     function renderMaintenanceTable(windows) {
@@ -3089,7 +3089,7 @@
                 '</tr>';
             }).join('');
             tbody.innerHTML = html;
-        })['catch'](function() {
+        }).catch(function() {
             // Fallback: render with IDs if fetch fails
             var now = new Date();
             var html = windows.map(function(w) {
@@ -3241,7 +3241,7 @@
                 closeMaintModal();
                 loadMaintenance();
                 AC.showSuccess(id ? 'Maintenance window updated' : 'Maintenance window created');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error saving maintenance window:', err);
                 AC.showError('Error: ' + (err.message || err));
             });
@@ -3258,7 +3258,7 @@
             apiFetch(API_BASE + '/maintenance-windows/' + id, {method: 'DELETE'}).then(function() {
                 loadMaintenance();
                 AC.showSuccess('Maintenance window deleted');
-            })['catch'](function(e) {
+            }).catch(function(e) {
                 console.error('Delete maintenance window failed:', e);
                 AC.showError('Delete failed: ' + e.message);
             });
@@ -3314,7 +3314,7 @@
             }
 
             AC.openModal('device-alert-modal');
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('Failed to load alert config:', e);
             AC.showError('Failed to load alert config: ' + e.message);
         });
@@ -3337,7 +3337,7 @@
                 closeDeviceAlertModal();
                 loadDevices();
                 AC.showSuccess('Alert config reset to defaults');
-            })['catch'](function(e) {
+            }).catch(function(e) {
                 console.error('Reset alert config failed:', e);
                 AC.showError('Reset failed: ' + e.message);
             });
@@ -3380,7 +3380,7 @@
                 closeDeviceAlertModal();
                 loadDevices();
                 AC.showSuccess('Alert config saved');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 console.error('Error saving alert config:', err);
                 AC.showError('Error saving alert config: ' + err.message);
             });
@@ -3447,7 +3447,7 @@
                 body: { public_visible: checked }
             }).then(function() {
                 AC.showSuccess('Public visibility updated');
-            })['catch'](function() {
+            }).catch(function() {
                 el.checked = !checked;
                 AC.showError('Failed to update public visibility');
             });

@@ -40,7 +40,7 @@
             } else {
                 console.error('Failed to save, status:', resp.status);
             }
-        })['catch'](function(err) { 
+        }).catch(function(err) { 
             console.error('Error saving:', err); 
         });
     };
@@ -55,7 +55,7 @@
                         if (!publicInterfaces[deviceId]) publicInterfaces[deviceId] = [];
                     } catch(e) { publicInterfaces = {}; }
                 }
-            })['catch'](function() {});
+            }).catch(function() {});
     }
 
     function isPublicIface(iface) {
@@ -75,7 +75,7 @@
                 deviceData = result.data;
                 renderDevice();
             })
-            ['catch'](function(e) {
+            .catch(function(e) {
                 if (e.message === 'Not authenticated') return;
                 // v0.10.233: #error / #content carry class="hidden" in the
                 // markup (device-detail.html:44, 46). style.display = 'block'
@@ -290,7 +290,7 @@
                         scales: scales
                     }
                 });
-            })['catch'](function(e) { console.error('Failed to load status history chart:', e); });
+            }).catch(function(e) { console.error('Failed to load status history chart:', e); });
     }
 
     var networkThroughputChart = null;
@@ -337,7 +337,7 @@
             var sysData = (result.data && result.data.system_status) || [];
             statusHistoryCache[cacheKey] = sysData;
             renderNetworkThroughputChart(sysData, range);
-        })['catch'](function(e) { console.error('Failed to load network throughput chart:', e); });
+        }).catch(function(e) { console.error('Failed to load network throughput chart:', e); });
     }
 
     function renderNetworkThroughputChart(sysData, range) {
@@ -452,7 +452,7 @@
                     }
                 }
             });
-        })['catch'](function(e) { console.error('Failed to load CPU breakdown chart:', e); });
+        }).catch(function(e) { console.error('Failed to load CPU breakdown chart:', e); });
     }
 
     function createGauge(containerId, value, color) {
@@ -672,7 +672,7 @@
                     }
                 });
             })
-            ['catch'](function(e) { console.error('Failed to load interface chart:', e); });
+            .catch(function(e) { console.error('Failed to load interface chart:', e); });
     }
 
     function getTypeBadge(iface) {
@@ -1123,7 +1123,7 @@
                 }).join('');
 
                 updateConfigCompareButton();
-            })['catch'](function(e) { console.error('Failed to load config history:', e); });
+            }).catch(function(e) { console.error('Failed to load config history:', e); });
     }
 
     function updateConfigCompareButton() {
@@ -1201,7 +1201,7 @@
                     return;
                 }
                 renderConfigDiff(result.data);
-            })['catch'](function(e) {
+            }).catch(function(e) {
                 console.error('[diff] fetch failed:', e);
                 var modal = document.getElementById('config-diff-modal');
                 var body  = document.getElementById('config-diff-body');
@@ -1368,7 +1368,7 @@
                 if (!result.success || !result.data || !result.data.revision) return;
                 var rev = result.data.revision;
                 showConfigModal('Configuration Revision', rev.config_text, rev.timestamp, rev.checksum);
-            })['catch'](function(e) { console.error('Failed to view config:', e); });
+            }).catch(function(e) { console.error('Failed to view config:', e); });
     };
 
     window.diffConfigRevisions = function(revId1, revId2) {
@@ -1380,7 +1380,7 @@
             var rev1 = results[0].data.revision;
             var rev2 = results[1].data.revision;
             showDiffModal('Configuration Diff', rev1.config_text, rev2.config_text, rev1.timestamp, rev2.timestamp);
-        })['catch'](function(e) { console.error('Failed to load diff:', e); });
+        }).catch(function(e) { console.error('Failed to load diff:', e); });
     };
 
     function showConfigModal(title, configText, timestamp, checksum) {
@@ -1463,7 +1463,7 @@
                 a.download = 'config_' + deviceId + '_' + revId + '.txt';
                 a.click();
                 URL.revokeObjectURL(url);
-            })['catch'](function(e) { console.error('Failed to download config:', e); });
+            }).catch(function(e) { console.error('Failed to download config:', e); });
     };
 
     window.deleteConfigRevision = function(revId) {
@@ -1481,7 +1481,7 @@
             .then(function(result) {
                 if (result.success) renderConfigHistory();
                 else alert('Failed to delete: ' + (result.error || 'Unknown error'));
-            })['catch'](function(e) { console.error('Failed to delete config:', e); });
+            }).catch(function(e) { console.error('Failed to delete config:', e); });
         });
     };
 
@@ -1552,7 +1552,7 @@
                         }
                     }
                 });
-            })['catch'](function(e) { console.error('Failed to load process monitor:', e); });
+            }).catch(function(e) { console.error('Failed to load process monitor:', e); });
     }
 
     var ifaceErrChart = null;
@@ -1622,7 +1622,7 @@
                         }
                     }
                 });
-            })['catch'](function(e) { console.error('Failed to load interface errors:', e); });
+            }).catch(function(e) { console.error('Failed to load interface errors:', e); });
     }
 
     function switchTab(name) {

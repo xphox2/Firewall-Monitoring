@@ -111,7 +111,7 @@
                     '</tr>';
                 }).join('') +
                 '</tbody></table>';
-        })['catch'](function() {
+        }).catch(function() {
             container.innerHTML = '<div style="padding:20px;color:#f85149;">Failed to load events</div>';
         });
     }

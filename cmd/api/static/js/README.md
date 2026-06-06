@@ -17,9 +17,11 @@ rest, optional chaining, nullish coalescing, `Promise.allSettled`, etc.).
   **correct** — the older "pick ES5" framing in the audit is superseded by the
   evergreen baseline.
 - ❌ Do **not** add new ES5-compatibility workarounds. In particular the
-  bracket-notation `promise['catch'](…)` form (a relic of IE11 reserved-word
-  handling) is **legacy** — write `promise.catch(…)`. The remaining `['catch']`
-  call sites are tracked for a cleanup sweep under **AUDIT-132**; don't add more.
+  bracket-notation `promise['catch'](…)` / `promise['finally'](…)` form (a relic
+  of IE11 reserved-word handling) is **legacy** — write `promise.catch(…)` /
+  `promise.finally(…)`. The cleanup sweep that converted every remaining call
+  site to dot notation landed in **AUDIT-132** (v0.10.365); don't reintroduce
+  the bracket form.
 - No `<script type="module">` / bundler is wired yet, so keep each file a
   self-contained IIFE that attaches to the shared `AdminCommon` / `AC`
   namespace rather than using ES module `import`/`export` (until AUDIT-139).

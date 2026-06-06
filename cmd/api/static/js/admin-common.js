@@ -59,7 +59,7 @@
             .then(function(data) {
                 csrfTokenCache = data.csrf_token || '';
                 return csrfTokenCache;
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 fwmonLog.error('Failed to fetch CSRF token:', err);
                 return '';
             });
@@ -378,7 +378,7 @@
     function doLogout() {
         apiFetch(API_BASE + '/logout', { method: 'POST' }).then(function() {
             window.location.href = '/admin/login';
-        })['catch'](function() {
+        }).catch(function() {
             window.location.href = '/admin/login';
         });
     }
@@ -424,7 +424,7 @@
             .then(function() { return inject('/static/js/diagram-cytoscape.js'); })
             .then(function() { return inject('/static/js/diagram-panels.js'); })
             .then(function() { return window.FWDiagram; })
-            ['catch'](function(err) {
+            .catch(function(err) {
                 __fwmonCytoscapePromise = null; // allow retry
                 throw err;
             });
@@ -540,7 +540,7 @@
         if (v && v.version) {
             fwmonLog.info('%cFirewall-Mon v' + v.version, 'color:#58a6ff;font-weight:bold');
         }
-    })['catch'](function() { /* version endpoint not exposed — old build */ });
+    }).catch(function() { /* version endpoint not exposed — old build */ });
 
     /* ------------------------------------------------------------------
      * confirmModal — accessible replacement for window.confirm().
@@ -1089,7 +1089,7 @@
                 if (data && data.data && data.data['display_timezone']) {
                     setTimezone(data.data['display_timezone']);
                 }
-            })['catch'](function() {});
+            }).catch(function() {});
     }
     loadTimezoneFromServer();
 

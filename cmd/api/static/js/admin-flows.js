@@ -90,7 +90,7 @@
                 var v = state[k];
                 if (v === '' || v == null ||
                     (k === 'hours' && Number(v) === DEFAULTS.hours)) {
-                    url.searchParams['delete'](k);
+                    url.searchParams.delete(k);
                 } else {
                     url.searchParams.set(k, String(v));
                 }
@@ -354,7 +354,7 @@
                 return;
             }
             renderStats(result.data);
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('FwmonFlows: stats fetch failed', e);
             showChartEmpty('Error');
             clearTopTalkers();
@@ -574,7 +574,7 @@
             flowsOffset = samples.length;
             updateLoadedCount();
             renderConversations(); // re-renders existing conversation rows with current click target
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('FwmonFlows: samples fetch failed', e);
         });
     }
@@ -588,7 +588,7 @@
             renderSamples(samples, true);
             flowsOffset += samples.length;
             updateLoadedCount();
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('FwmonFlows: load-more failed', e);
         });
     }
@@ -653,7 +653,7 @@
                 AC.showError('Export capped at ' + EXPORT_MAX.toLocaleString() +
                              ' rows — refine the filter for the full set.');
             }
-        })['catch'](function(e) {
+        }).catch(function(e) {
             console.error('FwmonFlows: csv export failed', e);
             if (AC.showError) AC.showError('Export failed: ' + (e.message || 'unknown'));
         }).finally(function() {

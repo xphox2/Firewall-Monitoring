@@ -162,7 +162,7 @@
             renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
             document.getElementById('src-tunnels-title').textContent = 'Source Tunnels (' + srcName + ')';
             document.getElementById('dst-tunnels-title').textContent = 'Destination Tunnels (' + dstName + ')';
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading detail:', err);
             AC.showError('Failed to load connection details');
         });
@@ -304,7 +304,7 @@
                 },
                 options: chartOptions()
             });
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading tunnel chart:', err);
             AC.showError('Failed to load tunnel chart');
         });
@@ -374,7 +374,7 @@
                     options: chartOptions()
                 });
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading traffic chart:', err);
             AC.showError('Failed to load traffic chart');
         });
@@ -497,7 +497,7 @@
                     '</tr>';
             }
             ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:#768390;padding:20px;">No conversations found</td></tr>';
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading flow stats:', err);
             AC.showError('Failed to load flow statistics');
         });
@@ -575,7 +575,7 @@
             if (connDetail && connDetail.has_flow_data) {
                 loadFlowStats();
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('[ConnectionDetail] Init error:', err);
             AC.showError('Failed to initialize connection detail view');
         });
@@ -599,7 +599,7 @@
             if (connDetail && connDetail.has_flow_data && document.getElementById('tab-content-flows').classList.contains('active')) {
                 return loadFlowStats();
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             if (err.name === 'AbortError' || err.name === 'CancelError') return;
             console.error('[ConnectionDetail] Refresh error:', err);
             AC.showError('Failed to refresh connection data');

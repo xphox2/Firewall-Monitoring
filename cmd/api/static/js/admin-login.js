@@ -37,11 +37,11 @@
                 errorDiv.classList.remove('hidden');
             }
         })
-        ['catch'](function() {
+        .catch(function() {
             errorDiv.textContent = 'Connection error. Please try again.';
             errorDiv.classList.remove('hidden');
         })
-        ['finally'](function() {
+        .finally(function() {
             btn.disabled = false;
             btn.textContent = 'Login';
         });

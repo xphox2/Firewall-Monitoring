@@ -13,7 +13,7 @@
             currentProbes = result.data || [];
             renderProbes(currentProbes);
             loadProbeSummaryStats();
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Failed to load probes: ' + err.message);
         });
     }
@@ -58,7 +58,7 @@
                 lastHourPings += lh.pings || 0;
             });
             renderSummary();
-        })['catch'](function() {
+        }).catch(function() {
             failed = approvedProbes.length;
             renderSummary();
         });
@@ -68,7 +68,7 @@
         return AC.apiFetch(API_BASE + '/sites').then(function(result) {
             currentSites = result.data || [];
             populateSiteSelect();
-        })['catch'](function(err) {
+        }).catch(function(err) {
             console.error('Failed to load sites:', err);
         });
     }
@@ -178,7 +178,7 @@
             } else {
                 AC.showSuccess(id ? 'Probe updated' : 'Probe created');
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Error saving probe: ' + err.message);
         });
     }
@@ -222,7 +222,7 @@
             if (result && result.data) {
                 showDeployInfoForProbe(result.data);
             }
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Failed to load probe details: ' + err.message);
         });
     }
@@ -281,7 +281,7 @@
                     AC.showSuccess('Registration key regenerated');
                     loadProbes();
                 }
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 AC.showError('Error regenerating key: ' + err.message);
             });
         });
@@ -297,7 +297,7 @@
             AC.apiFetch(API_BASE + '/probes/' + id, { method: 'DELETE' }).then(function() {
                 loadProbes();
                 AC.showSuccess('Probe deleted');
-            })['catch'](function(err) {
+            }).catch(function(err) {
                 AC.showError('Error deleting probe: ' + err.message);
             });
         });
@@ -311,7 +311,7 @@
         }).then(function() {
             loadProbes();
             AC.showSuccess('Probe approved');
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Error approving probe: ' + err.message);
         });
     }
@@ -342,7 +342,7 @@
             closeRejectModal();
             loadProbes();
             AC.showSuccess('Probe rejected');
-        })['catch'](function(err) {
+        }).catch(function(err) {
             AC.showError('Error rejecting probe: ' + err.message);
         });
     }
