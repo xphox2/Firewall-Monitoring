@@ -628,6 +628,49 @@ func (d *Database) EnsurePartitions() error {
 	return nil
 }
 
+// defaultAutovacuumTables is the built-in set of high-write tables that get
+// aggressive autovacuum (AUDIT-147). It now includes interface_stats and
+// system_status — the two heaviest time-series writers, which the original
+// list omitted — alongside the per-poll/per-probe tables. Override the whole
+// set with the DB_AUTOVACUUM_TABLES env var.
+var defaultAutovacuumTables = []string{
+	"syslog_messages",
+	"syslog_summaries",
+	"trap_events",
+	"flow_samples",
+	"ping_results",
+	"alerts",
+	"interface_stats",
+	"system_status",
+	"processor_stats",
+	"process_stats",
+	"vpn_status",
+	"ha_status",
+	"interface_addresses",
+}
+
+// autovacuumTables returns the tables to tune. By default that's
+// defaultAutovacuumTables; DB_AUTOVACUUM_TABLES (comma-separated) overrides
+// the whole set for deployments with a different write profile (AUDIT-147).
+// Blank entries are ignored; an all-blank/empty override falls back to the
+// default rather than tuning nothing.
+func autovacuumTables() []string {
+	env := strings.TrimSpace(os.Getenv("DB_AUTOVACUUM_TABLES"))
+	if env == "" {
+		return defaultAutovacuumTables
+	}
+	var tables []string
+	for _, t := range strings.Split(env, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			tables = append(tables, t)
+		}
+	}
+	if len(tables) == 0 {
+		return defaultAutovacuumTables
+	}
+	return tables
+}
+
 // ConfigureAutovacuum sets aggressive autovacuum parameters for high-volume tables.
 // This reduces table bloat and improves query performance on PostgreSQL.
 func (d *Database) ConfigureAutovacuum() error {
@@ -635,15 +678,11 @@ func (d *Database) ConfigureAutovacuum() error {
 		return nil // Autovacuum is PostgreSQL-only
 	}
 
-	// High-volume tables that benefit from aggressive autovacuum
-	tables := []string{
-		"syslog_messages",
-		"syslog_summaries",
-		"trap_events",
-		"flow_samples",
-		"ping_results",
-		"alerts",
-	}
+	// AUDIT-147: the high-volume table list is configurable (see
+	// autovacuumTables) and now includes the biggest time-series writers.
+	// Each ALTER is failure-tolerant (logs + continues), so listing a table
+	// that doesn't exist on a given deployment is harmless.
+	tables := autovacuumTables()
 
 	// Autovacuum settings for high-volume tables:
 	// - vacuum_scale_factor = 0.01 (1% vs default 20%) - vacuum more frequently
