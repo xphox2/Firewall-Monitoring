@@ -1293,6 +1293,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-130 | No retry on transient API failures | 0.10.355 | d7c6fcd | `apiFetch` now retries 502/503/504 up to 3 attempts with exponential backoff + jitter before erroring; 401/403/`!ok` handling unchanged. `TestApiFetchRetriesTransient_AUDIT130` pins the statuses + jittered backoff. |
 | AUDIT-134 | Hardcoded `package.json` version | 0.10.356 | 2aedf38 | Removed the stale unused `"version": "0.10.157"` (read by nothing; app version lives in `ServerVersion`) and marked the package `"private": true` so no version is needed and none can go stale. `TestPackageJsonNoStaleVersion_AUDIT134` pins no version field + private. |
 | AUDIT-084 | `PruneExpiredAttempts` goroutine leak | 0.10.357 | 6eb0c1f | The prune goroutine ran a bare `for range ticker.C` with no exit. Added a cancellable `bgCtx`; the pruner now `select`s on `<-bgCtx.Done()` and the shutdown path calls `bgCancel()` before draining the server. `TestPruneGoroutineHasShutdown_AUDIT084` pins the wiring. |
+| AUDIT-113 | No "How to add a vendor" doc | 0.10.358 | (pending) | Covered by `docs/custom-vendor.md` (AUDIT-170), which documents both the SNMP profile side (`RegisterVendor`/`validVendors`) and the `internal/configdiff` normalizer (Step 5). `TestVendorDocCoversBothSides_AUDIT113` pins both-sided coverage so it can't be trimmed away. |
 
 ---
 
@@ -1431,6 +1432,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-130 — apiFetch retry 502/503/504 with backoff+jitter — v0.10.355 — d7c6fcd — opencode
 2026-06-06 — AUDIT-134 — remove stale unused package.json version + mark private — v0.10.356 — 2aedf38 — opencode
 2026-06-06 — AUDIT-084 — prune goroutine exits on bgCtx cancel (graceful shutdown) — v0.10.357 — 6eb0c1f — opencode
+2026-06-06 — AUDIT-113 — how-to-add-a-vendor covered by docs/custom-vendor.md (both-sided test) — v0.10.358 — (pending) — opencode
 ```
 
 ---
