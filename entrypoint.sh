@@ -86,6 +86,19 @@ maintenance_work_mem = 64MB
 effective_cache_size = 256MB
 wal_buffers = 4MB
 max_connections = 30
+# AUDIT-095: crash forensics are NOT lost despite logging_collector = off.
+# The audit assumed "off" meant Postgres logs vanished; in this embedded
+# single-container setup Postgres is started below with
+#   pg_ctl ... -l "\$PGDATA/postgresql.log"
+# so its stderr (startup, crash, FATAL/PANIC, slow-query warnings) is
+# redirected to that file, which lives in the bind-mounted /data/pgdata
+# and therefore survives container restarts. The collector is deliberately
+# kept OFF so we do not run Postgres's own log-rotation subprocess inside a
+# container whose lifecycle is already managed by Docker (one log writer,
+# captured on the persistent volume). To instead surface PG logs in
+# 'docker logs' alongside the app, set 'log_destination = stderr' here and
+# drop the pg_ctl -l redirect; we keep the file form so PG diagnostics are
+# not interleaved with the three fwmon daemons' stdout.
 logging_collector = off
 log_min_messages = warning
 PGCONF
