@@ -46,8 +46,8 @@ future session can pick up without re-reading the entire audit.
 
 | Bucket | Count | Notes |
 |---|---|---|
-| **Resolved bug audits** | **106** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); includes 11 verification-sweep reclassifications; 0 remain CRITICAL |
-| **Open bug audits** | **64** | 170 total − 106 resolved |
+| **Resolved bug audits** | **107** | per the `docs/AUDIT.md` resolved table (`grep -c '^\| AUDIT-'`); includes 11 verification-sweep reclassifications + AUDIT-066 (v0.10.334); 0 remain CRITICAL |
+| **Open bug audits** | **63** | 170 total − 107 resolved |
 | Feature recommendations (F01–F89) | 89 | out of scope for "complete the audit"; future v0.11.0+ work |
 
 > **Per-severity split:** the earlier hand-maintained HIGH/MEDIUM/LOW open counts
@@ -666,7 +666,7 @@ gate), 153 (LastUpAt now wired), 167 (KNOWN-ISSUES.md exists).
 - **AUDIT-161** — nav links centralized in `AdminCommon.renderSidebar()`; a ~11-line per-page sidebar shell + duplicated `<script>` lists remain.
 
 **CHANGED — premise no longer matches the code:**
-- **AUDIT-066** — `#484f58` is now only a decorative `border-left` (admin.html), not text, so the WCAG-text-contrast premise is gone. (Its sibling **AUDIT-067** is genuinely OPEN — `#6e7681` is still used for sub-18px text; both were reverted+reopened by v0.10.320.) Worth a quick close of 066.
+- **AUDIT-066** — **NOW FIXED (v0.10.334).** The "border-only" verdict above was wrong — `#484f58` was still a `color:` text rule in `admin-shared.css`/`styles.css`/public dashboard + 5 admin JS files. Fixed surgically: text `color:#484f58` → `#768390` (AA), decorative uses (borders/backgrounds/hover/chart colors) left as `#484f58` to avoid re-triggering the v0.10.320 hierarchy-flattening revert. (Its sibling **AUDIT-067** — `#6e7681` for sub-18px text — is **still OPEN**.)
 - **AUDIT-090** — no OpenAPI/versioning was added; the `/api/v1` path-rewrite was documented + test-pinned under AUDIT-138. Premise (no versioning) technically still holds; treat as "documented, not solved".
 
 **Confirmed GENUINELY OPEN (the real backlog — premises hold, cited file:line in agent reports):**

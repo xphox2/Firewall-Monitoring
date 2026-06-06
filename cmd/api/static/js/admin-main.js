@@ -584,13 +584,13 @@
             var tbody = document.querySelector('#devices-table tbody');
             tbody.innerHTML = currentDevices.map(function(d) {
                 return '<tr>' +
-                    '<td><a href="/admin/devices/' + d.id + '" style="color:#58a6ff;text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:#484f58;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
+                    '<td><a href="/admin/devices/' + d.id + '" style="color:#58a6ff;text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:#768390;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
                     '<td class="mono">' + escapeHtml(d.ip_address) + '</td>' +
-                    '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:#484f58">-</span>') + '</td>' +
-                    '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:#484f58">-</span>') + '</td>' +
-                    '<td id="dev-cpu-' + d.id + '" style="color:#484f58">-</td>' +
-                    '<td id="dev-mem-' + d.id + '" style="color:#484f58">-</td>' +
-                    '<td id="dev-sess-' + d.id + '" style="color:#484f58">-</td>' +
+                    '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:#768390">-</span>') + '</td>' +
+                    '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:#768390">-</span>') + '</td>' +
+                    '<td id="dev-cpu-' + d.id + '" style="color:#768390">-</td>' +
+                    '<td id="dev-mem-' + d.id + '" style="color:#768390">-</td>' +
+                    '<td id="dev-sess-' + d.id + '" style="color:#768390">-</td>' +
                     '<td><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td>' +
@@ -2837,7 +2837,7 @@
                 '<td>' + escapeHtml(p.description || '') + '</td>' +
                 '<td>' + (p.is_default ? '<span class="badge info">DEFAULT</span>' : '') + '</td>' +
                 '<td>' + ruleCount + '</td>' +
-                '<td>' + (channels.length ? channels.join(', ') : '<span style="color:#484f58">Dashboard only</span>') + '</td>' +
+                '<td>' + (channels.length ? channels.join(', ') : '<span style="color:#768390">Dashboard only</span>') + '</td>' +
                 '<td>' + p.cooldown_minutes + 'm</td>' +
                 '<td>' + (p.escalation_enabled ? p.escalation_minutes + 'm (' + p.escalation_repeat + 'x)' : 'Off') + '</td>' +
                 '<td>' +

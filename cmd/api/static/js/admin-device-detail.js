@@ -683,7 +683,7 @@
         if (tn === 'loopback') return '<span class="badge unknown">Loop</span>';
         if (tn === 'ethernet') return '<span class="badge online">Eth</span>';
         if (tn) return '<span class="badge unknown">' + esc(tn) + '</span>';
-        return '<span style="color:#484f58">' + iface.type + '</span>';
+        return '<span style="color:#768390">' + iface.type + '</span>';
     }
 
     function renderVPN() {
@@ -877,7 +877,7 @@
     }
 
     function getTunnelTypeBadge(type) {
-        if (!type) return '<span style="color:#484f58">-</span>';
+        if (!type) return '<span style="color:#768390">-</span>';
         var colors = { 'ipsec': '#58a6ff', 'ipsec-dialup': '#d29922', 'sslvpn': '#3fb950' };
         var color = colors[type] || '#8b949e';
         return '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:' + color + '22;color:' + color + ';border:1px solid ' + color + '44">' + esc(type) + '</span>';

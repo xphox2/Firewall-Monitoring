@@ -171,7 +171,7 @@
     function renderTunnelTable(tableId, tunnels, deviceId) {
         var tbody = document.querySelector('#' + tableId + ' tbody');
         if (!tunnels.length) {
-            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#484f58;padding:30px;">No matching tunnels found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#768390;padding:30px;">No matching tunnels found</td></tr>';
             return;
         }
         var html = '';
@@ -218,7 +218,7 @@
     function renderPhase2Matches(matches, srcName, dstName) {
         var container = document.getElementById('phase2-matches-container');
         if (!matches.length) {
-            container.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No Phase 2 selector matches found between these devices.</div>';
+            container.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No Phase 2 selector matches found between these devices.</div>';
             return;
         }
         var html = '';
@@ -496,7 +496,7 @@
                         '<td>' + formatNum(c.packets) + '</td>' +
                     '</tr>';
             }
-            ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:#484f58;padding:20px;">No conversations found</td></tr>';
+            ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:#768390;padding:20px;">No conversations found</td></tr>';
         })['catch'](function(err) {
             console.error('[ConnectionDetail] Error loading flow stats:', err);
             AC.showError('Failed to load flow statistics');

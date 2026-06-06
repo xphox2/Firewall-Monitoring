@@ -267,7 +267,7 @@
             if (!canvas) return;
             if (panelChartInstances['traffic']) panelChartInstances['traffic'].destroy();
             if (!Array.isArray(data) || data.length === 0) {
-                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No traffic data available for this connection.</div>';
+                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No traffic data available for this connection.</div>';
                 return;
             }
             const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
@@ -298,7 +298,7 @@
             const hasData = data.total_flows > 0;
             const content = document.getElementById('panel-flow-content');
             if (!hasData) {
-                content.innerHTML = '<div style="text-align:center;color:#484f58;padding:30px;">No sFlow data available for this connection.</div>';
+                content.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No sFlow data available for this connection.</div>';
                 return;
             }
 
@@ -340,7 +340,7 @@
 
             const convos = data.top_conversations || [];
             const ctbody = document.querySelector('#panel-convos-table tbody');
-            ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(c.src_addr)}:${c.src_port}</td><td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(c.dst_addr)}:${c.dst_port}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#484f58;">No conversations</td></tr>';
+            ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(c.src_addr)}:${c.src_port}</td><td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(c.dst_addr)}:${c.dst_port}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#768390;">No conversations</td></tr>';
         } catch (e) { console.error('Panel flow stats failed:', e); }
     }
 
@@ -353,7 +353,7 @@
     function renderPanelTunnelTable(tableId, tunnels, deviceId) {
         const tbody = document.querySelector(`#${tableId} tbody`);
         if (!tunnels.length) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#484f58;padding:16px;">No tunnels</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#768390;padding:16px;">No tunnels</td></tr>';
             return;
         }
         let html = '';
@@ -426,7 +426,7 @@
     function renderPanelPhase2(matches, srcName, dstName) {
         const container = document.getElementById('panel-phase2-container');
         if (!matches.length) {
-            container.innerHTML = '<div style="text-align:center;color:#484f58;padding:20px;">No Phase 2 selector matches.</div>';
+            container.innerHTML = '<div style="text-align:center;color:#768390;padding:20px;">No Phase 2 selector matches.</div>';
             return;
         }
         let html = '';
@@ -486,7 +486,7 @@
         const offnet = tunnels.filter(t => t.matched_device_id === 0);
 
         function renderVPNTunnelRows(prefix, rows, devId) {
-            if (!rows.length) return '<tr><td colspan="9" style="text-align:center;color:#484f58;padding:12px;">None</td></tr>';
+            if (!rows.length) return '<tr><td colspan="9" style="text-align:center;color:#768390;padding:12px;">None</td></tr>';
             return rows.map((t, i) => {
                 const rowId = `${prefix}-${i}`;
                 const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:#58a6ff;text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:#d29922;font-size:0.78rem;">Off-Net</span>';
@@ -531,7 +531,7 @@
                 <tbody>${renderVPNTunnelRows('vpn-o', offnet, deviceId)}</tbody></table>`;
         }
         if (!offnetOnly && matched.length === 0 && offnet.length === 0) {
-            sectionsHtml = '<div style="text-align:center;color:#484f58;padding:20px;">No tunnels</div>';
+            sectionsHtml = '<div style="text-align:center;color:#768390;padding:20px;">No tunnels</div>';
         }
 
         panel.innerHTML = `
