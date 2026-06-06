@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`docs/SUPPORT-MATRIX.md`** (closes AUDIT-068): per-minor-version compatibility table for the collector × server matrix, the recommended upgrade procedure (server first, then collector; roll in waves; verify via `firewall_collector_heartbeat_success_total`), and the precise list of wire-format additions per collector version (`backup_quality` field in 1.2.72, `X-Probe-Batch-ID` header in 1.2.74, mTLS in 1.2.79, `schema_version` in 1.2.89+, per-tenant authorization in 1.3.0+). Operators planning a roll-forward now have one place to check "is collector 1.3.0 still safe to point at server 0.10.358?" — answer: no, need 0.10.363+ for the per-tenant authorization change. Documentation only.
 - **KNOWN-ISSUES.md** (AUDIT-110): new top-level file cataloguing operator-known limitations that don't yet have a fix. Each entry cross-links to its `docs/AUDIT.md` row so the operator can navigate from a known issue to the audit doc and back. Covers AUDIT-040 (single-binary Docker port binding), AUDIT-118 (SQLite test backend vs production Postgres), AUDIT-093 (embedded Postgres random password), AUDIT-105 (default `ADMIN_USERNAME=admin` warning), and AUDIT-029 (orphan tables grow between cleanup ticks).
 
 ### Changed
