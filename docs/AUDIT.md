@@ -1235,7 +1235,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-088 | `time.Sleep` in retry loops without jitter | 0.10.341 | 84b13e2 | Added a `crypto/rand`-backed `jitter(d)` (returns `d + [0,d)`) in `internal/relay` and `internal/irc`; applied to relay `sendBatch` retry backoffs (both error + non-2xx paths) and the IRC bot restart delay, so a shared recovery doesn't retry in lock-step. `TestJitter_BoundsAndSpread_AUDIT088` (relay unit) + `TestBackoffJitter_CallSites_AUDIT088` (shell pin). `runCollectorHandler`'s 100 ms idle poll left unchanged (not a server retry). |
 | AUDIT-087 | `cmd/probe/main.go` pollDevice no ctx | 0.10.342 | e25ee81 | `go p.pollDevice(dev)` was untracked + context-less, so polls ran unbounded after `Stop()`. `pollDevice` now takes a `context.Context` and checkpoints between stages; the probe holds `ctx`/`cancel`/`pollWG`, tracks each poll, and `cleanup()` cancels then drains in-flight polls bounded to 5s (before stopping the relay client). `cmd/probe` unit tests (cancel+drain + 5s ceiling) + `TestProbePollDeviceContext_AUDIT087` shell pin. Deferred: ctx into gosnmp ops (lib uses its own timeout). |
 | AUDIT-103 | Dockerfile installs unused `gcc musl-dev` | 0.10.343 | 8c24348 | Builder built with `CGO_ENABLED=0`, so the `apk add gcc musl-dev` C toolchain was never used — removed it (kept a comment). `TestDockerfile_NoUnusedCToolchain_AUDIT103` pins the packages stay out while `CGO_ENABLED=0` remains. |
-| AUDIT-102 | `go build` lacks `-trimpath -buildvcs=false` | 0.10.344 | (pending) | Added `-trimpath -buildvcs=false` to all four Dockerfile build lines and the Makefile `build` target (`GOFLAGS_REPRO`), so binaries are byte-reproducible across hosts. `TestReproducibleBuildFlags_AUDIT102` pins both paths. Deferred: SOURCE_DATE_EPOCH + ldflags version injection (`ServerVersion` is a const, not ldflags-injectable). |
+| AUDIT-102 | `go build` lacks `-trimpath -buildvcs=false` | 0.10.344 | 3923924 | Added `-trimpath -buildvcs=false` to all four Dockerfile build lines and the Makefile `build` target (`GOFLAGS_REPRO`), so binaries are byte-reproducible across hosts. `TestReproducibleBuildFlags_AUDIT102` pins both paths. Deferred: SOURCE_DATE_EPOCH + ldflags version injection (`ServerVersion` is a const, not ldflags-injectable). |
+| AUDIT-104 | No `make install` / native-binary path | 0.10.345 | (pending) | Added `make install`/`uninstall` (PREFIX/DESTDIR-aware) + `make tarball` (`dist/firewall-mon-$(VERSION).tar.gz`). Also fixed a latent bug: `build` named binaries after their dirs (`api`/`poller`/…) instead of the canonical `fwmon-*` the install/systemd paths expect — now emits `fwmon-*`. Validated via staged install + tarball. `TestMakefileNativeInstall_AUDIT104` pins targets + names + PREFIX/DESTDIR. |
 
 ---
 
@@ -1360,7 +1361,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-088 — jittered relay retry + IRC reconnect backoffs (crypto/rand) — v0.10.341 — 84b13e2 — opencode
 2026-06-06 — AUDIT-087 — probe pollDevice ctx + tracked goroutines + bounded drain on Stop — v0.10.342 — e25ee81 — opencode
 2026-06-06 — AUDIT-103 — drop unused gcc/musl-dev from Dockerfile builder (CGO_ENABLED=0) — v0.10.343 — 8c24348 — opencode
-2026-06-06 — AUDIT-102 — reproducible builds: -trimpath -buildvcs=false (Dockerfile + Makefile) — v0.10.344 — (pending) — opencode
+2026-06-06 — AUDIT-102 — reproducible builds: -trimpath -buildvcs=false (Dockerfile + Makefile) — v0.10.344 — 3923924 — opencode
+2026-06-06 — AUDIT-104 — make install/uninstall/tarball + canonical fwmon-* build names — v0.10.345 — (pending) — opencode
 ```
 
 ---
