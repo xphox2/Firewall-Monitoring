@@ -1,3 +1,11 @@
+# AUDIT-097: this file ships nginx-proxy-manager (a GUI proxy) for operators
+# who prefer point-and-click TLS. It carries NO hardened proxy config of its
+# own — TLS policy, HSTS, gzip, WebSocket upgrade and real-client-IP are all
+# configured later through the NPM web UI (port 81), and it's easy to forget
+# the WebSocket-upgrade toggle (needed by /admin/connections and /admin/irc)
+# or HSTS. For a config-as-code alternative, a complete hardened plain-nginx
+# config is shipped at docs/nginx.conf; the commented `nginx` service below
+# mounts it. Pick ONE of the two services.
 version: '3.8'
 
 services:
@@ -14,6 +22,25 @@ services:
       - ./letsencrypt:/etc/letsencrypt
     environment:
       - DB_SQLITE_FILE=/data/database.sqlite
+
+  # ---- AUDIT-097: config-as-code alternative to nginx-proxy-manager. ----
+  # Uncomment this service (and comment out nginx-proxy-manager above) to run
+  # plain nginx with the hardened, version-controlled config in docs/nginx.conf
+  # (TLS termination, HSTS, gzip, WebSocket upgrade for the live pages, real
+  # client IP). Put your certs under ./letsencrypt and edit the hostname in
+  # docs/nginx.conf first. This assumes the fwmon container is named
+  # `firewall-mon` and reachable on the same compose network.
+  # nginx:
+  #   image: nginx:stable
+  #   container_name: firewall-mon-proxy
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./docs/nginx.conf:/etc/nginx/conf.d/firewall-mon.conf:ro
+  #     - ./letsencrypt:/etc/letsencrypt:ro
+  #     - ./data/certbot-www:/var/www/certbot:ro
 
 volumes:
   data:
