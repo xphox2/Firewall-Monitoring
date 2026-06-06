@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.353"
+const ServerVersion = "0.10.354"
 
 func main() {
 	cfg := config.Load()
@@ -351,6 +351,22 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#161b22"/><path d="M8 10h16M8 16h16M8 22h12" stroke="#58a6ff" stroke-width="2.5" stroke-linecap="round"/><circle cx="25" cy="22" r="3" fill="#3fb950"/></svg>`
 		c.Data(http.StatusOK, "image/svg+xml", []byte(svg))
 	})
+
+	// AUDIT-112: RFC 9116 security.txt for vulnerability-disclosure programs.
+	// Served at both the canonical /.well-known/ path and the legacy root path.
+	// The Expires field is required by RFC 9116 and is generated 6 months out
+	// at request time so it never goes stale (the spec recommends < 1 year).
+	securityTxt := func(c *gin.Context) {
+		expires := time.Now().UTC().AddDate(0, 6, 0).Format(time.RFC3339)
+		body := "# Firewall-Mon security contact (RFC 9116)\n" +
+			"Contact: https://github.com/xphox2/Firewall-Monitoring/security/advisories/new\n" +
+			"Policy: https://github.com/xphox2/Firewall-Monitoring/blob/master/SECURITY.md\n" +
+			"Preferred-Languages: en\n" +
+			"Expires: " + expires + "\n"
+		c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(body))
+	}
+	router.GET("/.well-known/security.txt", securityTxt)
+	router.GET("/security.txt", securityTxt)
 
 	router.GET("/admin/login", func(c *gin.Context) {
 		middleware.RenderHTML(c, http.StatusOK, "login.html", nil)
