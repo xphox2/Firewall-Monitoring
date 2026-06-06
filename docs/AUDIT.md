@@ -1298,6 +1298,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-113 | No "How to add a vendor" doc | 0.10.358 | 1ec0457 | Covered by `docs/custom-vendor.md` (AUDIT-170), which documents both the SNMP profile side (`RegisterVendor`/`validVendors`) and the `internal/configdiff` normalizer (Step 5). `TestVendorDocCoversBothSides_AUDIT113` pins both-sided coverage so it can't be trimmed away. |
 | AUDIT-111 | No RUNBOOK.md / OPERATIONS.md | 0.10.359 | 7c2d000 | Added `docs/OPERATIONS.md` (first-24h, failure-mode table, debug logging, admin reset, JWT rotation, backup/restore, upgrade, scale, DR), grounded in real mechanisms (verified vs code — e.g. admin reset = `DELETE FROM admins`+restart since `InitAdmin` is create-when-absent; no `GIN_MODE` toggle). README-linked. `TestOperationsRunbook_AUDIT111` pins the sections + link. |
 | AUDIT-108 | No architecture diagram | 0.10.360 | 40c68df | Added `docs/architecture.md`: Mermaid component flowchart + 3 sequence diagrams (probe registration, poll cycle, alert firing) + package map. README-linked. `TestArchitectureDiagram_AUDIT108` pins the Mermaid blocks, ≥3 sequence diagrams, README link. |
+| AUDIT-135 | No request-ID middleware | 0.10.361 | (pending) | New `RequestID` middleware: reuses a safe inbound `X-Request-ID` (`^[A-Za-z0-9._-]{1,64}$`, log-forge guarded) or mints a 128-bit hex one, stores it on the context + echoes the `X-Request-ID` response header; `RequestLogger` logs `req=<id>`. Unit tests cover generate/reuse/reject-hostile. Full slog migration is AUDIT-076 (open). |
 
 ---
 
@@ -1439,6 +1440,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-113 — how-to-add-a-vendor covered by docs/custom-vendor.md (both-sided test) — v0.10.358 — 1ec0457 — opencode
 2026-06-06 — AUDIT-111 — docs/OPERATIONS.md runbook (grounded in real mechanisms) — v0.10.359 — 7c2d000 — opencode
 2026-06-06 — AUDIT-108 — docs/architecture.md Mermaid component + sequence diagrams — v0.10.360 — 40c68df — opencode
+2026-06-06 — AUDIT-135 — RequestID middleware (X-Request-ID, log correlation, log-forge guard) — v0.10.361 — (pending) — opencode
 ```
 
 ---

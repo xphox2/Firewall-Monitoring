@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -507,8 +508,12 @@ func RequestLogger() gin.HandlerFunc {
 		status := c.Writer.Status()
 
 		if status >= 400 {
-			log.Printf("[%s] %s %s %d %v",
+			// AUDIT-135: include the per-request ID so a logged error can be
+			// correlated with the X-Request-ID the client/proxy saw.
+			reqID, _ := c.Get(RequestIDKey)
+			log.Printf("[%s] req=%v %s %s %d %v",
 				time.Now().Format("2006-01-02 15:04:05"),
+				reqID,
 				method,
 				path,
 				status,
@@ -516,4 +521,40 @@ func RequestLogger() gin.HandlerFunc {
 			)
 		}
 	}
+}
+
+// RequestIDKey is the gin context key under which the per-request ID is stored.
+const RequestIDKey = "request_id"
+
+// requestIDPattern bounds a trusted inbound X-Request-ID to a safe charset and
+// length, so a hostile client can't inject newlines / huge values into the
+// logs via the header (log forging).
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// RequestID assigns a stable ID to every request (AUDIT-135). It reuses a
+// safe-looking inbound X-Request-ID (so a fronting proxy's trace ID is kept)
+// or mints a fresh 128-bit hex one, stores it on the context for downstream
+// handlers/loggers, and echoes it in the X-Request-ID response header so a
+// single click can be traced end-to-end through the logs.
+func RequestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.GetHeader("X-Request-ID")
+		if !requestIDPattern.MatchString(id) {
+			id = newRequestID()
+		}
+		c.Set(RequestIDKey, id)
+		c.Writer.Header().Set("X-Request-ID", id)
+		c.Next()
+	}
+}
+
+// newRequestID returns a random 128-bit hex request ID.
+func newRequestID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failure is effectively impossible; fall back to a
+		// constant so logging still has something to group on.
+		return "req-unknown"
+	}
+	return hex.EncodeToString(b[:])
 }

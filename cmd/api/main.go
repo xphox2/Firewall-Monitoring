@@ -32,7 +32,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.360"
+const ServerVersion = "0.10.361"
 
 func main() {
 	cfg := config.Load()
@@ -330,6 +330,7 @@ func main() {
 func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handler, authManager *auth.AuthManager) {
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.CORS(cfg))
+	router.Use(middleware.RequestID()) // AUDIT-135: before RequestLogger so the ID is logged
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body
 	// Rate limiter applied per-group below instead of globally so authenticated
