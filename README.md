@@ -198,3 +198,4 @@ MIT — see [LICENSE](LICENSE). Third-party components and their licenses are in
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, QA requirements, PR workflow.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
 - [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.
+- [docs/custom-vendor.md](docs/custom-vendor.md) — step-by-step tutorial for adding a new SNMP vendor profile.

@@ -1241,7 +1241,8 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-162 | No README test instructions | 0.10.347 | b1d394b | Added README **Test** (`go test ./...`, `make qa`, `make test-race`) + **Install Natively** (`make install`/`tarball`) subsections. `TestReadmeHasTestInstructions_AUDIT162` pins `go test ./...` stays documented. |
 | AUDIT-109 | README feature list stale | 0.10.348 | 3056a84 | Rewrote the Features list to cover reports, sites + connection map, alert policies, maintenance windows, IRC bot, sFlow/syslog/ICMP, multi-tenant probes, multi-vendor SNMP. `TestReadmeFeatureListCurrent_AUDIT109` requires a keyword per subsystem in the `## Features` section. |
 | AUDIT-107 | Documented env vars are 6 lines | 0.10.349 | dc1b01d | Added a README env-var defaults table (verified against `internal/config`, not guessed) + a cross-link naming `config.env.example` as authoritative; covers ENCRYPTION_KEY / RETENTION_* / PROBE_* / REPORT_* / DB_MAX_OPEN_CONNS / SERVER_*_TIMEOUT. `TestReadmeEnvVarDocs_AUDIT107` pins the cross-link + families. |
-| AUDIT-168 | No browser support baseline documented | 0.10.350 | (pending) | Added a README **Browser Support** section: Chrome/Edge 105+, Safari 15.4+, Firefox 121+ (the `:has()`/ES2020 floor), no legacy support. `TestReadmeBrowserBaseline_AUDIT168` pins the section + the three engines. |
+| AUDIT-168 | No browser support baseline documented | 0.10.350 | 4f30ff2 | Added a README **Browser Support** section: Chrome/Edge 105+, Safari 15.4+, Firefox 121+ (the `:has()`/ES2020 floor), no legacy support. `TestReadmeBrowserBaseline_AUDIT168` pins the section + the three engines. |
+| AUDIT-170 | No example of a custom vendor profile | 0.10.351 | (pending) | Added `docs/custom-vendor.md`: end-to-end tutorial (full `VendorProfile` interface, copy-pasteable shallow profile, `init()`/`RegisterVendor`, the `validVendors` edit, optional `configdiff` normalizer, checklist). Code verified against the real API (`gosnmp.ToBigInt`, real float64 fields). README-linked. `TestCustomVendorDoc_AUDIT170` pins the doc + extension points + README link. |
 
 ---
 
@@ -1372,7 +1373,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-162 — README Test + native-install instructions (go test ./...) — v0.10.347 — b1d394b — opencode
 2026-06-06 — AUDIT-109 — refresh stale README feature list — v0.10.348 — 3056a84 — opencode
 2026-06-06 — AUDIT-107 — README env-var defaults table + config.env.example cross-link — v0.10.349 — dc1b01d — opencode
-2026-06-06 — AUDIT-168 — document browser support baseline (Chrome 105+/Safari 15.4+/Firefox 121+) — v0.10.350 — (pending) — opencode
+2026-06-06 — AUDIT-168 — document browser support baseline (Chrome 105+/Safari 15.4+/Firefox 121+) — v0.10.350 — 4f30ff2 — opencode
+2026-06-06 — AUDIT-170 — docs/custom-vendor.md tutorial (add an SNMP vendor profile) — v0.10.351 — (pending) — opencode
 ```
 
 ---
