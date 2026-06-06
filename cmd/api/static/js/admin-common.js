@@ -235,12 +235,23 @@
             'X-CSRF-Token': getCsrfToken(),
             'Content-Type': 'application/json'
         }, options.headers || {});
-        return fetch(url, {
-            method: options.method || 'GET',
-            headers: headers,
-            body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined,
-            credentials: 'same-origin'
-        }).then(function(res) {
+        // AUDIT-130: retry transient gateway errors (502/503/504) with
+        // exponential backoff + jitter, up to 3 attempts total, before
+        // surfacing them as an error toast. A brief proxy/DB hiccup or a
+        // rolling restart no longer shows the operator a hard failure.
+        var maxAttempts = 3;
+        function doFetch(attempt) {
+            return fetch(url, {
+                method: options.method || 'GET',
+                headers: headers,
+                body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined,
+                credentials: 'same-origin'
+            }).then(function(res) {
+            if ((res.status === 502 || res.status === 503 || res.status === 504) && attempt < maxAttempts) {
+                var delay = Math.pow(2, attempt - 1) * 200 + Math.floor(Math.random() * 150);
+                return new Promise(function(resolve) { setTimeout(resolve, delay); })
+                    .then(function() { return doFetch(attempt + 1); });
+            }
             if (res.status === 401 || res.status === 302) {
                 // AUDIT-058: redirect the TOP frame, not the current one. A 401
                 // inside the Reports preview iframe would otherwise render the
@@ -262,7 +273,9 @@
                 return res.json().then(function(err) { throw new Error(err.error || 'Request failed'); });
             }
             return res.json();
-        });
+            });
+        }
+        return doFetch(1);
     }
 
     /* ------------------------------------------------------------------
