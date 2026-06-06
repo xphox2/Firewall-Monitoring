@@ -10,11 +10,11 @@ import "testing"
 // run `go test -fuzz=FuzzParseSFlowDatagram ./internal/sflow` for real fuzzing.
 func FuzzParseSFlowDatagram(f *testing.F) {
 	f.Add([]byte{})
-	f.Add([]byte{0, 0, 0, 5})                 // version 5, nothing else
-	f.Add(make([]byte, 28))                   // zeroed minimal header
-	f.Add([]byte{0, 0, 0, 5, 0, 0, 0, 1})     // version + ip-version, truncated
+	f.Add([]byte{0, 0, 0, 5})             // version 5, nothing else
+	f.Add(make([]byte, 28))               // zeroed minimal header
+	f.Add([]byte{0, 0, 0, 5, 0, 0, 0, 1}) // version + ip-version, truncated
 	f.Add(append([]byte{0, 0, 0, 5, 0, 0, 0, 1}, make([]byte, 200)...))
-	f.Add([]byte{255, 255, 255, 255})         // garbage version
+	f.Add([]byte{255, 255, 255, 255}) // garbage version
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Must not panic on any input. The harness fails the test if it does.
