@@ -1229,6 +1229,7 @@ By leverage × risk × fit with existing architecture:
 | AUDIT-085 | Probe auth key rotation not transactional | 0.10.325 | ccd602f | `RegenerateProbeKey` deleted the old key's `SystemSetting` first and only logged a warning if the new setting failed to write — a mid-sequence failure could rotate the key but leave no usable registration setting, locking the probe out. Now generates the new key before any write and wraps update-probe → delete-old → create-new in one `gorm.Transaction` (rollback keeps the working key). `TestRegenerateProbeKey_Atomic_AUDIT085` in `internal/api/handlers/` pins the success contract. |
 | AUDIT-092 | `.dockerignore` missing many entries | 0.10.336 | (pending) | Added `cookies.txt`, `interfaces.json`, `IRC-FORMAT.txt`, `node_modules/`, `tasks/`, `.claude/`, `lessons.md`, `*.csv` to the build-context ignore list. Nothing leaks today (the Dockerfile COPYs specific paths), but a future `COPY . .`-style broadening would otherwise ship these working-tree artifacts. `TestDockerignore_CoversWorkingTreeArtifacts_AUDIT092` pins each required entry. |
 | AUDIT-095 | `entrypoint.sh` sets `logging_collector = off` | 0.10.337 | (pending) | Documentation-only. The audit's "crash forensics lost" premise is half-true: PG is started with `pg_ctl -l "$PGDATA/postgresql.log"`, so stderr is retained on the bind-mounted volume even with the collector off. Added an in-config rationale comment (where logs live + the `log_destination = stderr` alternative). No runtime change — entrypoint runs the live prod DB. `TestEntrypoint_LoggingRationale_AUDIT095` pins the rationale + the `pg_ctl -l` redirect together. |
+| AUDIT-099 | `deploy.sh` overwrites live config | 0.10.338 | (pending) | The remote-install heredoc unconditionally `cp`'d `config.env.example` over `/etc/firewall-mon/config.env` on every deploy, wiping the operator's real secrets/thresholds back to placeholders. Now guarded by `if [ ! -f /etc/firewall-mon/config.env ]` — the example only seeds a first install; later deploys preserve the existing file (example still staged at `/tmp/config.env.example`). `TestDeploy_PreservesLiveConfig_AUDIT099` pins the guard. |
 
 ---
 
@@ -1347,6 +1348,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-167 — verification sweep: already resolved (see resolved-table note) — (verified) — 2026-06-06 — opencode
 2026-06-06 — AUDIT-092 — add missing .dockerignore entries (working-tree artifacts) — v0.10.336 — (pending) — opencode
 2026-06-06 — AUDIT-095 — document logging_collector=off rationale in entrypoint.sh (logs retained in postgresql.log) — v0.10.337 — (pending) — opencode
+2026-06-06 — AUDIT-099 — guard deploy.sh config.env copy with [ ! -f ] (preserve live config) — v0.10.338 — (pending) — opencode
 ```
 
 ---

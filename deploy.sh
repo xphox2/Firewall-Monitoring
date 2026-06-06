@@ -106,7 +106,21 @@ deploy_remote() {
     log_info "Installing files on remote..."
     ssh ${SSH_OPTS} ${USER}@${HOST} << 'EOF'
         sudo cp /tmp/web/* /opt/firewall-mon/ -r
-        sudo cp /tmp/config.env.example /etc/firewall-mon/config.env
+        # AUDIT-099: never clobber the operator's live config. The pre-fix
+        # deploy unconditionally copied config.env.example over
+        # /etc/firewall-mon/config.env on EVERY deploy, wiping the
+        # operator's real SNMP community, JWT secret, SMTP creds, etc. and
+        # silently reverting the service to placeholder defaults on restart.
+        # Only seed the example config when no config exists yet (first
+        # install); on every subsequent deploy the existing file is kept.
+        # The example is still staged at /tmp/config.env.example for manual
+        # diffing of new keys.
+        if [ ! -f /etc/firewall-mon/config.env ]; then
+            sudo cp /tmp/config.env.example /etc/firewall-mon/config.env
+            echo "Seeded /etc/firewall-mon/config.env from the example (first install)"
+        else
+            echo "Preserving existing /etc/firewall-mon/config.env (AUDIT-099); example at /tmp/config.env.example"
+        fi
         sudo chmod +x /opt/firewall-mon/fwmon-*
         sudo cp /etc/systemd/system/fwmon-*.service /tmp/ 2>/dev/null || true
 EOF
