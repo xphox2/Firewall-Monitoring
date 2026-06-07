@@ -1341,7 +1341,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-032 | `c.Request.Context()` never passed to DB calls | 0.10.377 | 887834c | Added `(*Database).WithContext(ctx)` shallow-copy (gorm reusable session; **zero changes to the ~175 methods**) + `Handler.reqDB(c)`; swept **116 browser-facing handlers / 13 files** to `db := h.reqDB(c)` so a client disconnect cancels the query + frees the pooled conn (the dashboard pool-exhaustion fix). Boundary: probe ingestion (`handlers_data.go`), batchers, audit mw, daemons stay on durable background ctx. `TestWithContext_AUDIT032` (cancellation/reuse) + `TestRequestContextBoundary_AUDIT032` (boundary guard). 2nd large refactor. |
 | AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | 887834c | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
 | AUDIT-044 | AutoMigrate on every startup, no schema-version table | 0.10.378 | 74d7513 | In-repo versioned migration runner (`migrations.go`): `schema_migrations` table + append-only registry + `RunMigrations()` (logs each, blocking advisory lock on a pinned `*sql.Conn`, distinct key). **v1 baseline reuses the proven AutoMigrate+shims** → DDL vs prod unchanged; only bookkeeping is new. Added `migrate`/`migrate-status` subcommands (+ `database.Connect()`); daemons still auto-apply on startup (hybrid). **Removed** the dead/destructive IRC drop-and-recreate heuristic. `migrations_audit044_test.go` (runner, sqlite) + shell static guard. Verified on sqlite; prod-PG safety = identical baseline DDL. 3rd large refactor. |
-| AUDIT-118 | Tests run on SQLite; prod is Postgres | 0.10.379 | (pending) | Build-tagged (`//go:build integration`) PG suite `integration_pg_test.go` via `TEST_PG_DSN` (skips when unset; default `go test ./...` never compiles it). Resets a `test`-named schema (safety rail), runs `RunMigrations`, asserts the **TimeBucket round-trip** (v0.10.238 minute-bucket guard: `to_char` output == expected, `time.Parse`s, not the unparseable sentinel), partitions/autovacuum no-error, advisory lock, CRUD. New CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. No new deps. Runs in CI (no PG locally); now unblocks verifying 028/040. `TestPostgresIntegrationWired_AUDIT118` guards the wiring. |
+| AUDIT-118 | Tests run on SQLite; prod is Postgres | 0.10.379 | d39e80f | Build-tagged (`//go:build integration`) PG suite `integration_pg_test.go` via `TEST_PG_DSN` (skips when unset; default `go test ./...` never compiles it). Resets a `test`-named schema (safety rail), runs `RunMigrations`, asserts the **TimeBucket round-trip** (v0.10.238 minute-bucket guard: `to_char` output == expected, `time.Parse`s, not the unparseable sentinel), partitions/autovacuum no-error, advisory lock, CRUD. New CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. No new deps. Runs in CI (no PG locally); now unblocks verifying 028/040. `TestPostgresIntegrationWired_AUDIT118` guards the wiring. |
 
 ---
 
@@ -1502,7 +1502,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-032 — request-context propagation to 116 browser-facing handlers (WithContext/reqDB; ingestion stays background) — v0.10.377 — 887834c — opencode
 2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — 887834c — opencode
 2026-06-06 — AUDIT-044 — in-repo versioned migration runner (schema_migrations + migrate subcommands; baseline reuses AutoMigrate; IRC heuristic removed) — v0.10.378 — 74d7513 — opencode
-2026-06-06 — AUDIT-118 — Postgres integration test suite (TEST_PG_DSN, build-tagged) + CI postgres:16 job + make test-integration — v0.10.379 — (pending) — opencode
+2026-06-06 — AUDIT-118 — Postgres integration test suite (TEST_PG_DSN, build-tagged) + CI postgres:16 job + make test-integration — v0.10.379 — d39e80f — opencode
 ```
 
 ---
@@ -2858,7 +2858,7 @@ dependencies. Default suite untouched.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-118 | 0.10.379 | (pending) | Build-tagged Postgres integration suite (`TEST_PG_DSN`) + CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. |
+| AUDIT-118 | 0.10.379 | d39e80f | Build-tagged Postgres integration suite (`TEST_PG_DSN`) + CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. |
 
 **Design / decisions:**
 
