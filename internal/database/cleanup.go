@@ -144,6 +144,15 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (bool
 // parsePartitionUpperBound pulls the exclusive upper bound date out of a
 // monthly RANGE partition's bound expression, e.g.
 // "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')" → 2026-02-01.
+//
+// Even though EnsurePartitions creates the bounds with date-only literals,
+// Postgres renders the bound of a timestamp/timestamptz-typed partition key
+// WITH a time component (and possibly a timezone), e.g.
+// "... TO ('2026-02-01 00:00:00')" or "... TO ('2026-02-01 00:00:00+00')".
+// Parsing only "2006-01-02" therefore failed on every real partition, so
+// dropPartitionsOlderThan treated them all as unparseable and never dropped
+// anything. Accept the date-only, timestamp, and timestamptz renderings, and
+// fall back to the leading YYYY-MM-DD date (which is all a monthly bound needs).
 func parsePartitionUpperBound(bound string) (time.Time, bool) {
 	const marker = "TO ('"
 	i := strings.Index(bound, marker)
@@ -155,8 +164,25 @@ func parsePartitionUpperBound(bound string) (time.Time, bool) {
 	if j < 0 {
 		return time.Time{}, false
 	}
-	t, err := time.Parse("2006-01-02", rest[:j])
-	return t, err == nil
+	val := rest[:j]
+	for _, layout := range []string{
+		"2006-01-02",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04:05-07",
+		"2006-01-02 15:04:05-07:00",
+	} {
+		if t, err := time.Parse(layout, val); err == nil {
+			return t, true
+		}
+	}
+	// Fall back to the leading date portion (monthly bounds are first-of-month
+	// midnight, so the date alone is sufficient and unambiguous).
+	if len(val) >= 10 {
+		if t, err := time.Parse("2006-01-02", val[:10]); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
