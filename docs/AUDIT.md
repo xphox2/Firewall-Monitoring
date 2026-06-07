@@ -4,11 +4,11 @@
 > merges the original 170-finding audit, the live resolution status, and the
 > per-session working notes (it absorbed the former `docs/HANDOFF.md`).
 
-## 📊 Status at a glance — updated 2026-06-06
+## 📊 Status at a glance — updated 2026-06-07
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.381** |
+| Server version | **v0.10.383** |
 | Bug findings resolved | **156 / 170  (92%)** |
 | CRITICAL still open | **0** ✅ |
 | Open bug findings | **14** |
@@ -34,6 +34,7 @@
 - ✅ Postgres integration test suite + CI `postgres:16` job (118) — real-PG coverage; unblocks 028/040 (Session 33)
 - ✅ Monthly range-partitioning for the 6 high-volume tables (028 + 146) — fourth large refactor (Session 34)
 - ✅ API single-instance guard (040) — **fifth and final large refactor; all 5 large refactors are now done** (Session 35)
+- ➕ Cross-repo / PR triage (Session 36, v0.10.382–383) — **not an audit-finding resolution** (count unchanged): triaged 7 stale PRs from another agent (closed 5, re-implemented 1, re-did 3 docs); added the probe↔server `schema_version` handshake (server **+** collector) and 3 grounded operator docs
 - ⏳ Remaining 14: observability (076 slog / 150 OTel), the rest of test infra (117/120/122/123/140/142), and smaller code items (073 transport-type move / 094 entrypoint supervision) — all fully-local-verifiable
 
 ## 🧭 How to read this file
@@ -60,6 +61,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 36** (v0.10.382–383) | Cross-repo — PR triage + `schema_version` handshake | triaged 7 stale PRs opened by another agent (all CONFLICTING, branched from v0.10.362, with colliding fake AUDIT IDs): closed #9/#10 (superseded by master's BackupQuality + 042 batch-dedup), closed #11 (single-tenant — multi-tenant declined). Re-implemented #8 cleanly as the probe↔server **`schema_version` handshake** (`relay.SchemaVersionMin/Max`, register sends it, server 426s out-of-range + `X-Probe-Schema-Version-Supported` header; `MIGRATING.md`) and shipped the **collector half** (`Firewall-Collector` v1.2.108). Re-did the 3 doc PRs #12/#13/#14 (`DATA-RETENTION`/`SUPPORT-MATRIX`/`CERT-ROTATION`) **grounded in real config/routes** — the drafts were full of fictional env vars/endpoints. **Not an audit-finding resolution** — count stays 156/170 |
 | **Session 35** (v0.10.381) | Large refactor — API singleton guard | session-scoped Postgres advisory lock (pinned `*sql.Conn`) makes `cmd/api` a singleton: a 2nd instance refuses to start by default (`ALLOW_MULTI_API` → follower mode, IRC bots gated off), released on graceful shutdown — fixes the 2-IRC-bots / 2×-lockout-rate-limit / divergent-uptime footgun (040). **Completes all 5 large refactors** |
 | **Session 34** (v0.10.380) | Large refactor — table partitioning | monthly range-partitioning for the 6 high-volume time-series tables: a v2 migration converts them to `PARTITION BY RANGE(timestamp)` parents when empty (fresh installs), populated prod is skipped + documented (`docs/partition-migration.md`); `EnsurePartitions` covers all 6; cleanup drops whole old partitions. PG-only, verified by the 118 CI suite (028 + 146 — the partition subsystem was dormant). 4th of the 5 large refactors |
 | **Session 33** (v0.10.379) | Test infra — Postgres CI matrix | build-tagged (`//go:build integration`) Postgres suite via `TEST_PG_DSN` + a CI `postgres:16` service job + `make test-integration`; asserts the PG-only paths SQLite can't (the `to_char` TimeBucket round-trip / v0.10.238 guard, migration advisory lock, partitions/autovacuum). No new deps; runs in CI; unblocks verifying 028/040 (118) |
@@ -2995,6 +2997,47 @@ verified by the AUDIT-118 CI suite.
   items (073 transport-type move ~120-file churn; 094 entrypoint supervision).
 - **Recommended next:** AUDIT-076 (slog) — biggest remaining single lever, fully
   local — or knock out the test-infra `t.Parallel`/`Short`/coverage items.
+
+## Session 36 completion log (2026-06-07) — cross-repo: PR triage + schema_version handshake
+
+**0 audits shipped** — resolved count **unchanged at 156 / 170 (92%)**. This
+session was **not** an audit-finding resolution: it triaged 7 stale PRs opened
+by another agent and shipped two repos' worth of cross-repo plumbing + docs.
+Both repos' full suites green; no force-push.
+
+| Change | Version | Code commit | What shipped |
+|---|---|---|---|
+| schema_version handshake (server) | 0.10.382 | 186801a | `relay.SchemaVersionMin/Max` (1-1) + `schema_version` on the register DTOs; `RegisterProbe` validates → **HTTP 426** + `X-Probe-Schema-Version-Supported` header for out-of-range; `MIGRATING.md`; 3 handler tests + shell guard. |
+| Operator docs (grounded) | 0.10.383 | cd99c79 | `docs/DATA-RETENTION.md` / `docs/SUPPORT-MATRIX.md` / `docs/CERT-ROTATION.md`, rewritten against real config/routes. |
+| schema_version handshake (collector) | Collector v1.2.108 | 20b7322 | mirror consts + advertise `SchemaVersionMax` on register + explicit 426 handling. (Separate repo: `Firewall-Collector`.) |
+
+**PR triage outcome (7 PRs, all CONFLICTING / branched from v0.10.362 / colliding fake AUDIT IDs):**
+
+- **#9, #10 — closed (superseded):** master already accepts collector-set
+  `BackupQuality` (`handlers_data.go`) and already does `X-Probe-Batch-ID`
+  dedup (AUDIT-042 `batchDedupCheck`/`ProcessedBatch`).
+- **#11 — closed (declined):** per-tenant authz; the deployment is
+  **single-tenant** and multi-tenant access is not being added. No `tenant_id`.
+- **#8 — re-implemented on master, then closed:** the schema_version handshake
+  is genuinely worth it for the independently-deployed probe/server pair. The
+  PR mislabeled itself "AUDIT-065" (an unrelated, already-resolved frontend
+  finding) — shipped here with **no colliding ID** and a real version.
+- **#12/#13/#14 — completed on master, then closed:** the doc drafts referenced
+  fictional env vars/endpoints (`PROBE_*_RETENTION_DAYS`, `PROBE_DATABASE_URL`,
+  `/api/probes/:id/export`, `SSL_CERT_FILE`, a SIGHUP reload, `tenant_id`).
+  Rewritten grounded in `config.go`/routes; multi-tenant content dropped.
+
+**Why no audit IDs were assigned:** none of this maps to one of the 170
+findings — the other agent's PRs reused IDs that already belong to resolved
+findings in this repo (065/066/068/074 are frontend/doc items already done).
+Assigning them here would corrupt the resolved-table, so this work lives only
+in the session log and the Recent-activity row.
+
+**For the next session:** the cross-repo `schema_version` contract now lives in
+**both** repos' `internal/relay/relay.go` as `SchemaVersionMin/Max` consts — a
+future wire-format bump must move `SchemaVersionMax` in **both** plus add a row
+to `MIGRATING.md` + `docs/SUPPORT-MATRIX.md`. Audit work proper still has 14
+open findings (076 slog is the recommended next).
 
 ## Closing
 
