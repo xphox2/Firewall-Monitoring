@@ -1344,8 +1344,8 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | 887834c | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
 | AUDIT-044 | AutoMigrate on every startup, no schema-version table | 0.10.378 | 74d7513 | In-repo versioned migration runner (`migrations.go`): `schema_migrations` table + append-only registry + `RunMigrations()` (logs each, blocking advisory lock on a pinned `*sql.Conn`, distinct key). **v1 baseline reuses the proven AutoMigrate+shims** → DDL vs prod unchanged; only bookkeeping is new. Added `migrate`/`migrate-status` subcommands (+ `database.Connect()`); daemons still auto-apply on startup (hybrid). **Removed** the dead/destructive IRC drop-and-recreate heuristic. `migrations_audit044_test.go` (runner, sqlite) + shell static guard. Verified on sqlite; prod-PG safety = identical baseline DDL. 3rd large refactor. |
 | AUDIT-118 | Tests run on SQLite; prod is Postgres | 0.10.379 | d39e80f | Build-tagged (`//go:build integration`) PG suite `integration_pg_test.go` via `TEST_PG_DSN` (skips when unset; default `go test ./...` never compiles it). Resets a `test`-named schema (safety rail), runs `RunMigrations`, asserts the **TimeBucket round-trip** (v0.10.238 minute-bucket guard: `to_char` output == expected, `time.Parse`s, not the unparseable sentinel), partitions/autovacuum no-error, advisory lock, CRUD. New CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. No new deps. Runs in CI (no PG locally); now unblocks verifying 028/040. `TestPostgresIntegrationWired_AUDIT118` guards the wiring. |
-| AUDIT-028 | interface_stats/system_status not partitioned | 0.10.380 | (pending) | v2 migration `partition_high_volume` converts the 6 high-volume tables to monthly `PARTITION BY RANGE(timestamp)` parents **when empty** (fresh installs), composite PK `(id,timestamp)`, models unchanged; populated prod → skip+warn→`docs/partition-migration.md` (operator runbook, new). `EnsurePartitions` covers all 6 (+interface_stats 3-col idx); cleanup `dropPartitionsOlderThan` drops whole old partitions (syslog_messages stays severity-DELETE). PG-only (sqlite no-op). Verified by the 118 CI suite (partitioned parents / create+route / EXPLAIN prunes / populated-skip / drop-old). |
-| AUDIT-146 | EnsurePartitions skips non-partitioned tables | 0.10.380 | (pending) | **Resolved with AUDIT-028** — the partition subsystem was dormant (no code created partitioned parents); the v2 migration now creates them for all 6 tables on fresh installs, and `docs/partition-migration.md` documents the populated-table conversion the warning referenced. |
+| AUDIT-028 | interface_stats/system_status not partitioned | 0.10.380 | 35f9fd1 | v2 migration `partition_high_volume` converts the 6 high-volume tables to monthly `PARTITION BY RANGE(timestamp)` parents **when empty** (fresh installs), composite PK `(id,timestamp)`, models unchanged; populated prod → skip+warn→`docs/partition-migration.md` (operator runbook, new). `EnsurePartitions` covers all 6 (+interface_stats 3-col idx); cleanup `dropPartitionsOlderThan` drops whole old partitions (syslog_messages stays severity-DELETE). PG-only (sqlite no-op). Verified by the 118 CI suite (partitioned parents / create+route / EXPLAIN prunes / populated-skip / drop-old). |
+| AUDIT-146 | EnsurePartitions skips non-partitioned tables | 0.10.380 | 35f9fd1 | **Resolved with AUDIT-028** — the partition subsystem was dormant (no code created partitioned parents); the v2 migration now creates them for all 6 tables on fresh installs, and `docs/partition-migration.md` documents the populated-table conversion the warning referenced. |
 
 ---
 
@@ -1507,8 +1507,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — 887834c — opencode
 2026-06-06 — AUDIT-044 — in-repo versioned migration runner (schema_migrations + migrate subcommands; baseline reuses AutoMigrate; IRC heuristic removed) — v0.10.378 — 74d7513 — opencode
 2026-06-06 — AUDIT-118 — Postgres integration test suite (TEST_PG_DSN, build-tagged) + CI postgres:16 job + make test-integration — v0.10.379 — d39e80f — opencode
-2026-06-06 — AUDIT-028 — monthly range-partition the 6 high-volume tables (empty-auto-convert v2 migration + EnsurePartitions + drop-old-partition cleanup + operator runbook) — v0.10.380 — (pending) — opencode
-2026-06-06 — AUDIT-146 — partition subsystem made live (parents now created on fresh installs); resolved with 028 — v0.10.380 — (pending) — opencode
+2026-06-06 — AUDIT-028 — monthly range-partition the 6 high-volume tables (empty-auto-convert v2 migration + EnsurePartitions + drop-old-partition cleanup + operator runbook) — v0.10.380 — 35f9fd1 — opencode
+2026-06-06 — AUDIT-146 — partition subsystem made live (parents now created on fresh installs); resolved with 028 — v0.10.380 — 35f9fd1 — opencode
 ```
 
 ---
@@ -2911,8 +2911,8 @@ PG behavior verified by the AUDIT-118 CI suite.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-028 | 0.10.380 | (pending) | v2 migration `partition_high_volume` (empty-only convert to monthly RANGE partitions), EnsurePartitions over all 6 tables, `dropPartitionsOlderThan` cleanup, `docs/partition-migration.md`. |
-| AUDIT-146 | 0.10.380 | (pending) | The partition subsystem (dormant — no code created parents) is now live: parents created on fresh installs; the operator runbook the warning referenced now exists. |
+| AUDIT-028 | 0.10.380 | 35f9fd1 | v2 migration `partition_high_volume` (empty-only convert to monthly RANGE partitions), EnsurePartitions over all 6 tables, `dropPartitionsOlderThan` cleanup, `docs/partition-migration.md`. |
+| AUDIT-146 | 0.10.380 | 35f9fd1 | The partition subsystem (dormant — no code created parents) is now live: parents created on fresh installs; the operator runbook the warning referenced now exists. |
 
 **Design / decisions:**
 
