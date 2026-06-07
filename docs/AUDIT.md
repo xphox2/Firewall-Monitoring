@@ -1328,7 +1328,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-164 | No FUNDING | 0.10.372 | a5026aa | **Accept/wontfix** — not soliciting donations, so no `FUNDING.yml` shipped (an empty one is clutter; inventing a sponsor account is wrong). Decision documented in CHANGELOG; adding `.github/FUNDING.yml` later is a one-liner GitHub auto-detects. No code/test change. |
 | AUDIT-077 | No Prometheus `/metrics` endpoint | 0.10.373 | 1bfd651 | New `internal/metrics`: `fwmon_http_request_duration_seconds{method,route,status}` histogram (gin middleware, labelled by `c.FullPath()` template; 404→`unmatched` — cardinality-safe), DB-pool gauges (`collectors.NewDBStatsCollector`), + free Go/process collectors; served at `GET /metrics` via `promhttp` (unauth, ACL-protected per audit). Added `prometheus/client_golang` dep. `TestMetricsMiddlewareAndHandler_AUDIT077` scrapes real exposition; `TestMetricsWiring_AUDIT077` pins main.go wiring. Poller-process counters (poll_cycles/alerts_fired/batcher_queue) deferred — separate binary, no HTTP. |
 | AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
-| AUDIT-129 | No frontend error reporting | 0.10.375 | (pending) | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
+| AUDIT-129 | No frontend error reporting | 0.10.375 | 1954068 | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
 
 ---
 
@@ -1484,7 +1484,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-164 — FUNDING: documented accept/wontfix (not soliciting donations) — v0.10.372 — a5026aa — opencode
 2026-06-06 — AUDIT-077 — Prometheus /metrics (HTTP histogram + DB pool + Go runtime; internal/metrics) — v0.10.373 — 1bfd651 — opencode
 2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
-2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — (pending) — opencode
+2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — 1954068 — opencode
 ```
 
 ---
@@ -2654,7 +2654,7 @@ test-bug fix surfaced by the new test. Full suite green.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-129 | 0.10.375 | (pending) | `admin-common.js` global error reporter (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` handler that logs the JS error server-side (req-id + IP, all fields truncated). No DB, no auth, rate-limited `/api` group. |
+| AUDIT-129 | 0.10.375 | 1954068 | `admin-common.js` global error reporter (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` handler that logs the JS error server-side (req-id + IP, all fields truncated). No DB, no auth, rate-limited `/api` group. |
 
 **This completes the observability arc** started in Session 25: server-side 500s
 log their cause (071), `/metrics` exposes latency/pool/runtime (077), admin
