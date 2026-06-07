@@ -43,6 +43,24 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	}
 }
 
+// reqDB returns the request-scoped database handle: h.db bound to the request
+// context (AUDIT-032/079) so a client disconnect cancels in-flight queries and
+// frees the pooled connection instead of leaving it checked out — the
+// dashboard-polling pool-exhaustion outage. It returns nil exactly when h.db is
+// nil, so the existing `httputil.RequireDB(c, ...)` / `== nil` / `!= nil` guards
+// keep working unchanged when callers swap `h.db` for `db := h.reqDB(c)`.
+//
+// Browser-facing handlers (admin UI, public dashboard, auth) use this. The
+// probe-ingestion handlers (handlers_data.go) deliberately keep using h.db (the
+// durable background context) so a probe's in-flight write over a flaky WAN is
+// never cancelled mid-flight.
+func (h *Handler) reqDB(c *gin.Context) *database.Database {
+	if h.db == nil {
+		return nil
+	}
+	return h.db.WithContext(c.Request.Context())
+}
+
 func (h *Handler) SetIRCManager(mgr *irc.Manager) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -16,7 +16,8 @@ import (
 // pagination. Read-only — the trail is written exclusively by the audit
 // middleware.
 func (h *Handler) GetAuditLogs(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -29,7 +30,7 @@ func (h *Handler) GetAuditLogs(c *gin.Context) {
 		since = time.Now().Add(-time.Duration(httputil.ParseHours(c)) * time.Hour)
 	}
 
-	logs, total, err := h.db.GetAuditLogs(actor, action, since, limit, offset)
+	logs, total, err := db.GetAuditLogs(actor, action, since, limit, offset)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get audit logs", err)
 		return

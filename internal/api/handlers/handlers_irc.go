@@ -13,23 +13,25 @@ import (
 )
 
 func (h *Handler) GetIRCServer(c *gin.Context) {
+	db := h.reqDB(c)
 	// Defensive cap (v0.10.217, bundle D3). IRC config rarely exceeds
 	// a handful of servers; 200 leaves headroom for accidental dupes.
 	var servers []models.IRCServer
-	if err := h.db.Gorm().Preload("Channels").Limit(200).Find(&servers).Error; err != nil {
+	if err := db.Gorm().Preload("Channels").Limit(200).Find(&servers).Error; err != nil {
 		httputil.InternalError(c, "Failed to get IRC servers", err)
 		return
 	}
 	for i := range servers {
-		h.db.DecryptIRCServerSecrets(&servers[i])
+		db.DecryptIRCServerSecrets(&servers[i])
 		for j := range servers[i].Channels {
-			h.db.DecryptIRCChannelSecrets(&servers[i].Channels[j])
+			db.DecryptIRCChannelSecrets(&servers[i].Channels[j])
 		}
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(servers))
 }
 
 func (h *Handler) GetIRCServerByID(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid server ID"))
@@ -37,18 +39,19 @@ func (h *Handler) GetIRCServerByID(c *gin.Context) {
 	}
 
 	var server models.IRCServer
-	if err := h.db.Gorm().Preload("Channels").First(&server, id).Error; err != nil {
+	if err := db.Gorm().Preload("Channels").First(&server, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Server not found"))
 		return
 	}
-	h.db.DecryptIRCServerSecrets(&server)
+	db.DecryptIRCServerSecrets(&server)
 	for i := range server.Channels {
-		h.db.DecryptIRCChannelSecrets(&server.Channels[i])
+		db.DecryptIRCChannelSecrets(&server.Channels[i])
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(server))
 }
 
 func (h *Handler) CreateIRCServer(c *gin.Context) {
+	db := h.reqDB(c)
 	var server models.IRCServer
 	if err := c.ShouldBindJSON(&server); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
@@ -64,9 +67,9 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 		server.ServerPort = 6667
 	}
 
-	h.db.EncryptIRCServerSecrets(&server)
+	db.EncryptIRCServerSecrets(&server)
 
-	if err := h.db.Gorm().Create(&server).Error; err != nil {
+	if err := db.Gorm().Create(&server).Error; err != nil {
 		httputil.InternalError(c, "Failed to create server", err)
 		return
 	}
@@ -76,11 +79,12 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 	}
 
 	// Decrypt before returning so client sees plaintext, not ciphertext
-	h.db.DecryptIRCServerSecrets(&server)
+	db.DecryptIRCServerSecrets(&server)
 	c.JSON(http.StatusOK, models.SuccessResponse(server))
 }
 
 func (h *Handler) UpdateIRCServer(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid server ID"))
@@ -88,7 +92,7 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 	}
 
 	var server models.IRCServer
-	if err := h.db.Gorm().First(&server, id).Error; err != nil {
+	if err := db.Gorm().First(&server, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Server not found"))
 		return
 	}
@@ -124,18 +128,18 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 	// Encrypt password fields before saving
 	for _, field := range []string{"server_password", "nickserv_password", "sasl_password"} {
 		if v, ok := updates[field].(string); ok && v != "" {
-			updates[field] = h.db.EncryptField(v)
+			updates[field] = db.EncryptField(v)
 		}
 	}
 
-	if err := h.db.Gorm().Model(&server).Updates(updates).Error; err != nil {
+	if err := db.Gorm().Model(&server).Updates(updates).Error; err != nil {
 		log.Printf("Failed to update IRC server %d: %v", id, err)
 		httputil.InternalError(c, "Failed to update server", err)
 		return
 	}
 
 	// Re-fetch to return current state
-	h.db.Gorm().Preload("Channels").First(&server, id)
+	db.Gorm().Preload("Channels").First(&server, id)
 
 	if mgr := h.GetIRCManager(); mgr != nil {
 		if server.Enabled {
@@ -149,14 +153,15 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 	}
 
 	// Decrypt before returning so client sees plaintext, not ciphertext
-	h.db.DecryptIRCServerSecrets(&server)
+	db.DecryptIRCServerSecrets(&server)
 	for i := range server.Channels {
-		h.db.DecryptIRCChannelSecrets(&server.Channels[i])
+		db.DecryptIRCChannelSecrets(&server.Channels[i])
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(server))
 }
 
 func (h *Handler) DeleteIRCServer(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid server ID"))
@@ -169,7 +174,7 @@ func (h *Handler) DeleteIRCServer(c *gin.Context) {
 		}
 	}
 
-	if err := h.db.Gorm().Delete(&models.IRCServer{}, id).Error; err != nil {
+	if err := db.Gorm().Delete(&models.IRCServer{}, id).Error; err != nil {
 		httputil.InternalError(c, "Failed to delete server", err)
 		return
 	}
@@ -178,6 +183,7 @@ func (h *Handler) DeleteIRCServer(c *gin.Context) {
 }
 
 func (h *Handler) ConnectIRCServer(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid server ID"))
@@ -185,13 +191,13 @@ func (h *Handler) ConnectIRCServer(c *gin.Context) {
 	}
 
 	var server models.IRCServer
-	if err := h.db.Gorm().First(&server, id).Error; err != nil {
+	if err := db.Gorm().First(&server, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Server not found"))
 		return
 	}
 
 	if !server.Enabled {
-		h.db.Gorm().Model(&server).Update("enabled", true)
+		db.Gorm().Model(&server).Update("enabled", true)
 		server.Enabled = true
 	}
 
@@ -206,6 +212,7 @@ func (h *Handler) ConnectIRCServer(c *gin.Context) {
 }
 
 func (h *Handler) DisconnectIRCServer(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid server ID"))
@@ -218,35 +225,37 @@ func (h *Handler) DisconnectIRCServer(c *gin.Context) {
 		}
 	}
 
-	h.db.Gorm().Model(&models.IRCServer{}).Where("id = ?", id).Update("status", "disconnected")
+	db.Gorm().Model(&models.IRCServer{}).Where("id = ?", id).Update("status", "disconnected")
 
 	c.JSON(http.StatusOK, models.MessageResponse("Disconnected"))
 }
 
 func (h *Handler) GetIRCChannels(c *gin.Context) {
+	db := h.reqDB(c)
 	serverID := c.Query("server_id")
 	var channels []models.IRCChannel
 
 	// Defensive cap (v0.10.217, bundle D3). IRC channels per fleet are
 	// typically under 100; 500 is comfortable headroom.
 	if serverID != "" {
-		if err := h.db.Gorm().Where("server_id = ?", serverID).Limit(500).Find(&channels).Error; err != nil {
+		if err := db.Gorm().Where("server_id = ?", serverID).Limit(500).Find(&channels).Error; err != nil {
 			httputil.InternalError(c, "Failed to get channels", err)
 			return
 		}
 	} else {
-		if err := h.db.Gorm().Limit(500).Find(&channels).Error; err != nil {
+		if err := db.Gorm().Limit(500).Find(&channels).Error; err != nil {
 			httputil.InternalError(c, "Failed to get channels", err)
 			return
 		}
 	}
 	for i := range channels {
-		h.db.DecryptIRCChannelSecrets(&channels[i])
+		db.DecryptIRCChannelSecrets(&channels[i])
 	}
 	c.JSON(http.StatusOK, models.SuccessResponse(channels))
 }
 
 func (h *Handler) CreateIRCChannel(c *gin.Context) {
+	db := h.reqDB(c)
 	var channel models.IRCChannel
 	if err := c.ShouldBindJSON(&channel); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
@@ -258,9 +267,9 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 		return
 	}
 
-	h.db.EncryptIRCChannelSecrets(&channel)
+	db.EncryptIRCChannelSecrets(&channel)
 
-	if err := h.db.Gorm().Create(&channel).Error; err != nil {
+	if err := db.Gorm().Create(&channel).Error; err != nil {
 		httputil.InternalError(c, "Failed to create channel", err)
 		return
 	}
@@ -269,11 +278,12 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 		mgr.RestartBot(channel.ServerID)
 	}
 
-	h.db.DecryptIRCChannelSecrets(&channel)
+	db.DecryptIRCChannelSecrets(&channel)
 	c.JSON(http.StatusOK, models.SuccessResponse(channel))
 }
 
 func (h *Handler) UpdateIRCChannel(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid channel ID"))
@@ -281,7 +291,7 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 	}
 
 	var channel models.IRCChannel
-	if err := h.db.Gorm().First(&channel, id).Error; err != nil {
+	if err := db.Gorm().First(&channel, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Channel not found"))
 		return
 	}
@@ -298,11 +308,11 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 	// Encrypt password fields before saving
 	for _, field := range []string{"chanserv_password", "chan_oper_pass", "channel_key"} {
 		if v, ok := updates[field].(string); ok && v != "" {
-			updates[field] = h.db.EncryptField(v)
+			updates[field] = db.EncryptField(v)
 		}
 	}
 
-	if err := h.db.Gorm().Model(&channel).Updates(updates).Error; err != nil {
+	if err := db.Gorm().Model(&channel).Updates(updates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update channel", err)
 		return
 	}
@@ -312,12 +322,13 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 	}
 
 	// Re-fetch and decrypt for response
-	h.db.Gorm().First(&channel, id)
-	h.db.DecryptIRCChannelSecrets(&channel)
+	db.Gorm().First(&channel, id)
+	db.DecryptIRCChannelSecrets(&channel)
 	c.JSON(http.StatusOK, models.SuccessResponse(channel))
 }
 
 func (h *Handler) DeleteIRCChannel(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid channel ID"))
@@ -325,14 +336,14 @@ func (h *Handler) DeleteIRCChannel(c *gin.Context) {
 	}
 
 	var channel models.IRCChannel
-	if err := h.db.Gorm().First(&channel, id).Error; err != nil {
+	if err := db.Gorm().First(&channel, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Channel not found"))
 		return
 	}
 
 	serverID := channel.ServerID
 
-	if err := h.db.Gorm().Delete(&channel).Error; err != nil {
+	if err := db.Gorm().Delete(&channel).Error; err != nil {
 		httputil.InternalError(c, "Failed to delete channel", err)
 		return
 	}
@@ -345,9 +356,10 @@ func (h *Handler) DeleteIRCChannel(c *gin.Context) {
 }
 
 func (h *Handler) GetIRCCommands(c *gin.Context) {
+	db := h.reqDB(c)
 	// Defensive cap (v0.10.217, bundle D3).
 	var commands []models.IRCCommand
-	if err := h.db.Gorm().Limit(500).Find(&commands).Error; err != nil {
+	if err := db.Gorm().Limit(500).Find(&commands).Error; err != nil {
 		httputil.InternalError(c, "Failed to get commands", err)
 		return
 	}
@@ -355,6 +367,7 @@ func (h *Handler) GetIRCCommands(c *gin.Context) {
 }
 
 func (h *Handler) CreateIRCCommand(c *gin.Context) {
+	db := h.reqDB(c)
 	var cmd models.IRCCommand
 	if err := c.ShouldBindJSON(&cmd); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
@@ -370,7 +383,7 @@ func (h *Handler) CreateIRCCommand(c *gin.Context) {
 		cmd.CommandType = "static"
 	}
 
-	if err := h.db.Gorm().Create(&cmd).Error; err != nil {
+	if err := db.Gorm().Create(&cmd).Error; err != nil {
 		httputil.InternalError(c, "Failed to create command", err)
 		return
 	}
@@ -383,6 +396,7 @@ func (h *Handler) CreateIRCCommand(c *gin.Context) {
 }
 
 func (h *Handler) UpdateIRCCommand(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid command ID"))
@@ -390,7 +404,7 @@ func (h *Handler) UpdateIRCCommand(c *gin.Context) {
 	}
 
 	var cmd models.IRCCommand
-	if err := h.db.Gorm().First(&cmd, id).Error; err != nil {
+	if err := db.Gorm().First(&cmd, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Command not found"))
 		return
 	}
@@ -404,7 +418,7 @@ func (h *Handler) UpdateIRCCommand(c *gin.Context) {
 	delete(updates, "id")
 	delete(updates, "created_at")
 
-	if err := h.db.Gorm().Model(&cmd).Updates(updates).Error; err != nil {
+	if err := db.Gorm().Model(&cmd).Updates(updates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update command", err)
 		return
 	}
@@ -417,13 +431,14 @@ func (h *Handler) UpdateIRCCommand(c *gin.Context) {
 }
 
 func (h *Handler) DeleteIRCCommand(c *gin.Context) {
+	db := h.reqDB(c)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid command ID"))
 		return
 	}
 
-	if err := h.db.Gorm().Delete(&models.IRCCommand{}, id).Error; err != nil {
+	if err := db.Gorm().Delete(&models.IRCCommand{}, id).Error; err != nil {
 		httputil.InternalError(c, "Failed to delete command", err)
 		return
 	}

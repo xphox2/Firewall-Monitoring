@@ -11,11 +11,12 @@ import (
 )
 
 func (h *Handler) ListAlertPolicies(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
-	policies, err := h.db.GetAlertPolicies()
+	policies, err := db.GetAlertPolicies()
 	if err != nil {
 		httputil.InternalError(c, "Failed to get alert policies", err)
 		return
@@ -25,7 +26,8 @@ func (h *Handler) ListAlertPolicies(c *gin.Context) {
 }
 
 func (h *Handler) GetAlertPolicy(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -33,7 +35,7 @@ func (h *Handler) GetAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	policy, err := h.db.GetAlertPolicy(id)
+	policy, err := db.GetAlertPolicy(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
 		return
@@ -43,7 +45,8 @@ func (h *Handler) GetAlertPolicy(c *gin.Context) {
 }
 
 func (h *Handler) CreateAlertPolicy(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -63,7 +66,7 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 	}
 
 	policy.ID = 0
-	if err := h.db.CreateAlertPolicy(&policy); err != nil {
+	if err := db.CreateAlertPolicy(&policy); err != nil {
 		httputil.InternalError(c, "Failed to create alert policy", err)
 		return
 	}
@@ -72,7 +75,8 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 }
 
 func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -80,7 +84,7 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.db.GetAlertPolicy(id)
+	existing, err := db.GetAlertPolicy(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
 		return
@@ -94,7 +98,7 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 
 	policy.ID = existing.ID
 	policy.CreatedAt = existing.CreatedAt
-	if err := h.db.UpdateAlertPolicy(&policy); err != nil {
+	if err := db.UpdateAlertPolicy(&policy); err != nil {
 		httputil.InternalError(c, "Failed to update alert policy", err)
 		return
 	}
@@ -103,7 +107,8 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 }
 
 func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -111,7 +116,7 @@ func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteAlertPolicy(id); err != nil {
+	if err := db.DeleteAlertPolicy(id); err != nil {
 		if err.Error() == "cannot delete the default alert policy" {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
 		} else {
@@ -124,7 +129,8 @@ func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
 }
 
 func (h *Handler) CloneAlertPolicy(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -132,7 +138,7 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	src, err := h.db.GetAlertPolicy(id)
+	src, err := db.GetAlertPolicy(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
 		return
@@ -144,7 +150,7 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 	clone.IsDefault = false
 	clone.Rules = nil
 
-	if err := h.db.CreateAlertPolicy(&clone); err != nil {
+	if err := db.CreateAlertPolicy(&clone); err != nil {
 		httputil.InternalError(c, "Failed to clone policy", err)
 		return
 	}
@@ -157,19 +163,20 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 			rules[i].ID = 0
 			rules[i].PolicyID = clone.ID
 		}
-		if err := h.db.BatchUpsertAlertRules(clone.ID, rules); err != nil {
+		if err := db.BatchUpsertAlertRules(clone.ID, rules); err != nil {
 			httputil.InternalError(c, "Failed to clone rules", err)
 			return
 		}
 	}
 
 	// Reload with rules
-	result, _ := h.db.GetAlertPolicy(clone.ID)
+	result, _ := db.GetAlertPolicy(clone.ID)
 	c.JSON(http.StatusCreated, models.SuccessResponse(result))
 }
 
 func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -178,7 +185,7 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 	}
 
 	// Verify policy exists
-	if _, err := h.db.GetAlertPolicy(id); err != nil {
+	if _, err := db.GetAlertPolicy(id); err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
 		return
 	}
@@ -189,20 +196,21 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.BatchUpsertAlertRules(id, rules); err != nil {
+	if err := db.BatchUpsertAlertRules(id, rules); err != nil {
 		httputil.InternalError(c, "Failed to save rules", err)
 		return
 	}
 
 	// Reload policy with rules
-	policy, _ := h.db.GetAlertPolicy(id)
+	policy, _ := db.GetAlertPolicy(id)
 	c.JSON(http.StatusOK, models.SuccessResponse(policy))
 }
 
 // Device alert config endpoints
 
 func (h *Handler) GetDeviceAlertConfig(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -210,7 +218,7 @@ func (h *Handler) GetDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	cfg, err := h.db.GetDeviceAlertConfig(id)
+	cfg, err := db.GetDeviceAlertConfig(id)
 	if err != nil {
 		// Return empty config (not an error — device just has no overrides)
 		c.JSON(http.StatusOK, models.SuccessResponse(models.DeviceAlertConfig{
@@ -224,7 +232,8 @@ func (h *Handler) GetDeviceAlertConfig(c *gin.Context) {
 }
 
 func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -242,7 +251,7 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 	// that ARE present in the JSON body, so loading first preserves the
 	// untouched columns. The "create if absent" path keeps the model's
 	// AlertsEnabled=true default.
-	cfg, err := h.db.GetDeviceAlertConfig(id)
+	cfg, err := db.GetDeviceAlertConfig(id)
 	if err != nil {
 		cfg = &models.DeviceAlertConfig{DeviceID: id, AlertsEnabled: true}
 	}
@@ -257,7 +266,7 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.UpsertDeviceAlertConfig(cfg); err != nil {
+	if err := db.UpsertDeviceAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save device alert config", err)
 		return
 	}
@@ -287,7 +296,8 @@ func validateAlertConfigThresholds(cpu, mem, disk float64, sessions, cooldown in
 }
 
 func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -295,7 +305,7 @@ func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteDeviceAlertConfig(id); err != nil {
+	if err := db.DeleteDeviceAlertConfig(id); err != nil {
 		httputil.InternalError(c, "Failed to delete device alert config", err)
 		return
 	}
@@ -306,7 +316,8 @@ func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
 // Site alert config endpoints
 
 func (h *Handler) GetSiteAlertConfig(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -314,7 +325,7 @@ func (h *Handler) GetSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	cfg, err := h.db.GetSiteAlertConfig(id)
+	cfg, err := db.GetSiteAlertConfig(id)
 	if err != nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(models.SiteAlertConfig{
 			SiteID: id,
@@ -326,7 +337,8 @@ func (h *Handler) GetSiteAlertConfig(c *gin.Context) {
 }
 
 func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -338,7 +350,7 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 	// above. See the comment there for the rationale. SiteAlertConfig has
 	// no AlertsEnabled column (site configs always apply when present);
 	// the rest of the threshold/cooldown surface mirrors DeviceAlertConfig.
-	cfg, err := h.db.GetSiteAlertConfig(id)
+	cfg, err := db.GetSiteAlertConfig(id)
 	if err != nil {
 		cfg = &models.SiteAlertConfig{SiteID: id}
 	}
@@ -353,7 +365,7 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.UpsertSiteAlertConfig(cfg); err != nil {
+	if err := db.UpsertSiteAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save site alert config", err)
 		return
 	}
@@ -362,7 +374,8 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 }
 
 func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -370,7 +383,7 @@ func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteSiteAlertConfig(id); err != nil {
+	if err := db.DeleteSiteAlertConfig(id); err != nil {
 		httputil.InternalError(c, "Failed to delete site alert config", err)
 		return
 	}

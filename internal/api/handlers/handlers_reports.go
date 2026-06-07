@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
@@ -50,8 +51,9 @@ func (h *Handler) reportSpikeThreshold() float64 {
 
 // buildReportHTML gathers fleet data and renders the report to a single HTML
 // document. collapsible wraps per-device detail in <details> for the admin
-// preview.
-func (h *Handler) buildReportHTML(period string, collapsible bool) (subject, html string, err error) {
+// preview. db is the request-scoped handle (AUDIT-032) so the heavy fleet-wide
+// data gather is cancelled if the operator navigates away mid-render.
+func (h *Handler) buildReportHTML(db *database.Database, period string, collapsible bool) (subject, html string, err error) {
 	hours, label := reportWindow(period)
 	tz := h.reportTimezone()
 	spikeThreshold := h.reportSpikeThreshold()
@@ -63,14 +65,14 @@ func (h *Handler) buildReportHTML(period string, collapsible bool) (subject, htm
 		}
 	}
 
-	devices, err := h.db.GetAllDevices()
+	devices, err := db.GetAllDevices()
 	if err != nil {
 		return "", "", err
 	}
 
 	deviceData := make([]*report.DeviceReportData, len(devices))
 	for i := range devices {
-		deviceData[i] = report.GatherDeviceData(h.db, &devices[i], hours, pollInterval, spikeThreshold)
+		deviceData[i] = report.GatherDeviceData(db, &devices[i], hours, pollInterval, spikeThreshold)
 	}
 
 	h.mu.RLock()
@@ -87,9 +89,10 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
 	}
+	db := h.reqDB(c)
 
 	period := c.DefaultQuery("period", "daily")
-	subject, html, err := h.buildReportHTML(period, true)
+	subject, html, err := h.buildReportHTML(db, period, true)
 	if err != nil {
 		httputil.InternalError(c, "Failed to build report", err)
 		return
@@ -113,6 +116,7 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Mailer not available"))
 		return
 	}
+	db := h.reqDB(c)
 
 	var req struct {
 		Period string `json:"period"`
@@ -147,7 +151,7 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 		}
 	}
 
-	subject, html, err := h.buildReportHTML(req.Period, false)
+	subject, html, err := h.buildReportHTML(db, req.Period, false)
 	if err != nil {
 		httputil.InternalError(c, "Failed to build report", err)
 		return

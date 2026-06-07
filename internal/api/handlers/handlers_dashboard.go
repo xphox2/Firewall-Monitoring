@@ -15,13 +15,14 @@ import (
 )
 
 func (h *Handler) GetPublicDevices(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
 		return
 	}
 
 	var devices []models.Device
-	if err := h.db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Find(&devices).Error; err != nil {
+	if err := db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Find(&devices).Error; err != nil {
 		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
@@ -42,6 +43,7 @@ func (h *Handler) GetPublicDevices(c *gin.Context) {
 // resolvePublicDeviceID returns the device ID from ?device_id query param,
 // or falls back to the first enabled device.
 func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
+	db := h.reqDB(c)
 	if idStr := c.Query("device_id"); idStr != "" {
 		id, err := strconv.ParseUint(idStr, 10, 32)
 		if err != nil {
@@ -50,9 +52,9 @@ func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
 		return uint(id), true
 	}
 	// Default to first enabled + public-visible device
-	if h.db != nil {
+	if db != nil {
 		var dev models.Device
-		if err := h.db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Order("id ASC").First(&dev).Error; err == nil {
+		if err := db.Gorm().Where("enabled = ? AND public_visible = ?", true, true).Order("id ASC").First(&dev).Error; err == nil {
 			return dev.ID, true
 		}
 	}
@@ -60,6 +62,7 @@ func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
 }
 
 func (h *Handler) GetPublicDashboard(c *gin.Context) {
+	db := h.reqDB(c)
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -90,12 +93,12 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 	}
 
 	// Fall back to database
-	if h.db != nil && hasDevice {
+	if db != nil && hasDevice {
 		var status models.SystemStatus
-		if err := h.db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&status).Error; err == nil {
+		if err := db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&status).Error; err == nil {
 			// Get device name
 			var dev models.Device
-			if err := h.db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev).Error; err != nil {
+			if err := db.Gorm().Select("name").Where("id = ?", deviceID).First(&dev).Error; err != nil {
 				log.Printf("Device %d: failed to get device name: %v", deviceID, err)
 			}
 			var uptimeStats *uptime.UptimeStats
@@ -119,8 +122,8 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
 			return
 		}
-	} else if h.db != nil {
-		status, err := h.db.GetLatestSystemStatus()
+	} else if db != nil {
+		status, err := db.GetLatestSystemStatus()
 		if err == nil && status != nil {
 			var uptimeStats *uptime.UptimeStats
 			if h.uptimeTrack != nil {
@@ -148,6 +151,7 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 }
 
 func (h *Handler) GetPublicInterfaces(c *gin.Context) {
+	db := h.reqDB(c)
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -163,18 +167,18 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	}
 
 	// Fall back to database
-	if h.db != nil && hasDevice {
+	if db != nil && hasDevice {
 		var latestIface models.InterfaceStats
-		if err := h.db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
+		if err := db.Gorm().Where("device_id = ?", deviceID).Order("timestamp DESC").First(&latestIface).Error; err == nil {
 			var ifaces []models.InterfaceStats
-			if err := h.db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces).Error; err != nil {
+			if err := db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces).Error; err != nil {
 				log.Printf("Device %d: failed to get interfaces at timestamp: %v", deviceID, err)
 			}
 			c.JSON(http.StatusOK, models.SuccessResponse(ifaces))
 			return
 		}
-	} else if h.db != nil {
-		interfaces, err := h.db.GetLatestInterfaceStats()
+	} else if db != nil {
+		interfaces, err := db.GetLatestInterfaceStats()
 		if err == nil && len(interfaces) > 0 {
 			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
 			return
@@ -185,7 +189,8 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 }
 
 func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
 	}
@@ -266,7 +271,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 
 	// Get raw data points
 	var stats []models.InterfaceStats
-	err = h.db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
+	err = db.Gorm().Where("device_id = ? AND \"index\" = ? AND timestamp > ?", deviceID, ifIndex, cutoff).
 		Order("timestamp ASC").Find(&stats).Error
 	if err != nil {
 		httputil.InternalError(c, "Failed to get interface data", err)
@@ -378,13 +383,14 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 }
 
 func (h *Handler) GetPublicVPN(c *gin.Context) {
+	db := h.reqDB(c)
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	deviceID, hasDevice := h.resolvePublicDeviceID(c)
 
-	if h.db != nil && hasDevice {
-		vpnStatuses, err := h.db.GetLatestVPNStatuses(deviceID)
+	if db != nil && hasDevice {
+		vpnStatuses, err := db.GetLatestVPNStatuses(deviceID)
 		if err == nil && vpnStatuses != nil {
 			result := make([]gin.H, 0, len(vpnStatuses))
 			for _, vpn := range vpnStatuses {
@@ -409,13 +415,14 @@ func (h *Handler) GetPublicVPN(c *gin.Context) {
 }
 
 func (h *Handler) GetPublicConnections(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No connections available"))
 		return
 	}
 
 	var connections []models.DeviceConnection
-	if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(100).Find(&connections).Error; err != nil {
+	if err := db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(100).Find(&connections).Error; err != nil {
 		httputil.InternalError(c, "Failed to get connections", err)
 		return
 	}
@@ -444,7 +451,8 @@ func (h *Handler) GetPublicConnections(c *gin.Context) {
 }
 
 func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No data available"))
 		return
 	}
@@ -460,7 +468,7 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 	// accepts an `hours` query parameter.
 	hours := httputil.ParseHours(c)
 
-	statuses, err := h.db.GetSystemStatusHistory(deviceID, hours)
+	statuses, err := db.GetSystemStatusHistory(deviceID, hours)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get status history", err)
 		return
@@ -483,6 +491,7 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 }
 
 func (h *Handler) GetAdminDashboard(c *gin.Context) {
+	db := h.reqDB(c)
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -507,14 +516,14 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 	}
 
 	// Fall back to DB if SNMP unavailable
-	if status == nil && h.db != nil {
-		s, err := h.db.GetLatestSystemStatus()
+	if status == nil && db != nil {
+		s, err := db.GetLatestSystemStatus()
 		if err == nil && s != nil {
 			status = s
 		}
 	}
-	if len(interfaces) == 0 && h.db != nil {
-		ifaces, err := h.db.GetLatestInterfaceStats()
+	if len(interfaces) == 0 && db != nil {
+		ifaces, err := db.GetLatestInterfaceStats()
 		if err == nil {
 			interfaces = ifaces
 		}
@@ -526,8 +535,8 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 	}
 
 	var recentAlerts []models.Alert
-	if h.db != nil {
-		alerts, err := h.db.GetAlerts(10, nil)
+	if db != nil {
+		alerts, err := db.GetAlerts(10, nil)
 		if err != nil {
 			log.Printf("Failed to get recent alerts: %v", err)
 		}
@@ -546,25 +555,26 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 }
 
 func (h *Handler) GetDashboardAll(c *gin.Context) {
+	db := h.reqDB(c)
 	devices := []models.Device{}
 	connections := []models.DeviceConnection{}
 	recentAlerts := []models.Alert{}
 
-	if h.db != nil {
+	if db != nil {
 		// Defensive bounds (v0.10.217, bundle D3). Devices + connections
 		// are configuration tables, but on a fleet with thousands of
 		// auto-detected connections the previous unbounded Find could
 		// pull an enormous payload. 1000 is well above any realistic
 		// admin-managed fleet, low enough to fit in a single response.
-		if err := h.db.Gorm().Preload("Site").Preload("Probe").Limit(1000).Find(&devices).Error; err != nil {
+		if err := db.Gorm().Preload("Site").Preload("Probe").Limit(1000).Find(&devices).Error; err != nil {
 			log.Printf("Failed to get devices: %v", err)
 		}
 
-		if err := h.db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(1000).Find(&connections).Error; err != nil {
+		if err := db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(1000).Find(&connections).Error; err != nil {
 			log.Printf("Failed to get connections: %v", err)
 		}
 
-		if err := h.db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
+		if err := db.Gorm().Order("timestamp DESC").Limit(20).Find(&recentAlerts).Error; err != nil {
 			log.Printf("Failed to get recent alerts: %v", err)
 		}
 	}
@@ -599,13 +609,13 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 	// codebase's max-timestamp self-join pattern (portable across Postgres and
 	// the SQLite test backend). Query count is now O(1) in the device count.
 	enrichments := make(map[uint]*DeviceEnrichment)
-	if h.db != nil && len(devices) > 0 {
+	if db != nil && len(devices) > 0 {
 		ids := make([]uint, len(devices))
 		for i, dev := range devices {
 			ids[i] = dev.ID
 			enrichments[dev.ID] = &DeviceEnrichment{DeviceID: dev.ID}
 		}
-		g := h.db.Gorm()
+		g := db.Gorm()
 
 		// latest builds "the row(s) at MAX(timestamp) per device" subquery for
 		// a given time-series table, scoped to the dashboard's device set.
@@ -747,14 +757,15 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 // GetDeviceDataDiag returns per-device system_status record counts and latest values.
 // Used to diagnose why some devices may show "No data" in the UI.
 func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
 		return
 	}
 
 	// Defensive cap (v0.10.217, bundle D3).
 	var devices []models.Device
-	if err := h.db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Limit(1000).Find(&devices).Error; err != nil {
+	if err := db.Gorm().Select("id, name, ip_address, status, last_polled, probe_id").Limit(1000).Find(&devices).Error; err != nil {
 		httputil.InternalError(c, "Failed to get devices", err)
 		return
 	}
@@ -783,12 +794,12 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 			ProbeID:    dev.ProbeID,
 		}
 
-		if err := h.db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&diag.StatusRows).Error; err != nil {
+		if err := db.Gorm().Model(&models.SystemStatus{}).Where("device_id = ?", dev.ID).Count(&diag.StatusRows).Error; err != nil {
 			log.Printf("Device %d: failed to count status rows: %v", dev.ID, err)
 		}
 
 		var ss models.SystemStatus
-		if err := h.db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
+		if err := db.Gorm().Where("device_id = ?", dev.ID).Order("timestamp DESC").First(&ss).Error; err == nil {
 			diag.LatestCPU = ss.CPUUsage
 			diag.LatestMem = ss.MemoryUsage
 			diag.LatestTime = &ss.Timestamp
@@ -801,14 +812,15 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 }
 
 func (h *Handler) GetDashboardStats(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
 		return
 	}
 
 	hours := httputil.ParseHours(c)
 
-	stats, err := h.db.GetDashboardTimeSeries(hours)
+	stats, err := db.GetDashboardTimeSeries(hours)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get dashboard stats", err)
 		return

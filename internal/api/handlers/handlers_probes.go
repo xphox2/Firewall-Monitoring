@@ -20,12 +20,13 @@ import (
 )
 
 func (h *Handler) GetProbes(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.Probe{}))
 		return
 	}
 
-	probes, err := h.db.GetAllProbes()
+	probes, err := db.GetAllProbes()
 	if err != nil {
 		httputil.InternalError(c, "Failed to fetch probes", err)
 		return
@@ -37,7 +38,8 @@ func (h *Handler) GetProbes(c *gin.Context) {
 }
 
 func (h *Handler) GetProbe(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
 		return
 	}
@@ -47,7 +49,7 @@ func (h *Handler) GetProbe(c *gin.Context) {
 		return
 	}
 
-	probe, err := h.db.GetProbe(id)
+	probe, err := db.GetProbe(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
 		return
@@ -57,7 +59,8 @@ func (h *Handler) GetProbe(c *gin.Context) {
 }
 
 func (h *Handler) CreateProbe(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -72,14 +75,14 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.db.GetProbeByName(probe.Name)
+	existing, err := db.GetProbeByName(probe.Name)
 	if err == nil && existing != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Probe with this name already exists"))
 		return
 	}
 
 	if probe.SiteID > 0 {
-		_, err := h.db.GetSite(probe.SiteID)
+		_, err := db.GetSite(probe.SiteID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("Site not found"))
 			return
@@ -115,7 +118,7 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		probe.RegistrationKey = database.HashProbeKey(hex.EncodeToString(keyBytes))
 	}
 
-	if err := h.db.CreateProbe(&probe); err != nil {
+	if err := db.CreateProbe(&probe); err != nil {
 		httputil.InternalError(c, "Failed to create probe", err)
 		return
 	}
@@ -131,7 +134,7 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 			Label:    "Probe Registration Key for " + probe.Name,
 			Category: "probes",
 		}
-		if err := h.db.Gorm().Create(&setting).Error; err != nil {
+		if err := db.Gorm().Create(&setting).Error; err != nil {
 			log.Printf("Warning: Failed to create registration setting for probe %s: %v", probe.Name, err)
 		}
 	}
@@ -141,7 +144,8 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 }
 
 func (h *Handler) UpdateProbe(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -150,7 +154,7 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 		return
 	}
 
-	probe, err := h.db.GetProbe(id)
+	probe, err := db.GetProbe(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
 		return
@@ -195,7 +199,7 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 			return
 		}
 		if siteID > 0 {
-			_, err := h.db.GetSite(uint(siteID))
+			_, err := db.GetSite(uint(siteID))
 			if err != nil {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Site not found"))
 				return
@@ -210,12 +214,12 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 		}
 	}
 
-	if err := h.db.Gorm().Model(probe).Updates(filteredUpdates).Error; err != nil {
+	if err := db.Gorm().Model(probe).Updates(filteredUpdates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update probe", err)
 		return
 	}
 
-	updated, err := h.db.GetProbe(id)
+	updated, err := db.GetProbe(id)
 	if err != nil {
 		httputil.RedactProbe(probe)
 		c.JSON(http.StatusOK, models.SuccessResponse(probe))
@@ -226,7 +230,8 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 }
 
 func (h *Handler) DeleteProbe(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -235,7 +240,7 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteProbe(id); err != nil {
+	if err := db.DeleteProbe(id); err != nil {
 		httputil.InternalError(c, "Failed to delete probe", err)
 		return
 	}
@@ -244,12 +249,13 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 }
 
 func (h *Handler) GetPendingProbes(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.Probe{}))
 		return
 	}
 
-	probes, err := h.db.GetPendingProbes()
+	probes, err := db.GetPendingProbes()
 	if err != nil {
 		httputil.InternalError(c, "Failed to fetch pending probes", err)
 		return
@@ -265,7 +271,8 @@ type ApproveProbeRequest struct {
 }
 
 func (h *Handler) ApproveProbe(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -291,7 +298,7 @@ func (h *Handler) ApproveProbe(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.ApproveProbe(id, adminID); err != nil {
+	if err := db.ApproveProbe(id, adminID); err != nil {
 		httputil.InternalError(c, "Failed to approve probe", err)
 		return
 	}
@@ -304,7 +311,8 @@ type RejectProbeRequest struct {
 }
 
 func (h *Handler) RejectProbe(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -324,7 +332,7 @@ func (h *Handler) RejectProbe(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.RejectProbe(id, req.Reason); err != nil {
+	if err := db.RejectProbe(id, req.Reason); err != nil {
 		httputil.InternalError(c, "Failed to reject probe", err)
 		return
 	}
@@ -462,7 +470,8 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 }
 
 func (h *Handler) RegenerateProbeKey(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -471,7 +480,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 		return
 	}
 
-	probe, err := h.db.GetProbe(id)
+	probe, err := db.GetProbe(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
 		return
@@ -496,7 +505,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 	hashedNew := database.HashProbeKey(newKey)
 	oldKey := probe.RegistrationKey
 
-	if err := h.db.Gorm().Transaction(func(tx *gorm.DB) error {
+	if err := db.Gorm().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(probe).Update("registration_key", hashedNew).Error; err != nil {
 			return err
 		}
@@ -660,7 +669,8 @@ func (h *Handler) probeDeviceIDs(probeID uint) map[uint]bool {
 }
 
 func (h *Handler) GetProbeStats(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -673,35 +683,35 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 
 	// Total counts
 	var syslogCount, trapCount, flowCount, pingCount int64
-	if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", id).Count(&syslogCount).Error; err != nil {
+	if err := db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ?", id).Count(&syslogCount).Error; err != nil {
 		httputil.InternalError(c, "Failed to count syslog messages", err)
 		return
 	}
-	if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ?", id).Count(&trapCount).Error; err != nil {
+	if err := db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ?", id).Count(&trapCount).Error; err != nil {
 		httputil.InternalError(c, "Failed to count trap events", err)
 		return
 	}
-	if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ?", id).Count(&flowCount).Error; err != nil {
+	if err := db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ?", id).Count(&flowCount).Error; err != nil {
 		httputil.InternalError(c, "Failed to count flow samples", err)
 		return
 	}
-	if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ?", id).Count(&pingCount).Error; err != nil {
+	if err := db.Gorm().Model(&models.PingResult{}).Where("probe_id = ?", id).Count(&pingCount).Error; err != nil {
 		httputil.InternalError(c, "Failed to count ping results", err)
 		return
 	}
 
 	// Last hour counts
 	var syslogLastHour, trapLastHour, flowLastHour, pingLastHour int64
-	if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&syslogLastHour).Error; err != nil {
+	if err := db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&syslogLastHour).Error; err != nil {
 		syslogLastHour = 0
 	}
-	if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&trapLastHour).Error; err != nil {
+	if err := db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&trapLastHour).Error; err != nil {
 		trapLastHour = 0
 	}
-	if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&flowLastHour).Error; err != nil {
+	if err := db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&flowLastHour).Error; err != nil {
 		flowLastHour = 0
 	}
-	if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&pingLastHour).Error; err != nil {
+	if err := db.Gorm().Model(&models.PingResult{}).Where("probe_id = ? AND timestamp > ?", id, hourAgo).Count(&pingLastHour).Error; err != nil {
 		pingLastHour = 0
 	}
 
@@ -713,19 +723,19 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 		hourEnd := hourStart.Add(time.Hour)
 
 		var hSyslog, hTrap, hFlow, hPing int64
-		if err := h.db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hSyslog).Error; err != nil {
+		if err := db.Gorm().Model(&models.SyslogMessage{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hSyslog).Error; err != nil {
 			log.Printf("GetProbeStats: failed to count syslog for hour %s: %v", hourStart.Format("15:04"), err)
 			hSyslog = 0
 		}
-		if err := h.db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hTrap).Error; err != nil {
+		if err := db.Gorm().Model(&models.TrapEvent{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hTrap).Error; err != nil {
 			log.Printf("GetProbeStats: failed to count traps for hour %s: %v", hourStart.Format("15:04"), err)
 			hTrap = 0
 		}
-		if err := h.db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hFlow).Error; err != nil {
+		if err := db.Gorm().Model(&models.FlowSample{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hFlow).Error; err != nil {
 			log.Printf("GetProbeStats: failed to count flows for hour %s: %v", hourStart.Format("15:04"), err)
 			hFlow = 0
 		}
-		if err := h.db.Gorm().Model(&models.PingResult{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hPing).Error; err != nil {
+		if err := db.Gorm().Model(&models.PingResult{}).Where("probe_id = ? AND timestamp >= ? AND timestamp < ?", id, hourStart, hourEnd).Count(&hPing).Error; err != nil {
 			log.Printf("GetProbeStats: failed to count pings for hour %s: %v", hourStart.Format("15:04"), err)
 			hPing = 0
 		}
@@ -763,7 +773,8 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 // hourly_breakdown that GetProbeStats computes: the summary never uses it and
 // computing it per probe is 96 extra queries each. AUDIT-064.
 func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -809,7 +820,7 @@ func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
 			Cnt     int64
 		}
 		var rows []row
-		q := h.db.Gorm().Model(model).
+		q := db.Gorm().Model(model).
 			Select("probe_id, count(*) as cnt").
 			Where("probe_id IN ?", ids)
 		if sinceHour {

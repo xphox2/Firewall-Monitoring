@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.376** |
-| Bug findings resolved | **149 / 170  (88%)** |
+| Server version | **v0.10.377** |
+| Bug findings resolved | **151 / 170  (89%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **21** |
+| Open bug findings | **19** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -29,7 +29,8 @@
 - ✅ Admin-action audit log: append-only `who did what` trail via middleware + `GET /admin/api/audit` (Session 28)
 - ✅ Client-side error reporting: browser JS errors beaconed to the server log via `POST /api/client-error` (Session 29)
 - ✅ Split the 4,887-line `database.go` into 15 per-domain files — first of the large refactors (Session 30)
-- ⏳ Remaining 21: 4 large refactors (032/044/028/040), the rest of observability (076 slog / 150 OTel), test infrastructure
+- ✅ Request-context propagation to 116 browser-facing handlers (032/079) — second large refactor (Session 31)
+- ⏳ Remaining 19: 3 large refactors (044/028/040), the rest of observability (076 slog / 150 OTel), test infrastructure
 
 ## 🧭 How to read this file
 
@@ -40,12 +41,12 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 21 open findings)
+## ⏳ What's left (the 19 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
-- **Large refactors** — `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state). *(072 database.go split now done — first of the five.)*
+- **Large refactors** — `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state). *(072 database.go split + 032/079 request-context propagation now done — two of the five.)*
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
@@ -55,6 +56,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 31** (v0.10.377) | Large refactor — request-context propagation | added `(*Database).WithContext(ctx)` + `Handler.reqDB(c)` and swept 116 browser-facing handlers to the request-scoped DB so a client disconnect cancels the query and frees the pooled connection (the dashboard pool-exhaustion fix); probe ingestion stays on the durable background context (032 + its duplicate 079). 2nd of the 5 large refactors |
 | **Session 30** (v0.10.376) | Large refactor — split `database.go` | the 4,887-line monolith → 15 cohesive per-domain files in the same `package database` (core lifecycle stays in `database.go`, now 331 lines); pure code organization, zero behavior change, full suite green, content-preservation verified (072 — first of the 5 large refactors) |
 | **Session 29** (v0.10.375) | Observability — client-side error reporting | global `error`/`unhandledrejection` reporter in the admin JS beacons uncaught browser errors to a new `POST /api/client-error`, which logs them server-side (with `X-Request-ID`+IP); capped/self-protecting, no-DB, rate-limited, fields truncated (129). Also fixed a latent `log.SetOutput(nil)` test bug |
 | **Session 28** (v0.10.374) | Observability — admin-action audit log | new `models.AuditLog` + `internal/audit` middleware on the `/admin` group records an append-only row per authenticated mutation (actor / route-template action / target params / final status incl. 4xx-5xx / IP); read endpoint `GET /admin/api/audit` with actor/action/hours filters (078). UI page + before/after diffing deferred |
@@ -1332,6 +1334,8 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
 | AUDIT-129 | No frontend error reporting | 0.10.375 | 1954068 | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
 | AUDIT-072 | `database.go` is 4,210 LOC, 175 functions | 0.10.376 | ec73e80 | Split the (now 4,887-line) `database.go` into **15 per-domain sibling files** in the same `package database` (migrate/telemetry/events/config_revisions/cleanup/devices/sites_probes/ping/charts/flows/syslog_agg/stats/connection_detail/device_queries/alerts); core (`Database` struct/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). Pure organization — no behavior/API change; content-preservation diff = 0 lines dropped; full `go test ./...` green. Updated AUDIT-080/146 static guards to scan the package dir; `TestDatabaseFileSplit_AUDIT072` pins it. First of the 5 large refactors. |
+| AUDIT-032 | `c.Request.Context()` never passed to DB calls | 0.10.377 | (pending) | Added `(*Database).WithContext(ctx)` shallow-copy (gorm reusable session; **zero changes to the ~175 methods**) + `Handler.reqDB(c)`; swept **116 browser-facing handlers / 13 files** to `db := h.reqDB(c)` so a client disconnect cancels the query + frees the pooled conn (the dashboard pool-exhaustion fix). Boundary: probe ingestion (`handlers_data.go`), batchers, audit mw, daemons stay on durable background ctx. `TestWithContext_AUDIT032` (cancellation/reuse) + `TestRequestContextBoundary_AUDIT032` (boundary guard). 2nd large refactor. |
+| AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | (pending) | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
 
 ---
 
@@ -1489,6 +1493,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
 2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — 1954068 — opencode
 2026-06-06 — AUDIT-072 — split 4,887-line database.go into 15 per-domain files (same package, no behavior change) — v0.10.376 — ec73e80 — opencode
+2026-06-06 — AUDIT-032 — request-context propagation to 116 browser-facing handlers (WithContext/reqDB; ingestion stays background) — v0.10.377 — (pending) — opencode
+2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — (pending) — opencode
 ```
 
 ---
@@ -2740,6 +2746,55 @@ invisible (129). The only observability left is the big `slog`/OTel work.
   (two-instance shared state) is architectural. Each needs its own planning pass
   and several can't be fully verified without a Postgres runner — schedule them
   individually, not as a batch.
+
+## Session 31 completion log (2026-06-06) — large refactor #2: request-context propagation
+
+**2 audits shipped** (one finding + its duplicate; v0.10.377), resolved count
+**149 → 151**. Second of the 5 large refactors. Full suite green.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-032 | 0.10.377 | (pending) | `(*Database).WithContext(ctx)` + `Handler.reqDB(c)`; swept 116 browser-facing handlers to the request-scoped DB. |
+| AUDIT-079 | 0.10.377 | (pending) | Duplicate of 032 ("no per-request cancellation") — closed by the same change. |
+
+**Method (reusable for future sweeps):**
+
+- **`WithContext` shallow-copy beats per-method ctx params.** Binding the copy's
+  `*gorm.DB` to the request ctx makes every method on the copy ctx-aware with
+  **zero changes to the ~175 `*Database` methods**. gorm's `WithContext`
+  (validated v1.31.1) returns a reusable `clone==2` session, so one copy safely
+  serves many queries + transactions in a handler.
+- **A `reqDB(c)` helper kept the per-handler edit to one line.** Because `reqDB`
+  returns nil exactly when `h.db` is nil, the existing `RequireDB`/`== nil`/`!=
+  nil` guards work unchanged after `h.db` → `db`. A function-aware Python pass
+  inserted `db := h.reqDB(c)` and replaced `h.db`→`db` per in-scope gin handler.
+
+**Discoveries / decisions:**
+
+- **The blanket `h.db`→`db` had ONE collision the pre-flight grep missed:**
+  `GetDeviceDetail` already had a local `db := h.db.Gorm()` (a `*gorm.DB`), so the
+  grep `grep -v 'h.db'` filtered it out. After the sweep it became
+  `db := db.Gorm()` (redeclare). Fixed by renaming the inner gorm handle to
+  `gdb`; the compiler caught it immediately. **Lesson:** when checking for
+  `db :=` collisions before a `h.db`→`db` sweep, do NOT filter lines containing
+  `h.db` — that's exactly where `db := h.db.Gorm()` hides.
+- **Scope boundary held (user decision):** browser-facing handlers cancel on
+  disconnect; `handlers_data.go` probe ingestion (many synchronous writes) stays
+  on the durable background ctx, as do the async batchers, the audit
+  post-response middleware, the AlertManager, the daemons, and trivial single-row
+  settings lookups (`getNotificationSetting`). `TestRequestContextBoundary_AUDIT032`
+  freezes this (browser files use `reqDB`; `handlers_data.go` must not).
+- **Pragmatic refinement on the report path:** threaded ctx through the heavy
+  `buildReportHTML`→`GatherDeviceData` (fleet-wide gather) but left the trivial
+  `getNotificationSetting` config lookups on background — not worth 17 call-site
+  edits for single-row reads that aren't a pool-exhaustion source.
+- **Verifiability:** cancellation is provable here — `TestWithContext_AUDIT032`
+  cancels a ctx and asserts `context.Canceled` from a query on the in-memory
+  sqlite (modernc driver honors ctx). No Postgres needed.
+- **Remaining 3 large refactors need a Postgres runner or are architectural:**
+  044 (migration tool — migration semantics vs prod PG), 028 (PG partitioning —
+  DDL unverifiable on sqlite), 040 (two-instance shared state). Each is its own
+  planned session.
 
 ## Closing
 

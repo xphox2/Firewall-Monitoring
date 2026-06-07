@@ -27,6 +27,7 @@ func parseSameSite(s string) http.SameSite {
 }
 
 func (h *Handler) Login(c *gin.Context) {
+	db := h.reqDB(c)
 	if h.authManager == nil {
 		httputil.InternalError(c, "Authentication not configured", nil)
 		return
@@ -62,8 +63,8 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	if err := h.authManager.ValidateCredentials(creds.Username, creds.Password, ip); err != nil {
-		if h.db != nil {
-			if dbErr := h.db.SaveLoginAttempt(&models.LoginAttempt{
+		if db != nil {
+			if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
 				Timestamp: time.Now(),
 				Username:  creds.Username,
 				IPAddress: ip,
@@ -81,8 +82,8 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	if h.db != nil {
-		if dbErr := h.db.SaveLoginAttempt(&models.LoginAttempt{
+	if db != nil {
+		if dbErr := db.SaveLoginAttempt(&models.LoginAttempt{
 			Timestamp: time.Now(),
 			Username:  creds.Username,
 			IPAddress: ip,
@@ -96,8 +97,8 @@ func (h *Handler) Login(c *gin.Context) {
 	// Get admin record to use real ID and token version in JWT
 	var adminID uint = 1
 	var tokenVersion uint
-	if h.db != nil {
-		adminRecord, adminErr := h.db.GetAdminByUsername(creds.Username)
+	if db != nil {
+		adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
 		if adminErr == nil && adminRecord != nil {
 			adminID = adminRecord.ID
 			tokenVersion = adminRecord.TokenVersion
@@ -149,6 +150,7 @@ func (h *Handler) Login(c *gin.Context) {
 }
 
 func (h *Handler) Logout(c *gin.Context) {
+	db := h.reqDB(c)
 	// Only clear cookies if an auth token is present (prevents cross-origin logout)
 	if _, err := c.Cookie("auth_token"); err != nil {
 		c.JSON(http.StatusOK, models.MessageResponse("Already logged out"))
@@ -156,10 +158,10 @@ func (h *Handler) Logout(c *gin.Context) {
 	}
 
 	// Invalidate all tokens for this user by incrementing token version
-	if h.db != nil {
+	if db != nil {
 		if userID, exists := c.Get("user_id"); exists {
 			if uid, ok := userID.(uint); ok {
-				if err := h.db.IncrementAdminTokenVersion(uid); err != nil {
+				if err := db.IncrementAdminTokenVersion(uid); err != nil {
 					log.Printf("Failed to increment token version on logout: %v", err)
 				}
 			}
@@ -219,13 +221,14 @@ type ChangePasswordRequest struct {
 }
 
 func (h *Handler) ChangePassword(c *gin.Context) {
+	db := h.reqDB(c)
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
 		return
 	}
 
-	if h.db == nil {
+	if db == nil {
 		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
 		return
 	}
@@ -275,7 +278,7 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	}
 
 	// Verify current password directly (bypass rate limiter — user is already authenticated)
-	admin, adminErr := h.db.GetAdminByUsername(usernameStr)
+	admin, adminErr := db.GetAdminByUsername(usernameStr)
 	if adminErr != nil || admin == nil {
 		c.JSON(http.StatusForbidden, models.ErrorResponse("Current password is incorrect"))
 		return
@@ -291,14 +294,14 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	err = h.db.UpdateAdminPassword(userIDUint, hashedPassword)
+	err = db.UpdateAdminPassword(userIDUint, hashedPassword)
 	if err != nil {
 		httputil.InternalError(c, "Failed to update password", err)
 		return
 	}
 
 	// Invalidate all existing tokens by incrementing token version
-	if err := h.db.IncrementAdminTokenVersion(userIDUint); err != nil {
+	if err := db.IncrementAdminTokenVersion(userIDUint); err != nil {
 		log.Printf("Failed to increment token version after password change: %v", err)
 	}
 

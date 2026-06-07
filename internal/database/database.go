@@ -6,6 +6,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -31,6 +32,26 @@ type Database struct {
 
 func (d *Database) Gorm() *gorm.DB {
 	return d.db
+}
+
+// WithContext returns a shallow copy of the Database whose underlying *gorm.DB
+// is bound to ctx, so every query/transaction run through the returned handle
+// is cancelled when ctx is (AUDIT-032/079). Browser-facing handlers call
+// `db := h.db.WithContext(c.Request.Context())` once at the top, then use `db`
+// — a client disconnect then cancels the in-flight query and frees the pooled
+// connection instead of leaving it checked out (the dashboard-polling
+// pool-exhaustion outage). gorm's WithContext yields a reusable session, so the
+// single copy safely serves many queries and transactions in one request.
+//
+// The copy shares the encryption keychain, dialect, and the async batchers (by
+// pointer) — the batchers' flush closures captured the original *Database, so
+// batched writes always run on the durable background context regardless of any
+// per-request copy. Daemons (poller/trap) and probe-ingestion handlers keep
+// using the root Database so their writes are never cancelled by a client.
+func (d *Database) WithContext(ctx context.Context) *Database {
+	cp := *d
+	cp.db = d.db.WithContext(ctx)
+	return &cp
 }
 
 func (d *Database) IsPostgres() bool {

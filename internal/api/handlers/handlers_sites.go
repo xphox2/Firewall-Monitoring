@@ -12,12 +12,13 @@ import (
 )
 
 func (h *Handler) GetSites(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.Site{}))
 		return
 	}
 
-	sites, err := h.db.GetAllSites()
+	sites, err := db.GetAllSites()
 	if err != nil {
 		httputil.InternalError(c, "Failed to fetch sites", err)
 		return
@@ -27,7 +28,8 @@ func (h *Handler) GetSites(c *gin.Context) {
 }
 
 func (h *Handler) GetSite(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -36,14 +38,14 @@ func (h *Handler) GetSite(c *gin.Context) {
 		return
 	}
 
-	site, err := h.db.GetSite(id)
+	site, err := db.GetSite(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Site not found"))
 		return
 	}
 
 	var children []models.Site
-	if err := h.db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
+	if err := db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
 		log.Printf("Site %d: failed to get children: %v", id, err)
 	}
 
@@ -55,7 +57,8 @@ func (h *Handler) GetSite(c *gin.Context) {
 }
 
 func (h *Handler) CreateSite(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -76,7 +79,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.db.GetSiteByName(site.Name)
+	existing, err := db.GetSiteByName(site.Name)
 	if err != nil {
 		httputil.InternalError(c, "Failed to check existing site", err)
 		return
@@ -87,7 +90,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 	}
 
 	if site.ParentSiteID != nil && *site.ParentSiteID > 0 {
-		parent, err := h.db.GetSite(*site.ParentSiteID)
+		parent, err := db.GetSite(*site.ParentSiteID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
 			return
@@ -99,7 +102,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 	}
 
 	site.ID = 0
-	if err := h.db.CreateSite(&site); err != nil {
+	if err := db.CreateSite(&site); err != nil {
 		httputil.InternalError(c, "Failed to create site", err)
 		return
 	}
@@ -108,7 +111,8 @@ func (h *Handler) CreateSite(c *gin.Context) {
 }
 
 func (h *Handler) UpdateSite(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -117,7 +121,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 		return
 	}
 
-	site, err := h.db.GetSite(id)
+	site, err := db.GetSite(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Site not found"))
 		return
@@ -144,7 +148,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 			updates["parent_site_id"] = nil
 		} else if pid, isNum := parentIDVal.(float64); isNum && pid > 0 {
 			parentID := uint(pid)
-			parent, err := h.db.GetSite(parentID)
+			parent, err := db.GetSite(parentID)
 			if err != nil || parent == nil {
 				c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
 				return
@@ -163,7 +167,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 					c.JSON(http.StatusBadRequest, models.ErrorResponse("Circular parent reference detected"))
 					return
 				}
-				ancestor, err := h.db.GetSite(*cur.ParentSiteID)
+				ancestor, err := db.GetSite(*cur.ParentSiteID)
 				if err != nil || ancestor == nil {
 					break
 				}
@@ -195,7 +199,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 
 	if nameVal, ok := filteredUpdates["name"]; ok {
 		if nameStr, isStr := nameVal.(string); isStr {
-			existing, err := h.db.GetSiteByName(nameStr)
+			existing, err := db.GetSiteByName(nameStr)
 			if err != nil {
 				httputil.InternalError(c, "Failed to check existing site", err)
 				return
@@ -207,12 +211,12 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 		}
 	}
 
-	if err := h.db.Gorm().Model(site).Updates(filteredUpdates).Error; err != nil {
+	if err := db.Gorm().Model(site).Updates(filteredUpdates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update site", err)
 		return
 	}
 
-	updated, err := h.db.GetSite(id)
+	updated, err := db.GetSite(id)
 	if err != nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(site))
 		return
@@ -221,7 +225,8 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 }
 
 func (h *Handler) DeleteSite(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -231,7 +236,7 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 	}
 
 	var children []models.Site
-	if err := h.db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
+	if err := db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
 		httputil.InternalError(c, "Failed to check child sites", err)
 		return
 	}
@@ -240,7 +245,7 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteSite(id); err != nil {
+	if err := db.DeleteSite(id); err != nil {
 		httputil.InternalError(c, "Failed to delete site", err)
 		return
 	}

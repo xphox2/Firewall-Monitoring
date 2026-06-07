@@ -10,11 +10,12 @@ import (
 )
 
 func (h *Handler) ListMaintenanceWindows(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
-	windows, err := h.db.GetMaintenanceWindows()
+	windows, err := db.GetMaintenanceWindows()
 	if err != nil {
 		httputil.InternalError(c, "Failed to get maintenance windows", err)
 		return
@@ -24,11 +25,12 @@ func (h *Handler) ListMaintenanceWindows(c *gin.Context) {
 }
 
 func (h *Handler) GetActiveMaintenanceWindows(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
-	windows, err := h.db.GetActiveMaintenanceWindows()
+	windows, err := db.GetActiveMaintenanceWindows()
 	if err != nil {
 		httputil.InternalError(c, "Failed to get active maintenance windows", err)
 		return
@@ -38,7 +40,8 @@ func (h *Handler) GetActiveMaintenanceWindows(c *gin.Context) {
 }
 
 func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -62,7 +65,7 @@ func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
 	}
 
 	window.ID = 0
-	if err := h.db.CreateMaintenanceWindow(&window); err != nil {
+	if err := db.CreateMaintenanceWindow(&window); err != nil {
 		httputil.InternalError(c, "Failed to create maintenance window", err)
 		return
 	}
@@ -71,7 +74,8 @@ func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
 }
 
 func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -87,7 +91,7 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 	// Fix: bind directly onto the loaded struct. encoding/json only writes
 	// fields present in the body, so absent fields stay as their DB values.
 	var window models.MaintenanceWindow
-	if err := h.db.Gorm().First(&window, id).Error; err != nil {
+	if err := db.Gorm().First(&window, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Maintenance window not found"))
 		return
 	}
@@ -111,7 +115,7 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.UpdateMaintenanceWindow(&window); err != nil {
+	if err := db.UpdateMaintenanceWindow(&window); err != nil {
 		httputil.InternalError(c, "Failed to update maintenance window", err)
 		return
 	}
@@ -120,7 +124,8 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 }
 
 func (h *Handler) DeleteMaintenanceWindow(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -128,7 +133,7 @@ func (h *Handler) DeleteMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.DeleteMaintenanceWindow(id); err != nil {
+	if err := db.DeleteMaintenanceWindow(id); err != nil {
 		httputil.InternalError(c, "Failed to delete maintenance window", err)
 		return
 	}

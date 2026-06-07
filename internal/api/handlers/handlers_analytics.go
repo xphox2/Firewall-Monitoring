@@ -101,14 +101,15 @@ func applyAlertFilters(c *gin.Context, q *gorm.DB) *gorm.DB {
 }
 
 func (h *Handler) GetAlerts(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": []models.Alert{}, "total": 0}))
 		return
 	}
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := applyAlertFilters(c, h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset))
+	query := applyAlertFilters(c, db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset))
 
 	var alerts []models.Alert
 	if err := query.Find(&alerts).Error; err != nil {
@@ -117,13 +118,14 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 	}
 
 	var total int64
-	applyAlertFilters(c, h.db.Gorm().Model(&models.Alert{})).Count(&total)
+	applyAlertFilters(c, db.Gorm().Model(&models.Alert{})).Count(&total)
 
 	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": alerts, "total": total}))
 }
 
 func (h *Handler) GetAlert(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert not found"))
 		return
 	}
@@ -132,7 +134,7 @@ func (h *Handler) GetAlert(c *gin.Context) {
 		return
 	}
 	var alert models.Alert
-	if err := h.db.Gorm().First(&alert, id).Error; err != nil {
+	if err := db.Gorm().First(&alert, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert not found"))
 		return
 	}
@@ -140,14 +142,15 @@ func (h *Handler) GetAlert(c *gin.Context) {
 }
 
 func (h *Handler) GetTraps(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.TrapEvent{}))
 		return
 	}
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
+	query := db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 
 	if deviceID := c.Query("device_id"); deviceID != "" {
 		query = query.Where("device_id = ?", deviceID)
@@ -169,14 +172,15 @@ func (h *Handler) GetTraps(c *gin.Context) {
 }
 
 func (h *Handler) GetSyslogMessages(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"messages": []models.SyslogMessage{}, "total": 0}))
 		return
 	}
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := h.db.Gorm().Order("timestamp DESC")
+	query := db.Gorm().Order("timestamp DESC")
 
 	if probeID := c.Query("probe_id"); probeID != "" {
 		query = query.Where("probe_id = ?", probeID)
@@ -202,7 +206,7 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	}
 
 	var total int64
-	countQuery := h.db.Gorm().Model(&models.SyslogMessage{})
+	countQuery := db.Gorm().Model(&models.SyslogMessage{})
 	if probeID := c.Query("probe_id"); probeID != "" {
 		countQuery = countQuery.Where("probe_id = ?", probeID)
 	}
@@ -225,7 +229,8 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 }
 
 func (h *Handler) GetSyslogMessage(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Syslog message not found"))
 		return
 	}
@@ -234,7 +239,7 @@ func (h *Handler) GetSyslogMessage(c *gin.Context) {
 		return
 	}
 	var msg models.SyslogMessage
-	if err := h.db.Gorm().First(&msg, id).Error; err != nil {
+	if err := db.Gorm().First(&msg, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, models.ErrorResponse("Syslog message not found"))
 		return
 	}
@@ -242,14 +247,15 @@ func (h *Handler) GetSyslogMessage(c *gin.Context) {
 }
 
 func (h *Handler) GetFlowSamples(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse([]models.FlowSample{}))
 		return
 	}
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := h.db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
+	query := db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 
 	if probeID := c.Query("probe_id"); probeID != "" {
 		query = query.Where("probe_id = ?", probeID)
@@ -286,7 +292,8 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 }
 
 func (h *Handler) GetFlowStats(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
 		return
 	}
@@ -299,7 +306,7 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		}
 	}
 
-	stats, err := h.db.GetFlowStats(hours, deviceID)
+	stats, err := db.GetFlowStats(hours, deviceID)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
@@ -324,7 +331,8 @@ func parseStatsDeviceFilter(c *gin.Context) uint {
 }
 
 func (h *Handler) GetAlertStats(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
 		return
 	}
@@ -332,7 +340,7 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 	hours := httputil.ParseHours(c)
 	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := h.db.GetAlertStats(hours, deviceID)
+	stats, err := db.GetAlertStats(hours, deviceID)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get alert stats", err)
 		return
@@ -342,7 +350,8 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 }
 
 func (h *Handler) GetTrapStats(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
 		return
 	}
@@ -350,7 +359,7 @@ func (h *Handler) GetTrapStats(c *gin.Context) {
 	hours := httputil.ParseHours(c)
 	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := h.db.GetTrapStats(hours, deviceID)
+	stats, err := db.GetTrapStats(hours, deviceID)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get trap stats", err)
 		return
@@ -360,7 +369,8 @@ func (h *Handler) GetTrapStats(c *gin.Context) {
 }
 
 func (h *Handler) GetSyslogStats(c *gin.Context) {
-	if h.db == nil {
+	db := h.reqDB(c)
+	if db == nil {
 		c.JSON(http.StatusOK, models.SuccessResponse(nil))
 		return
 	}
@@ -368,7 +378,7 @@ func (h *Handler) GetSyslogStats(c *gin.Context) {
 	hours := httputil.ParseHours(c)
 	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := h.db.GetSyslogStats(hours, deviceID)
+	stats, err := db.GetSyslogStats(hours, deviceID)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get syslog stats", err)
 		return
@@ -378,7 +388,8 @@ func (h *Handler) GetSyslogStats(c *gin.Context) {
 }
 
 func (h *Handler) AcknowledgeAlert(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -393,7 +404,7 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 	// Allow empty body for backward compatibility
 	c.ShouldBindJSON(&body)
 
-	if err := h.db.AcknowledgeAlertEnhanced(id, body.Notes); err != nil {
+	if err := db.AcknowledgeAlertEnhanced(id, body.Notes); err != nil {
 		httputil.InternalError(c, "Failed to acknowledge alert", err)
 		return
 	}
@@ -409,7 +420,8 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 // Body: { "hours": 4, "reason": "weekly rotation, check Monday" }
 // `hours` is clamped to [1, 720] (30 days max). Empty/zero hours = 1.
 func (h *Handler) SnoozeAlert(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -439,7 +451,7 @@ func (h *Handler) SnoozeAlert(c *gin.Context) {
 	user, _ := c.Get("username")
 	username, _ := user.(string)
 
-	if err := h.db.SnoozeAlert(id, until, username, body.Reason); err != nil {
+	if err := db.SnoozeAlert(id, until, username, body.Reason); err != nil {
 		httputil.InternalError(c, "Failed to snooze alert", err)
 		return
 	}
@@ -453,7 +465,8 @@ func (h *Handler) SnoozeAlert(c *gin.Context) {
 // UnsnoozeAlert clears the snooze, re-surfacing the alert immediately
 // (v0.10.218, bundle G2).
 func (h *Handler) UnsnoozeAlert(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -462,7 +475,7 @@ func (h *Handler) UnsnoozeAlert(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.UnsnoozeAlert(id); err != nil {
+	if err := db.UnsnoozeAlert(id); err != nil {
 		httputil.InternalError(c, "Failed to unsnooze alert", err)
 		return
 	}
@@ -474,7 +487,8 @@ func (h *Handler) UnsnoozeAlert(c *gin.Context) {
 // AUDIT-143: mirror of BulkAcknowledgeAlerts for the snooze flow.
 // Body: { "ids": [1, 2, 3], "hours": 4, "reason": "..." }
 func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -508,7 +522,7 @@ func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
 	user, _ := c.Get("username")
 	username, _ := user.(string)
 
-	affected, err := h.db.SnoozeAlertsBulk(body.IDs, until, username, body.Reason)
+	affected, err := db.SnoozeAlertsBulk(body.IDs, until, username, body.Reason)
 	if err != nil {
 		httputil.InternalError(c, "Failed to snooze alerts", err)
 		return
@@ -527,7 +541,8 @@ func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
 // least one filter is required to prevent accidental "snooze
 // everything" calls.
 func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -575,7 +590,7 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 	user, _ := c.Get("username")
 	username, _ := user.(string)
 
-	affected, err := h.db.SnoozeAlertsByFilter(filter, until, username, body.Reason)
+	affected, err := db.SnoozeAlertsByFilter(filter, until, username, body.Reason)
 	if err != nil {
 		httputil.InternalError(c, "Failed to snooze alerts", err)
 		return
@@ -596,7 +611,8 @@ const maxBulkAckIDs = 500
 // single SQL UPDATE. Used by the admin UI's "Acknowledge selected" toolbar so
 // the user doesn't have to ack alerts one at a time.
 func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -617,7 +633,7 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 		return
 	}
 
-	affected, err := h.db.AcknowledgeAlertsBulk(body.IDs, body.Notes)
+	affected, err := db.AcknowledgeAlertsBulk(body.IDs, body.Notes)
 	if err != nil {
 		httputil.InternalError(c, "Failed to acknowledge alerts", err)
 		return
@@ -638,7 +654,8 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 // At least one filter must be specified to prevent accidental "ack everything
 // in the database" calls.
 func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -674,7 +691,7 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 		return
 	}
 
-	affected, err := h.db.AcknowledgeAlertsByFilter(filter, body.Notes)
+	affected, err := db.AcknowledgeAlertsByFilter(filter, body.Notes)
 	if err != nil {
 		httputil.InternalError(c, "Failed to acknowledge alerts", err)
 		return
@@ -686,7 +703,8 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 }
 
 func (h *Handler) UpdateAlertNotes(c *gin.Context) {
-	if !httputil.RequireDB(c, h.db) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
 		return
 	}
 
@@ -708,7 +726,7 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.UpdateAlertNotes(id, body.Notes); err != nil {
+	if err := db.UpdateAlertNotes(id, body.Notes); err != nil {
 		httputil.InternalError(c, "Failed to update alert notes", err)
 		return
 	}
@@ -717,13 +735,14 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 }
 
 func (h *Handler) GetUptime(c *gin.Context) {
+	db := h.reqDB(c)
 	stats := h.uptimeTrack.GetStats()
 	fiveNines := h.uptimeTrack.CalculateFiveNines()
 
 	var records []models.UptimeRecord
-	if h.db != nil {
+	if db != nil {
 		var err error
-		records, err = h.db.GetUptimeRecords(100)
+		records, err = db.GetUptimeRecords(100)
 		if err != nil {
 			log.Printf("Failed to get uptime records: %v", err)
 		}
