@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.377** |
-| Bug findings resolved | **151 / 170  (89%)** |
+| Server version | **v0.10.378** |
+| Bug findings resolved | **152 / 170  (89%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **19** |
+| Open bug findings | **18** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -30,7 +30,8 @@
 - ✅ Client-side error reporting: browser JS errors beaconed to the server log via `POST /api/client-error` (Session 29)
 - ✅ Split the 4,887-line `database.go` into 15 per-domain files — first of the large refactors (Session 30)
 - ✅ Request-context propagation to 116 browser-facing handlers (032/079) — second large refactor (Session 31)
-- ⏳ Remaining 19: 3 large refactors (044/028/040), the rest of observability (076 slog / 150 OTel), test infrastructure
+- ✅ Versioned migration runner + `migrate` subcommands, IRC heuristic removed (044) — third large refactor (Session 32)
+- ⏳ Remaining 18: 2 large refactors (028 partitioning / 040 shared-state), the rest of observability (076 slog / 150 OTel), test infrastructure
 
 ## 🧭 How to read this file
 
@@ -41,12 +42,12 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 19 open findings)
+## ⏳ What's left (the 18 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
-- **Large refactors** — `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state). *(072 database.go split + 032/079 request-context propagation now done — two of the five.)*
+- **Large refactors** — `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state). *(072 split + 032/079 request-context + 044 migration runner now done — three of the five; both remaining need a Postgres test env or are architectural.)*
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
@@ -56,6 +57,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 32** (v0.10.378) | Large refactor — versioned migrations | replaced blind AutoMigrate-on-startup with an in-repo versioned runner: `schema_migrations` table + append-only registry + per-migration log + blocking advisory lock; v1 baseline reuses the proven AutoMigrate (prod DDL unchanged); added `migrate`/`migrate-status` subcommands (hybrid — daemons still self-heal); removed the dead/destructive IRC drop-and-recreate heuristic (044). 3rd of the 5 large refactors |
 | **Session 31** (v0.10.377) | Large refactor — request-context propagation | added `(*Database).WithContext(ctx)` + `Handler.reqDB(c)` and swept 116 browser-facing handlers to the request-scoped DB so a client disconnect cancels the query and frees the pooled connection (the dashboard pool-exhaustion fix); probe ingestion stays on the durable background context (032 + its duplicate 079). 2nd of the 5 large refactors |
 | **Session 30** (v0.10.376) | Large refactor — split `database.go` | the 4,887-line monolith → 15 cohesive per-domain files in the same `package database` (core lifecycle stays in `database.go`, now 331 lines); pure code organization, zero behavior change, full suite green, content-preservation verified (072 — first of the 5 large refactors) |
 | **Session 29** (v0.10.375) | Observability — client-side error reporting | global `error`/`unhandledrejection` reporter in the admin JS beacons uncaught browser errors to a new `POST /api/client-error`, which logs them server-side (with `X-Request-ID`+IP); capped/self-protecting, no-DB, rate-limited, fields truncated (129). Also fixed a latent `log.SetOutput(nil)` test bug |
@@ -1336,6 +1338,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-072 | `database.go` is 4,210 LOC, 175 functions | 0.10.376 | ec73e80 | Split the (now 4,887-line) `database.go` into **15 per-domain sibling files** in the same `package database` (migrate/telemetry/events/config_revisions/cleanup/devices/sites_probes/ping/charts/flows/syslog_agg/stats/connection_detail/device_queries/alerts); core (`Database` struct/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). Pure organization — no behavior/API change; content-preservation diff = 0 lines dropped; full `go test ./...` green. Updated AUDIT-080/146 static guards to scan the package dir; `TestDatabaseFileSplit_AUDIT072` pins it. First of the 5 large refactors. |
 | AUDIT-032 | `c.Request.Context()` never passed to DB calls | 0.10.377 | 887834c | Added `(*Database).WithContext(ctx)` shallow-copy (gorm reusable session; **zero changes to the ~175 methods**) + `Handler.reqDB(c)`; swept **116 browser-facing handlers / 13 files** to `db := h.reqDB(c)` so a client disconnect cancels the query + frees the pooled conn (the dashboard pool-exhaustion fix). Boundary: probe ingestion (`handlers_data.go`), batchers, audit mw, daemons stay on durable background ctx. `TestWithContext_AUDIT032` (cancellation/reuse) + `TestRequestContextBoundary_AUDIT032` (boundary guard). 2nd large refactor. |
 | AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | 887834c | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
+| AUDIT-044 | AutoMigrate on every startup, no schema-version table | 0.10.378 | (pending) | In-repo versioned migration runner (`migrations.go`): `schema_migrations` table + append-only registry + `RunMigrations()` (logs each, blocking advisory lock on a pinned `*sql.Conn`, distinct key). **v1 baseline reuses the proven AutoMigrate+shims** → DDL vs prod unchanged; only bookkeeping is new. Added `migrate`/`migrate-status` subcommands (+ `database.Connect()`); daemons still auto-apply on startup (hybrid). **Removed** the dead/destructive IRC drop-and-recreate heuristic. `migrations_audit044_test.go` (runner, sqlite) + shell static guard. Verified on sqlite; prod-PG safety = identical baseline DDL. 3rd large refactor. |
 
 ---
 
@@ -1495,6 +1498,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-072 — split 4,887-line database.go into 15 per-domain files (same package, no behavior change) — v0.10.376 — ec73e80 — opencode
 2026-06-06 — AUDIT-032 — request-context propagation to 116 browser-facing handlers (WithContext/reqDB; ingestion stays background) — v0.10.377 — 887834c — opencode
 2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — 887834c — opencode
+2026-06-06 — AUDIT-044 — in-repo versioned migration runner (schema_migrations + migrate subcommands; baseline reuses AutoMigrate; IRC heuristic removed) — v0.10.378 — (pending) — opencode
 ```
 
 ---
@@ -2795,6 +2799,53 @@ invisible (129). The only observability left is the big `slog`/OTel work.
   044 (migration tool — migration semantics vs prod PG), 028 (PG partitioning —
   DDL unverifiable on sqlite), 040 (two-instance shared state). Each is its own
   planned session.
+
+## Session 32 completion log (2026-06-06) — large refactor #3: versioned migrations
+
+**1 audit shipped** (v0.10.378), resolved count **151 → 152**. Third of the 5
+large refactors. Full suite green; no new dependencies.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-044 | 0.10.378 | (pending) | In-repo versioned migration runner + `schema_migrations` + `migrate`/`migrate-status` subcommands; v1 baseline reuses AutoMigrate; removed the dead IRC drop-and-recreate heuristic. |
+
+**Design (chosen over literal golang-migrate/goose, with the user):**
+
+- **Reuse, don't rewrite.** The riskiest part of "adopt a migration tool" is
+  rewriting the 44-model schema as SQL and baselining a live prod DB. Instead,
+  v1 "baseline" = the existing, proven `migrateBaseline` (the old `migrate()`
+  body). On existing prod it no-ops and just records v1, so **the DDL run against
+  prod is byte-identical to today's** — only the dialect-agnostic
+  `schema_migrations` bookkeeping is new. That's why this is safe to ship without
+  a Postgres test env (which doesn't exist here).
+- **Hybrid invocation** keeps the daemons' startup auto-apply (self-heal) AND
+  adds explicit `migrate`/`migrate-status` — no entrypoint/systemd/deploy changes.
+- **`NewDatabase` = `Connect` + `RunMigrations` + (unchanged) leader-gated setup.**
+  Extracting `Connect` (open-without-migrate) gave the subcommands a clean handle.
+
+**Discoveries / decisions for the next session:**
+
+- **The advisory-lock-over-a-pool gotcha is real.** `pg_advisory_lock` /
+  `pg_advisory_unlock` must run on the SAME backend, but gorm's pool routes
+  consecutive `Exec`s to arbitrary connections — so the unlock would silently
+  no-op on the wrong session. The runner pins a dedicated `*sql.Conn` for the
+  lock's lifetime (acquire → run migrations via the pool → unlock + close on the
+  pinned conn). Used a **distinct** lock key from `startupMigrationLockKey` (a
+  never-released *try*-lock — a blocking acquire on the same key would deadlock).
+- **`schema_migrations` is created by raw `CREATE TABLE IF NOT EXISTS`, not
+  AutoMigrate** — otherwise the "which versions are applied?" query would precede
+  the migration that creates the table (chicken/egg). Its model struct is a
+  read-only view, deliberately NOT in any AutoMigrate list.
+- **`NewDatabaseForTesting` kept on direct AutoMigrate** (unchanged) — each test
+  gets a fresh DB, so the runner would just re-run baseline; zero churn across
+  ~30 test files. The runner is exercised by its own sqlite test.
+- **Both remaining large refactors are blocked on environment/architecture:**
+  AUDIT-028 (Postgres range partitioning of interface_stats/system_status) is PG
+  DDL unverifiable on the sqlite test backend, and AUDIT-040 (two-instance shared
+  state) is architectural. Neither is a clean fully-verifiable-here session like
+  072/032/044 were — they'd benefit from a Postgres CI env (AUDIT-118) first.
+- **Future schema changes** now append a Go `migration{version, name, run}` to
+  `registeredMigrations` (rules in the file header) — not an edit to `migrate()`.
 
 ## Closing
 

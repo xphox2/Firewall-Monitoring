@@ -8,11 +8,14 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
-
-	"gorm.io/gorm"
 )
 
-func (d *Database) migrate() error {
+// migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
+// database up to the full current schema and is idempotent, so on an existing
+// (already-AutoMigrated) deployment every step is a no-op and the migration
+// runner simply records v1 as applied. It is invoked via the registry in
+// migrations.go — do not call it directly; call RunMigrations.
+func (d *Database) migrateBaseline() error {
 	allModels := []interface{}{
 		&models.SystemStatus{},
 		&models.InterfaceStats{},
@@ -80,31 +83,13 @@ func (d *Database) migrate() error {
 	// from the first request. Idempotent via the sha256: prefix.
 	d.migrateProbeKeysToHash()
 
-	// One-time fix: if IRC tables have wrong column names from prior migrations,
-	// drop and recreate them. Detect by checking for the correct server_password column.
+	// AUDIT-044: the legacy IRC drop-and-recreate heuristic was removed here. It
+	// fired only when the IRCServer table existed but lacked the ServerPassword
+	// column — a long-dead schema state that is false on any recently-booted
+	// deployment — and it was destructive (dropped/recreated the four IRC tables,
+	// losing rows). The IRC tables are maintained by the AutoMigrate loop above
+	// like every other table.
 	m := d.db.Migrator()
-	if m.HasTable(&models.IRCServer{}) && !m.HasColumn(&models.IRCServer{}, "ServerPassword") {
-		log.Println("IRC migrate: detected old schema, recreating IRC tables")
-		ircTables := []interface{}{&models.IRCMessageLog{}, &models.IRCCommand{}, &models.IRCChannel{}, &models.IRCServer{}}
-		err := d.db.Transaction(func(tx *gorm.DB) error {
-			for _, tbl := range ircTables {
-				if m.HasTable(tbl) {
-					if err := m.DropTable(tbl); err != nil {
-						return fmt.Errorf("IRC migrate: drop table %T: %w", tbl, err)
-					}
-				}
-			}
-			for _, tbl := range ircTables {
-				if err := tx.AutoMigrate(tbl); err != nil {
-					return fmt.Errorf("IRC migrate: recreate table %T: %w", tbl, err)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			log.Printf("%v", err)
-		}
-	}
 
 	// Add missing columns for SystemStatus extended fields (SSH performance data)
 	if m.HasTable(&models.SystemStatus{}) {

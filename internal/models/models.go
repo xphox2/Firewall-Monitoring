@@ -360,6 +360,20 @@ type LoginAttempt struct {
 	UserAgent string    `json:"user_agent"`
 }
 
+// SchemaMigration records one applied DB migration (AUDIT-044). The
+// schema_migrations table is created by the migration runner via raw DDL
+// before any migration runs (so the "which versions are applied?" query never
+// depends on a migration having created it) — this struct is therefore the
+// READ model only and is intentionally NOT added to any AutoMigrate list.
+type SchemaMigration struct {
+	Version    int       `json:"version" gorm:"primaryKey"`
+	Name       string    `json:"name"`
+	AppVersion string    `json:"app_version"`
+	AppliedAt  time.Time `json:"applied_at"`
+}
+
+func (SchemaMigration) TableName() string { return "schema_migrations" }
+
 // AuditLog records a privileged admin mutation (AUDIT-078): who did what, to
 // which target, from where, and whether it succeeded. The audit middleware
 // writes one row per authenticated POST/PUT/DELETE/PATCH under /admin. It is

@@ -34,13 +34,66 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.377"
+const ServerVersion = "0.10.378"
 
-func main() {
+// runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
+// pending migrations, print status, exit non-zero on failure.
+func runMigrateCmd() {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	database.AppVersion = ServerVersion
+	db, err := database.Connect(cfg)
+	if err != nil {
+		log.Fatalf("migrate: connect: %v", err)
+	}
+	defer db.Close()
+	if err := db.RunMigrations(); err != nil {
+		log.Printf("migrate: FAILED: %v", err)
+		os.Exit(1)
+	}
+	db.PrintMigrationStatus()
+}
+
+// runMigrateStatusCmd implements `fwmon-api migrate-status` (AUDIT-044): connect
+// and report applied/pending migrations without changing anything.
+func runMigrateStatusCmd() {
+	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+	database.AppVersion = ServerVersion
+	db, err := database.Connect(cfg)
+	if err != nil {
+		log.Fatalf("migrate-status: connect: %v", err)
+	}
+	defer db.Close()
+	db.PrintMigrationStatus()
+}
+
+func main() {
+	// AUDIT-044: explicit migration subcommands. `migrate` connects, applies any
+	// pending migrations, prints status, and exits; `migrate-status` just reports
+	// applied/pending without changing anything. The long-running services still
+	// auto-apply migrations on startup (NewDatabase) as a self-heal, so these are
+	// for operators who want to run/inspect migrations out-of-band.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "migrate":
+			runMigrateCmd()
+			return
+		case "migrate-status":
+			runMigrateStatusCmd()
+			return
+		}
+	}
+
+	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+	database.AppVersion = ServerVersion // AUDIT-044: stamp schema_migrations rows
 
 	// AUDIT-008: persist auto-generated JWT secret to disk so subsequent
 	// restarts use the SAME key. Otherwise every restart (a) invalidates

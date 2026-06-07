@@ -69,7 +69,12 @@ func pgQuote(s string) string {
 	return "'" + s + "'"
 }
 
-func NewDatabase(cfg *config.Config) (*Database, error) {
+// Connect opens the database, configures the connection pool and encryption
+// keychain, and wires the async batchers — but does NOT run migrations or the
+// startup setup. The `migrate` / `migrate-status` subcommands use this to get a
+// live handle without starting a server or auto-applying anything beyond what
+// they explicitly invoke. NewDatabase is the normal daemon entry point.
+func Connect(cfg *config.Config) (*Database, error) {
 	var db *gorm.DB
 	var dial Dialect
 	var err error
@@ -190,7 +195,21 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		return d.db.Create(&items).Error
 	})
 
-	if err := d.migrate(); err != nil {
+	return d, nil
+}
+
+// NewDatabase connects, applies any pending migrations (AUDIT-044 versioned
+// runner — leader-gated, idempotent baseline), then runs the idempotent
+// post-migration startup setup. This is the entry point for the long-running
+// daemons (api/poller/trap); they keep auto-applying migrations on startup so a
+// forgotten explicit `migrate` step still self-heals.
+func NewDatabase(cfg *config.Config) (*Database, error) {
+	d, err := Connect(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := d.RunMigrations(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
