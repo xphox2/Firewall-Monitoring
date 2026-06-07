@@ -1334,8 +1334,8 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
 | AUDIT-129 | No frontend error reporting | 0.10.375 | 1954068 | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
 | AUDIT-072 | `database.go` is 4,210 LOC, 175 functions | 0.10.376 | ec73e80 | Split the (now 4,887-line) `database.go` into **15 per-domain sibling files** in the same `package database` (migrate/telemetry/events/config_revisions/cleanup/devices/sites_probes/ping/charts/flows/syslog_agg/stats/connection_detail/device_queries/alerts); core (`Database` struct/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). Pure organization — no behavior/API change; content-preservation diff = 0 lines dropped; full `go test ./...` green. Updated AUDIT-080/146 static guards to scan the package dir; `TestDatabaseFileSplit_AUDIT072` pins it. First of the 5 large refactors. |
-| AUDIT-032 | `c.Request.Context()` never passed to DB calls | 0.10.377 | (pending) | Added `(*Database).WithContext(ctx)` shallow-copy (gorm reusable session; **zero changes to the ~175 methods**) + `Handler.reqDB(c)`; swept **116 browser-facing handlers / 13 files** to `db := h.reqDB(c)` so a client disconnect cancels the query + frees the pooled conn (the dashboard pool-exhaustion fix). Boundary: probe ingestion (`handlers_data.go`), batchers, audit mw, daemons stay on durable background ctx. `TestWithContext_AUDIT032` (cancellation/reuse) + `TestRequestContextBoundary_AUDIT032` (boundary guard). 2nd large refactor. |
-| AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | (pending) | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
+| AUDIT-032 | `c.Request.Context()` never passed to DB calls | 0.10.377 | 887834c | Added `(*Database).WithContext(ctx)` shallow-copy (gorm reusable session; **zero changes to the ~175 methods**) + `Handler.reqDB(c)`; swept **116 browser-facing handlers / 13 files** to `db := h.reqDB(c)` so a client disconnect cancels the query + frees the pooled conn (the dashboard pool-exhaustion fix). Boundary: probe ingestion (`handlers_data.go`), batchers, audit mw, daemons stay on durable background ctx. `TestWithContext_AUDIT032` (cancellation/reuse) + `TestRequestContextBoundary_AUDIT032` (boundary guard). 2nd large refactor. |
+| AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | 887834c | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
 
 ---
 
@@ -1493,8 +1493,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
 2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — 1954068 — opencode
 2026-06-06 — AUDIT-072 — split 4,887-line database.go into 15 per-domain files (same package, no behavior change) — v0.10.376 — ec73e80 — opencode
-2026-06-06 — AUDIT-032 — request-context propagation to 116 browser-facing handlers (WithContext/reqDB; ingestion stays background) — v0.10.377 — (pending) — opencode
-2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — (pending) — opencode
+2026-06-06 — AUDIT-032 — request-context propagation to 116 browser-facing handlers (WithContext/reqDB; ingestion stays background) — v0.10.377 — 887834c — opencode
+2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — 887834c — opencode
 ```
 
 ---
@@ -2754,8 +2754,8 @@ invisible (129). The only observability left is the big `slog`/OTel work.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-032 | 0.10.377 | (pending) | `(*Database).WithContext(ctx)` + `Handler.reqDB(c)`; swept 116 browser-facing handlers to the request-scoped DB. |
-| AUDIT-079 | 0.10.377 | (pending) | Duplicate of 032 ("no per-request cancellation") — closed by the same change. |
+| AUDIT-032 | 0.10.377 | 887834c | `(*Database).WithContext(ctx)` + `Handler.reqDB(c)`; swept 116 browser-facing handlers to the request-scoped DB. |
+| AUDIT-079 | 0.10.377 | 887834c | Duplicate of 032 ("no per-request cancellation") — closed by the same change. |
 
 **Method (reusable for future sweeps):**
 
