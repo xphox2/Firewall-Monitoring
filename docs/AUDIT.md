@@ -1348,7 +1348,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-118 | Tests run on SQLite; prod is Postgres | 0.10.379 | d39e80f | Build-tagged (`//go:build integration`) PG suite `integration_pg_test.go` via `TEST_PG_DSN` (skips when unset; default `go test ./...` never compiles it). Resets a `test`-named schema (safety rail), runs `RunMigrations`, asserts the **TimeBucket round-trip** (v0.10.238 minute-bucket guard: `to_char` output == expected, `time.Parse`s, not the unparseable sentinel), partitions/autovacuum no-error, advisory lock, CRUD. New CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. No new deps. Runs in CI (no PG locally); now unblocks verifying 028/040. `TestPostgresIntegrationWired_AUDIT118` guards the wiring. |
 | AUDIT-028 | interface_stats/system_status not partitioned | 0.10.380 | 35f9fd1 | v2 migration `partition_high_volume` converts the 6 high-volume tables to monthly `PARTITION BY RANGE(timestamp)` parents **when empty** (fresh installs), composite PK `(id,timestamp)`, models unchanged; populated prod → skip+warn→`docs/partition-migration.md` (operator runbook, new). `EnsurePartitions` covers all 6 (+interface_stats 3-col idx); cleanup `dropPartitionsOlderThan` drops whole old partitions (syslog_messages stays severity-DELETE). PG-only (sqlite no-op). Verified by the 118 CI suite (partitioned parents / create+route / EXPLAIN prunes / populated-skip / drop-old). |
 | AUDIT-146 | EnsurePartitions skips non-partitioned tables | 0.10.380 | 35f9fd1 | **Resolved with AUDIT-028** — the partition subsystem was dormant (no code created partitioned parents); the v2 migration now creates them for all 6 tables on fresh installs, and `docs/partition-migration.md` documents the populated-table conversion the warning referenced. |
-| AUDIT-040 | 2nd cmd/api → 2 IRC bots, 2× lockout/rate-limit | 0.10.381 | (pending) | `AcquireAPISingletonLock` — session-scoped PG advisory lock (`FWMNAPIS`) on a pinned `*sql.Conn` for the process lifetime. API **refuses to start** if another holds it (retries `API_SINGLETON_LOCK_WAIT`=10s first); `ALLOW_MULTI_API=true` → follower (HTTP only, IRC bots gated off). Released on graceful shutdown. Long-term shared lockout/rate-limit/uptime deferred (PG rate-limit = anti-pattern). Integration contention subtest + sqlite no-op + shell guard. OPERATIONS.md section. **5th/last large refactor.** |
+| AUDIT-040 | 2nd cmd/api → 2 IRC bots, 2× lockout/rate-limit | 0.10.381 | 0407a1b | `AcquireAPISingletonLock` — session-scoped PG advisory lock (`FWMNAPIS`) on a pinned `*sql.Conn` for the process lifetime. API **refuses to start** if another holds it (retries `API_SINGLETON_LOCK_WAIT`=10s first); `ALLOW_MULTI_API=true` → follower (HTTP only, IRC bots gated off). Released on graceful shutdown. Long-term shared lockout/rate-limit/uptime deferred (PG rate-limit = anti-pattern). Integration contention subtest + sqlite no-op + shell guard. OPERATIONS.md section. **5th/last large refactor.** |
 
 ---
 
@@ -1512,7 +1512,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-118 — Postgres integration test suite (TEST_PG_DSN, build-tagged) + CI postgres:16 job + make test-integration — v0.10.379 — d39e80f — opencode
 2026-06-06 — AUDIT-028 — monthly range-partition the 6 high-volume tables (empty-auto-convert v2 migration + EnsurePartitions + drop-old-partition cleanup + operator runbook) — v0.10.380 — 35f9fd1 — opencode
 2026-06-06 — AUDIT-146 — partition subsystem made live (parents now created on fresh installs); resolved with 028 — v0.10.380 — 35f9fd1 — opencode
-2026-06-07 — AUDIT-040 — API singleton guard (PG advisory lock; refuse 2nd instance / ALLOW_MULTI_API follower; IRC gated to primary) — v0.10.381 — (pending) — opencode
+2026-06-07 — AUDIT-040 — API singleton guard (PG advisory lock; refuse 2nd instance / ALLOW_MULTI_API follower; IRC gated to primary) — v0.10.381 — 0407a1b — opencode
 ```
 
 ---
@@ -2963,7 +2963,7 @@ verified by the AUDIT-118 CI suite.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-040 | 0.10.381 | (pending) | `AcquireAPISingletonLock` (pinned-conn session advisory lock, `FWMNAPIS`); refuse-2nd-instance by default + `ALLOW_MULTI_API` follower; IRC bots gated to the primary; OPERATIONS.md section. |
+| AUDIT-040 | 0.10.381 | 0407a1b | `AcquireAPISingletonLock` (pinned-conn session advisory lock, `FWMNAPIS`); refuse-2nd-instance by default + `ALLOW_MULTI_API` follower; IRC bots gated to the primary; OPERATIONS.md section. |
 
 **Design / decisions:**
 
