@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -179,6 +181,27 @@ func (d *Database) migrateBaseline() error {
 	return nil
 }
 
+type partitionDef struct {
+	tableName string
+	column    string
+}
+
+// partitionTables are the high-volume time-series tables that are monthly
+// RANGE-partitioned on `timestamp` (AUDIT-028 for interface_stats/system_status;
+// AUDIT-146 for the four syslog/trap/flow tables). The v2 migration
+// (migratePartitionHighVolume) converts each to a partitioned parent when it's
+// empty; EnsurePartitions then creates the monthly child partitions. All six
+// share the same machinery — they only differ in a couple of per-partition
+// indexes (see EnsurePartitions).
+var partitionTables = []partitionDef{
+	{"interface_stats", "timestamp"},
+	{"system_status", "timestamp"},
+	{"syslog_messages", "timestamp"},
+	{"syslog_summaries", "timestamp"},
+	{"trap_events", "timestamp"},
+	{"flow_samples", "timestamp"},
+}
+
 // EnsurePartitions creates monthly range partitions for high-volume tables on PostgreSQL.
 // Partitions are created for the current month + 6 months ahead.
 // This is safe for existing servers - it only creates new partitions, never modifies existing data.
@@ -187,16 +210,7 @@ func (d *Database) EnsurePartitions() error {
 		return nil // Partitioning is PostgreSQL-only
 	}
 
-	type partitionDef struct {
-		tableName string
-		column    string
-	}
-	tables := []partitionDef{
-		{"syslog_messages", "timestamp"},
-		{"syslog_summaries", "timestamp"},
-		{"trap_events", "timestamp"},
-		{"flow_samples", "timestamp"},
-	}
+	tables := partitionTables
 
 	// Filter the candidate list to only tables that are actually partitioned
 	// parents. Deployments that ran GORM AutoMigrate before partitioning was
@@ -296,6 +310,18 @@ func (d *Database) EnsurePartitions() error {
 						where string
 					}{fmt.Sprintf("idx_%s_severity", partitionName), "(severity)", ""})
 			}
+			// AUDIT-028: interface_stats is also queried by (device_id, ifIndex,
+			// timestamp) for per-interface charts; recreate that 3-col index per
+			// partition (the plain-table idx_iface_device_idx_ts). "index" is a
+			// reserved word — quote it.
+			if def.tableName == "interface_stats" {
+				indexes = append(indexes,
+					struct {
+						name  string
+						cols  string
+						where string
+					}{fmt.Sprintf("idx_%s_device_idx_ts", partitionName), `(device_id, "index", timestamp)`, ""})
+			}
 
 			for _, idx := range indexes {
 				createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s %s", idx.name, partitionName, idx.cols)
@@ -312,6 +338,83 @@ func (d *Database) EnsurePartitions() error {
 	}
 
 	return nil
+}
+
+// migratePartitionHighVolume is the v2 migration (AUDIT-028/146): it converts the
+// high-volume time-series tables from plain to monthly RANGE-partitioned parents.
+// It ONLY converts a table that is EMPTY (a fresh install) — converting a
+// populated ~100M-row table is a copy-rewrite far too heavy to run at startup, so
+// a populated table is left plain and the operator converts it in a maintenance
+// window per docs/partition-migration.md. Postgres-only; a no-op (still recorded)
+// on the SQLite test backend.
+//
+// Ordering safety: RunMigrations (this) runs in NewDatabase BEFORE
+// EnsurePartitions and before the server accepts traffic, so there is no window
+// where a freshly-converted parent (which has no child partitions yet) receives
+// an insert.
+func (d *Database) migratePartitionHighVolume() error {
+	if !d.dialect.IsPostgres() {
+		return nil // SQLite test backend: no-op (the runner still records v2)
+	}
+	for _, t := range partitionTables {
+		var isPartitioned bool
+		if err := d.db.Raw(`SELECT EXISTS (
+			SELECT 1 FROM pg_partitioned_table pt
+			JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`,
+			t.tableName).Scan(&isPartitioned).Error; err != nil {
+			return fmt.Errorf("partition probe %s: %w", t.tableName, err)
+		}
+		if isPartitioned {
+			continue // already converted (idempotent re-run)
+		}
+
+		var exists bool
+		if err := d.db.Raw(`SELECT to_regclass(?) IS NOT NULL`, t.tableName).Scan(&exists).Error; err != nil {
+			return fmt.Errorf("table-exists probe %s: %w", t.tableName, err)
+		}
+		if !exists {
+			continue // table not created yet — nothing to convert
+		}
+
+		var hasRows bool
+		if err := d.db.Raw(fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s LIMIT 1)", t.tableName)).Scan(&hasRows).Error; err != nil {
+			return fmt.Errorf("row probe %s: %w", t.tableName, err)
+		}
+		if hasRows {
+			log.Printf("WARNING: AUDIT-028 partition migration: %q has existing rows; NOT auto-converting (a populated-table copy is too heavy at startup). Convert it in a maintenance window per docs/partition-migration.md. Until then the table stays plain and cleanup uses batched DELETE.", t.tableName)
+			continue
+		}
+
+		if err := d.convertEmptyTableToPartitioned(t.tableName, t.column); err != nil {
+			return fmt.Errorf("convert %s to partitioned: %w", t.tableName, err)
+		}
+		log.Printf("AUDIT-028: converted empty table %q to a monthly RANGE-partitioned parent on %s", t.tableName, t.column)
+	}
+	return nil
+}
+
+// convertEmptyTableToPartitioned rewrites an EMPTY plain table into a RANGE
+// partitioned parent in one transaction (Postgres DDL is transactional, so a
+// mid-conversion failure rolls back cleanly). The old single-column PK(id) is
+// intentionally NOT copied (`INCLUDING DEFAULTS` only) because a partitioned
+// parent's PK must include the partition key; we add the composite PK(id, col).
+// `INCLUDING DEFAULTS` preserves the `id` serial default so inserts keep
+// auto-assigning ids. Caller guarantees the table is empty.
+func (d *Database) convertEmptyTableToPartitioned(table, col string) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		stmts := []string{
+			fmt.Sprintf(`ALTER TABLE %s RENAME TO %s_prepart`, table, table),
+			fmt.Sprintf(`CREATE TABLE %s (LIKE %s_prepart INCLUDING DEFAULTS) PARTITION BY RANGE (%s)`, table, table, col),
+			fmt.Sprintf(`ALTER TABLE %s ADD PRIMARY KEY (id, %s)`, table, col),
+			fmt.Sprintf(`DROP TABLE %s_prepart`, table),
+		}
+		for _, s := range stmts {
+			if err := tx.Exec(s).Error; err != nil {
+				return fmt.Errorf("%s: %w", s, err)
+			}
+		}
+		return nil
+	})
 }
 
 // defaultAutovacuumTables is the built-in set of high-write tables that get

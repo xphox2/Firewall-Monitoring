@@ -90,6 +90,75 @@ func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) e
 	}
 }
 
+// dropPartitionsOlderThan drops whole monthly partitions of a RANGE-partitioned
+// table whose entire range is older than cutoff (AUDIT-028) — instant
+// space reclamation, vs. row-by-row DELETE that bloats. It only ever drops a
+// partition whose upper bound (the exclusive `TO ('YYYY-MM-DD')`) is <= cutoff,
+// so the current/future and the straddling partition are never touched (the
+// caller still runs batchedDeleteOlderThan for the straddling tail). Returns
+// whether the table was partitioned (false → caller relies on batched DELETE).
+// Postgres-only; no-op on SQLite.
+func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (bool, error) {
+	if !d.dialect.IsPostgres() {
+		return false, nil
+	}
+	var isPartitioned bool
+	if err := d.db.Raw(`SELECT EXISTS (
+		SELECT 1 FROM pg_partitioned_table pt
+		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`, table).Scan(&isPartitioned).Error; err != nil {
+		return false, err
+	}
+	if !isPartitioned {
+		return false, nil
+	}
+
+	type childPart struct {
+		Name  string
+		Bound string
+	}
+	var children []childPart
+	if err := d.db.Raw(`
+		SELECT c.relname AS name, pg_get_expr(c.relpartbound, c.oid) AS bound
+		FROM pg_inherits i
+		JOIN pg_class c ON c.oid = i.inhrelid
+		JOIN pg_class parent ON parent.oid = i.inhparent
+		WHERE parent.relname = ?`, table).Scan(&children).Error; err != nil {
+		return true, err
+	}
+	for _, ch := range children {
+		upper, ok := parsePartitionUpperBound(ch.Bound)
+		if !ok {
+			continue // unparseable (DEFAULT partition, custom bound) — leave it
+		}
+		if upper.After(cutoff) {
+			continue // range reaches into the retention window — keep it
+		}
+		if err := d.db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, ch.Name)).Error; err != nil {
+			return true, fmt.Errorf("drop old partition %s: %w", ch.Name, err)
+		}
+		log.Printf("cleanup: dropped old partition %s (range entirely before %s)", ch.Name, cutoff.Format("2006-01-02"))
+	}
+	return true, nil
+}
+
+// parsePartitionUpperBound pulls the exclusive upper bound date out of a
+// monthly RANGE partition's bound expression, e.g.
+// "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')" → 2026-02-01.
+func parsePartitionUpperBound(bound string) (time.Time, bool) {
+	const marker = "TO ('"
+	i := strings.Index(bound, marker)
+	if i < 0 {
+		return time.Time{}, false
+	}
+	rest := bound[i+len(marker):]
+	j := strings.Index(rest, "'")
+	if j < 0 {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02", rest[:j])
+	return t, err == nil
+}
+
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}
@@ -109,11 +178,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.InterfaceStats{}, "interface_stats", statusDays},
 		{&models.ProcessorStats{}, "processor_stats", ret.Days(ret.ProcessorStatsDays)},
 		{&models.HardwareSensor{}, "hardware_sensors", statusDays},
-		{&models.TrapEvent{}, "trap_event", trapDays},
-		{&models.LoginAttempt{}, "login_attempt", defaultDays},
-		{&models.FlowSample{}, "flow_sample", flowDays},
+		{&models.TrapEvent{}, "trap_events", trapDays},
+		{&models.LoginAttempt{}, "login_attempts", defaultDays},
+		{&models.FlowSample{}, "flow_samples", flowDays},
 		{&models.InterfaceAddress{}, "interface_addresses", statusDays},
-		{&models.PingResult{}, "ping_result", pingDays},
+		{&models.PingResult{}, "ping_results", pingDays},
 		// AUDIT-029: the four tables that previously had no
 		// retention knob and grew unbounded on long-running
 		// deployments. Defaults are 30 days for the
@@ -134,6 +203,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 
 	for _, e := range entries {
 		cutoff := time.Now().AddDate(0, 0, -e.days)
+		// AUDIT-028: if the table is RANGE-partitioned, drop whole old
+		// partitions first (instant, reclaims space); a no-op for plain tables.
+		// Drop errors are non-fatal — fall through to the batched DELETE, which
+		// also trims the straddling/current partition's rows for exact retention.
+		if _, err := d.dropPartitionsOlderThan(e.name, cutoff); err != nil {
+			log.Printf("cleanup: drop-old-partitions warning for %s: %v", e.name, err)
+		}
 		if err := d.batchedDeleteOlderThan(e.model, cutoff); err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
 		}
@@ -165,6 +241,13 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		summaryDays = 7 // default fallback
 	}
 	summaryCutoff := time.Now().AddDate(0, 0, -summaryDays)
+	// AUDIT-028: drop whole old partitions first (no-op if plain). syslog_messages
+	// is intentionally NOT partition-dropped here — its dual critical(<6)/info(>=6)
+	// retention means a partition can hold rows under two different cutoffs, so it
+	// stays on the severity-scoped DELETEs above.
+	if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff); err != nil {
+		log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
+	}
 	if err := d.db.Where("timestamp < ?", summaryCutoff).Delete(&models.SyslogSummary{}).Error; err != nil {
 		return fmt.Errorf("failed to cleanup syslog_summary: %w", err)
 	}

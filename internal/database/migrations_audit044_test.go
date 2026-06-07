@@ -19,17 +19,25 @@ func TestRunMigrations_BaselineRecordedOnce(t *testing.T) {
 	if err := d.RunMigrations(); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
 	}
+	// Expect every registered migration recorded, in order. v1 = baseline,
+	// v2 = partition_high_volume (a no-op on SQLite but still recorded).
+	want := registeredMigrations
 	rows := appliedMigrations(t, d)
-	if len(rows) != 1 || rows[0].Version != 1 || rows[0].Name != "baseline" {
-		t.Fatalf("after first run, want exactly [{1 baseline}], got %+v", rows)
+	if len(rows) != len(want) {
+		t.Fatalf("after first run, want %d recorded migrations, got %d (%+v)", len(want), len(rows), rows)
+	}
+	for i, m := range want {
+		if rows[i].Version != m.version || rows[i].Name != m.name {
+			t.Fatalf("recorded migration %d = {%d %q}, want {%d %q}", i, rows[i].Version, rows[i].Name, m.version, m.name)
+		}
 	}
 
-	// Re-run must be a no-op (skip the already-applied v1).
+	// Re-run must be a no-op (skip the already-applied versions).
 	if err := d.RunMigrations(); err != nil {
 		t.Fatalf("RunMigrations (2nd): %v", err)
 	}
-	if rows := appliedMigrations(t, d); len(rows) != 1 {
-		t.Fatalf("re-run should not add rows; want 1, got %d", len(rows))
+	if rows := appliedMigrations(t, d); len(rows) != len(want) {
+		t.Fatalf("re-run should not add rows; want %d, got %d", len(want), len(rows))
 	}
 }
 

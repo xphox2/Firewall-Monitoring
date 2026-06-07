@@ -50,6 +50,7 @@ type migration struct {
 // on a fresh install it builds the whole schema.
 var registeredMigrations = []migration{
 	{version: 1, name: "baseline", run: (*Database).migrateBaseline},
+	{version: 2, name: "partition_high_volume", run: (*Database).migratePartitionHighVolume},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

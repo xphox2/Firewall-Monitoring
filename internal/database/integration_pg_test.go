@@ -15,6 +15,7 @@
 package database
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -25,6 +26,18 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 )
+
+// pgIsPartitioned reports whether table is a RANGE-partitioned parent.
+func pgIsPartitioned(t *testing.T, d *Database, table string) bool {
+	t.Helper()
+	var ok bool
+	if err := d.Gorm().Raw(`SELECT EXISTS (
+		SELECT 1 FROM pg_partitioned_table pt
+		JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = ?)`, table).Scan(&ok).Error; err != nil {
+		t.Fatalf("partition probe %s: %v", table, err)
+	}
+	return ok
+}
 
 // cfgFromDSN parses a URL-form DSN (postgres://user:pass@host:port/db?sslmode=…)
 // into the cfg.Database.* fields Connect() consumes. URL form keeps this
@@ -105,13 +118,18 @@ func newPGForTest(t *testing.T) *Database {
 func TestPostgresIntegration(t *testing.T) {
 	d := newPGForTest(t) // skips if TEST_PG_DSN is unset
 
-	t.Run("MigrationsRecordBaseline", func(t *testing.T) {
+	t.Run("MigrationsRecorded", func(t *testing.T) {
 		var rows []models.SchemaMigration
 		if err := d.Gorm().Order("version").Find(&rows).Error; err != nil {
 			t.Fatalf("read schema_migrations: %v", err)
 		}
-		if len(rows) != 1 || rows[0].Version != 1 || rows[0].Name != "baseline" {
-			t.Fatalf("want exactly [{1 baseline}], got %+v", rows)
+		if len(rows) != len(registeredMigrations) {
+			t.Fatalf("want %d recorded migrations, got %+v", len(registeredMigrations), rows)
+		}
+		for i, m := range registeredMigrations {
+			if rows[i].Version != m.version || rows[i].Name != m.name {
+				t.Fatalf("recorded[%d] = {%d %q}, want {%d %q}", i, rows[i].Version, rows[i].Name, m.version, m.name)
+			}
 		}
 		// Idempotent re-run (also re-exercises the pinned-conn advisory lock).
 		if err := d.RunMigrations(); err != nil {
@@ -119,8 +137,108 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 		var n int64
 		d.Gorm().Model(&models.SchemaMigration{}).Count(&n)
+		if n != int64(len(registeredMigrations)) {
+			t.Fatalf("re-run changed the recorded set; want %d, got %d", len(registeredMigrations), n)
+		}
+	})
+
+	// AUDIT-028/146: after migrations on a fresh DB, all 6 high-volume tables
+	// are partitioned parents.
+	t.Run("AllSixArePartitionedParents", func(t *testing.T) {
+		for _, pt := range partitionTables {
+			if !pgIsPartitioned(t, d, pt.tableName) {
+				t.Errorf("%s is not a partitioned parent after migrations (AUDIT-028/146)", pt.tableName)
+			}
+		}
+	})
+
+	t.Run("EnsurePartitionsCreatesAndRoutes", func(t *testing.T) {
+		if err := d.EnsurePartitions(); err != nil {
+			t.Fatalf("EnsurePartitions: %v", err)
+		}
+		now := time.Now().UTC()
+		child := fmt.Sprintf("interface_stats_%d%02d", now.Year(), int(now.Month()))
+		var cnt int
+		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", child).Scan(&cnt)
+		if cnt != 1 {
+			t.Fatalf("EnsurePartitions did not create current-month child %s", child)
+		}
+		// An inserted row routes into the current-month child partition.
+		if err := d.Gorm().Create(&models.InterfaceStats{DeviceID: 1, Timestamp: now, Name: "port1"}).Error; err != nil {
+			t.Fatalf("insert InterfaceStats: %v", err)
+		}
+		var inChild int64
+		d.Gorm().Raw(fmt.Sprintf("SELECT COUNT(*) FROM %s", child)).Scan(&inChild)
+		if inChild != 1 {
+			t.Fatalf("inserted row did not route into %s (got %d)", child, inChild)
+		}
+	})
+
+	t.Run("QueryPrunesToOnePartition", func(t *testing.T) {
+		now := time.Now().UTC()
+		cur := fmt.Sprintf("interface_stats_%d%02d", now.Year(), int(now.Month()))
+		nm := now.AddDate(0, 1, 0)
+		next := fmt.Sprintf("interface_stats_%d%02d", nm.Year(), int(nm.Month()))
+		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		var plan []string
+		q := fmt.Sprintf("EXPLAIN SELECT * FROM interface_stats WHERE device_id = 1 AND timestamp >= '%s' AND timestamp < '%s'",
+			start.Format("2006-01-02"), start.AddDate(0, 1, 0).Format("2006-01-02"))
+		if err := d.Gorm().Raw(q).Scan(&plan).Error; err != nil {
+			t.Fatalf("EXPLAIN: %v", err)
+		}
+		joined := strings.Join(plan, "\n")
+		if !strings.Contains(joined, cur) {
+			t.Fatalf("EXPLAIN did not scan the current-month partition %s:\n%s", cur, joined)
+		}
+		if strings.Contains(joined, next) {
+			t.Fatalf("EXPLAIN scanned an out-of-range partition %s (pruning failed):\n%s", next, joined)
+		}
+	})
+
+	// The populated-table case is verified via a baseline-only DB (so v2 hasn't
+	// converted), an inserted row, then a direct migratePartitionHighVolume call
+	// which must SKIP (leave the table plain).
+	t.Run("PopulatedTableSkipped", func(t *testing.T) {
+		d2 := newPGForTest(t) // fresh reset + full migrations… then we test the skip path on a NEW table
+		// Reset to baseline-only so interface_stats is plain again.
+		if err := d2.Gorm().Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		if err := d2.runMigrationList([]migration{{version: 1, name: "baseline", run: (*Database).migrateBaseline}}); err != nil {
+			t.Fatalf("baseline-only: %v", err)
+		}
+		if pgIsPartitioned(t, d2, "interface_stats") {
+			t.Fatal("interface_stats should be plain after baseline-only")
+		}
+		if err := d2.Gorm().Create(&models.InterfaceStats{DeviceID: 1, Timestamp: time.Now().UTC(), Name: "p"}).Error; err != nil {
+			t.Fatalf("insert into plain table: %v", err)
+		}
+		if err := d2.migratePartitionHighVolume(); err != nil {
+			t.Fatalf("migratePartitionHighVolume: %v", err)
+		}
+		if pgIsPartitioned(t, d2, "interface_stats") {
+			t.Fatal("populated interface_stats was auto-converted; it must be SKIPPED (AUDIT-028)")
+		}
+	})
+
+	t.Run("CleanupDropsOldPartition", func(t *testing.T) {
+		if err := d.Gorm().Exec(
+			`CREATE TABLE IF NOT EXISTS interface_stats_200001 PARTITION OF interface_stats FOR VALUES FROM ('2000-01-01') TO ('2000-02-01')`).Error; err != nil {
+			t.Fatalf("create old partition: %v", err)
+		}
+		handled, err := d.dropPartitionsOlderThan("interface_stats", time.Now())
+		if err != nil || !handled {
+			t.Fatalf("dropPartitionsOlderThan: handled=%v err=%v", handled, err)
+		}
+		var n int
+		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = 'interface_stats_200001'").Scan(&n)
+		if n != 0 {
+			t.Fatal("old partition interface_stats_200001 was not dropped")
+		}
+		cur := fmt.Sprintf("interface_stats_%d%02d", time.Now().UTC().Year(), int(time.Now().UTC().Month()))
+		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", cur).Scan(&n)
 		if n != 1 {
-			t.Fatalf("re-run changed the recorded set; want 1, got %d", n)
+			t.Fatalf("current-month partition %s should survive the drop", cur)
 		}
 	})
 
@@ -158,14 +276,6 @@ func TestPostgresIntegration(t *testing.T) {
 					t.Fatalf("parseBucketToMillis(%q) returned the unparseable sentinel; the chart would drop this bucket", got)
 				}
 			})
-		}
-	})
-
-	// AutoMigrate creates plain (non-partitioned) tables, so EnsurePartitions
-	// must no-op with a warning and return nil — not error, not create partitions.
-	t.Run("EnsurePartitionsNoErrorOnPlainTables", func(t *testing.T) {
-		if err := d.EnsurePartitions(); err != nil {
-			t.Fatalf("EnsurePartitions on plain tables: want nil, got %v", err)
 		}
 	})
 
