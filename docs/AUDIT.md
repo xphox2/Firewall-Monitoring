@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.374** |
-| Bug findings resolved | **147 / 170  (86%)** |
+| Server version | **v0.10.375** |
+| Bug findings resolved | **148 / 170  (87%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **23** |
+| Open bug findings | **22** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -27,7 +27,8 @@
 - ✅ Docs & repo hygiene theme cleared: README endpoint sweep + positioning, build prereqs, support channel, FUNDING decision (Session 26)
 - ✅ Prometheus `/metrics` for the API server: HTTP-latency histogram + DB-pool + Go runtime (Session 27)
 - ✅ Admin-action audit log: append-only `who did what` trail via middleware + `GET /admin/api/audit` (Session 28)
-- ⏳ Remaining 23: large refactors, the rest of observability (076 slog / 150 OTel), test infrastructure
+- ✅ Client-side error reporting: browser JS errors beaconed to the server log via `POST /api/client-error` (Session 29)
+- ⏳ Remaining 22: large refactors, the rest of observability (076 slog / 150 OTel), test infrastructure
 
 ## 🧭 How to read this file
 
@@ -38,7 +39,7 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 23 open findings)
+## ⏳ What's left (the 22 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
@@ -47,12 +48,13 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
-- **Smaller code cleanups** — `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision), `129` (Sentry). *(071 JSONError helper + 081 `return err` wrapping + 132 ES5 `['catch']` sweep now done.)*
+- **Smaller code cleanups** — `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision). *(071 JSONError helper + 081 `return err` wrapping + 129 client-error reporting + 132 ES5 `['catch']` sweep now done.)*
 
 ## 🗓 Recent activity
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 29** (v0.10.375) | Observability — client-side error reporting | global `error`/`unhandledrejection` reporter in the admin JS beacons uncaught browser errors to a new `POST /api/client-error`, which logs them server-side (with `X-Request-ID`+IP); capped/self-protecting, no-DB, rate-limited, fields truncated (129). Also fixed a latent `log.SetOutput(nil)` test bug |
 | **Session 28** (v0.10.374) | Observability — admin-action audit log | new `models.AuditLog` + `internal/audit` middleware on the `/admin` group records an append-only row per authenticated mutation (actor / route-template action / target params / final status incl. 4xx-5xx / IP); read endpoint `GET /admin/api/audit` with actor/action/hours filters (078). UI page + before/after diffing deferred |
 | **Session 27** (v0.10.373) | Observability — Prometheus metrics | new `internal/metrics`: `/metrics` endpoint with an HTTP request-latency histogram (route-template-labelled, 404→`unmatched` for cardinality safety), DB connection-pool gauges, and the free Go runtime/process collectors; `prometheus/client_golang` added (077). Poller-process counters deferred (separate binary) |
 | **Session 26** (v0.10.369–372) | Docs & repo hygiene (theme cleared) | README endpoint sweep — ~170 routes grouped, base paths spelled out — plus "Who is this for"/"When NOT to use this"/comparison-table positioning (106); fresh-Ubuntu build prereqs + network-ports table (114); Support & community section pointing at Issues/Discussions (166); FUNDING accept/wontfix decision (164) |
@@ -1326,6 +1328,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-164 | No FUNDING | 0.10.372 | a5026aa | **Accept/wontfix** — not soliciting donations, so no `FUNDING.yml` shipped (an empty one is clutter; inventing a sponsor account is wrong). Decision documented in CHANGELOG; adding `.github/FUNDING.yml` later is a one-liner GitHub auto-detects. No code/test change. |
 | AUDIT-077 | No Prometheus `/metrics` endpoint | 0.10.373 | 1bfd651 | New `internal/metrics`: `fwmon_http_request_duration_seconds{method,route,status}` histogram (gin middleware, labelled by `c.FullPath()` template; 404→`unmatched` — cardinality-safe), DB-pool gauges (`collectors.NewDBStatsCollector`), + free Go/process collectors; served at `GET /metrics` via `promhttp` (unauth, ACL-protected per audit). Added `prometheus/client_golang` dep. `TestMetricsMiddlewareAndHandler_AUDIT077` scrapes real exposition; `TestMetricsWiring_AUDIT077` pins main.go wiring. Poller-process counters (poll_cycles/alerts_fired/batcher_queue) deferred — separate binary, no HTTP. |
 | AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
+| AUDIT-129 | No frontend error reporting | 0.10.375 | (pending) | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
 
 ---
 
@@ -1481,6 +1484,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-164 — FUNDING: documented accept/wontfix (not soliciting donations) — v0.10.372 — a5026aa — opencode
 2026-06-06 — AUDIT-077 — Prometheus /metrics (HTTP histogram + DB pool + Go runtime; internal/metrics) — v0.10.373 — 1bfd651 — opencode
 2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
+2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — (pending) — opencode
 ```
 
 ---
@@ -2642,6 +2646,51 @@ green.
   dedicated next session. Otherwise: the 5 large refactors (072/032/044/028/040),
   the test-infra block (117/118/120/122/123/140/142), and a few smaller code
   items (073/079/094/129).
+
+## Session 29 completion log (2026-06-06) — observability: client-side error reporting
+
+**1 audit shipped** (v0.10.375), resolved count **147 → 148**, plus a latent
+test-bug fix surfaced by the new test. Full suite green.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-129 | 0.10.375 | (pending) | `admin-common.js` global error reporter (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` handler that logs the JS error server-side (req-id + IP, all fields truncated). No DB, no auth, rate-limited `/api` group. |
+
+**This completes the observability arc** started in Session 25: server-side 500s
+log their cause (071), `/metrics` exposes latency/pool/runtime (077), admin
+mutations are audited (078), and now **client-side** JS failures are no longer
+invisible (129). The only observability left is the big `slog`/OTel work.
+
+**Discoveries / decisions for the next session:**
+
+- **Scoped AUDIT-076 (slog) out of "next batch" deliberately.** A direct count
+  found **427 `log.*` sites across 33 files** — that is a genuine multi-session
+  refactor with per-site level/attribute judgment, not a safe one-shot
+  autonomous sweep. (071 was a 133-site *mechanical* sweep with the compiler as
+  a safety net; 076 is 3× larger and needs human-style classification.) It wants
+  a planning pass per the repo's own conventions. The three logging seams to
+  thread it through are all in place now (071 `InternalError`, 077 metrics mw,
+  078 audit mw) — so when 076 is tackled, those are the high-value first targets.
+- **Caught a real latent test bug while adding the 129 test.** `defer
+  log.SetOutput(nil)` (used in the 071 and 129 tests to restore after capturing
+  log output) leaves the std logger writing to a **nil** writer, so the *next*
+  test in the package that calls `log.Printf` panics — which
+  `TestReceiveConfigRevision…` did, intermittently by test order. Fixed to
+  restore `os.Stderr`. **Lesson:** when capturing `log` output in a test, restore
+  to `os.Stderr`, never `nil`; a package-global side effect outlives the test.
+- **The client-error endpoint is unauthenticated by design** (so the public
+  dashboard can also report) but defends itself: rate-limited `/api` group, 5
+  reports/page client cap, and server-side truncation of every field regardless
+  of the client. A malicious client can at worst write a few truncated lines to
+  the log per rate-limit window.
+- **Two small follow-ups noted:** wire the same reporter into
+  `public-dashboard.js` (one-liner, the endpoint is ready), and — if log-volume
+  ever warrants — an aggregation/UI view. Neither is blocking.
+- **Remaining 22 are the hard core:** 5 large refactors (072/032/044/028/040),
+  076 slog + 150 OTel, and the test-infra block (117/118/120/122/123/140/142).
+  No more single-session bounded features remain — the next picks each need
+  either a planning pass (slog, the refactors) or are test-writing efforts
+  (122/123) or CI-matrix work (118, unverifiable without a Postgres runner here).
 
 ## Closing
 

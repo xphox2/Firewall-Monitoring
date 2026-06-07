@@ -34,7 +34,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.374"
+const ServerVersion = "0.10.375"
 
 func main() {
 	cfg := config.Load()
@@ -407,6 +407,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	api.Use(middleware.RateLimiter(cfg))
 	{
 		api.GET("/health", handler.GetHealth)
+		api.POST("/client-error", handler.ReportClientError) // AUDIT-129: browser JS error beacon (rate-limited, logged)
 
 		public := api.Group("/public")
 		public.Use(middleware.PublicRateLimiter())

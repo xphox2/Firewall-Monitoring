@@ -1107,4 +1107,47 @@
     window.clearToasts = clearToasts;
     window.parseFortiGateLog = parseFortiGateLog;
     window.formatFortiGateLogHtml = formatFortiGateLogHtml;
+
+    // AUDIT-129: client-side error reporting. An uncaught JS error or unhandled
+    // promise rejection otherwise only flashes the 5-second toast (if that) and
+    // then vanishes, leaving the operator blind to client failures in prod.
+    // Forward them to the server log via a best-effort beacon — capped per page
+    // load so a render loop can't flood the log, and wrapped so the reporter can
+    // never itself throw.
+    (function installClientErrorReporter() {
+        if (typeof window === 'undefined') return;
+        var sent = 0;
+        var MAX = 5; // per page load
+        function report(message, source, line, col, stack) {
+            if (sent >= MAX || !message) return;
+            sent++;
+            var payload = JSON.stringify({
+                message: String(message).slice(0, 1000),
+                source: String(source || '').slice(0, 500),
+                line: line || 0,
+                col: col || 0,
+                stack: String(stack || '').slice(0, 4000),
+                url: (window.location && window.location.href) || '',
+            });
+            try {
+                if (navigator && navigator.sendBeacon) {
+                    navigator.sendBeacon('/api/client-error', new Blob([payload], { type: 'application/json' }));
+                } else {
+                    fetch('/api/client-error', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: payload,
+                        keepalive: true,
+                    }).catch(function() {});
+                }
+            } catch (e) { /* never let the reporter throw */ }
+        }
+        window.addEventListener('error', function(e) {
+            report(e.message, e.filename, e.lineno, e.colno, e.error && e.error.stack);
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+            var r = e.reason;
+            report((r && r.message) || String(r), '', 0, 0, r && r.stack);
+        });
+    })();
 })();

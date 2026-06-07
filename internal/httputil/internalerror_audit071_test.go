@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestInternalError_AUDIT071(t *testing.T) {
 	t.Run("writes 500 with message, logs err, never leaks err to body", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log.SetOutput(&logBuf)
-		defer log.SetOutput(nil) // restore default (stderr)
+		defer log.SetOutput(os.Stderr) // restore default (stderr)
 
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
@@ -54,7 +55,7 @@ func TestInternalError_AUDIT071(t *testing.T) {
 	t.Run("nil err logs the message without crashing", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log.SetOutput(&logBuf)
-		defer log.SetOutput(nil)
+		defer log.SetOutput(os.Stderr)
 
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
@@ -73,7 +74,7 @@ func TestInternalError_AUDIT071(t *testing.T) {
 	t.Run("includes X-Request-ID in the log when present", func(t *testing.T) {
 		var logBuf bytes.Buffer
 		log.SetOutput(&logBuf)
-		defer log.SetOutput(nil)
+		defer log.SetOutput(os.Stderr)
 
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
