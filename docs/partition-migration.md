@@ -19,6 +19,11 @@ hold a long lock. You run the conversion below in a maintenance window. Until yo
 do, the table keeps working as a plain table and retention uses batched `DELETE`
 (correct, just not space-reclaiming).
 
+> **Planned (not yet available):** a guided admin-UI migration utility that
+> performs this data-preserving conversion for you (progress, safety gating,
+> resumable), so you won't need to run the SQL below by hand. Until it ships, use
+> the manual procedure here.
+
 ## Why it isn't automatic
 
 Postgres cannot convert a table to partitioned in place. The procedure is
