@@ -23,7 +23,7 @@ func TestGoModDepMinimums_AUDIT018(t *testing.T) {
 		"github.com/gin-gonic/gin":     "1.10.1", // 1.9.1 had CVEs
 		"github.com/golang-jwt/jwt/v5": "5.2.2",  // 5.2.0 missing CVE fixes
 		"github.com/gosnmp/gosnmp":     "1.40.0",
-		"golang.org/x/net":             "0.38.0", // fixes reachable html.Tokenizer DoS
+		"golang.org/x/net":             "0.53.0", // GO-2026-4918 (v0.10.385); was 0.38.0 floor
 	}
 	for mod, min := range mins {
 		got := modVersion(body, mod)
@@ -34,6 +34,30 @@ func TestGoModDepMinimums_AUDIT018(t *testing.T) {
 		if semverLess(got, min) {
 			t.Errorf("%s = v%s, below the AUDIT-018 floor v%s — do not downgrade (CVE-affected)", mod, got, min)
 		}
+	}
+}
+
+// TestGoDirectiveMinimum_AUDIT018 pins the `go` directive floor. govulncheck
+// evaluates stdlib CVEs against the Go version the module declares, so a
+// downgrade of this directive silently re-introduces dozens of "affected by Go
+// standard library" findings and re-reds the govulncheck CI job (v0.10.385).
+func TestGoDirectiveMinimum_AUDIT018(t *testing.T) {
+	data, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	re := regexp.MustCompile(`(?m)^go\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)`)
+	m := re.FindStringSubmatch(string(data))
+	if len(m) < 2 {
+		t.Fatal("no `go` directive found in go.mod")
+	}
+	got := m[1]
+	if strings.Count(got, ".") < 2 {
+		got += ".0" // normalize `go 1.25` → 1.25.0 for the 3-part compare
+	}
+	const min = "1.25.0" // patched stdlib floor for govulncheck (v0.10.385)
+	if semverLess(got, min) {
+		t.Errorf("go directive = %s, below the govulncheck stdlib floor %s — a downgrade re-reds the govulncheck CI job (AUDIT-018/v0.10.385)", m[1], min)
 	}
 }
 

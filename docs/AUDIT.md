@@ -1515,7 +1515,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-028 — monthly range-partition the 6 high-volume tables (empty-auto-convert v2 migration + EnsurePartitions + drop-old-partition cleanup + operator runbook) — v0.10.380 — 35f9fd1 — opencode
 2026-06-06 — AUDIT-146 — partition subsystem made live (parents now created on fresh installs); resolved with 028 — v0.10.380 — 35f9fd1 — opencode
 2026-06-07 — AUDIT-040 — API singleton guard (PG advisory lock; refuse 2nd instance / ALLOW_MULTI_API follower; IRC gated to primary) — v0.10.381 — 0407a1b — opencode
-2026-06-07 — AUDIT-028 — fix partition migration DROP TABLE 2BP01 on fresh PG (re-own id sequence via pg_get_serial_sequence before dropping _prepart) — v0.10.384 — (pending) — claude
+2026-06-07 — AUDIT-028 — fix partition migration DROP TABLE 2BP01 on fresh PG (re-own id sequence via pg_get_serial_sequence before dropping _prepart) — v0.10.384 — 3b6937c — claude
+2026-06-07 — AUDIT-018 — fix red govulncheck CI: go directive 1.23→1.25.11 + x/net 0.43→0.55 (govulncheck now 0 affected) — v0.10.385 — (pending) — claude
 ```
 
 ---
