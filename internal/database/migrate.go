@@ -402,16 +402,46 @@ func (d *Database) migratePartitionHighVolume() error {
 // auto-assigning ids. Caller guarantees the table is empty.
 func (d *Database) convertEmptyTableToPartitioned(table, col string) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
+		// Rename the plain table aside and recreate it as a partitioned parent
+		// from the old table's shape. INCLUDING DEFAULTS copies the id serial's
+		// nextval() default so inserts keep auto-assigning ids.
 		stmts := []string{
 			fmt.Sprintf(`ALTER TABLE %s RENAME TO %s_prepart`, table, table),
 			fmt.Sprintf(`CREATE TABLE %s (LIKE %s_prepart INCLUDING DEFAULTS) PARTITION BY RANGE (%s)`, table, table, col),
 			fmt.Sprintf(`ALTER TABLE %s ADD PRIMARY KEY (id, %s)`, table, col),
-			fmt.Sprintf(`DROP TABLE %s_prepart`, table),
 		}
 		for _, s := range stmts {
 			if err := tx.Exec(s).Error; err != nil {
 				return fmt.Errorf("%s: %w", s, err)
 			}
+		}
+
+		// The id serial's sequence is still OWNED BY <table>_prepart.id — the
+		// ownership dependency followed the table on RENAME. INCLUDING DEFAULTS
+		// gave the new partitioned parent a nextval() default pointing at that
+		// same sequence, so the new parent now depends on it too. A plain
+		// DROP TABLE <table>_prepart would therefore fail with SQLSTATE 2BP01
+		// ("cannot drop table ... because other objects depend on it"), because
+		// Postgres would have to cascade-drop a sequence the live parent needs.
+		// Re-point the sequence's ownership to the new parent's id column first;
+		// then the old table drops cleanly and the sequence (with its current
+		// value) survives, bound to the new table. We must NOT use
+		// DROP TABLE ... CASCADE here — that would drop the still-needed sequence.
+		var seq string
+		if err := tx.Raw(
+			`SELECT COALESCE(pg_get_serial_sequence(?, 'id'), '')`,
+			table+"_prepart",
+		).Scan(&seq).Error; err != nil {
+			return fmt.Errorf("locate id sequence for %s: %w", table, err)
+		}
+		if seq != "" {
+			if err := tx.Exec(fmt.Sprintf(`ALTER SEQUENCE %s OWNED BY %s.id`, seq, table)).Error; err != nil {
+				return fmt.Errorf("reassign sequence %s ownership to %s.id: %w", seq, table, err)
+			}
+		}
+
+		if err := tx.Exec(fmt.Sprintf(`DROP TABLE %s_prepart`, table)).Error; err != nil {
+			return fmt.Errorf("DROP TABLE %s_prepart: %w", table, err)
 		}
 		return nil
 	})
