@@ -1520,7 +1520,8 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-07 — AUDIT-008 — fix secrets.LoadOrGenerate concurrent-start race (temp+os.Link atomic publish, no empty-file window) — v0.10.386 — 6afd303 — claude
 2026-06-07 — AUDIT-118 — fix integration-postgres subtest contamination (run destructive PopulatedTableSkipped last) — v0.10.386 — 6afd303 — claude
 2026-06-07 — AUDIT-028 — fix dropPartitionsOlderThan never dropping (parse timestamp/timestamptz partition bounds, not date-only) — v0.10.387 — 059fb47 — claude
-2026-06-07 — CI — bump checkout@v4→v5 / setup-go@v5→v6 (Node20 deprecation) + docs/UPGRADE-2026-06.md runbook — v0.10.388 — (pending) — claude
+2026-06-07 — CI — bump checkout@v4→v5 / setup-go@v5→v6 (Node20 deprecation) + docs/UPGRADE-2026-06.md runbook — v0.10.388 — 4fed075 — claude
+2026-06-07 — AUDIT-037 — fix large-DB startup cascade: lift statement_timeout for interface_addresses self-heal DDL + migration advisory-lock acquire (was 42P10 upsert flood + API/trap crash-loop) — v0.10.391 — (pending) — claude
 ```
 
 ---

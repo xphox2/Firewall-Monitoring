@@ -122,6 +122,20 @@ func (d *Database) acquireMigrationLock() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	// AUDIT-037 sets a per-connection statement_timeout (default 30s) on every
+	// pooled connection. pg_advisory_lock() blocks until a concurrent migrator
+	// releases the lock, which can exceed 30s when another process is mid-way
+	// through a heavy migration on a large DB — the timeout then cancels the
+	// wait (SQLSTATE 57014) and the starting process fails to boot ("migrate:
+	// acquire lock: canceling statement due to statement timeout"), crash-looping
+	// the API/trap-receiver while the poller holds the lock. Lift the timeout on
+	// THIS dedicated lock connection so the blocking acquire can wait as long as
+	// needed. Only this connection is affected; the migrations themselves run on
+	// other pooled connections and keep their timeout.
+	if _, err := conn.ExecContext(ctx, "SET statement_timeout = 0"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("lift statement_timeout on migration-lock connection: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
 		conn.Close()
 		return nil, err

@@ -566,16 +566,39 @@ func (d *Database) ensureInterfaceAddrUniqueIndex() {
 		dedup = `DELETE FROM interface_addresses
 		         WHERE id NOT IN (SELECT MAX(id) FROM interface_addresses GROUP BY device_id, ip_address)`
 	}
-	res := d.db.Exec(dedup)
-	if res.Error != nil {
-		log.Printf("WARNING: interface_addresses dedup failed; idx_ifaddr_dev_ip not created, ingestion still broken: %v", res.Error)
-		return
-	}
-	if res.RowsAffected > 0 {
-		log.Printf("interface_addresses: removed %d duplicate (device_id, ip_address) row(s) before indexing", res.RowsAffected)
-	}
-	if err := d.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ifaddr_dev_ip ON interface_addresses (device_id, ip_address)`).Error; err != nil {
-		log.Printf("WARNING: failed to create idx_ifaddr_dev_ip after dedup: %v", err)
+	// Run the dedupe + index build with NO statement timeout. AUDIT-037 sets a
+	// per-connection statement_timeout (default 30s) via the DSN, applied to
+	// EVERY pooled connection — including this one. On a large
+	// interface_addresses table the dedupe DELETE and CREATE UNIQUE INDEX exceed
+	// 30s and get canceled ("canceling statement due to statement timeout"), so
+	// the index is never built and every UPSERT keeps failing 42P10 — the exact
+	// failure seen on a 32 GB production DB after a data relocation. A
+	// transaction pins one connection; `SET LOCAL statement_timeout = 0` lifts
+	// the cap for just this maintenance DDL (Postgres only; SQLite has no such
+	// knob and its test data is tiny). The CREATE UNIQUE INDEX briefly locks the
+	// table while it builds, but ingestion to it is already failing, so there's
+	// nothing to block; for a zero-lock manual repair use CREATE UNIQUE INDEX
+	// CONCURRENTLY outside a transaction.
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		if d.dialect.IsPostgres() {
+			if e := tx.Exec("SET LOCAL statement_timeout = 0").Error; e != nil {
+				return fmt.Errorf("lift statement_timeout: %w", e)
+			}
+		}
+		res := tx.Exec(dedup)
+		if res.Error != nil {
+			return fmt.Errorf("dedup: %w", res.Error)
+		}
+		if res.RowsAffected > 0 {
+			log.Printf("interface_addresses: removed %d duplicate (device_id, ip_address) row(s) before indexing", res.RowsAffected)
+		}
+		if e := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ifaddr_dev_ip ON interface_addresses (device_id, ip_address)`).Error; e != nil {
+			return fmt.Errorf("create index: %w", e)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("WARNING: interface_addresses index repair failed; idx_ifaddr_dev_ip not created, ingestion still broken: %v", err)
 		return
 	}
 	log.Println("interface_addresses: idx_ifaddr_dev_ip created — UPSERT ingestion restored")
