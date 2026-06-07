@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.378** |
-| Bug findings resolved | **152 / 170  (89%)** |
+| Server version | **v0.10.379** |
+| Bug findings resolved | **153 / 170  (90%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **18** |
+| Open bug findings | **17** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -31,7 +31,8 @@
 - ✅ Split the 4,887-line `database.go` into 15 per-domain files — first of the large refactors (Session 30)
 - ✅ Request-context propagation to 116 browser-facing handlers (032/079) — second large refactor (Session 31)
 - ✅ Versioned migration runner + `migrate` subcommands, IRC heuristic removed (044) — third large refactor (Session 32)
-- ⏳ Remaining 18: 2 large refactors (028 partitioning / 040 shared-state), the rest of observability (076 slog / 150 OTel), test infrastructure
+- ✅ Postgres integration test suite + CI `postgres:16` job (118) — real-PG coverage; unblocks 028/040 (Session 33)
+- ⏳ Remaining 17: 2 large refactors (028 partitioning / 040 shared-state), observability (076 slog / 150 OTel), the rest of test infra (117/120/122/123/140/142)
 
 ## 🧭 How to read this file
 
@@ -42,14 +43,14 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 18 open findings)
+## ⏳ What's left (the 17 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
 - **Large refactors** — `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state). *(072 split + 032/079 request-context + 044 migration runner now done — three of the five; both remaining need a Postgres test env or are architectural.)*
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
-- **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
+- **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench + 118 Postgres-CI-matrix now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
 - **Smaller code cleanups** — `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision). *(071 JSONError helper + 081 `return err` wrapping + 129 client-error reporting + 132 ES5 `['catch']` sweep now done.)*
 
@@ -57,6 +58,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 33** (v0.10.379) | Test infra — Postgres CI matrix | build-tagged (`//go:build integration`) Postgres suite via `TEST_PG_DSN` + a CI `postgres:16` service job + `make test-integration`; asserts the PG-only paths SQLite can't (the `to_char` TimeBucket round-trip / v0.10.238 guard, migration advisory lock, partitions/autovacuum). No new deps; runs in CI; unblocks verifying 028/040 (118) |
 | **Session 32** (v0.10.378) | Large refactor — versioned migrations | replaced blind AutoMigrate-on-startup with an in-repo versioned runner: `schema_migrations` table + append-only registry + per-migration log + blocking advisory lock; v1 baseline reuses the proven AutoMigrate (prod DDL unchanged); added `migrate`/`migrate-status` subcommands (hybrid — daemons still self-heal); removed the dead/destructive IRC drop-and-recreate heuristic (044). 3rd of the 5 large refactors |
 | **Session 31** (v0.10.377) | Large refactor — request-context propagation | added `(*Database).WithContext(ctx)` + `Handler.reqDB(c)` and swept 116 browser-facing handlers to the request-scoped DB so a client disconnect cancels the query and frees the pooled connection (the dashboard pool-exhaustion fix); probe ingestion stays on the durable background context (032 + its duplicate 079). 2nd of the 5 large refactors |
 | **Session 30** (v0.10.376) | Large refactor — split `database.go` | the 4,887-line monolith → 15 cohesive per-domain files in the same `package database` (core lifecycle stays in `database.go`, now 331 lines); pure code organization, zero behavior change, full suite green, content-preservation verified (072 — first of the 5 large refactors) |
@@ -1339,6 +1341,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-032 | `c.Request.Context()` never passed to DB calls | 0.10.377 | 887834c | Added `(*Database).WithContext(ctx)` shallow-copy (gorm reusable session; **zero changes to the ~175 methods**) + `Handler.reqDB(c)`; swept **116 browser-facing handlers / 13 files** to `db := h.reqDB(c)` so a client disconnect cancels the query + frees the pooled conn (the dashboard pool-exhaustion fix). Boundary: probe ingestion (`handlers_data.go`), batchers, audit mw, daemons stay on durable background ctx. `TestWithContext_AUDIT032` (cancellation/reuse) + `TestRequestContextBoundary_AUDIT032` (boundary guard). 2nd large refactor. |
 | AUDIT-079 | No per-request cancellation (dup of 032) | 0.10.377 | 887834c | **Same finding as AUDIT-032** — closed by the same change (request-context propagation via `reqDB`/`WithContext`). |
 | AUDIT-044 | AutoMigrate on every startup, no schema-version table | 0.10.378 | 74d7513 | In-repo versioned migration runner (`migrations.go`): `schema_migrations` table + append-only registry + `RunMigrations()` (logs each, blocking advisory lock on a pinned `*sql.Conn`, distinct key). **v1 baseline reuses the proven AutoMigrate+shims** → DDL vs prod unchanged; only bookkeeping is new. Added `migrate`/`migrate-status` subcommands (+ `database.Connect()`); daemons still auto-apply on startup (hybrid). **Removed** the dead/destructive IRC drop-and-recreate heuristic. `migrations_audit044_test.go` (runner, sqlite) + shell static guard. Verified on sqlite; prod-PG safety = identical baseline DDL. 3rd large refactor. |
+| AUDIT-118 | Tests run on SQLite; prod is Postgres | 0.10.379 | (pending) | Build-tagged (`//go:build integration`) PG suite `integration_pg_test.go` via `TEST_PG_DSN` (skips when unset; default `go test ./...` never compiles it). Resets a `test`-named schema (safety rail), runs `RunMigrations`, asserts the **TimeBucket round-trip** (v0.10.238 minute-bucket guard: `to_char` output == expected, `time.Parse`s, not the unparseable sentinel), partitions/autovacuum no-error, advisory lock, CRUD. New CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. No new deps. Runs in CI (no PG locally); now unblocks verifying 028/040. `TestPostgresIntegrationWired_AUDIT118` guards the wiring. |
 
 ---
 
@@ -1499,6 +1502,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-032 — request-context propagation to 116 browser-facing handlers (WithContext/reqDB; ingestion stays background) — v0.10.377 — 887834c — opencode
 2026-06-06 — AUDIT-079 — per-request cancellation (duplicate of 032; closed by same change) — v0.10.377 — 887834c — opencode
 2026-06-06 — AUDIT-044 — in-repo versioned migration runner (schema_migrations + migrate subcommands; baseline reuses AutoMigrate; IRC heuristic removed) — v0.10.378 — 74d7513 — opencode
+2026-06-06 — AUDIT-118 — Postgres integration test suite (TEST_PG_DSN, build-tagged) + CI postgres:16 job + make test-integration — v0.10.379 — (pending) — opencode
 ```
 
 ---
@@ -2846,6 +2850,52 @@ large refactors. Full suite green; no new dependencies.
   072/032/044 were — they'd benefit from a Postgres CI env (AUDIT-118) first.
 - **Future schema changes** now append a Go `migration{version, name, run}` to
   `registeredMigrations` (rules in the file header) — not an edit to `migrate()`.
+
+## Session 33 completion log (2026-06-06) — test infra: Postgres CI matrix
+
+**1 audit shipped** (v0.10.379), resolved count **152 → 153 (90%)**. No new
+dependencies. Default suite untouched.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-118 | 0.10.379 | (pending) | Build-tagged Postgres integration suite (`TEST_PG_DSN`) + CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. |
+
+**Design / decisions:**
+
+- **`TEST_PG_DSN` + CI service over `testcontainers`** (user decision): zero new
+  deps, standard GitHub Actions pattern. The suite is `//go:build integration` so
+  the default `go test ./...` never compiles it; it also `t.Skip`s without a DSN.
+- **Reuses the real `database.Connect`** (AUDIT-044) so the prod connection path
+  is itself under test, not bypassed. DSN is URL-form, parsed with stdlib
+  `net/url` (no dep), into a `config.Config`.
+- **Safety rail:** the suite `DROP SCHEMA public CASCADE`s for a clean slate, so
+  it `t.Fatalf`s unless the DSN's dbname contains `test` — it can't be pointed at
+  prod and wipe it.
+- **Headline assertion is the v0.10.238 guard:** the minute/hour/day
+  `postgresDialect.TimeBucket` strings are checked three ways on real PG (equal
+  the expected `to_char` output, `time.Parse` with the app layout, not the
+  `parseBucketToMillis` sentinel). Plus migration-baseline+advisory-lock,
+  partitions/autovacuum no-error, advisory lock, CRUD.
+
+**Discoveries / for the next session:**
+
+- **This is the first thing here that genuinely can't run locally.** No
+  Docker/Postgres in the sandbox, so I verified by: default build/test unaffected
+  (tag excludes the file), `go vet -tags=integration` compiles it, and
+  `-tags=integration` with no DSN SKIPs. The **real PG run is the CI job's first
+  execution** — if it surfaces a dialect bug, that's the audit's value (a
+  follow-up fix). I could not eliminate that gap without a Postgres runner.
+- **028 and 040 are now verifiable.** With this lane, AUDIT-028 (PG range
+  partitioning of interface_stats/system_status) can be implemented with
+  integration subtests that assert partitions actually get created + routed, and
+  AUDIT-040 (two-instance shared state) can assert the advisory-lock leader
+  election across two connections — rather than shipping blind. Either is a
+  reasonable next plan; 028 is the more concrete/bounded of the two.
+- **Remaining 17:** 2 large refactors (028/040), observability (076 slog / 150
+  OTel), and the rest of test-infra (117 coverage / 120 property-based / 122
+  handler / 123 integration-expansion / 140 `t.Parallel` / 142 `Short`). The
+  fully-local-verifiable picks are 076 (slog) and the test-infra items; 028/040
+  now have a CI verification path.
 
 ## Closing
 

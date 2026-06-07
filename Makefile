@@ -35,6 +35,19 @@ test: ## Run tests
 test-race: ## Run tests with the race detector (requires CGO)
 	CGO_ENABLED=1 $(GO) test -race -count=1 -timeout=5m ./...
 
+.PHONY: test-integration
+test-integration: ## Run the Postgres integration suite (AUDIT-118; needs TEST_PG_DSN)
+	# Build-tagged (//go:build integration) suite that needs a real PostgreSQL.
+	# Set TEST_PG_DSN, e.g.:
+	#   postgres://firewall_mon:firewall_mon@localhost:5432/firewall_mon_test?sslmode=disable
+	# With Docker you can spin one up:
+	#   docker run --rm -d --name fwmon-it-pg -p 5432:5432 \
+	#     -e POSTGRES_USER=firewall_mon -e POSTGRES_PASSWORD=firewall_mon \
+	#     -e POSTGRES_DB=firewall_mon_test postgres:16
+	# Without TEST_PG_DSN the suite compiles and skips. Deliberately NOT part of
+	# `qa` so the default contributor gate stays database-free.
+	$(GO) test -tags=integration -count=1 -timeout=5m ./internal/database/...
+
 # AUDIT-102: -trimpath strips local filesystem paths and -buildvcs=false
 # keeps VCS state out of the binary, so builds are reproducible across hosts.
 GOFLAGS_REPRO ?= -trimpath -buildvcs=false
