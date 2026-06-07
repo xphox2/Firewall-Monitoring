@@ -1,42 +1,56 @@
 # Firewall Monitor
 
-A comprehensive, vendor-agnostic firewall monitoring system with SNMP polling, trap reception, alerting, and uptime tracking. Currently supports FortiGate devices via Fortinet enterprise OIDs, with a generic architecture ready for any SNMP-capable firewall.
+> **A vendor-agnostic firewall monitoring system with SNMP polling, trap
+> reception, alerting, config-change tracking, and uptime — run centrally
+> or distributed via lightweight remote probes.**
+>
+> This repo builds the **central server** (4 Go binaries: `fwmon-api`,
+> `fwmon-poller`, `fwmon-trap`, `fwmon-probe`) and ships the admin UI
+> and the public GridStack dashboard. The **probe** half of the project
+> is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
-## Features
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen)](https://github.com/xphox2/Firewall-Monitoring/actions)
+[![Version](https://img.shields.io/badge/version-0.10.385-blue)](CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.25.11+-00ADD8)](go.mod)
 
-- **Public Dashboard**: Display firewall status without authentication (drag-and-drop GridStack wallboard)
-- **Secure Admin Panel**: Protected by JWT authentication with rate limiting and account lockout
-- **Multi-vendor SNMP**: FortiGate, Palo Alto, and Cisco ASA profiles today, with a generic profile for any SNMP-capable firewall (`VendorProfile` interface)
-- **SNMP Polling**: Comprehensive monitoring with configurable intervals (default 60s to avoid firewall overload)
-- **SNMP Trap Receiver**: Listen for SNMP traps and generate alerts
-- **Remote Probe / Collector Architecture**: Deploy lightweight probes at remote sites that relay SNMP polls, SNMP traps, syslog, sFlow, and ICMP ping back to the central server (multi-tenant, per-probe registration keys)
-- **Syslog / sFlow / ICMP collection**: TCP+UDP syslog receiver, sFlow flow sampling, and ping-based reachability — directly or via a probe
-- **Sites & Connection Map**: Group devices into sites and visualize the physical → VLAN → tunnel → overlay network topology between them
-- **Alerting System**: Email, Slack, Discord, and webhook notifications, with configurable **alert policies** and **maintenance windows** (suppress alerts during planned work)
-- **Reports**: Image-free executive HTML reports (view in-browser, export PDF, download, or email on a schedule) at `/admin/reports`
-- **IRC Bot**: Per-server IRC bots that post alerts and answer status queries from a channel
-- **Uptime Tracking**: 99.99999% (five nines) uptime calculation
-- **Secure**: CSRF protection, secure headers (HSTS/CSP), rate limiting, account lockout, encrypted-at-rest device/probe secrets
+## Sibling project
+
+This is **one of two** repositories. The other is
+[Firewall-Collector](https://github.com/xphox2/Firewall-Collector) — the
+lightweight probe that runs at a remote site, listens for syslog /
+SNMP-trap / sFlow / ICMP, SSH- and TFTP-polls FortiGates, and relays
+everything to this server. You need both: the other repo **deploys at
+the edge**, this repo **runs at HQ**.
+
+| | Server (this repo) | Probe (sibling) |
+|---|---|---|
+| Role | Store, alert, visualize, configure | Listen at the edge, relay to HQ |
+| Binaries | `fwmon-api`, `fwmon-poller`, `fwmon-trap`, `fwmon-probe` | `firewall-collector`, `firewall-collector-diag-backup`, `firewall-collector-tftp-test` |
+| Listens on | 8080/tcp, 162/udp, 514/udp+tcp, 6343/udp, 8089/tcp | 162/udp, 514/tcp+udp, 6343/udp, 69/udp |
+| Talks to | The device (SNMP/SSH/TFTP); the probe (HTTPS) | The server (HTTPS, mTLS) |
+| Docs | this README + [docs/](docs/STRUCTURE.md) | [README](https://github.com/xphox2/Firewall-Collector/blob/master/README.md) + [docs/](https://github.com/xphox2/Firewall-Collector/blob/master/docs/STRUCTURE.md) |
 
 ## Who is this for
 
-Self-hosted network/security teams and small-to-mid MSPs running a **firewall
-fleet across multiple sites** — primarily FortiGate today, with Palo Alto and
-Cisco ASA profiles and a generic SNMP profile for anything else. It gives you
-one pane of glass (status, interfaces, VPN tunnels, syslog, sFlow, alerts,
-reports) with **lightweight remote probes** that relay SNMP/syslog/sFlow/ICMP
-from sites you can't poll directly — without standing up a heavyweight NMS.
+Self-hosted network/security teams and small-to-mid MSPs running a
+**firewall fleet across multiple sites** — primarily FortiGate today, with
+Palo Alto and Cisco ASA profiles and a generic SNMP profile for anything
+else. It gives you one pane of glass (status, interfaces, VPN tunnels,
+syslog, sFlow, alerts, reports) with **lightweight remote probes** that
+relay SNMP/syslog/sFlow/ICMP from sites you can't poll directly — without
+standing up a heavyweight NMS.
 
 ## When NOT to use this
 
-- **General-purpose infrastructure monitoring** (servers, switches, apps, DBs) →
-  LibreNMS, Zabbix, or Checkmk are built for that breadth.
+- **General-purpose infrastructure monitoring** (servers, switches, apps,
+  DBs) → LibreNMS, Zabbix, or Checkmk are built for that breadth.
 - **Agentless website / synthetic / SSL-expiry checks** → Uptime Kuma or
   StatusCake are simpler and purpose-built.
-- **A single firewall with no remote sites** → an SNMP exporter + Grafana, or
-  the vendor's own GUI, is lighter than running this stack.
-- **Vendor-supported enterprise NMS with SLAs and pro services** → PRTG or
-  SolarWinds. This is OSS you self-host and operate yourself.
+- **A single firewall with no remote sites** → an SNMP exporter +
+  Grafana, or the vendor's own GUI, is lighter than running this stack.
+- **Vendor-supported enterprise NMS with SLAs and pro services** → PRTG
+  or SolarWinds. This is OSS you self-host and operate yourself.
 
 ## How it compares
 
@@ -51,198 +65,396 @@ from sites you can't poll directly — without standing up a heavyweight NMS.
 | Syslog + sFlow ingest | ✅ | add-on | plugins | add-on | partial | add-on | ✗ | ✗ |
 | Footprint | Light (4 Go binaries) | Heavy | Medium | Medium | Medium | Medium | Light | n/a |
 
-This project is intentionally **narrow and firewall-first**: it does a few
-things (firewall health, VPN/connection mapping, config drift, alerting) well,
-rather than being a general NMS. If you need breadth, reach for one of the tools
-above; many teams run this *alongside* a general NMS.
+This project is intentionally **narrow and firewall-first**: it does a
+few things (firewall health, VPN/connection mapping, config drift,
+alerting) well, rather than being a general NMS. If you need breadth,
+reach for one of the tools above; many teams run this *alongside* a
+general NMS.
+
+## Features
+
+Every feature below is shipped in the current `0.10.x` release. **Role
+tag** — `[Server]` runs on the central server (this repo), `[Probe]`
+runs on the collector, `[Both]` requires both sides. **Status** —
+Stable shipping, Beta shipping but with a known follow-up, Planned a
+public AUDIT-NNN row exists.
+
+### Data ingest (direct poll, no probe)
+
+- **[Server] SNMP polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256)
+  on `SNMP_POLL_INTERVAL` (default 60s). Per-device `VendorProfile`
+  registry with FortiGate, Palo Alto, Cisco ASA, pfSense, OPNsense,
+  SonicWall, Firewalla, generic Linux/BSD VPN.
+- **[Server] SNMP trap receiver** (UDP/162). V1 enterprise + V2c
+  specific-trap, per-source-IP rate limit, community filter (required,
+  AUDIT-012).
+- **[Server] Syslog receiver** — TCP + UDP, RFC 5424 + RFC 3164,
+  `SYSLOG_ALLOWED_SOURCES` allow-list.
+- **[Server] sFlow v5 datagram parser**.
+- **[Server] ICMP ping** — raw `net/icmp`, no external binary.
+- **[Both] Probe relay ingest** — syslog / sFlow / trap / flow / ping /
+  SNMP-poll results from a remote [collector](https://github.com/xphox2/Firewall-Collector).
+- **[Both] `X-Probe-Batch-ID` idempotency key** (AUDIT-042) +
+  **`schema_version` handshake** (0.10.382 / 1.2.108). Out-of-range
+  versions get HTTP 426 with `X-Probe-Schema-Version-Supported`. No
+  data loss on a 426. See [MIGRATING.md](MIGRATING.md).
+
+### Multi-tenant / multi-site
+
+- **[Server] Sites, Connections, Probes** — group devices into sites,
+  visualize the physical → VLAN → tunnel → overlay network topology
+  between them.
+- **[Server] Probe approval workflow** — Pending → Approve / Reject.
+  Per-probe registration keys (hashed, constant-time compare, AUDIT-016/017).
+- **[Server] `POST /admin/api/probes/:id/regenerate-key`** (AUDIT-085).
+
+### Alerting
+
+- **[Server] Threshold alerts** (CPU / memory / disk / session count).
+- **[Server] `INTERFACE_DOWN_ALERT`** (default `true`).
+- **[Server] Alert state machine** (threshold + dedup + cooldown).
+- **[Server] Alert policies** — per-device / per-site, DB-backed, bulk
+  rules, clone.
+- **[Server] Maintenance windows** — suppress alerts during planned work.
+- **[Server] `PROBE_DATA_LAG_ALERT_MINUTES`** (default 60).
+- **[Server] `PROBE_DATA_TRUNCATED`** alert (re-truncation within 5 min).
+- **[Server] Traffic-spike detection** (per-interface std-dev threshold,
+  0.10.239).
+- **[Server] Auto-snooze + auto-archive of stale unacked alerts**
+  (AUDIT-144 / AUDIT-031).
+
+### Notifications
+
+- **[Server] Email** (SMTP, HTML, STARTTLS / LOGIN / PLAIN).
+- **[Server] Slack / Discord / generic webhook** (SSRF-gated, AUDIT-020).
+- **[Server] IRC bot** (per-server, alerts + status commands; per-channel
+  command allow-list, AUDIT-019).
+
+### Reports
+
+- **[Server] Image-free executive HTML report** (view in-browser, export
+  PDF, download, or email on a schedule).
+- **[Server] Daily / weekly scheduled report** with
+  `REPORT_TIMEZONE` (IANA TZ).
+- **[Server] Traffic-spike + uptime rollup** in reports.
+
+### Dashboards
+
+- **[Server] Public GridStack dashboard** (drag-and-drop wallboard, no
+  auth — safe to expose).
+- **[Server] Admin dashboard** (auth-gated).
+- **[Server] Site / connection / device topology diagram** (Cytoscape.js).
+- **[Server] Per-device + per-connection detail pages** (status,
+  interfaces, VPN, HA, SD-WAN, security, process top, config history
+  with diff).
+- **[Server] Chart zoom + pan** (chartjs-plugin-zoom).
+
+### Auth & security
+
+- **[Server] JWT-based admin auth** (HS256, `golang-jwt/jwt/v5`).
+- **[Server] bcrypt** (configurable cost, default 12).
+- **[Server] Account lockout** (5 attempts, 15 min).
+- **[Server] Rate limiting** — per-IP LRU cap; separate buckets for
+  login / public / probe (AUDIT-083).
+- **[Server] CSRF protection** on admin mutations.
+- **[Server] Secure HTTP headers** (HSTS, CSP nonce, X-Frame-Options).
+- **[Server] Encrypted-at-rest stored secrets** (AES-256-GCM, key
+  derived from JWT secret, rotation chain, AUDIT-009).
+- **[Server] Admin-action audit log** (append-only, route-template
+  labelled, AUDIT-078).
+- **[Server] `httputil.InternalError`** — logs underlying error, never
+  leaks it (AUDIT-071).
+- **[Server] SSRF block-list** (private/loopback/CGNAT) for webhooks
+  + test endpoints.
+- **[Server] Client-side JS error reporting** (`POST /api/client-error`,
+  AUDIT-129).
+- **[Server] RFC 9116 `security.txt`** at `/.well-known/security.txt`
+  (AUDIT-112).
+- **[Server] Request-ID correlation** (`X-Request-ID` propagation,
+  AUDIT-135).
+- **[Planned] Server-side mTLS client-cert verification of probes** —
+  tracked in [CERT-ROTATION.md](docs/CERT-ROTATION.md).
+- **[Planned] SIGHUP hot-reload of TLS certs** — restart required
+  today.
+- **[Planned] One-click GDPR export / per-subject erasure endpoint** —
+  tracked in [DATA-RETENTION.md](docs/DATA-RETENTION.md).
+
+### Database & storage
+
+- **[Server] PostgreSQL backend** (production).
+- **[Server] SQLite** (tests only, AUDIT-118).
+- **[Server] Embedded PostgreSQL in Docker** (auto-generated password
+  in `/config/pg-credentials`, chmod 600, AUDIT-093).
+- **[Server] Versioned, recorded DB migrations** (`schema_migrations`
+  table, advisory-lock-gated runner, `migrate` / `migrate-status`
+  subcommands, AUDIT-044).
+- **[Server] Monthly range-partitioning** for the 6 high-volume
+  tables (AUDIT-028 + AUDIT-146).
+- **[Server] Autovacuum tuning** for high-write tables (AUDIT-147).
+- **[Server] Per-table data retention** (14 `RETENTION_*_DAYS` env vars).
+- **[Server] API single-instance guard** (Postgres advisory lock;
+  `ALLOW_MULTI_API=true` opts into follower mode, AUDIT-040).
+- **[Server] Poller cross-process leader lock** (only one does
+  cleanup/migration work, AUDIT-007).
+- **[Server] Per-connection `statement_timeout`** (Postgres, AUDIT-037).
+- **[Server] Request-bound DB queries** (browser-disconnect
+  cancellation, AUDIT-032 + AUDIT-079).
+
+### Observability
+
+- **[Server] `GET /api/health`** (Postgres ping, 1s timeout).
+- **[Server] Docker `HEALTHCHECK`** (30s interval, 3s timeout, 3
+  retries, AUDIT-091).
+- **[Server] Prometheus `/metrics`** (request-latency histogram by
+  matched route template, DB-pool gauges, Go runtime + process
+  collectors, AUDIT-077).
+- **[Server] Structured logging** (slog) with request-ID correlation.
+
+The full **website-ready** feature inventory (with status, role, and
+"since" version for every row, plus the known-limitations table) lives
+in [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Architecture
 
 ```
 firewall-mon/
 ├── cmd/
-│   ├── api/          # Main API server (Gin web server)
-│   ├── poller/       # SNMP polling daemon
-│   ├── probe/        # Remote site probe collector
+│   ├── api/           # Main API server (Gin web server) — auth, REST, admin UI
+│   ├── poller/        # SNMP polling daemon (advisory-lock leader)
+│   ├── probe/         # Remote site probe collector (server-side implementation)
 │   └── trap-receiver/ # SNMP trap listener
 ├── internal/
-│   ├── config/      # Configuration management
-│   ├── auth/        # JWT authentication & security
-│   ├── snmp/        # SNMP client & trap receiver (FortiGate OIDs)
-│   ├── alerts/      # Alert threshold checking
-│   ├── notifier/    # Email/webhook notifications
-│   ├── uptime/      # Uptime calculation
-│   ├── models/      # Data structures
-│   ├── relay/       # Probe relay client
-│   ├── ping/        # ICMP ping collector
-│   ├── syslog/      # Syslog receiver
-│   ├── sflow/       # sFlow receiver
+│   ├── config/        # Configuration management
+│   ├── auth/          # JWT authentication & security
+│   ├── snmp/          # SNMP client & trap receiver (FortiGate OIDs)
+│   ├── alerts/        # Alert threshold checking
+│   ├── notifier/      # Email/webhook notifications
+│   ├── uptime/        # Uptime calculation
+│   ├── models/        # Data structures
+│   ├── relay/         # Probe relay client
+│   ├── ping/          # ICMP ping collector
+│   ├── syslog/        # Syslog receiver
+│   ├── sflow/         # sFlow receiver
 │   └── api/
-│       ├── handlers/ # HTTP handlers
+│       ├── handlers/  # HTTP handlers
 │       └── middleware/ # Security middleware
 ├── web/
-│   ├── public/      # Public dashboard
-│   └── admin/       # Admin panel
-└── deploy.sh        # Deployment script
+│   ├── public/        # Public dashboard
+│   └── admin/         # Admin panel
+├── docs/              # Operator runbooks, AUDIT log, compatibility matrix
+└── deploy.sh          # Deployment script
 ```
 
-See [docs/architecture.md](docs/architecture.md) for component **data-flow and sequence diagrams** (probe registration, poll cycle, alert firing).
+The full architecture with **Mermaid sequence diagrams** (probe
+registration, poll cycle, alert firing/recovery) is in
+[docs/architecture.md](docs/architecture.md).
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Go 1.21+** (uses `log/slog`-era stdlib; `go.mod` pins the exact minor).
+- **Go 1.21+** (uses `log/slog`-era stdlib; `go.mod` pins the exact
+  minor; CI is on 1.25.11).
 - **Linux server** (tested on Ubuntu/Debian). The native installer uses
   **systemd**; macOS/Windows can build and run the binaries but the
   `make install` / `deploy.sh install` unit files are Linux-only.
-- An **SNMP-enabled firewall** (or a remote **probe** at a site you can't poll
-  directly).
+- **PostgreSQL** (or use the embedded one in the Docker image).
 
-On a fresh Ubuntu 24.04 box, install the toolchain and the tools the
-build/deploy scripts shell out to:
+On a fresh Ubuntu 24.04 box:
 
 ```bash
 sudo apt update
 sudo apt install -y golang-go git make rsync bash
-# 'rsync' is required by `deploy.sh deploy` (it rsyncs binaries to the remote).
-# 'make' drives the Makefile targets; 'git' is needed for the version stamp.
-# The race detector (`make test-race`) additionally needs a C toolchain:
-sudo apt install -y build-essential   # gcc — only for -race; normal builds are CGO-free
+# rsync is required by `deploy.sh deploy`; make drives the Makefile; git stamps the version.
+sudo apt install -y build-essential   # gcc — only for `make test-race`; normal builds are CGO-free
 ```
 
-**Firewall / network ports** the stack uses (open only what you enable):
+**Network ports** the stack uses (open only what you enable):
 
 | Port | Proto | Direction | Purpose |
 |---|---|---|---|
 | `8080` | TCP | inbound | HTTP UI + API (set by `SERVER_PORT`; put TLS or a reverse proxy in front for prod) |
 | `161` | UDP | outbound | SNMP polling to devices (`SNMP_PORT`) |
 | `162` | UDP | inbound | SNMP trap receiver (`SNMP_TRAP_LISTEN`, default `0.0.0.0:162`) |
-| `514` | UDP/TCP | inbound | syslog collector (when syslog ingest is enabled) |
-| `6343` | UDP | inbound | sFlow collector (when flow ingest is enabled) |
+| `514` | UDP/TCP | inbound | syslog collector |
+| `6343` | UDP | inbound | sFlow collector |
 | `5432` | TCP | outbound | PostgreSQL (`DB_PORT`; prod backend) |
 
-Probes relay back to the server over the same HTTP(S) port (`8080`), so a remote
-site only needs **outbound** reach to the server — no inbound ports at the site.
+Probes relay back to the server over the same HTTP(S) port (`8080`),
+so a remote site only needs **outbound** reach to the server — no
+inbound ports at the site.
 
-### Build
+### Docker (recommended)
 
 ```bash
-./deploy.sh build          # build all binaries into ./bin via the deploy script
-# or, with the Makefile:
+git clone https://github.com/xphox2/Firewall-Monitoring.git
+cd Firewall-Monitoring
+docker compose up -d
+# wait ~30s for Postgres to come up
+open http://localhost:8080
+```
+
+The first boot auto-generates the admin password and writes it to
+`./data/admin-password`. Tail `./data/firewall-mon.log` to see it.
+
+### Build from source
+
+```bash
+./deploy.sh build          # build all binaries into ./bin
+# or
 make build                 # reproducible build of the four fwmon-* binaries
 ```
 
 ### Test
 
 ```bash
-go test ./...              # run the full test suite
-make qa                    # the full pre-commit gate: tidy + gofmt + vet + build + test
-make test-race             # run the suite under the race detector (needs CGO)
+go test ./...              # the full test suite
+make qa                    # full pre-commit gate: tidy + gofmt + vet + build + test
+make test-race             # under the race detector (needs CGO)
+make test-integration      # against a real Postgres (TEST_PG_DSN)
 ```
 
-### Install Natively (without Docker)
+### Install natively (without Docker)
 
 ```bash
 sudo make install          # installs to /usr/local (override PREFIX=/opt/firewall-mon)
 make tarball               # package dist/firewall-mon-<version>.tar.gz
 ```
 
-### Deploy to Remote Server
+### Deploy to a remote server
 
 ```bash
 ./deploy.sh deploy -h your-server.com -u root -k ~/.ssh/id_rsa
 ```
 
-### Install Locally
+### Install locally
 
 ```bash
 sudo ./deploy.sh install
 sudo ./deploy.sh start
 ```
 
-### Configuration
+## Configuration
 
-1. Copy `config.env.example` to `/etc/firewall-mon/config.env`
-2. Update `SNMP_HOST` and SNMP community
-3. Set strong admin credentials
-4. Configure alert thresholds
+Configuration is loaded from **environment variables** (or a
+`CONFIG_FILE` pointing at an .env-style file). The authoritative
+reference is [config.env.example](config.env.example) — it lists every
+variable with inline comments and defaults. The probe-side env vars
+live in the
+[collector's ENV-VARS.md](https://github.com/xphox2/Firewall-Collector/blob/master/docs/ENV-VARS.md).
 
-**[`config.env.example`](config.env.example) is the authoritative reference for every setting** — it lists all ~70 variables with inline comments and defaults. The most important ones:
+The most important ones:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `SERVER_HOST` / `SERVER_PORT` | `0.0.0.0` / `8080` | HTTP listen address |
 | `SERVER_ENABLE_TLS` | `false` | Terminate TLS in-process (cert/key via `SERVER_TLS_CERT`/`_KEY`) |
-| `JWT_SECRET_KEY` | _(auto-generated + persisted)_ | Signs login JWTs **and** derives the AES-256 key for stored secrets — leave empty to auto-persist to `<SECRETS_DIR>/.jwt-secret` |
+| `JWT_SECRET_KEY` | _(auto-generated + persisted)_ | Signs login JWTs **and** derives the AES-256 key for stored secrets |
 | `ENCRYPTION_KEY` | _(derived from JWT secret)_ | Optional explicit key for encrypting device/probe secrets at rest |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / _(set me)_ | Initial admin login (a non-default username is strongly recommended) |
 | `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / `public` | Default directly-polled device |
 | `SNMP_POLL_INTERVAL` | `60s` | Poll cadence (keep ≥ 60s to avoid overloading devices) |
+| `SNMP_TRAP_COMMUNITY` | _(empty — required)_ | Trap community check (AUDIT-012) |
 | `CPU_THRESHOLD` / `MEMORY_THRESHOLD` / `DISK_THRESHOLD` / `SESSION_THRESHOLD` | `80` / `80` / `90` / `100000` | Alert thresholds |
 | `EMAIL_ENABLED` + `SMTP_*` | `false` | Email alerting + scheduled reports |
 | `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` | _(empty)_ | Chat alerting |
 | `DB_TYPE` / `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` (prod) | Database connection (SQLite is used for tests) |
+| `RETENTION_*_DAYS` | varies | Per-table data retention (see [DATA-RETENTION.md](docs/DATA-RETENTION.md)) |
+| `ALLOW_MULTI_API` | `false` | Opt out of the single-API-instance guard (AUDIT-040); follower mode serves HTTP only, no IRC bots. See [docs/OPERATIONS.md](docs/OPERATIONS.md). |
+| `SERVER_READ_TIMEOUT` / `SERVER_WRITE_TIMEOUT` | `30s` / `30s` | HTTP server read/write timeouts |
 | `DB_MAX_OPEN_CONNS` | per-process (15/10/5) | Connection-pool ceiling per daemon |
-| `RETENTION_*_DAYS` | varies | Per-table data retention (e.g. `RETENTION_SYSLOG_CRITICAL_DAYS`) |
-| `PROBE_*` | _(empty)_ | Remote-probe identity/listeners (see the probe section of `config.env.example`) |
-| `REPORT_*` | _(empty)_ | Scheduled-report recipients/cadence |
-| `SERVER_READ_TIMEOUT` / `SERVER_WRITE_TIMEOUT` | `30s` / `30s` | HTTP server timeouts |
-| `ALLOW_MULTI_API` | `false` | Opt out of the single-API-instance guard (AUDIT-040); follower mode serves HTTP only, no IRC bots. See `docs/OPERATIONS.md`. |
 
-## SNMP OIDs Monitored
+## Upgrading
 
-### System Status (FortiGate enterprise OIDs)
-- CPU Usage (`1.3.6.1.4.1.12356.101.4.1.3`)
-- Memory Usage (`1.3.6.1.4.1.12356.101.4.1.4`)
-- Disk Usage (`1.3.6.1.4.1.12356.101.4.1.6`)
-- Session Count (`1.3.6.1.4.1.12356.101.4.1.8`)
-- Uptime (`1.3.6.1.4.1.12356.101.4.1.20`)
+The Docker image is `:latest` by default; for reproducibility pin to
+the matching `:0.10.x` tag. The collector and the server can be
+upgraded in either order — the `schema_version` handshake is symmetric
+and both directions are backward-compatible. The
+[production upgrade runbook](docs/UPGRADE-2026-06.md) is the
+operator-facing step-by-step (backup, migrate, restart, verify).
 
-### Interface Statistics (RFC IF-MIB)
-- Status, Speed, In/Out Bytes, Packets, Errors
+```bash
+# server (Docker)
+docker compose pull && docker compose up -d
+# server (native)
+./deploy.sh deploy -h your-server.com -u root -k ~/.ssh/id_rsa
+# probe
+docker compose -f /path/to/probe/docker-compose.yml pull && up -d
+```
 
-### Hardware Sensors (via `fgHwSensorTable`)
-- Temperature, Voltage, Power, Fans
+## Compatibility
 
-### Traps Supported (FortiGate enterprise traps)
-- VPN Tunnel Up/Down
-- HA Failover
-- IPS Signatures & Anomalies
-- Antivirus Events
+The collector and the server are deployed and upgraded independently.
+The `schema_version` handshake (1.2.108 / 0.10.382) makes the upgrade
+**order-independent** — both directions are backward-compatible. The
+canonical compatibility table is [docs/SUPPORT-MATRIX.md](docs/SUPPORT-MATRIX.md);
+the 1-pager version is the
+[collector's COMPATIBILITY.md](https://github.com/xphox2/Firewall-Collector/blob/master/docs/COMPATIBILITY.md).
+
+| Server | Accepts collectors | Notes |
+|---|---|---|
+| **0.10.386+** (current) | all 1.2.x | |
+| 0.10.382 | 1.2.108+ | `schema_version` field is required starting here; absent field → 1 (back-compat) |
+| 0.10.380 and earlier | all 1.2.x | Pre-handshake. The probe's `schema_version` field is ignored |
+
+| Collector | Talks to server | Notes |
+|---|---|---|
+| **1.2.108+** (current) | 0.10.382+ (recommended), 0.10.380+ (works, field ignored) | Advertises `schema_version` on register |
+| 1.2.78 – 1.2.107 | any 0.10.x | Pre-handshake; field omitted → server assumes v1 |
+| < 1.2.78 | unsupported | Missing disk-spillover and several hardening fixes |
+
+## Operations
+
+The full operator runbook is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+The first-24h checklist, failure modes table, backup/restore, JWT
+rotation (flagged destructive), and the single-instance API guard
+semantics are all there. The probe side is intentionally simpler
+(see the [collector's README](https://github.com/xphox2/Firewall-Collector/blob/master/README.md#operations)).
 
 ## Security
 
-- JWT tokens with secure cookies
-- Account lockout after 5 failed attempts
-- CSRF protection
-- Rate limiting (10 req/sec)
-- Secure HTTP headers (HSTS, CSP, X-Frame-Options)
-- TLS support
+- JWT tokens with secure cookies; account lockout after 5 failed
+  attempts; CSRF protection on admin mutations.
+- Rate limiting (per-IP LRU cap; 10 req/s baseline).
+- Secure HTTP headers (HSTS, CSP nonce, X-Frame-Options).
+- TLS support (in-process or via reverse proxy — `docs/nginx.conf` is
+  a hardened plain-nginx config-as-code alternative to nginx-proxy-manager).
+- Encrypted-at-rest stored secrets (AES-256-GCM, key derived from JWT
+  secret, rotation chain).
+- Admin-action audit log (append-only, route-template labelled).
+- SSRF block-list (private/loopback/CGNAT) for webhooks and test
+  endpoints.
+- Client-side JS error reporting (`POST /api/client-error`).
+- See [SECURITY.md](SECURITY.md) for the supported-versions table,
+  vulnerability disclosure policy (90-day coordinated), and the hall
+  of fame.
 
 ## API Endpoints
 
-The server registers ~170 routes across four groups. The authoritative list is
-the route table in [`cmd/api/main.go`](cmd/api/main.go); the grouped overview
-below covers every category. Path bases: `api` → `/api`, public → `/api/public`,
-admin → `/admin`.
+The server registers **~174 routes** across four groups. The
+authoritative list is the route table in [`cmd/api/main.go`](cmd/api/main.go).
+The grouped overview below covers every category.
 
 ### Public — no authentication (safe to expose on a wallboard)
+
 - `GET /` — public GridStack dashboard
 - `GET /api/health` — liveness/readiness check
 - `GET /api/version` — build version (JSON)
-- `GET /api/public/{dashboard,devices,interfaces,interfaces/chart,connections,vpn,status-history,display-settings}` — read-only status JSON behind the public dashboard
+- `GET /api/public/{dashboard,devices,interfaces,interfaces/chart,connections,vpn,status-history,display-settings}` — read-only status JSON
 - `GET /security.txt`, `GET /.well-known/security.txt` — RFC 9116 contact; `GET /favicon.ico`
 
 ### Authentication
+
 - `POST /api/auth/login` — obtain the JWT cookie
 - `POST /admin/api/logout` — clear the session
 - `GET /admin/api/csrf-token` — fetch the CSRF token for mutating requests
 
 ### Admin UI pages (HTML, auth-gated)
+
 `GET /admin` and `/admin/{dashboard,devices,devices/:id,connections,connections/:id,sites,probes,probe-pending,interfaces,syslog,flows,traps,network,maintenance,reports,settings,irc,alerts,alert-policies}`
 
 ### Admin API (JSON, auth + CSRF) — base `/admin/api`
+
 - **Devices:** `GET/POST /devices`, `GET/PUT/DELETE /devices/:id`, `POST /devices/test`, and per-device detail/history/charts under `/devices/:id/{detail,interfaces/:ifIndex/{history,chart},status-history,process-history,config-history[/:revId[/view]],config-history/diff,ha-status,sdwan-health,security-stats,interface-errors,vpn/:tunnel/chart,alert-config}`
 - **Sites:** `GET/POST /sites`, `GET/PUT/DELETE /sites/:id`, `GET/PUT/DELETE /sites/:id/alert-config`
 - **Probes:** `GET/POST /probes`, `GET/PUT/DELETE /probes/:id`, `GET /probes/pending`, `GET /probes/stats`, `GET /probes/:id/stats`, `POST /probes/:id/{approve,reject,regenerate-key}`, `POST /probes/test`
@@ -257,20 +469,35 @@ admin → `/admin`.
 - **Dashboard / uptime:** `GET /dashboard[/:id|/stats|/diag]`, `GET /uptime`, `POST /uptime/reset`
 
 ### Probe ingestion (probe → server, per-probe key auth) — base `/api/probes`
+
 - `POST /register`, `POST /heartbeat`, `GET /:id/devices`
 - `POST /:id/{system-status,interface-stats,interface-addresses,interface-errors,processor-stats,process-snapshot,hardware-sensors,sensor-details,vpn-status,ha-status,sdwan-health,security-stats,license-info,license-details,config-revision,syslog,traps,flows,pings}`
 
-## Monitoring Intervals
+## Contributing & docs
 
-Recommended intervals to avoid overloading devices:
-- System stats: 60 seconds
-- Interface stats: 60-120 seconds
-- Hardware sensors: 300 seconds
-- Full system walk: 300 seconds
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, QA requirements, PR workflow.
+- [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
+- [docs/STRUCTURE.md](docs/STRUCTURE.md) — index of where every topic lives.
+- [docs/architecture.md](docs/architecture.md) — combined architecture with Mermaid sequence diagrams.
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) — operator runbook.
+- [docs/SUPPORT-MATRIX.md](docs/SUPPORT-MATRIX.md) — version compatibility table.
+- [docs/DATA-RETENTION.md](docs/DATA-RETENTION.md) — per-table retention, PII inventory.
+- [docs/CERT-ROTATION.md](docs/CERT-ROTATION.md) — TLS / probe-credential rotation.
+- [docs/custom-vendor.md](docs/custom-vendor.md) — step-by-step tutorial for adding a new SNMP vendor profile.
+- [docs/FORTIGATE-SNMP-SETUP.md](docs/FORTIGATE-SNMP-SETUP.md) — FortiGate device-side setup.
+- [docs/FEATURES.md](docs/FEATURES.md) — website-ready feature inventory.
+- [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.
+- [docs/UPGRADE-2026-06.md](docs/UPGRADE-2026-06.md) — June 2026 production upgrade runbook.
+- [MIGRATING.md](MIGRATING.md) — probe↔server wire format (`schema_version`).
+- [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — current limitations with AUDIT-NNN cross-links.
+- [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — vendored browser-side assets.
 
 ## Browser Support
 
-The admin panel and public dashboard target **evergreen browsers**. The baseline is set by the use of the CSS `:has()` selector and ES2020 JavaScript:
+The admin panel and public dashboard target **evergreen browsers**.
+The baseline is set by the use of the CSS `:has()` selector and
+ES2020 JavaScript:
 
 | Browser | Minimum version |
 |---|---|
@@ -278,32 +505,21 @@ The admin panel and public dashboard target **evergreen browsers**. The baseline
 | Safari (macOS / iOS) | 15.4+ |
 | Firefox | 121+ |
 
-Older browsers may render the dashboard with degraded layout. There is no IE11 / legacy support, and none is planned.
-
 ## License
 
-MIT — see [LICENSE](LICENSE). Third-party components and their licenses are inventoried in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+MIT — see [LICENSE](LICENSE). Third-party components and their
+licenses are inventoried in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-## Support & community
+## Support
 
 - **Bug reports & feature requests** → open a **GitHub Issue** on this
-  repository. Include version (`GET /api/version`), platform, and relevant log
-  lines (every server-side 500 is logged with an `X-Request-ID`).
-- **Questions, setup help, "how do I…"** → use **GitHub Discussions** on this
-  repository.
+  repository. Include version (`GET /api/version`), platform, and the
+  `X-Request-ID` of any 500.
+- **Questions, setup help, "how do I…"** → use **GitHub Discussions** on
+  this repository.
 - **Security vulnerabilities** → do **not** open a public issue; follow
-  [SECURITY.md](SECURITY.md) (also published at `/.well-known/security.txt`).
+  [SECURITY.md](SECURITY.md).
 
-There is no dedicated chat server (Discord/Matrix/IRC) for the project — GitHub
-Issues/Discussions are the support channels. Note that the built-in **IRC bot**
-is a *monitoring feature* (it posts alerts and answers status queries in **your**
-ops channel); it is not a support channel for this project.
-
-## Contributing & docs
-
-- [SECURITY.md](SECURITY.md) — vulnerability disclosure policy.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, QA requirements, PR workflow.
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant v2.1.
-- [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.
-- [docs/custom-vendor.md](docs/custom-vendor.md) — step-by-step tutorial for adding a new SNMP vendor profile.
-- [docs/OPERATIONS.md](docs/OPERATIONS.md) — operator runbook: first-24h checklist, failure modes, backup/restore, upgrade, password/JWT reset, DR.
+There is no dedicated chat server (Discord/Matrix/IRC) for the project.
+The built-in **IRC bot** is a *monitoring feature* — it posts alerts and
+answers status queries in **your** ops channel. It is not a support channel for this project. (The project's own support channels are GitHub Issues and GitHub Discussions, listed above.)
