@@ -351,6 +351,63 @@ func (d *Database) ReleasePollerWorkLock() {
 	}
 }
 
+// apiSingletonLockKey is the advisory-lock key the API process holds for its
+// ENTIRE lifetime to enforce singleton operation (AUDIT-040). cmd/api keeps four
+// state stores in process memory — the IRC bots (one nick per server), the
+// login-lockout counters, the rate-limit buckets, and the uptime baseline — so a
+// second cmd/api against the same DB double-runs them (nick collision, ~2× the
+// lockout/rate-limit thresholds, divergent uptime). Distinct from
+// startupMigrationLockKey / pollerWorkLockKey / migrationLockKey. Value is the
+// ASCII of "FWMNAPIS" so it's visible in pg_locks.
+const apiSingletonLockKey int64 = 0x46574d4e41504953
+
+// AcquireAPISingletonLock takes a NON-blocking, session-scoped Postgres advisory
+// lock on a dedicated PINNED connection (so the matching unlock runs on the SAME
+// backend — gorm's pool would otherwise route the unlock to a different
+// connection, making it a no-op; same pattern as acquireMigrationLock). Unlike
+// the migration lock this is a LIFETIME hold: the API keeps it until graceful
+// shutdown calls the returned release func.
+//
+//   - acquired=true + a real release func (unlock + close the pinned conn) when
+//     this process owns the singleton lock (it is the primary).
+//   - acquired=false + a no-op release when another session already holds it
+//     (the pinned conn is closed before returning so it isn't leaked).
+//   - err only on a connection/probe infrastructure failure.
+//
+// SQLite (tests / single-process) returns acquired=true + a no-op release — the
+// guard is inert because there is exactly one process. A second call on the same
+// *Database pins a DIFFERENT pooled connection (a different PG session), so it
+// genuinely contends — that's how the integration test simulates two processes.
+func (d *Database) AcquireAPISingletonLock() (release func(), acquired bool, err error) {
+	if !d.dialect.IsPostgres() {
+		return func() {}, true, nil
+	}
+	sqlDB, err := d.db.DB()
+	if err != nil {
+		return nil, false, err
+	}
+	ctx := context.Background()
+	conn, err := sqlDB.Conn(ctx) // pins one backend out of the pool
+	if err != nil {
+		return nil, false, err
+	}
+	var got bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", apiSingletonLockKey).Scan(&got); err != nil {
+		conn.Close()
+		return nil, false, err
+	}
+	if !got {
+		conn.Close() // held by another session — don't leak the pinned conn
+		return func() {}, false, nil
+	}
+	return func() {
+		if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", apiSingletonLockKey); err != nil {
+			log.Printf("api: singleton advisory unlock failed (%v); it releases on connection close", err)
+		}
+		conn.Close() // returns the (now-unlocked) connection to the pool
+	}, true, nil
+}
+
 func (d *Database) Close() error {
 	// Flush and stop all batch inserters before closing the DB
 	if d.syslogBatch != nil {

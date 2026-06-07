@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.380** |
-| Bug findings resolved | **155 / 170  (91%)** |
+| Server version | **v0.10.381** |
+| Bug findings resolved | **156 / 170  (92%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **15** |
+| Open bug findings | **14** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -33,7 +33,8 @@
 - ✅ Versioned migration runner + `migrate` subcommands, IRC heuristic removed (044) — third large refactor (Session 32)
 - ✅ Postgres integration test suite + CI `postgres:16` job (118) — real-PG coverage; unblocks 028/040 (Session 33)
 - ✅ Monthly range-partitioning for the 6 high-volume tables (028 + 146) — fourth large refactor (Session 34)
-- ⏳ Remaining 15: 1 large refactor (040 shared-state), observability (076 slog / 150 OTel), the rest of test infra (117/120/122/123/140/142)
+- ✅ API single-instance guard (040) — **fifth and final large refactor; all 5 large refactors are now done** (Session 35)
+- ⏳ Remaining 14: observability (076 slog / 150 OTel), the rest of test infra (117/120/122/123/140/142), and smaller code items (073 transport-type move / 094 entrypoint supervision) — all fully-local-verifiable
 
 ## 🧭 How to read this file
 
@@ -44,12 +45,12 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 15 open findings)
+## ⏳ What's left (the 14 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
-- **Large refactors** — `AUDIT-040` (two-instance shared state). *(072 split + 032/079 request-context + 044 migration runner + 028/146 partitioning now done — four of the five; 040 is the last, now CI-verifiable via the 118 lane.)*
+- **Large refactors** — ✅ **all five done** (072 split + 032/079 request-context + 044 migration runner + 028/146 partitioning + 040 API singleton guard).
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench + 118 Postgres-CI-matrix now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
@@ -59,6 +60,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 35** (v0.10.381) | Large refactor — API singleton guard | session-scoped Postgres advisory lock (pinned `*sql.Conn`) makes `cmd/api` a singleton: a 2nd instance refuses to start by default (`ALLOW_MULTI_API` → follower mode, IRC bots gated off), released on graceful shutdown — fixes the 2-IRC-bots / 2×-lockout-rate-limit / divergent-uptime footgun (040). **Completes all 5 large refactors** |
 | **Session 34** (v0.10.380) | Large refactor — table partitioning | monthly range-partitioning for the 6 high-volume time-series tables: a v2 migration converts them to `PARTITION BY RANGE(timestamp)` parents when empty (fresh installs), populated prod is skipped + documented (`docs/partition-migration.md`); `EnsurePartitions` covers all 6; cleanup drops whole old partitions. PG-only, verified by the 118 CI suite (028 + 146 — the partition subsystem was dormant). 4th of the 5 large refactors |
 | **Session 33** (v0.10.379) | Test infra — Postgres CI matrix | build-tagged (`//go:build integration`) Postgres suite via `TEST_PG_DSN` + a CI `postgres:16` service job + `make test-integration`; asserts the PG-only paths SQLite can't (the `to_char` TimeBucket round-trip / v0.10.238 guard, migration advisory lock, partitions/autovacuum). No new deps; runs in CI; unblocks verifying 028/040 (118) |
 | **Session 32** (v0.10.378) | Large refactor — versioned migrations | replaced blind AutoMigrate-on-startup with an in-repo versioned runner: `schema_migrations` table + append-only registry + per-migration log + blocking advisory lock; v1 baseline reuses the proven AutoMigrate (prod DDL unchanged); added `migrate`/`migrate-status` subcommands (hybrid — daemons still self-heal); removed the dead/destructive IRC drop-and-recreate heuristic (044). 3rd of the 5 large refactors |
@@ -1346,6 +1348,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-118 | Tests run on SQLite; prod is Postgres | 0.10.379 | d39e80f | Build-tagged (`//go:build integration`) PG suite `integration_pg_test.go` via `TEST_PG_DSN` (skips when unset; default `go test ./...` never compiles it). Resets a `test`-named schema (safety rail), runs `RunMigrations`, asserts the **TimeBucket round-trip** (v0.10.238 minute-bucket guard: `to_char` output == expected, `time.Parse`s, not the unparseable sentinel), partitions/autovacuum no-error, advisory lock, CRUD. New CI `integration-postgres` job (`postgres:16` service) + `make test-integration`. No new deps. Runs in CI (no PG locally); now unblocks verifying 028/040. `TestPostgresIntegrationWired_AUDIT118` guards the wiring. |
 | AUDIT-028 | interface_stats/system_status not partitioned | 0.10.380 | 35f9fd1 | v2 migration `partition_high_volume` converts the 6 high-volume tables to monthly `PARTITION BY RANGE(timestamp)` parents **when empty** (fresh installs), composite PK `(id,timestamp)`, models unchanged; populated prod → skip+warn→`docs/partition-migration.md` (operator runbook, new). `EnsurePartitions` covers all 6 (+interface_stats 3-col idx); cleanup `dropPartitionsOlderThan` drops whole old partitions (syslog_messages stays severity-DELETE). PG-only (sqlite no-op). Verified by the 118 CI suite (partitioned parents / create+route / EXPLAIN prunes / populated-skip / drop-old). |
 | AUDIT-146 | EnsurePartitions skips non-partitioned tables | 0.10.380 | 35f9fd1 | **Resolved with AUDIT-028** — the partition subsystem was dormant (no code created partitioned parents); the v2 migration now creates them for all 6 tables on fresh installs, and `docs/partition-migration.md` documents the populated-table conversion the warning referenced. |
+| AUDIT-040 | 2nd cmd/api → 2 IRC bots, 2× lockout/rate-limit | 0.10.381 | (pending) | `AcquireAPISingletonLock` — session-scoped PG advisory lock (`FWMNAPIS`) on a pinned `*sql.Conn` for the process lifetime. API **refuses to start** if another holds it (retries `API_SINGLETON_LOCK_WAIT`=10s first); `ALLOW_MULTI_API=true` → follower (HTTP only, IRC bots gated off). Released on graceful shutdown. Long-term shared lockout/rate-limit/uptime deferred (PG rate-limit = anti-pattern). Integration contention subtest + sqlite no-op + shell guard. OPERATIONS.md section. **5th/last large refactor.** |
 
 ---
 
@@ -1509,6 +1512,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-118 — Postgres integration test suite (TEST_PG_DSN, build-tagged) + CI postgres:16 job + make test-integration — v0.10.379 — d39e80f — opencode
 2026-06-06 — AUDIT-028 — monthly range-partition the 6 high-volume tables (empty-auto-convert v2 migration + EnsurePartitions + drop-old-partition cleanup + operator runbook) — v0.10.380 — 35f9fd1 — opencode
 2026-06-06 — AUDIT-146 — partition subsystem made live (parents now created on fresh installs); resolved with 028 — v0.10.380 — 35f9fd1 — opencode
+2026-06-07 — AUDIT-040 — API singleton guard (PG advisory lock; refuse 2nd instance / ALLOW_MULTI_API follower; IRC gated to primary) — v0.10.381 — (pending) — opencode
 ```
 
 ---
@@ -2950,6 +2954,47 @@ PG behavior verified by the AUDIT-118 CI suite.
   two connections). After it, only observability (076 slog / 150 OTel) and the
   remaining test-infra (117/120/122/123/140/142) are left — all
   fully-local-verifiable.
+
+## Session 35 completion log (2026-06-07) — large refactor #5/5: API singleton guard
+
+**1 audit shipped** (v0.10.381), resolved count **155 → 156 (92%)**. **This
+completes all five large refactors.** Default suite green; PG contention
+verified by the AUDIT-118 CI suite.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-040 | 0.10.381 | (pending) | `AcquireAPISingletonLock` (pinned-conn session advisory lock, `FWMNAPIS`); refuse-2nd-instance by default + `ALLOW_MULTI_API` follower; IRC bots gated to the primary; OPERATIONS.md section. |
+
+**Design / decisions:**
+
+- **Refuse-to-start by default** (user decision), `ALLOW_MULTI_API=true` →
+  follower (HTTP only, no IRC bots). Reused the AUDIT-044 pinned-`*sql.Conn`
+  pattern for a lifetime hold; **non-blocking** `pg_try_advisory_lock` so we can
+  detect contention. A 2nd acquire on the same `*Database` pins a different
+  pooled conn = a different PG session → genuine contention (how the test
+  simulates two processes).
+- **Deploy-safety:** graceful SIGTERM runs `defer releaseSingleton()` → unlock →
+  next restart re-acquires instantly; a `API_SINGLETON_LOCK_WAIT` (10s) retry
+  absorbs a predecessor mid-shutdown. A hard SIGKILL leaves the lock until
+  Postgres reaps the dead session — documented, can't fully fix without PG
+  session-timeout tuning.
+- **Scope = short-term guard only.** The long-term move of lockout/rate-limit/
+  uptime to shared storage is deferred and partly an anti-pattern (PG
+  rate-limiting at request rates). Follower IRC-`RestartBot` edge is a documented
+  best-effort limitation.
+
+**Discoveries / for the next session:**
+
+- **All 5 large refactors are now complete** (072/032+079/044/028+146/040). The
+  remaining 14 findings are **fully local-verifiable**: observability — **076
+  (structured logging / `slog`)** is the highest-leverage and now has all its
+  seams in place (071 `InternalError`, 077 metrics mw, 078 audit mw; ~427
+  `log.*` sites, wants a planning pass) — and **150 (OpenTelemetry)**; the
+  test-infra block (117 coverage / 120 property-based / 122 handler / 123
+  integration-expansion / 140 `t.Parallel` / 142 `Short`); and two smaller code
+  items (073 transport-type move ~120-file churn; 094 entrypoint supervision).
+- **Recommended next:** AUDIT-076 (slog) — biggest remaining single lever, fully
+  local — or knock out the test-infra `t.Parallel`/`Short`/coverage items.
 
 ## Closing
 

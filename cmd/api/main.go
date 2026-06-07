@@ -34,7 +34,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.380"
+const ServerVersion = "0.10.381"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -167,6 +167,56 @@ func main() {
 	}
 	defer db.Close()
 	log.Println("Database initialized")
+
+	// AUDIT-040: API singleton guard. cmd/api keeps four state stores in process
+	// memory (IRC bots, login-lockout counters, rate-limit buckets, uptime
+	// baseline); a second instance would double-run them. Hold a lifetime
+	// Postgres advisory lock; refuse to start if another API already holds it
+	// (unless ALLOW_MULTI_API opts into follower mode — HTTP only, no IRC bots).
+	isPrimary := false
+	releaseSingleton := func() {}
+	{
+		deadline := time.Now().Add(cfg.Server.APISingletonLockWait)
+		for {
+			release, acquired, lockErr := db.AcquireAPISingletonLock()
+			if lockErr != nil {
+				// Probe/infra error: bias toward proceeding as primary rather
+				// than blocking on a transient DB hiccup (cf. tryAcquireStartupLock).
+				log.Printf("AUDIT-040: singleton lock probe failed (%v); proceeding as primary.", lockErr)
+				isPrimary, releaseSingleton = true, release
+				break
+			}
+			if acquired {
+				isPrimary, releaseSingleton = true, release
+				break
+			}
+			release() // no-op; we didn't get the lock
+			if time.Now().Before(deadline) {
+				log.Printf("AUDIT-040: another API holds the singleton lock; retrying for up to %s...", cfg.Server.APISingletonLockWait)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			break
+		}
+		if !isPrimary {
+			if cfg.Server.AllowMultiAPI {
+				log.Println("============================================================")
+				log.Println("WARNING: AUDIT-040 — starting in FOLLOWER mode (ALLOW_MULTI_API=true).")
+				log.Println("         Another API instance holds the singleton lock.")
+				log.Println("         IRC bots are DISABLED on this instance (nick-collision guard).")
+				log.Println("         Login lockout, rate-limit, and uptime are PER-INSTANCE and")
+				log.Println("         WILL DIVERGE from the primary. See docs/OPERATIONS.md.")
+				log.Println("============================================================")
+			} else {
+				log.Fatalf("AUDIT-040: another fwmon-api instance is already running (singleton " +
+					"advisory lock held). Refusing to start to avoid double IRC bots, divergent " +
+					"login-lockout/rate-limit state, and inconsistent uptime. Run exactly ONE API " +
+					"process, or set ALLOW_MULTI_API=true for follower mode (HTTP only, no IRC bots). " +
+					"See docs/OPERATIONS.md 'Running a single API instance (AUDIT-040)'.")
+			}
+		}
+	}
+	defer releaseSingleton() // drops the lock on graceful shutdown so the next restart re-acquires
 
 	// AUDIT-077: expose the database/sql connection-pool stats on /metrics so
 	// pool exhaustion is observable before it turns into request timeouts.
@@ -326,7 +376,15 @@ func main() {
 			"memory_avg":    memAvg,
 		}, nil
 	})
-	ircManager.Start()
+	// AUDIT-040: only the singleton primary runs the IRC bots — a follower
+	// starting them would collide on the bot's IRC nick. The manager is still
+	// wired into the handler so the admin IRC config pages (DB CRUD) work on a
+	// follower; only the bot connections are gated.
+	if isPrimary {
+		ircManager.Start()
+	} else {
+		log.Println("AUDIT-040: IRC bots disabled (follower / not the singleton primary).")
+	}
 	handler.SetIRCManager(ircManager)
 	defer ircManager.Stop()
 

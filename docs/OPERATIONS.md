@@ -142,14 +142,54 @@ effect on an already-initialized install. To reset:
 
 ## Scale & HA
 
-- **Single API instance only** for now: a second `cmd/api` against the same DB
-  spawns a second IRC bot, doubles login-lockout/rate-limit state, and the
-  in-memory alert state machine isn't shared (AUDIT-040 — KNOWN-ISSUES).
+- **Single API instance only** (enforced — see below). A second `cmd/api`
+  against the same DB would spawn a second IRC bot, double login-lockout/
+  rate-limit state, and diverge on uptime (AUDIT-040).
 - The **poller** is multi-instance-safe via a Postgres advisory lock
   (`pg_try_advisory_lock`, AUDIT-007) — only one poller does the migration/
   cleanup work at a time.
 - **Remote sites** scale horizontally via probes (each relays SNMP/syslog/
   sFlow/ICMP back to the central server); this is the supported scale-out path.
+
+## Running a single API instance (AUDIT-040)
+
+The API process keeps four pieces of state **in memory**, not in the database:
+
+- IRC bots (one TCP connection + nick per configured server)
+- login-lockout counters (`internal/auth`)
+- rate-limit buckets (`internal/api/middleware`)
+- uptime baseline (`internal/uptime`)
+
+Running **two** API processes against the same database double-runs all four:
+two bots fight over the same IRC nick (the loser gets `_` suffixes), lockout and
+rate-limit counters split across instances (a brute-forcer effectively gets ~2×
+the attempts; rate limits ~2× looser), and the two report different uptimes.
+
+**Guard:** on startup the API takes a session-scoped Postgres advisory lock. If
+another API already holds it, the new process **refuses to start** with an
+actionable error. This is the default and recommended behavior.
+
+- **Graceful shutdown (SIGTERM) releases the lock** before the process exits, so
+  a normal restart re-acquires it instantly. Docker/systemd send SIGTERM on
+  restart, so the common case is seamless.
+- **SIGKILL / OOM-kill does NOT run the release.** The lock then lingers until
+  the killed process's Postgres session is reaped (TCP keepalive / server-side
+  idle timeout). A restart within that window retries for
+  `API_SINGLETON_LOCK_WAIT` (default `10s`) and then, if still blocked, refuses.
+  Tuning Postgres `tcp_keepalives_*` / `idle_session_timeout` shortens the
+  lingering window (this guard does not change those).
+
+**`ALLOW_MULTI_API=true`** — follower mode (advanced / not recommended):
+
+- The extra instance serves HTTP but does **not** start the IRC bots.
+- Login-lockout, rate-limit, and uptime remain **per-instance and will diverge**.
+  Moving them to shared storage is the long-term fix and is deliberately **not**
+  done here — a Postgres round-trip per request at dashboard-polling rates is the
+  wrong tool for rate-limiting.
+- Edge case: a follower's admin **Connect** action on an IRC server can still
+  start a single bot for that server (best-effort; the background reconnect/
+  status loops don't run on a follower). Don't connect IRC servers from a
+  follower instance.
 
 ---
 

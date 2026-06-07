@@ -188,6 +188,7 @@ sudo ./deploy.sh start
 | `PROBE_*` | _(empty)_ | Remote-probe identity/listeners (see the probe section of `config.env.example`) |
 | `REPORT_*` | _(empty)_ | Scheduled-report recipients/cadence |
 | `SERVER_READ_TIMEOUT` / `SERVER_WRITE_TIMEOUT` | `30s` / `30s` | HTTP server timeouts |
+| `ALLOW_MULTI_API` | `false` | Opt out of the single-API-instance guard (AUDIT-040); follower mode serves HTTP only, no IRC bots. See `docs/OPERATIONS.md`. |
 
 ## SNMP OIDs Monitored
 

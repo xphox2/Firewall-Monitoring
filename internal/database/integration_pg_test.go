@@ -291,6 +291,39 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	})
 
+	// AUDIT-040: the API singleton lock must contend across sessions. A 2nd
+	// acquire on the same *Database pins a different pooled conn (a different PG
+	// session), simulating a 2nd cmd/api process.
+	t.Run("APISingletonLock_AUDIT040", func(t *testing.T) {
+		rel1, ok1, err := d.AcquireAPISingletonLock()
+		if err != nil {
+			t.Fatalf("first acquire: %v", err)
+		}
+		if !ok1 {
+			t.Fatal("first acquire: want acquired=true on a free lock")
+		}
+		rel2, ok2, err := d.AcquireAPISingletonLock()
+		if err != nil {
+			t.Fatalf("second acquire: %v", err)
+		}
+		if ok2 {
+			rel2()
+			t.Fatal("second acquire: want acquired=false while the lock is held")
+		}
+		if rel2 == nil {
+			t.Fatal("second acquire: release must be non-nil (no-op) even on contention")
+		}
+		rel1() // release the holder
+		rel3, ok3, err := d.AcquireAPISingletonLock()
+		if err != nil {
+			t.Fatalf("third acquire: %v", err)
+		}
+		if !ok3 {
+			t.Fatal("third acquire: want acquired=true after release")
+		}
+		rel3()
+	})
+
 	t.Run("DeviceCRUD", func(t *testing.T) {
 		dev := &models.Device{Name: "it-dev-1", IPAddress: "10.0.0.1"}
 		if err := d.CreateDevice(dev); err != nil {

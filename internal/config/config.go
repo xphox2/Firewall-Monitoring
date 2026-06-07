@@ -46,6 +46,16 @@ type ServerConfig struct {
 	// this flag to fire only when the mismatch is the operator's own
 	// doing, not the safe default.
 	CookieSecureExplicit bool
+	// AllowMultiAPI opts out of the AUDIT-040 singleton guard. Default false:
+	// a second cmd/api refuses to start (the IRC bots / login-lockout /
+	// rate-limit / uptime state is in-process and would double-run). true =>
+	// follower mode (serve HTTP, no IRC bots; lockout/rate-limit/uptime are
+	// per-instance and diverge).
+	AllowMultiAPI bool
+	// APISingletonLockWait is how long a starting API retries the singleton
+	// advisory lock before giving up, so a graceful predecessor mid-shutdown
+	// doesn't trigger a false refuse (AUDIT-040).
+	APISingletonLockWait time.Duration
 }
 
 type SNMPConfig struct {
@@ -239,6 +249,8 @@ func Load() *Config {
 			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
+			AllowMultiAPI:        getBoolEnv("ALLOW_MULTI_API", false),
+			APISingletonLockWait: getDurationEnv("API_SINGLETON_LOCK_WAIT", 10*time.Second),
 		},
 		SNMP: SNMPConfig{
 			SNMPHost:       getEnv("SNMP_HOST", "192.168.1.1"),
