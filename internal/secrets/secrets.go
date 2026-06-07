@@ -97,7 +97,7 @@ func LoadOrGenerate(envValue, baseDir, filename string) (value string, source So
 		return "", 0, fmt.Errorf("read existing secret %s: %w", path, readErr)
 	}
 
-	// Step 3: generate and persist.
+	// Step 3: generate and persist atomically.
 	token, gErr := auth.GenerateSecureToken(32)
 	if gErr != nil {
 		return "", 0, fmt.Errorf("generate secret: %w", gErr)
@@ -105,15 +105,37 @@ func LoadOrGenerate(envValue, baseDir, filename string) (value string, source So
 	if mkErr := os.MkdirAll(baseDir, 0o700); mkErr != nil {
 		return "", 0, fmt.Errorf("mkdir secrets dir %s: %w", baseDir, mkErr)
 	}
-	// Use O_CREATE|O_EXCL to defeat the TOCTOU race when multiple
-	// processes (cmd/api, cmd/poller, cmd/trap-receiver) start
-	// concurrently on a fresh /data volume and all see the file as
-	// missing. The winner writes the secret; everyone else hits
-	// os.ErrExist and re-reads the now-present file.
-	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if openErr != nil {
-		if errors.Is(openErr, os.ErrExist) {
-			// Another process won the race; re-read and use their value.
+	// Write the token to a private temp file in the same directory, then
+	// hard-link it into place. os.Link is atomic and FAILS if the destination
+	// already exists, which closes the TOCTOU race when multiple processes
+	// (cmd/api, cmd/poller, cmd/trap-receiver) start concurrently on a fresh
+	// /data volume. Two guarantees the old O_CREATE|O_EXCL-then-Write approach
+	// did not provide:
+	//   1. The final file appears only once it is FULLY written — a concurrent
+	//      reader can never observe it created-but-empty. (The old code created
+	//      an empty file with O_EXCL and wrote to it as a separate step, so a
+	//      racing goroutine could read it empty, or remove it out from under
+	//      the writer — the source of the "empty after concurrent write" flake.)
+	//   2. The first linker wins; every loser gets ErrExist and re-reads the
+	//      winner's complete value, so all concurrent starters converge on ONE
+	//      secret (AUDIT-008 — three processes must share one ENC key).
+	tmp, tErr := os.CreateTemp(baseDir, filename+".tmp-*")
+	if tErr != nil {
+		return "", 0, fmt.Errorf("create temp secret in %s: %w", baseDir, tErr)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // best-effort: the inode survives via the hard link at path
+	if _, wErr := tmp.Write([]byte(token + "\n")); wErr != nil {
+		_ = tmp.Close()
+		return "", 0, fmt.Errorf("write temp secret %s: %w", tmpPath, wErr)
+	}
+	if cErr := tmp.Close(); cErr != nil {
+		return "", 0, fmt.Errorf("close temp secret %s: %w", tmpPath, cErr)
+	}
+	if linkErr := os.Link(tmpPath, path); linkErr != nil {
+		if errors.Is(linkErr, os.ErrExist) {
+			// Another process won the race; its file is fully written (we never
+			// publish an empty one), so re-read and use its value.
 			data, rErr := os.ReadFile(path)
 			if rErr != nil {
 				return "", 0, fmt.Errorf("re-read secret %s after race: %w", path, rErr)
@@ -124,15 +146,7 @@ func LoadOrGenerate(envValue, baseDir, filename string) (value string, source So
 			}
 			return trimmed, FromFile, nil
 		}
-		return "", 0, fmt.Errorf("create secret %s: %w", path, openErr)
-	}
-	if _, wErr := f.Write([]byte(token + "\n")); wErr != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return "", 0, fmt.Errorf("write secret to %s: %w", path, wErr)
-	}
-	if cErr := f.Close(); cErr != nil {
-		return "", 0, fmt.Errorf("close secret %s: %w", path, cErr)
+		return "", 0, fmt.Errorf("link secret into place %s: %w", path, linkErr)
 	}
 	return token, Generated, nil
 }

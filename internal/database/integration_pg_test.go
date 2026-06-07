@@ -195,31 +195,12 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	})
 
-	// The populated-table case is verified via a baseline-only DB (so v2 hasn't
-	// converted), an inserted row, then a direct migratePartitionHighVolume call
-	// which must SKIP (leave the table plain).
-	t.Run("PopulatedTableSkipped", func(t *testing.T) {
-		d2 := newPGForTest(t) // fresh reset + full migrations… then we test the skip path on a NEW table
-		// Reset to baseline-only so interface_stats is plain again.
-		if err := d2.Gorm().Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
-			t.Fatalf("reset: %v", err)
-		}
-		if err := d2.runMigrationList([]migration{{version: 1, name: "baseline", run: (*Database).migrateBaseline}}); err != nil {
-			t.Fatalf("baseline-only: %v", err)
-		}
-		if pgIsPartitioned(t, d2, "interface_stats") {
-			t.Fatal("interface_stats should be plain after baseline-only")
-		}
-		if err := d2.Gorm().Create(&models.InterfaceStats{DeviceID: 1, Timestamp: time.Now().UTC(), Name: "p"}).Error; err != nil {
-			t.Fatalf("insert into plain table: %v", err)
-		}
-		if err := d2.migratePartitionHighVolume(); err != nil {
-			t.Fatalf("migratePartitionHighVolume: %v", err)
-		}
-		if pgIsPartitioned(t, d2, "interface_stats") {
-			t.Fatal("populated interface_stats was auto-converted; it must be SKIPPED (AUDIT-028)")
-		}
-	})
+	// NOTE: the PopulatedTableSkipped subtest is intentionally registered LAST
+	// (after DeviceCRUD), not here. It resets the shared `public` schema via a
+	// second handle to the same physical test database, which would leave
+	// interface_stats plain and system_status a childless partitioned parent —
+	// corrupting the partitioned state that CleanupDropsOldPartition and
+	// TimeBucketRoundTrip depend on. Running it last keeps it self-contained.
 
 	t.Run("CleanupDropsOldPartition", func(t *testing.T) {
 		if err := d.Gorm().Exec(
@@ -341,6 +322,36 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 		if got.Vendor != "fortigate" {
 			t.Fatalf("Vendor default not applied: %q", got.Vendor)
+		}
+	})
+
+	// PopulatedTableSkipped runs LAST: it DROPs and recreates the shared public
+	// schema (via a second handle to the same physical test DB) to verify the
+	// AUDIT-028 skip path on a populated table, which destroys the partitioned
+	// state the earlier subtests rely on. Keeping it last avoids cross-subtest
+	// contamination. The populated-table case is verified via a baseline-only DB
+	// (so v2 hasn't converted), an inserted row, then a direct
+	// migratePartitionHighVolume call which must SKIP (leave the table plain).
+	t.Run("PopulatedTableSkipped", func(t *testing.T) {
+		d2 := newPGForTest(t) // fresh reset + full migrations… then we test the skip path on a NEW table
+		// Reset to baseline-only so interface_stats is plain again.
+		if err := d2.Gorm().Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		if err := d2.runMigrationList([]migration{{version: 1, name: "baseline", run: (*Database).migrateBaseline}}); err != nil {
+			t.Fatalf("baseline-only: %v", err)
+		}
+		if pgIsPartitioned(t, d2, "interface_stats") {
+			t.Fatal("interface_stats should be plain after baseline-only")
+		}
+		if err := d2.Gorm().Create(&models.InterfaceStats{DeviceID: 1, Timestamp: time.Now().UTC(), Name: "p"}).Error; err != nil {
+			t.Fatalf("insert into plain table: %v", err)
+		}
+		if err := d2.migratePartitionHighVolume(); err != nil {
+			t.Fatalf("migratePartitionHighVolume: %v", err)
+		}
+		if pgIsPartitioned(t, d2, "interface_stats") {
+			t.Fatal("populated interface_stats was auto-converted; it must be SKIPPED (AUDIT-028)")
 		}
 	})
 }
