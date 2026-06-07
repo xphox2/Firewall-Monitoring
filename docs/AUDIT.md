@@ -1331,7 +1331,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-077 | No Prometheus `/metrics` endpoint | 0.10.373 | 1bfd651 | New `internal/metrics`: `fwmon_http_request_duration_seconds{method,route,status}` histogram (gin middleware, labelled by `c.FullPath()` template; 404→`unmatched` — cardinality-safe), DB-pool gauges (`collectors.NewDBStatsCollector`), + free Go/process collectors; served at `GET /metrics` via `promhttp` (unauth, ACL-protected per audit). Added `prometheus/client_golang` dep. `TestMetricsMiddlewareAndHandler_AUDIT077` scrapes real exposition; `TestMetricsWiring_AUDIT077` pins main.go wiring. Poller-process counters (poll_cycles/alerts_fired/batcher_queue) deferred — separate binary, no HTTP. |
 | AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
 | AUDIT-129 | No frontend error reporting | 0.10.375 | 1954068 | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
-| AUDIT-072 | `database.go` is 4,210 LOC, 175 functions | 0.10.376 | (pending) | Split the (now 4,887-line) `database.go` into **15 per-domain sibling files** in the same `package database` (migrate/telemetry/events/config_revisions/cleanup/devices/sites_probes/ping/charts/flows/syslog_agg/stats/connection_detail/device_queries/alerts); core (`Database` struct/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). Pure organization — no behavior/API change; content-preservation diff = 0 lines dropped; full `go test ./...` green. Updated AUDIT-080/146 static guards to scan the package dir; `TestDatabaseFileSplit_AUDIT072` pins it. First of the 5 large refactors. |
+| AUDIT-072 | `database.go` is 4,210 LOC, 175 functions | 0.10.376 | ec73e80 | Split the (now 4,887-line) `database.go` into **15 per-domain sibling files** in the same `package database` (migrate/telemetry/events/config_revisions/cleanup/devices/sites_probes/ping/charts/flows/syslog_agg/stats/connection_detail/device_queries/alerts); core (`Database` struct/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). Pure organization — no behavior/API change; content-preservation diff = 0 lines dropped; full `go test ./...` green. Updated AUDIT-080/146 static guards to scan the package dir; `TestDatabaseFileSplit_AUDIT072` pins it. First of the 5 large refactors. |
 
 ---
 
@@ -1488,7 +1488,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-077 — Prometheus /metrics (HTTP histogram + DB pool + Go runtime; internal/metrics) — v0.10.373 — 1bfd651 — opencode
 2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
 2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — 1954068 — opencode
-2026-06-06 — AUDIT-072 — split 4,887-line database.go into 15 per-domain files (same package, no behavior change) — v0.10.376 — (pending) — opencode
+2026-06-06 — AUDIT-072 — split 4,887-line database.go into 15 per-domain files (same package, no behavior change) — v0.10.376 — ec73e80 — opencode
 ```
 
 ---
@@ -2703,7 +2703,7 @@ invisible (129). The only observability left is the big `slog`/OTel work.
 
 | Audit | Version | Code commit | What shipped |
 |---|---|---|---|
-| AUDIT-072 | 0.10.376 | (pending) | Split `internal/database/database.go` (4,887 lines) into 15 per-domain sibling files in the same `package database`; core (`Database`/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). |
+| AUDIT-072 | 0.10.376 | ec73e80 | Split `internal/database/database.go` (4,887 lines) into 15 per-domain sibling files in the same `package database`; core (`Database`/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). |
 
 **Method (reusable for the other refactors):**
 
