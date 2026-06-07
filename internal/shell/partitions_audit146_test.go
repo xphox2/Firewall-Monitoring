@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -25,12 +24,9 @@ import (
 //     operator who sees the warning has a pointer to
 //     docs/partition-migration.md).
 func TestEnsurePartitions_SurfacesWarning_AUDIT146(t *testing.T) {
-	const path = "../../internal/database/database.go"
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("internal/database/database.go not found at %s (tests must run from the package root); err: %v", path, err)
-	}
-	body := string(data)
+	// AUDIT-072 moved EnsurePartitions into internal/database/migrate.go; scan
+	// the whole package so this static check follows the code across files.
+	body := readDatabasePackage(t)
 
 	// 1. The WARNING prefix is present in the partition-skip
 	// log message. We look for the exact substring

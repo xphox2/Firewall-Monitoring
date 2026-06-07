@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.375** |
-| Bug findings resolved | **148 / 170  (87%)** |
+| Server version | **v0.10.376** |
+| Bug findings resolved | **149 / 170  (88%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **22** |
+| Open bug findings | **21** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -28,7 +28,8 @@
 - ✅ Prometheus `/metrics` for the API server: HTTP-latency histogram + DB-pool + Go runtime (Session 27)
 - ✅ Admin-action audit log: append-only `who did what` trail via middleware + `GET /admin/api/audit` (Session 28)
 - ✅ Client-side error reporting: browser JS errors beaconed to the server log via `POST /api/client-error` (Session 29)
-- ⏳ Remaining 22: large refactors, the rest of observability (076 slog / 150 OTel), test infrastructure
+- ✅ Split the 4,887-line `database.go` into 15 per-domain files — first of the large refactors (Session 30)
+- ⏳ Remaining 21: 4 large refactors (032/044/028/040), the rest of observability (076 slog / 150 OTel), test infrastructure
 
 ## 🧭 How to read this file
 
@@ -39,12 +40,12 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 22 open findings)
+## ⏳ What's left (the 21 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
 
-- **Large refactors** — `AUDIT-072` (split the 4,200-LOC `database.go`), `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state).
+- **Large refactors** — `AUDIT-032` (request-context propagation, ~188 call sites), `AUDIT-044` (adopt `golang-migrate`/`goose`), `AUDIT-028` (partition `interface_stats`/`system_status`), `AUDIT-040` (two-instance shared state). *(072 database.go split now done — first of the five.)*
 - **Observability** — `AUDIT-076` (structured logging / `slog`), `AUDIT-150` (OpenTelemetry tracing). *(077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-118` (Postgres CI matrix), `AUDIT-120` (property-based), `AUDIT-122` (handler coverage), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
@@ -54,6 +55,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 
 | Session / range | Theme | Highlights |
 |---|---|---|
+| **Session 30** (v0.10.376) | Large refactor — split `database.go` | the 4,887-line monolith → 15 cohesive per-domain files in the same `package database` (core lifecycle stays in `database.go`, now 331 lines); pure code organization, zero behavior change, full suite green, content-preservation verified (072 — first of the 5 large refactors) |
 | **Session 29** (v0.10.375) | Observability — client-side error reporting | global `error`/`unhandledrejection` reporter in the admin JS beacons uncaught browser errors to a new `POST /api/client-error`, which logs them server-side (with `X-Request-ID`+IP); capped/self-protecting, no-DB, rate-limited, fields truncated (129). Also fixed a latent `log.SetOutput(nil)` test bug |
 | **Session 28** (v0.10.374) | Observability — admin-action audit log | new `models.AuditLog` + `internal/audit` middleware on the `/admin` group records an append-only row per authenticated mutation (actor / route-template action / target params / final status incl. 4xx-5xx / IP); read endpoint `GET /admin/api/audit` with actor/action/hours filters (078). UI page + before/after diffing deferred |
 | **Session 27** (v0.10.373) | Observability — Prometheus metrics | new `internal/metrics`: `/metrics` endpoint with an HTTP request-latency histogram (route-template-labelled, 404→`unmatched` for cardinality safety), DB connection-pool gauges, and the free Go runtime/process collectors; `prometheus/client_golang` added (077). Poller-process counters deferred (separate binary) |
@@ -1329,6 +1331,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-077 | No Prometheus `/metrics` endpoint | 0.10.373 | 1bfd651 | New `internal/metrics`: `fwmon_http_request_duration_seconds{method,route,status}` histogram (gin middleware, labelled by `c.FullPath()` template; 404→`unmatched` — cardinality-safe), DB-pool gauges (`collectors.NewDBStatsCollector`), + free Go/process collectors; served at `GET /metrics` via `promhttp` (unauth, ACL-protected per audit). Added `prometheus/client_golang` dep. `TestMetricsMiddlewareAndHandler_AUDIT077` scrapes real exposition; `TestMetricsWiring_AUDIT077` pins main.go wiring. Poller-process counters (poll_cycles/alerts_fired/batcher_queue) deferred — separate binary, no HTTP. |
 | AUDIT-078 | No admin-action audit log | 0.10.374 | 510f01b | New `models.AuditLog` + `internal/audit` middleware on the `/admin` group (after auth+CSRF) recording one append-only row per authenticated mutation: actor (user+id), action (route template), target (path params), final status (incl. 4xx/5xx), IP, UA. Read endpoint `GET /admin/api/audit` with actor/action/hours/pagination filters. `TestAuditMiddleware_AUDIT078` + `TestAuditFilters_AUDIT078` (behaviour) + `TestAuditWiring_AUDIT078` (wiring + after-auth order). Deferred: UI page, before/after diffing, retention. |
 | AUDIT-129 | No frontend error reporting | 0.10.375 | 1954068 | Global `error`/`unhandledrejection` reporter in `admin-common.js` (capped 5/page, `sendBeacon`, never throws) → new `POST /api/client-error` that logs the JS error server-side with `X-Request-ID`+IP. No DB, no auth (rate-limited `/api` group), all fields truncated server-side. `TestReportClientError_AUDIT129` + `TestClientErrorReporting_AUDIT129`. Also fixed a latent test bug (`log.SetOutput(nil)`→`os.Stderr`). Deferred: public-dashboard reporter, aggregation UI. |
+| AUDIT-072 | `database.go` is 4,210 LOC, 175 functions | 0.10.376 | (pending) | Split the (now 4,887-line) `database.go` into **15 per-domain sibling files** in the same `package database` (migrate/telemetry/events/config_revisions/cleanup/devices/sites_probes/ping/charts/flows/syslog_agg/stats/connection_detail/device_queries/alerts); core (`Database` struct/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). Pure organization — no behavior/API change; content-preservation diff = 0 lines dropped; full `go test ./...` green. Updated AUDIT-080/146 static guards to scan the package dir; `TestDatabaseFileSplit_AUDIT072` pins it. First of the 5 large refactors. |
 
 ---
 
@@ -1485,6 +1488,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-06 — AUDIT-077 — Prometheus /metrics (HTTP histogram + DB pool + Go runtime; internal/metrics) — v0.10.373 — 1bfd651 — opencode
 2026-06-06 — AUDIT-078 — admin-action audit log (models.AuditLog + internal/audit middleware + GET /admin/api/audit) — v0.10.374 — 510f01b — opencode
 2026-06-06 — AUDIT-129 — client-side error reporting (window error beacon → POST /api/client-error, logged) — v0.10.375 — 1954068 — opencode
+2026-06-06 — AUDIT-072 — split 4,887-line database.go into 15 per-domain files (same package, no behavior change) — v0.10.376 — (pending) — opencode
 ```
 
 ---
@@ -2691,6 +2695,51 @@ invisible (129). The only observability left is the big `slog`/OTel work.
   No more single-session bounded features remain — the next picks each need
   either a planning pass (slog, the refactors) or are test-writing efforts
   (122/123) or CI-matrix work (118, unverifiable without a Postgres runner here).
+
+## Session 30 completion log (2026-06-06) — large refactor #1: split database.go
+
+**1 audit shipped** (v0.10.376), resolved count **148 → 149**. The first of the
+5 large refactors, and the lowest-risk one. Full suite green.
+
+| Audit | Version | Code commit | What shipped |
+|---|---|---|---|
+| AUDIT-072 | 0.10.376 | (pending) | Split `internal/database/database.go` (4,887 lines) into 15 per-domain sibling files in the same `package database`; core (`Database`/`NewDatabase`/locks/`Close`) stays in `database.go` (331 lines). |
+
+**Method (reusable for the other refactors):**
+
+- **One controlled partition pass, not 14 manual cuts.** The domains were
+  *interleaved* in the original file (e.g. `GetAllLatestVPNStatuses` sat in the
+  middle of the connections block), so a Python script cut at exact
+  top-level-declaration boundaries and routed each decl to its target file —
+  carrying each decl's leading doc-comment/blank lines WITH it (trailing trivia
+  of block N is prepended to block N+1). `goimports` then resolved each new
+  file's import subset; `gofmt` formatted.
+- **Verification that the move was lossless:** `comm -23` of the sorted
+  non-blank lines (original vs. union of all new files) returned **empty** — no
+  code line dropped or mangled — and the **full `go test ./...` passed
+  unchanged**. For a pure-organization refactor the green suite IS the proof.
+
+**Discoveries / decisions for the next refactor session:**
+
+- **`internal/shell` static-source guards can break on a file move even though
+  no behavior changed.** Two (`errorsis_audit080`, `partitions_audit146`)
+  hard-coded `../../internal/database/database.go`; after the split the code
+  they scan lived in `devices.go`/`alerts.go`/`migrate.go`. Fixed by adding a
+  shared `readDatabasePackage(t)` helper that concatenates every non-test `.go`
+  in the package. **Lesson:** before/while doing a refactor, grep
+  `internal/shell` for tests that pin a path or file content of the area you're
+  moving, and repoint them to scan the package/dir.
+- **File-size outcome:** largest new file `connection_detail.go` 677 lines (under
+  the 700 cap), then `flows.go` 603, `migrate.go` 521. `database.go` 331. Good
+  spread; none unwieldy.
+- **The remaining 4 large refactors are NOT this easy.** 072 was unique in being
+  pure organization (same package, no signature change). `AUDIT-032`
+  (ctx-propagation) changes ~188 signatures; `AUDIT-044` (golang-migrate/goose)
+  changes migration semantics against a prod Postgres; `AUDIT-028` (partitioning)
+  is Postgres DDL unverifiable on the SQLite test backend; `AUDIT-040`
+  (two-instance shared state) is architectural. Each needs its own planning pass
+  and several can't be fully verified without a Postgres runner — schedule them
+  individually, not as a batch.
 
 ## Closing
 
