@@ -244,6 +244,11 @@ func (r *RelayClient) Register() error {
 		RegistrationKey: r.Config.RegistrationKey,
 		ProbeName:       r.Config.ProbeName,
 		SiteID:          r.Config.SiteID,
+		// Advertise the wire-format version this probe speaks. Pre-handshake
+		// servers ignore unknown JSON fields, so this stays backward-
+		// compatible; a handshake-aware server can 426 us if we're too old
+		// or too new for it.
+		SchemaVersion: SchemaVersionMax,
 	}
 
 	jsonData, err := json.Marshal(regReq)
@@ -507,16 +512,39 @@ func (r *RelayClient) flushQueues() {
 	r.syncData()
 }
 
+// SchemaVersionMin / SchemaVersionMax pin the supported probe↔server
+// relay wire-format range. The probe advertises SchemaVersionMax on
+// register; the server rejects anything outside [Min, Max] with HTTP 426
+// (Upgrade Required). Bump SchemaVersionMax in lockstep with MIGRATING.md
+// whenever the relay handshake changes shape. See docs/SUPPORT-MATRIX.md
+// for the per-version compatibility table.
+const (
+	SchemaVersionMin = 1
+	SchemaVersionMax = 1
+)
+
 type RegistrationRequest struct {
 	RegistrationKey string `json:"registration_key"`
 	ProbeName       string `json:"probe_name"`
 	SiteID          uint   `json:"site_id"`
+	// SchemaVersion is the relay-wire-format version the probe speaks.
+	// Zero / absent is treated as v1 (the pre-handshake format) so
+	// already-deployed collectors keep working unchanged. The server
+	// rejects anything outside [SchemaVersionMin, SchemaVersionMax] with
+	// HTTP 426 (Upgrade Required).
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 type RegistrationResponse struct {
 	Approved bool   `json:"approved"`
 	ProbeID  uint   `json:"probe_id"`
 	Message  string `json:"message"`
+	// SchemaVersion is the version the server has *selected* for this
+	// probe. Pre-handshake servers may not return it at all (zero value),
+	// in which case the collector must assume v1. On rejection the
+	// /api/probes/register endpoint also advertises the supported range in
+	// the X-Probe-Schema-Version-Supported response header.
+	SchemaVersion int `json:"schema_version,omitempty"`
 }
 
 type HeartbeatRequest struct {
