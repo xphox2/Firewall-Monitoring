@@ -26,6 +26,7 @@ import (
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/secrets"
 	"firewall-mon/internal/snmp"
+	"firewall-mon/internal/tracing"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.402"
+const ServerVersion = "0.10.403"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -102,6 +103,15 @@ func main() {
 		log.Fatalf("Configuration error: %v", err)
 	}
 	database.AppVersion = ServerVersion // AUDIT-044: stamp schema_migrations rows
+
+	// AUDIT-150: OpenTelemetry tracing. OFF unless OTEL_TRACES_ENABLED=true, in
+	// which case spans export over OTLP/HTTP to OTEL_EXPORTER_OTLP_ENDPOINT. The
+	// shutdown flushes buffered spans on graceful exit; it's a no-op when disabled.
+	traceShutdown, err := tracing.Init(context.Background(), "fwmon-api", ServerVersion)
+	if err != nil {
+		log.Printf("Tracing init failed (continuing without tracing): %v", err)
+	}
+	defer func() { _ = traceShutdown(context.Background()) }()
 
 	// AUDIT-008: persist auto-generated JWT secret to disk so subsequent
 	// restarts use the SAME key. Otherwise every restart (a) invalidates
@@ -457,7 +467,8 @@ func main() {
 func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handler, authManager *auth.AuthManager, db *database.Database) {
 	router.Use(middleware.SecureHeaders())
 	router.Use(middleware.CORS(cfg))
-	router.Use(middleware.RequestID()) // AUDIT-135: before RequestLogger so the ID is logged
+	router.Use(middleware.RequestID())             // AUDIT-135: before RequestLogger so the ID is logged
+	router.Use(tracing.GinMiddleware("fwmon-api")) // AUDIT-150: server span + W3C extract, before RequestLogger so logs get trace_id
 	router.Use(middleware.RequestLogger())
 	router.Use(metrics.Middleware())              // AUDIT-077: record request latency by route/method/status
 	router.Use(middleware.BodySizeLimit(5 << 20)) // 5MB max request body

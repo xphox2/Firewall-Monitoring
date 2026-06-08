@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/tracing"
 )
 
 // jitter returns d plus a uniformly random extra delay in [0, d). Retry and
@@ -193,7 +194,11 @@ func (r *RelayClient) buildHTTPClient() *http.Client {
 	}
 
 	return &http.Client{
-		Transport: transport,
+		// AUDIT-150: wrap the transport so outbound probe→api requests open a
+		// client span and inject the W3C `traceparent` header, connecting the
+		// probe's trace to the server's. No-op (returns transport unchanged)
+		// unless OTEL_TRACES_ENABLED=true.
+		Transport: tracing.WrapTransport(transport),
 		Timeout:   30 * time.Second,
 	}
 }

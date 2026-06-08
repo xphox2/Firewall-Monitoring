@@ -18,6 +18,7 @@ import (
 	"firewall-mon/internal/sflow"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/syslog"
+	"firewall-mon/internal/tracing"
 )
 
 type ProbeConfig struct {
@@ -517,6 +518,18 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	cfg := LoadProbeConfig()
+
+	// AUDIT-150: OpenTelemetry tracing for the probe side of the probe→api hop.
+	// OFF unless OTEL_TRACES_ENABLED=true; when on, the relay's HTTP client emits
+	// client spans + injects W3C trace context so the call connects to the api's
+	// server span. Shutdown flushes buffered spans on exit.
+	// This repo's cmd/probe carries no release version (the versioned production
+	// probe is the separate Firewall-Collector repo), so the span resource uses "dev".
+	traceShutdown, err := tracing.Init(context.Background(), "fwmon-probe", "dev")
+	if err != nil {
+		log.Printf("Tracing init failed (continuing without tracing): %v", err)
+	}
+	defer func() { _ = traceShutdown(context.Background()) }()
 
 	probe := NewProbe(cfg)
 

@@ -24,9 +24,12 @@
 package logging
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // redactValue replaces the value of any attribute whose key names a secret.
@@ -59,16 +62,49 @@ func Init() *slog.Logger {
 }
 
 // newHandler builds the slog handler for w from the LOG_FORMAT / LOG_LEVEL env
-// vars. Split out from Init so tests can target a buffer instead of stderr.
+// vars. Split out from Init so tests can target a buffer instead of stderr. The
+// base handler is wrapped in a traceHandler so any record logged with an active
+// span context (e.g. middleware.RequestLogger, which passes the request context)
+// carries the trace_id/span_id that correlate the log line with its OpenTelemetry
+// trace (AUDIT-150). When tracing is off there is no active span, so nothing is
+// added and the output is byte-for-byte the AUDIT-076 format.
 func newHandler(w *os.File) slog.Handler {
 	opts := &slog.HandlerOptions{
 		Level:       parseLevel(os.Getenv("LOG_LEVEL")),
 		ReplaceAttr: redactSecrets,
 	}
+	var base slog.Handler
 	if strings.EqualFold(os.Getenv("LOG_FORMAT"), "json") {
-		return slog.NewJSONHandler(w, opts)
+		base = slog.NewJSONHandler(w, opts)
+	} else {
+		base = slog.NewTextHandler(w, opts)
 	}
-	return slog.NewTextHandler(w, opts)
+	return traceHandler{base}
+}
+
+// traceHandler decorates a slog.Handler: if the record's context carries a valid
+// OpenTelemetry span, it stamps trace_id/span_id onto the record so logs and
+// traces cross-link (AUDIT-150). It is a transparent pass-through otherwise.
+type traceHandler struct{ slog.Handler }
+
+func (h traceHandler) Handle(ctx context.Context, r slog.Record) error {
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		r.AddAttrs(
+			slog.String("trace_id", sc.TraceID().String()),
+			slog.String("span_id", sc.SpanID().String()),
+		)
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+// WithAttrs/WithGroup must re-wrap so the trace stamping survives a logger built
+// via slog.With(...); the embedded Handler's versions would unwrap us.
+func (h traceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return traceHandler{h.Handler.WithAttrs(attrs)}
+}
+
+func (h traceHandler) WithGroup(name string) slog.Handler {
+	return traceHandler{h.Handler.WithGroup(name)}
 }
 
 // parseLevel maps a LOG_LEVEL string to a slog.Level, defaulting to info.
