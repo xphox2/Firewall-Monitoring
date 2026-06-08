@@ -213,6 +213,26 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
+	// Validate the target probe exists when reassigning. Without this, an
+	// UPDATE that sets probe_id to a non-existent probe fails with an opaque
+	// foreign-key-violation 500 and the WHOLE update rolls back — so the device
+	// silently keeps its previous probe, which presents to the operator as
+	// "the reassignment saved but reverted on refresh". A nil/0 value is the
+	// explicit "unassign" case and is allowed.
+	if probeVal, ok := filteredUpdates["probe_id"]; ok && probeVal != nil {
+		pf, isNum := probeVal.(float64) // JSON numbers decode as float64
+		if !isNum || pf < 0 || pf != float64(int(pf)) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid probe ID"))
+			return
+		}
+		if pf > 0 {
+			if _, err := db.GetProbe(uint(pf)); err != nil {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse("Target probe not found"))
+				return
+			}
+		}
+	}
+
 	// Encrypt SNMP secrets before database write.
 	//
 	// CRITICAL: the GET endpoints mask these fields as RedactedMask ("********").

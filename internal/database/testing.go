@@ -62,6 +62,7 @@ func NewDatabaseForTesting(t interface {
 		&models.SyslogSummary{},
 		&models.UptimeRecord{},
 		&models.ProcessedBatch{},
+		&models.SystemSetting{},
 	}
 
 	for _, m := range testModels {

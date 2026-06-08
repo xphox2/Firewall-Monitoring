@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -243,6 +244,11 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 	}
 
 	if err := db.DeleteProbe(id); err != nil {
+		if errors.Is(err, database.ErrProbeHasDevices) {
+			c.JSON(http.StatusConflict, models.ErrorResponse(
+				"Cannot delete probe: it still has devices assigned. Reassign or remove those devices first."))
+			return
+		}
 		httputil.InternalError(c, "Failed to delete probe", err)
 		return
 	}

@@ -180,8 +180,55 @@ func (d *Database) UpdateProbe(probe *models.Probe) error {
 	return d.db.Save(probe).Error
 }
 
+// ErrProbeHasDevices is returned by DeleteProbe when the probe still has
+// devices assigned to it. Deleting it anyway would violate the
+// devices.probe_id foreign key (and silently orphan monitored devices), so the
+// caller must reassign or remove those devices first.
+var ErrProbeHasDevices = errors.New("probe has assigned devices")
+
+// DeleteProbe removes a probe along with the rows that hold a foreign key back
+// to it (probe_approvals, probe_heartbeats) and its registration SystemSetting.
+//
+// The pre-fix version was a bare `DELETE FROM probes`, which Postgres rejects
+// with a foreign-key violation whenever ANY dependent row exists — and a probe
+// that was ever approved always has a probe_approvals row and probe_heartbeats
+// rows. The result was that an in-use probe could never be deleted ("Failed to
+// delete probe"). Devices are deliberately NOT deleted here: they may be in the
+// middle of being reassigned, so we refuse the delete with ErrProbeHasDevices
+// and let the operator move them first.
 func (d *Database) DeleteProbe(id uint) error {
-	return d.db.Delete(&models.Probe{}, id).Error
+	var deviceCount int64
+	if err := d.db.Model(&models.Device{}).Where("probe_id = ?", id).Count(&deviceCount).Error; err != nil {
+		return fmt.Errorf("delete probe %d: count assigned devices: %w", id, err)
+	}
+	if deviceCount > 0 {
+		return fmt.Errorf("%w: %d device(s) still assigned", ErrProbeHasDevices, deviceCount)
+	}
+
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		// Remove the registration-key SystemSetting (keyed by the hashed key) so
+		// a deleted probe's row doesn't leak and the key can't be reused.
+		var probe models.Probe
+		if err := tx.First(&probe, id).Error; err != nil {
+			return fmt.Errorf("delete probe %d: load probe: %w", id, err)
+		}
+		if probe.RegistrationKey != "" {
+			if err := tx.Where("key = ?", "probe_registration_"+probe.RegistrationKey).
+				Delete(&models.SystemSetting{}).Error; err != nil {
+				return fmt.Errorf("delete probe %d: delete registration setting: %w", id, err)
+			}
+		}
+		// FK-referencing child rows must go before the probe row itself.
+		for _, model := range []interface{}{
+			&models.ProbeApproval{},
+			&models.ProbeHeartbeat{},
+		} {
+			if err := tx.Where("probe_id = ?", id).Delete(model).Error; err != nil {
+				return fmt.Errorf("delete probe %d: delete related %T: %w", id, model, err)
+			}
+		}
+		return tx.Delete(&models.Probe{}, id).Error
+	})
 }
 
 func (d *Database) GetProbesBySite(siteID uint) ([]models.Probe, error) {
