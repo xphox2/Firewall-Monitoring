@@ -128,6 +128,34 @@ effect on an already-initialized install. To reset:
 
 ## Upgrade
 
+> ⚠ **Key continuity — the #1 upgrade hazard.** Two secrets MUST survive every
+> upgrade, host move, or repo-directory relocation **unchanged**:
+>
+> - **`ENCRYPTION_KEY`** — derives the AES-256 key (`sha256(value)`) for every
+>   secret stored at rest (SNMP communities, SMTP/IRC passwords). If it changes,
+>   `decryptField` fails closed (AUDIT-027) and **every stored secret becomes
+>   unreadable** — devices stop polling and email/IRC alerts fail (`535`) until
+>   you re-enter them all by hand. There is no recovery without the original value.
+> - **`JWT_SECRET_KEY`** — signs login sessions; if it changes everyone is logged
+>   out (annoying, not destructive).
+>
+> **The trap (2026-06-07 prod incident):** deploying from a *fresh checkout in a
+> new directory* (e.g. `/home/xphox/firewall-mon` → `/opt/Firewall-Monitoring`)
+> makes the entrypoint generate a **brand-new** `config.env` with a **random**
+> `JWT_SECRET_KEY`. If `ENCRYPTION_KEY` was never set explicitly (so encryption
+> was silently derived from the JWT secret — the AUDIT-008/009 fallback), the
+> derived key changes and every stored secret breaks. **Always set
+> `ENCRYPTION_KEY` explicitly** (in `docker-compose.yml` `environment:` or the
+> container env) — this decouples encryption from JWT churn — **record it in your
+> secret store, and carry the exact same value forward on every deploy.**
+>
+> Verify it is unchanged across the upgrade (run **before and after** — the value
+> must match):
+> ```bash
+> grep ENCRYPTION_KEY docker-compose.yml
+> docker exec <c> env | grep -E 'ENCRYPTION_KEY|JWT_SECRET_KEY'
+> ```
+
 1. **Read the [CHANGELOG](../CHANGELOG.md)** for the target version — look for
    `### Security` / breaking-change callouts since your current `GET /api/version`.
 2. Pull/rebuild the image (`docker compose pull && docker compose up -d`, or

@@ -57,6 +57,18 @@ validated facts that make this upgrade safe:
    ```
    Expect no output (or `false`). If either is `true`, leave it out / set false.
 6. **Do not touch the nginx config.** It already terminates HTTPS correctly.
+7. **Record the encryption/JWT keys and carry them forward** (see the **Key
+   continuity** warning in [OPERATIONS.md](OPERATIONS.md#upgrade)). If you deploy
+   into a *new directory*, the entrypoint generates a fresh `config.env` with a
+   new random `JWT_SECRET_KEY` — copy `ENCRYPTION_KEY` (and `JWT_SECRET_KEY`)
+   from the current deployment so stored secrets stay decryptable:
+   ```bash
+   docker exec firewall-mon env | grep -E 'ENCRYPTION_KEY|JWT_SECRET_KEY'
+   grep -E 'ENCRYPTION_KEY|JWT_SECRET_KEY' /home/xphox/firewall-mon/config/config.env
+   ```
+   Save these, and set the **same** `ENCRYPTION_KEY` in the new
+   `docker-compose.yml` before `up -d`. **A changed `ENCRYPTION_KEY` makes every
+   stored SNMP/SMTP/IRC secret unrecoverable** (the 2026-06-07 incident).
 
 ---
 
