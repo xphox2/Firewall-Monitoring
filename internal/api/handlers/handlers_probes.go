@@ -217,7 +217,12 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 		}
 	}
 
-	if err := db.Gorm().Model(probe).Updates(filteredUpdates).Error; err != nil {
+	// Use Model(&Probe{}).Where(id) instead of Model(probe): `probe` was loaded
+	// by GetProbe with Preload("Site"), so passing it to Updates makes gorm
+	// re-derive site_id from the loaded Site association and clobber the map's
+	// site_id (the same belongs-to write-back bug fixed for devices). A bare
+	// model + WHERE honors the map values verbatim.
+	if err := db.Gorm().Model(&models.Probe{}).Where("id = ?", id).Updates(filteredUpdates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update probe", err)
 		return
 	}

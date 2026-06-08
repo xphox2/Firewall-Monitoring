@@ -265,7 +265,14 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		}
 	}
 
-	if err := db.Gorm().Model(device).Updates(filteredUpdates).Error; err != nil {
+	// Write via Model(&Device{}).Where(id) rather than Model(device). The
+	// `device` here was loaded by GetDevice, which Preload("Probe")/Preload(
+	// "Site") — so it carries loaded belongs-to associations. gorm's
+	// Model(loadedStruct).Updates(map) re-derives the foreign keys from those
+	// loaded associations (the OLD probe/site) and overrides probe_id/site_id in
+	// the map, silently reverting any reassignment. Passing a bare model + WHERE
+	// makes gorm honor the map values verbatim.
+	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", id).Updates(filteredUpdates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update device", err)
 		return
 	}
