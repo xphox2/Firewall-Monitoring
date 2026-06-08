@@ -190,16 +190,51 @@ echo "  API:      $API_PID"
 echo "  Poller:   $POLLER_PID"
 echo "  Trap:     $TRAP_PID"
 
-# Graceful shutdown — stop app first, then PostgreSQL
-shutdown() {
-    echo "Shutting down..."
-    kill $API_PID $POLLER_PID $TRAP_PID 2>/dev/null
-    wait $API_PID $POLLER_PID $TRAP_PID 2>/dev/null
+# Stop the app daemons, then PostgreSQL. Does NOT exit — the caller decides the
+# exit code (0 for a clean signal-driven stop, non-zero for a crash).
+teardown() {
+    echo "Stopping fwmon services..."
+    # `|| true` so a non-zero kill/wait (e.g. the daemon that already crashed)
+    # can't trip the script-level `set -e` before the caller's explicit exit,
+    # which would otherwise leak 143 into a clean `docker stop` (want exit 0).
+    kill $API_PID $POLLER_PID $TRAP_PID 2>/dev/null || true
+    wait $API_PID $POLLER_PID $TRAP_PID 2>/dev/null || true
     echo "Stopping PostgreSQL..."
-    su-exec postgres pg_ctl -D "$PGDATA" -m fast stop > /dev/null 2>&1
+    su-exec postgres pg_ctl -D "$PGDATA" -m fast stop > /dev/null 2>&1 || true
+}
+
+# Graceful shutdown on SIGINT/SIGTERM (e.g. `docker stop`) — clean exit 0.
+shutdown() {
+    echo "Received shutdown signal..."
+    teardown
     exit 0
 }
 trap shutdown INT TERM
 
-# Wait for all processes
-wait $API_PID $POLLER_PID $TRAP_PID
+# AUDIT-094: fail-fast supervision. A bare `wait $API_PID $POLLER_PID $TRAP_PID`
+# blocks until ALL THREE exit, so a single crashed daemon left the container up
+# running a silently-degraded stack — the dead process was neither restarted nor
+# surfaced. Instead, wait for the FIRST daemon to exit, report which one and its
+# status, tear the whole stack down cleanly, and exit non-zero. Docker's
+# `restart: unless-stopped` then brings back a fresh, COMPLETE stack (PostgreSQL
+# included) rather than limping along missing a daemon. `set +e` keeps the
+# script-level `set -e` from aborting before we can log/teardown when the
+# crashed child returns a non-zero status.
+set +e
+wait -n
+first_status=$?
+set -e
+
+dead="a service"
+for entry in "API:$API_PID" "Poller:$POLLER_PID" "Trap:$TRAP_PID"; do
+    name=${entry%%:*}
+    pid=${entry##*:}
+    if ! kill -0 "$pid" 2>/dev/null; then
+        dead="$name (pid $pid)"
+        break
+    fi
+done
+
+echo "!!! $dead exited (status $first_status) — tearing down the stack for a clean restart"
+teardown
+exit 1

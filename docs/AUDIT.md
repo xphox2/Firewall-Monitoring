@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.401** |
-| Bug findings resolved | **163 / 170  (96%)** |
+| Server version | **v0.10.402** |
+| Bug findings resolved | **164 / 170  (96%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **7** |
+| Open bug findings | **6** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -41,7 +41,8 @@
 - ✅ First tests for the last zero-coverage critical-path packages — `auth` (security boundary: lockout, bcrypt, JWT alg-confusion/wrong-secret/expiry/version, secure-token), `alerts` (policy helpers), `models` (TableName uniqueness + ToJSON) — closes AUDIT-117 (Session 40, 117)
 - ✅ Parallel test execution (`t.Parallel()` on 59 pure-logic tests) + `go test -short` fast/slow split (gated 7 timing/concurrency tests) — closes AUDIT-140 + 142 (Session 41)
 - ✅ End-to-end handler→real-Postgres integration test (full ingestion stack: HTTP → probe auth → SaveSystemStatus → partition routing → query-back); shared `database.NewIntegrationDB` harness; CI/Makefile broadened to the handlers package — closes AUDIT-123 (Session 42)
-- ⏳ Remaining 7: observability (150 OTel) and smaller code item (094 entrypoint supervision, re-scope first), + a few partial/decided (039/126/160/161) — all fully-local-verifiable
+- ✅ Container entrypoint fail-fast supervision — `wait -n` replaces the bare 3-PID wait so a single daemon crash triggers a clean full-stack restart instead of silent degradation — closes AUDIT-094 (Session 43)
+- ⏳ Remaining 6: observability (150 OTel — the last large item), + a few partial/decided (039/126/160/161) — 150 is fully-local-buildable; the rest are decisions
 
 ## 🧭 How to read this file
 
@@ -52,7 +53,7 @@
 5. **Part II — the original audit** — all 170 findings + 89 feature ideas in full detail. `file:line` references are against the **v0.10.239** baseline and may have since moved.
 6. **Part III — maintainer & session notes** — the per-commit workflow and session-by-session completion logs (formerly `HANDOFF.md`).
 
-## ⏳ What's left (the 7 open findings)
+## ⏳ What's left (the 6 open findings)
 
 These are no longer quick wins — they cluster into five themes. Search the
 `AUDIT-NNN` ID in **Part II** for the full issue + suggested fix of any item.
@@ -61,7 +62,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Observability** — `AUDIT-150` (OpenTelemetry tracing). *(076 slog + 077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — ✅ **theme cleared.** *(117 per-package coverage + 118 Postgres-CI-matrix + 119 fuzz + 120 property-based + 122 dead-test + 123 end-to-end handler→PG + 124 bench + 140 `t.Parallel` + 142 `-short` gating all done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
-- **Smaller code cleanups** — `094` (entrypoint supervision). *(073 transport-type move + 071 JSONError helper + 081 `return err` wrapping + 129 client-error reporting + 132 ES5 `['catch']` sweep now done.)*
+- **Smaller code cleanups** — ✅ **theme cleared.** *(094 entrypoint fail-fast supervision + 073 transport-type move + 071 JSONError helper + 081 `return err` wrapping + 129 client-error reporting + 132 ES5 `['catch']` sweep now done.)*
 
 ## 🗓 Recent activity
 
@@ -1360,6 +1361,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-076 | No structured logging | 0.10.396 | 2932241 | New `internal/logging` adopts stdlib `log/slog`. Key lever: `logging.Init()` (first line of `main()`) calls `slog.SetDefault`, which (Go 1.21+) **also routes the legacy `log` package through the slog handler** — so all ~460 existing `log.Printf` sites gain levelled/structured/redacted output with **zero per-site churn**. `LOG_FORMAT`=`text`(default logfmt)\|`json`; `LOG_LEVEL`=`debug`\|`info`(default)\|`warn`\|`error` (legacy lines bridge in at info → default verbosity unchanged). `ReplaceAttr` redacts secret-named attrs (`password`/`secret`/`token`/`apikey`/`community`/`private_key` → `REDACTED`). The 2 hot chokepoints converted to **native** records: `httputil.InternalError` (handler 500s → `slog.Error(msg, status=500, method, route, req, err)`) + `middleware.RequestLogger` (failed requests, 4xx→warn/5xx→error). Tests: `internal/logging/logging_test.go` (redaction/bridge/level) + `structuredlogging_audit076_test.go` (static guards); updated AUDIT-071 test for slog quoting. `config.env.example` documents the env. 150 OTel still open. |
 | AUDIT-073 | `internal/models` mixes GORM structs with HTTP transport | 0.10.397 | af0e756 | Moved `APIResponse` + its `Success/Error/Message` constructors out of the GORM model package into a new `internal/api/response` leaf package (de-stuttered: `response.Error` not `models.ErrorResponse`). 435 call sites / 16 files (15 handlers + httputil) updated; `goimports` fixed imports. **JSON wire shape byte-for-byte unchanged** → no client effect, pure refactor. AUDIT-071 sweep guard re-pointed to the new `StatusInternalServerError, response.Error` form; new `transporttypes_audit073_test.go` pins the boundary (models declares neither type nor constructors; response declares both). The dead-`LastUpAt` half was already resolved when the field got wired up in telemetry.go. Same commit also `gofmt`-fixed the two AUDIT-076 test files that had reddened the CI gofmt gate. |
 | AUDIT-120 | No property-based tests | 0.10.398 | cfc3a3f | Added `testing/quick` (stdlib, no new dep) invariant tests for the trickiest math. `internal/report/spike_property_test.go`: `meanStdDev` → finite non-negative stddev + mean within `[min,max]`, constant window → stddev 0; `detectSpikesInSeries` → every reported spike has value>mean, stddev>0, `critical` clears the 2× bar, severity ∈ {warning,critical}, degenerate inputs → nil. `internal/uptime/uptime_property_test.go`: `FormatUptime` round-trips to `uptime/100` for any uint64 (independent decoder), `GetStats().UptimePercent` always finite in `[0,100]` with reboot/zero pinned to 0 (uint64 underflow guard). Generators bounded to the real throughput domain (finite, non-neg bps) so they don't trip float64-max overflow. `propertytests_audit120_test.go` static guard. Also chips at 117. |
+| AUDIT-094 | `entrypoint.sh` runs 3 binaries with bare `wait` | 0.10.402 | _pending_ | The signal-trap half (the S-scope) was already in place; this adds the real value. Replaced the final `wait $API_PID $POLLER_PID $TRAP_PID` (blocks until ALL exit → a crashed daemon leaves a silently-degraded stack) with a **`wait -n` fail-fast**: on the first daemon exit, log which one + status, `teardown()` (daemons then PG), `exit 1` → compose `restart: unless-stopped` rebuilds a complete stack. Factored shared stop into `teardown()`; `\|\| true`-guarded its kill/wait/pg_ctl so `set -e` can't leak 143 into a clean `docker stop` (exit 0) or skip the crash-path `exit 1`. Chose `wait -n` over s6/supervisord (no new image dep; clean-slate restart; reviewable + unit-testable without a live container). Verified via mock harness (crash→exit 1, SIGTERM→exit 0) + `bash -n`; `wait -n` needs bash≥4.3 (Alpine 3.19 = bash 5.2). Static guard `entrypoint_supervision_audit094_test.go`. |
 | AUDIT-123 | No integration tests | 0.10.401 | 52465d0 | The tag/`make test-integration`/CI-Postgres-service triad was already delivered by AUDIT-118 (v0.10.379), but 118's suite tests the `database` package's PG paths in isolation. Added the missing cross-package, full-stack piece: `internal/api/handlers/integration_pg_test.go` (`TestEndToEndIngestion_Postgres_AUDIT123`) drives a real HTTP request → gin handler → probe Bearer auth → `SaveSystemStatus` → real partitioned Postgres, then asserts persistence, **current-month partition routing** (`system_status_YYYYMM`), the device→online handler side-effect, and a query-layer round-trip. Promoted 118's private `newPGForTest`/`cfgFromDSN` to a shared exported `database.NewIntegrationDB(testing.TB)` (`integration_testkit.go`); the 118 suite now delegates to it. Broadened the CI `integration-postgres` job + `make test-integration` from `./internal/database/...` to also run `./internal/api/handlers/...`. Verified locally via compile-under-tag + skip-without-DSN (real run = CI). Static guard `integrationtests_audit123_test.go`. |
 | AUDIT-140 | 0 `t.Parallel()` in any test | 0.10.400 | 7413b8b | Added `t.Parallel()` to 59 independent, shared-state-free tests across the pure-logic packages: `configdiff` (26), `report` (incl. the 120 property tests), `auth` (bcrypt/JWT — parallel helps most), `models`, `alerts`, `uptime`, plus the deterministic `database/batcher` + `snmp/trap` tests the audit named. Packages mutating process-global state (`gin.SetMode`/`log.SetOutput`/env) or depending on wall-clock timing were left serial. Verified stable under `-count=2`. Static guard `parallel_audit140_test.go`. |
 | AUDIT-142 | No `testing.Short()` gating | 0.10.400 | 7413b8b | Gated the timing/concurrency tests behind `testing.Short()` so `go test -short` skips them: 4 `time.Sleep`-based `batcher` tests + 2 `snmp/trap` rate-limiter tests (burst-refill timing + 50-goroutine stress); the 5s `cmd/probe` bounded-drain test was already gated. `-short` now skips 7 slow/flaky-prone tests; full `go test` still runs everything. Static guard `shortgating_audit142_test.go`. |
@@ -1542,6 +1544,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-08 — AUDIT-140 — added t.Parallel() to 59 independent pure-logic tests (configdiff/report/auth/models/alerts/uptime + deterministic batcher/trap); global-state + timing tests left serial; -count=2 verified; shell guard — v0.10.400 — 7413b8b — claude
 2026-06-08 — AUDIT-142 — gated timing/concurrency tests behind testing.Short() (4 batcher sleep tests + 2 trap rate-limiter tests; probe 5s already gated); go test -short now skips 7 slow tests; shell guard — v0.10.400 — 7413b8b — claude
 2026-06-08 — AUDIT-123 — end-to-end handler→real-Postgres integration test (HTTP → probe auth → SaveSystemStatus → partition routing → query-back); shared exported database.NewIntegrationDB harness; CI+Makefile broadened to handlers pkg; shell guard — v0.10.401 — 52465d0 — claude
+2026-06-08 — AUDIT-094 — entrypoint.sh fail-fast supervision: wait -n replaces the bare 3-PID wait (silent degradation), crash → teardown + exit 1 → full-stack restart; teardown() helper with || true guards; mock-harness + bash -n verified; shell guard — v0.10.402 — (pending) — claude
 ```
 
 ---
@@ -2299,11 +2302,12 @@ tests, `gofmt -l`, `go vet`).
   The nginx example forwards the real client IP, but the app won't honor it
   until trusted-proxy config is wired — that's a deliberate security-loosening
   change for its own commit, documented inline in `docs/nginx.conf`.
-- **AUDIT-094 still OPEN (deliberately deferred):** the entrypoint already traps
-  signals (the S-scope), but the real value (per-process supervision/restart via
-  s6/supervisord, or a `wait -n` fail-fast loop) is an L-sized change to the
-  **live production entrypoint** — left for a careful dedicated pass given the
-  v0.10.322-324 prod-hotfix history.
+- **AUDIT-094 — RESOLVED in v0.10.402 (Session 43):** the dedicated pass chose
+  the `wait -n` fail-fast loop (not s6/supervisord) — a crashed daemon now tears
+  the stack down and `exit 1`s so the restart policy rebuilds a complete stack,
+  instead of the bare 3-PID `wait` leaving a silently-degraded container. The
+  signal-trap S-scope was already in place. (This note kept for history; see the
+  Resolved table for the authoritative status.)
 - **The comment-quotes-the-bug-token gotcha bit again** (AUDIT-098): an
   explanatory comment that quoted `rm -rf ${REMOTE_DIR}/*` tripped the test's
   backup-before-rm ordering check. Reword marker comments to avoid the literal
