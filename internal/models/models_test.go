@@ -40,6 +40,7 @@ func allTablers() []tabler {
 var snakeCase = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 func TestTableNames_UniqueAndSnakeCase_AUDIT117(t *testing.T) {
+	t.Parallel()
 	seen := map[string]string{} // table name -> first model type that claimed it
 	for _, m := range allTablers() {
 		name := m.TableName()
@@ -61,6 +62,7 @@ func TestTableNames_UniqueAndSnakeCase_AUDIT117(t *testing.T) {
 }
 
 func TestSystemStatus_ToJSON_AUDIT117(t *testing.T) {
+	t.Parallel()
 	s := &SystemStatus{DeviceID: 42, CPUUsage: 17.5, MemoryUsage: 60}
 	out := s.ToJSON()
 

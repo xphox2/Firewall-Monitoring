@@ -15,6 +15,7 @@ import (
 // empty, so the listener accepted every UDP packet on port 162 — which
 // is the open-relay shape we're closing.
 func TestTrapReceiver_Start_RequiresCommunity(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.SNMP.TrapCommunity = ""
 	cfg.SNMP.TrapListenAddr = "127.0.0.1:0" // unused, Start returns before binding
@@ -39,6 +40,9 @@ func TestTrapReceiver_Start_RequiresCommunity(t *testing.T) {
 //   - The next call fails (bucket empty).
 //   - After waiting long enough to refill 1 token, one more call succeeds.
 func TestTrapReceiver_Allow_BurstThenRefill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
 	cfg := &config.Config{}
 	cfg.SNMP.TrapCommunity = "x" // not used by allow()
 	rcv, _ := NewTrapReceiver(cfg)
@@ -67,6 +71,7 @@ func TestTrapReceiver_Allow_BurstThenRefill(t *testing.T) {
 // bucket does not affect a different IP's bucket — a spoofing-defense
 // requirement (one bad IP must not block all others).
 func TestTrapReceiver_Allow_PerIPIsolated(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.SNMP.TrapCommunity = "x"
 	rcv, _ := NewTrapReceiver(cfg)
@@ -97,6 +102,7 @@ func TestTrapReceiver_Allow_PerIPIsolated(t *testing.T) {
 // bound when an attacker sprays unique source IPs. After hitting the cap,
 // new IPs are rejected.
 func TestTrapReceiver_Allow_MapCapped(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{}
 	cfg.SNMP.TrapCommunity = "x"
 	rcv, _ := NewTrapReceiver(cfg)
@@ -128,6 +134,9 @@ func TestTrapReceiver_Allow_MapCapped(t *testing.T) {
 // TestTrapReceiver_Allow_ConcurrencySafe runs allow() from N goroutines
 // under -race. The total accepted count must not exceed the burst.
 func TestTrapReceiver_Allow_ConcurrencySafe(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
 	cfg := &config.Config{}
 	cfg.SNMP.TrapCommunity = "x"
 	rcv, _ := NewTrapReceiver(cfg)

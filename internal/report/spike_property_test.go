@@ -40,6 +40,7 @@ func finite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
 // TestMeanStdDev_Invariants_AUDIT120: stddev is always a finite, non-negative
 // real; mean lies within [min,max] of the inputs; the empty slice yields (0,0).
 func TestMeanStdDev_Invariants_AUDIT120(t *testing.T) {
+	t.Parallel()
 	prop := func(vals []float64) bool {
 		mean, sd := meanStdDev(vals)
 		if len(vals) == 0 {
@@ -73,6 +74,7 @@ func TestMeanStdDev_Invariants_AUDIT120(t *testing.T) {
 // and mean equal to the constant — the exact precondition spike detection uses
 // to skip a window (avoids a divide-by-meaning on a flat signal).
 func TestMeanStdDev_ConstantHasZeroStdDev_AUDIT120(t *testing.T) {
+	t.Parallel()
 	prop := func(v float64, count uint8) bool {
 		// Domain guard: throughput (bps) is finite and bounded — real values
 		// top out around terabit/s. Magnitudes near float64-max are out of
@@ -101,6 +103,7 @@ func TestMeanStdDev_ConstantHasZeroStdDev_AUDIT120(t *testing.T) {
 // known labels. The detector must also never panic and must return nil for
 // degenerate inputs (too few points, or a non-positive threshold).
 func TestDetectSpikes_Invariants_AUDIT120(t *testing.T) {
+	t.Parallel()
 	const threshold = 3.0
 	prop := func(vals []float64) bool {
 		times := make([]time.Time, len(vals))

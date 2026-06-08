@@ -50,6 +50,7 @@ func parseUptimeString(s string) (uint64, bool) {
 // (uptime/100) exactly, for any uint64. Implicitly proves it never panics and
 // always emits a parseable, non-empty string.
 func TestFormatUptime_RoundTrip_AUDIT120(t *testing.T) {
+	t.Parallel()
 	prop := func(u uint64) bool {
 		got, ok := parseUptimeString(FormatUptime(u))
 		return ok && got == u/100
@@ -70,6 +71,7 @@ func TestFormatUptime_RoundTrip_AUDIT120(t *testing.T) {
 // baseline) and a not-yet-reported tracker (lastUptime==0) must both yield 0,
 // never a negative number or NaN from the uint64 subtraction.
 func TestGetStats_UptimePercentBounded_AUDIT120(t *testing.T) {
+	t.Parallel()
 	prop := func(lastUptime, startUptime uint64, elapsedSecs uint16) bool {
 		// White-box construction: GetStats only reads baseline + lastUptime,
 		// never config, so a zero-value tracker with fields set is sufficient.

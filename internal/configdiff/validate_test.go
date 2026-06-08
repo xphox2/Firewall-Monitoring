@@ -7,6 +7,7 @@ import (
 )
 
 func TestValidateFortiGateBackup_RealConfigPasses(t *testing.T) {
+	t.Parallel()
 	// fortigateUnchangedA from normalize_test.go is real-shape FortiOS config
 	// text. We pad it past the 1KB floor since the test fixture is compact.
 	cfg := fortigateUnchangedA + strings.Repeat("\nconfig system replacemsg-image\n    edit \"foo\"\n    next\nend\n", 30)
@@ -16,6 +17,7 @@ func TestValidateFortiGateBackup_RealConfigPasses(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_Empty(t *testing.T) {
+	t.Parallel()
 	if err := ValidateFortiGateBackup(nil); !errors.Is(err, ErrEmptyBackup) {
 		t.Errorf("nil bytes: got %v, want ErrEmptyBackup", err)
 	}
@@ -25,6 +27,7 @@ func TestValidateFortiGateBackup_Empty(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_Truncated(t *testing.T) {
+	t.Parallel()
 	short := strings.Repeat("config system global\nset hostname \"X\"\nend\n", 10)
 	if err := ValidateFortiGateBackup([]byte(short)); !errors.Is(err, ErrBackupTooSmall) {
 		t.Errorf("sub-min-size: got %v, want ErrBackupTooSmall", err)
@@ -32,6 +35,7 @@ func TestValidateFortiGateBackup_Truncated(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_MissingVersionHeader(t *testing.T) {
+	t.Parallel()
 	cfg := strings.Repeat("config system global\n    set hostname \"X\"\nend\n", 50)
 	if err := ValidateFortiGateBackup([]byte(cfg)); !errors.Is(err, ErrMissingVersionHeader) {
 		t.Errorf("missing header: got %v, want ErrMissingVersionHeader", err)
@@ -39,6 +43,7 @@ func TestValidateFortiGateBackup_MissingVersionHeader(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_MissingSystemGlobal(t *testing.T) {
+	t.Parallel()
 	cfg := "#config-version=fake\n" + strings.Repeat("config firewall policy\n    edit 1\n    next\nend\n", 50)
 	if err := ValidateFortiGateBackup([]byte(cfg)); !errors.Is(err, ErrMissingSystemGlobal) {
 		t.Errorf("missing system global: got %v, want ErrMissingSystemGlobal", err)
@@ -46,6 +51,7 @@ func TestValidateFortiGateBackup_MissingSystemGlobal(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_TooFewBlocks(t *testing.T) {
+	t.Parallel()
 	cfg := "#config-version=fake\n" +
 		strings.Repeat("# padding line that fills space without adding config blocks\n", 30) +
 		"config system global\n    set hostname \"X\"\nend\n"
@@ -55,6 +61,7 @@ func TestValidateFortiGateBackup_TooFewBlocks(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_UnbalancedBlocks(t *testing.T) {
+	t.Parallel()
 	// 10 `config X` blocks, only 2 `end`s — clear truncation.
 	cfg := "#config-version=fake\nconfig system global\n    set hostname \"X\"\n"
 	for i := 0; i < 10; i++ {
@@ -68,6 +75,7 @@ func TestValidateFortiGateBackup_UnbalancedBlocks(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_BinaryCorruption(t *testing.T) {
+	t.Parallel()
 	// Real-shape config (with valid headers) but lots of binary bytes mixed
 	// into the BODY. Skip the first 200 bytes so the #config-version= /
 	// system-global checks pass, then corrupt frequently to exceed the
@@ -82,6 +90,7 @@ func TestValidateFortiGateBackup_BinaryCorruption(t *testing.T) {
 }
 
 func TestValidateFortiGateBackup_AllowsSparseNonPrintable(t *testing.T) {
+	t.Parallel()
 	// A handful of stray non-printable bytes (well under 1%) — should pass.
 	cfg := []byte(fortigateUnchangedA + strings.Repeat("\nconfig system replacemsg-image\n    edit \"foo\"\n    next\nend\n", 30))
 	if len(cfg) > 200 {

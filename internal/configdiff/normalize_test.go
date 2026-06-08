@@ -216,6 +216,7 @@ end
 `
 
 func TestFortiGateNormalizerStableAcrossUnchangedSnapshots(t *testing.T) {
+	t.Parallel()
 	a, qa := Normalize("fortigate", []byte(fortigateUnchangedA))
 	b, qb := Normalize("fortigate", []byte(fortigateUnchangedB))
 
@@ -233,6 +234,7 @@ func TestFortiGateNormalizerStableAcrossUnchangedSnapshots(t *testing.T) {
 }
 
 func TestFortiGateNormalizerDetectsRealChanges(t *testing.T) {
+	t.Parallel()
 	base := HashNormalized("fortigate", []byte(fortigateUnchangedA))
 	policy := HashNormalized("fortigate", []byte(fortigatePolicyAdded))
 	iface := HashNormalized("fortigate", []byte(fortigateInterfaceIPChanged))
@@ -246,6 +248,7 @@ func TestFortiGateNormalizerDetectsRealChanges(t *testing.T) {
 }
 
 func TestFortiGatePasswordOnlyChangeIsAcceptedlyInvisible(t *testing.T) {
+	t.Parallel()
 	// Documented limitation: a password-only rotation produces a different
 	// ENC blob, but the normalizer strips it the same way as IV churn, so
 	// the hash matches the baseline. We accept this — see plan section
@@ -259,6 +262,7 @@ func TestFortiGatePasswordOnlyChangeIsAcceptedlyInvisible(t *testing.T) {
 }
 
 func TestFortiGateNormalizerDetectsMasking(t *testing.T) {
+	t.Parallel()
 	_, q := Normalize("fortigate", []byte(fortigateMaskedBackup))
 	if q != QualityMasked {
 		t.Errorf("expected masked quality, got %q", q)
@@ -266,6 +270,7 @@ func TestFortiGateNormalizerDetectsMasking(t *testing.T) {
 }
 
 func TestFortiGateVolatilePatternStripping(t *testing.T) {
+	t.Parallel()
 	out, _ := Normalize("fortigate", []byte(fortigateUnchangedA))
 	s := string(out)
 
@@ -300,6 +305,7 @@ func TestFortiGateVolatilePatternStripping(t *testing.T) {
 }
 
 func TestIdentityNormalizerForUnknownVendor(t *testing.T) {
+	t.Parallel()
 	raw := []byte("anything goes here\nincluding ENC blobs\n")
 	out, q := Normalize("", raw)
 	if !bytes.Equal(raw, out) {
@@ -311,6 +317,7 @@ func TestIdentityNormalizerForUnknownVendor(t *testing.T) {
 }
 
 func TestRegisteredVendorsLookup(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		vendor   string
 		wantSame bool // does Normalize return identical bytes for this raw input?
@@ -334,6 +341,7 @@ func TestRegisteredVendorsLookup(t *testing.T) {
 }
 
 func TestVolatilePatternsForFortiGate(t *testing.T) {
+	t.Parallel()
 	patterns := VolatilePatternsFor("fortigate")
 	if len(patterns) == 0 {
 		t.Fatal("fortigate must publish volatile patterns")
@@ -387,6 +395,7 @@ end
 `
 
 func TestFortiGateNormalizerStripsCertAndCSRBlocks(t *testing.T) {
+	t.Parallel()
 	a := HashNormalized("fortigate", []byte(fortigateCertsA))
 	b := HashNormalized("fortigate", []byte(fortigateCertsB))
 	if a != b {
@@ -487,6 +496,7 @@ const panosRealChange = `<config version="9.1.0" detail-version="9.1.0-h1" urldb
 `
 
 func TestPaloAltoNormalizerStableAcrossUnchangedSnapshots(t *testing.T) {
+	t.Parallel()
 	a := HashNormalized("paloalto", []byte(panosA))
 	b := HashNormalized("paloalto", []byte(panosB))
 	if a != b {
@@ -495,6 +505,7 @@ func TestPaloAltoNormalizerStableAcrossUnchangedSnapshots(t *testing.T) {
 }
 
 func TestPaloAltoNormalizerDetectsRealChange(t *testing.T) {
+	t.Parallel()
 	base := HashNormalized("paloalto", []byte(panosA))
 	added := HashNormalized("paloalto", []byte(panosRealChange))
 	if base == added {
@@ -503,6 +514,7 @@ func TestPaloAltoNormalizerDetectsRealChange(t *testing.T) {
 }
 
 func TestPaloAltoNormalizerStripsSensitiveContent(t *testing.T) {
+	t.Parallel()
 	out, _ := Normalize("paloalto", []byte(panosA))
 	s := string(out)
 	banned := []string{
@@ -521,6 +533,7 @@ func TestPaloAltoNormalizerStripsSensitiveContent(t *testing.T) {
 }
 
 func TestPaloAltoSanitizedExportDetected(t *testing.T) {
+	t.Parallel()
 	sanitized := `<config><phash>*****</phash><secret>*****</secret><key>*****</key></config>`
 	_, q := Normalize("paloalto", []byte(sanitized))
 	if q != QualityMasked {
@@ -569,6 +582,7 @@ enable secret 6 a$BcDe$F.GhIj/random-nonce-aaaa
 `
 
 func TestCiscoASANormalizerStableAcrossUnchangedSnapshots(t *testing.T) {
+	t.Parallel()
 	a := HashNormalized("cisco_asa", []byte(asaA))
 	b := HashNormalized("cisco_asa", []byte(asaB))
 	if a != b {
@@ -577,6 +591,7 @@ func TestCiscoASANormalizerStableAcrossUnchangedSnapshots(t *testing.T) {
 }
 
 func TestCiscoASANormalizerDetectsRealChange(t *testing.T) {
+	t.Parallel()
 	base := HashNormalized("cisco_asa", []byte(asaA))
 	renamed := HashNormalized("cisco_asa", []byte(asaRealChange))
 	if base == renamed {
@@ -585,6 +600,7 @@ func TestCiscoASANormalizerDetectsRealChange(t *testing.T) {
 }
 
 func TestCiscoASANormalizerStripsType6Only(t *testing.T) {
+	t.Parallel()
 	// Type 5/7/8/9 must be visible in the normalized output — only Type 6 is
 	// volatile-by-design. This guards against over-masking that would silence
 	// real password changes for non-Type-6 deployments.
@@ -611,6 +627,7 @@ username carol password 9 $9$abcd$scrypt.deterministic
 // ---- Registry helpers ----
 
 func TestHasRichNormalizer(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		vendor string
 		rich   bool

@@ -85,6 +85,7 @@ func managerWithUser(t *testing.T, username, password string) (*auth.AuthManager
 }
 
 func TestHashPassword_RoundTrip_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am := auth.NewAuthManager(testConfig(), nil)
 	hash, err := am.HashPassword("hunter2")
 	if err != nil {
@@ -102,6 +103,7 @@ func TestHashPassword_RoundTrip_AUDIT117(t *testing.T) {
 }
 
 func TestValidateCredentials_SuccessAndFailure_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, _ := managerWithUser(t, "admin", "correct-horse")
 
 	if err := am.ValidateCredentials("admin", "correct-horse", "1.2.3.4"); err != nil {
@@ -116,6 +118,7 @@ func TestValidateCredentials_SuccessAndFailure_AUDIT117(t *testing.T) {
 }
 
 func TestValidateCredentials_LockoutAfterMaxAttempts_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, _ := managerWithUser(t, "admin", "correct-horse")
 	const ip = "10.0.0.1"
 
@@ -136,6 +139,7 @@ func TestValidateCredentials_LockoutAfterMaxAttempts_AUDIT117(t *testing.T) {
 }
 
 func TestValidateCredentials_SuccessClearsAttempts_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, _ := managerWithUser(t, "admin", "correct-horse")
 	const ip = "10.0.0.9"
 
@@ -154,6 +158,7 @@ func TestValidateCredentials_SuccessClearsAttempts_AUDIT117(t *testing.T) {
 }
 
 func TestGenerateAndValidateToken_RoundTrip_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, db := managerWithUser(t, "admin", "pw")
 	db.version[1] = 7 // current token version in DB must match the minted token
 	tok, err := am.GenerateToken("admin", 1, 7)
@@ -170,6 +175,7 @@ func TestGenerateAndValidateToken_RoundTrip_AUDIT117(t *testing.T) {
 }
 
 func TestGenerateToken_NoSecret_AUDIT117(t *testing.T) {
+	t.Parallel()
 	cfg := testConfig()
 	cfg.Server.JWTSecretKey = ""
 	am := auth.NewAuthManager(cfg, newFakeDB())
@@ -179,6 +185,7 @@ func TestGenerateToken_NoSecret_AUDIT117(t *testing.T) {
 }
 
 func TestValidateToken_RejectsWrongSecret_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, _ := managerWithUser(t, "admin", "pw")
 	// Mint a token with the right claims but a DIFFERENT signing secret.
 	claims := auth.Claims{Username: "admin", UserID: 1, RegisteredClaims: jwt.RegisteredClaims{
@@ -194,6 +201,7 @@ func TestValidateToken_RejectsWrongSecret_AUDIT117(t *testing.T) {
 }
 
 func TestValidateToken_RejectsAlgConfusion_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, _ := managerWithUser(t, "admin", "pw")
 	// "alg: none" — the classic JWT bypass. ValidateToken's keyfunc must reject
 	// any non-HMAC signing method.
@@ -210,6 +218,7 @@ func TestValidateToken_RejectsAlgConfusion_AUDIT117(t *testing.T) {
 }
 
 func TestValidateToken_RejectsExpired_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, _ := managerWithUser(t, "admin", "pw")
 	claims := auth.Claims{Username: "admin", UserID: 1, RegisteredClaims: jwt.RegisteredClaims{
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour)), // already expired
@@ -225,6 +234,7 @@ func TestValidateToken_RejectsExpired_AUDIT117(t *testing.T) {
 }
 
 func TestValidateToken_TokenVersionMismatch_AUDIT117(t *testing.T) {
+	t.Parallel()
 	am, db := managerWithUser(t, "admin", "pw")
 	// Issue at version 1, then the DB advances to version 2 (a forced logout /
 	// password change). The old token must be rejected.
@@ -244,6 +254,7 @@ func TestValidateToken_TokenVersionMismatch_AUDIT117(t *testing.T) {
 }
 
 func TestGenerateSecureToken_LengthInvariant_AUDIT117(t *testing.T) {
+	t.Parallel()
 	seen := map[string]bool{}
 	for _, n := range []int{1, 8, 16, 32, 43, 64, 100} {
 		tok, err := auth.GenerateSecureToken(n)

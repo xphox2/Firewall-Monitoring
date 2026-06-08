@@ -39,6 +39,9 @@ func (s *flushSink) all() []int {
 // TestBatcher_AddFlushesAtMaxSize — when the buffer reaches maxSize,
 // it must flush immediately, not wait for the ticker.
 func TestBatcher_AddFlushesAtMaxSize(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
 	sink := &flushSink{}
 	b := NewBatchInserter[int](3, time.Hour, sink.fn)
 	defer b.Stop()
@@ -61,6 +64,7 @@ func TestBatcher_AddFlushesAtMaxSize(t *testing.T) {
 // Pre-AUDIT-006 the goroutine closed doneCh first, then Stop called its
 // own Flush — items added concurrently with Stop could be lost.
 func TestBatcher_StopDrainsBuffer_AUDIT006(t *testing.T) {
+	t.Parallel()
 	sink := &flushSink{}
 	b := NewBatchInserter[int](1000, time.Hour, sink.fn) // large maxSize so Add doesn't auto-flush
 
@@ -78,6 +82,7 @@ func TestBatcher_StopDrainsBuffer_AUDIT006(t *testing.T) {
 // TestBatcher_AddAfterStopRejected_AUDIT006 — Add must reject items
 // after Stop was called and bump the Dropped counter.
 func TestBatcher_AddAfterStopRejected_AUDIT006(t *testing.T) {
+	t.Parallel()
 	sink := &flushSink{}
 	b := NewBatchInserter[int](1000, time.Hour, sink.fn)
 
@@ -100,6 +105,7 @@ func TestBatcher_AddAfterStopRejected_AUDIT006(t *testing.T) {
 // TestBatcher_StopIdempotent — calling Stop twice must not panic on
 // close-of-closed-channel.
 func TestBatcher_StopIdempotent(t *testing.T) {
+	t.Parallel()
 	sink := &flushSink{}
 	b := NewBatchInserter[int](10, time.Hour, sink.fn)
 	b.Add(1)
@@ -112,6 +118,9 @@ func TestBatcher_StopIdempotent(t *testing.T) {
 // concurrently with Stop. Every item must EITHER appear in the flush sink
 // OR be counted in Dropped — never silently lost.
 func TestBatcher_ConcurrentAddDuringStop_AUDIT006(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
 	sink := &flushSink{}
 	b := NewBatchInserter[int](100, time.Hour, sink.fn)
 
@@ -150,6 +159,9 @@ func TestBatcher_ConcurrentAddDuringStop_AUDIT006(t *testing.T) {
 // TestBatcher_FlushOnTick — items below maxSize must be flushed by the
 // background ticker.
 func TestBatcher_FlushOnTick(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
 	sink := &flushSink{}
 	b := NewBatchInserter[int](100, 30*time.Millisecond, sink.fn)
 	defer b.Stop()
@@ -167,6 +179,9 @@ func TestBatcher_FlushOnTick(t *testing.T) {
 // TestBatcher_FlushErrorLoggedNotPropagated — error from flushFn must
 // not crash the batcher; the next batch must still flush.
 func TestBatcher_FlushErrorLoggedNotPropagated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
 	var calls atomic.Int64
 	failOnce := errors.New("synthetic")
 	fn := func(items []int) error {
@@ -193,6 +208,7 @@ func TestBatcher_FlushErrorLoggedNotPropagated(t *testing.T) {
 // TestBatcher_DroppedReflectsExactCount — sanity that the atomic counter
 // is exact (no double-increment, no skipped increment).
 func TestBatcher_DroppedReflectsExactCount(t *testing.T) {
+	t.Parallel()
 	sink := &flushSink{}
 	b := NewBatchInserter[int](100, time.Hour, sink.fn)
 	b.Stop()

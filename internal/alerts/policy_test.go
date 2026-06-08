@@ -8,6 +8,7 @@ import "testing"
 // DB/notifier-bound methods are exercised by the handler/integration suites.
 
 func TestDefaultSeverityForType_AUDIT117(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"DISK_HIGH":        "critical",
 		"INTERFACE_DOWN":   "critical",
@@ -28,6 +29,7 @@ func TestDefaultSeverityForType_AUDIT117(t *testing.T) {
 }
 
 func TestOverrideThreshold_AUDIT117(t *testing.T) {
+	t.Parallel()
 	const current = 75.0
 
 	// A positive per-config value for the matching type overrides the current.

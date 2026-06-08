@@ -13,6 +13,7 @@ import (
 // must never contain CR or LF, otherwise an attacker who can register a device
 // with a malicious name folds extra headers (e.g. Bcc:) into the outbound mail.
 func TestBuildCriticalAlertEmail_SubjectSanitizesCRLF(t *testing.T) {
+	t.Parallel()
 	device := &models.Device{
 		Name:      "router-1\r\nBcc: attacker@evil.example",
 		IPAddress: "10.0.0.1\nX-Mailer: pwn",

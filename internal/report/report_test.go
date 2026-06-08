@@ -20,6 +20,7 @@ func approx(a, b float64) bool {
 // TestComputeTraffic verifies that traffic is derived from counter DELTAS, that
 // totals telescope correctly, and that counter resets/wraps are clamped.
 func TestComputeTraffic(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	// Use the real Postgres minute-bucket format (to_char 'YYYY-MM-DD HH24:MI',
 	// NO seconds) so a parse-layout regression is caught here.
@@ -64,6 +65,7 @@ func TestComputeTraffic(t *testing.T) {
 }
 
 func TestFormatters(t *testing.T) {
+	t.Parallel()
 	if got := formatBytes(3 * 1024 * 1024); got != "3.0 MB" {
 		t.Errorf("formatBytes(3MiB) = %q, want 3.0 MB", got)
 	}
@@ -76,6 +78,7 @@ func TestFormatters(t *testing.T) {
 }
 
 func TestDetectSpikesInSeries(t *testing.T) {
+	t.Parallel()
 	var vals []float64
 	var times []time.Time
 	base := time.Now()
@@ -96,6 +99,7 @@ func TestDetectSpikesInSeries(t *testing.T) {
 }
 
 func TestGroupSpikes(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 5, 30, 2, 0, 0, 0, time.UTC)
 	mk := func(dev, iface, sev string, minOff int) spikeItem {
 		return spikeItem{device: dev, s: TrafficSpike{
@@ -137,6 +141,7 @@ func TestGroupSpikes(t *testing.T) {
 // confirms the report renders as a single self-contained HTML document with the
 // expected executive sections and no image/CID references.
 func TestRenderReportHTML(t *testing.T) {
+	t.Parallel()
 	devices := []models.Device{
 		{Name: "fw-edge-01", IPAddress: "10.0.0.1", Status: "online"},
 		{Name: "fw-edge-02", IPAddress: "10.0.0.2", Status: "offline"},
