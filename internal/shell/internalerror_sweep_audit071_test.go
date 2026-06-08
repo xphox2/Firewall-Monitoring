@@ -8,11 +8,12 @@ import (
 )
 
 // TestInternalErrorSweep_AUDIT071 pins that the handler layer no longer uses the
-// bare `c.JSON(http.StatusInternalServerError, models.ErrorResponse(...))`
+// bare `c.JSON(http.StatusInternalServerError, response.Error(...))`
 // boilerplate the audit flagged (134 sites that returned a 500 without logging
 // the cause). Every 500 must now go through httputil.InternalError, which logs
 // the underlying err. This guard fails if a future handler reintroduces the
-// silent form.
+// silent form. (The envelope constructor moved models.ErrorResponse →
+// response.Error in AUDIT-073.)
 func TestInternalErrorSweep_AUDIT071(t *testing.T) {
 	const dir = "../../internal/api/handlers"
 
@@ -21,7 +22,7 @@ func TestInternalErrorSweep_AUDIT071(t *testing.T) {
 		t.Fatalf("cannot read %s (AUDIT-071): %v", dir, err)
 	}
 
-	const banned = "StatusInternalServerError, models.ErrorResponse"
+	const banned = "StatusInternalServerError, response.Error"
 	var offenders []string
 	var sawHelperCall bool
 

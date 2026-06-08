@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"strconv"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
-	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
 
-// InternalError writes the standard HTTP 500 response (models.ErrorResponse(msg))
-// and — unlike the bare `c.JSON(500, models.ErrorResponse(...))` it replaces —
+// InternalError writes the standard HTTP 500 response (response.Error(msg))
+// and — unlike the bare `c.JSON(500, response.Error(...))` it replaces —
 // LOGS the underlying err with operation context, so a 500 leaves an
 // operator-visible trail instead of vanishing (AUDIT-071). The audit found 134
 // handler sites that returned a 500 without logging the cause, so production
@@ -43,7 +43,7 @@ func InternalError(c *gin.Context, msg string, err error) {
 		attrs = append(attrs, slog.Any("err", err))
 	}
 	slog.LogAttrs(c.Request.Context(), slog.LevelError, msg, attrs...)
-	c.JSON(http.StatusInternalServerError, models.ErrorResponse(msg))
+	c.JSON(http.StatusInternalServerError, response.Error(msg))
 }
 
 // ParsePagination extracts limit and offset from query parameters.
@@ -70,7 +70,7 @@ func ParseID(c *gin.Context) (uint, bool) {
 	id := c.Param("id")
 	idUint, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid ID format"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid ID format"))
 		return 0, false
 	}
 	return uint(idUint), true
@@ -91,7 +91,7 @@ func ParseHours(c *gin.Context) int {
 // RequireDB checks that db is non-nil. If nil, writes a 503 error and returns false.
 func RequireDB(c *gin.Context, db *database.Database) bool {
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return false
 	}
 	return true

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -14,7 +15,7 @@ import (
 func (h *Handler) GetConnectionStatusSummary(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
+		c.JSON(http.StatusOK, response.Success(map[string]interface{}{
 			"connections": []interface{}{},
 			"devices":     []interface{}{},
 		}))
@@ -33,7 +34,7 @@ func (h *Handler) GetConnectionStatusSummary(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
 		"connections": conns,
 		"devices":     devs,
 	}))
@@ -51,7 +52,7 @@ func (h *Handler) GetConnectionEvents(c *gin.Context) {
 
 	var conn models.DeviceConnection
 	if err := db.Gorm().First(&conn, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
 
@@ -70,13 +71,13 @@ func (h *Handler) GetConnectionEvents(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(events))
+	c.JSON(http.StatusOK, response.Success(events))
 }
 
 func (h *Handler) GetDeviceConnections(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.DeviceConnection{}))
+		c.JSON(http.StatusOK, response.Success([]models.DeviceConnection{}))
 		return
 	}
 
@@ -86,7 +87,7 @@ func (h *Handler) GetDeviceConnections(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(connections))
+	c.JSON(http.StatusOK, response.Success(connections))
 }
 
 func (h *Handler) CreateDeviceConnection(c *gin.Context) {
@@ -97,25 +98,25 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 
 	var conn models.DeviceConnection
 	if err := c.ShouldBindJSON(&conn); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	// Validate required FK references
 	if conn.SourceDeviceID == 0 || conn.DestDeviceID == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination device IDs are required"))
+		c.JSON(http.StatusBadRequest, response.Error("Source and destination device IDs are required"))
 		return
 	}
 	if conn.SourceDeviceID == conn.DestDeviceID {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination cannot be the same device"))
+		c.JSON(http.StatusBadRequest, response.Error("Source and destination cannot be the same device"))
 		return
 	}
 	if _, err := db.GetDevice(conn.SourceDeviceID); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source device not found"))
+		c.JSON(http.StatusBadRequest, response.Error("Source device not found"))
 		return
 	}
 	if _, err := db.GetDevice(conn.DestDeviceID); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination device not found"))
+		c.JSON(http.StatusBadRequest, response.Error("Destination device not found"))
 		return
 	}
 
@@ -126,7 +127,7 @@ func (h *Handler) CreateDeviceConnection(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, models.SuccessResponse(conn))
+	c.JSON(http.StatusCreated, response.Success(conn))
 }
 
 func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
@@ -142,7 +143,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 
 	var conn models.DeviceConnection
 	if err := db.Gorm().First(&conn, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
 
@@ -158,7 +159,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -166,7 +167,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	if statusVal, ok := updates["status"]; ok {
 		validStatuses := map[string]bool{"unknown": true, "up": true, "down": true}
 		if s, isStr := statusVal.(string); !isStr || !validStatuses[s] {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid status value"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid status value"))
 			return
 		}
 	}
@@ -175,22 +176,22 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	if srcVal, ok := updates["source_device_id"]; ok {
 		srcID, isNum := srcVal.(float64)
 		if !isNum || srcID < 1 {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid source device ID"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid source device ID"))
 			return
 		}
 		if _, err := db.GetDevice(uint(srcID)); err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Source device not found"))
+			c.JSON(http.StatusBadRequest, response.Error("Source device not found"))
 			return
 		}
 	}
 	if dstVal, ok := updates["dest_device_id"]; ok {
 		dstID, isNum := dstVal.(float64)
 		if !isNum || dstID < 1 {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid destination device ID"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid destination device ID"))
 			return
 		}
 		if _, err := db.GetDevice(uint(dstID)); err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Destination device not found"))
+			c.JSON(http.StatusBadRequest, response.Error("Destination device not found"))
 			return
 		}
 	}
@@ -198,7 +199,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	filteredUpdates := httputil.FilterAllowedFields(updates, allowedFields)
 
 	if len(filteredUpdates) == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
 		return
 	}
 
@@ -216,7 +217,7 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 		}
 	}
 	if effectiveSrc == effectiveDst {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Source and destination cannot be the same device"))
+		c.JSON(http.StatusBadRequest, response.Error("Source and destination cannot be the same device"))
 		return
 	}
 
@@ -228,10 +229,10 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 	// Re-fetch to return fresh data with preloaded relations
 	var updated models.DeviceConnection
 	if err := db.Gorm().Preload("SourceDevice").Preload("DestDevice").First(&updated, id).Error; err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(conn))
+		c.JSON(http.StatusOK, response.Success(conn))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(updated))
+	c.JSON(http.StatusOK, response.Success(updated))
 }
 
 func (h *Handler) DeleteDeviceConnection(c *gin.Context) {
@@ -251,11 +252,11 @@ func (h *Handler) DeleteDeviceConnection(c *gin.Context) {
 		return
 	}
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Connection deleted"))
+	c.JSON(http.StatusOK, response.Message("Connection deleted"))
 }
 
 func (h *Handler) GetConnectionDetail(c *gin.Context) {
@@ -269,10 +270,10 @@ func (h *Handler) GetConnectionDetail(c *gin.Context) {
 	}
 	detail, err := db.GetConnectionDetail(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Connection not found"))
+		c.JSON(http.StatusNotFound, response.Error("Connection not found"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(detail))
+	c.JSON(http.StatusOK, response.Success(detail))
 }
 
 func (h *Handler) GetConnectionTraffic(c *gin.Context) {
@@ -295,7 +296,7 @@ func (h *Handler) GetConnectionTraffic(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get traffic data", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(data))
+	c.JSON(http.StatusOK, response.Success(data))
 }
 
 func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
@@ -309,7 +310,7 @@ func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
 	}
 	tunnel := c.Param("tunnel")
 	if tunnel == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Tunnel name required"))
+		c.JSON(http.StatusBadRequest, response.Error("Tunnel name required"))
 		return
 	}
 	rangeStr := c.DefaultQuery("range", "24h")
@@ -323,7 +324,7 @@ func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get VPN chart data", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(data))
+	c.JSON(http.StatusOK, response.Success(data))
 }
 
 func (h *Handler) GetConnectionFlows(c *gin.Context) {
@@ -347,14 +348,14 @@ func (h *Handler) GetConnectionFlows(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(data))
+	c.JSON(http.StatusOK, response.Success(data))
 }
 
 // GetVPNMapData returns per-device VPN tunnel summaries with remote IP matching.
 func (h *Handler) GetVPNMapData(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{}))
+		c.JSON(http.StatusOK, response.Success(map[string]interface{}{}))
 		return
 	}
 
@@ -459,5 +460,5 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(result))
+	c.JSON(http.StatusOK, response.Success(result))
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -21,7 +22,7 @@ func (h *Handler) ListMaintenanceWindows(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(windows))
+	c.JSON(http.StatusOK, response.Success(windows))
 }
 
 func (h *Handler) GetActiveMaintenanceWindows(c *gin.Context) {
@@ -36,7 +37,7 @@ func (h *Handler) GetActiveMaintenanceWindows(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(windows))
+	c.JSON(http.StatusOK, response.Success(windows))
 }
 
 func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
@@ -47,20 +48,20 @@ func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
 
 	var window models.MaintenanceWindow
 	if err := c.ShouldBindJSON(&window); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	if window.Name == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Name is required"))
 		return
 	}
 	if window.StartTime.IsZero() || window.EndTime.IsZero() {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Start time and end time are required"))
+		c.JSON(http.StatusBadRequest, response.Error("Start time and end time are required"))
 		return
 	}
 	if window.EndTime.Before(window.StartTime) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("End time must be after start time"))
+		c.JSON(http.StatusBadRequest, response.Error("End time must be after start time"))
 		return
 	}
 
@@ -70,7 +71,7 @@ func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, models.SuccessResponse(window))
+	c.JSON(http.StatusCreated, response.Success(window))
 }
 
 func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
@@ -92,26 +93,26 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 	// fields present in the body, so absent fields stay as their DB values.
 	var window models.MaintenanceWindow
 	if err := db.Gorm().First(&window, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Maintenance window not found"))
+		c.JSON(http.StatusNotFound, response.Error("Maintenance window not found"))
 		return
 	}
 
 	if err := c.ShouldBindJSON(&window); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 	window.ID = id // prevent client from rewriting the PK
 
 	if window.Name == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Name is required"))
 		return
 	}
 	if window.StartTime.IsZero() || window.EndTime.IsZero() {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Start time and end time are required"))
+		c.JSON(http.StatusBadRequest, response.Error("Start time and end time are required"))
 		return
 	}
 	if window.EndTime.Before(window.StartTime) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("End time must be after start time"))
+		c.JSON(http.StatusBadRequest, response.Error("End time must be after start time"))
 		return
 	}
 
@@ -120,7 +121,7 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(window))
+	c.JSON(http.StatusOK, response.Success(window))
 }
 
 func (h *Handler) DeleteMaintenanceWindow(c *gin.Context) {
@@ -138,5 +139,5 @@ func (h *Handler) DeleteMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Maintenance window deleted"))
+	c.JSON(http.StatusOK, response.Message("Maintenance window deleted"))
 }

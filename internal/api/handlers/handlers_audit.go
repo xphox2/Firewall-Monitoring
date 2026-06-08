@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
-	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,7 +36,7 @@ func (h *Handler) GetAuditLogs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"audit_logs": logs,
 		"total":      total,
 		"limit":      limit,

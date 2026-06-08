@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -22,7 +23,7 @@ func (h *Handler) ListAlertPolicies(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(policies))
+	c.JSON(http.StatusOK, response.Success(policies))
 }
 
 func (h *Handler) GetAlertPolicy(c *gin.Context) {
@@ -37,11 +38,11 @@ func (h *Handler) GetAlertPolicy(c *gin.Context) {
 
 	policy, err := db.GetAlertPolicy(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
+		c.JSON(http.StatusNotFound, response.Error("Alert policy not found"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(policy))
+	c.JSON(http.StatusOK, response.Success(policy))
 }
 
 func (h *Handler) CreateAlertPolicy(c *gin.Context) {
@@ -52,16 +53,16 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 
 	var policy models.AlertPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	if strings.TrimSpace(policy.Name) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Policy name is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Policy name is required"))
 		return
 	}
 	if len(policy.Name) > 200 || len(policy.Description) > 1000 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name (max 200) or description (max 1000) too long"))
+		c.JSON(http.StatusBadRequest, response.Error("Name (max 200) or description (max 1000) too long"))
 		return
 	}
 
@@ -71,7 +72,7 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, models.SuccessResponse(policy))
+	c.JSON(http.StatusCreated, response.Success(policy))
 }
 
 func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
@@ -86,13 +87,13 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 
 	existing, err := db.GetAlertPolicy(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
+		c.JSON(http.StatusNotFound, response.Error("Alert policy not found"))
 		return
 	}
 
 	var policy models.AlertPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -103,7 +104,7 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(policy))
+	c.JSON(http.StatusOK, response.Success(policy))
 }
 
 func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
@@ -118,14 +119,14 @@ func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
 
 	if err := db.DeleteAlertPolicy(id); err != nil {
 		if err.Error() == "cannot delete the default alert policy" {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse(err.Error()))
+			c.JSON(http.StatusBadRequest, response.Error(err.Error()))
 		} else {
 			httputil.InternalError(c, "Failed to delete alert policy", err)
 		}
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Alert policy deleted"))
+	c.JSON(http.StatusOK, response.Message("Alert policy deleted"))
 }
 
 func (h *Handler) CloneAlertPolicy(c *gin.Context) {
@@ -140,7 +141,7 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 
 	src, err := db.GetAlertPolicy(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
+		c.JSON(http.StatusNotFound, response.Error("Alert policy not found"))
 		return
 	}
 
@@ -171,7 +172,7 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 
 	// Reload with rules
 	result, _ := db.GetAlertPolicy(clone.ID)
-	c.JSON(http.StatusCreated, models.SuccessResponse(result))
+	c.JSON(http.StatusCreated, response.Success(result))
 }
 
 func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
@@ -186,13 +187,13 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 
 	// Verify policy exists
 	if _, err := db.GetAlertPolicy(id); err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert policy not found"))
+		c.JSON(http.StatusNotFound, response.Error("Alert policy not found"))
 		return
 	}
 
 	var rules []models.AlertRule
 	if err := c.ShouldBindJSON(&rules); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -203,7 +204,7 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 
 	// Reload policy with rules
 	policy, _ := db.GetAlertPolicy(id)
-	c.JSON(http.StatusOK, models.SuccessResponse(policy))
+	c.JSON(http.StatusOK, response.Success(policy))
 }
 
 // Device alert config endpoints
@@ -221,14 +222,14 @@ func (h *Handler) GetDeviceAlertConfig(c *gin.Context) {
 	cfg, err := db.GetDeviceAlertConfig(id)
 	if err != nil {
 		// Return empty config (not an error — device just has no overrides)
-		c.JSON(http.StatusOK, models.SuccessResponse(models.DeviceAlertConfig{
+		c.JSON(http.StatusOK, response.Success(models.DeviceAlertConfig{
 			DeviceID:      id,
 			AlertsEnabled: true,
 		}))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(cfg))
+	c.JSON(http.StatusOK, response.Success(cfg))
 }
 
 func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
@@ -256,13 +257,13 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 		cfg = &models.DeviceAlertConfig{DeviceID: id, AlertsEnabled: true}
 	}
 	if err := c.ShouldBindJSON(cfg); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 	cfg.DeviceID = id // prevent client from rewriting the FK
 
 	if msg := validateAlertConfigThresholds(cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold, cfg.CooldownMinutes); msg != "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(msg))
+		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
 
@@ -271,7 +272,7 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(cfg))
+	c.JSON(http.StatusOK, response.Success(cfg))
 }
 
 // validateAlertConfigThresholds enforces sensible ranges shared by both the
@@ -310,7 +311,7 @@ func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Device alert config deleted"))
+	c.JSON(http.StatusOK, response.Message("Device alert config deleted"))
 }
 
 // Site alert config endpoints
@@ -327,13 +328,13 @@ func (h *Handler) GetSiteAlertConfig(c *gin.Context) {
 
 	cfg, err := db.GetSiteAlertConfig(id)
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(models.SiteAlertConfig{
+		c.JSON(http.StatusOK, response.Success(models.SiteAlertConfig{
 			SiteID: id,
 		}))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(cfg))
+	c.JSON(http.StatusOK, response.Success(cfg))
 }
 
 func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
@@ -355,13 +356,13 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 		cfg = &models.SiteAlertConfig{SiteID: id}
 	}
 	if err := c.ShouldBindJSON(cfg); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 	cfg.SiteID = id // prevent client from rewriting the FK
 
 	if msg := validateAlertConfigThresholds(cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold, cfg.CooldownMinutes); msg != "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(msg))
+		c.JSON(http.StatusBadRequest, response.Error(msg))
 		return
 	}
 
@@ -370,7 +371,7 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(cfg))
+	c.JSON(http.StatusOK, response.Success(cfg))
 }
 
 func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
@@ -388,5 +389,5 @@ func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Site alert config deleted"))
+	c.JSON(http.StatusOK, response.Message("Site alert config deleted"))
 }

@@ -8,10 +8,10 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.396** |
-| Bug findings resolved | **157 / 170  (92%)** |
+| Server version | **v0.10.397** |
+| Bug findings resolved | **158 / 170  (93%)** |
 | CRITICAL still open | **0** ✅ |
-| Open bug findings | **13** |
+| Open bug findings | **12** |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
 
 **Where the effort stands:**
@@ -36,7 +36,8 @@
 - ✅ API single-instance guard (040) — **fifth and final large refactor; all 5 large refactors are now done** (Session 35)
 - ➕ Cross-repo / PR triage (Session 36, v0.10.382–383) — **not an audit-finding resolution** (count unchanged): triaged 7 stale PRs from another agent (closed 5, re-implemented 1, re-did 3 docs); added the probe↔server `schema_version` handshake (server **+** collector) and 3 grounded operator docs
 - ✅ Structured logging via `log/slog` — `slog.SetDefault` bridges all ~460 legacy `log.Printf` sites at once; two hot chokepoints emit native records; credential-name redaction; `LOG_FORMAT`/`LOG_LEVEL` env (Session 37, 076)
-- ⏳ Remaining 13: observability (150 OTel), the rest of test infra (117/120/123/140/142), and smaller code items (073 transport-type move / 094 entrypoint supervision) — all fully-local-verifiable
+- ✅ Moved the HTTP transport envelope (`APIResponse` + constructors) out of the GORM model package into a new `internal/api/response` leaf package — 435 call sites / 16 files, JSON shape unchanged (Session 38, 073)
+- ⏳ Remaining 12: observability (150 OTel), the rest of test infra (117/120/123/140/142), and smaller code item (094 entrypoint supervision, re-scope first) — all fully-local-verifiable
 
 ## 🧭 How to read this file
 
@@ -56,7 +57,7 @@ These are no longer quick wins — they cluster into five themes. Search the
 - **Observability** — `AUDIT-150` (OpenTelemetry tracing). *(076 slog + 077 Prometheus `/metrics` + 078 admin-action audit log now done.)*
 - **Test infrastructure** — `AUDIT-117` (per-package coverage), `AUDIT-120` (property-based), `AUDIT-123` (integration), `AUDIT-140`/`142` (`t.Parallel`/`Short`). *(119 fuzz + 124 bench + 118 Postgres-CI-matrix + 122 dead-test now done.)*
 - **Docs & repo hygiene** — ✅ **theme cleared** (Session 26): 106 README endpoint sweep + positioning, 114 fresh-Ubuntu build prereqs, 166 support channel, 164 FUNDING (accept), 165 release automation all done.
-- **Smaller code cleanups** — `073` (gorm/DTO split), `079` (ctx, see 032), `094` (entrypoint supervision). *(071 JSONError helper + 081 `return err` wrapping + 129 client-error reporting + 132 ES5 `['catch']` sweep now done.)*
+- **Smaller code cleanups** — `094` (entrypoint supervision). *(073 transport-type move + 071 JSONError helper + 081 `return err` wrapping + 129 client-error reporting + 132 ES5 `['catch']` sweep now done.)*
 
 ## 🗓 Recent activity
 
@@ -1353,6 +1354,7 @@ Per-commit workflow (see Part III for the full conventions): append a row here
 | AUDIT-146 | EnsurePartitions skips non-partitioned tables | 0.10.380 | 35f9fd1 | **Resolved with AUDIT-028** — the partition subsystem was dormant (no code created partitioned parents); the v2 migration now creates them for all 6 tables on fresh installs, and `docs/partition-migration.md` documents the populated-table conversion the warning referenced. |
 | AUDIT-040 | 2nd cmd/api → 2 IRC bots, 2× lockout/rate-limit | 0.10.381 | 0407a1b | `AcquireAPISingletonLock` — session-scoped PG advisory lock (`FWMNAPIS`) on a pinned `*sql.Conn` for the process lifetime. API **refuses to start** if another holds it (retries `API_SINGLETON_LOCK_WAIT`=10s first); `ALLOW_MULTI_API=true` → follower (HTTP only, IRC bots gated off). Released on graceful shutdown. Long-term shared lockout/rate-limit/uptime deferred (PG rate-limit = anti-pattern). Integration contention subtest + sqlite no-op + shell guard. OPERATIONS.md section. **5th/last large refactor.** |
 | AUDIT-076 | No structured logging | 0.10.396 | _pending_ | New `internal/logging` adopts stdlib `log/slog`. Key lever: `logging.Init()` (first line of `main()`) calls `slog.SetDefault`, which (Go 1.21+) **also routes the legacy `log` package through the slog handler** — so all ~460 existing `log.Printf` sites gain levelled/structured/redacted output with **zero per-site churn**. `LOG_FORMAT`=`text`(default logfmt)\|`json`; `LOG_LEVEL`=`debug`\|`info`(default)\|`warn`\|`error` (legacy lines bridge in at info → default verbosity unchanged). `ReplaceAttr` redacts secret-named attrs (`password`/`secret`/`token`/`apikey`/`community`/`private_key` → `REDACTED`). The 2 hot chokepoints converted to **native** records: `httputil.InternalError` (handler 500s → `slog.Error(msg, status=500, method, route, req, err)`) + `middleware.RequestLogger` (failed requests, 4xx→warn/5xx→error). Tests: `internal/logging/logging_test.go` (redaction/bridge/level) + `structuredlogging_audit076_test.go` (static guards); updated AUDIT-071 test for slog quoting. `config.env.example` documents the env. 150 OTel still open. |
+| AUDIT-073 | `internal/models` mixes GORM structs with HTTP transport | 0.10.397 | _pending_ | Moved `APIResponse` + its `Success/Error/Message` constructors out of the GORM model package into a new `internal/api/response` leaf package (de-stuttered: `response.Error` not `models.ErrorResponse`). 435 call sites / 16 files (15 handlers + httputil) updated; `goimports` fixed imports. **JSON wire shape byte-for-byte unchanged** → no client effect, pure refactor. AUDIT-071 sweep guard re-pointed to the new `StatusInternalServerError, response.Error` form; new `transporttypes_audit073_test.go` pins the boundary (models declares neither type nor constructors; response declares both). The dead-`LastUpAt` half was already resolved when the field got wired up in telemetry.go. Same commit also `gofmt`-fixed the two AUDIT-076 test files that had reddened the CI gofmt gate. |
 
 ---
 
@@ -1525,6 +1527,7 @@ Append a one-line entry per resolved finding in chronological order.
 2026-06-07 — CI — bump checkout@v4→v5 / setup-go@v5→v6 (Node20 deprecation) + docs/UPGRADE-2026-06.md runbook — v0.10.388 — 4fed075 — claude
 2026-06-07 — AUDIT-037 — fix large-DB startup cascade: lift statement_timeout for interface_addresses self-heal DDL + migration advisory-lock acquire (was 42P10 upsert flood + API/trap crash-loop) — v0.10.391 — (pending) — claude
 2026-06-08 — AUDIT-076 — structured logging via log/slog: slog.SetDefault bridges all ~460 legacy log.Printf at once + native-record chokepoints (InternalError/RequestLogger) + secret-name redaction + LOG_FORMAT/LOG_LEVEL env — v0.10.396 — (pending) — claude
+2026-06-08 — AUDIT-073 — move HTTP transport envelope (APIResponse + constructors) out of internal/models into new internal/api/response leaf package; 435 sites/16 files, JSON shape unchanged; + gofmt CI-gate fix for the two 076 test files — v0.10.397 — (pending) — claude
 ```
 
 ---

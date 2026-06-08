@@ -35,7 +35,7 @@ func TestStructuredLogging_FoundationExists_AUDIT076(t *testing.T) {
 // log.Printf there would re-flatten the highest-volume structured signals.
 func TestStructuredLogging_ChokepointsUseSlog_AUDIT076(t *testing.T) {
 	checks := []struct {
-		path    string
+		path     string
 		mustHave string
 		marker   string // a snippet that must NOT reappear as a log.Printf
 	}{

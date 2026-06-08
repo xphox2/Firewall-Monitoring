@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
@@ -32,7 +33,7 @@ var settingsSecretKeys = map[string]bool{
 
 func (h *Handler) GetSettings(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.SystemSetting{}))
+		c.JSON(http.StatusOK, response.Success([]models.SystemSetting{}))
 		return
 	}
 
@@ -58,18 +59,18 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(settings))
+	c.JSON(http.StatusOK, response.Success(settings))
 }
 
 func (h *Handler) UpdateSettings(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 
 	var settings []models.SystemSetting
 	if err := c.ShouldBindJSON(&settings); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -121,61 +122,61 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		case "cpu_threshold", "memory_threshold", "disk_threshold":
 			v, err := strconv.ParseFloat(s.Value, 64)
 			if err != nil || v < 0 || v > 100 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be 0-100", s.Key)))
+				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid value for %s: must be 0-100", s.Key)))
 				return
 			}
 		case "session_threshold":
 			v, err := strconv.Atoi(s.Value)
 			if err != nil || v < 1 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for session_threshold: must be a positive integer"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for session_threshold: must be a positive integer"))
 				return
 			}
 		case "public_refresh_interval":
 			v, err := strconv.Atoi(s.Value)
 			if err != nil || v < 5 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for public_refresh_interval: must be at least 5"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for public_refresh_interval: must be at least 5"))
 				return
 			}
 		case "spike_stddev_threshold":
 			v, err := strconv.ParseFloat(s.Value, 64)
 			if err != nil || v < 1.0 || v > 10.0 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for spike_stddev_threshold: must be 1.0-10.0"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_stddev_threshold: must be 1.0-10.0"))
 				return
 			}
 		case "report_daily_time":
 			if len(s.Value) > 0 && (len(s.Value) != 5 || s.Value[2] != ':') {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_daily_time: must be HH:MM format"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid report_daily_time: must be HH:MM format"))
 				return
 			}
 		case "report_weekly_day":
 			if len(s.Value) > 0 {
 				validDays := map[string]bool{"monday": true, "tuesday": true, "wednesday": true, "thursday": true, "friday": true, "saturday": true, "sunday": true}
 				if !validDays[strings.ToLower(s.Value)] {
-					c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid report_weekly_day: must be a day of the week"))
+					c.JSON(http.StatusBadRequest, response.Error("Invalid report_weekly_day: must be a day of the week"))
 					return
 				}
 			}
 		case "report_timezone":
 			if len(s.Value) > 64 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid timezone value"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid timezone value"))
 				return
 			}
 		case "report_recipients":
 			if len(s.Value) > 500 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Value for report_recipients is too long (max 500)"))
+				c.JSON(http.StatusBadRequest, response.Error("Value for report_recipients is too long (max 500)"))
 				return
 			}
 		case "email_enabled", "report_daily_enabled", "report_weekly_enabled", "spike_alert_enabled",
 			"public_show_vpn", "public_show_connections":
 			if s.Value != "true" && s.Value != "false" {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid value for %s: must be true or false", s.Key)))
+				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid value for %s: must be true or false", s.Key)))
 				return
 			}
 		case "smtp_port":
 			if s.Value != "" {
 				v, err := strconv.Atoi(s.Value)
 				if err != nil || v < 1 || v > 65535 {
-					c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SMTP port: must be 1-65535"))
+					c.JSON(http.StatusBadRequest, response.Error("Invalid SMTP port: must be 1-65535"))
 					return
 				}
 			}
@@ -191,12 +192,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				s.Value = trimmed
 			}
 			if len(s.Value) > 255 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
+				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Value for %s is too long (max 255)", s.Key)))
 				return
 			}
 		case "display_timezone":
 			if len(s.Value) > 64 {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid timezone value"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid timezone value"))
 				return
 			}
 		case "public_interfaces":
@@ -283,7 +284,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		httputil.InternalError(c, fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys)), nil)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"message":  "Settings updated",
 		"warnings": warnings,
 	}))
@@ -647,7 +648,7 @@ func authFailureHint(errStr string) string {
 
 func (h *Handler) TestEmail(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 
@@ -678,13 +679,13 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	}
 
 	if smtpHost == "" || smtpFrom == "" || smtpTo == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host, sender, and recipient address are required"))
+		c.JSON(http.StatusBadRequest, response.Error("SMTP host, sender, and recipient address are required"))
 		return
 	}
 
 	// Validate SMTP host to prevent SSRF / internal port scanning
 	if !isValidExternalIP(smtpHost) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host resolves to a blocked address"))
+		c.JSON(http.StatusBadRequest, response.Error("SMTP host resolves to a blocked address"))
 		return
 	}
 
@@ -714,7 +715,7 @@ func (h *Handler) TestEmail(c *gin.Context) {
 	// that password_len was supposed to provide is now surfaced at SAVE
 	// time instead (see UpdateSettings — passwords are no longer
 	// silently trimmed).
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"success":     ok,
 		"message":     summary,
 		"trace":       trace,
@@ -744,7 +745,7 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 		URL  string `json:"url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request: type is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request: type is required"))
 		return
 	}
 
@@ -755,19 +756,19 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	}
 
 	if webhookURL == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("No webhook URL configured"))
+		c.JSON(http.StatusBadRequest, response.Error("No webhook URL configured"))
 		return
 	}
 
 	// Validate URL scheme and host to prevent SSRF
 	parsed, err := url.Parse(webhookURL)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid webhook URL: must be http or https"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid webhook URL: must be http or https"))
 		return
 	}
 	hostname := parsed.Hostname()
 	if !isValidExternalIP(hostname) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Webhook URL resolves to a blocked address"))
+		c.JSON(http.StatusBadRequest, response.Error("Webhook URL resolves to a blocked address"))
 		return
 	}
 
@@ -799,14 +800,14 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	httpReq, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Invalid URL: %v", err)))
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid URL: %v", err)))
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
 			"message": fmt.Sprintf("Failed to reach webhook: %v", err),
 		}))
@@ -815,14 +816,14 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
 			"message": fmt.Sprintf("Webhook returned status %d", resp.StatusCode),
 		}))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"success": true,
 		"message": "Test notification sent successfully",
 	}))

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -103,7 +104,7 @@ func applyAlertFilters(c *gin.Context, q *gorm.DB) *gorm.DB {
 func (h *Handler) GetAlerts(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": []models.Alert{}, "total": 0}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"alerts": []models.Alert{}, "total": 0}))
 		return
 	}
 
@@ -120,13 +121,13 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 	var total int64
 	applyAlertFilters(c, db.Gorm().Model(&models.Alert{})).Count(&total)
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"alerts": alerts, "total": total}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"alerts": alerts, "total": total}))
 }
 
 func (h *Handler) GetAlert(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert not found"))
+		c.JSON(http.StatusNotFound, response.Error("Alert not found"))
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -135,16 +136,16 @@ func (h *Handler) GetAlert(c *gin.Context) {
 	}
 	var alert models.Alert
 	if err := db.Gorm().First(&alert, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Alert not found"))
+		c.JSON(http.StatusNotFound, response.Error("Alert not found"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(alert))
+	c.JSON(http.StatusOK, response.Success(alert))
 }
 
 func (h *Handler) GetTraps(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.TrapEvent{}))
+		c.JSON(http.StatusOK, response.Success([]models.TrapEvent{}))
 		return
 	}
 
@@ -168,13 +169,13 @@ func (h *Handler) GetTraps(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(traps))
+	c.JSON(http.StatusOK, response.Success(traps))
 }
 
 func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"messages": []models.SyslogMessage{}, "total": 0}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"messages": []models.SyslogMessage{}, "total": 0}))
 		return
 	}
 
@@ -225,13 +226,13 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	}
 	countQuery.Count(&total)
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"messages": messages, "total": total}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"messages": messages, "total": total}))
 }
 
 func (h *Handler) GetSyslogMessage(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Syslog message not found"))
+		c.JSON(http.StatusNotFound, response.Error("Syslog message not found"))
 		return
 	}
 	id, ok := httputil.ParseID(c)
@@ -240,16 +241,16 @@ func (h *Handler) GetSyslogMessage(c *gin.Context) {
 	}
 	var msg models.SyslogMessage
 	if err := db.Gorm().First(&msg, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Syslog message not found"))
+		c.JSON(http.StatusNotFound, response.Error("Syslog message not found"))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(msg))
+	c.JSON(http.StatusOK, response.Success(msg))
 }
 
 func (h *Handler) GetFlowSamples(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.FlowSample{}))
+		c.JSON(http.StatusOK, response.Success([]models.FlowSample{}))
 		return
 	}
 
@@ -288,13 +289,13 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get flow samples", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(samples))
+	c.JSON(http.StatusOK, response.Success(samples))
 }
 
 func (h *Handler) GetFlowStats(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
 
@@ -312,7 +313,7 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+	c.JSON(http.StatusOK, response.Success(stats))
 }
 
 // parseStatsDeviceFilter reads an optional device_id query parameter from
@@ -333,7 +334,7 @@ func parseStatsDeviceFilter(c *gin.Context) uint {
 func (h *Handler) GetAlertStats(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
 
@@ -346,13 +347,13 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+	c.JSON(http.StatusOK, response.Success(stats))
 }
 
 func (h *Handler) GetTrapStats(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
 
@@ -365,13 +366,13 @@ func (h *Handler) GetTrapStats(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+	c.JSON(http.StatusOK, response.Success(stats))
 }
 
 func (h *Handler) GetSyslogStats(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
 
@@ -384,7 +385,7 @@ func (h *Handler) GetSyslogStats(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+	c.JSON(http.StatusOK, response.Success(stats))
 }
 
 func (h *Handler) AcknowledgeAlert(c *gin.Context) {
@@ -409,7 +410,7 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Alert acknowledged"))
+	c.JSON(http.StatusOK, response.Message("Alert acknowledged"))
 }
 
 // SnoozeAlert temporarily silences an alert until SnoozedUntil. Distinct
@@ -456,7 +457,7 @@ func (h *Handler) SnoozeAlert(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"snoozed_until": until,
 		"hours":         hours,
 	}))
@@ -480,7 +481,7 @@ func (h *Handler) UnsnoozeAlert(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Alert unsnoozed"))
+	c.JSON(http.StatusOK, response.Message("Alert unsnoozed"))
 }
 
 // BulkSnoozeAlerts snoozes every alert whose ID is in the request body.
@@ -498,15 +499,15 @@ func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 	if len(body.IDs) == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("ids is required"))
+		c.JSON(http.StatusBadRequest, response.Error("ids is required"))
 		return
 	}
 	if len(body.IDs) > maxBulkAckIDs {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("too many ids (max %d per request)", maxBulkAckIDs)))
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("too many ids (max %d per request)", maxBulkAckIDs)))
 		return
 	}
 
@@ -528,7 +529,7 @@ func (h *Handler) BulkSnoozeAlerts(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"snoozed":       affected,
 		"snoozed_until": until,
 		"hours":         hours,
@@ -583,7 +584,7 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 		hasAnyFilter = true
 	}
 	if !hasAnyFilter {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
+		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
 		return
 	}
 
@@ -596,7 +597,7 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"snoozed":       affected,
 		"snoozed_until": until,
 		"hours":         hours,
@@ -621,15 +622,15 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 		Notes string `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(body.IDs) == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("ids must be a non-empty array"))
+		c.JSON(http.StatusBadRequest, response.Error("ids must be a non-empty array"))
 		return
 	}
 	if len(body.IDs) > maxBulkAckIDs {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("too many ids (max %d per request)", maxBulkAckIDs)))
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("too many ids (max %d per request)", maxBulkAckIDs)))
 		return
 	}
 
@@ -639,7 +640,7 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"acknowledged": affected,
 		"requested":    len(body.IDs),
 	}))
@@ -687,7 +688,7 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 	}
 
 	if !hasAnyFilter {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
+		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
 		return
 	}
 
@@ -697,7 +698,7 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"acknowledged": affected,
 	}))
 }
@@ -717,12 +718,12 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 		Notes string `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	if len(body.Notes) > 4000 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Notes must be under 4000 characters"))
+		c.JSON(http.StatusBadRequest, response.Error("Notes must be under 4000 characters"))
 		return
 	}
 
@@ -731,7 +732,7 @@ func (h *Handler) UpdateAlertNotes(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Alert notes updated"))
+	c.JSON(http.StatusOK, response.Message("Alert notes updated"))
 }
 
 func (h *Handler) GetUptime(c *gin.Context) {
@@ -748,7 +749,7 @@ func (h *Handler) GetUptime(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"stats":      stats,
 		"five_nines": fiveNines,
 		"history":    records,
@@ -760,5 +761,5 @@ func (h *Handler) ResetUptime(c *gin.Context) {
 		httputil.InternalError(c, "Failed to reset uptime", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.MessageResponse("Uptime tracking reset successfully"))
+	c.JSON(http.StatusOK, response.Message("Uptime tracking reset successfully"))
 }

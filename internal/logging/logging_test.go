@@ -14,7 +14,7 @@ func TestRedactSecrets(t *testing.T) {
 	cases := map[string]bool{
 		"password":       true,
 		"Password":       true, // case-insensitive
-		"snmp_community":  true,
+		"snmp_community": true,
 		"auth_token":     true,
 		"api_key":        true,
 		"private_key":    true,

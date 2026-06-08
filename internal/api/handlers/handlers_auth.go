@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/middleware"
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -39,19 +40,19 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&creds); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	// Reject oversized passwords to prevent bcrypt CPU exhaustion DoS
 	if len(creds.Password) > 1024 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid credentials"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid credentials"))
 		return
 	}
 
 	// Reject oversized usernames to prevent map/DB bloat
 	if len(creds.Username) > 255 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid credentials"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid credentials"))
 		return
 	}
 
@@ -75,10 +76,10 @@ func (h *Handler) Login(c *gin.Context) {
 			}
 		}
 		if err == auth.ErrAccountLocked {
-			c.JSON(http.StatusTooManyRequests, models.ErrorResponse("Account temporarily locked due to too many failed attempts"))
+			c.JSON(http.StatusTooManyRequests, response.Error("Account temporarily locked due to too many failed attempts"))
 			return
 		}
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid credentials"))
+		c.JSON(http.StatusUnauthorized, response.Error("Invalid credentials"))
 		return
 	}
 
@@ -143,7 +144,7 @@ func (h *Handler) Login(c *gin.Context) {
 		SameSite: cookieSameSite,
 	})
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"message":    "Login successful",
 		"csrf_token": csrfToken,
 	}))
@@ -153,7 +154,7 @@ func (h *Handler) Logout(c *gin.Context) {
 	db := h.reqDB(c)
 	// Only clear cookies if an auth token is present (prevents cross-origin logout)
 	if _, err := c.Cookie("auth_token"); err != nil {
-		c.JSON(http.StatusOK, models.MessageResponse("Already logged out"))
+		c.JSON(http.StatusOK, response.Message("Already logged out"))
 		return
 	}
 
@@ -193,7 +194,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		SameSite: cookieSameSite,
 	})
 
-	c.JSON(http.StatusOK, models.MessageResponse("Logged out successfully"))
+	c.JSON(http.StatusOK, response.Message("Logged out successfully"))
 }
 
 // GetCSRFToken returns a fresh CSRF token derived from the current auth cookie.
@@ -224,45 +225,45 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	db := h.reqDB(c)
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 
 	if h.authManager == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Auth not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Auth not available"))
 		return
 	}
 
 	// Reject oversized current password
 	if len(req.CurrentPassword) > 1024 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	// Enforce password length constraints
 	if len(req.NewPassword) < 8 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("New password must be at least 8 characters"))
+		c.JSON(http.StatusBadRequest, response.Error("New password must be at least 8 characters"))
 		return
 	}
 	if len(req.NewPassword) > 72 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("New password must be at most 72 characters"))
+		c.JSON(http.StatusBadRequest, response.Error("New password must be at most 72 characters"))
 		return
 	}
 
 	// Get username and user ID from JWT claims
 	username, exists := c.Get("username")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
 		return
 	}
 	userID, uidExists := c.Get("user_id")
 	if !uidExists {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
 		return
 	}
 
@@ -280,11 +281,11 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	// Verify current password directly (bypass rate limiter — user is already authenticated)
 	admin, adminErr := db.GetAdminByUsername(usernameStr)
 	if adminErr != nil || admin == nil {
-		c.JSON(http.StatusForbidden, models.ErrorResponse("Current password is incorrect"))
+		c.JSON(http.StatusForbidden, response.Error("Current password is incorrect"))
 		return
 	}
 	if !h.authManager.CheckPassword(req.CurrentPassword, admin.Password) {
-		c.JSON(http.StatusForbidden, models.ErrorResponse("Current password is incorrect"))
+		c.JSON(http.StatusForbidden, response.Error("Current password is incorrect"))
 		return
 	}
 
@@ -305,5 +306,5 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		log.Printf("Failed to increment token version after password change: %v", err)
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Password changed successfully. Please log in again."))
+	c.JSON(http.StatusOK, response.Message("Password changed successfully. Please log in again."))
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/httputil"
@@ -21,7 +22,7 @@ import (
 func (h *Handler) GetDevices(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.Device{}))
+		c.JSON(http.StatusOK, response.Success([]models.Device{}))
 		return
 	}
 
@@ -33,7 +34,7 @@ func (h *Handler) GetDevices(c *gin.Context) {
 
 	httputil.RedactDevices(devices)
 
-	c.JSON(http.StatusOK, models.SuccessResponse(devices))
+	c.JSON(http.StatusOK, response.Success(devices))
 }
 
 func (h *Handler) CreateDevice(c *gin.Context) {
@@ -44,23 +45,23 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 
 	var device models.Device
 	if err := c.ShouldBindJSON(&device); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	// Validate required fields
 	if strings.TrimSpace(device.Name) == "" || strings.TrimSpace(device.IPAddress) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name and IP address are required"))
+		c.JSON(http.StatusBadRequest, response.Error("Name and IP address are required"))
 		return
 	}
 
 	// Length validation
 	if len(device.Name) > 255 || len(device.Hostname) > 255 || len(device.IPAddress) > 255 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name, hostname, and IP address must be 255 characters or less"))
+		c.JSON(http.StatusBadRequest, response.Error("Name, hostname, and IP address must be 255 characters or less"))
 		return
 	}
 	if len(device.Location) > 500 || len(device.Description) > 1000 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Location (max 500) or description (max 1000) too long"))
+		c.JSON(http.StatusBadRequest, response.Error("Location (max 500) or description (max 1000) too long"))
 		return
 	}
 
@@ -69,14 +70,14 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		device.Vendor = "fortigate"
 	}
 	if !isValidVendor(device.Vendor) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
 		return
 	}
 
 	// Validate IP to prevent SSRF - skip for probe-managed devices (they use private IPs)
 	if device.ProbeID == nil || *device.ProbeID == 0 {
 		if !isValidExternalIP(device.IPAddress) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid or disallowed IP address"))
 			return
 		}
 	}
@@ -86,7 +87,7 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 		device.SNMPPort = 161
 	}
 	if device.SNMPPort < 1 || device.SNMPPort > 65535 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid SNMP port"))
 		return
 	}
 
@@ -101,7 +102,7 @@ func (h *Handler) CreateDevice(c *gin.Context) {
 	}
 
 	httputil.RedactDevice(&device)
-	c.JSON(http.StatusCreated, models.SuccessResponse(device))
+	c.JSON(http.StatusCreated, response.Success(device))
 }
 
 func (h *Handler) UpdateDevice(c *gin.Context) {
@@ -117,7 +118,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 
 	device, err := db.GetDevice(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Device not found"))
+		c.JSON(http.StatusNotFound, response.Error("Device not found"))
 		return
 	}
 
@@ -149,14 +150,14 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	filteredUpdates := httputil.FilterAllowedFields(updates, allowedFields)
 
 	if len(filteredUpdates) == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
 		return
 	}
 
@@ -169,7 +170,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	for field, maxLen := range stringLimits {
 		if val, ok := filteredUpdates[field]; ok {
 			if str, isStr := val.(string); isStr && len(str) > maxLen {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse(fmt.Sprintf("Field %s exceeds max length of %d", field, maxLen)))
+				c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Field %s exceeds max length of %d", field, maxLen)))
 				return
 			}
 		}
@@ -179,7 +180,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if portVal, ok := filteredUpdates["snmp_port"]; ok {
 		port, isNum := portVal.(float64) // JSON numbers decode as float64
 		if !isNum || port < 1 || port > 65535 || port != float64(int(port)) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid SNMP port"))
 			return
 		}
 	}
@@ -190,7 +191,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		} else {
 			ipStr, isStr := ipVal.(string)
 			if !isStr || !isValidExternalIP(ipStr) {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+				c.JSON(http.StatusBadRequest, response.Error("Invalid or disallowed IP address"))
 				return
 			}
 		}
@@ -199,7 +200,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	// Validate enabled is boolean if present
 	if enabledVal, ok := filteredUpdates["enabled"]; ok {
 		if _, isBool := enabledVal.(bool); !isBool {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for enabled"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid value for enabled"))
 			return
 		}
 	}
@@ -208,7 +209,7 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if vendorVal, ok := filteredUpdates["vendor"]; ok {
 		vendorStr, isStr := vendorVal.(string)
 		if !isStr || !isValidVendor(vendorStr) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid vendor: must be fortigate, paloalto, cisco_asa, sonicwall, firewalla, pfsense, opnsense, or generic"))
 			return
 		}
 	}
@@ -222,12 +223,12 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	if probeVal, ok := filteredUpdates["probe_id"]; ok && probeVal != nil {
 		pf, isNum := probeVal.(float64) // JSON numbers decode as float64
 		if !isNum || pf < 0 || pf != float64(int(pf)) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid probe ID"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid probe ID"))
 			return
 		}
 		if pf > 0 {
 			if _, err := db.GetProbe(uint(pf)); err != nil {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Target probe not found"))
+				c.JSON(http.StatusBadRequest, response.Error("Target probe not found"))
 				return
 			}
 		}
@@ -281,11 +282,11 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 	updated, err := db.GetDevice(id)
 	if err != nil {
 		httputil.RedactDevice(device)
-		c.JSON(http.StatusOK, models.SuccessResponse(device))
+		c.JSON(http.StatusOK, response.Success(device))
 		return
 	}
 	httputil.RedactDevice(updated)
-	c.JSON(http.StatusOK, models.SuccessResponse(updated))
+	c.JSON(http.StatusOK, response.Success(updated))
 }
 
 func (h *Handler) DeleteDevice(c *gin.Context) {
@@ -304,7 +305,7 @@ func (h *Handler) DeleteDevice(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Device deleted"))
+	c.JSON(http.StatusOK, response.Message("Device deleted"))
 }
 
 func (h *Handler) GetDeviceDetail(c *gin.Context) {
@@ -320,7 +321,7 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 
 	device, err := db.GetDevice(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Device not found"))
+		c.JSON(http.StatusNotFound, response.Error("Device not found"))
 		return
 	}
 
@@ -406,7 +407,7 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		log.Printf("Device %d: failed to get license info: %v", id, err)
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"device":           device,
 		"system_status":    systemStatus,
 		"interfaces":       interfaces,
@@ -444,7 +445,7 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 			httputil.InternalError(c, "Failed to get status history", err)
 			return
 		}
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"buckets": buckets,
 			"range":   rangeStr,
 		}))
@@ -465,7 +466,7 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 		pingHistory = nil
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"system_status": statuses,
 		"ping_history":  pingHistory,
 	}))
@@ -482,13 +483,13 @@ func (h *Handler) GetInterfaceHistory(c *gin.Context) {
 
 	deviceIDUint, err := strconv.ParseUint(deviceID, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
 	ifIndexInt, err := strconv.Atoi(ifIndex)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid interface index"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid interface index"))
 		return
 	}
 
@@ -504,7 +505,7 @@ func (h *Handler) GetInterfaceHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+	c.JSON(http.StatusOK, response.Success(stats))
 }
 
 func (h *Handler) GetInterfaceChart(c *gin.Context) {
@@ -518,20 +519,20 @@ func (h *Handler) GetInterfaceChart(c *gin.Context) {
 
 	deviceIDUint, err := strconv.ParseUint(deviceID, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
 	ifIndexInt, err := strconv.Atoi(ifIndex)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid interface index"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid interface index"))
 		return
 	}
 
 	rangeStr := c.DefaultQuery("range", "24h")
 	validRanges := map[string]bool{"24h": true, "7d": true, "30d": true, "90d": true}
 	if !validRanges[rangeStr] {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid range: must be 24h, 7d, 30d, or 90d"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid range: must be 24h, 7d, 30d, or 90d"))
 		return
 	}
 
@@ -541,7 +542,7 @@ func (h *Handler) GetInterfaceChart(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(buckets))
+	c.JSON(http.StatusOK, response.Success(buckets))
 }
 
 func (h *Handler) GetAllInterfaces(c *gin.Context) {
@@ -614,7 +615,7 @@ func (h *Handler) GetAllInterfaces(c *gin.Context) {
 		end = total
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"interfaces": result[start:end],
 		"total":      total,
 		"limit":      limit,
@@ -638,7 +639,7 @@ type TestDeviceRequest struct {
 func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	var req TestDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -646,7 +647,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		req.SNMPPort = 161
 	}
 	if req.SNMPPort < 1 || req.SNMPPort > 65535 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid SNMP port"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid SNMP port"))
 		return
 	}
 	if req.SNMPVersion == "" {
@@ -654,19 +655,19 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	}
 	// Require community string for v1/v2c (do not default to insecure "public")
 	if req.SNMPCommunity == "" && (req.SNMPVersion == "1" || req.SNMPVersion == "2c") {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("SNMP community string is required for v1/v2c"))
+		c.JSON(http.StatusBadRequest, response.Error("SNMP community string is required for v1/v2c"))
 		return
 	}
 
 	// Validate IP to prevent SSRF against internal services
 	if !isValidExternalIP(req.IPAddress) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed IP address"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid or disallowed IP address"))
 		return
 	}
 
 	// Probe-managed devices cannot be tested from the API server
 	if req.ProbeID != nil && *req.ProbeID > 0 {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success":       false,
 			"probe_managed": true,
 			"message":       "Device is managed by a remote probe. Direct test not available — the probe polls this device automatically.",
@@ -693,7 +694,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	client, err := snmp.NewSNMPClient(cfg)
 	if err != nil {
 		log.Printf("TestDevice connect error for %s: %v", req.IPAddress, err)
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
 			"message": "Connection test failed: unable to reach device",
 			"online":  false,
@@ -705,7 +706,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 	status, err := client.GetSystemStatus()
 	if err != nil {
 		log.Printf("TestDevice poll error for %s: %v", req.IPAddress, err)
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
 			"message": "Connection test failed: device did not respond to SNMP query",
 			"online":  false,
@@ -713,7 +714,7 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"success":  true,
 		"message":  "Connected successfully",
 		"online":   true,
@@ -729,12 +730,12 @@ func (h *Handler) TestDeviceConnection(c *gin.Context) {
 func (h *Handler) GetDeviceSecurityStats(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 	// Unified parsing (v0.10.217, bundle D2). 720h cap retained for the
@@ -754,7 +755,7 @@ func (h *Handler) GetDeviceSecurityStats(c *gin.Context) {
 		log.Printf("Device %d: failed to get security stats history: %v", id, err)
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"latest":  latest,
 		"history": history,
 	}))
@@ -763,12 +764,12 @@ func (h *Handler) GetDeviceSecurityStats(c *gin.Context) {
 func (h *Handler) GetDeviceSDWANHealth(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
@@ -777,18 +778,18 @@ func (h *Handler) GetDeviceSDWANHealth(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get SD-WAN health", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"health": health}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"health": health}))
 }
 
 func (h *Handler) GetDeviceHAStatus(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
@@ -797,18 +798,18 @@ func (h *Handler) GetDeviceHAStatus(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get HA status", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"ha_status": ha}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"ha_status": ha}))
 }
 
 func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
@@ -828,7 +829,7 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"revisions":   revisions,
 		"distinct":    true, // legacy field name; every row is already distinct now
 		"total_all":   totalAll,
@@ -842,32 +843,32 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 	fromID, err := strconv.ParseUint(c.Query("from"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid 'from' revision ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid 'from' revision ID"))
 		return
 	}
 	toID, err := strconv.ParseUint(c.Query("to"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid 'to' revision ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid 'to' revision ID"))
 		return
 	}
 
 	var fromRev, toRev models.DeviceConfigRevision
 	if err := db.Gorm().Where("id = ? AND device_id = ?", uint(fromID), uint(id)).First(&fromRev).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("'from' revision not found"))
+		c.JSON(http.StatusNotFound, response.Error("'from' revision not found"))
 		return
 	}
 	if err := db.Gorm().Where("id = ? AND device_id = ?", uint(toID), uint(id)).First(&toRev).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("'to' revision not found"))
+		c.JSON(http.StatusNotFound, response.Error("'to' revision not found"))
 		return
 	}
 
@@ -879,7 +880,7 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 	}
 	patterns := configdiff.VolatilePatternsFor(vendor)
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"from": gin.H{
 			"id":                  fromRev.ID,
 			"timestamp":           fromRev.Timestamp,
@@ -906,23 +907,23 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 func (h *Handler) GetDeviceConfigRevisionDownload(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 	revID, err := strconv.ParseUint(c.Param("revId"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid revision ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid revision ID"))
 		return
 	}
 
 	var rev models.DeviceConfigRevision
 	if err := db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).First(&rev).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Config revision not found"))
+		c.JSON(http.StatusNotFound, response.Error("Config revision not found"))
 		return
 	}
 
@@ -934,27 +935,27 @@ func (h *Handler) GetDeviceConfigRevisionDownload(c *gin.Context) {
 func (h *Handler) GetDeviceConfigRevision(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 	revID, err := strconv.ParseUint(c.Param("revId"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid revision ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid revision ID"))
 		return
 	}
 
 	var rev models.DeviceConfigRevision
 	if err := db.Gorm().Where("id = ? AND device_id = ?", uint(revID), uint(id)).First(&rev).Error; err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Config revision not found"))
+		c.JSON(http.StatusNotFound, response.Error("Config revision not found"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"revision": gin.H{
 			"id":          rev.ID,
 			"device_id":   rev.DeviceID,
@@ -969,17 +970,17 @@ func (h *Handler) GetDeviceConfigRevision(c *gin.Context) {
 func (h *Handler) DeleteDeviceConfigRevision(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 	revID, err := strconv.ParseUint(c.Param("revId"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid revision ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid revision ID"))
 		return
 	}
 
@@ -989,22 +990,22 @@ func (h *Handler) DeleteDeviceConfigRevision(c *gin.Context) {
 		return
 	}
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Config revision not found"))
+		c.JSON(http.StatusNotFound, response.Error("Config revision not found"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"deleted": true}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"deleted": true}))
 }
 
 func (h *Handler) GetDeviceProcessHistory(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
@@ -1032,18 +1033,18 @@ func (h *Handler) GetDeviceProcessHistory(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get process history", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"process_stats": stats}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"process_stats": stats}))
 }
 
 func (h *Handler) GetDeviceInterfaceErrors(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid device ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
 		return
 	}
 
@@ -1075,5 +1076,5 @@ func (h *Handler) GetDeviceInterfaceErrors(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get interface errors", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"interface_errors": errs}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"interface_errors": errs}))
 }

@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/irc"
-	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/snmp"
 	"firewall-mon/internal/uptime"
@@ -145,10 +145,10 @@ func (h *Handler) GetHealth(c *gin.Context) {
 	health["database"] = dbOK
 	if !dbOK {
 		health["status"] = "unhealthy"
-		c.JSON(http.StatusServiceUnavailable, models.SuccessResponse(health))
+		c.JSON(http.StatusServiceUnavailable, response.Success(health))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(health))
+	c.JSON(http.StatusOK, response.Success(health))
 }
 
 // isBlockedIP reports whether an IP is a forbidden SSRF target. Delegates to

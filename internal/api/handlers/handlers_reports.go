@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
-	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/report"
 
@@ -86,7 +86,7 @@ func (h *Handler) buildReportHTML(db *database.Database, period string, collapsi
 // GET /admin/api/reports/preview?period=daily|weekly
 func (h *Handler) PreviewReport(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	db := h.reqDB(c)
@@ -98,7 +98,7 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"subject": subject,
 		"html":    html,
 	}))
@@ -109,11 +109,11 @@ func (h *Handler) PreviewReport(c *gin.Context) {
 // POST /admin/api/reports/send  body: {"period":"daily|weekly"}
 func (h *Handler) SendReportNow(c *gin.Context) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 	if h.notifier == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Mailer not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Mailer not available"))
 		return
 	}
 	db := h.reqDB(c)
@@ -135,12 +135,12 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 	}
 
 	if smtpHost == "" || smtpFrom == "" || recipients == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host, sender, and a report recipient must be configured"))
+		c.JSON(http.StatusBadRequest, response.Error("SMTP host, sender, and a report recipient must be configured"))
 		return
 	}
 	// Guard against SSRF / internal port scanning via the SMTP host.
 	if !isValidExternalIP(smtpHost) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("SMTP host resolves to a blocked address"))
+		c.JSON(http.StatusBadRequest, response.Error("SMTP host resolves to a blocked address"))
 		return
 	}
 
@@ -169,11 +169,11 @@ func (h *Handler) SendReportNow(c *gin.Context) {
 
 	if err := h.notifier.SendHTMLEmail(subject, html, nil, nc, recipients); err != nil {
 		log.Printf("Send report failed: %v", err)
-		c.JSON(http.StatusBadGateway, models.ErrorResponse("Failed to send report: "+err.Error()))
+		c.JSON(http.StatusBadGateway, response.Error("Failed to send report: "+err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"success": true,
 		"message": "Report sent to " + recipients,
 	}))

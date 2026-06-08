@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/uptime"
@@ -17,7 +18,7 @@ import (
 func (h *Handler) GetPublicDevices(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
 		return
 	}
 
@@ -37,7 +38,7 @@ func (h *Handler) GetPublicDevices(c *gin.Context) {
 			"wan_speed_mbps": d.WanSpeedMbps,
 		})
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(result))
+	c.JSON(http.StatusOK, response.Success(result))
 }
 
 // resolvePublicDeviceID returns the device ID from ?device_id query param,
@@ -87,7 +88,7 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 				"sessions":     status.SessionCount,
 				"uptime_stats": uptimeStats,
 			}
-			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+			c.JSON(http.StatusOK, response.Success(publicData))
 			return
 		}
 	}
@@ -119,7 +120,7 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 				"cached":       true,
 				"cached_at":    status.Timestamp,
 			}
-			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+			c.JSON(http.StatusOK, response.Success(publicData))
 			return
 		}
 	} else if db != nil {
@@ -142,12 +143,12 @@ func (h *Handler) GetPublicDashboard(c *gin.Context) {
 				"cached":       true,
 				"cached_at":    status.Timestamp,
 			}
-			c.JSON(http.StatusOK, models.SuccessResponse(publicData))
+			c.JSON(http.StatusOK, response.Success(publicData))
 			return
 		}
 	}
 
-	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No monitoring data available"))
+	c.JSON(http.StatusServiceUnavailable, response.Error("No monitoring data available"))
 }
 
 func (h *Handler) GetPublicInterfaces(c *gin.Context) {
@@ -161,7 +162,7 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 	if !hasDevice && h.snmpClient != nil {
 		interfaces, err := h.snmpClient.GetInterfaceStats()
 		if err == nil {
-			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
+			c.JSON(http.StatusOK, response.Success(interfaces))
 			return
 		}
 	}
@@ -174,37 +175,37 @@ func (h *Handler) GetPublicInterfaces(c *gin.Context) {
 			if err := db.Gorm().Where("device_id = ? AND timestamp = ?", deviceID, latestIface.Timestamp).Find(&ifaces).Error; err != nil {
 				log.Printf("Device %d: failed to get interfaces at timestamp: %v", deviceID, err)
 			}
-			c.JSON(http.StatusOK, models.SuccessResponse(ifaces))
+			c.JSON(http.StatusOK, response.Success(ifaces))
 			return
 		}
 	} else if db != nil {
 		interfaces, err := db.GetLatestInterfaceStats()
 		if err == nil && len(interfaces) > 0 {
-			c.JSON(http.StatusOK, models.SuccessResponse(interfaces))
+			c.JSON(http.StatusOK, response.Success(interfaces))
 			return
 		}
 	}
 
-	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No interface data available"))
+	c.JSON(http.StatusServiceUnavailable, response.Error("No interface data available"))
 }
 
 func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return
 	}
 
 	deviceID, hasDevice := h.resolvePublicDeviceID(c)
 	if !hasDevice {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Device ID required"))
+		c.JSON(http.StatusBadRequest, response.Error("Device ID required"))
 		return
 	}
 
 	ifIndexStr := c.Query("index")
 	ifIndex, err := strconv.Atoi(ifIndexStr)
 	if err != nil || ifIndex < 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid interface index"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid interface index"))
 		return
 	}
 
@@ -279,7 +280,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}
 
 	if len(stats) < 2 {
-		c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
+		c.JSON(http.StatusOK, response.Success(map[string]interface{}{
 			"labels":   []string{},
 			"rx_total": []float64{},
 			"tx_total": []float64{},
@@ -368,7 +369,7 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 		txRate = append(txRate, tRate)
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(map[string]interface{}{
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
 		"labels":     labels,
 		"rx_total":   rxTotalVals,
 		"tx_total":   txTotalVals,
@@ -406,18 +407,18 @@ func (h *Handler) GetPublicVPN(c *gin.Context) {
 					"tunnel_uptime": vpn.TunnelUptime,
 				})
 			}
-			c.JSON(http.StatusOK, models.SuccessResponse(result))
+			c.JSON(http.StatusOK, response.Success(result))
 			return
 		}
 	}
 
-	c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No VPN data available"))
+	c.JSON(http.StatusServiceUnavailable, response.Error("No VPN data available"))
 }
 
 func (h *Handler) GetPublicConnections(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No connections available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("No connections available"))
 		return
 	}
 
@@ -447,19 +448,19 @@ func (h *Handler) GetPublicConnections(c *gin.Context) {
 			"notes":  "",
 		})
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(result))
+	c.JSON(http.StatusOK, response.Success(result))
 }
 
 func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No data available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("No data available"))
 		return
 	}
 
 	deviceID, hasDevice := h.resolvePublicDeviceID(c)
 	if !hasDevice {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("No device specified"))
+		c.JSON(http.StatusBadRequest, response.Error("No device specified"))
 		return
 	}
 
@@ -487,7 +488,7 @@ func (h *Handler) GetPublicStatusHistory(c *gin.Context) {
 			MemoryUsage: s.MemoryUsage,
 		})
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(result))
+	c.JSON(http.StatusOK, response.Success(result))
 }
 
 func (h *Handler) GetAdminDashboard(c *gin.Context) {
@@ -530,7 +531,7 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 	}
 
 	if status == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("No monitoring data available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("No monitoring data available"))
 		return
 	}
 
@@ -551,7 +552,7 @@ func (h *Handler) GetAdminDashboard(c *gin.Context) {
 		UptimeData:      h.uptimeTrack.GetUptimeRecord(),
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(dashboard))
+	c.JSON(http.StatusOK, response.Success(dashboard))
 }
 
 func (h *Handler) GetDashboardAll(c *gin.Context) {
@@ -748,7 +749,7 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		Connections:  connections,
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"dashboard":   dashboard,
 		"enrichments": enrichments,
 	}))
@@ -759,7 +760,7 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
 
@@ -808,13 +809,13 @@ func (h *Handler) GetDeviceDataDiag(c *gin.Context) {
 		results = append(results, diag)
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(results))
+	c.JSON(http.StatusOK, response.Success(results))
 }
 
 func (h *Handler) GetDashboardStats(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(nil))
+		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
 
@@ -826,5 +827,5 @@ func (h *Handler) GetDashboardStats(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(stats))
+	c.JSON(http.StatusOK, response.Success(stats))
 }

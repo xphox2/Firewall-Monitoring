@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -25,7 +26,7 @@ import (
 func (h *Handler) GetProbes(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.Probe{}))
+		c.JSON(http.StatusOK, response.Success([]models.Probe{}))
 		return
 	}
 
@@ -37,13 +38,13 @@ func (h *Handler) GetProbes(c *gin.Context) {
 
 	httputil.RedactProbes(probes)
 
-	c.JSON(http.StatusOK, models.SuccessResponse(probes))
+	c.JSON(http.StatusOK, response.Success(probes))
 }
 
 func (h *Handler) GetProbe(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		c.JSON(http.StatusNotFound, response.Error("Probe not found"))
 		return
 	}
 
@@ -54,11 +55,11 @@ func (h *Handler) GetProbe(c *gin.Context) {
 
 	probe, err := db.GetProbe(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		c.JSON(http.StatusNotFound, response.Error("Probe not found"))
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(probe))
+	c.JSON(http.StatusOK, response.Success(probe))
 }
 
 func (h *Handler) CreateProbe(c *gin.Context) {
@@ -69,25 +70,25 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 
 	var probe models.Probe
 	if err := c.ShouldBindJSON(&probe); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	if strings.TrimSpace(probe.Name) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Name is required"))
 		return
 	}
 
 	existing, err := db.GetProbeByName(probe.Name)
 	if err == nil && existing != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Probe with this name already exists"))
+		c.JSON(http.StatusBadRequest, response.Error("Probe with this name already exists"))
 		return
 	}
 
 	if probe.SiteID > 0 {
 		_, err := db.GetSite(probe.SiteID)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Site not found"))
+			c.JSON(http.StatusBadRequest, response.Error("Site not found"))
 			return
 		}
 	}
@@ -96,7 +97,7 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 		probe.ListenPort = 8089
 	}
 	if probe.ListenPort < 1 || probe.ListenPort > 65535 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid listen port"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid listen port"))
 		return
 	}
 
@@ -143,7 +144,7 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	}
 
 	httputil.RedactProbe(&probe)
-	c.JSON(http.StatusCreated, models.SuccessResponse(probe))
+	c.JSON(http.StatusCreated, response.Success(probe))
 }
 
 func (h *Handler) UpdateProbe(c *gin.Context) {
@@ -159,7 +160,7 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 
 	probe, err := db.GetProbe(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		c.JSON(http.StatusNotFound, response.Error("Probe not found"))
 		return
 	}
 
@@ -176,21 +177,21 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	filteredUpdates := httputil.FilterAllowedFields(updates, allowedFields)
 
 	if len(filteredUpdates) == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
 		return
 	}
 
 	if portVal, ok := filteredUpdates["listen_port"]; ok {
 		port, isNum := portVal.(float64)
 		if !isNum || port < 1 || port > 65535 || port != float64(int(port)) {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid listen port"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid listen port"))
 			return
 		}
 	}
@@ -198,13 +199,13 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 	if siteIDVal, ok := filteredUpdates["site_id"]; ok {
 		siteID, isNum := siteIDVal.(float64)
 		if !isNum || siteID < 0 {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid site ID"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid site ID"))
 			return
 		}
 		if siteID > 0 {
 			_, err := db.GetSite(uint(siteID))
 			if err != nil {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Site not found"))
+				c.JSON(http.StatusBadRequest, response.Error("Site not found"))
 				return
 			}
 		}
@@ -212,7 +213,7 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 
 	if enabledVal, ok := filteredUpdates["enabled"]; ok {
 		if _, isBool := enabledVal.(bool); !isBool {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid value for enabled"))
+			c.JSON(http.StatusBadRequest, response.Error("Invalid value for enabled"))
 			return
 		}
 	}
@@ -230,11 +231,11 @@ func (h *Handler) UpdateProbe(c *gin.Context) {
 	updated, err := db.GetProbe(id)
 	if err != nil {
 		httputil.RedactProbe(probe)
-		c.JSON(http.StatusOK, models.SuccessResponse(probe))
+		c.JSON(http.StatusOK, response.Success(probe))
 		return
 	}
 	httputil.RedactProbe(updated)
-	c.JSON(http.StatusOK, models.SuccessResponse(updated))
+	c.JSON(http.StatusOK, response.Success(updated))
 }
 
 func (h *Handler) DeleteProbe(c *gin.Context) {
@@ -250,7 +251,7 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 
 	if err := db.DeleteProbe(id); err != nil {
 		if errors.Is(err, database.ErrProbeHasDevices) {
-			c.JSON(http.StatusConflict, models.ErrorResponse(
+			c.JSON(http.StatusConflict, response.Error(
 				"Cannot delete probe: it still has devices assigned. Reassign or remove those devices first."))
 			return
 		}
@@ -258,13 +259,13 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Probe deleted"))
+	c.JSON(http.StatusOK, response.Message("Probe deleted"))
 }
 
 func (h *Handler) GetPendingProbes(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.Probe{}))
+		c.JSON(http.StatusOK, response.Success([]models.Probe{}))
 		return
 	}
 
@@ -276,7 +277,7 @@ func (h *Handler) GetPendingProbes(c *gin.Context) {
 
 	httputil.RedactProbes(probes)
 
-	c.JSON(http.StatusOK, models.SuccessResponse(probes))
+	c.JSON(http.StatusOK, response.Success(probes))
 }
 
 type ApproveProbeRequest struct {
@@ -296,13 +297,13 @@ func (h *Handler) ApproveProbe(c *gin.Context) {
 
 	var req ApproveProbeRequest
 	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
 		return
 	}
 	adminID, ok := userID.(uint)
@@ -316,7 +317,7 @@ func (h *Handler) ApproveProbe(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Probe approved successfully"))
+	c.JSON(http.StatusOK, response.Message("Probe approved successfully"))
 }
 
 type RejectProbeRequest struct {
@@ -336,12 +337,12 @@ func (h *Handler) RejectProbe(c *gin.Context) {
 
 	var req RejectProbeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Reason is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Reason is required"))
 		return
 	}
 
 	if _, exists := c.Get("user_id"); !exists {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Not authenticated"))
+		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
 		return
 	}
 
@@ -350,7 +351,7 @@ func (h *Handler) RejectProbe(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Probe rejected successfully"))
+	c.JSON(http.StatusOK, response.Message("Probe rejected successfully"))
 }
 
 type TestProbeRequest struct {
@@ -364,7 +365,7 @@ type TestProbeRequest struct {
 func (h *Handler) TestProbeConnection(c *gin.Context) {
 	var req TestProbeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -372,13 +373,13 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 		req.ListenPort = 8089
 	}
 	if req.ListenPort < 1 || req.ListenPort > 65535 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid listen port"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid listen port"))
 		return
 	}
 
 	// Validate address to prevent SSRF / internal port scanning
 	if !isValidExternalIP(req.ListenAddress) {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid or disallowed listen address"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid or disallowed listen address"))
 		return
 	}
 
@@ -391,7 +392,7 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 
 	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
 			"message": "Failed to connect to probe",
 			"online":  false,
@@ -400,7 +401,7 @@ func (h *Handler) TestProbeConnection(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"success": true,
 		"message": "Connected successfully",
 		"online":  true,
@@ -523,7 +524,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 
 	probe, err := db.GetProbe(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		c.JSON(http.StatusNotFound, response.Error("Probe not found"))
 		return
 	}
 
@@ -568,7 +569,7 @@ func (h *Handler) RegenerateProbeKey(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"registration_key": newKey,
 	}))
 }
@@ -625,19 +626,19 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 func (h *Handler) authenticateProbeByBearer(c *gin.Context) (*models.Probe, bool) {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		c.JSON(http.StatusUnauthorized, response.Error("Authorization required"))
 		return nil, false
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token == "" {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		c.JSON(http.StatusUnauthorized, response.Error("Authorization required"))
 		return nil, false
 	}
 
 	// Look up probe by registration key (AUDIT-017: stored hashed).
 	var probe models.Probe
 	if err := h.db.Gorm().Where("registration_key = ?", database.HashProbeKey(token)).First(&probe).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
+		c.JSON(http.StatusUnauthorized, response.Error("Invalid authorization"))
 		return nil, false
 	}
 	return &probe, true
@@ -647,29 +648,29 @@ func (h *Handler) authenticateProbeByBearer(c *gin.Context) (*models.Probe, bool
 // and the caller provides a valid Bearer token matching the probe's registration key.
 func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	if h.db == nil {
-		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse("Database not available"))
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return nil, false
 	}
 	id := c.Param("id")
 	idUint, err := strconv.ParseUint(id, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid probe ID"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid probe ID"))
 		return nil, false
 	}
 	probe, err := h.db.GetProbe(uint(idUint))
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Probe not found"))
+		c.JSON(http.StatusNotFound, response.Error("Probe not found"))
 		return nil, false
 	}
 	if probe.ApprovalStatus != "approved" {
-		c.JSON(http.StatusForbidden, models.ErrorResponse("Probe not approved"))
+		c.JSON(http.StatusForbidden, response.Error("Probe not approved"))
 		return nil, false
 	}
 
 	// Verify Bearer token matches this probe's registration key
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Authorization required"))
+		c.JSON(http.StatusUnauthorized, response.Error("Authorization required"))
 		return nil, false
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -682,7 +683,7 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	// AUDIT-017: stored key is hashed; hash the presented token and compare the
 	// digests in constant time (preserves the AUDIT-016 timing-safety property).
 	if token == "" || subtle.ConstantTimeCompare([]byte(database.HashProbeKey(token)), []byte(probe.RegistrationKey)) != 1 {
-		c.JSON(http.StatusUnauthorized, models.ErrorResponse("Invalid authorization"))
+		c.JSON(http.StatusUnauthorized, response.Error("Invalid authorization"))
 		return nil, false
 	}
 
@@ -791,7 +792,7 @@ func (h *Handler) GetProbeStats(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"probe_id": id,
 		"syslog":   syslogCount,
 		"traps":    trapCount,
@@ -821,7 +822,7 @@ func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
 
 	idsParam := strings.TrimSpace(c.Query("ids"))
 	if idsParam == "" {
-		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
 		return
 	}
 
@@ -844,7 +845,7 @@ func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
 		}
 	}
 	if len(ids) == 0 {
-		c.JSON(http.StatusOK, models.SuccessResponse([]gin.H{}))
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
 		return
 	}
 
@@ -903,7 +904,7 @@ func (h *Handler) GetProbesStatsBatch(c *gin.Context) {
 			},
 		})
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(out))
+	c.JSON(http.StatusOK, response.Success(out))
 }
 
 func (h *Handler) GetProbeDevices(c *gin.Context) {

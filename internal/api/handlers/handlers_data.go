@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -28,7 +29,7 @@ func (h *Handler) batchDedupCheck(c *gin.Context, probeID uint) (batchID string,
 		return "", false
 	}
 	if h.db.BatchAlreadyProcessed(probeID, batchID) {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"deduped": true, "saved": 0}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"deduped": true, "saved": 0}))
 		return "", true
 	}
 	return batchID, false
@@ -60,7 +61,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var messages []models.SyslogMessage
 	if err := c.ShouldBindJSON(&messages); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	originalLen := len(messages)
@@ -97,7 +98,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(messages)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(messages)}))
 }
 
 func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
@@ -112,7 +113,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var traps []models.TrapEvent
 	if err := c.ShouldBindJSON(&traps); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	originalLen := len(traps)
@@ -140,7 +141,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save trap events", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
@@ -155,7 +156,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var samples []models.FlowSample
 	if err := c.ShouldBindJSON(&samples); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(samples) > 1000 {
@@ -184,7 +185,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save flow samples", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceivePingResults(c *gin.Context) {
@@ -199,7 +200,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var results []models.PingResult
 	if err := c.ShouldBindJSON(&results); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(results) > 1000 {
@@ -230,7 +231,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		h.updatePingStats(r.DeviceID, probe.ID, r.TargetIP, r.Latency, r.PacketLoss)
 	}
 	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, len(filtered))
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, latency, packetLoss float64) {
@@ -278,7 +279,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 	}
 	var addrs []models.InterfaceAddress
 	if err := c.ShouldBindJSON(&addrs); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(addrs) > 1000 {
@@ -301,7 +302,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save interface addresses", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
@@ -311,7 +312,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	}
 	var stats []models.ProcessorStats
 	if err := c.ShouldBindJSON(&stats); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(stats) > 500 {
@@ -334,7 +335,7 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save processor stats", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
@@ -344,7 +345,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	}
 	var sensors []models.HardwareSensor
 	if err := c.ShouldBindJSON(&sensors); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(sensors) > 500 {
@@ -363,7 +364,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		filtered = append(filtered, sensors[i])
 	}
 	if len(filtered) == 0 {
-		c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": 0}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"saved": 0}))
 		return
 	}
 	if err := h.db.Gorm().Create(&filtered).Error; err != nil {
@@ -371,7 +372,7 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save hardware sensors", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
@@ -381,7 +382,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 	}
 	var statuses []models.SystemStatus
 	if err := c.ShouldBindJSON(&statuses); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(statuses) > 100 {
@@ -418,7 +419,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 	}
 
 	log.Printf("Probe %d: saved %d/%d system status records (devices: %v)", probe.ID, saved, len(statuses), deviceIDs)
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": saved}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": saved}))
 }
 
 func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
@@ -428,7 +429,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	}
 	var stats []models.InterfaceStats
 	if err := c.ShouldBindJSON(&stats); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(stats) > 1000 {
@@ -469,7 +470,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
@@ -479,7 +480,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 	}
 	var statuses []models.VPNStatus
 	if err := c.ShouldBindJSON(&statuses); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(statuses) > 500 {
@@ -514,7 +515,7 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
@@ -524,7 +525,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 	}
 	var statuses []models.HAStatus
 	if err := c.ShouldBindJSON(&statuses); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(statuses) > 500 {
@@ -547,7 +548,7 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save HA statuses", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
@@ -557,7 +558,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 	}
 	var stats []models.SecurityStats
 	if err := c.ShouldBindJSON(&stats); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(stats) > 500 {
@@ -580,7 +581,7 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save security stats", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
@@ -590,7 +591,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 	}
 	var health []models.SDWANHealth
 	if err := c.ShouldBindJSON(&health); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(health) > 500 {
@@ -613,7 +614,7 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save SD-WAN health", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
@@ -623,7 +624,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 	}
 	var licenses []models.LicenseInfo
 	if err := c.ShouldBindJSON(&licenses); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(licenses) > 500 {
@@ -646,7 +647,7 @@ func (h *Handler) ReceiveLicenseInfo(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save license info", err)
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 const (
@@ -664,7 +665,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	var rev models.DeviceConfigRevision
 	if err := c.ShouldBindJSON(&rev); err != nil {
 		log.Printf("ReceiveConfigRevision: Invalid JSON: %v", err)
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	log.Printf("ReceiveConfigRevision: received DeviceID=%d, Length=%d, ConfigText len=%d", rev.DeviceID, rev.Length, len(rev.ConfigText))
@@ -674,14 +675,14 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 
 	if allowedDevices != nil && !allowedDevices[rev.DeviceID] {
 		log.Printf("ReceiveConfigRevision: REJECTED - device %d not in probe %d's device list (probe name: %s)", rev.DeviceID, probe.ID, probe.Name)
-		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
+		c.JSON(http.StatusForbidden, response.Error("Device not assigned to probe"))
 		return
 	}
 
 	// Validate ConfigText size to prevent DoS
 	if len(rev.ConfigText) > maxConfigTextSize {
 		log.Printf("ReceiveConfigRevision: Rejected config for device %d - size %d exceeds limit %d", rev.DeviceID, len(rev.ConfigText), maxConfigTextSize)
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Config too large"))
+		c.JSON(http.StatusBadRequest, response.Error("Config too large"))
 		return
 	}
 
@@ -841,7 +842,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		"last_polled": time.Now(),
 	})
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{
+	c.JSON(http.StatusOK, response.Success(gin.H{
 		"saved":               mergedID,
 		"action":              mergedAction,
 		"normalized_checksum": rev.NormalizedChecksum,
@@ -857,13 +858,13 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 	}
 	var snap models.ProcessStats
 	if err := c.ShouldBindJSON(&snap); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	if allowedDevices != nil && !allowedDevices[snap.DeviceID] {
-		c.JSON(http.StatusForbidden, models.ErrorResponse("Device not assigned to probe"))
+		c.JSON(http.StatusForbidden, response.Error("Device not assigned to probe"))
 		return
 	}
 
@@ -877,7 +878,7 @@ func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": snap.ID}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": snap.ID}))
 }
 
 func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
@@ -887,7 +888,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 	}
 	var errs []models.InterfaceErrors
 	if err := c.ShouldBindJSON(&errs); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(errs) > 500 {
@@ -913,7 +914,7 @@ func (h *Handler) ReceiveInterfaceErrors(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
@@ -923,7 +924,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 	}
 	var sensors []models.HardwareSensor
 	if err := c.ShouldBindJSON(&sensors); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	log.Printf("ReceiveSensorDetails: probe=%d received %d sensors", probe.ID, len(sensors))
@@ -954,7 +955,7 @@ func (h *Handler) ReceiveSensorDetails(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
@@ -964,7 +965,7 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 	}
 	var licenses []models.LicenseInfo
 	if err := c.ShouldBindJSON(&licenses); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid JSON"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
 	if len(licenses) > 100 {
@@ -990,5 +991,5 @@ func (h *Handler) ReceiveLicenseDetails(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(gin.H{"saved": len(filtered)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }

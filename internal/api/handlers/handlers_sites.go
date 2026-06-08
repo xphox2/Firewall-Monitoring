@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -14,7 +15,7 @@ import (
 func (h *Handler) GetSites(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
-		c.JSON(http.StatusOK, models.SuccessResponse([]models.Site{}))
+		c.JSON(http.StatusOK, response.Success([]models.Site{}))
 		return
 	}
 
@@ -24,7 +25,7 @@ func (h *Handler) GetSites(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.SuccessResponse(sites))
+	c.JSON(http.StatusOK, response.Success(sites))
 }
 
 func (h *Handler) GetSite(c *gin.Context) {
@@ -40,7 +41,7 @@ func (h *Handler) GetSite(c *gin.Context) {
 
 	site, err := db.GetSite(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Site not found"))
+		c.JSON(http.StatusNotFound, response.Error("Site not found"))
 		return
 	}
 
@@ -64,18 +65,18 @@ func (h *Handler) CreateSite(c *gin.Context) {
 
 	var site models.Site
 	if err := c.ShouldBindJSON(&site); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
 	if strings.TrimSpace(site.Name) == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Name is required"))
+		c.JSON(http.StatusBadRequest, response.Error("Name is required"))
 		return
 	}
 
 	if len(site.Name) > 255 || len(site.Region) > 255 || len(site.Country) > 255 ||
 		len(site.Address) > 500 || len(site.Timezone) > 100 || len(site.Description) > 1000 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("One or more fields exceed maximum length"))
+		c.JSON(http.StatusBadRequest, response.Error("One or more fields exceed maximum length"))
 		return
 	}
 
@@ -85,18 +86,18 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		return
 	}
 	if existing != nil {
-		c.JSON(http.StatusConflict, models.ErrorResponse("Site with this name already exists"))
+		c.JSON(http.StatusConflict, response.Error("Site with this name already exists"))
 		return
 	}
 
 	if site.ParentSiteID != nil && *site.ParentSiteID > 0 {
 		parent, err := db.GetSite(*site.ParentSiteID)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
+			c.JSON(http.StatusBadRequest, response.Error("Parent site not found"))
 			return
 		}
 		if parent == nil {
-			c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
+			c.JSON(http.StatusBadRequest, response.Error("Parent site not found"))
 			return
 		}
 	}
@@ -107,7 +108,7 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, models.SuccessResponse(site))
+	c.JSON(http.StatusCreated, response.Success(site))
 }
 
 func (h *Handler) UpdateSite(c *gin.Context) {
@@ -123,7 +124,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 
 	site, err := db.GetSite(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse("Site not found"))
+		c.JSON(http.StatusNotFound, response.Error("Site not found"))
 		return
 	}
 
@@ -139,7 +140,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("Invalid request"))
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 
@@ -150,11 +151,11 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 			parentID := uint(pid)
 			parent, err := db.GetSite(parentID)
 			if err != nil || parent == nil {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Parent site not found"))
+				c.JSON(http.StatusBadRequest, response.Error("Parent site not found"))
 				return
 			}
 			if parentID == id {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Site cannot be its own parent"))
+				c.JSON(http.StatusBadRequest, response.Error("Site cannot be its own parent"))
 				return
 			}
 			// Walk up the parent chain to detect circular references (max depth 50)
@@ -164,7 +165,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 					break
 				}
 				if *cur.ParentSiteID == id {
-					c.JSON(http.StatusBadRequest, models.ErrorResponse("Circular parent reference detected"))
+					c.JSON(http.StatusBadRequest, response.Error("Circular parent reference detected"))
 					return
 				}
 				ancestor, err := db.GetSite(*cur.ParentSiteID)
@@ -179,7 +180,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 	filteredUpdates := httputil.FilterAllowedFields(updates, allowedFields)
 
 	if len(filteredUpdates) == 0 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse("No valid fields to update"))
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
 		return
 	}
 
@@ -191,7 +192,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 	for field, maxLen := range stringLimits {
 		if val, ok := filteredUpdates[field]; ok {
 			if str, isStr := val.(string); isStr && len(str) > maxLen {
-				c.JSON(http.StatusBadRequest, models.ErrorResponse("Field "+field+" exceeds maximum length"))
+				c.JSON(http.StatusBadRequest, response.Error("Field "+field+" exceeds maximum length"))
 				return
 			}
 		}
@@ -205,7 +206,7 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 				return
 			}
 			if existing != nil && existing.ID != id {
-				c.JSON(http.StatusConflict, models.ErrorResponse("Site with this name already exists"))
+				c.JSON(http.StatusConflict, response.Error("Site with this name already exists"))
 				return
 			}
 		}
@@ -218,10 +219,10 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 
 	updated, err := db.GetSite(id)
 	if err != nil {
-		c.JSON(http.StatusOK, models.SuccessResponse(site))
+		c.JSON(http.StatusOK, response.Success(site))
 		return
 	}
-	c.JSON(http.StatusOK, models.SuccessResponse(updated))
+	c.JSON(http.StatusOK, response.Success(updated))
 }
 
 func (h *Handler) DeleteSite(c *gin.Context) {
@@ -241,7 +242,7 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 		return
 	}
 	if len(children) > 0 {
-		c.JSON(http.StatusConflict, models.ErrorResponse("Cannot delete site with child sites"))
+		c.JSON(http.StatusConflict, response.Error("Cannot delete site with child sites"))
 		return
 	}
 
@@ -250,5 +251,5 @@ func (h *Handler) DeleteSite(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, models.MessageResponse("Site deleted"))
+	c.JSON(http.StatusOK, response.Message("Site deleted"))
 }
