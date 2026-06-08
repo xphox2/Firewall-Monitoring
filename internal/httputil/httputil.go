@@ -1,7 +1,7 @@
 package httputil
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -23,20 +23,26 @@ import (
 // pass a raw db/driver error. err may be nil for 500s that have no underlying
 // Go error, in which case only msg is logged.
 //
-// The log line carries the request method, matched route, and the
+// The record carries status=500 plus the request method, matched route, and the
 // X-Request-ID set by the RequestID middleware (AUDIT-135) when present, so a
 // logged 500 correlates with the access-log line for the same request.
+//
+// AUDIT-076: emitted as a native slog.Error record (was log.Printf) — the
+// operation msg becomes the record message and the rest are queryable
+// attributes (status=500, method, route, req, err) instead of a flat string.
 func InternalError(c *gin.Context, msg string, err error) {
-	reqID := c.Writer.Header().Get("X-Request-ID")
-	prefix := "HTTP 500"
-	if reqID != "" {
-		prefix = "HTTP 500 [req=" + reqID + "]"
+	attrs := []slog.Attr{
+		slog.Int("status", http.StatusInternalServerError),
+		slog.String("method", c.Request.Method),
+		slog.String("route", c.FullPath()),
+	}
+	if reqID := c.Writer.Header().Get("X-Request-ID"); reqID != "" {
+		attrs = append(attrs, slog.String("req", reqID))
 	}
 	if err != nil {
-		log.Printf("%s %s %s: %s: %v", prefix, c.Request.Method, c.FullPath(), msg, err)
-	} else {
-		log.Printf("%s %s %s: %s", prefix, c.Request.Method, c.FullPath(), msg)
+		attrs = append(attrs, slog.Any("err", err))
 	}
+	slog.LogAttrs(c.Request.Context(), slog.LevelError, msg, attrs...)
 	c.JSON(http.StatusInternalServerError, models.ErrorResponse(msg))
 }
 

@@ -20,6 +20,7 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/irc"
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
@@ -34,7 +35,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.395"
+const ServerVersion = "0.10.396"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -73,6 +74,13 @@ func runMigrateStatusCmd() {
 }
 
 func main() {
+	// AUDIT-076: install the structured (slog) logger first, before any other
+	// package logs. This also routes the legacy `log` package through slog, so
+	// every existing log.Printf gains levels/fields/redaction (LOG_FORMAT,
+	// LOG_LEVEL env). Done before the migrate-subcommand switch so out-of-band
+	// `migrate`/`migrate-status` runs are structured too.
+	logging.Init()
+
 	// AUDIT-044: explicit migration subcommands. `migrate` connects, applies any
 	// pending migrations, prints status, and exits; `migrate-status` just reports
 	// applied/pending without changing anything. The long-running services still

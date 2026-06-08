@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -508,16 +509,24 @@ func RequestLogger() gin.HandlerFunc {
 		status := c.Writer.Status()
 
 		if status >= 400 {
-			// AUDIT-135: include the per-request ID so a logged error can be
-			// correlated with the X-Request-ID the client/proxy saw.
+			// AUDIT-076: structured access log for failed requests (was a flat
+			// log.Printf). The status splits the level — client 4xx → warn,
+			// server 5xx → error — and method/path/status/latency become
+			// queryable attributes. AUDIT-135: req carries the per-request
+			// X-Request-ID so a logged failure correlates with the
+			// X-Request-ID the client/proxy saw. slog stamps its own time, so
+			// the manual timestamp is gone.
 			reqID, _ := c.Get(RequestIDKey)
-			log.Printf("[%s] req=%v %s %s %d %v",
-				time.Now().Format("2006-01-02 15:04:05"),
-				reqID,
-				method,
-				path,
-				status,
-				latency,
+			level := slog.LevelWarn
+			if status >= 500 {
+				level = slog.LevelError
+			}
+			slog.LogAttrs(c.Request.Context(), level, "http request",
+				slog.Any("req", reqID),
+				slog.String("method", method),
+				slog.String("path", path),
+				slog.Int("status", status),
+				slog.Duration("latency", latency),
 			)
 		}
 	}

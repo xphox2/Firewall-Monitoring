@@ -30,7 +30,10 @@ func TestInternalError_AUDIT071(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/devices", nil)
 
-		secret := "pq: password authentication failed for user \"admin\""
+		// AUDIT-076: InternalError now emits a native slog record, whose text
+		// handler quote-escapes attr values — so this fixture avoids embedded
+		// quotes that would be rendered as \" and break a naive substring match.
+		secret := "pq: password authentication failed for user admin"
 		InternalError(c, "Failed to get devices", errors.New(secret))
 
 		if w.Code != http.StatusInternalServerError {
