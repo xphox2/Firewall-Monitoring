@@ -16,14 +16,10 @@ package database
 
 import (
 	"fmt"
-	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 )
 
@@ -39,80 +35,12 @@ func pgIsPartitioned(t *testing.T, d *Database, table string) bool {
 	return ok
 }
 
-// cfgFromDSN parses a URL-form DSN (postgres://user:pass@host:port/db?sslmode=…)
-// into the cfg.Database.* fields Connect() consumes. URL form keeps this
-// dependency-free (net/url) and matches the DSN the CI job sets.
-func cfgFromDSN(t *testing.T, dsn string) *config.Config {
-	t.Helper()
-	u, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatalf("TEST_PG_DSN is not a valid URL: %v", err)
-	}
-	port := 5432
-	if p := u.Port(); p != "" {
-		if n, aerr := strconv.Atoi(p); aerr == nil {
-			port = n
-		}
-	}
-	pw, _ := u.User.Password()
-	name := strings.TrimPrefix(u.Path, "/")
-	ssl := u.Query().Get("sslmode")
-	if ssl == "" {
-		ssl = "disable"
-	}
-	// Safety rail: the suite drops/recreates the public schema, so refuse to run
-	// against anything that isn't obviously a throwaway test database.
-	if !strings.Contains(strings.ToLower(name), "test") {
-		t.Fatalf("refusing to run: TEST_PG_DSN dbname %q must contain 'test' "+
-			"(this suite DROPs/recreates the public schema)", name)
-	}
-
-	cfg := &config.Config{}
-	cfg.Database.Type = "postgres"
-	cfg.Database.Host = u.Hostname()
-	cfg.Database.Port = port
-	cfg.Database.User = u.User.Username()
-	cfg.Database.Password = pw
-	cfg.Database.Name = name
-	cfg.Database.SSLMode = ssl
-	cfg.Database.StatementTimeout = 0 // migrations run DDL; don't time-box them
-	cfg.Database.MaxOpenConns = 5
-	return cfg
-}
-
-// newPGForTest connects to TEST_PG_DSN (skipping the suite if unset), resets the
-// public schema to a clean slate, runs migrations, and returns a migrated
-// *Database with Close() registered for cleanup.
+// newPGForTest delegates to the shared NewIntegrationDB harness (defined in
+// integration_testkit.go) — connects to TEST_PG_DSN (skipping if unset), resets
+// the public schema, runs migrations, returns a migrated *Database.
 func newPGForTest(t *testing.T) *Database {
 	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("TEST_PG_DSN"))
-	if dsn == "" {
-		t.Skip("TEST_PG_DSN not set; skipping Postgres integration suite")
-	}
-	cfg := cfgFromDSN(t, dsn)
-
-	// Reset to an empty public schema via a throwaway handle so re-runs against
-	// a persistent Postgres never trip over leftover tables/rows.
-	reset, err := Connect(cfg)
-	if err != nil {
-		t.Fatalf("Connect (reset handle): %v", err)
-	}
-	if err := reset.Gorm().Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
-		_ = reset.Close()
-		t.Fatalf("reset public schema: %v", err)
-	}
-	_ = reset.Close()
-
-	d, err := Connect(cfg)
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-
-	if err := d.RunMigrations(); err != nil {
-		t.Fatalf("RunMigrations on real Postgres: %v", err)
-	}
-	return d
+	return NewIntegrationDB(t)
 }
 
 func TestPostgresIntegration(t *testing.T) {
