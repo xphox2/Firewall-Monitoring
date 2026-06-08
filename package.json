@@ -10,5 +10,13 @@
   },
   "dependencies": {
     "tailwindcss": "^3.4.19"
+  },
+  "_comment_vendoredBrowserLibraries": "AUDIT-160: provenance/version pins for the pre-minified browser libs committed under cmd/api/static (embedded via go:embed, NOT npm-installed). Full table incl. upstream URLs + licenses in cmd/api/static/js/VENDOR.md. The three cytoscape-fcose-stack files have no version embedded in their artifact; pin on next refresh.",
+  "vendoredBrowserLibraries": {
+    "chart.js": "4.4.7",
+    "chartjs-plugin-zoom": "2.0.1",
+    "cytoscape": "3.30.4",
+    "gridstack": "10.3.1",
+    "uplot": "1.6.31"
   }
 }
