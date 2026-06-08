@@ -2792,10 +2792,12 @@
         var path = window.location.pathname.replace(/\/$/, '');
         var segments = path.split('/');
         var lastSegment = segments[segments.length - 1];
+        // Only SPA tabs hosted inside admin.html. Standalone pages (probes,
+        // sites, probe-pending, irc) are served as their own HTML documents and
+        // never reach this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
-            'alert-policies':'alert-policies', 'maintenance':'maintenance',
-            'probes':'probes', 'sites':'sites', 'network':'network', 'probe-pending':'probe-pending', 'irc':'irc' };
+            'alert-policies':'alert-policies', 'maintenance':'maintenance' };
         var page = pageMap[lastSegment];
         if (page) {
             document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
@@ -3636,10 +3638,18 @@
     // middle-click via the button check) bypass the handler so the
     // browser keeps its native open-in-new-tab affordance — which is
     // critical for the multi-tab triage flow.
+    // ONLY the tabs that actually exist as `page-<name>` divs inside admin.html
+    // (and have a loadPageData() case) belong here. Probes, Sites, Pending and
+    // IRC are STANDALONE HTML documents (probes.html, sites.html,
+    // probe-pending.html, irc.html) — they do not load admin-main.js and have no
+    // page div here. Listing them caused the click interceptor below to
+    // preventDefault() the real navigation and call loadPageData() with no
+    // matching case, so the page went blank until a manual refresh did the true
+    // full-page navigation. Keep this set in sync with the page divs + the
+    // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, interfaces:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, alerts:1, traps:1,
-        'alert-policies':1, maintenance:1,
-        probes:1, sites:1, network:1, 'probe-pending':1, irc:1 };
+        'alert-policies':1, maintenance:1 };
 
     document.addEventListener('click', function(ev) {
         if (ev.button !== 0) return;                        // not a primary click
