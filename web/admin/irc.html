@@ -55,8 +55,8 @@
         </div>
 
         <div id="tab-servers" class="tab-content active">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">IRC Servers</h2>
+            <div class="card p-6 mb-6">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">IRC Servers</h2>
                 <div id="serversList">
                     <div class="text-center p-7.5 text-[#8b949e]">Loading servers...</div>
                 </div>
@@ -64,61 +64,63 @@
         </div>
 
         <div id="tab-channels" class="tab-content">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+            <div class="card p-6 mb-6">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">
                     Channels
-                    <button class="bg-[#238636] text-white border-none px-2.5 py-1 rounded-md cursor-pointer text-xs font-medium transition-colors duration-150" data-action="open-channel-modal">Add Channel</button>
+                    <button class="btn sm" data-action="open-channel-modal">+ Add Channel</button>
                 </h2>
-                <div id="channelsList">
+                <div id="channelsList" class="table-wrap">
                     <div class="text-center p-10 text-[#8b949e]">Loading channels...</div>
                 </div>
             </div>
         </div>
 
         <div id="tab-commands" class="tab-content">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+            <div class="card p-6 mb-6">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">
                     Custom Commands
-                    <button class="bg-[#238636] text-white border-none px-2.5 py-1 rounded-md cursor-pointer text-xs font-medium transition-colors duration-150" data-action="open-command-modal">Add Command</button>
+                    <button class="btn sm" data-action="open-command-modal">+ Add Command</button>
                 </h2>
-                <table class="w-full border-collapse">
-                    <thead>
-                        <tr>
-                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Command</th>
-                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Description</th>
-                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Type</th>
-                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Admin Only</th>
-                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Enabled</th>
-                            <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="commandsList">
-                        <tr><td colspan="6" class="text-center p-7.5 text-[#8b949e]">Loading commands...</td></tr>
-                    </tbody>
-                </table>
+                <div class="table-wrap">
+                    <table class="w-full border-collapse">
+                        <thead>
+                            <tr>
+                                <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Command</th>
+                                <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Description</th>
+                                <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Type</th>
+                                <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Admin Only</th>
+                                <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Enabled</th>
+                                <th class="p-2 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="commandsList">
+                            <tr><td colspan="6" class="text-center p-7.5 text-[#8b949e]">Loading commands...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
         <div id="tab-send" class="tab-content">
-            <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Send IRC Message</h2>
+            <div class="card p-6 mb-6">
+                <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">Send IRC Message</h2>
                 <div class="mb-3">
                     <label for="sendServerSelect" class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
-                    <select id="sendServerSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm">
+                    <select id="sendServerSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label for="sendChannelSelect" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel</label>
-                    <select id="sendChannelSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm">
+                    <select id="sendChannelSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
                         <option value="">Select a channel...</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label for="sendMessage" class="block mb-1 text-[#8b949e] text-xs font-medium">Message</label>
-                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm"></textarea>
+                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
-                <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="send-message">Send Message</button>
+                <button class="btn" data-action="send-message">Send Message</button>
             </div>
         </div>
     </main>

@@ -1501,4 +1501,191 @@ tr:hover td, .vpn-detail-table tr:hover td, .tunnel-table tr:hover td {
     padding: 3px 8px !important;
 }
 
+/* ============================================================
+ * IRC Page Premium Styling Overrides
+ * ============================================================ */
+.server-card {
+    background: rgba(15, 23, 42, 0.45) !important;
+    backdrop-filter: blur(20px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35) !important;
+    border-radius: 12px !important;
+    padding: 20px !important;
+    margin-bottom: 16px !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.server-card:hover {
+    transform: translateY(-2px) !important;
+    border-color: rgba(125, 211, 252, 0.3) !important;
+    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
+}
+
+.server-card-header h3 {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.1rem !important;
+    color: #f8fafc !important;
+    margin: 0 !important;
+}
+
+.server-info {
+    border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+    background: rgba(255, 255, 255, 0.01) !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    margin-top: 10px !important;
+    margin-bottom: 14px !important;
+}
+
+.channel-tag {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-radius: 14px !important;
+    padding: 3px 10px !important;
+    color: #e2e8f0 !important;
+}
+
+/* ============================================================
+ * Dashboard Page Premium Styling Overrides
+ * ============================================================ */
+.chart-card {
+    background: rgba(15, 23, 42, 0.45) !important;
+    backdrop-filter: blur(20px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35) !important;
+    border-radius: 12px !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.chart-card:hover {
+    border-color: rgba(125, 211, 252, 0.3) !important;
+    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
+}
+
+.chart-card h3 {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    color: #f8fafc !important;
+    margin-top: 0 !important;
+    margin-bottom: 16px !important;
+}
+
+/* Probe Cards & Stats on Dashboard */
+.probe-card.clickable {
+    background: rgba(15, 23, 42, 0.45) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 12px !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.probe-card.clickable:hover {
+    transform: translateY(-2px) !important;
+    border-color: rgba(125, 211, 252, 0.3) !important;
+    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
+}
+
+.probe-card .probe-name {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    color: #f8fafc !important;
+    margin-bottom: 4px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.probe-card .probe-meta {
+    font-size: 0.78rem !important;
+    color: #94a3b8 !important;
+    margin-bottom: 12px !important;
+}
+
+.probe-card .probe-stats {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 8px !important;
+}
+
+.probe-card .probe-stat {
+    background: rgba(255, 255, 255, 0.015) !important;
+    border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    border-radius: 8px !important;
+    padding: 10px 6px !important;
+    text-align: center !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    min-height: 52px !important;
+}
+
+.probe-card .probe-stat .lbl {
+    font-size: 0.62rem !important;
+    text-transform: uppercase !important;
+    color: #64748b !important;
+    letter-spacing: 0.5px !important;
+    line-height: 1.2 !important;
+}
+
+.probe-card .probe-stat .last-hour {
+    font-size: 0.72rem !important;
+    font-weight: 600 !important;
+    color: #e2e8f0 !important;
+    font-family: var(--fwmon-font-mono) !important;
+    margin-top: 4px !important;
+}
+
+/* ============================================================
+ * Premium Table Styling (Devices, Interfaces, Connections, Audit, etc.)
+ * ============================================================ */
+.card table, .tab-content table {
+    width: 100% !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    font-size: 0.85rem !important;
+    color: #e2e8f0 !important;
+}
+
+.card th, .tab-content th {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    font-size: 0.75rem !important;
+    letter-spacing: 0.5px !important;
+    color: #64748b !important;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08) !important;
+    padding: 12px 16px !important;
+    text-align: left !important;
+    background: rgba(15, 23, 42, 0.2) !important;
+}
+
+.card tr td, .tab-content tr td {
+    padding: 14px 16px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+    vertical-align: middle !important;
+    background: transparent !important;
+    transition: all 0.15s ease !important;
+}
+
+.card tbody tr:hover td, .tab-content tbody tr:hover td {
+    background: rgba(255, 255, 255, 0.02) !important;
+    color: #f8fafc !important;
+}
+
+.card tbody tr:last-child td, .tab-content tbody tr:last-child td {
+    border-bottom: none !important;
+}
+
+.card tbody tr.audit-row, .card tbody tr.clickable-row {
+    cursor: pointer !important;
+}
+
+.card tbody tr.audit-row:hover, .card tbody tr.clickable-row:hover {
+    box-shadow: inset 4px 0 0 var(--fwmon-series-1) !important;
+}
+
 
