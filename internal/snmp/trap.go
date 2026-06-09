@@ -106,12 +106,24 @@ func (t *TrapReceiver) allow(ip string) bool {
 	return true
 }
 
+// Enabled reports whether trap ingestion is configured. Trap reception requires
+// a non-empty SNMP_TRAP_COMMUNITY: without one the receiver must NOT open a
+// listener (AUDIT-012 — an empty community accepts every spoofable UDP packet on
+// port 162). When disabled, the daemon idles as a clean no-op instead of failing
+// to start, so a deployment that doesn't use a global trap community (e.g. each
+// firewall has its own) keeps the rest of the stack — API/web UI, poller —
+// running normally rather than crash-looping the container.
+func (t *TrapReceiver) Enabled() bool {
+	return t.config.SNMP.TrapCommunity != ""
+}
+
 func (t *TrapReceiver) Start(handler func(*models.TrapEvent)) error {
 	// AUDIT-012: require a non-empty SNMP_TRAP_COMMUNITY. Previously the
 	// listener accepted every UDP packet on port 162 when the community
 	// was empty (`if t.config.SNMP.TrapCommunity != "" && ...` short-
 	// circuited the check), so an attacker spoofing source IPs could
-	// inject arbitrary trap events and pollute the DB.
+	// inject arbitrary trap events and pollute the DB. Callers should gate on
+	// Enabled() and idle instead of treating this as fatal.
 	if t.config.SNMP.TrapCommunity == "" {
 		return fmt.Errorf("SNMP_TRAP_COMMUNITY must be set to a non-empty value; refusing to start the trap listener with an open community string (AUDIT-012)")
 	}

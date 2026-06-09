@@ -33,6 +33,33 @@ func TestTrapReceiver_Start_RequiresCommunity(t *testing.T) {
 	}
 }
 
+// TestTrapReceiver_Enabled_AUDIT094 locks in the graceful-disable behavior: with
+// no SNMP_TRAP_COMMUNITY, Enabled() is false so the daemon idles instead of
+// fatal-exiting (which under the entrypoint supervisor crash-looped the whole
+// container). With a community set, Enabled() is true.
+func TestTrapReceiver_Enabled_AUDIT094(t *testing.T) {
+	t.Parallel()
+
+	on := &config.Config{}
+	on.SNMP.TrapCommunity = "public"
+	r1, err := NewTrapReceiver(on)
+	if err != nil {
+		t.Fatalf("NewTrapReceiver(on): %v", err)
+	}
+	if !r1.Enabled() {
+		t.Error("Enabled() = false with a community set, want true")
+	}
+
+	off := &config.Config{} // empty community
+	r2, err := NewTrapReceiver(off)
+	if err != nil {
+		t.Fatalf("NewTrapReceiver(off): %v", err)
+	}
+	if r2.Enabled() {
+		t.Error("Enabled() = true with an empty community, want false")
+	}
+}
+
 // TestTrapReceiver_Allow_BurstThenRefill exercises the per-IP token-bucket
 // rate limiter at unit-test scale (using a fast refill rate so tests stay
 // quick). Asserts:

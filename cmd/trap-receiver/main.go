@@ -47,6 +47,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// AUDIT-012/094: trap ingestion needs a global SNMP_TRAP_COMMUNITY. Many
+	// deployments don't use one (each firewall can have its own community), so a
+	// missing value is a normal "traps off" state, NOT a fatal error — refusing
+	// to start here would (under the entrypoint supervisor) crash-loop the whole
+	// container and take the API/web UI offline. Instead, log once and idle so
+	// the rest of the stack runs normally. Set SNMP_TRAP_COMMUNITY to enable.
+	if !trapReceiver.Enabled() {
+		log.Printf("SNMP trap ingestion DISABLED: SNMP_TRAP_COMMUNITY is not set, so no trap listener is opened (AUDIT-012: an empty community would accept any spoofable packet on port 162). Set SNMP_TRAP_COMMUNITY to enable. Idling.")
+		<-quit
+		log.Println("Trap receiver exited")
+		return
+	}
+
 	// AUDIT-005: open a real DB connection and pass it to the AlertManager.
 	// Previously this passed nil, which made am.saveAlert a no-op
 	// (alerts.go:532-539) — every trap arrived, was logged to stdout, and
@@ -81,8 +97,6 @@ func main() {
 
 	log.Printf("Trap receiver listening on %s", cfg.SNMP.TrapListenAddr)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("Shutting down trap receiver...")

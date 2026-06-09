@@ -194,9 +194,9 @@ echo "  Trap:     $TRAP_PID"
 # exit code (0 for a clean signal-driven stop, non-zero for a crash).
 teardown() {
     echo "Stopping fwmon services..."
-    # `|| true` so a non-zero kill/wait (e.g. the daemon that already crashed)
-    # can't trip the script-level `set -e` before the caller's explicit exit,
-    # which would otherwise leak 143 into a clean `docker stop` (want exit 0).
+    # `|| true` so a non-zero kill/wait (e.g. a daemon that already exited) can't
+    # trip the script-level `set -e` before the caller's explicit exit, which
+    # would otherwise leak 143 into a clean `docker stop` (want exit 0).
     kill $API_PID $POLLER_PID $TRAP_PID 2>/dev/null || true
     wait $API_PID $POLLER_PID $TRAP_PID 2>/dev/null || true
     echo "Stopping PostgreSQL..."
@@ -211,30 +211,26 @@ shutdown() {
 }
 trap shutdown INT TERM
 
-# AUDIT-094: fail-fast supervision. A bare `wait $API_PID $POLLER_PID $TRAP_PID`
-# blocks until ALL THREE exit, so a single crashed daemon left the container up
-# running a silently-degraded stack — the dead process was neither restarted nor
-# surfaced. Instead, wait for the FIRST daemon to exit, report which one and its
-# status, tear the whole stack down cleanly, and exit non-zero. Docker's
-# `restart: unless-stopped` then brings back a fresh, COMPLETE stack (PostgreSQL
-# included) rather than limping along missing a daemon. `set +e` keeps the
-# script-level `set -e` from aborting before we can log/teardown when the
-# crashed child returns a non-zero status.
+# AUDIT-094: supervise the ESSENTIAL service (the api / web UI), not all three.
+#
+# The first cut (v0.10.402) used `wait -n` and tore the whole stack down when
+# ANY daemon exited. That regressed production: a non-essential daemon with a
+# permanent startup failure — e.g. the trap-receiver declining to run without an
+# SNMP_TRAP_COMMUNITY (AUDIT-012) — exits immediately and forever, so the entire
+# container (api + web UI included) crash-looped every few seconds and never came
+# online. A "traps disabled" degradation became a total outage.
+#
+# Instead, block on the api only. If the poller or trap-receiver dies, the api
+# stays up and the UI remains reachable (degraded but visible) — the operator can
+# see what's wrong instead of staring at a restart loop. When the api itself
+# exits we tear the stack down and exit non-zero so Docker's
+# `restart: unless-stopped` brings back a fresh, complete stack. `set +e` keeps
+# the api's non-zero status from aborting the script before teardown.
 set +e
-wait -n
-first_status=$?
+wait "$API_PID"
+api_status=$?
 set -e
 
-dead="a service"
-for entry in "API:$API_PID" "Poller:$POLLER_PID" "Trap:$TRAP_PID"; do
-    name=${entry%%:*}
-    pid=${entry##*:}
-    if ! kill -0 "$pid" 2>/dev/null; then
-        dead="$name (pid $pid)"
-        break
-    fi
-done
-
-echo "!!! $dead exited (status $first_status) — tearing down the stack for a clean restart"
+echo "!!! API server (pid $API_PID) exited (status $api_status) — tearing down the stack for a clean restart"
 teardown
 exit 1
