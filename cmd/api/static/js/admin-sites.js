@@ -22,24 +22,40 @@
     function renderSites() {
         var container = document.getElementById('sites-container');
         if (sites.length === 0) {
-            container.innerHTML = '<div class="empty">No sites configured. Click "Add Site" to create one.</div>';
+            container.innerHTML = '<div class="col-span-full card text-center p-8 text-[#8b949e]">No sites configured. Click "+ Add Site" to create one.</div>';
             return;
         }
 
         var html = '';
         for (var i = 0; i < sites.length; i++) {
             var site = sites[i];
-            html += '<div class="site-card">' +
-                '<h3>' + AC.escapeHtml(site.name) + '</h3>' +
-                '<div class="site-info">' +
-                '<div><span>Region:</span> ' + AC.escapeHtml(site.region || 'N/A') + '</div>' +
-                '<div><span>Country:</span> ' + AC.escapeHtml(site.country || 'N/A') + '</div>' +
-                '<div><span>Timezone:</span> ' + AC.escapeHtml(site.timezone || 'N/A') + '</div>' +
-                '<div><span>Address:</span> ' + AC.escapeHtml(site.address || 'N/A') + '</div>' +
+            
+            var desc = site.description ? AC.escapeHtml(site.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
+            
+            html += '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:245px;padding:20px;">' +
+                '<div>' +
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
+                        '<h3 style="font-size:1.05rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + AC.escapeHtml(site.name) + '</h3>' +
+                        (site.country ? '<span class="badge info">' + AC.escapeHtml(site.country).toUpperCase() + '</span>' : '') +
+                    '</div>' +
+                    '<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:14px;min-height:36px;line-height:1.4;">' + desc + '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.03);border-radius:8px;padding:10px;">' +
+                        '<div style="display:flex;flex-direction:column;">' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Region</span>' +
+                            '<span style="font-size:0.8rem;font-weight:600;color:#e2e8f0;">' + AC.escapeHtml(site.region || 'N/A') + '</span>' +
+                        '</div>' +
+                        '<div style="display:flex;flex-direction:column;">' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Timezone</span>' +
+                            '<span style="font-size:0.8rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + AC.escapeHtml(site.timezone || 'N/A') + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="font-size:0.75rem;color:#8b949e;margin-bottom:8px;">' +
+                        '<span style="color:#64748b;font-weight:500;">Address:</span> ' + AC.escapeHtml(site.address || 'N/A') +
+                    '</div>' +
                 '</div>' +
-                '<div style="margin-top:15px;">' +
-                '<button class="btn sm" data-action="edit-site" data-id="' + site.id + '">Edit</button> ' +
-                '<button class="btn sm danger" data-action="delete-site" data-id="' + site.id + '">Delete</button>' +
+                '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">' +
+                    '<button class="btn sm secondary" data-action="edit-site" data-id="' + site.id + '">Edit</button> ' +
+                    '<button class="btn sm danger" data-action="delete-site" data-id="' + site.id + '">Delete</button>' +
                 '</div>' +
                 '</div>';
         }

@@ -24,12 +24,16 @@
     </div>
 
     <main class="main-content p-6" id="main-content" tabindex="-1">
-        <div class="flex justify-between items-center mb-6">
-            <h1 class="text-xl font-semibold text-[#e6edf3]">Pending Probe Approvals</h1>
-        </div>
-
-        <div id="pending-container">
-            <div class="text-center p-8 text-[#8b949e]">Loading...</div>
+        <div class="card p-6 mb-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                <div>
+                    <h2 class="text-lg font-bold text-[#e6edf3] font-outfit" style="font-family: 'Outfit', sans-serif;">Pending Probe Registrations</h2>
+                    <p class="text-xs text-[#8b949e] mt-1">Review, approve, or reject connection requests from newly deployed probes.</p>
+                </div>
+            </div>
+            <div id="pending-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div class="col-span-full text-center py-8 text-[#8b949e]">Loading pending requests...</div>
+            </div>
         </div>
     </main>
 

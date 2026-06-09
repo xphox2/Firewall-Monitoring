@@ -22,29 +22,42 @@
         var container = document.getElementById('pending-container');
 
         if (pendingProbes.length === 0) {
-            container.innerHTML = '<div class="card"><div class="empty">No pending probe requests. All probes have been processed.</div></div>';
+            container.innerHTML = '<div class="col-span-full card text-center p-8 text-[#8b949e]">No pending probe requests. All probes have been processed.</div>';
             return;
         }
 
         var html = '';
         for (var i = 0; i < pendingProbes.length; i++) {
             var p = pendingProbes[i];
-            html += '<div class="probe-card">' +
-                '<div class="probe-header">' +
-                '<span class="probe-name">' + AC.escapeHtml(p.name) + '</span>' +
-                '<span class="badge pending">Pending</span>' +
+            
+            var desc = p.description ? AC.escapeHtml(p.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
+            var created = p.created_at ? AC.formatDate(p.created_at) : 'N/A';
+            
+            html += '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:220px;padding:20px;">' +
+                '<div>' +
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
+                        '<h3 style="font-size:1.05rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + AC.escapeHtml(p.name) + '</h3>' +
+                        '<span class="badge pending">PENDING</span>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:14px;min-height:36px;line-height:1.4;">' + desc + '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:12px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.03);border-radius:8px;padding:10px;">' +
+                        '<div style="display:flex;justify-content:space-between;width:100%;font-size:0.8rem;">' +
+                            '<span style="color:#64748b;text-transform:uppercase;font-size:0.6rem;letter-spacing:0.5px;">Listen Address</span>' +
+                            '<span style="font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + AC.escapeHtml(p.listen_address || '0.0.0.0') + ':' + (p.listen_port || 'N/A') + '</span>' +
+                        '</div>' +
+                        '<div style="display:flex;justify-content:space-between;width:100%;font-size:0.8rem;margin-top:4px;">' +
+                            '<span style="color:#64748b;text-transform:uppercase;font-size:0.6rem;letter-spacing:0.5px;">Created At</span>' +
+                            '<span style="font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + created + '</span>' +
+                        '</div>' +
+                    '</div>' +
                 '</div>' +
-                '<div class="probe-details">' +
-                '<div><span>Listen:</span> ' + AC.escapeHtml(p.listen_address || '') + ':' + (p.listen_port || '') + '</div>' +
-                '<div><span>Created:</span> ' + (p.created_at ? AC.formatDate(p.created_at) : 'N/A') + '</div>' +
-                '</div>' +
-                '<div class="probe-actions">' +
-                '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
-                '<button class="btn sm danger" data-action="show-reject-modal" data-id="' + p.id + '">Reject</button>' +
+                '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;">' +
+                    '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
+                    '<button class="btn sm danger" data-action="show-reject-modal" data-id="' + p.id + '">Reject</button>' +
                 '</div>' +
                 '</div>';
         }
-        container.innerHTML = '<div class="card"><h2>Pending Requests (' + pendingProbes.length + ')</h2></div>' + html;
+        container.innerHTML = html;
     }
 
     function approveProbe(id) {

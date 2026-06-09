@@ -7,6 +7,7 @@
     var currentProbes = [];
     var currentSites = [];
     var currentDeployProbe = null;
+    var probeStatsMap = {};
 
     function loadProbes() {
         AC.apiFetch(API_BASE + '/probes').then(function(result) {
@@ -22,10 +23,38 @@
         var approvedProbes = currentProbes.filter(function(p) { return p.approval_status === 'approved'; });
         if (approvedProbes.length === 0) {
             document.getElementById('probe-summary-stats').innerHTML =
-                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Syslog</div></div>' +
-                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Traps</div></div>' +
-                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Flows</div></div>' +
-                '<div class="probe-summary-stat"><div class="stat-val">0</div><div class="stat-lbl">Pings</div></div>';
+                '<div class="stat-card accent-blue">' +
+                    '<div class="stat-icon">📄</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Syslog</div>' +
+                        '<div class="stat-value">0</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="stat-card accent-green">' +
+                    '<div class="stat-icon">⚡</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Traps</div>' +
+                        '<div class="stat-value">0</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="stat-card accent-blue">' +
+                    '<div class="stat-icon">🔄</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Flows</div>' +
+                        '<div class="stat-value">0</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="stat-card accent-green">' +
+                    '<div class="stat-icon">📶</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Pings</div>' +
+                        '<div class="stat-value">0</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
+                    '</div>' +
+                '</div>';
             return;
         }
 
@@ -34,18 +63,47 @@
         var failed = 0;
 
         function renderSummary() {
-            var failedNote = failed > 0 ? ' (' + failed + ' probe(s) unavailable)' : '';
+            var failedNote = failed > 0 ? ' (' + failed + ' offline)' : '';
             document.getElementById('probe-summary-stats').innerHTML =
-                '<div class="probe-summary-stat"><div class="stat-val">' + totalSyslog.toLocaleString() + '</div><div class="stat-lbl">Total Syslog' + failedNote + '</div><div class="stat-sub">+' + lastHourSyslog.toLocaleString() + ' last hr</div></div>' +
-                '<div class="probe-summary-stat"><div class="stat-val">' + totalTraps.toLocaleString() + '</div><div class="stat-lbl">Total Traps' + failedNote + '</div><div class="stat-sub">+' + lastHourTraps.toLocaleString() + ' last hr</div></div>' +
-                '<div class="probe-summary-stat"><div class="stat-val">' + totalFlows.toLocaleString() + '</div><div class="stat-lbl">Total Flows' + failedNote + '</div><div class="stat-sub">+' + lastHourFlows.toLocaleString() + ' last hr</div></div>' +
-                '<div class="probe-summary-stat"><div class="stat-val">' + totalPings.toLocaleString() + '</div><div class="stat-lbl">Total Pings' + failedNote + '</div><div class="stat-sub">+' + lastHourPings.toLocaleString() + ' last hr</div></div>';
+                '<div class="stat-card accent-blue">' +
+                    '<div class="stat-icon">📄</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Syslog' + failedNote + '</div>' +
+                        '<div class="stat-value">' + totalSyslog.toLocaleString() + '</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourSyslog.toLocaleString() + ' last hr</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="stat-card accent-green">' +
+                    '<div class="stat-icon">⚡</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Traps' + failedNote + '</div>' +
+                        '<div class="stat-value">' + totalTraps.toLocaleString() + '</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourTraps.toLocaleString() + ' last hr</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="stat-card accent-blue">' +
+                    '<div class="stat-icon">🔄</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Flows' + failedNote + '</div>' +
+                        '<div class="stat-value">' + totalFlows.toLocaleString() + '</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourFlows.toLocaleString() + ' last hr</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="stat-card accent-green">' +
+                    '<div class="stat-icon">📶</div>' +
+                    '<div class="stat-content">' +
+                        '<div class="stat-label">Pings' + failedNote + '</div>' +
+                        '<div class="stat-value">' + totalPings.toLocaleString() + '</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourPings.toLocaleString() + ' last hr</div>' +
+                    '</div>' +
+                '</div>';
         }
 
         // AUDIT-064: one batched request for all approved probes instead of an
         // N+1 (one /probes/:id/stats per probe — 20 probes = 20 round-trips).
         var ids = approvedProbes.map(function(p) { return p.id; });
         AC.apiFetch(API_BASE + '/probes/stats?ids=' + ids.join(',')).then(function(r) {
+            probeStatsMap = {};
             (r && r.data ? r.data : []).forEach(function(d) {
                 var lh = d.last_hour || {};
                 totalSyslog += d.syslog || 0;
@@ -56,8 +114,11 @@
                 lastHourTraps += lh.traps || 0;
                 lastHourFlows += lh.flows || 0;
                 lastHourPings += lh.pings || 0;
+
+                probeStatsMap[d.probe_id] = d;
             });
             renderSummary();
+            renderProbes(currentProbes);
         }).catch(function() {
             failed = approvedProbes.length;
             renderSummary();
@@ -86,33 +147,93 @@
     }
 
     function renderProbes(probes) {
-        var tbody = document.querySelector('#probes-table tbody');
+        var grid = document.getElementById('probes-grid');
+        if (!grid) return;
         if (probes.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="loading">No probes configured</td></tr>';
+            grid.innerHTML = '<div class="col-span-full card text-center p-8 text-[#8b949e]">No probes configured</div>';
             return;
         }
-        tbody.innerHTML = probes.map(function(p) {
+        grid.innerHTML = probes.map(function(p) {
             var approvalStatus = p.approval_status || 'pending';
             var lastSeen = p.last_seen && p.last_seen !== '0001-01-01T00:00:00Z'
                 ? AC.formatDate(p.last_seen) : 'Never';
-            var html = '<tr>' +
-                '<td><strong>' + AC.escapeHtml(p.name) + '</strong>' +
-                (p.description ? '<br><span class="info-text">' + AC.escapeHtml(p.description) + '</span>' : '') +
-                '</td>' +
-                '<td>' + AC.escapeHtml(p.site ? p.site.name : '-') + '</td>' +
-                '<td><span class="badge ' + AC.escapeHtml(p.status) + '">' + AC.escapeHtml(p.status || 'offline').toUpperCase() + '</span></td>' +
-                '<td><span class="badge ' + AC.escapeHtml(approvalStatus) + '">' + AC.escapeHtml(approvalStatus).toUpperCase() + '</span></td>' +
-                '<td>' + lastSeen + '</td>' +
-                '<td class="actions">' +
-                '<button class="btn sm info" data-action="deploy-info" data-id="' + p.id + '">Deploy Info</button>';
+            
+            var statusBadge = '';
+            if (p.status === 'online' || p.status === 'up') {
+                statusBadge = '<span class="badge online">ONLINE</span>';
+            } else if (p.status === 'offline' || p.status === 'down') {
+                statusBadge = '<span class="badge offline">OFFLINE</span>';
+            } else {
+                statusBadge = '<span class="badge unknown">' + (p.status || 'OFFLINE').toUpperCase() + '</span>';
+            }
+
+            var approvalBadge = '';
+            if (approvalStatus === 'approved') {
+                approvalBadge = '<span class="badge approved">APPROVED</span>';
+            } else if (approvalStatus === 'rejected') {
+                approvalBadge = '<span class="badge rejected">REJECTED</span>';
+            } else {
+                approvalBadge = '<span class="badge pending">PENDING</span>';
+            }
+
+            var stats = probeStatsMap[p.id];
+            var statsHtml = '';
+            if (stats && approvalStatus === 'approved') {
+                statsHtml = '<div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin:12px 0;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:8px;">' +
+                    '<div style="text-align:center;">' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Logs</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.syslog || 0).toLocaleString() + '</div>' +
+                    '</div>' +
+                    '<div style="text-align:center;">' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Traps</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.traps || 0).toLocaleString() + '</div>' +
+                    '</div>' +
+                    '<div style="text-align:center;">' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Flows</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.flows || 0).toLocaleString() + '</div>' +
+                    '</div>' +
+                    '<div style="text-align:center;">' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Pings</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.pings || 0).toLocaleString() + '</div>' +
+                    '</div>' +
+                '</div>';
+            } else {
+                statsHtml = '<div style="height:12px;"></div>';
+            }
+
+            var desc = p.description ? AC.escapeHtml(p.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
+
+            var buttons = '<button class="btn sm secondary" data-action="deploy-info" data-id="' + p.id + '">Deploy Info</button>';
             if (approvalStatus === 'pending') {
-                html += '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
+                buttons += '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
                     '<button class="btn sm danger" data-action="reject-probe" data-id="' + p.id + '">Reject</button>';
             }
-            html += '<button class="btn sm secondary" data-action="edit-probe" data-id="' + p.id + '">Edit</button>' +
-                '<button class="btn sm danger" data-action="delete-probe" data-id="' + p.id + '">Delete</button>' +
-                '</td></tr>';
-            return html;
+            buttons += '<button class="btn sm secondary" data-action="edit-probe" data-id="' + p.id + '">Edit</button>' +
+                '<button class="btn sm danger" data-action="delete-probe" data-id="' + p.id + '">Delete</button>';
+
+            return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:250px;padding:20px;">' +
+                '<div>' +
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
+                        '<h3 style="font-size:1.05rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + AC.escapeHtml(p.name) + '</h3>' +
+                        '<div style="display:flex;gap:4px;">' + statusBadge + approvalBadge + '</div>' +
+                    '</div>' +
+                    '<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:14px;min-height:36px;line-height:1.4;">' + desc + '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.03);border-radius:8px;padding:10px;">' +
+                        '<div style="display:flex;flex-direction:column;">' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Site</span>' +
+                            '<span style="font-size:0.8rem;font-weight:600;color:#e2e8f0;">' + AC.escapeHtml(p.site ? p.site.name : '-') + '</span>' +
+                        '</div>' +
+                        '<div style="display:flex;flex-direction:column;">' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Last Seen</span>' +
+                            '<span style="font-size:0.8rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + lastSeen + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                    statsHtml +
+                '</div>' +
+                '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;flex-wrap:wrap;">' +
+                    buttons +
+                '</div>' +
+            '</div>';
         }).join('');
     }
 

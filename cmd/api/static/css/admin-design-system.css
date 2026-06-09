@@ -984,7 +984,7 @@ select option, .form-group select option, .policy-rules-table select option {
 }
 
 /* Form inputs: upgrade to high-end inputs */
-input, select, textarea, .form-group input, .form-group select, .form-group textarea, .fwmon-flows-input, .fwmon-flows-select {
+input, select, textarea, .form-group input, .form-group select, .form-group textarea, .fwmon-flows-input, .fwmon-flows-select, .setting-item input, .setting-item select, .setting-item textarea {
     background: rgba(13, 17, 23, 0.6) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     border-radius: 8px !important;
@@ -994,7 +994,7 @@ input, select, textarea, .form-group input, .form-group select, .form-group text
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
-input:focus, select:focus, textarea:focus, .form-group input:focus, .form-group select:focus, .form-group textarea:focus, .fwmon-flows-input:focus, .fwmon-flows-select:focus {
+input:focus, select:focus, textarea:focus, .form-group input:focus, .form-group select:focus, .form-group textarea:focus, .fwmon-flows-input:focus, .fwmon-flows-select:focus, .setting-item input:focus, .setting-item select:focus, .setting-item textarea:focus {
     border-color: #7dd3fc !important;
     box-shadow: 0 0 12px rgba(125, 211, 252, 0.25) !important;
     outline: none !important;
@@ -1369,6 +1369,136 @@ tr:hover td, .vpn-detail-table tr:hover td, .tunnel-table tr:hover td {
 .escalation-hint {
     font-size: 0.78rem !important;
     color: #94a3b8 !important;
+}
+
+/* ============================================================
+ * Settings Page Premium Layout Overrides
+ * ============================================================ */
+#page-settings .card {
+    background: rgba(15, 23, 42, 0.35) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-radius: 12px !important;
+    padding: 24px !important;
+    margin-bottom: 20px !important;
+}
+
+#page-settings .card-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+    padding-bottom: 12px !important;
+    margin-bottom: 20px !important;
+}
+
+#page-settings .card-header h2 {
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    color: #f8fafc !important;
+    letter-spacing: -0.2px !important;
+    margin: 0 !important;
+}
+
+#page-settings .settings-grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+    gap: 16px !important;
+}
+
+#page-settings .setting-item {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+}
+
+#page-settings .setting-item label {
+    font-size: 0.82rem !important;
+    font-weight: 500 !important;
+    color: #94a3b8 !important;
+}
+
+#page-settings .toggle-row {
+    background: rgba(255, 255, 255, 0.015) !important;
+    border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    transition: all 0.2s ease !important;
+}
+
+#page-settings .toggle-row:hover {
+    background: rgba(255, 255, 255, 0.035) !important;
+    border-color: rgba(125, 211, 252, 0.15) !important;
+}
+
+#page-settings .toggle-row label {
+    margin: 0 !important;
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    color: #e2e8f0 !important;
+    cursor: pointer !important;
+}
+
+#page-settings .toggle-row input[type="checkbox"] {
+    accent-color: #7dd3fc !important;
+    width: 16px !important;
+    height: 16px !important;
+    cursor: pointer !important;
+}
+
+/* ============================================================
+ * Audit Logs Premium Layout & Tabular Styling
+ * ============================================================ */
+#audit-table {
+    width: 100% !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    font-size: 0.85rem !important;
+    color: #e2e8f0 !important;
+}
+
+#audit-table th {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    font-size: 0.75rem !important;
+    letter-spacing: 0.5px !important;
+    color: #64748b !important;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08) !important;
+    padding: 12px 16px !important;
+    text-align: left !important;
+    background: rgba(15, 23, 42, 0.2) !important;
+}
+
+#audit-table tr.audit-row {
+    transition: all 0.15s ease !important;
+}
+
+#audit-table tr.audit-row td {
+    padding: 14px 16px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+    vertical-align: middle !important;
+    background: transparent !important;
+}
+
+#audit-table tr.audit-row:hover td {
+    background: rgba(255, 255, 255, 0.02) !important;
+    color: #f8fafc !important;
+}
+
+#audit-table tr.audit-row:hover {
+    box-shadow: inset 4px 0 0 var(--fwmon-series-1) !important;
+}
+
+#audit-table tbody tr:last-child td {
+    border-bottom: none !important;
+}
+
+#audit-table .badge {
+    border-radius: 6px !important;
+    font-family: var(--fwmon-font-mono) !important;
+    font-weight: 600 !important;
+    padding: 3px 8px !important;
 }
 
 

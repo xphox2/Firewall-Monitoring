@@ -739,17 +739,16 @@
                 <div class="stat-card accent-blue"><div class="stat-label">Scheduled</div><div class="stat-value accent" id="mw-scheduled">--</div></div>
                 <div class="stat-card accent-gray"><div class="stat-label">Total</div><div class="stat-value" id="mw-total">--</div></div>
             </div>
-            <div class="card">
-                <div class="card-header">
-                    <h2>Maintenance Windows</h2>
-                    <button class="btn" data-action="show-maint-modal">+ Create Window</button>
+            <div class="flex justify-between items-center mb-6 mt-4">
+                <div>
+                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Maintenance Windows</h2>
+                    <p class="text-xs text-[#8b949e] mt-1">Schedule periods to suppress alerts for specific devices or sites.</p>
                 </div>
-                <div class="table-wrap">
-                    <table id="maintenance-table">
-                        <thead><tr><th>Name</th><th>Scope</th><th>Start</th><th>End</th><th>Recurring</th><th>Status</th><th>Actions</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
+                <button class="btn" data-action="show-maint-modal">+ Create Window</button>
+            </div>
+            
+            <div id="maintenance-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <!-- Dynamically populated card grid -->
             </div>
         </div>
 
@@ -837,17 +836,17 @@
                 <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
                 <div class="setting-item">
                     <label for="display-timezone">Timezone</label>
-                    <select id="display-timezone" name="display_timezone" style="width:100%;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.88rem;">
+                    <select id="display-timezone" name="display_timezone">
                     </select>
                 </div>
             </div>
             <div class="card">
                 <div class="card-header"><h2>Public Dashboard Display</h2></div>
                 <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">Control default widget visibility on the public dashboard. Users can also hide/show widgets locally via the Widgets menu.</p>
-                <div id="display-settings">
+                <div id="display-settings" class="settings-grid">
                     <div class="toggle-row"><label>Show VPN Tunnels</label><input type="checkbox" name="public_show_vpn"></div>
                     <div class="toggle-row"><label>Show Connection Map</label><input type="checkbox" name="public_show_connections"></div>
-                    <div class="setting-item" style="margin-top: 12px;">
+                    <div class="setting-item">
                         <label>Public Dashboard Refresh Interval (seconds)</label>
                         <input type="number" name="public_refresh_interval" value="30" min="10" max="300">
                     </div>

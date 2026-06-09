@@ -50,29 +50,22 @@
             </div>
         </div>
 
-        <div class="bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-base text-[#8b949e]">All Probes</h3>
-                <div class="flex gap-2.5 mb-5">
-                    <button class="filter-tab bg-[#238636] text-white border-none py-2 px-4 rounded-md cursor-pointer text-sm hover:bg-[#2ea043]" data-action="filter-probes" data-filter="all">All</button>
-                    <button class="filter-tab bg-[#21262d] border-none text-[#8b949e] py-2 px-4 rounded-md cursor-pointer text-sm hover:bg-[#30363d] hover:text-white" data-action="filter-probes" data-filter="pending">Pending</button>
-                    <button class="filter-tab bg-[#21262d] border-none text-[#8b949e] py-2 px-4 rounded-md cursor-pointer text-sm hover:bg-[#30363d] hover:text-white" data-action="filter-probes" data-filter="approved">Approved</button>
-                    <button class="filter-tab bg-[#21262d] border-none text-[#8b949e] py-2 px-4 rounded-md cursor-pointer text-sm hover:bg-[#30363d] hover:text-white" data-action="filter-probes" data-filter="rejected">Rejected</button>
+        <div class="card p-6 mb-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                <div>
+                    <h2 class="text-lg font-bold text-[#e6edf3] font-outfit" style="font-family: 'Outfit', sans-serif;">Configured Probes</h2>
+                    <p class="text-xs text-[#8b949e] mt-1">Deploy and monitor network collectors for syslog, SNMP traps, NetFlow, and ICMP.</p>
+                </div>
+                <div class="chart-range-pills">
+                    <button class="filter-tab chart-range-pill active" data-action="filter-probes" data-filter="all">All</button>
+                    <button class="filter-tab chart-range-pill" data-action="filter-probes" data-filter="pending">Pending</button>
+                    <button class="filter-tab chart-range-pill" data-action="filter-probes" data-filter="approved">Approved</button>
+                    <button class="filter-tab chart-range-pill" data-action="filter-probes" data-filter="rejected">Rejected</button>
                 </div>
             </div>
-            <table id="probes-table" class="w-full border-collapse">
-                <thead>
-                    <tr>
-                        <th class="py-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wide">Name</th>
-                        <th class="py-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wide">Site</th>
-                        <th class="py-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wide">Status</th>
-                        <th class="py-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wide">Approval</th>
-                        <th class="py-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wide">Last Seen</th>
-                        <th class="py-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-xs uppercase tracking-wide">Actions</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
+            <div id="probes-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <div class="col-span-full text-center py-8 text-[#8b949e]">Loading probes...</div>
+            </div>
         </div>
     </main>
 

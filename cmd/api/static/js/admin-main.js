@@ -3289,9 +3289,10 @@
     }
 
     function renderMaintenanceTable(windows) {
-        var tbody = document.querySelector('#maintenance-table tbody');
+        var grid = document.getElementById('maintenance-grid');
+        if (!grid) return;
         if (!windows.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-icon">&#128295;</div>No maintenance windows scheduled</td></tr>';
+            grid.innerHTML = '<div class="col-span-full card text-center p-8 text-[#8b949e]"><div style="font-size:2rem;margin-bottom:8px;">🔧</div>No maintenance windows scheduled</div>';
             return;
         }
         // Fetch device and site names for display
@@ -3320,22 +3321,33 @@
                 if (w.device_id) scope = deviceMap[w.device_id] || ('Device #' + w.device_id);
                 if (w.site_id) scope = siteMap[w.site_id] || ('Site #' + w.site_id);
 
-                return '<tr>' +
-                    '<td>' + escapeHtml(w.name) + '</td>' +
-                    '<td>' + escapeHtml(scope) + '</td>' +
-                    '<td>' + formatDate(w.start_time) + '</td>' +
-                    '<td>' + formatDate(w.end_time) + '</td>' +
-                    '<td>' + (w.recurring ? 'Yes' : 'No') + '</td>' +
-                    '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
-                    '<td><span class="maint-table-actions">' +
-                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button> ' +
+                return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:220px;padding:20px;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">' +
+                        '<h3 style="font-size:1.1rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(w.name) + '</h3>' +
+                        '<span class="badge ' + statusClass + '">' + status + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:0.82rem;color:#e2e8f0;margin-bottom:16px;">' +
+                        '<span style="color:#64748b;font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
+                        '<strong>' + escapeHtml(scope) + '</strong>' +
+                    '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
+                        '<div>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">Start</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.start_time) + '</span>' +
+                        '</div>' +
+                        '<div>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">End</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.end_time) + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
+                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button>' +
                         '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
-                    '</span></td>' +
-                '</tr>';
+                    '</div>' +
+                '</div>';
             }).join('');
-            tbody.innerHTML = html;
+            grid.innerHTML = html;
         }).catch(function() {
-            // Fallback: render with IDs if fetch fails
             var now = new Date();
             var html = windows.map(function(w) {
                 var start = new Date(w.start_time);
@@ -3347,20 +3359,33 @@
                 var scope = 'All Devices';
                 if (w.device_id) scope = 'Device #' + w.device_id;
                 if (w.site_id) scope = 'Site #' + w.site_id;
-                return '<tr>' +
-                    '<td>' + escapeHtml(w.name) + '</td>' +
-                    '<td>' + scope + '</td>' +
-                    '<td>' + formatDate(w.start_time) + '</td>' +
-                    '<td>' + formatDate(w.end_time) + '</td>' +
-                    '<td>' + (w.recurring ? 'Yes' : 'No') + '</td>' +
-                    '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
-                    '<td><span class="maint-table-actions">' +
-                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button> ' +
+
+                return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:220px;padding:20px;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">' +
+                        '<h3 style="font-size:1.1rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(w.name) + '</h3>' +
+                        '<span class="badge ' + statusClass + '">' + status + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:0.82rem;color:#e2e8f0;margin-bottom:16px;">' +
+                        '<span style="color:#64748b;font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
+                        '<strong>' + escapeHtml(scope) + '</strong>' +
+                    '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
+                        '<div>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">Start</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.start_time) + '</span>' +
+                        '</div>' +
+                        '<div>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">End</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.end_time) + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
+                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button>' +
                         '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
-                    '</span></td>' +
-                '</tr>';
+                    '</div>' +
+                '</div>';
             }).join('');
-            tbody.innerHTML = html;
+            grid.innerHTML = html;
         });
     }
 
