@@ -20,8 +20,11 @@ func RenderReportHTML(m ReportModel) (string, error) {
 }
 
 var reportTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
-	"upper": strings.ToUpper,
-	"dict":  templateDict,
+	"upper":                 strings.ToUpper,
+	"dict":                  templateDict,
+	"renderAlertChart":      RenderAlertTimelineSVG,
+	"renderThroughputChart": RenderThroughputChart,
+	"renderCPUMemChart":     RenderCPUMemSVGChart,
 }).Parse(reportTemplateSrc))
 
 // templateDict builds a map from alternating key/value args so sub-templates
@@ -138,16 +141,9 @@ const reportTemplateSrc = `
   <tr><td style="height:18px;line-height:18px;font-size:0;">&nbsp;</td></tr>
   <tr><td class="surface" style="background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:10px;padding:20px 24px;">
     <div style="font-size:15px;font-weight:700;color:#e6edf3;margin-bottom:14px;">Alert Timeline</div>
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="height:64px;"><tr>
-      {{range .AlertBuckets}}
-      <td valign="bottom" style="padding:0 1px;height:64px;">
-        <div style="background:{{if .Crit}}#fca5a5{{else}}#7dd3fc{{end}};height:{{.BarPct}}%;{{if .Count}}min-height:3px;{{end}}border-radius:2px 2px 0 0;"></div>
-      </td>
-      {{end}}
-    </tr></table>
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
-      {{range .AlertBuckets}}<td style="font-size:9px;color:#6e7681;text-align:left;white-space:nowrap;">{{.Label}}</td>{{end}}
-    </tr></table>
+    <div style="width:100%;overflow-x:auto;">
+      {{renderAlertChart .AlertBuckets}}
+    </div>
   </td></tr>
   {{end}}
 
@@ -239,11 +235,16 @@ const reportTemplateSrc = `
   <td align="right" style="vertical-align:middle;font-size:11px;color:#e6edf3;padding-left:10px;width:64px;">{{printf "%.2f%%" .UptimePct}}</td>
 </tr></table>
 
+<div style="font-size:11px;color:#8b949e;margin:14px 0 6px;">CPU &amp; Memory History</div>
+<div style="width:100%;overflow-x:auto;margin-bottom:14px;">
+  {{renderCPUMemChart . .Timezone}}
+</div>
+
 {{if .HasSparkline}}
-<div style="font-size:11px;color:#8b949e;margin:12px 0 4px;">Throughput</div>
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="height:40px;"><tr>
-  {{range .Sparkline}}<td valign="bottom" style="padding:0 1px;height:40px;"><div style="background:#7dd3fc;height:{{.HeightPct}}%;border-radius:1px;"></div></td>{{end}}
-</tr></table>
+<div style="font-size:11px;color:#8b949e;margin:14px 0 6px;">Throughput (Busiest Interface)</div>
+<div style="width:100%;overflow-x:auto;margin-bottom:14px;">
+  {{renderThroughputChart . .Timezone}}
+</div>
 {{end}}
 
 {{if .Talkers}}

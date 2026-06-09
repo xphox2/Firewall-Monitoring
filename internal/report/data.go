@@ -32,8 +32,14 @@ type DeviceReportData struct {
 	Spikes       []TrafficSpike
 
 	// Bandwidth (image-free, v0.10.236)
-	Talkers   []IfaceTraffic // top interfaces by bytes transferred
-	Sparkline []float64      // per-bucket throughput (bps) for the busiest interface
+	Talkers        []IfaceTraffic // top interfaces by bytes transferred
+	Sparkline      []float64      // per-bucket throughput (bps) for the busiest interface
+	SparklineTimes []time.Time    // timestamps for each bucket in the sparkline
+
+	// CPU & Memory trends (NOC daily report)
+	CPUHistory []float64   // downsampled CPU usage history
+	MemHistory []float64   // downsampled memory usage history
+	SysTimes   []time.Time // timestamps for the CPU/Mem history
 
 	// Uptime
 	UptimePct         float64
@@ -165,10 +171,28 @@ func GatherDeviceData(db *database.Database, device *models.Device, hours int, p
 		// Sparkline + spike detection run on the busiest interface only.
 		if idx == 0 {
 			data.Sparkline = series
+			data.SparklineTimes = times
 			if spikeThreshold > 0 {
 				data.Spikes = append(data.Spikes, detectSpikesInSeries(series, times, spikeThreshold, ti.Name)...)
 			}
 		}
+	}
+
+	// Get downsampled system status history for NOC charts (CPU/Mem trends)
+	if sysBuckets, err := db.GetSystemStatusBuckets(device.ID, rangeStr); err == nil {
+		var cpuHistory []float64
+		var memHistory []float64
+		var sysTimes []time.Time
+		for _, b := range sysBuckets {
+			cpuHistory = append(cpuHistory, b.CPUUsage)
+			memHistory = append(memHistory, b.MemoryUsage)
+			sysTimes = append(sysTimes, time.UnixMilli(b.BucketMillis))
+		}
+		data.CPUHistory = cpuHistory
+		data.MemHistory = memHistory
+		data.SysTimes = sysTimes
+	} else {
+		log.Printf("Report: failed to get system status buckets for %s: %v", device.Name, err)
 	}
 
 	// Uptime calculation

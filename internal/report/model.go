@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -74,10 +75,11 @@ type SpikeGroup struct {
 
 // AlertBucket is one column in the alert-frequency timeline.
 type AlertBucket struct {
-	Label  string
-	Count  int
-	BarPct int // 0..100, relative to the busiest bucket
-	Crit   bool
+	Label   string
+	Count   int
+	BarPct  int // 0..100, relative to the busiest bucket
+	Crit    bool
+	Tooltip string // Detailed text for hover tooltips
 }
 
 // SparkBar is one column in a device throughput sparkline.
@@ -87,23 +89,29 @@ type SparkBar struct {
 
 // DeviceCard is the per-device detail block.
 type DeviceCard struct {
-	Name         string
-	IPAddress    string
-	Status       string
-	Online       bool
-	CPUAvg       float64
-	CPUMax       float64
-	MemAvg       float64
-	MemMax       float64
-	DiskUsage    float64
-	UptimePct    float64
-	UptimeBarPct int
-	SessionCount int
-	AlertCount   int
-	Sparkline    []SparkBar
-	HasSparkline bool
-	Talkers      []TopTalker
-	Spikes       []SpikeGroup
+	Name           string
+	IPAddress      string
+	Status         string
+	Online         bool
+	CPUAvg         float64
+	CPUMax         float64
+	MemAvg         float64
+	MemMax         float64
+	DiskUsage      float64
+	UptimePct      float64
+	UptimeBarPct   int
+	SessionCount   int
+	AlertCount     int
+	Sparkline      []SparkBar
+	SparklineRaw   []float64
+	SparklineTimes []time.Time
+	CPUHistory     []float64
+	MemHistory     []float64
+	SysTimes       []time.Time
+	HasSparkline   bool
+	Talkers        []TopTalker
+	Spikes         []SpikeGroup
+	Timezone       string
 }
 
 // BuildReportModel assembles a ReportModel from gathered per-device data.
@@ -184,22 +192,28 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 		devGroups, _, _, _, _ := groupSpikes(devItems, loc, false, 6)
 
 		card := DeviceCard{
-			Name:         device.Name,
-			IPAddress:    device.IPAddress,
-			Status:       device.Status,
-			Online:       online,
-			CPUAvg:       dd.CPUAvg,
-			CPUMax:       dd.CPUMax,
-			MemAvg:       dd.MemAvg,
-			MemMax:       dd.MemMax,
-			DiskUsage:    dd.DiskUsage,
-			UptimePct:    dd.UptimePct,
-			UptimeBarPct: clampPct(dd.UptimePct),
-			SessionCount: dd.SessionCount,
-			AlertCount:   dd.AlertCount,
-			Talkers:      barsFromTalkers(device.Name, dd.Talkers, false),
-			Sparkline:    sparkline(dd.Sparkline),
-			Spikes:       devGroups,
+			Name:           device.Name,
+			IPAddress:      device.IPAddress,
+			Status:         device.Status,
+			Online:         online,
+			CPUAvg:         dd.CPUAvg,
+			CPUMax:         dd.CPUMax,
+			MemAvg:         dd.MemAvg,
+			MemMax:         dd.MemMax,
+			DiskUsage:      dd.DiskUsage,
+			UptimePct:      dd.UptimePct,
+			UptimeBarPct:   clampPct(dd.UptimePct),
+			SessionCount:   dd.SessionCount,
+			AlertCount:     dd.AlertCount,
+			Talkers:        barsFromTalkers(device.Name, dd.Talkers, false),
+			Sparkline:      sparkline(dd.Sparkline),
+			SparklineRaw:   dd.Sparkline,
+			SparklineTimes: dd.SparklineTimes,
+			CPUHistory:     dd.CPUHistory,
+			MemHistory:     dd.MemHistory,
+			SysTimes:       dd.SysTimes,
+			Spikes:         devGroups,
+			Timezone:       tz,
 		}
 		card.HasSparkline = len(card.Sparkline) > 0
 		m.Devices = append(m.Devices, card)
@@ -453,20 +467,36 @@ func bucketAlerts(alerts []models.Alert, hours int) []AlertBucket {
 
 	buckets := make([]AlertBucket, 0, numBuckets)
 	for i := 0; i < numBuckets; i++ {
+		t := start.Add(time.Duration(i) * bucketDuration)
 		label := ""
 		if i%6 == 0 {
-			t := start.Add(time.Duration(i) * bucketDuration)
 			if bucketDuration >= 24*time.Hour {
 				label = t.Format("Jan 2")
 			} else {
 				label = t.Format("15:04")
 			}
 		}
+
+		var toolTip string
+		if bucketDuration >= 24*time.Hour {
+			toolTip = fmt.Sprintf("Date: %s\nAlerts: %d", t.Format("Jan 2, 2006"), counts[i])
+		} else {
+			toolTip = fmt.Sprintf("Time: %s\nAlerts: %d", t.Format("Jan 2, 15:04"), counts[i])
+		}
+		if counts[i] > 0 {
+			if crit[i] {
+				toolTip += " (Critical)"
+			} else {
+				toolTip += " (Warning)"
+			}
+		}
+
 		buckets = append(buckets, AlertBucket{
-			Label:  label,
-			Count:  counts[i],
-			BarPct: pctOf(float64(counts[i]), float64(maxCount)),
-			Crit:   crit[i],
+			Label:   label,
+			Count:   counts[i],
+			BarPct:  pctOf(float64(counts[i]), float64(maxCount)),
+			Crit:    crit[i],
+			Tooltip: toolTip,
 		})
 	}
 	return buckets
