@@ -27,7 +27,7 @@
     // `hours` value drives both the stats fetch and is mirrored back to the
     // pill bar via FwmonControls. Sentinel of 0/'' means "default" and is
     // stripped from the URL by FwmonControls.syncURL.
-    var analyticsPages = { syslog: null, alerts: null, traps: null };
+    var analyticsPages = { syslog: null, alerts: null, traps: null, audit: null };
     var alertsOffset = 0;
     var trapsOffset = 0;
     var chartInstances = {};
@@ -124,6 +124,7 @@
             case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
             case 'alert-policies': loadAlertPolicies(); break;
             case 'maintenance': loadMaintenance(); break;
+            case 'audit': wireAuditAnalyticsPage(); loadAuditLogs(); break;
         }
     }
 
@@ -1151,6 +1152,180 @@
             AC.showError('Failed to load more syslog');
         });
     }
+
+    // ---- Audit Logs ----
+    var auditOffset = 0;
+    var auditTotalCount = 0;
+    var currentAuditLogs = [];
+
+    function wireAuditAnalyticsPage() {
+        if (!window.FwmonControls) return;
+        if (analyticsPages.audit) {
+            analyticsPages.audit.refresh();
+            return;
+        }
+        analyticsPages.audit = FwmonControls.attachAnalyticsPage({
+            page: 'audit',
+            rangePillsId: 'audit-range-pills',
+            chipsId: 'audit-active-chips',
+            defaults: { hours: 24, actor: '', action: '' },
+            inputs: [
+                { id: 'audit-filter-actor',  stateKey: 'actor',  chipKey: 'actor' },
+                { id: 'audit-filter-action', stateKey: 'action', chipKey: 'action' }
+            ],
+            selects: [],
+            onChange: function() { loadAuditLogs(); }
+        });
+    }
+
+    function loadAuditLogs() {
+        auditOffset = 0;
+        var params = buildAuditParams(10);
+        apiFetch(API_BASE + '/audit?' + params).then(function(result) {
+            if (!result) return;
+            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            currentAuditLogs = logs;
+            renderAuditTable(logs, false);
+            auditOffset = logs.length;
+            updateAuditPagination(logs.length, total);
+        }).catch(function(e) {
+            fwmonLog.error('Failed to load audit logs:', e);
+            AC.showError('Failed to load audit logs');
+        });
+    }
+
+    function buildAuditParams(limit) {
+        var parts = ['limit=' + limit];
+        var s = analyticsPages.audit && analyticsPages.audit.getState();
+        var actor = document.getElementById('audit-filter-actor');
+        var action = document.getElementById('audit-filter-action');
+        if (s && s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
+        if (actor && actor.value) parts.push('actor=' + encodeURIComponent(actor.value.trim()));
+        if (action && action.value) parts.push('action=' + encodeURIComponent(action.value.trim()));
+        return parts.join('&');
+    }
+
+    function renderAuditTable(logs, append) {
+        var tbody = document.querySelector('#audit-table tbody');
+        if (!tbody) return;
+        
+        var html = logs.map(function(log) {
+            var statusClass = 'unknown';
+            if (log.status >= 200 && log.status < 300) {
+                statusClass = 'online';
+            } else if (log.status >= 400) {
+                statusClass = 'offline';
+            }
+            
+            return '<tr class="audit-row" data-id="' + log.id + '">' +
+                '<td>' + formatDate(log.created_at) + '</td>' +
+                '<td><span style="font-weight:600;color:#e6edf3;">' + escapeHtml(log.actor) + '</span></td>' +
+                '<td><span class="badge ' + (log.method === 'DELETE' ? 'error' : (log.method === 'POST' ? 'success' : 'info')) + '">' + escapeHtml(log.method) + '</span></td>' +
+                '<td style="font-family:monospace;color:#8b949e;font-size:0.82rem;">' + escapeHtml(log.action) + '</td>' +
+                '<td style="font-family:monospace;font-size:0.82rem;">' + escapeHtml(log.target || '—') + '</td>' +
+                '<td><span class="badge ' + statusClass + '">' + log.status + '</span></td>' +
+                '<td>' + escapeHtml(log.ip_address) + '</td>' +
+                '</tr>';
+        }).join('');
+        
+        if (append) {
+            tbody.innerHTML += html;
+        } else {
+            tbody.innerHTML = html || '<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px;">No audit records found</td></tr>';
+        }
+        
+        tbody.querySelectorAll('.audit-row').forEach(function(row) {
+            row.addEventListener('click', function() {
+                var id = row.getAttribute('data-id');
+                showAuditDetail(id);
+            });
+            row.style.cursor = 'pointer';
+        });
+    }
+
+    function updateAuditPagination(count, total) {
+        auditTotalCount = total;
+        var info = document.getElementById('audit-page-info');
+        var prevBtn = document.getElementById('audit-prev');
+        var nextBtn = document.getElementById('audit-next');
+        if (!info || !prevBtn || !nextBtn) return;
+        
+        if (total === 0) {
+            info.textContent = 'No records';
+            prevBtn.disabled = true;
+            nextBtn.disabled = true;
+            return;
+        }
+        
+        var from = auditOffset - count + 1;
+        var to = auditOffset;
+        var totalPages = Math.ceil(total / 10);
+        var currentPage = Math.ceil(auditOffset / 10);
+        
+        info.innerHTML = 'Showing ' + from + '-' + to + ' of ' + total.toLocaleString();
+        prevBtn.disabled = (currentPage <= 1);
+        nextBtn.disabled = (auditOffset >= total);
+    }
+
+    function prevAudit() {
+        if (auditOffset <= 10) return;
+        auditOffset -= 20;
+        if (auditOffset < 0) auditOffset = 0;
+        var params = buildAuditParams(10);
+        apiFetch(API_BASE + '/audit?' + params + '&offset=' + auditOffset).then(function(result) {
+            if (!result) return;
+            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            currentAuditLogs = logs;
+            renderAuditTable(logs, false);
+            auditOffset += logs.length;
+            updateAuditPagination(logs.length, total);
+        }).catch(function(e) {
+            fwmonLog.error('Failed to load prev audit logs:', e);
+            AC.showError('Failed to load prev audit logs');
+        });
+    }
+
+    function nextAudit() {
+        var params = buildAuditParams(10);
+        apiFetch(API_BASE + '/audit?' + params + '&offset=' + auditOffset).then(function(result) {
+            if (!result) return;
+            var logs = (result.data && result.data.audit_logs) ? result.data.audit_logs : [];
+            var total = (result.data && result.data.total) ? result.data.total : 0;
+            if (logs.length > 0) {
+                currentAuditLogs = logs;
+                renderAuditTable(logs, false);
+                auditOffset += logs.length;
+                updateAuditPagination(logs.length, total);
+            }
+        }).catch(function(e) {
+            fwmonLog.error('Failed to load next audit logs:', e);
+            AC.showError('Failed to load next audit logs');
+        });
+    }
+
+    function showAuditDetail(id) {
+        var log = currentAuditLogs.find(function(l) { return String(l.id) === String(id); });
+        if (!log) return;
+        
+        var body = document.getElementById('audit-detail-body');
+        if (!body) return;
+        
+        var parsedHtml = 
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Timestamp</span>' + formatDate(log.created_at) + '</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Actor</span>' + escapeHtml(log.actor) + ' (ID: ' + log.actor_id + ')</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Action Route</span><span style="font-family:monospace;font-size:0.85rem;color:#58a6ff;">' + escapeHtml(log.method) + ' ' + escapeHtml(log.action) + '</span></div>' +
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Target Parameters</span><div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + (log.target ? escapeHtml(log.target) : 'None') + '</div></div>' +
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Status</span><span class="badge ' + (log.status >= 200 && log.status < 300 ? 'online' : 'offline') + '">' + log.status + '</span></div>' +
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">IP Address</span>' + escapeHtml(log.ip_address) + '</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">User Agent</span><div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:0.85rem;word-break:break-all;color:#8b949e;">' + escapeHtml(log.user_agent) + '</div></div>';
+            
+        body.innerHTML = parsedHtml;
+        AC.openModal('audit-detail-modal');
+    }
+
+    function closeAuditDetail() { AC.closeModal('audit-detail-modal'); }
 
     // ---- Flows ----
     // ensureFlowFilterLists — populate the device + probe <select> dropdowns
@@ -2797,7 +2972,7 @@
         // never reach this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
-            'alert-policies':'alert-policies', 'maintenance':'maintenance' };
+            'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit' };
         var page = pageMap[lastSegment];
         if (page) {
             document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
@@ -3429,6 +3604,10 @@
         'load-more-traps': function() { loadMoreTraps(); },
         'prev-syslog': function() { prevSyslog(); },
         'next-syslog': function() { nextSyslog(); },
+        'prev-audit': function() { prevAudit(); },
+        'next-audit': function() { nextAudit(); },
+        'refresh-audit': function() { loadAuditLogs(); },
+        'close-audit-detail': function() { closeAuditDetail(); },
         'change-password': function() { changePassword(); },
         'save-settings': function() { saveSettings(); },
         'test-email': function() { testEmail(); },
@@ -3649,7 +3828,7 @@
     // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, interfaces:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, alerts:1, traps:1,
-        'alert-policies':1, maintenance:1 };
+        'alert-policies':1, maintenance:1, audit:1 };
 
     document.addEventListener('click', function(ev) {
         if (ev.button !== 0) return;                        // not a primary click

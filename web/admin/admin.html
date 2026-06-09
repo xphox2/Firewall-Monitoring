@@ -923,6 +923,60 @@
                 <iframe id="report-frame" title="Report preview" style="width:100%;height:900px;border:0;background:#0d1117;border-radius:8px;display:block;"></iframe>
             </div>
         </div>
+
+        <!-- Audit Logs Page -->
+        <div class="page" id="page-audit">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">Audit Logs</h2>
+                    <div class="chart-range-pills" id="audit-range-pills">
+                        <button type="button" class="chart-range-pill" data-range="1">1h</button>
+                        <button type="button" class="chart-range-pill" data-range="6">6h</button>
+                        <button type="button" class="chart-range-pill" data-range="12">12h</button>
+                        <button type="button" class="chart-range-pill active" data-range="24">24h</button>
+                        <button type="button" class="chart-range-pill" data-range="168">7d</button>
+                        <button type="button" class="chart-range-pill" data-range="720">30d</button>
+                    </div>
+                </div>
+                <div class="fwmon-flows-header-right">
+                    <div class="fwmon-chips" id="audit-active-chips"></div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h2>Admin Actions Trail</h2>
+                </div>
+                <div class="filter-bar">
+                    <input type="text" class="search-input" id="audit-filter-actor" placeholder="Actor (username)..." autocomplete="one-time-code">
+                    <input type="text" class="search-input" id="audit-filter-action" placeholder="Action route..." autocomplete="one-time-code">
+                    <button class="btn secondary sm" id="audit-refresh-btn" data-action="refresh-audit">Refresh</button>
+                </div>
+                <div class="table-wrap" style="max-height: 600px;">
+                    <table id="audit-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Actor</th>
+                                <th>Method</th>
+                                <th>Action</th>
+                                <th>Target Params</th>
+                                <th>Status</th>
+                                <th>IP Address</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="audit-pagination" style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span id="audit-page-info" style="font-size: 0.82rem; color: #8b949e;"></span>
+                    <div>
+                        <button class="btn secondary sm" id="audit-prev" data-action="prev-audit">Prev</button>
+                        <button class="btn secondary sm" id="audit-next" data-action="next-audit">Next</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <!-- AUDIT-069: static modals carry role="dialog" aria-modal="true"
@@ -1234,6 +1288,22 @@
             <div id="alert-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;"></div>
             <div class="modal-footer">
                 <button type="button" class="btn secondary" data-action="close-alert-detail">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Detail Modal -->
+    <div class="modal" id="audit-detail-modal" role="dialog" aria-modal="true" aria-labelledby="audit-detail-modal-title">
+        <div class="modal-content" style="max-width:600px">
+            <div class="modal-header">
+                <h2 id="audit-detail-modal-title">Audit Log Detail</h2>
+                <button class="modal-close" data-action="close-audit-detail">&times;</button>
+            </div>
+            <div id="audit-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;">
+                <!-- Filled dynamically -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn secondary" data-action="close-audit-detail">Close</button>
             </div>
         </div>
     </div>

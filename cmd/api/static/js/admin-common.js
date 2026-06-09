@@ -893,7 +893,7 @@
             var pageMap = { 'dashboard':'', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
                 'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
-                'probe-pending':'probe-pending', 'irc':'irc' };
+                'probe-pending':'probe-pending', 'irc':'irc', 'audit':'audit' };
             currentPage = pageMap[lastSegment] || 'dashboard';
         }
 
@@ -901,7 +901,7 @@
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;', 'interfaces': '&#8646;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
-            'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;'
+            'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;', 'audit': '&#128203;'
         };
         // AUDIT-057: the active link gets aria-current="page" (so screen readers
         // announce the current page) and every nav icon gets aria-hidden="true"
@@ -926,6 +926,7 @@
             '</div><div class="nav-section"><div class="nav-section-title">System</div>' +
             '<a class="nav-item' + (currentPage === 'reports' ? ' active" aria-current="page' : '') + '" href="/admin/reports"><span class="nav-icon" aria-hidden="true">' + pageIcons['reports'] + '</span> Reports</a>' +
             '<a class="nav-item' + (currentPage === 'settings' ? ' active" aria-current="page' : '') + '" href="/admin/settings"><span class="nav-icon" aria-hidden="true">' + pageIcons['settings'] + '</span> Settings</a>' +
+            '<a class="nav-item' + (currentPage === 'audit' ? ' active" aria-current="page' : '') + '" href="/admin/audit"><span class="nav-icon" aria-hidden="true">' + pageIcons['audit'] + '</span> Audit Logs</a>' +
             '<a class="nav-item' + (currentPage === 'irc' ? ' active" aria-current="page' : '') + '" href="/admin/irc"><span class="nav-icon" aria-hidden="true">' + pageIcons['irc'] + '</span> IRC</a>' +
             '</div>';
 
