@@ -476,8 +476,15 @@ document.getElementById('commandForm').addEventListener('submit', saveCommand);
 
 // Event delegation for data-action buttons and tabs
 document.addEventListener('click', function(e) {
-    var btn = e.target.closest('[data-action]');
+    var btn = e.target.closest('[data-action],[data-tab]');
     if (!btn) return;
+
+    var tab = btn.getAttribute('data-tab');
+    if (tab) {
+        switchTab(tab, btn);
+        return;
+    }
+
     var action = btn.getAttribute('data-action');
     var id = btn.getAttribute('data-id');
     if (id) id = parseInt(id, 10);
@@ -505,10 +512,6 @@ document.addEventListener('click', function(e) {
         case 'edit-command': editCommand(id); break;
         case 'delete-command': deleteCommand(id); break;
     }
-
-    // Tab switching
-    var tab = btn.getAttribute('data-tab');
-    if (tab) switchTab(tab, btn);
 });
 
 async function saveCommand(e) {
