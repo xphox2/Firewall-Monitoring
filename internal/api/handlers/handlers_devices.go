@@ -529,14 +529,12 @@ func (h *Handler) GetInterfaceChart(c *gin.Context) {
 		return
 	}
 
-	rangeStr := c.DefaultQuery("range", "24h")
-	validRanges := map[string]bool{"24h": true, "7d": true, "30d": true, "90d": true}
-	if !validRanges[rangeStr] {
-		c.JSON(http.StatusBadRequest, response.Error("Invalid range: must be 24h, 7d, 30d, or 90d"))
-		return
-	}
-
-	buckets, err := db.GetInterfaceChartData(uint(deviceIDUint), ifIndexInt, rangeStr)
+	// Window resolution (v0.10.410): an explicit from/to pair (epoch ms, from
+	// the drag-to-zoom selection) re-queries that sub-window at finer
+	// resolution; otherwise the range preset maps to [now-dur, now]. Adaptive
+	// bucketing keeps the point count readable at every zoom level.
+	from, to := httputil.ParseChartWindow(c, "24h")
+	buckets, err := db.GetInterfaceChartWindow(uint(deviceIDUint), ifIndexInt, from, to)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get chart data", err)
 		return

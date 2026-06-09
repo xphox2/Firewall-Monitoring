@@ -11,10 +11,14 @@
     var ifaceCharts = {};
     var currentChartRange = '24h';
     var currentChartView = 'rate'; // 'rate' | 'total' | 'mix' — shared 3-mode bandwidth view (matches public dashboard)
+    var ifaceWin = null;           // {from, to} epoch-ms when drag-zoomed; null = use the preset range
+    var ifaceBucketMs = {};        // ifIndex -> bucket_ms[] of the currently rendered series (for drag→time mapping)
     var tunnelCharts = {};
     var expandedTunnel = null;     // tunnel_name of the currently-expanded VPN row
     var currentTunnelRange = '24h';
     var currentTunnelView = 'rate';
+    var tunnelWin = null;          // {from, to} epoch-ms when drag-zoomed
+    var tunnelBucketMs = {};       // tunnel_name -> bucket_ms[]
     var statusHistoryChart = null;
     var statusHistoryPromise = null;
     var publicInterfaces = {}; // {"iface1":true,"iface2":true}
@@ -579,10 +583,12 @@
                 var ifaceControls = bwControlsHtml({
                     viewAction: 'set-iface-view',
                     rangeAction: 'load-iface-chart',
+                    resetAction: 'reset-iface-zoom',
                     dataAttr: 'data-index="' + iface.index + '"',
                     view: currentChartView,
                     range: currentChartRange,
-                    ranges: ['24h', '7d', '30d', '90d']
+                    ranges: ['24h', '7d', '30d', '90d'],
+                    win: ifaceWin
                 });
                 html += '<tr class="expand-row"><td colspan="11">' +
                     '<div class="expand-content">' +
@@ -617,12 +623,16 @@
     }
 
     function toggleExpand(ifIndex) {
-        expandedIfIndex = expandedIfIndex === ifIndex ? null : ifIndex;
+        var wasExpanded = expandedIfIndex === ifIndex;
+        expandedIfIndex = wasExpanded ? null : ifIndex;
+        ifaceWin = null; // a drag-zoom window belongs to one interface — reset on expand/collapse
         filterIfaces(currentFilter);
     }
 
     function toggleTunnel(name) {
-        expandedTunnel = expandedTunnel === name ? null : name;
+        var wasExpanded = expandedTunnel === name;
+        expandedTunnel = wasExpanded ? null : name;
+        tunnelWin = null; // window belongs to one tunnel — reset on expand/collapse
         renderVPN();
     }
 
@@ -647,71 +657,125 @@
         var rangeBtns = '';
         for (var ri = 0; ri < cfg.ranges.length; ri++) {
             var r = cfg.ranges[ri];
-            rangeBtns += '<button class="range-btn' + (cfg.range === r ? ' active' : '') +
+            // When a drag-zoom window is active no preset is "active"; clicking a
+            // preset exits the zoom (handled in the range action).
+            var rActive = (!cfg.win && cfg.range === r) ? ' active' : '';
+            rangeBtns += '<button class="range-btn' + rActive +
                 '" data-action="' + cfg.rangeAction + '" ' + cfg.dataAttr + ' data-range="' + r + '">' + r + '</button>';
+        }
+        // Drag-zoom indicator + reset, shown only while a custom window is active.
+        var zoomChip = '';
+        if (cfg.win) {
+            zoomChip = '<span class="bw-chart-controls-sep"></span>' +
+                '<span class="bw-zoom-chip" title="Showing a drag-selected window">' +
+                '<span class="bw-zoom-ico" aria-hidden="true">&#128269;</span>' +
+                '<span class="bw-zoom-range">' + esc(winLabel(cfg.win.from, cfg.win.to)) + '</span>' +
+                '<button class="bw-zoom-reset" data-action="' + cfg.resetAction + '" ' + cfg.dataAttr +
+                ' title="Reset zoom to the selected range">&times;</button>' +
+                '</span>';
         }
         return '<div class="bw-chart-controls">' +
             '<div class="chart-range-btns" role="group" aria-label="Display mode">' + viewBtns + '</div>' +
             '<span class="bw-chart-controls-sep"></span>' +
             '<div class="chart-range-btns" role="group" aria-label="Time range">' + rangeBtns + '</div>' +
+            zoomChip +
+            '<span class="bw-chart-hint">drag on chart to zoom</span>' +
         '</div>';
     }
 
-    // Nominal bucket width (seconds) per range — must mirror the server-side
-    // TimeBucket granularity in internal/database/charts.go so the client can
-    // turn cumulative-counter deltas into Mbps. Same convention the report
-    // module (internal/report/data.go computeTraffic) uses.
-    function ifaceBucketSeconds(range) {
-        if (range === '90d') return 86400;       // day buckets
-        if (range === '7d' || range === '30d') return 3600; // hour buckets
-        return 60;                                // 24h → minute buckets
-    }
-    function tunnelBucketSeconds(range) {
-        if (range === '7d' || range === '30d') return 3600; // hour buckets
-        return 60;                                // 1h / 24h → minute buckets
+    // winLabel renders a compact "Jun 9 14:00 – 15:30" label for a drag-zoom
+    // window. bucket_ms encodes the server wall clock as a UTC epoch (it comes
+    // from parsing the dialect's to_char/strftime output), so format in UTC to
+    // recover that same wall clock — matching the chart's x-axis tick labels.
+    function winLabel(fromMs, toMs) {
+        var f = new Date(fromMs), t = new Date(toMs);
+        var dOpts = { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        var tOpts = { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' };
+        var sameDay = f.getUTCFullYear() === t.getUTCFullYear() && f.getUTCMonth() === t.getUTCMonth() && f.getUTCDate() === t.getUTCDate();
+        try {
+            return f.toLocaleString([], dOpts) + ' – ' + (sameDay ? t.toLocaleTimeString([], tOpts) : t.toLocaleString([], dOpts));
+        } catch (e) {
+            return '';
+        }
     }
 
-    function bucketLabel(b, range) {
-        if (!b) return '';
-        if (range === '90d') return b.substring(5);            // MM-DD
-        if (range === '30d' || range === '7d') return b.substring(5, 13); // MM-DD HH
-        return b.substring(11, 16);                            // HH:MM
+    // Each chart row carries an epoch-ms bucket timestamp (bucket_ms) from the
+    // server's adaptive bucketing. We derive the per-bucket interval (for the
+    // Mbps math) directly from consecutive bucket_ms gaps rather than a fixed
+    // per-range constant — this stays correct no matter which adaptive bucket
+    // size the window resolved to, and tolerates sparse/missing buckets.
+
+    // medianIntervalSec returns the median positive gap (seconds) between
+    // consecutive bucket timestamps — a robust fallback for the first bucket
+    // and for any gap we can't measure directly.
+    function medianIntervalSec(ms) {
+        var diffs = [];
+        for (var i = 1; i < ms.length; i++) {
+            var d = ms[i] - ms[i - 1];
+            if (d > 0) diffs.push(d);
+        }
+        if (diffs.length === 0) return 60;
+        diffs.sort(function(a, b) { return a - b; });
+        return diffs[Math.floor(diffs.length / 2)] / 1000;
+    }
+
+    // makeLabels formats x-axis tick labels from the bucket strings. The dialect
+    // emits "YYYY-MM-DD HH:MM" (sub-day) or "YYYY-MM-DD" (day). Across a
+    // multi-day span we include the date so ticks aren't ambiguous.
+    function makeLabels(data, spanMs) {
+        var multiDay = spanMs > 36 * 3600 * 1000;
+        return data.map(function(d) {
+            var b = d.bucket || '';
+            if (b.length <= 10) return b.substring(5);   // MM-DD (day bucket)
+            if (multiDay) return b.substring(5, 13);     // MM-DD HH
+            return b.substring(11, 16);                  // HH:MM
+        });
+    }
+
+    function bucketMsArray(data) {
+        return data.map(function(d) { return Number(d.bucket_ms) || 0; });
     }
 
     // Interface chart rows carry cumulative SNMP octet counters (AVG per
     // bucket). Transfer is the consecutive-bucket delta (clamped >= 0 across
-    // counter resets/wraps); throughput is that delta over the nominal bucket
-    // window. This matches internal/report computeTraffic exactly.
-    function normalizeIfaceSeries(data, range) {
-        var secs = ifaceBucketSeconds(range);
-        var s = { labels: [], rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
+    // counter resets/wraps); throughput is that delta over the actual bucket
+    // interval. Mirrors internal/report computeTraffic, but interval-accurate.
+    function normalizeIfaceSeries(data) {
+        var ms = bucketMsArray(data);
+        var span = ms.length > 1 ? (ms[ms.length - 1] - ms[0]) : 0;
+        var medSec = medianIntervalSec(ms);
+        var s = { labels: makeLabels(data, span), bucketMs: ms, rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
         for (var i = 0; i < data.length; i++) {
-            s.labels.push(bucketLabel(data[i].bucket, range));
             if (i === 0) { s.rxTransfer.push(0); s.txTransfer.push(0); s.rxRate.push(0); s.txRate.push(0); continue; }
             var dRx = data[i].in_bytes - data[i - 1].in_bytes; if (dRx < 0) dRx = 0;
             var dTx = data[i].out_bytes - data[i - 1].out_bytes; if (dTx < 0) dTx = 0;
+            var sec = (ms[i] > ms[i - 1]) ? (ms[i] - ms[i - 1]) / 1000 : medSec;
+            if (!(sec > 0)) sec = medSec;
             s.rxTransfer.push(dRx);
             s.txTransfer.push(dTx);
-            s.rxRate.push(dRx * 8 / secs / 1e6);
-            s.txRate.push(dTx * 8 / secs / 1e6);
+            s.rxRate.push(dRx * 8 / sec / 1e6);
+            s.txRate.push(dTx * 8 / sec / 1e6);
         }
         return s;
     }
 
     // VPN tunnel chart rows already arrive as per-bucket deltas (the server's
-    // GetVPNChartData uses LAG() + SUM to emit bytes-transferred-per-bucket),
-    // so transfer is the value as-is; throughput divides by the bucket window.
-    function normalizeTunnelSeries(data, range) {
-        var secs = tunnelBucketSeconds(range);
-        var s = { labels: [], rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
+    // GetVPNChartWindow uses LAG() + SUM to emit bytes-transferred-per-bucket),
+    // so transfer is the value as-is; throughput divides by the bucket interval.
+    function normalizeTunnelSeries(data) {
+        var ms = bucketMsArray(data);
+        var span = ms.length > 1 ? (ms[ms.length - 1] - ms[0]) : 0;
+        var medSec = medianIntervalSec(ms);
+        var s = { labels: makeLabels(data, span), bucketMs: ms, rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
         for (var i = 0; i < data.length; i++) {
-            s.labels.push(bucketLabel(data[i].bucket, range));
             var dRx = data[i].in_bytes < 0 ? 0 : data[i].in_bytes;
             var dTx = data[i].out_bytes < 0 ? 0 : data[i].out_bytes;
+            var sec = (i > 0 && ms[i] > ms[i - 1]) ? (ms[i] - ms[i - 1]) / 1000 : medSec;
+            if (!(sec > 0)) sec = medSec;
             s.rxTransfer.push(dRx);
             s.txTransfer.push(dTx);
-            s.rxRate.push(dRx * 8 / secs / 1e6);
-            s.txRate.push(dTx * 8 / secs / 1e6);
+            s.rxRate.push(dRx * 8 / sec / 1e6);
+            s.txRate.push(dTx * 8 / sec / 1e6);
         }
         return s;
     }
@@ -722,6 +786,13 @@
         ctx2.fillStyle = '#484f58';
         ctx2.font = '11px sans-serif';
         ctx2.fillText(msg, 10, 30);
+    }
+
+    // chartQuery builds the chart endpoint query string: an explicit drag-zoom
+    // window (from/to epoch ms) takes precedence over the preset range.
+    function chartQuery(win, range) {
+        if (win) return 'from=' + win.from + '&to=' + win.to;
+        return 'range=' + range;
     }
 
     function loadInterfaceChart(ifIndex, range) {
@@ -736,25 +807,40 @@
             delete ifaceCharts[ifIndex];
         }
 
-        fetch('/admin/api/devices/' + deviceId + '/interfaces/' + ifIndex + '/chart?range=' + range, { credentials: 'same-origin' })
+        fetch('/admin/api/devices/' + deviceId + '/interfaces/' + ifIndex + '/chart?' + chartQuery(ifaceWin, range), { credentials: 'same-origin' })
             .then(function(resp) {
                 if (!resp.ok) return Promise.reject(new Error('Failed'));
                 return resp.json();
             })
             .then(function(result) {
                 if (!result.success || !result.data || result.data.length < 2) {
+                    ifaceBucketMs[ifIndex] = [];
                     drawChartMessage(canvas, 'Not enough history data');
                     return;
                 }
-                var s = normalizeIfaceSeries(result.data, range);
+                var s = normalizeIfaceSeries(result.data);
+                ifaceBucketMs[ifIndex] = s.bucketMs;
                 ifaceCharts[ifIndex] = FwmonBwChart.render(canvas, {
                     labels: s.labels,
                     rxRate: s.rxRate, txRate: s.txRate,
                     rxTransfer: s.rxTransfer, txTransfer: s.txTransfer,
-                    view: currentChartView, rxLabel: 'In', txLabel: 'Out'
+                    view: currentChartView, rxLabel: 'In', txLabel: 'Out',
+                    onZoomSelect: function(lo, hi) { zoomIfaceTo(ifIndex, lo, hi); }
                 });
             })
             .catch(function(e) { console.error('Failed to load interface chart:', e); });
+    }
+
+    // zoomIfaceTo maps the dragged category-index range to the bucket
+    // timestamps at those edges, sets the window, and re-queries the backend
+    // for exactly that span (at the finer adaptive bucket size).
+    function zoomIfaceTo(ifIndex, lo, hi) {
+        var ms = ifaceBucketMs[ifIndex];
+        if (!ms || hi >= ms.length || lo < 0) return;
+        var from = ms[lo], to = ms[hi];
+        if (!(to > from)) return;
+        ifaceWin = { from: from, to: to };
+        filterIfaces(currentFilter); // re-render controls (reset chip) + reload chart for the window
     }
 
     function loadTunnelChart(tunnelName, range) {
@@ -768,25 +854,37 @@
             delete tunnelCharts[tunnelName];
         }
 
-        fetch('/admin/api/devices/' + deviceId + '/vpn/' + encodeURIComponent(tunnelName) + '/chart?range=' + range, { credentials: 'same-origin' })
+        fetch('/admin/api/devices/' + deviceId + '/vpn/' + encodeURIComponent(tunnelName) + '/chart?' + chartQuery(tunnelWin, range), { credentials: 'same-origin' })
             .then(function(resp) {
                 if (!resp.ok) return Promise.reject(new Error('Failed'));
                 return resp.json();
             })
             .then(function(result) {
                 if (!result.success || !result.data || result.data.length < 2) {
+                    tunnelBucketMs[tunnelName] = [];
                     drawChartMessage(canvas, 'Not enough history data');
                     return;
                 }
-                var s = normalizeTunnelSeries(result.data, range);
+                var s = normalizeTunnelSeries(result.data);
+                tunnelBucketMs[tunnelName] = s.bucketMs;
                 tunnelCharts[tunnelName] = FwmonBwChart.render(canvas, {
                     labels: s.labels,
                     rxRate: s.rxRate, txRate: s.txRate,
                     rxTransfer: s.rxTransfer, txTransfer: s.txTransfer,
-                    view: currentTunnelView, rxLabel: 'In', txLabel: 'Out'
+                    view: currentTunnelView, rxLabel: 'In', txLabel: 'Out',
+                    onZoomSelect: function(lo, hi) { zoomTunnelTo(tunnelName, lo, hi); }
                 });
             })
             .catch(function(e) { console.error('Failed to load tunnel chart:', e); });
+    }
+
+    function zoomTunnelTo(tunnelName, lo, hi) {
+        var ms = tunnelBucketMs[tunnelName];
+        if (!ms || hi >= ms.length || lo < 0) return;
+        var from = ms[lo], to = ms[hi];
+        if (!(to > from)) return;
+        tunnelWin = { from: from, to: to };
+        renderVPN();
     }
 
     // cssId — derive a DOM-id-safe token from an arbitrary tunnel name so a
@@ -874,10 +972,12 @@
                 var tunnelControls = bwControlsHtml({
                     viewAction: 'set-tunnel-view',
                     rangeAction: 'load-tunnel-chart',
+                    resetAction: 'reset-tunnel-zoom',
                     dataAttr: 'data-tunnel="' + tAttr + '"',
                     view: currentTunnelView,
                     range: currentTunnelRange,
-                    ranges: ['1h', '24h', '7d', '30d']
+                    ranges: ['1h', '24h', '7d', '30d'],
+                    win: tunnelWin
                 });
                 html += '<tr class="expand-row"><td colspan="13">' +
                     '<div class="expand-content">' +
@@ -1893,14 +1993,21 @@
         },
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
-            // Re-render the interface list so the active range pill updates;
-            // filterIfaces() reloads the expanded chart at the new range.
+            // Choosing a preset range exits any drag-zoom window. Re-render the
+            // interface list so the active pill updates; filterIfaces() reloads
+            // the expanded chart at the new range.
             currentChartRange = el.dataset.range;
+            ifaceWin = null;
             filterIfaces(currentFilter);
         },
         'set-iface-view': function(el, e) {
             e.stopPropagation();
-            currentChartView = el.dataset.view;
+            currentChartView = el.dataset.view; // keeps the current window
+            filterIfaces(currentFilter);
+        },
+        'reset-iface-zoom': function(el, e) {
+            e.stopPropagation();
+            ifaceWin = null;
             filterIfaces(currentFilter);
         },
         'toggle-tunnel': function(el) {
@@ -1909,11 +2016,17 @@
         'load-tunnel-chart': function(el, e) {
             e.stopPropagation();
             currentTunnelRange = el.dataset.range;
+            tunnelWin = null;
             renderVPN();
         },
         'set-tunnel-view': function(el, e) {
             e.stopPropagation();
-            currentTunnelView = el.dataset.view;
+            currentTunnelView = el.dataset.view; // keeps the current window
+            renderVPN();
+        },
+        'reset-tunnel-zoom': function(el, e) {
+            e.stopPropagation();
+            tunnelWin = null;
             renderVPN();
         },
         'toggle-public-iface': function(el, e) {

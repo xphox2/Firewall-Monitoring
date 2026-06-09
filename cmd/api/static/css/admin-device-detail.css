@@ -224,3 +224,45 @@
     min-height: 20px;
     background: #30363d;
 }
+
+/* "drag on chart to zoom" affordance hint — pushed to the right. */
+.bw-chart-hint {
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--fwmon-text-faint, #6e7681);
+    font-style: italic;
+    white-space: nowrap;
+}
+
+/* Active drag-zoom window indicator: shows the selected span + a reset (×). */
+.bw-zoom-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(88, 166, 255, 0.12);
+    border: 1px solid rgba(88, 166, 255, 0.4);
+    border-radius: 6px;
+    padding: 3px 4px 3px 8px;
+    font-size: 0.72rem;
+    color: #7dd3fc;
+    white-space: nowrap;
+}
+
+.bw-zoom-ico { font-size: 0.72rem; line-height: 1; }
+.bw-zoom-range { font-variant-numeric: tabular-nums; }
+
+.bw-zoom-reset {
+    background: transparent;
+    border: none;
+    color: #7dd3fc;
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 0 4px;
+    border-radius: 4px;
+}
+
+.bw-zoom-reset:hover {
+    background: rgba(88, 166, 255, 0.2);
+    color: #fff;
+}

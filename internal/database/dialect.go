@@ -27,6 +27,8 @@ func (postgresDialect) TimeBucket(unit, column string) string {
 		return fmt.Sprintf("to_char(date_trunc('hour', %s) + INTERVAL '5 min' * FLOOR(EXTRACT(MINUTE FROM %s)/5), 'YYYY-MM-DD HH24:MI')", column, column)
 	case "hour":
 		return fmt.Sprintf("to_char(date_trunc('hour', %s), 'YYYY-MM-DD HH24:00')", column)
+	case "6hour":
+		return fmt.Sprintf("to_char(date_trunc('day', %s) + INTERVAL '6 hour' * FLOOR(EXTRACT(HOUR FROM %s)/6), 'YYYY-MM-DD HH24:00')", column, column)
 	case "day":
 		return fmt.Sprintf("to_char(date_trunc('day', %s), 'YYYY-MM-DD')", column)
 	default:
@@ -51,6 +53,10 @@ func (sqliteDialect) TimeBucket(unit, column string) string {
 	case "5min":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:%%M', %s)", column)
 	case "hour":
+		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
+	case "6hour":
+		// SQLite is dev/test only — approximate 6-hour buckets at hour
+		// resolution (Postgres does true 6-hour bucketing in prod).
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d %%H:00', %s)", column)
 	case "day":
 		return fmt.Sprintf("strftime('%%Y-%%m-%%d', %s)", column)

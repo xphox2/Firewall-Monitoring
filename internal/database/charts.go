@@ -12,6 +12,7 @@ import (
 // InterfaceChartBucket holds a single time-bucket for interface chart data.
 type InterfaceChartBucket struct {
 	Bucket     string  `json:"bucket"`
+	BucketMs   int64   `json:"bucket_ms"` // epoch ms, derived for the chart x-axis + drag-to-zoom windowing
 	InBytes    float64 `json:"in_bytes"`
 	OutBytes   float64 `json:"out_bytes"`
 	InPackets  float64 `json:"in_packets"`
@@ -19,6 +20,30 @@ type InterfaceChartBucket struct {
 	InErrors   float64 `json:"in_errors"`
 	OutErrors  float64 `json:"out_errors"`
 }
+
+// bucketUnitForWindow picks a TimeBucket granularity that keeps a chart for the
+// given span readable — roughly 90–360 points — instead of cramming raw
+// poll-cadence samples in. It backs the drag-to-zoom re-query: a narrower
+// window selects a finer bucket, revealing detail that was averaged away at the
+// wider zoom. Units must exist in dialect.go's TimeBucket.
+func bucketUnitForWindow(dur time.Duration) string {
+	switch {
+	case dur <= 3*time.Hour:
+		return "minute" // ≤180 pts
+	case dur <= 30*time.Hour:
+		return "5min" // ≤360 pts (24h → 288)
+	case dur <= 8*24*time.Hour:
+		return "hour" // ≤192 pts (7d → 168)
+	case dur <= 60*24*time.Hour:
+		return "6hour" // ≤240 pts (30d → 120)
+	default:
+		return "day" // ≤366 pts (1y)
+	}
+}
+
+// maxChartWindow caps a chart window so a pathological from/to can't ask the DB
+// to bucket centuries of rows.
+const maxChartWindow = 400 * 24 * time.Hour
 
 // GetInterfaceChartData returns downsampled interface stats for charting.
 func (d *Database) GetInterfaceChartData(deviceID uint, ifIndex int, rangeStr string) ([]InterfaceChartBucket, error) {
@@ -49,6 +74,37 @@ func (d *Database) GetInterfaceChartData(deviceID uint, ifIndex int, rangeStr st
 		Group("bucket").Order("bucket ASC").Scan(&rows).Error
 	if err != nil {
 		return nil, err
+	}
+	return rows, nil
+}
+
+// GetInterfaceChartWindow returns downsampled interface stats for an explicit
+// [from, to] window with an adaptive bucket size (see bucketUnitForWindow) and
+// a per-row epoch-ms timestamp. It backs the admin chart's default range view
+// AND its drag-to-zoom re-query: the frontend selects a sub-window and asks for
+// it back at finer resolution. GetInterfaceChartData (fixed minute/hour/day
+// bucketing, no bucket_ms) is left untouched for the report + connection-detail
+// consumers that depend on its exact granularity.
+func (d *Database) GetInterfaceChartWindow(deviceID uint, ifIndex int, from, to time.Time) ([]InterfaceChartBucket, error) {
+	if !to.After(from) {
+		return []InterfaceChartBucket{}, nil
+	}
+	if to.Sub(from) > maxChartWindow {
+		from = to.Add(-maxChartWindow)
+	}
+	bucketExpr := d.dialect.TimeBucket(bucketUnitForWindow(to.Sub(from)), "timestamp")
+	quotedIndex := d.dialect.QuoteIdent("index")
+
+	var rows []InterfaceChartBucket
+	err := d.db.Model(&models.InterfaceStats{}).
+		Where(fmt.Sprintf("device_id = ? AND %s = ? AND timestamp > ? AND timestamp <= ?", quotedIndex), deviceID, ifIndex, from, to).
+		Select(fmt.Sprintf("%s as bucket, AVG(in_bytes) as in_bytes, AVG(out_bytes) as out_bytes, AVG(in_packets) as in_packets, AVG(out_packets) as out_packets, AVG(in_errors) as in_errors, AVG(out_errors) as out_errors", bucketExpr)).
+		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].BucketMs = parseBucketToMillis(rows[i].Bucket)
 	}
 	return rows, nil
 }
@@ -263,6 +319,7 @@ func (d *Database) GetPingResultHistory(deviceID uint, hours int) ([]models.Ping
 // VPNChartBucket holds a single time-bucket for VPN tunnel chart data.
 type VPNChartBucket struct {
 	Bucket     string  `json:"bucket"`
+	BucketMs   int64   `json:"bucket_ms"` // epoch ms, derived for the chart x-axis + drag-to-zoom windowing
 	InBytes    float64 `json:"in_bytes"`
 	OutBytes   float64 `json:"out_bytes"`
 	InPackets  float64 `json:"in_packets"`
@@ -290,14 +347,28 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	// Use LAG() window function to compute per-sample deltas from cumulative SNMP counters.
-	// First row per partition (LAG is NULL) returns NULL and is filtered by the outer WHERE.
-	// Counter resets (new value < old value) use the raw value as the delta.
-	// AUDIT-043: the named `WINDOW w AS (...)` clause runs on BOTH Postgres
-	// (prod) and the modernc SQLite test backend — no dialect gating needed.
-	// `vpnchart_window_audit043_test.go` exercises this path on SQLite (the
-	// audit flagged it as untested in CI) and pins the delta + reset-clamp math.
-	query := fmt.Sprintf(`
+	var rows []VPNChartBucket
+	err := d.db.Raw(vpnDeltaQuery(bucketExpr, "timestamp > ?"), deviceID, tunnelName, cutoff).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// vpnDeltaQuery builds the LAG()-based per-bucket delta query for VPN tunnel
+// traffic. timeWhere is the timestamp predicate ("timestamp > ?" for a cutoff,
+// "timestamp > ? AND timestamp <= ?" for an explicit window); its placeholders
+// are bound after device_id and tunnel_name.
+//
+// Use LAG() to compute per-sample deltas from cumulative SNMP counters. The
+// first row per partition (LAG is NULL) returns NULL and is filtered by the
+// outer WHERE. Counter resets (new value < old value) use the raw value as the
+// delta. AUDIT-043: the named `WINDOW w AS (...)` clause runs on BOTH Postgres
+// (prod) and the modernc SQLite test backend — no dialect gating needed.
+// `vpnchart_window_audit043_test.go` exercises this path on SQLite and pins the
+// delta + reset-clamp math.
+func vpnDeltaQuery(bucketExpr, timeWhere string) string {
+	return fmt.Sprintf(`
 		SELECT bucket, SUM(delta_in) as in_bytes, SUM(delta_out) as out_bytes,
 		       SUM(delta_pin) as in_packets, SUM(delta_pout) as out_packets
 		FROM (
@@ -315,15 +386,33 @@ func (d *Database) GetVPNChartData(deviceID uint, tunnelName string, rangeStr st
 					WHEN packets_out >= LAG(packets_out) OVER w THEN packets_out - LAG(packets_out) OVER w
 					ELSE packets_out END as delta_pout
 			FROM vpn_status
-			WHERE device_id = ? AND tunnel_name = ? AND timestamp > ?
+			WHERE device_id = ? AND tunnel_name = ? AND %s
 			WINDOW w AS (ORDER BY timestamp)
 		) AS deltas WHERE delta_in IS NOT NULL
-		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr)
+		GROUP BY bucket ORDER BY bucket ASC`, bucketExpr, timeWhere)
+}
+
+// GetVPNChartWindow returns per-bucket VPN tunnel deltas for an explicit
+// [from, to] window with adaptive bucketing and per-row epoch-ms timestamps.
+// Backs the admin/connection-detail tunnel chart's default view and its
+// drag-to-zoom re-query. GetVPNChartData (fixed bucketing, no bucket_ms) is
+// retained for its regression test.
+func (d *Database) GetVPNChartWindow(deviceID uint, tunnelName string, from, to time.Time) ([]VPNChartBucket, error) {
+	if !to.After(from) {
+		return []VPNChartBucket{}, nil
+	}
+	if to.Sub(from) > maxChartWindow {
+		from = to.Add(-maxChartWindow)
+	}
+	bucketExpr := d.dialect.TimeBucket(bucketUnitForWindow(to.Sub(from)), "timestamp")
 
 	var rows []VPNChartBucket
-	err := d.db.Raw(query, deviceID, tunnelName, cutoff).Scan(&rows).Error
+	err := d.db.Raw(vpnDeltaQuery(bucketExpr, "timestamp > ? AND timestamp <= ?"), deviceID, tunnelName, from, to).Scan(&rows).Error
 	if err != nil {
 		return nil, err
+	}
+	for i := range rows {
+		rows[i].BucketMs = parseBucketToMillis(rows[i].Bucket)
 	}
 	return rows, nil
 }

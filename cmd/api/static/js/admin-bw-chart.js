@@ -23,8 +23,14 @@
  *       txTransfer: [...],   // bytes/bucket
  *       view:       'rate',  // 'rate' | 'total' | 'mix'
  *       rxLabel:    'In',    // series prefix (e.g. In/Out, RX/TX)
- *       txLabel:    'Out'
+ *       txLabel:    'Out',
+ *       onZoomSelect: function(loIdx, hiIdx) { ... } // optional drag-to-zoom
  *   });
+ *
+ * When onZoomSelect is supplied (and chartjs-plugin-zoom is loaded), the chart
+ * enables drag-to-select on the x-axis; on release it reports the selected
+ * category index range so the caller can re-query the backend for exactly that
+ * window at finer resolution.
  */
 (function () {
     'use strict';
@@ -115,11 +121,51 @@
             };
         }
 
+        var options = chartOpts(scales);
+
+        // Drag-to-zoom: select an x-range, then re-query the backend for that
+        // window. Requires chartjs-plugin-zoom (auto-registers on load). On a
+        // category x-axis the post-drag scale min/max are fractional category
+        // indices; we snap outward (floor/ceil) and clamp to the data bounds.
+        if (typeof o.onZoomSelect === 'function' && window.Chart && Chart.registry && hasZoomPlugin()) {
+            var n = (o.labels || []).length;
+            options.plugins.zoom = {
+                zoom: {
+                    drag: {
+                        enabled: true,
+                        backgroundColor: 'rgba(88,166,255,0.18)',
+                        borderColor: 'rgba(88,166,255,0.8)',
+                        borderWidth: 1
+                    },
+                    mode: 'x',
+                    onZoomComplete: function (ctx) {
+                        var sx = ctx && ctx.chart && ctx.chart.scales && ctx.chart.scales.x;
+                        if (!sx) return;
+                        var lo = Math.floor(sx.min);
+                        var hi = Math.ceil(sx.max);
+                        if (lo < 0) lo = 0;
+                        if (hi > n - 1) hi = n - 1;
+                        if (hi - lo < 1) return; // selection too small to be meaningful
+                        o.onZoomSelect(lo, hi);
+                    }
+                }
+            };
+        }
+
         return new Chart(canvas, {
             type: 'line',
             data: { labels: o.labels || [], datasets: datasets },
-            options: chartOpts(scales)
+            options: options
         });
+    }
+
+    // hasZoomPlugin reports whether chartjs-plugin-zoom registered itself.
+    function hasZoomPlugin() {
+        try {
+            return !!Chart.registry.plugins.get('zoom');
+        } catch (e) {
+            return false;
+        }
     }
 
     window.FwmonBwChart = {

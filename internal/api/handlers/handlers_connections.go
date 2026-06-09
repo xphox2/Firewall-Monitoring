@@ -313,14 +313,13 @@ func (h *Handler) GetVPNTunnelChart(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Tunnel name required"))
 		return
 	}
-	rangeStr := c.DefaultQuery("range", "24h")
-	validRanges := map[string]bool{"1h": true, "24h": true, "7d": true, "30d": true}
-	if !validRanges[rangeStr] {
-		rangeStr = "24h"
-	}
-	data, err := db.GetVPNChartData(id, tunnel, rangeStr)
+	// Window resolution (v0.10.410): explicit from/to (epoch ms, drag-to-zoom)
+	// re-queries that sub-window at finer resolution; otherwise the range preset
+	// maps to [now-dur, now]. Adaptive bucketing keeps the chart readable.
+	from, to := httputil.ParseChartWindow(c, "24h")
+	data, err := db.GetVPNChartWindow(id, tunnel, from, to)
 	if err != nil {
-		log.Printf("GetVPNChartData(%d, %s, %s) error: %v", id, tunnel, rangeStr, err)
+		log.Printf("GetVPNChartWindow(%d, %s, %v, %v) error: %v", id, tunnel, from, to, err)
 		httputil.InternalError(c, "Failed to get VPN chart data", err)
 		return
 	}

@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
@@ -86,6 +87,39 @@ func ParseHours(c *gin.Context) int {
 		}
 	}
 	return hours
+}
+
+// chartRangeDurations maps the chart range presets to a lookback duration.
+var chartRangeDurations = map[string]time.Duration{
+	"1h":  time.Hour,
+	"24h": 24 * time.Hour,
+	"7d":  168 * time.Hour,
+	"30d": 720 * time.Hour,
+	"90d": 2160 * time.Hour,
+}
+
+// ParseChartWindow resolves a chart time window from the request. An explicit
+// `from`/`to` pair (epoch milliseconds, from the drag-to-zoom selection) takes
+// precedence; otherwise the `range` preset (1h/24h/7d/30d/90d) maps to
+// [now-duration, now]. Unknown/absent range falls back to defaultRange. The
+// returned window always satisfies to.After(from).
+func ParseChartWindow(c *gin.Context, defaultRange string) (from, to time.Time) {
+	fromMs, ferr := strconv.ParseInt(c.Query("from"), 10, 64)
+	toMs, terr := strconv.ParseInt(c.Query("to"), 10, 64)
+	if ferr == nil && terr == nil && fromMs > 0 && toMs > fromMs {
+		return time.UnixMilli(fromMs), time.UnixMilli(toMs)
+	}
+	r := c.DefaultQuery("range", defaultRange)
+	dur, ok := chartRangeDurations[r]
+	if !ok {
+		dur = chartRangeDurations[defaultRange]
+		if dur == 0 {
+			dur = 24 * time.Hour
+		}
+	}
+	to = time.Now()
+	from = to.Add(-dur)
+	return from, to
 }
 
 // RequireDB checks that db is non-nil. If nil, writes a 503 error and returns false.
