@@ -201,3 +201,26 @@
     position: relative;
     min-height: 200px;
 }
+
+/* Shared control strip above the interface / VPN-tunnel bandwidth charts:
+ * a 3-mode display toggle (Throughput / Transfer / Combined) and a time-range
+ * selector, separated by a thin divider. Mirrors the public dashboard's
+ * bandwidth-view + range controls. */
+.bw-chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.bw-chart-controls .chart-range-btns {
+    margin-bottom: 0;
+}
+
+.bw-chart-controls-sep {
+    width: 1px;
+    align-self: stretch;
+    min-height: 20px;
+    background: #30363d;
+}

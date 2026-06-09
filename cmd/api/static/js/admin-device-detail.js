@@ -10,6 +10,11 @@
     var expandedIfIndex = null;
     var ifaceCharts = {};
     var currentChartRange = '24h';
+    var currentChartView = 'rate'; // 'rate' | 'total' | 'mix' — shared 3-mode bandwidth view (matches public dashboard)
+    var tunnelCharts = {};
+    var expandedTunnel = null;     // tunnel_name of the currently-expanded VPN row
+    var currentTunnelRange = '24h';
+    var currentTunnelView = 'rate';
     var statusHistoryChart = null;
     var statusHistoryPromise = null;
     var publicInterfaces = {}; // {"iface1":true,"iface2":true}
@@ -571,12 +576,14 @@
                 '</tr>';
 
             if (isExpanded) {
-                var ranges = ['24h', '7d', '30d', '90d'];
-                var rangeBtns = '';
-                for (var ri = 0; ri < ranges.length; ri++) {
-                    var r = ranges[ri];
-                    rangeBtns += '<button class="range-btn' + (currentChartRange === r ? ' active' : '') + '" data-action="load-iface-chart" data-index="' + iface.index + '" data-range="' + r + '">' + r + '</button>';
-                }
+                var ifaceControls = bwControlsHtml({
+                    viewAction: 'set-iface-view',
+                    rangeAction: 'load-iface-chart',
+                    dataAttr: 'data-index="' + iface.index + '"',
+                    view: currentChartView,
+                    range: currentChartRange,
+                    ranges: ['24h', '7d', '30d', '90d']
+                });
                 html += '<tr class="expand-row"><td colspan="11">' +
                     '<div class="expand-content">' +
                         '<div class="detail-grid">' +
@@ -594,7 +601,7 @@
                             '<div class="detail-item"><span class="label">In Discards</span><span class="value">' + (iface.in_discards || 0).toLocaleString() + '</span></div>' +
                             '<div class="detail-item"><span class="label">Out Discards</span><span class="value">' + (iface.out_discards || 0).toLocaleString() + '</span></div>' +
                         '</div>' +
-                        '<div class="chart-range-btns">' + rangeBtns + '</div>' +
+                        ifaceControls +
                         '<div class="iface-chart-container" id="chart-container-' + iface.index + '">' +
                             '<canvas id="canvas-' + iface.index + '"></canvas>' +
                         '</div>' +
@@ -614,12 +621,111 @@
         filterIfaces(currentFilter);
     }
 
+    function toggleTunnel(name) {
+        expandedTunnel = expandedTunnel === name ? null : name;
+        renderVPN();
+    }
+
+    // bwControlsHtml — renders the shared two-row control strip used above both
+    // the interface and VPN-tunnel bandwidth charts: a 3-mode display toggle
+    // (Throughput / Transfer / Combined, from FwmonBwChart.MODES) and a time
+    // range selector. `cfg.dataAttr` carries the per-row identity (data-index
+    // for interfaces, data-tunnel for tunnels) so the delegated click handlers
+    // know which chart to refresh.
+    function bwControlsHtml(cfg) {
+        var modes = (window.FwmonBwChart && FwmonBwChart.MODES) || [
+            { value: 'rate', label: 'Throughput' },
+            { value: 'total', label: 'Transfer' },
+            { value: 'mix', label: 'Combined' }
+        ];
+        var viewBtns = '';
+        for (var i = 0; i < modes.length; i++) {
+            var m = modes[i];
+            viewBtns += '<button class="range-btn' + (cfg.view === m.value ? ' active' : '') +
+                '" data-action="' + cfg.viewAction + '" ' + cfg.dataAttr + ' data-view="' + m.value + '">' + esc(m.label) + '</button>';
+        }
+        var rangeBtns = '';
+        for (var ri = 0; ri < cfg.ranges.length; ri++) {
+            var r = cfg.ranges[ri];
+            rangeBtns += '<button class="range-btn' + (cfg.range === r ? ' active' : '') +
+                '" data-action="' + cfg.rangeAction + '" ' + cfg.dataAttr + ' data-range="' + r + '">' + r + '</button>';
+        }
+        return '<div class="bw-chart-controls">' +
+            '<div class="chart-range-btns" role="group" aria-label="Display mode">' + viewBtns + '</div>' +
+            '<span class="bw-chart-controls-sep"></span>' +
+            '<div class="chart-range-btns" role="group" aria-label="Time range">' + rangeBtns + '</div>' +
+        '</div>';
+    }
+
+    // Nominal bucket width (seconds) per range — must mirror the server-side
+    // TimeBucket granularity in internal/database/charts.go so the client can
+    // turn cumulative-counter deltas into Mbps. Same convention the report
+    // module (internal/report/data.go computeTraffic) uses.
+    function ifaceBucketSeconds(range) {
+        if (range === '90d') return 86400;       // day buckets
+        if (range === '7d' || range === '30d') return 3600; // hour buckets
+        return 60;                                // 24h → minute buckets
+    }
+    function tunnelBucketSeconds(range) {
+        if (range === '7d' || range === '30d') return 3600; // hour buckets
+        return 60;                                // 1h / 24h → minute buckets
+    }
+
+    function bucketLabel(b, range) {
+        if (!b) return '';
+        if (range === '90d') return b.substring(5);            // MM-DD
+        if (range === '30d' || range === '7d') return b.substring(5, 13); // MM-DD HH
+        return b.substring(11, 16);                            // HH:MM
+    }
+
+    // Interface chart rows carry cumulative SNMP octet counters (AVG per
+    // bucket). Transfer is the consecutive-bucket delta (clamped >= 0 across
+    // counter resets/wraps); throughput is that delta over the nominal bucket
+    // window. This matches internal/report computeTraffic exactly.
+    function normalizeIfaceSeries(data, range) {
+        var secs = ifaceBucketSeconds(range);
+        var s = { labels: [], rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
+        for (var i = 0; i < data.length; i++) {
+            s.labels.push(bucketLabel(data[i].bucket, range));
+            if (i === 0) { s.rxTransfer.push(0); s.txTransfer.push(0); s.rxRate.push(0); s.txRate.push(0); continue; }
+            var dRx = data[i].in_bytes - data[i - 1].in_bytes; if (dRx < 0) dRx = 0;
+            var dTx = data[i].out_bytes - data[i - 1].out_bytes; if (dTx < 0) dTx = 0;
+            s.rxTransfer.push(dRx);
+            s.txTransfer.push(dTx);
+            s.rxRate.push(dRx * 8 / secs / 1e6);
+            s.txRate.push(dTx * 8 / secs / 1e6);
+        }
+        return s;
+    }
+
+    // VPN tunnel chart rows already arrive as per-bucket deltas (the server's
+    // GetVPNChartData uses LAG() + SUM to emit bytes-transferred-per-bucket),
+    // so transfer is the value as-is; throughput divides by the bucket window.
+    function normalizeTunnelSeries(data, range) {
+        var secs = tunnelBucketSeconds(range);
+        var s = { labels: [], rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
+        for (var i = 0; i < data.length; i++) {
+            s.labels.push(bucketLabel(data[i].bucket, range));
+            var dRx = data[i].in_bytes < 0 ? 0 : data[i].in_bytes;
+            var dTx = data[i].out_bytes < 0 ? 0 : data[i].out_bytes;
+            s.rxTransfer.push(dRx);
+            s.txTransfer.push(dTx);
+            s.rxRate.push(dRx * 8 / secs / 1e6);
+            s.txRate.push(dTx * 8 / secs / 1e6);
+        }
+        return s;
+    }
+
+    function drawChartMessage(canvas, msg) {
+        var ctx2 = canvas.getContext('2d');
+        ctx2.clearRect(0, 0, canvas.width, canvas.height);
+        ctx2.fillStyle = '#484f58';
+        ctx2.font = '11px sans-serif';
+        ctx2.fillText(msg, 10, 30);
+    }
+
     function loadInterfaceChart(ifIndex, range) {
         currentChartRange = range;
-        // Update active button styling
-        document.querySelectorAll('.range-btn').forEach(function(btn) {
-            btn.classList.toggle('active', btn.textContent === range);
-        });
 
         var canvas = document.getElementById('canvas-' + ifIndex);
         if (!canvas) return;
@@ -637,42 +743,56 @@
             })
             .then(function(result) {
                 if (!result.success || !result.data || result.data.length < 2) {
-                    var ctx2 = canvas.getContext('2d');
-                    ctx2.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx2.fillStyle = '#484f58';
-                    ctx2.font = '11px sans-serif';
-                    ctx2.fillText('Not enough history data', 10, 30);
+                    drawChartMessage(canvas, 'Not enough history data');
                     return;
                 }
-
-                var data = result.data;
-                var labels = data.map(function(d) {
-                    var b = d.bucket;
-                    if (range === '90d') return b.substring(5);
-                    if (range === '30d' || range === '7d') return b.substring(5, 13);
-                    return b.substring(11, 16);
-                });
-
-                ifaceCharts[ifIndex] = new Chart(canvas, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            { label: 'In Bytes', data: data.map(function(d) { return d.in_bytes; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                            { label: 'Out Bytes', data: data.map(function(d) { return d.out_bytes; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                        ]
-                    },
-                    options: {
-                        responsive: true, maintainAspectRatio: false,
-                        plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
-                        scales: {
-                            x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                            y: { ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } }
-                        }
-                    }
+                var s = normalizeIfaceSeries(result.data, range);
+                ifaceCharts[ifIndex] = FwmonBwChart.render(canvas, {
+                    labels: s.labels,
+                    rxRate: s.rxRate, txRate: s.txRate,
+                    rxTransfer: s.rxTransfer, txTransfer: s.txTransfer,
+                    view: currentChartView, rxLabel: 'In', txLabel: 'Out'
                 });
             })
             .catch(function(e) { console.error('Failed to load interface chart:', e); });
+    }
+
+    function loadTunnelChart(tunnelName, range) {
+        currentTunnelRange = range;
+
+        var canvas = document.getElementById('tcanvas-' + cssId(tunnelName));
+        if (!canvas) return;
+
+        if (tunnelCharts[tunnelName]) {
+            tunnelCharts[tunnelName].destroy();
+            delete tunnelCharts[tunnelName];
+        }
+
+        fetch('/admin/api/devices/' + deviceId + '/vpn/' + encodeURIComponent(tunnelName) + '/chart?range=' + range, { credentials: 'same-origin' })
+            .then(function(resp) {
+                if (!resp.ok) return Promise.reject(new Error('Failed'));
+                return resp.json();
+            })
+            .then(function(result) {
+                if (!result.success || !result.data || result.data.length < 2) {
+                    drawChartMessage(canvas, 'Not enough history data');
+                    return;
+                }
+                var s = normalizeTunnelSeries(result.data, range);
+                tunnelCharts[tunnelName] = FwmonBwChart.render(canvas, {
+                    labels: s.labels,
+                    rxRate: s.rxRate, txRate: s.txRate,
+                    rxTransfer: s.rxTransfer, txTransfer: s.txTransfer,
+                    view: currentTunnelView, rxLabel: 'In', txLabel: 'Out'
+                });
+            })
+            .catch(function(e) { console.error('Failed to load tunnel chart:', e); });
+    }
+
+    // cssId — derive a DOM-id-safe token from an arbitrary tunnel name so a
+    // canvas id (tcanvas-<token>) never breaks on spaces/punctuation.
+    function cssId(s) {
+        return String(s).replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
     function getTypeBadge(iface) {
@@ -694,7 +814,9 @@
         if (vpn.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
         empty.classList.add('hidden');
 
-        body.innerHTML = vpn.map(function(v) {
+        var html = '';
+        for (var vi = 0; vi < vpn.length; vi++) {
+            var v = vpn[vi];
             var hasTraffic = (v.bytes_in > 0) || (v.bytes_out > 0);
             var state = v.state || (v.status === 'up' ? 'active' : 'inactive');
             var stateClass = (state === 'active' && hasTraffic) ? 'active' : (state === 'active' ? 'up' : 'inactive');
@@ -715,7 +837,12 @@
             } else {
                 remoteCell = esc(v.remote_ip);
             }
-            return '<tr>' +
+            // Attribute-safe tunnel name for data-* (esc() escapes < > & for
+            // text content but not the double-quote that would break out of an
+            // attribute — mirror the toggle-public-iface fix).
+            var tAttr = esc(v.tunnel_name).replace(/"/g, '&quot;');
+            var tExpanded = expandedTunnel === v.tunnel_name;
+            html += '<tr class="clickable" data-action="toggle-tunnel" data-tunnel="' + tAttr + '">' +
                 '<td>' + esc(v.phase1_name || v.tunnel_name) + '</td>' +
                 '<td><strong>' + esc(v.tunnel_name) + '</strong></td>' +
                 '<td>' + getTunnelTypeBadge(v.tunnel_type) + '</td>' +
@@ -742,7 +869,41 @@
                         : '<span style="color:#8b949e;">-</span>')) +
                 '</td>' +
             '</tr>';
-        }).join('');
+
+            if (tExpanded) {
+                var tunnelControls = bwControlsHtml({
+                    viewAction: 'set-tunnel-view',
+                    rangeAction: 'load-tunnel-chart',
+                    dataAttr: 'data-tunnel="' + tAttr + '"',
+                    view: currentTunnelView,
+                    range: currentTunnelRange,
+                    ranges: ['1h', '24h', '7d', '30d']
+                });
+                html += '<tr class="expand-row"><td colspan="13">' +
+                    '<div class="expand-content">' +
+                        '<div class="detail-grid">' +
+                            '<div class="detail-item"><span class="label">Type</span><span class="value">' + esc(v.tunnel_type || '-') + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Interface</span><span class="value">' + esc(v.interface_name || '-') + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Remote GW</span><span class="value">' + esc(v.remote_ip || '-') + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Mode</span><span class="value">' + esc(v.mode || '-') + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Local Subnet</span><span class="value">' + esc(v.local_subnet || '-') + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Remote Subnet</span><span class="value">' + esc(v.remote_subnet || '-') + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Bytes In</span><span class="value">' + formatBytes(v.bytes_in) + '</span></div>' +
+                            '<div class="detail-item"><span class="label">Bytes Out</span><span class="value">' + formatBytes(v.bytes_out) + '</span></div>' +
+                        '</div>' +
+                        tunnelControls +
+                        '<div class="iface-chart-container" id="tchart-container-' + cssId(v.tunnel_name) + '">' +
+                            '<canvas id="tcanvas-' + cssId(v.tunnel_name) + '"></canvas>' +
+                        '</div>' +
+                    '</div>' +
+                '</td></tr>';
+            }
+        }
+        body.innerHTML = html;
+
+        if (expandedTunnel !== null) {
+            loadTunnelChart(expandedTunnel, currentTunnelRange);
+        }
 
         // Update tab label with count
         var upCount = vpn.filter(function(v) { return v.status === 'up'; }).length;
@@ -1732,7 +1893,28 @@
         },
         'load-iface-chart': function(el, e) {
             e.stopPropagation();
-            loadInterfaceChart(parseInt(el.dataset.index, 10), el.dataset.range);
+            // Re-render the interface list so the active range pill updates;
+            // filterIfaces() reloads the expanded chart at the new range.
+            currentChartRange = el.dataset.range;
+            filterIfaces(currentFilter);
+        },
+        'set-iface-view': function(el, e) {
+            e.stopPropagation();
+            currentChartView = el.dataset.view;
+            filterIfaces(currentFilter);
+        },
+        'toggle-tunnel': function(el) {
+            toggleTunnel(el.dataset.tunnel);
+        },
+        'load-tunnel-chart': function(el, e) {
+            e.stopPropagation();
+            currentTunnelRange = el.dataset.range;
+            renderVPN();
+        },
+        'set-tunnel-view': function(el, e) {
+            e.stopPropagation();
+            currentTunnelView = el.dataset.view;
+            renderVPN();
         },
         'toggle-public-iface': function(el, e) {
             // v0.10.229: replaces the previous inline onclick that built
