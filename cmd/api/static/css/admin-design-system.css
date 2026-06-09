@@ -910,10 +910,10 @@ select option, .form-group select option, .policy-rules-table select option {
 }
 
 /* Enhanced stat borders */
-.stat-card.accent-green { border-left: 4px solid #4ade80 !important; }
-.stat-card.accent-red { border-left: 4px solid #f87171 !important; }
-.stat-card.accent-blue { border-left: 4px solid #7dd3fc !important; }
-.stat-card.accent-gray { border-left: 4px solid #475569 !important; }
+.stat-card.accent-green, .fwmon-stat.accent-green { border-left: 4px solid #4ade80 !important; }
+.stat-card.accent-red, .fwmon-stat.accent-red { border-left: 4px solid #f87171 !important; }
+.stat-card.accent-blue, .fwmon-stat.accent-blue { border-left: 4px solid #7dd3fc !important; }
+.stat-card.accent-gray, .fwmon-stat.accent-gray { border-left: 4px solid #475569 !important; }
 
 /* Custom glowing sidebar header & navigation */
 .sidebar {
