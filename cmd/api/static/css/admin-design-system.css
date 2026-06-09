@@ -879,7 +879,7 @@ body {
 }
 
 /* Glassmorphism Cards & Panels */
-.card, .stat-card, .probe-card, .rich-detail-panel, .panel-flow-card, .tunnel-chart-wrap, .fwmon-stat, .fwmon-toptalk-card {
+.card, .stat-card, .probe-card, .rich-detail-panel, .panel-flow-card, .tunnel-chart-wrap, .fwmon-stat, .fwmon-toptalk-card, .modal-content {
     background: rgba(15, 23, 42, 0.45) !important;
     backdrop-filter: blur(20px) saturate(140%) !important;
     -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
@@ -887,6 +887,19 @@ body {
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35) !important;
     border-radius: 12px !important;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Modal backdrop frosted overlay */
+.modal {
+    background: rgba(0, 0, 0, 0.55) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
+}
+
+/* Select options dark styling */
+select option, .form-group select option, .policy-rules-table select option {
+    background: #0f172a !important;
+    color: #e2e8f0 !important;
 }
 
 /* Hover glow & lift effects */
