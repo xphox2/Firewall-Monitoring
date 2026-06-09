@@ -40,14 +40,15 @@
     var RX_COLOR = '#3fb950'; // green  — matches public dashboard RX
     var TX_COLOR = '#ff9500'; // orange — matches public dashboard TX
 
-    function formatBytes(v) {
-        if (v == null || isNaN(v)) return '0 B';
-        var abs = Math.abs(v);
-        if (abs >= 1e12) return (v / 1e12).toFixed(2) + ' TB';
-        if (abs >= 1e9)  return (v / 1e9).toFixed(2) + ' GB';
-        if (abs >= 1e6)  return (v / 1e6).toFixed(2) + ' MB';
-        if (abs >= 1e3)  return (v / 1e3).toFixed(2) + ' KB';
-        return Math.round(v) + ' B';
+    // 1024-based, matching public-dashboard.js / admin-device-detail.js so the
+    // chart's byte axis reads the same as the table cells right above it.
+    function formatBytes(bytes) {
+        if (bytes == null || isNaN(bytes) || bytes === 0) return '0 B';
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var i = 0;
+        var val = bytes;
+        while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+        return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     }
 
     // Common Chart.js options — dark NOC theme aligned with the rest of the
