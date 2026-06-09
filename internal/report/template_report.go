@@ -62,20 +62,20 @@ const reportTemplateSrc = `
   }
 </style>
 </head>
-<body style="margin:0;padding:0;background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#0d1117;padding:24px 0;">
+<body style="margin:0;padding:0;background:#08090c;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#08090c;padding:24px 0;">
 <tr><td align="center">
 <table width="680" cellpadding="0" cellspacing="0" role="presentation" style="width:680px;max-width:680px;">
 
   <!-- Header -->
-  <tr><td class="surface" style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:22px 26px;">
+  <tr><td class="surface" style="background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:10px;padding:22px 26px;">
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
       <td style="vertical-align:middle;">
         <div style="font-size:20px;font-weight:700;color:#e6edf3;letter-spacing:-0.2px;">Firewall Monitor</div>
         <div style="font-size:13px;color:#8b949e;margin-top:3px;">{{.Period}} Report &middot; {{.Date}} ({{.Timezone}})</div>
       </td>
       <td align="right" style="vertical-align:middle;">
-        <span style="display:inline-block;background:rgba(88,166,255,0.12);color:#58a6ff;border:1px solid rgba(88,166,255,0.4);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;">Last {{.Hours}}h</span>
+        <span style="display:inline-block;background:rgba(125,211,252,0.12);color:#7dd3fc;border:1px solid rgba(125,211,252,0.4);border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;">Last {{.Hours}}h</span>
       </td>
     </tr></table>
   </td></tr>
@@ -87,13 +87,13 @@ const reportTemplateSrc = `
     <table width="100%" cellpadding="0" cellspacing="8" role="presentation">
       <tr>
         {{template "kpi" dict "Label" "Devices" "Value" (printf "%d" .TotalDevices) "Color" "#e6edf3"}}
-        {{template "kpi" dict "Label" "Online" "Value" (printf "%d" .OnlineDevices) "Color" "#3fb950"}}
-        {{template "kpi" dict "Label" "Offline" "Value" (printf "%d" .OfflineDevices) "Color" "#f85149"}}
+        {{template "kpi" dict "Label" "Online" "Value" (printf "%d" .OnlineDevices) "Color" "#86efac"}}
+        {{template "kpi" dict "Label" "Offline" "Value" (printf "%d" .OfflineDevices) "Color" "#fca5a5"}}
       </tr>
       <tr>
         {{template "kpi" dict "Label" (printf "Alerts (%dh)" .Hours) "Value" (printf "%d" .TotalAlerts) "Color" "#e6edf3"}}
-        {{template "kpi" dict "Label" "Critical" "Value" (printf "%d" .CriticalAlerts) "Color" "#f85149"}}
-        {{template "kpi" dict "Label" "Fleet Uptime" "Value" (printf "%.2f%%" .FleetUptimePct) "Color" "#58a6ff"}}
+        {{template "kpi" dict "Label" "Critical" "Value" (printf "%d" .CriticalAlerts) "Color" "#fca5a5"}}
+        {{template "kpi" dict "Label" "Fleet Uptime" "Value" (printf "%.2f%%" .FleetUptimePct) "Color" "#7dd3fc"}}
       </tr>
     </table>
   </td></tr>
@@ -101,15 +101,15 @@ const reportTemplateSrc = `
   <tr><td style="height:18px;line-height:18px;font-size:0;">&nbsp;</td></tr>
 
   <!-- Bandwidth & Traffic -->
-  <tr><td class="surface" style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px 24px;">
+  <tr><td class="surface" style="background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:10px;padding:20px 24px;">
     <div style="font-size:15px;font-weight:700;color:#e6edf3;margin-bottom:14px;">Bandwidth &amp; Traffic</div>
 
     <table width="100%" cellpadding="0" cellspacing="10" role="presentation"><tr>
-      <td width="50%" style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 14px;">
+      <td width="50%" style="background:rgba(255, 255, 255, 0.03);border:1px solid rgba(255, 255, 255, 0.05);border-radius:8px;padding:12px 14px;">
         <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;">Peak Throughput</div>
-        <div style="font-size:20px;font-weight:700;color:#58a6ff;margin-top:4px;">{{.PeakThroughput}}</div>
+        <div style="font-size:20px;font-weight:700;color:#7dd3fc;margin-top:4px;">{{.PeakThroughput}}</div>
       </td>
-      <td width="50%" style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 14px;">
+      <td width="50%" style="background:rgba(255, 255, 255, 0.03);border:1px solid rgba(255, 255, 255, 0.05);border-radius:8px;padding:12px 14px;">
         <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;">Total Transferred</div>
         <div style="font-size:20px;font-weight:700;color:#e6edf3;margin-top:4px;">{{.TotalTransfer}}</div>
       </td>
@@ -126,8 +126,8 @@ const reportTemplateSrc = `
     <div style="font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;margin:18px 0 6px;">Traffic Spikes</div>
     <div style="font-size:12px;color:#c9d1d9;margin-bottom:8px;">
       <strong style="color:#e6edf3;">{{.SpikeTotal}}</strong> spike{{if ne .SpikeTotal 1}}s{{end}} on {{.SpikeIfaceCount}} interface{{if ne .SpikeIfaceCount 1}}s{{end}}
-      {{if .SpikeCritical}}<span style="color:#f85149;"> &middot; {{.SpikeCritical}} critical</span>{{end}}
-      {{if .SpikeWarning}}<span style="color:#d29922;"> &middot; {{.SpikeWarning}} warning</span>{{end}}
+      {{if .SpikeCritical}}<span style="color:#fca5a5;"> &middot; {{.SpikeCritical}} critical</span>{{end}}
+      {{if .SpikeWarning}}<span style="color:#fcd34d;"> &middot; {{.SpikeWarning}} warning</span>{{end}}
     </div>
     {{range .SpikeGroups}}{{template "spikegroup" .}}{{end}}
     {{if .SpikeMore}}<div style="font-size:11px;color:#6e7681;margin-top:2px;">+ {{.SpikeMore}} more interface{{if ne .SpikeMore 1}}s{{end}} with spikes</div>{{end}}
@@ -136,12 +136,12 @@ const reportTemplateSrc = `
 
   {{if .HasAlerts}}
   <tr><td style="height:18px;line-height:18px;font-size:0;">&nbsp;</td></tr>
-  <tr><td class="surface" style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px 24px;">
+  <tr><td class="surface" style="background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:10px;padding:20px 24px;">
     <div style="font-size:15px;font-weight:700;color:#e6edf3;margin-bottom:14px;">Alert Timeline</div>
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="height:64px;"><tr>
       {{range .AlertBuckets}}
       <td valign="bottom" style="padding:0 1px;height:64px;">
-        <div style="background:{{if .Crit}}#f85149{{else}}#58a6ff{{end}};height:{{.BarPct}}%;{{if .Count}}min-height:3px;{{end}}border-radius:2px 2px 0 0;"></div>
+        <div style="background:{{if .Crit}}#fca5a5{{else}}#7dd3fc{{end}};height:{{.BarPct}}%;{{if .Count}}min-height:3px;{{end}}border-radius:2px 2px 0 0;"></div>
       </td>
       {{end}}
     </tr></table>
@@ -158,13 +158,13 @@ const reportTemplateSrc = `
     <div style="font-size:15px;font-weight:700;color:#e6edf3;margin:0 2px 10px;">Devices</div>
     {{range .Devices}}
       {{if $.Collapsible}}
-      <details open class="device-block surface" style="display:block;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:0;margin-bottom:12px;">
+      <details open class="device-block surface" style="display:block;background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:10px;padding:0;margin-bottom:12px;">
         <summary style="padding:14px 18px;">{{template "devhead" .}}</summary>
         <div style="padding:0 18px 16px;">{{template "devbody" .}}</div>
       </details>
       {{else}}
-      <div class="device-block surface" style="background:#161b22;border:1px solid #30363d;border-radius:10px;margin-bottom:12px;">
-        <div style="padding:14px 18px;border-bottom:1px solid #30363d;">{{template "devhead" .}}</div>
+      <div class="device-block surface" style="background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:10px;margin-bottom:12px;">
+        <div style="padding:14px 18px;border-bottom:1px solid rgba(255, 255, 255, 0.08);">{{template "devhead" .}}</div>
         <div style="padding:14px 18px 16px;">{{template "devbody" .}}</div>
       </div>
       {{end}}
@@ -182,7 +182,7 @@ const reportTemplateSrc = `
 </body>
 </html>{{end}}
 
-{{define "kpi"}}<td width="33%" style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 10px;text-align:center;">
+{{define "kpi"}}<td width="33%" style="background:rgba(15, 23, 42, 0.45);border:1px solid rgba(255, 255, 255, 0.08);border-radius:8px;padding:14px 10px;text-align:center;">
   <div style="font-size:22px;font-weight:700;color:{{.Color}};line-height:1.1;">{{.Value}}</div>
   <div style="font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:0.6px;margin-top:5px;">{{.Label}}</div>
 </td>{{end}}
@@ -192,18 +192,18 @@ const reportTemplateSrc = `
     <strong>{{.IfaceName}}</strong>{{if .DeviceName}} <span style="color:#8b949e;">{{.DeviceName}}</span>{{end}}
   </td>
   <td width="46%" style="vertical-align:middle;">
-    <div style="background:#21262d;border-radius:4px;height:12px;width:100%;">
-      <div style="background:#58a6ff;height:12px;border-radius:4px;width:{{.BarPct}}%;"></div>
+    <div style="background:rgba(255,255,255,0.06);border-radius:4px;height:12px;width:100%;">
+      <div style="background:#7dd3fc;height:12px;border-radius:4px;width:{{.BarPct}}%;"></div>
     </div>
   </td>
   <td width="20%" align="right" style="font-size:12px;color:#e6edf3;padding-left:10px;vertical-align:middle;white-space:nowrap;">
-    {{.TotalHuman}}<span style="color:#6e7681;font-size:10px;"> &middot; {{.PeakHuman}} pk</span>
+    {{.TotalHuman}}<span style="color:#8b949e;font-size:10px;"> &middot; {{.PeakHuman}} pk</span>
   </td>
 </tr></table>{{end}}
 
-{{define "spikegroup"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:6px;border:1px solid #30363d;border-left:3px solid {{if .IsCritical}}#f85149{{else}}#d29922{{end}};background:#0d1117;border-radius:6px;"><tr>
+{{define "spikegroup"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:6px;border:1px solid rgba(255, 255, 255, 0.08);border-left:3px solid {{if .IsCritical}}#fca5a5{{else}}#fcd34d{{end}};background:rgba(255, 255, 255, 0.03);border-radius:6px;"><tr>
   <td style="padding:8px 12px;vertical-align:middle;">
-    <span style="display:inline-block;background:{{if .IsCritical}}rgba(248,81,73,0.15){{else}}rgba(210,153,34,0.15){{end}};color:{{if .IsCritical}}#f85149{{else}}#d29922{{end}};border-radius:4px;padding:1px 7px;font-size:11px;font-weight:700;">{{.Count}}&times;</span>
+    <span style="display:inline-block;background:{{if .IsCritical}}rgba(252,165,165,0.15){{else}}rgba(252,211,77,0.15){{end}};color:{{if .IsCritical}}#fca5a5{{else}}#fcd34d{{end}};border-radius:4px;padding:1px 7px;font-size:11px;font-weight:700;">{{.Count}}&times;</span>
     <span style="color:#e6edf3;font-size:12px;font-weight:600;">&nbsp;{{.Interface}}</span>{{if .DeviceName}} <span style="color:#8b949e;font-size:12px;">{{.DeviceName}}</span>{{end}}
     {{if and .Critical (ne .Critical .Count)}}<span style="color:#8b949e;font-size:11px;"> ({{.Critical}} critical)</span>{{end}}
   </td>
@@ -215,8 +215,8 @@ const reportTemplateSrc = `
 {{define "devhead"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
   <td style="vertical-align:middle;">
     <span style="font-size:14px;font-weight:700;color:#e6edf3;">{{.Name}}</span>
-    {{if .Online}}<span style="display:inline-block;background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid rgba(63,185,80,0.4);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;margin-left:8px;">ONLINE</span>
-    {{else}}<span style="display:inline-block;background:rgba(248,81,73,0.15);color:#f85149;border:1px solid rgba(248,81,73,0.4);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;margin-left:8px;">OFFLINE</span>{{end}}
+    {{if .Online}}<span style="display:inline-block;background:rgba(134,239,172,0.15);color:#86efac;border:1px solid rgba(134,239,172,0.4);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;margin-left:8px;">ONLINE</span>
+    {{else}}<span style="display:inline-block;background:rgba(252,165,165,0.15);color:#fca5a5;border:1px solid rgba(252,165,165,0.4);border-radius:20px;padding:2px 9px;font-size:10px;font-weight:600;margin-left:8px;">OFFLINE</span>{{end}}
   </td>
   <td align="right" style="vertical-align:middle;font-size:12px;color:#8b949e;">{{.IPAddress}}</td>
 </tr></table>{{end}}
@@ -232,8 +232,8 @@ const reportTemplateSrc = `
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:10px;"><tr>
   <td style="vertical-align:middle;font-size:11px;color:#8b949e;width:70px;">Uptime</td>
   <td style="vertical-align:middle;">
-    <div style="background:#21262d;border-radius:4px;height:10px;width:100%;">
-      <div style="background:#3fb950;height:10px;border-radius:4px;width:{{.UptimeBarPct}}%;"></div>
+    <div style="background:rgba(255,255,255,0.06);border-radius:4px;height:10px;width:100%;">
+      <div style="background:#86efac;height:10px;border-radius:4px;width:{{.UptimeBarPct}}%;"></div>
     </div>
   </td>
   <td align="right" style="vertical-align:middle;font-size:11px;color:#e6edf3;padding-left:10px;width:64px;">{{printf "%.2f%%" .UptimePct}}</td>
@@ -242,7 +242,7 @@ const reportTemplateSrc = `
 {{if .HasSparkline}}
 <div style="font-size:11px;color:#8b949e;margin:12px 0 4px;">Throughput</div>
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="height:40px;"><tr>
-  {{range .Sparkline}}<td valign="bottom" style="padding:0 1px;height:40px;"><div style="background:#388bfd;height:{{.HeightPct}}%;border-radius:1px;"></div></td>{{end}}
+  {{range .Sparkline}}<td valign="bottom" style="padding:0 1px;height:40px;"><div style="background:#7dd3fc;height:{{.HeightPct}}%;border-radius:1px;"></div></td>{{end}}
 </tr></table>
 {{end}}
 
@@ -257,7 +257,7 @@ const reportTemplateSrc = `
 {{end}}
 {{end}}
 
-{{define "mini"}}<td style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 6px;text-align:center;">
+{{define "mini"}}<td style="background:rgba(255, 255, 255, 0.03);border:1px solid rgba(255, 255, 255, 0.05);border-radius:6px;padding:8px 6px;text-align:center;">
   <div style="font-size:13px;font-weight:600;color:#e6edf3;">{{.Value}}</div>
   <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-top:3px;">{{.Label}}</div>
 </td>{{end}}
