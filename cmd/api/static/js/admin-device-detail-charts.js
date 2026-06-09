@@ -55,11 +55,11 @@
     };
 
     var AXIS = {
-        stroke: '#6b7280',
+        stroke: 'rgba(255, 255, 255, 0.45)',
         font:  '11px "JetBrains Mono", ui-monospace, monospace',
         size:   24,
-        grid:   { stroke: '#1f2937', width: 1 },
-        ticks:  { stroke: '#374151', width: 1, size: 4 }
+        grid:   { stroke: 'rgba(255, 255, 255, 0.06)', width: 1 },
+        ticks:  { stroke: 'rgba(255, 255, 255, 0.15)', width: 1, size: 4 }
     };
 
     var state = {

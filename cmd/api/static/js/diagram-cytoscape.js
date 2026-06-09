@@ -25,9 +25,18 @@
     var DIRECT_TYPES = { ethernet: true, lag: true, l2vlan: true, bridge: true };
 
     var TYPE_COLORS = {
-        ipsec: '#58a6ff', ssl: '#d29922', gre: '#b392f0', tunnel: '#8b949e',
-        vxlan: '#8957e5', l2vlan: '#39d4e0', l3ipvlan: '#da7de8', bridge: '#39d4e0',
-        wan: '#f0883e', lag: '#d29922', ethernet: '#6e7681', offnet: '#3fb950'
+        ipsec: '#7dd3fc', // sky-300
+        ssl: '#fdba74',   // orange-300
+        gre: '#c4b5fd',   // violet-300
+        tunnel: '#94a3b8', // slate-400
+        vxlan: '#f0abfc',  // fuchsia-300
+        l2vlan: '#2dd4bf', // teal-400
+        l3ipvlan: '#f472b6', // pink-400
+        bridge: '#2dd4bf', // teal-400
+        wan: '#fb923c',    // orange-400
+        lag: '#fcd34d',    // amber-300
+        ethernet: '#94a3b8',
+        offnet: '#4ade80'  // green-400
     };
 
     var TYPE_LABELS = {
@@ -256,30 +265,33 @@
             // Site compound nodes — label above with dark background for visibility
             { selector: 'node[nodeType="site"]', style: {
                 'background-opacity': 0, 'border-width': 1.5, 'border-style': 'dashed',
-                'border-color': '#30363d', 'border-opacity': 0.7, 'label': 'data(label)',
+                'border-color': 'rgba(255, 255, 255, 0.15)', 'border-opacity': 0.7, 'label': 'data(label)',
                 'text-valign': 'top', 'text-halign': 'center', 'font-size': '13px',
-                'color': '#e6edf3', 'font-weight': '600', 'text-margin-y': -12,
+                'font-family': 'Outfit, "Inter", sans-serif', 'font-weight': '600',
+                'color': '#7dd3fc', 'text-margin-y': -12,
                 'text-background-color': '#0d1117', 'text-background-opacity': 0.9,
-                'text-background-padding': '4px', 'text-background-shape': 'roundrectangle',
+                'text-background-padding': '6px', 'text-background-shape': 'roundrectangle',
                 'padding': '40px', 'shape': 'roundrectangle', 'corner-radius': 12,
                 'min-width': '200px', 'min-height': '90px', 'z-index': 1
             }},
             // Device nodes
             { selector: 'node[nodeType="device"]', style: {
-                'width': 150, 'height': 64, 'shape': 'roundrectangle', 'background-color': '#161b22',
+                'width': 150, 'height': 64, 'shape': 'roundrectangle', 'background-color': '#12161f',
                 'border-width': 2, 'border-color': '#30363d', 'label': 'data(label)',
                 'text-valign': 'center', 'text-halign': 'center', 'font-size': '11px',
-                'color': '#e6edf3', 'text-wrap': 'wrap', 'text-max-width': '140px', 'corner-radius': 8
+                'font-family': 'Outfit, "Inter", "Segoe UI", sans-serif', 'font-weight': '500',
+                'color': '#e6edf3', 'text-wrap': 'wrap', 'text-max-width': '140px', 'corner-radius': 8,
+                'ghost': 'yes', 'ghost-opacity': 0.15, 'ghost-offset-x': 0, 'ghost-offset-y': 4
             }},
-            { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#3fb950' } },
-            { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f85149' } },
+            { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#4ade80' } },
+            { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f87171' } },
             // Cloud node — large cloud icon centered
             { selector: 'node[nodeType="cloud"]', style: {
                 'width': 10, 'height': 10, 'shape': 'ellipse',
                 'background-opacity': 0, 'border-width': 0,
                 'padding': 0,
                 'label': '\u2601\uFE0F', 'text-valign': 'center', 'text-halign': 'center',
-                'font-size': '80px', 'color': '#484f58',
+                'font-size': '80px', 'color': '#64748b',
                 'text-margin-x': 0, 'text-margin-y': 0
             }},
             // Default edge — all straight lines
@@ -288,31 +300,31 @@
                 'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
             }},
             // Tunnel bundle edges — thicker pipe
-            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'color': '#484f58', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
             // Connection type colors
-            { selector: 'edge[connType="ipsec"]', style: { 'line-color': '#58a6ff' } },
-            { selector: 'edge[connType="ssl"]', style: { 'line-color': '#d29922' } },
-            { selector: 'edge[connType="vxlan"]', style: { 'line-color': '#8957e5', 'line-style': 'dashed', 'line-dash-pattern': [8, 4] } },
-            { selector: 'edge[connType="l2vlan"]', style: { 'line-color': '#39d4e0' } },
-            { selector: 'edge[connType="l3ipvlan"]', style: { 'line-color': '#da7de8', 'line-style': 'dashed', 'line-dash-pattern': [12, 4] } },
-            { selector: 'edge[connType="gre"]', style: { 'line-color': '#b392f0' } },
-            { selector: 'edge[connType="wan"]', style: { 'line-color': '#f0883e' } },
-            { selector: 'edge[connType="lag"]', style: { 'line-color': '#d29922', 'width': 4 } },
-            { selector: 'edge[connType="ethernet"]', style: { 'line-color': '#6e7681', 'width': 2 } },
-            { selector: 'edge[connType="tunnel"]', style: { 'line-color': '#8b949e' } },
+            { selector: 'edge[connType="ipsec"]', style: { 'line-color': TYPE_COLORS.ipsec } },
+            { selector: 'edge[connType="ssl"]', style: { 'line-color': TYPE_COLORS.ssl } },
+            { selector: 'edge[connType="vxlan"]', style: { 'line-color': TYPE_COLORS.vxlan, 'line-style': 'dashed', 'line-dash-pattern': [8, 4] } },
+            { selector: 'edge[connType="l2vlan"]', style: { 'line-color': TYPE_COLORS.l2vlan } },
+            { selector: 'edge[connType="l3ipvlan"]', style: { 'line-color': TYPE_COLORS.l3ipvlan, 'line-style': 'dashed', 'line-dash-pattern': [12, 4] } },
+            { selector: 'edge[connType="gre"]', style: { 'line-color': TYPE_COLORS.gre } },
+            { selector: 'edge[connType="wan"]', style: { 'line-color': TYPE_COLORS.wan } },
+            { selector: 'edge[connType="lag"]', style: { 'line-color': TYPE_COLORS.lag, 'width': 4 } },
+            { selector: 'edge[connType="ethernet"]', style: { 'line-color': TYPE_COLORS.ethernet, 'width': 2 } },
+            { selector: 'edge[connType="tunnel"]', style: { 'line-color': TYPE_COLORS.tunnel } },
             // Sub-lane edges (expansion) — offset bezier for visual separation
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
-                'label': 'data(label)', 'font-size': '9px', 'color': '#c9d1d9',
+                'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': '#c9d1d9',
                 'text-rotation': 'autorotate', 'text-margin-y': -10,
                 'text-background-color': '#0d1117', 'text-background-opacity': 0.8,
                 'text-background-padding': '2px'
             }},
             // Pipe background (expansion)
-            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#58a6ff' } },
+            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#7dd3fc' } },
             // Off-net edges — gentle curve to separate from tunnel edges
             { selector: 'edge[edgeType="offnet"]', style: {
-                'line-color': '#3fb950', 'width': 1.5, 'opacity': 0.6,
+                'line-color': '#4ade80', 'width': 1.5, 'opacity': 0.6,
                 'line-style': 'dashed', 'line-dash-pattern': [3, 6],
                 'curve-style': 'unbundled-bezier',
                 'control-point-distances': [40], 'control-point-weights': [0.5]
@@ -321,14 +333,14 @@
             { selector: 'edge[status="down"]', style: {
                 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'opacity': 0.6,
                 'label': '\u2716', 'text-rotation': 'autorotate', 'font-size': '18px',
-                'color': '#f85149', 'text-background-color': '#0d1117',
+                'color': '#f87171', 'text-background-color': '#0d1117',
                 'text-background-opacity': 0.9, 'text-background-padding': '4px',
-                'text-background-shape': 'roundrectangle', 'text-border-color': '#f85149',
+                'text-background-shape': 'roundrectangle', 'text-border-color': '#f87171',
                 'text-border-width': 1.5, 'text-border-opacity': 0.8,
                 'text-halign': 'center', 'text-valign': 'center'
             }},
             // Selected states
-            { selector: 'node:selected', style: { 'border-color': '#58a6ff', 'border-width': 3 } },
+            { selector: 'node:selected', style: { 'border-color': '#7dd3fc', 'border-width': 3 } },
             { selector: 'edge:selected', style: { 'width': 5, 'opacity': 1 } }
         ];
     }
