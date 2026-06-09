@@ -719,17 +719,16 @@
                     </div>
                 </div>
             </div>
-            <div class="card">
-                <div class="card-header">
-                    <h2>Alert Policies</h2>
-                    <button class="btn" data-action="show-policy-modal">+ Create Policy</button>
+            <div class="flex justify-between items-center mb-6 mt-4">
+                <div>
+                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Alert Policies</h2>
+                    <p class="text-xs text-[#8b949e] mt-1">Define routing logic and thresholds for firewall status notifications.</p>
                 </div>
-                <div class="table-wrap">
-                    <table id="alert-policies-table">
-                        <thead><tr><th>Name</th><th>Description</th><th>Default</th><th>Rules</th><th>Channels</th><th>Cooldown</th><th>Escalation</th><th>Actions</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
+                <button class="btn" data-action="show-policy-modal">+ Create Policy</button>
+            </div>
+            
+            <div id="alert-policies-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <!-- Dynamically populated card grid -->
             </div>
         </div>
 

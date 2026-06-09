@@ -3046,30 +3046,53 @@
     }
 
     function renderPoliciesTable(policies) {
-        var tbody = document.querySelector('#alert-policies-table tbody');
+        var grid = document.getElementById('alert-policies-grid');
+        if (!grid) return;
         var html = policies.map(function(p) {
-            var channels = [];
-            if (p.notify_email) channels.push('Email');
-            if (p.notify_slack) channels.push('Slack');
-            if (p.notify_discord) channels.push('Discord');
-            if (p.notify_webhook) channels.push('Webhook');
             var ruleCount = (p.rules || []).length;
-            return '<tr>' +
-                '<td>' + escapeHtml(p.name) + '</td>' +
-                '<td>' + escapeHtml(p.description || '') + '</td>' +
-                '<td>' + (p.is_default ? '<span class="badge info">DEFAULT</span>' : '') + '</td>' +
-                '<td>' + ruleCount + '</td>' +
-                '<td>' + (channels.length ? channels.join(', ') : '<span style="color:#768390">Dashboard only</span>') + '</td>' +
-                '<td>' + p.cooldown_minutes + 'm</td>' +
-                '<td>' + (p.escalation_enabled ? p.escalation_minutes + 'm (' + p.escalation_repeat + 'x)' : 'Off') + '</td>' +
-                '<td>' +
-                    '<button class="btn secondary sm" data-action="edit-policy" data-id="' + p.id + '">Edit</button> ' +
-                    '<button class="btn secondary sm" data-action="clone-policy" data-id="' + p.id + '">Clone</button> ' +
+            
+            var emailClass = p.notify_email ? 'active email' : 'inactive';
+            var slackClass = p.notify_slack ? 'active slack' : 'inactive';
+            var discordClass = p.notify_discord ? 'active discord' : 'inactive';
+            var webhookClass = p.notify_webhook ? 'active webhook' : 'inactive';
+            
+            var escVal = p.escalation_enabled ? p.escalation_minutes + 'm (' + p.escalation_repeat + 'x)' : 'Disabled';
+            var desc = p.description ? escapeHtml(p.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
+            
+            return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:240px;padding:20px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">' +
+                    '<h3 style="font-size:1.1rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(p.name) + '</h3>' +
+                    (p.is_default ? '<span class="badge info">DEFAULT</span>' : '') +
+                '</div>' +
+                '<div style="font-size:0.82rem;color:#94a3b8;margin-bottom:16px;min-height:38px;line-height:1.4;">' + desc + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:20px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
+                    '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;">' +
+                        '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Rules</span>' +
+                        '<span style="font-size:0.85rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + ruleCount + '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;">' +
+                        '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Cooldown</span>' +
+                        '<span style="font-size:0.85rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + p.cooldown_minutes + 'm</span>' +
+                    '</div>' +
+                    '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;">' +
+                        '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Escalate</span>' +
+                        '<span style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + escVal + '</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="policy-card-channels" style="display:flex;gap:8px;margin-bottom:20px;align-items:center;">' +
+                    '<span class="policy-channel-tag ' + emailClass + '">Email</span>' +
+                    '<span class="policy-channel-tag ' + slackClass + '">Slack</span>' +
+                    '<span class="policy-channel-tag ' + discordClass + '">Discord</span>' +
+                    '<span class="policy-channel-tag ' + webhookClass + '">Webhook</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
+                    '<button class="btn secondary sm" data-action="edit-policy" data-id="' + p.id + '">Edit</button>' +
+                    '<button class="btn secondary sm" data-action="clone-policy" data-id="' + p.id + '">Clone</button>' +
                     (p.is_default ? '' : '<button class="btn secondary sm" data-action="delete-policy" data-id="' + p.id + '">Delete</button>') +
-                '</td>' +
-            '</tr>';
+                '</div>' +
+            '</div>';
         }).join('');
-        tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No alert policies</td></tr>';
+        grid.innerHTML = html || '<div class="col-span-full card text-center p-8 text-[#8b949e]">No alert policies configured</div>';
     }
 
     function showPolicyModal(id) {
