@@ -547,20 +547,65 @@
 
     function createChart(canvasId, type, labels, datasets, opts) {
         if (chartInstances[canvasId]) { chartInstances[canvasId].destroy(); }
-        var ctx = document.getElementById(canvasId);
-        if (!ctx) return;
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        var ctx2d = canvas.getContext('2d');
         var isDoughnut = type === 'doughnut' || type === 'pie';
+
+        // Enhance datasets with area gradients if it's a line chart
+        if (type === 'line' && ctx2d) {
+            datasets.forEach(function(ds) {
+                var color = ds.borderColor || '#58a6ff';
+                var gradient = ctx2d.createLinearGradient(0, 0, 0, 250);
+                // Convert hexadecimal or standard color formats to translucent gradients
+                var startColor = 'rgba(88, 166, 255, 0.25)';
+                if (color === '#d2992a') startColor = 'rgba(210, 153, 42, 0.25)';
+                else if (color === '#f85149') startColor = 'rgba(248, 81, 73, 0.25)';
+                else if (color === '#3fb950') startColor = 'rgba(63, 185, 80, 0.25)';
+                
+                gradient.addColorStop(0, startColor);
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ds.backgroundColor = gradient;
+                ds.fill = true;
+                ds.pointBackgroundColor = color;
+                ds.pointBorderColor = '#0d1117';
+                ds.pointBorderWidth = 2;
+                ds.pointRadius = 4;
+                ds.pointHoverRadius = 6;
+                ds.tension = 0.4; // smooth curve
+            });
+        } else if (isDoughnut) {
+            datasets.forEach(function(ds) {
+                ds.borderWidth = 3;
+                ds.borderColor = '#161b22';
+                ds.hoverBorderWidth = 0;
+            });
+        }
+
         var defaults = {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { position: isDoughnut ? 'bottom' : 'top', labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } } },
+            interaction: {
+                intersect: false,
+                mode: 'index',
+            },
+            plugins: {
+                legend: {
+                    position: isDoughnut ? 'bottom' : 'top',
+                }
+            },
             scales: isDoughnut ? {} : {
-                x: { ticks: { color: '#484f58', font:{size:11}, maxRotation: 0, maxTicksLimit: 8 }, grid: { color: '#21262d' } },
-                y: { ticks: { color: '#484f58', font:{size:11}, maxTicksLimit: 8 }, grid: { color: '#21262d' }, beginAtZero: true }
+                x: { ticks: { maxRotation: 0, maxTicksLimit: 8 } },
+                y: { beginAtZero: true }
             }
         };
+        
         var mergedOpts = Object.assign({}, defaults, opts || {});
-        chartInstances[canvasId] = new Chart(ctx, { type: type, data: { labels: labels, datasets: datasets }, options: mergedOpts });
+        if (isDoughnut) {
+            mergedOpts.cutout = '75%';
+        }
+
+        chartInstances[canvasId] = new Chart(canvas, { type: type, data: { labels: labels, datasets: datasets }, options: mergedOpts });
     }
 
     // ---- Devices ----

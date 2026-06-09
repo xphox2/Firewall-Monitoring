@@ -1151,4 +1151,64 @@
             report((r && r.message) || String(r), '', 0, 0, r && r.stack);
         });
     })();
+
+    function setupChartDefaults() {
+        if (!window.Chart) return;
+        
+        // General text color and font
+        Chart.defaults.color = '#8b949e';
+        Chart.defaults.font.family = '"Inter", ui-sans-serif, system-ui, -apple-system, sans-serif';
+        Chart.defaults.font.size = 10;
+        Chart.defaults.responsive = true;
+        Chart.defaults.maintainAspectRatio = false;
+        
+        // Grid lines styling
+        if (Chart.defaults.scale && Chart.defaults.scale.grid) {
+            Chart.defaults.scale.grid.color = 'rgba(48, 54, 61, 0.2)';
+            Chart.defaults.scale.grid.borderColor = 'transparent';
+            Chart.defaults.scale.grid.drawBorder = false;
+        }
+        if (Chart.defaults.scale && Chart.defaults.scale.ticks) {
+            Chart.defaults.scale.ticks.color = '#8b949e';
+            Chart.defaults.scale.ticks.font = {
+                family: '"JetBrains Mono", monospace',
+                size: 9
+            };
+        }
+        
+        // Custom Tooltip defaults
+        if (Chart.defaults.plugins && Chart.defaults.plugins.tooltip) {
+            Chart.defaults.plugins.tooltip.backgroundColor = '#161b22';
+            Chart.defaults.plugins.tooltip.titleColor = '#e6edf3';
+            Chart.defaults.plugins.tooltip.titleFont = { size: 12, weight: '600' };
+            Chart.defaults.plugins.tooltip.bodyColor = '#c9d1d9';
+            Chart.defaults.plugins.tooltip.borderColor = 'rgba(255, 255, 255, 0.08)';
+            Chart.defaults.plugins.tooltip.borderWidth = 1;
+            Chart.defaults.plugins.tooltip.padding = 10;
+            Chart.defaults.plugins.tooltip.cornerRadius = 6;
+            Chart.defaults.plugins.tooltip.displayColors = true;
+            Chart.defaults.plugins.tooltip.boxWidth = 8;
+            Chart.defaults.plugins.tooltip.boxHeight = 8;
+            Chart.defaults.plugins.tooltip.usePointStyle = true;
+        }
+        
+        // Legend defaults
+        if (Chart.defaults.plugins && Chart.defaults.plugins.legend) {
+            Chart.defaults.plugins.legend.labels.color = '#c9d1d9';
+            Chart.defaults.plugins.legend.labels.boxWidth = 8;
+            Chart.defaults.plugins.legend.labels.boxHeight = 8;
+            Chart.defaults.plugins.legend.labels.usePointStyle = true;
+            Chart.defaults.plugins.legend.labels.padding = 12;
+            Chart.defaults.plugins.legend.labels.font = {
+                size: 11,
+                weight: '500'
+            };
+        }
+    }
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupChartDefaults);
+    } else {
+        setupChartDefaults();
+    }
 })();

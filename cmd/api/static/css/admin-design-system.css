@@ -861,3 +861,137 @@
         transition: none !important;
     }
 }
+
+/* ============================================================
+ * Premium NOC-style Enhancements (WOW factor UI upgrades)
+ * ============================================================ */
+
+/* Glowing Gradient Background */
+body {
+    background-color: #0b0d11 !important;
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(56, 139, 253, 0.07) 0px, transparent 40%),
+        radial-gradient(at 100% 100%, rgba(137, 87, 229, 0.05) 0px, transparent 40%),
+        radial-gradient(at 50% 50%, rgba(63, 185, 80, 0.02) 0px, transparent 50%) !important;
+    background-attachment: fixed !important;
+}
+
+/* Glassmorphism Cards */
+.card, .stat-card, .probe-card {
+    background: rgba(22, 27, 34, 0.5) !important;
+    backdrop-filter: blur(16px) saturate(120%);
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Hover glow & lift effects */
+.card:hover {
+    border-color: rgba(125, 211, 252, 0.25) !important;
+    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.06) !important;
+}
+
+.stat-card:hover, .probe-card.clickable:hover {
+    transform: translateY(-4px) !important;
+    border-color: rgba(125, 211, 252, 0.4) !important;
+    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.1) !important;
+}
+
+/* Enhanced stat borders */
+.stat-card.accent-green { border-left: 4px solid #3fb950 !important; }
+.stat-card.accent-red { border-left: 4px solid #f85149 !important; }
+.stat-card.accent-blue { border-left: 4px solid #58a6ff !important; }
+.stat-card.accent-gray { border-left: 4px solid #484f58 !important; }
+
+/* Custom glowing sidebar header */
+.sidebar {
+    background: rgba(13, 17, 23, 0.8) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.sidebar-header h2 {
+    background: linear-gradient(135deg, #7dd3fc 0%, #c4b5fd 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 700;
+}
+
+/* Modern buttons with glow */
+.btn {
+    background: linear-gradient(135deg, #238636 0%, #2ea043 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 4px 12px rgba(46, 160, 67, 0.12) !important;
+    transition: all 0.2s ease !important;
+}
+.btn:hover {
+    background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%) !important;
+    box-shadow: 0 4px 16px rgba(46, 160, 67, 0.25) !important;
+    transform: translateY(-1px);
+}
+
+.btn.secondary {
+    background: rgba(33, 38, 45, 0.6) !important;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: #e6edf3 !important;
+    box-shadow: none !important;
+}
+.btn.secondary:hover {
+    background: rgba(48, 54, 61, 0.8) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.btn.danger {
+    background: linear-gradient(135deg, #da3633 0%, #f85149 100%) !important;
+    box-shadow: 0 4px 12px rgba(248, 81, 73, 0.12) !important;
+}
+.btn.danger:hover {
+    background: linear-gradient(135deg, #f85149 0%, #ff7b72 100%) !important;
+    box-shadow: 0 4px 16px rgba(248, 81, 73, 0.25) !important;
+}
+
+/* Table styling premium update */
+tr:hover {
+    background: rgba(255, 255, 255, 0.015) !important;
+}
+th {
+    background: #12161f !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+    color: #8b949e !important;
+}
+td {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+/* Glowing text styling */
+.stat-card .stat-value {
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.03);
+}
+.stat-card .stat-value.accent {
+    text-shadow: 0 0 12px rgba(88, 166, 255, 0.15);
+}
+.stat-card .stat-value.good {
+    text-shadow: 0 0 12px rgba(63, 185, 80, 0.15);
+}
+.stat-card .stat-value.bad {
+    text-shadow: 0 0 12px rgba(248, 81, 73, 0.15);
+}
+
+/* Modern scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #0d1117;
+}
+::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #8b949e;
+}
