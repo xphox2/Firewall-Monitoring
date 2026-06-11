@@ -124,7 +124,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 			continue
 		}
 		if rc.resolved.Threshold > 0 && rc.current < rc.resolved.Threshold {
-			am.sendRecovery(rc.metricKey, rc.alertType,
+			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
 				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID)
 		}
 	}
@@ -186,7 +186,8 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	for _, iface := range interfaces {
 		if iface.Status == "up" {
 			key := fmt.Sprintf("iface_down_%d_%s", iface.DeviceID, iface.Name)
-			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID)
+			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
+				fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID)
 		}
 	}
 
@@ -197,7 +198,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	// Handle LINK_UP as recovery for any active LINK_DOWN alert on this device
 	if trap.TrapType == "LINK_UP" {
 		key := fmt.Sprintf("trap_LINK_DOWN_%s", trap.SourceIP)
-		am.sendRecovery(key, "LINK_DOWN", trap.Message, trap.DeviceID)
+		am.sendRecovery(key, "LINK_DOWN", "snmp_trap", trap.Message, trap.DeviceID)
 		return nil
 	}
 
@@ -492,9 +493,15 @@ func (am *AlertManager) SetCooldown(duration time.Duration) {
 	am.alertCooldown = duration
 }
 
-// sendRecovery sends a resolved notification if the given key was previously active.
-// Must NOT be called with am.mu held — it acquires the lock internally.
-func (am *AlertManager) sendRecovery(key, alertType, message string, deviceID uint) {
+// sendRecovery auto-resolves the matching OPEN alert when a condition clears and,
+// if the alert was active in this process, emits a recovery notification + companion
+// _RESOLVED record. Must NOT be called with am.mu held — it acquires the lock internally.
+//
+// metricName scopes the resolution to the SPECIFIC resource that recovered (the value
+// stored in Alert.MetricName, e.g. "interface_<name>", "vpn_<tunnel>", "device_status").
+// Without it, a recovery for one interface would wrongly resolve every INTERFACE_DOWN
+// alert on the device.
+func (am *AlertManager) sendRecovery(key, alertType, metricName, message string, deviceID uint) {
 	am.mu.Lock()
 	wasActive := am.activeAlerts[key]
 	if wasActive {
@@ -503,39 +510,51 @@ func (am *AlertManager) sendRecovery(key, alertType, message string, deviceID ui
 	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
 
+	// Always run the precisely-scoped DB resolve, independent of the in-memory
+	// activeAlerts state. This is idempotent (the WHERE clause matches only OPEN,
+	// unacknowledged rows) and survives a poller restart that lost activeAlerts —
+	// an orphaned offline alert still auto-clears on the next recovery signal.
+	//
+	// We auto-ACKNOWLEDGE as well as resolve so the original alert leaves the NOC's
+	// default open queue with zero manual clicks; resolved_at is retained for the
+	// audit trail and the RESOLVED badge in the UI.
+	//
+	// AUDIT-144: also clear the snooze fields, so a snoozed alert that just resolved
+	// doesn't linger in the "snoozed" view as if it were still active — when the
+	// underlying issue clears, the recovery event unsnoozes it for the operator.
+	if am.db != nil {
+		now := time.Now()
+		am.db.Gorm().Model(&models.Alert{}).
+			Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND acknowledged = ?", deviceID, alertType, metricName, false).
+			Updates(map[string]interface{}{
+				"resolved_at":     now,
+				"acknowledged":    true,
+				"acknowledged_at": now,
+				"notes":           "Auto-resolved: " + message,
+				"snoozed_until":   nil,
+				"snoozed_by":      "",
+				"snoozed_reason":  "",
+			})
+	}
+
+	// Only notify + record the companion when the alert was active in THIS process.
+	// A cold resolve (post-restart, or a redundant per-poll up signal) clears the
+	// ticket silently without re-sending a "back up" email.
 	if !wasActive {
 		return
 	}
 
-	// Set ResolvedAt on unresolved alerts of this type for this device.
-	// AUDIT-144: also clear the snooze fields, so a snoozed alert
-	// that just resolved doesn't linger in the "snoozed" view as
-	// if it were still active. The auto-resnooze semantic: when the
-	// underlying issue clears, the operator no longer needs to
-	// manually unsnooze — the recovery event does it for them.
-	// (The intent is documented at the WHERE clause: we're
-	// touching only the alerts that the recovery event resolves,
-	// not the historical record. Snoozed + acknowledged alerts
-	// that have already been resolved_at'd are unaffected.)
-	if am.db != nil {
-		now := time.Now()
-		am.db.Gorm().Model(&models.Alert{}).
-			Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL AND acknowledged = ?", deviceID, alertType, false).
-			Updates(map[string]interface{}{
-				"resolved_at":    now,
-				"snoozed_until":  nil,
-				"snoozed_by":     "",
-				"snoozed_reason": "",
-			})
-	}
-
+	now := time.Now()
 	alert := models.Alert{
-		Timestamp:  time.Now(),
-		DeviceID:   deviceID,
-		AlertType:  alertType + "_RESOLVED",
-		Severity:   "info",
-		Message:    message,
-		MetricName: "recovery",
+		Timestamp:      now,
+		DeviceID:       deviceID,
+		AlertType:      alertType + "_RESOLVED",
+		Severity:       "info",
+		Message:        message,
+		MetricName:     "recovery",
+		Acknowledged:   true,
+		AcknowledgedAt: &now,
+		ResolvedAt:     &now,
 	}
 	am.saveAlert(&alert)
 	if err := am.notifier.SendAlert(&alert, nc); err != nil {
@@ -600,7 +619,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 	for _, vpn := range vpnStatuses {
 		if vpn.Status == "up" {
 			key := fmt.Sprintf("vpn_down_%d_%s", vpn.DeviceID, vpn.TunnelName)
-			am.sendRecovery(key, "VPN_TUNNEL_DOWN",
+			am.sendRecovery(key, "VPN_TUNNEL_DOWN", fmt.Sprintf("vpn_%s", vpn.TunnelName),
 				fmt.Sprintf("VPN tunnel %s to %s is back up", vpn.TunnelName, vpn.RemoteIP), vpn.DeviceID)
 		}
 	}
@@ -649,7 +668,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 // CheckDeviceOnline sends a recovery notification if the device was previously marked offline.
 func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 	key := fmt.Sprintf("device_offline_%d", device.ID)
-	am.sendRecovery(key, "DEVICE_OFFLINE",
+	am.sendRecovery(key, "DEVICE_OFFLINE", "device_status",
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
 }
 
@@ -719,7 +738,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		lag := now.Sub(probe.LastDataReceived)
 		if lag < lagThreshold {
 			key := fmt.Sprintf("probe_data_lag_%d", probe.ID)
-			am.sendRecovery(key, "PROBE_DATA_LAG",
+			am.sendRecovery(key, "PROBE_DATA_LAG", "probe_data_flow",
 				fmt.Sprintf("Probe %s is receiving data again (lag cleared)", probe.Name), 0)
 			continue
 		}

@@ -1936,6 +1936,11 @@
                 statusCol = '<span class="badge unknown">MAINT</span>';
             } else if (snoozedActive) {
                 statusCol = '<span class="badge warning" title="Until ' + escapeHtml(formatDate(a.snoozed_until)) + '">SNOOZED</span>';
+            } else if (a.resolved_at) {
+                // Auto-cleared by a recovery signal (device back online, interface up,
+                // etc.). These rows are also acknowledged, so this branch MUST precede
+                // the acknowledged branch to show RESOLVED instead of a generic ACK.
+                statusCol = '<span class="badge online" title="' + escapeHtml('Auto-cleared ' + formatDate(a.resolved_at) + (a.notes ? ' — ' + a.notes : '')) + '">RESOLVED</span>';
             } else if (a.acknowledged) {
                 statusCol = '<span class="badge info" title="' + escapeHtml((a.acknowledged_at ? formatDate(a.acknowledged_at) : '') + (a.notes ? ' — ' + a.notes : '')) + '">ACK</span>';
             } else {
@@ -1985,6 +1990,15 @@
                     if (a.snoozed_reason) statusHtml += '<br>Reason: ' + escapeHtml(a.snoozed_reason);
                     statusHtml += '</div>';
                 }
+            } else if (a.resolved_at) {
+                // Auto-cleared by a recovery signal — no operator action needed.
+                // Precedes the acknowledged branch because auto-resolved rows are
+                // also acknowledged.
+                statusHtml = '<span class="badge online">RESOLVED (AUTO-CLEARED)</span>';
+                statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
+                statusHtml += 'Resolved at: ' + formatDate(a.resolved_at);
+                if (a.notes) statusHtml += '<br>' + escapeHtml(a.notes);
+                statusHtml += '</div>';
             } else if (a.acknowledged) {
                 statusHtml = '<span class="badge info">ACKNOWLEDGED</span>';
                 if (a.acknowledged_at || a.notes) {
