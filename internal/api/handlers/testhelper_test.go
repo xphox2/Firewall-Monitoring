@@ -28,6 +28,15 @@ func setupTestHandler(t *testing.T) (*Handler, *database.Database) {
 
 func setupProbeAndDevice(t *testing.T, db *database.Database) (probe *models.Probe, device *models.Device) {
 	t.Helper()
+	// Probe.SiteID is a non-nullable uint with a FK to sites (fk_sites_probes).
+	// Postgres ENFORCES that FK, so a probe created without a site (site_id=0)
+	// fails with SQLSTATE 23503; SQLite (the local default) does not enforce
+	// FKs, which is why this passed locally but reddened the integration lane.
+	// Seed a real site first and reference it.
+	site := &models.Site{Name: "test-site"}
+	if err := db.Gorm().Create(site).Error; err != nil {
+		t.Fatalf("create site: %v", err)
+	}
 	// AUDIT-017: keys are stored HASHED at rest, but probes authenticate with
 	// the plaintext token. Seed the hash, then expose the plaintext on the
 	// returned struct so callers send the real token (validateProbe hashes it
@@ -35,6 +44,7 @@ func setupProbeAndDevice(t *testing.T, db *database.Database) (probe *models.Pro
 	const probeKey = "test-key-abc123"
 	probe = &models.Probe{
 		Name:            "test-probe",
+		SiteID:          site.ID,
 		RegistrationKey: database.HashProbeKey(probeKey),
 		ApprovalStatus:  "approved",
 		Status:          "online",
