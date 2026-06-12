@@ -13,17 +13,16 @@ import (
 // the file was "free-form" and "not machine-readable" before
 // the fix.
 //
-// The fix added:
-//  1. A header line referencing Keep-A-Changelog 1.1.0 and
-//     Semantic Versioning 2.0.0.
-//  2. An `## [Unreleased]` section at the top with the standard
-//     sub-section placeholders (Added, Changed, Deprecated,
-//     Removed, Fixed, Security).
+// The fix added a header line referencing Keep-A-Changelog 1.1.0 and
+// Semantic Versioning 2.0.0, which the test still pins.
 //
-// The test pins both. A future agent who removes the header
-// (e.g. while reflowing the file) or the [Unreleased] section
-// fails here, with a message pointing at the audit and the
-// Keep-A-Changelog spec.
+// UPDATE 2026-06-11: the original AUDIT-110 also mandated a top
+// `## [Unreleased]` section. The maintainer removed that convention —
+// it had drifted into a catch-all blob and diverged from the sibling
+// Firewall-Collector, which uses per-version `## [x.y.z] - date`
+// sections (newest first), as does this file's own <= 0.10.281 history.
+// The test now enforces the per-version convention: the first `## [...]`
+// section must be a concrete version, NOT `## [Unreleased]`.
 func TestChangelog_KeepAChangelogHeader_AUDIT110(t *testing.T) {
 	const path = "../../CHANGELOG.md"
 	data, err := os.ReadFile(path)
@@ -42,19 +41,18 @@ func TestChangelog_KeepAChangelogHeader_AUDIT110(t *testing.T) {
 		t.Errorf("CHANGELOG.md is missing the Semantic Versioning reference in the header (AUDIT-110). The header must link to https://semver.org/ so the version-bump discipline is documented in-place.")
 	}
 
-	// The [Unreleased] section must be the FIRST version section
-	// (i.e. appear before the first `## [0.X.Y]` heading). The
-	// audit's recommendation was to add this; without it, a
-	// future changelog-edit agent has no convention to follow for
-	// in-flight changes.
-	unreleasedRe := regexp.MustCompile(`(?m)^## \[Unreleased\]`)
-	firstVersionRe := regexp.MustCompile(`(?m)^## \[\d+\.\d+\.\d+\]`)
-	unreleasedIdx := unreleasedRe.FindStringIndex(body)
-	firstVersionIdx := firstVersionRe.FindStringIndex(body)
-	if unreleasedIdx == nil {
-		t.Errorf("CHANGELOG.md is missing the `## [Unreleased]` section (AUDIT-110). The Keep-A-Changelog spec requires this for in-flight changes; the audit's recommendation was to add it as a placeholder for future entries.")
-	} else if firstVersionIdx != nil && unreleasedIdx[0] > firstVersionIdx[0] {
-		t.Errorf("CHANGELOG.md has `## [Unreleased]` AFTER a `## [0.X.Y]` section (line %d vs line %d). Keep-A-Changelog requires [Unreleased] to be the first version section, before any released versions.", unreleasedIdx[0], firstVersionIdx[0])
+	// The first `## [...]` section must be a concrete `## [X.Y.Z] - date`
+	// release (newest first) — NOT a `## [Unreleased]` accumulator. This repo
+	// (and the sibling Firewall-Collector) use per-version sections; the
+	// maintainer removed the Keep-A-Changelog [Unreleased] convention on
+	// 2026-06-11 because it had drifted into a catch-all blob and diverged from
+	// the collector's format. New releases each get their own dated section.
+	firstSectionRe := regexp.MustCompile(`(?m)^## \[([^\]]+)\]`)
+	m := firstSectionRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Errorf("CHANGELOG.md has no `## [...]` version section (AUDIT-110).")
+	} else if m[1] == "Unreleased" {
+		t.Errorf("CHANGELOG.md leads with `## [Unreleased]`. This project uses per-version `## [x.y.z] - date` sections, newest first (matching the sibling Firewall-Collector and this file's own <= 0.10.281 history) — not a Keep-A-Changelog [Unreleased] accumulator. Give the change its own `## [x.y.z] - date` section at the top.")
 	}
 }
 
