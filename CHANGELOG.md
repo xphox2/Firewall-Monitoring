@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.423] - 2026-06-18
+### Fixed
+- **Admin → Data → Syslog now loads fast and shows a sane pager instead of "1 of 3,353,148".** The `/api/syslog` list endpoint ran an exact `COUNT(*)` over the entire partitioned `syslog_messages` table on every page load (and every Prev/Next), with no time bound — at prod volume that's millions of rows, a full scan across all monthly partitions, which both made the page slow and produced the nonsensical all-time total in the pager. The endpoint now honors the `hours` time window the admin UI already sends via its range pills (default 24h) for *both* the row list and the count, so Postgres can prune partitions and use the `timestamp` index. The "Showing X–Y of N" / "Page X of Y" totals now reflect the selected range; widen the range pill to see further back.
+
 ## [0.10.422] - 2026-06-17
 ### Changed
 - **Telemetry is now preserved as a running total when a probe is replaced or a device is removed — no more disappearing dashboard numbers or duplicate ping rows** (v0.10.422). Three related fixes:

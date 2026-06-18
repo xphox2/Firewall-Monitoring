@@ -181,7 +181,16 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 
 	limit, offset := httputil.ParsePagination(c)
 
-	query := db.Gorm().Order("timestamp DESC")
+	// Bound the list (and the COUNT below) to a recent time window so we
+	// never scan/count the full partitioned syslog_messages table — at prod
+	// volume that's millions of rows and an exact COUNT(*) is what made this
+	// page slow and showed a nonsensical "of 3,353,148" pager. The frontend's
+	// range pills already send `hours` (default 24h). The cutoff lets Postgres
+	// prune partitions and use the timestamp index.
+	hours := httputil.ParseHours(c)
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	query := db.Gorm().Order("timestamp DESC").Where("timestamp >= ?", cutoff)
 
 	if probeID := c.Query("probe_id"); probeID != "" {
 		query = query.Where("probe_id = ?", probeID)
@@ -207,7 +216,7 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	}
 
 	var total int64
-	countQuery := db.Gorm().Model(&models.SyslogMessage{})
+	countQuery := db.Gorm().Model(&models.SyslogMessage{}).Where("timestamp >= ?", cutoff)
 	if probeID := c.Query("probe_id"); probeID != "" {
 		countQuery = countQuery.Where("probe_id = ?", probeID)
 	}
