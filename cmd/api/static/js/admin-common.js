@@ -918,7 +918,10 @@
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +
             '<a class="nav-item' + (currentPage === 'probes' ? ' active" aria-current="page' : '') + '" href="/admin/probes"><span class="nav-icon" aria-hidden="true">' + pageIcons['probes'] + '</span> Probes</a>' +
             '<a class="nav-item' + (currentPage === 'sites' ? ' active" aria-current="page' : '') + '" href="/admin/sites"><span class="nav-icon" aria-hidden="true">' + pageIcons['sites'] + '</span> Sites</a>' +
-            '<a class="nav-item' + (currentPage === 'probe-pending' ? ' active" aria-current="page' : '') + '" href="/admin/probe-pending"><span class="nav-icon" aria-hidden="true">' + pageIcons['probe-pending'] + '</span> Pending</a>' +
+            // Pending nav link removed (v0.10.418): the Probes page now covers
+            // the full approve/reject workflow via its "Pending" filter tab, so
+            // a separate top-level link was redundant. The /admin/probe-pending
+            // page + route remain reachable by direct URL.
             '</div><div class="nav-section"><div class="nav-section-title">Configuration</div>' +
             '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active" aria-current="page' : '') + '" href="/admin/alert-policies"><span class="nav-icon" aria-hidden="true">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
             '<a class="nav-item' + (currentPage === 'maintenance' ? ' active" aria-current="page' : '') + '" href="/admin/maintenance"><span class="nav-icon" aria-hidden="true">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +
