@@ -893,7 +893,7 @@
             var pageMap = { 'dashboard':'', 'devices':'devices', 'connections':'connections',
                 'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
-                'probe-pending':'probe-pending', 'irc':'irc', 'audit':'audit' };
+                'irc':'irc', 'audit':'audit' };
             currentPage = pageMap[lastSegment] || 'dashboard';
         }
 
@@ -901,7 +901,7 @@
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
-            'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;', 'audit': '&#128203;'
+            'probes': '&#9678;', 'sites': '&#9962;', 'irc': '&#128172;', 'audit': '&#128203;'
         };
         // AUDIT-057: the active link gets aria-current="page" (so screen readers
         // announce the current page) and every nav icon gets aria-hidden="true"
@@ -918,10 +918,9 @@
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +
             '<a class="nav-item' + (currentPage === 'probes' ? ' active" aria-current="page' : '') + '" href="/admin/probes"><span class="nav-icon" aria-hidden="true">' + pageIcons['probes'] + '</span> Probes</a>' +
             '<a class="nav-item' + (currentPage === 'sites' ? ' active" aria-current="page' : '') + '" href="/admin/sites"><span class="nav-icon" aria-hidden="true">' + pageIcons['sites'] + '</span> Sites</a>' +
-            // Pending nav link removed (v0.10.418): the Probes page now covers
-            // the full approve/reject workflow via its "Pending" filter tab, so
-            // a separate top-level link was redundant. The /admin/probe-pending
-            // page + route remain reachable by direct URL.
+            // The standalone "Pending" page/link was removed (v0.10.419): the
+            // Probes page covers the full approve/reject workflow via its
+            // "Pending" filter tab, making a separate page redundant.
             '</div><div class="nav-section"><div class="nav-section-title">Configuration</div>' +
             '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active" aria-current="page' : '') + '" href="/admin/alert-policies"><span class="nav-icon" aria-hidden="true">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
             '<a class="nav-item' + (currentPage === 'maintenance' ? ' active" aria-current="page' : '') + '" href="/admin/maintenance"><span class="nav-icon" aria-hidden="true">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +

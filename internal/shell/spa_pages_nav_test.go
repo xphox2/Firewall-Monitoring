@@ -8,7 +8,7 @@ import (
 )
 
 // TestSPAPagesMatchPageDivs guards the navigation regression where the
-// standalone admin pages (Probes, Sites, Pending, IRC) were listed in
+// standalone admin pages (Probes, Sites, IRC) were listed in
 // admin-main.js's SPA_PAGES. The single-page click interceptor then
 // preventDefault()'d the real navigation and called loadPageData() with no
 // matching case, so those pages loaded blank until a manual refresh forced a
@@ -38,7 +38,7 @@ func TestSPAPagesMatchPageDivs(t *testing.T) {
 	}
 
 	htmlStr := string(html)
-	standalone := map[string]bool{"probes": true, "sites": true, "probe-pending": true, "irc": true, "network": true}
+	standalone := map[string]bool{"probes": true, "sites": true, "irc": true, "network": true}
 	for _, m := range matches {
 		page := m[1]
 		if standalone[page] {

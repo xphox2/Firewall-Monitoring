@@ -287,12 +287,6 @@ func (d *Database) RejectProbe(probeID uint, reason string) error {
 	return d.db.Create(approval).Error
 }
 
-func (d *Database) GetPendingProbes() ([]models.Probe, error) {
-	var probes []models.Probe
-	err := d.db.Where("approval_status = ?", "pending").Find(&probes).Error
-	return probes, err
-}
-
 func (d *Database) GetApprovedProbes() ([]models.Probe, error) {
 	var probes []models.Probe
 	err := d.db.Where("approval_status = ?", "approved").Find(&probes).Error

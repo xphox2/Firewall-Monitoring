@@ -9,7 +9,7 @@ import (
 // TestProbesReject_UsesModal_AUDIT051 is a static regression for the audit:
 // `cmd/api/static/js/admin-probes.js` rejected a probe via the native
 // `window.prompt('Enter rejection reason:')`, inconsistent with the styled
-// reject modal already on /admin/probe-pending. The fix adds a #reject-modal
+// reject modal convention. The fix adds a #reject-modal
 // to probes.html and routes rejection through AC.openModal / a form submit,
 // matching the AdminCommon modal convention.
 func TestProbesReject_UsesModal_AUDIT051(t *testing.T) {

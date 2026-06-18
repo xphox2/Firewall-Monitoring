@@ -45,7 +45,7 @@ func TestMobileChrome_OnAllPages_AUDIT055(t *testing.T) {
 	// 3) Every admin page must call renderMobileChrome().
 	pages := []string{
 		"admin.html", "connection-detail.html", "device-detail.html",
-		"irc.html", "probe-pending.html", "probes.html", "sites.html",
+		"irc.html", "probes.html", "sites.html",
 	}
 	for _, page := range pages {
 		data, err := os.ReadFile("../../web/admin/" + page)

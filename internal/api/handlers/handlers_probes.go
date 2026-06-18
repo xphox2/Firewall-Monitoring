@@ -262,24 +262,6 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Message("Probe deleted"))
 }
 
-func (h *Handler) GetPendingProbes(c *gin.Context) {
-	db := h.reqDB(c)
-	if db == nil {
-		c.JSON(http.StatusOK, response.Success([]models.Probe{}))
-		return
-	}
-
-	probes, err := db.GetPendingProbes()
-	if err != nil {
-		httputil.InternalError(c, "Failed to fetch pending probes", err)
-		return
-	}
-
-	httputil.RedactProbes(probes)
-
-	c.JSON(http.StatusOK, response.Success(probes))
-}
-
 type ApproveProbeRequest struct {
 	Notes string `json:"notes"`
 }

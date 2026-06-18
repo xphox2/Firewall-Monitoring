@@ -27,7 +27,6 @@ func TestLabelFor_AUDIT056(t *testing.T) {
 		{"../../web/admin/probes.html", 4},
 		{"../../web/admin/sites.html", 6},
 		{"../../web/admin/irc.html", 20},
-		{"../../web/admin/probe-pending.html", 1},
 		{"../../web/admin/admin.html", 50},
 	}
 	for _, tc := range cases {
