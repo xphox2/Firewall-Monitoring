@@ -3,6 +3,8 @@ package snmp
 import (
 	"testing"
 
+	"firewall-mon/internal/models"
+
 	"github.com/gosnmp/gosnmp"
 )
 
@@ -23,26 +25,35 @@ func TestFortiGate_ParseHardwareSensors_DisplayStringValue(t *testing.T) {
 		{Name: fgOIDHWSensorAlarm + ".2", Type: gosnmp.Integer, Value: 1},
 	}
 
-	byName := map[string]float64{}
-	status := map[string]string{}
+	byName := map[string]models.HardwareSensor{}
 	for _, s := range f.ParseHardwareSensors(pdus) {
-		byName[s.Name] = s.Value
-		status[s.Name] = s.Status
+		byName[s.Name] = s
 	}
 	if len(byName) != 2 {
 		t.Fatalf("expected 2 sensors, got %d", len(byName))
 	}
 
-	if v := byName["CPU LM75 Temp"]; v != 52.5 {
-		t.Errorf("temperature value = %v, want 52.5 (DisplayString must be parsed as float, not zeroed)", v)
+	temp := byName["CPU LM75 Temp"]
+	if temp.Value != 52.5 {
+		t.Errorf("temperature value = %v, want 52.5 (DisplayString must be parsed as float, not zeroed)", temp.Value)
 	}
-	if status["CPU LM75 Temp"] != "normal" {
-		t.Errorf("temperature status = %q, want normal", status["CPU LM75 Temp"])
+	if temp.Status != "normal" {
+		t.Errorf("temperature status = %q, want normal", temp.Status)
 	}
-	if v := byName["PS1 Fan 1"]; v != 11200 {
-		t.Errorf("fan value = %v, want 11200", v)
+	// inferSensorUnit must populate Type/Unit from the sensor name (parity with
+	// the collector) — the table itself carries no unit column.
+	if temp.Type != "temperature" || temp.Unit != "°C" {
+		t.Errorf("temperature type/unit = %q/%q, want temperature/°C", temp.Type, temp.Unit)
 	}
-	if status["PS1 Fan 1"] != "alarm" {
-		t.Errorf("fan status = %q, want alarm", status["PS1 Fan 1"])
+
+	fan := byName["PS1 Fan 1"]
+	if fan.Value != 11200 {
+		t.Errorf("fan value = %v, want 11200", fan.Value)
+	}
+	if fan.Status != "alarm" {
+		t.Errorf("fan status = %q, want alarm", fan.Status)
+	}
+	if fan.Type != "fan" || fan.Unit != "RPM" {
+		t.Errorf("fan type/unit = %q/%q, want fan/RPM", fan.Type, fan.Unit)
 	}
 }

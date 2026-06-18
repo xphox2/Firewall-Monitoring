@@ -716,9 +716,36 @@ func (f *FortiGateProfile) ParseHardwareSensors(pdus []gosnmp.SnmpPDU) []models.
 	sensors := make([]models.HardwareSensor, 0, len(sensorMap))
 	for _, sensor := range sensorMap {
 		sensor.Timestamp = now
+		inferSensorUnit(sensor)
 		sensors = append(sensors, *sensor)
 	}
 	return sensors
+}
+
+// inferSensorUnit sets Type and Unit based on FortiGate sensor name patterns.
+// FortiGate's fgHwSensorTable carries no unit/type column, so we derive them
+// from the sensor name. Kept in sync with the collector's identical helper
+// (Firewall-Collector internal/snmp/vendor_fortigate.go) so directly-polled and
+// probe-collected FortiGates render the same Unit/Type on the device page.
+func inferSensorUnit(s *models.HardwareSensor) {
+	lower := strings.ToLower(s.Name)
+	switch {
+	case strings.Contains(lower, "temp") || strings.Contains(lower, "dts") || strings.Contains(lower, "lm75"):
+		s.Type = "temperature"
+		s.Unit = "°C"
+	case strings.Contains(lower, "fan"):
+		s.Type = "fan"
+		s.Unit = "RPM"
+	case strings.Contains(lower, "vcc") || strings.Contains(lower, "vdd") ||
+		strings.Contains(lower, "+1.") || strings.Contains(lower, "+2.") ||
+		strings.Contains(lower, "+3.") || strings.Contains(lower, "+5.") ||
+		strings.Contains(lower, "+12") || strings.Contains(lower, "volt"):
+		s.Type = "voltage"
+		s.Unit = "mV"
+	case strings.Contains(lower, "ps") && strings.Contains(lower, "status"):
+		s.Type = "power"
+		s.Unit = ""
+	}
 }
 
 func (f *FortiGateProfile) ProcessorBaseOID() string { return fgBaseOIDProcessor }
