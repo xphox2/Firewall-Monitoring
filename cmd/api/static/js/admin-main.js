@@ -17,6 +17,11 @@
     var currentVpnMap = {};
     var currentProbes = [];
     var currentSites = [];
+    // Per-probe last-hour stats, keyed by probe id. Lets dashboard
+    // refreshes re-render probe cards with the last-known numbers instead
+    // of flashing back to the "loading..." placeholder every 30s — the
+    // placeholder should only show on the very first load of a probe.
+    var probeStatsCache = {};
     var adminRefreshTimer;
     var connRefreshTimer;
     var syslogRefreshTimer;
@@ -358,6 +363,24 @@
         });
     }
 
+    // Renders the inner cells of a probe card's stats grid. When `lh`
+    // (a probe's last_hour stats) is provided we show the real numbers;
+    // when it's undefined — the very first time we see a probe, before its
+    // /stats call returns — we show the "loading..." placeholder. Driving
+    // both states through one function lets dashboard refreshes reuse the
+    // cached numbers instead of flashing back to "loading...".
+    function renderProbeStatsInner(lh) {
+        function cell(label) {
+            var hr = lh ? '+' + (lh[label.key] || 0).toLocaleString() + ' / hr' : 'loading...';
+            return '<div class="probe-stat"><div class="lbl">' + label.name +
+                '<div class="last-hour">' + hr + '</div></div></div>';
+        }
+        return cell({ name: 'Syslog', key: 'syslog' }) +
+            cell({ name: 'Traps', key: 'traps' }) +
+            cell({ name: 'Flows', key: 'flows' }) +
+            cell({ name: 'Pings', key: 'pings' });
+    }
+
     function loadDashboard() {
         Promise.all([
             apiFetch(API_BASE + '/dashboard'),
@@ -408,10 +431,7 @@
                         '<div class="probe-name"><span class="pulse-dot ' + statusClass + '"></span>' + escapeHtml(p.name) + '</div>' +
                         '<div class="probe-meta">' + escapeHtml(p.site ? p.site.name : 'No Site') + ' &middot; ' + escapeHtml(p.approval_status) + ' &middot; Last seen: ' + lastSeen + '</div>' +
                         '<div class="probe-stats" id="probe-stats-' + p.id + '">' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Syslog<div class="last-hour">loading...</div></div></div>' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Traps<div class="last-hour">loading...</div></div></div>' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Flows<div class="last-hour">loading...</div></div></div>' +
-                            '<div class="probe-stat"><div class="val">-</div><div class="lbl">Pings<div class="last-hour">loading...</div></div></div>' +
+                            renderProbeStatsInner(probeStatsCache[p.id]) +
                         '</div></div>';
                 }).join('');
 
@@ -419,15 +439,13 @@
                 probes.forEach(function(p) {
                     apiFetch(API_BASE + '/probes/' + p.id + '/stats').then(function(r) {
                         if (!r || !r.data) return;
+                        var lh = r.data.last_hour || {};
+                        // Cache so the next 30s refresh re-renders with these
+                        // numbers immediately rather than the loading placeholder.
+                        probeStatsCache[p.id] = lh;
                         var el = document.getElementById('probe-stats-' + p.id);
                         if (el) {
-                            var d = r.data;
-                            var lh = d.last_hour || {};
-                            el.innerHTML =
-                                '<div class="probe-stat"><div class="lbl">Syslog<div class="last-hour">+' + (lh.syslog || 0).toLocaleString() + ' / hr</div></div></div>' +
-                                '<div class="probe-stat"><div class="lbl">Traps<div class="last-hour">+' + (lh.traps || 0).toLocaleString() + ' / hr</div></div></div>' +
-                                '<div class="probe-stat"><div class="lbl">Flows<div class="last-hour">+' + (lh.flows || 0).toLocaleString() + ' / hr</div></div></div>' +
-                                '<div class="probe-stat"><div class="lbl">Pings<div class="last-hour">+' + (lh.pings || 0).toLocaleString() + ' / hr</div></div></div>';
+                            el.innerHTML = renderProbeStatsInner(lh);
                         }
                     }).catch(function(err) {
                         console.error('Failed to load probe stats:', err);
