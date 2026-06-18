@@ -37,8 +37,6 @@
     var trapsOffset = 0;
     var chartInstances = {};
     var deviceSiteMap = {};
-    var ifacePage = 1;
-    var ifacePageSize = 50;
     var flowStatsHours = 24;
 
     // Expose globals for diagram-panels.js and other diagram modules
@@ -104,7 +102,6 @@
         switch(page) {
             case 'dashboard': loadDashboard(); break;
             case 'devices': loadDevices(); break;
-            case 'interfaces': populateIfaceFilters().then(function() { loadInterfaces(); }); break;
             case 'connections': loadConnections(); break;
             case 'syslog': wireSyslogAnalyticsPage(); loadSyslog(); break;
             case 'flows':
@@ -735,95 +732,6 @@
         }).catch(function(err) {
             console.error('Failed to load device enrichments:', err);
         });
-    }
-
-    // ---- Interfaces ----
-    function loadInterfaces() {
-        ifacePage = 1;
-        fetchInterfaces();
-    }
-
-    function fetchInterfaces() {
-        var deviceFilter = document.getElementById('iface-filter-device').value;
-        var statusFilter = document.getElementById('iface-filter-status').value;
-        var typeFilter = document.getElementById('iface-filter-type').value;
-        var url = API_BASE + '/interfaces?page=' + ifacePage + '&page_size=' + ifacePageSize;
-        if (deviceFilter) url += '&device_id=' + deviceFilter;
-        if (statusFilter) url += '&status=' + statusFilter;
-        if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
-
-        apiFetch(url).then(function(result) {
-            if (!result || !result.data) return;
-            var ifaces = result.data.interfaces || [];
-            var total = result.data.total || 0;
-
-            var tbody = document.querySelector('#interfaces-table tbody');
-            tbody.innerHTML = ifaces.map(function(i) {
-                return '<tr>' +
-                    '<td><a href="/admin/devices/' + i.device_id + '" style="color:#58a6ff;text-decoration:none;font-weight:500">' + escapeHtml(i.device_name) + '</a></td>' +
-                    '<td><strong>' + escapeHtml(i.name) + '</strong></td>' +
-                    '<td>' + escapeHtml(i.alias || '') + '</td>' +
-                    '<td>' + escapeHtml(i.type_name || String(i.type)) + '</td>' +
-                    '<td>' + formatIfaceSpeed(i) + '</td>' +
-                    '<td><span class="badge ' + i.status + '">' + escapeHtml(i.status) + '</span></td>' +
-                    '<td><span class="badge ' + (i.admin_status === 'up' ? 'up' : 'down') + '">' + escapeHtml(i.admin_status || 'unknown') + '</span></td>' +
-                    '<td>' + formatBytesShort(i.in_bytes) + '</td>' +
-                    '<td>' + formatBytesShort(i.out_bytes) + '</td>' +
-                    '<td>' + ((i.in_errors || 0) + (i.out_errors || 0)) + '</td>' +
-                '</tr>';
-            }).join('') || '<tr><td colspan="10" class="empty-state">No interfaces found</td></tr>';
-
-            var totalPages = Math.ceil(total / ifacePageSize) || 1;
-            document.getElementById('iface-page-info').textContent = 'Page ' + ifacePage + ' of ' + totalPages + ' (' + total + ' interfaces)';
-            document.getElementById('iface-prev').disabled = ifacePage <= 1;
-            document.getElementById('iface-next').disabled = ifacePage >= totalPages;
-        }).catch(function(e) { console.error('Failed to load interfaces:', e); });
-    }
-
-    function ifacePrevPage() { if (ifacePage > 1) { ifacePage--; fetchInterfaces(); } }
-    function ifaceNextPage() { ifacePage++; fetchInterfaces(); }
-
-    function populateIfaceFilters() {
-        return apiFetch(API_BASE + '/devices').then(function(devResult) {
-            if (devResult && devResult.data) {
-                var sel = document.getElementById('iface-filter-device');
-                sel.innerHTML = '<option value="">All Devices</option>' + devResult.data.map(function(d) {
-                    return '<option value="' + d.id + '">' + escapeHtml(d.name) + '</option>';
-                }).join('');
-            }
-            return apiFetch(API_BASE + '/interfaces?page=1&page_size=500');
-        }).then(function(result) {
-            if (result && result.data && result.data.interfaces) {
-                var typeSet = {};
-                result.data.interfaces.forEach(function(i) { if (i.type_name) typeSet[i.type_name] = true; });
-                var types = Object.keys(typeSet).sort();
-                var sel = document.getElementById('iface-filter-type');
-                sel.innerHTML = '<option value="">All Types</option>' + types.map(function(t) {
-                    return '<option value="' + encodeURIComponent(t) + '">' + escapeHtml(t) + '</option>';
-                }).join('');
-            }
-        }).catch(function(e) { console.error('Failed to populate interface filters:', e); });
-    }
-
-    function formatIfaceSpeed(iface) {
-        if (iface.high_speed && iface.high_speed > 0) {
-            if (iface.high_speed >= 1000) return (iface.high_speed / 1000).toFixed(0) + ' Gbps';
-            return iface.high_speed + ' Mbps';
-        }
-        if (iface.speed) {
-            var mbps = iface.speed / 1000000;
-            if (mbps >= 1000) return (mbps / 1000).toFixed(0) + ' Gbps';
-            if (mbps >= 1) return mbps.toFixed(0) + ' Mbps';
-        }
-        return '-';
-    }
-
-    function formatBytesShort(bytes) {
-        if (!bytes || bytes === 0) return '0 B';
-        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        var i = 0, val = bytes;
-        while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
-        return val.toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
     }
 
     function formatBucketTime(bucket, hours) {
@@ -3047,7 +2955,7 @@
         // Only SPA tabs hosted inside admin.html. Standalone pages (probes,
         // sites, probe-pending, irc) are served as their own HTML documents and
         // never reach this code, so they must NOT be mapped here (see SPA_PAGES).
-        var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
+        var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
             'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit' };
         var page = pageMap[lastSegment];
@@ -3692,9 +3600,6 @@
     // ---- Event Delegation (click) ----
     AC.delegateEvent('click', {
         'show-device-modal': function() { showDeviceModal(); },
-        'load-interfaces': function() { loadInterfaces(); },
-        'iface-prev-page': function() { ifacePrevPage(); },
-        'iface-next-page': function() { ifaceNextPage(); },
         'show-connection-modal': function(el) { showConnectionModal(el && el.dataset.id ? parseInt(el.dataset.id) : null); },
         'edit-connection': function(el) { showConnectionModal(parseInt(el.dataset.id)); },
         'load-syslog': function() { loadSyslog(); },
@@ -3951,7 +3856,7 @@
     // matching case, so the page went blank until a manual refresh did the true
     // full-page navigation. Keep this set in sync with the page divs + the
     // loadPageData() switch.
-    var SPA_PAGES = { dashboard:1, devices:1, interfaces:1, connections:1,
+    var SPA_PAGES = { dashboard:1, devices:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, alerts:1, traps:1,
         'alert-policies':1, maintenance:1, audit:1 };
 

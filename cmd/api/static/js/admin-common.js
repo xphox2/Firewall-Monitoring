@@ -890,7 +890,7 @@
             var path = window.location.pathname.replace(/\/$/, '');
             var segments = path.split('/');
             var lastSegment = segments[segments.length - 1];
-            var pageMap = { 'dashboard':'', 'devices':'devices', 'interfaces':'interfaces', 'connections':'connections',
+            var pageMap = { 'dashboard':'', 'devices':'devices', 'connections':'connections',
                 'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
                 'probe-pending':'probe-pending', 'irc':'irc', 'audit':'audit' };
@@ -898,7 +898,7 @@
         }
 
         var pageIcons = {
-            'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;', 'interfaces': '&#8646;',
+            'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
             'probes': '&#9678;', 'sites': '&#9962;', 'probe-pending': '&#9200;', 'irc': '&#128172;', 'audit': '&#128203;'
@@ -910,7 +910,6 @@
             '<a class="nav-item' + (currentPage === 'dashboard' ? ' active" aria-current="page' : '') + '" href="/admin"><span class="nav-icon" aria-hidden="true">' + pageIcons['dashboard'] + '</span> Dashboard</a>' +
             '<a class="nav-item' + (currentPage === 'devices' ? ' active" aria-current="page' : '') + '" href="/admin/devices"><span class="nav-icon" aria-hidden="true">' + pageIcons['devices'] + '</span> Devices</a>' +
             '<a class="nav-item' + (currentPage === 'connections' ? ' active" aria-current="page' : '') + '" href="/admin/connections"><span class="nav-icon" aria-hidden="true">' + pageIcons['connections'] + '</span> Connections</a>' +
-            '<a class="nav-item' + (currentPage === 'interfaces' ? ' active" aria-current="page' : '') + '" href="/admin/interfaces"><span class="nav-icon" aria-hidden="true">' + pageIcons['interfaces'] + '</span> Interfaces</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Data</div>' +
             '<a class="nav-item' + (currentPage === 'syslog' ? ' active" aria-current="page' : '') + '" href="/admin/syslog"><span class="nav-icon" aria-hidden="true">' + pageIcons['syslog'] + '</span> Syslog</a>' +
             '<a class="nav-item' + (currentPage === 'flows' ? ' active" aria-current="page' : '') + '" href="/admin/flows"><span class="nav-icon" aria-hidden="true">' + pageIcons['flows'] + '</span> Flows</a>' +

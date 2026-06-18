@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.416"
+const ServerVersion = "0.10.417"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -638,10 +638,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
-		admin.GET("/interfaces", func(c *gin.Context) {
-			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
-		})
-
 		admin.GET("/alerts", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
@@ -713,7 +709,6 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/history", handler.GetInterfaceHistory)
 		admin.GET("/api/devices/:id/interfaces/:ifIndex/chart", handler.GetInterfaceChart)
 		admin.GET("/api/devices/:id/status-history", handler.GetDeviceStatusHistory)
-		admin.GET("/api/interfaces", handler.GetAllInterfaces)
 
 		admin.POST("/api/alerts/:id/acknowledge", handler.AcknowledgeAlert)
 		admin.POST("/api/alerts/:id/snooze", handler.SnoozeAlert)
