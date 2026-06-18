@@ -328,6 +328,46 @@
 }
 
 /* === Filter row above Flow Samples === */
+/* === Combined data card: tabbed Conversations / Flow Samples === */
+.fwmon-flows-data-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.fwmon-flows-tabs {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.fwmon-flows-tab {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-ui);
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: color 80ms ease, background-color 80ms ease, border-color 80ms ease;
+}
+
+.fwmon-flows-tab:hover {
+    color: var(--fwmon-text);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.fwmon-flows-tab.active {
+    color: var(--fwmon-text);
+    background: rgba(125, 211, 252, 0.10);
+    border-color: rgba(125, 211, 252, 0.35);
+}
+
 .fwmon-flows-filter-row {
     display: flex;
     align-items: center;

@@ -34,12 +34,14 @@
         protocol: '',
         src: '',
         dst: '',
-        dport: ''
+        dport: '',
+        // Which view of the combined data card is active: 'conversations' | 'samples'.
+        tab: 'conversations'
     };
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport'];
+    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'tab'];
 
     var state = Object.assign({}, DEFAULTS);
     var inited = false;
@@ -76,6 +78,8 @@
                 if (k === 'hours') {
                     var n = parseFloat(v);
                     if (isFinite(n) && n > 0) state.hours = n;
+                } else if (k === 'tab') {
+                    if (v === 'conversations' || v === 'samples') state.tab = v;
                 } else {
                     state[k] = v;
                 }
@@ -89,7 +93,8 @@
             URL_KEYS.forEach(function(k) {
                 var v = state[k];
                 if (v === '' || v == null ||
-                    (k === 'hours' && Number(v) === DEFAULTS.hours)) {
+                    (k === 'hours' && Number(v) === DEFAULTS.hours) ||
+                    (k === 'tab' && v === DEFAULTS.tab)) {
                     url.searchParams.delete(k);
                 } else {
                     url.searchParams.set(k, String(v));
@@ -184,6 +189,17 @@
         var convTable = document.getElementById('flows-conversations-table');
         if (convTable) convTable.addEventListener('click', onConversationClick);
 
+        // View tabs (Conversations / Flow Samples) — switching is pure show/hide;
+        // both data sources are already fetched on every reload, so no re-fetch.
+        var viewTabs = document.getElementById('flows-view-tabs');
+        if (viewTabs) {
+            viewTabs.addEventListener('click', function(ev) {
+                var btn = ev.target && ev.target.closest && ev.target.closest('.fwmon-flows-tab');
+                if (!btn) return;
+                setActiveTab(btn.getAttribute('data-flows-tab'));
+            });
+        }
+
         // Resize handler for the bandwidth chart
         if (typeof ResizeObserver !== 'undefined') {
             var host = document.getElementById('flows-bandwidth-chart');
@@ -259,7 +275,39 @@
         setVal('flows-filter-src',    state.src);
         setVal('flows-filter-dst',    state.dst);
         setVal('flows-filter-dport',  state.dport);
+        applyTabView();
         renderActiveChips();
+    }
+
+    // Toggle the active view of the combined data card. Both tables stay in the
+    // DOM (already populated by the last reload); we just show/hide them and the
+    // samples-only "Load more" row, and update the contextual hint.
+    function setActiveTab(tab) {
+        if (tab !== 'conversations' && tab !== 'samples') return;
+        if (state.tab === tab) return;
+        state.tab = tab;
+        syncURL();
+        applyTabView();
+    }
+
+    function applyTabView() {
+        var tab = state.tab === 'samples' ? 'samples' : 'conversations';
+        var tabs = document.querySelectorAll('#flows-view-tabs .fwmon-flows-tab');
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.toggle('active', tabs[i].getAttribute('data-flows-tab') === tab);
+        }
+        var convView = document.getElementById('flows-view-conversations');
+        var sampView = document.getElementById('flows-view-samples');
+        var loadMore = document.getElementById('flows-loadmore-row');
+        if (convView) convView.hidden = (tab !== 'conversations');
+        if (sampView) sampView.hidden = (tab !== 'samples');
+        if (loadMore) loadMore.hidden = (tab !== 'samples');
+        var hint = document.getElementById('flows-view-hint');
+        if (hint) {
+            hint.textContent = (tab === 'samples')
+                ? 'raw flow records · newest first'
+                : 'click a conversation to inspect its raw flows';
+        }
     }
 
     function setVal(id, v) {
@@ -556,6 +604,9 @@
         state.src = src;
         state.dst = dst;
         state.dport = dport;
+        // Drill-down: jump to the Samples view so the operator immediately sees
+        // the raw flows for the conversation they clicked.
+        state.tab = 'samples';
         applyStateToControls();
         syncURL();
         reload();

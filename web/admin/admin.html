@@ -530,25 +530,19 @@
                 </div>
             </div>
 
-            <!-- Top Conversations — full sortable table, click row to filter src+dst+port -->
-            <div class="card">
-                <div class="card-header">
-                    <h2>Top Conversations</h2>
-                    <span class="fwmon-toptalk-hint">click to filter</span>
+            <!-- Combined Conversations + Flow Samples — tabbed views with one shared
+                 filter row, so the operator picks what to focus on without two stacked
+                 tables eating the viewport. Click a conversation to drill into its raw flows. -->
+            <div class="card fwmon-flows-data-card">
+                <div class="card-header fwmon-flows-data-header">
+                    <div class="fwmon-flows-tabs" id="flows-view-tabs" role="tablist">
+                        <button type="button" class="fwmon-flows-tab active" data-flows-tab="conversations" role="tab">Top Conversations</button>
+                        <button type="button" class="fwmon-flows-tab" data-flows-tab="samples" role="tab">Flow Samples</button>
+                    </div>
+                    <span class="fwmon-toptalk-hint" id="flows-view-hint">click a conversation to inspect its raw flows</span>
                 </div>
-                <div class="table-wrap" style="max-height: 360px;">
-                    <table id="flows-conversations-table" class="fwmon-flows-table">
-                        <thead><tr><th>Source</th><th></th><th>Destination</th><th>Protocol</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">%</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-            </div>
 
-            <!-- Flow Samples — filter pills, IP inputs with CIDR support, auto-apply -->
-            <div class="card">
-                <div class="card-header">
-                    <h2>Flow Samples</h2>
-                </div>
+                <!-- Shared filter row — applies to both views (Conversations honors device + range; Samples honors all). -->
                 <div class="fwmon-flows-filter-row">
                     <select id="flows-filter-device" class="fwmon-flows-select"><option value="">All devices</option></select>
                     <select id="flows-filter-probe" class="fwmon-flows-select"><option value="">All probes</option></select>
@@ -565,13 +559,23 @@
                     <input type="text" id="flows-filter-dport" class="fwmon-flows-input fwmon-flows-input-port" placeholder="dst port" autocomplete="one-time-code" spellcheck="false" inputmode="numeric">
                     <button type="button" class="btn secondary sm fwmon-flows-clear" id="flows-clear-filters">clear</button>
                 </div>
-                <div class="table-wrap" style="max-height: 600px;">
+
+                <!-- Conversations view — click row to filter src+dst+port and jump to Samples -->
+                <div class="table-wrap fwmon-flows-view" id="flows-view-conversations" style="max-height: 600px;">
+                    <table id="flows-conversations-table" class="fwmon-flows-table">
+                        <thead><tr><th>Source</th><th></th><th>Destination</th><th>Protocol</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">%</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <!-- Flow Samples view — raw FlowSample rows, paginated -->
+                <div class="table-wrap fwmon-flows-view" id="flows-view-samples" style="max-height: 600px;" hidden>
                     <table id="flows-table" class="fwmon-flows-table">
                         <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
-                <div class="fwmon-flows-loadmore">
+                <div class="fwmon-flows-loadmore" id="flows-loadmore-row" hidden>
                     <button class="btn secondary" data-action="load-more-flows" id="flows-load-more">Load more</button>
                     <span class="fwmon-flows-loadmore-hint" id="flows-loaded-count">--</span>
                 </div>
