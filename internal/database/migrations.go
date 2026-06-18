@@ -51,6 +51,8 @@ type migration struct {
 var registeredMigrations = []migration{
 	{version: 1, name: "baseline", run: (*Database).migrateBaseline},
 	{version: 2, name: "partition_high_volume", run: (*Database).migratePartitionHighVolume},
+	{version: 3, name: "unify_ping_stats_by_device_target", run: (*Database).migrateUnifyPingStats},
+	{version: 4, name: "probe_decommissioned_at", run: (*Database).migrateProbeDecommissionedAt},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

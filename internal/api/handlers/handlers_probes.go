@@ -262,6 +262,64 @@ func (h *Handler) DeleteProbe(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Message("Probe deleted"))
 }
 
+// DecommissionProbe retires a replaced/decommissioned probe without deleting any
+// data (the row and all its telemetry are kept, so running totals are preserved;
+// it's just hidden from active lists). This is the primary "remove a probe" UI
+// action — use DeleteProbe only for probes that never collected data.
+func (h *Handler) DecommissionProbe(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	if err := db.DecommissionProbe(id); err != nil {
+		if errors.Is(err, database.ErrProbeHasDevices) {
+			c.JSON(http.StatusConflict, response.Error(
+				"Cannot decommission probe: it still has devices assigned. Reassign those devices to the replacement probe first."))
+			return
+		}
+		httputil.InternalError(c, "Failed to decommission probe", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Message("Probe decommissioned"))
+}
+
+// RecommissionProbe reverses a decommission (restores the probe to active).
+func (h *Handler) RecommissionProbe(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	if err := db.RecommissionProbe(id); err != nil {
+		httputil.InternalError(c, "Failed to restore probe", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Message("Probe restored"))
+}
+
+// GetTelemetryTotals returns orphan-safe, probe-independent running totals of
+// all ingested telemetry. Used by the "Data Totals (All Probes)" card so the
+// numbers never drop when a probe is decommissioned or deleted.
+func (h *Handler) GetTelemetryTotals(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	totals, err := db.GetTelemetryTotals()
+	if err != nil {
+		httputil.InternalError(c, "Failed to get telemetry totals", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(totals))
+}
+
 type ApproveProbeRequest struct {
 	Notes string `json:"notes"`
 }

@@ -115,26 +115,17 @@ func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) ([]mod
 	return stale, nil
 }
 
+// DeleteDevice removes the device row and its user-drawn connection-map entries,
+// but DELIBERATELY preserves all historical telemetry (system_status,
+// interface_stats, vpn_status, ha_status, hardware_sensors, processor_stats,
+// alerts, uptime_records, trap_events, device_tunnels, interface_addresses).
+// Those rows are orphaned (their device_id no longer resolves) but kept, so the
+// data is never destroyed just because a device was removed — matching how
+// syslog/flow/ping rows already survive a device delete, and the project rule
+// that telemetry is a running total. DeviceConnection IS removed: it is pure
+// user-drawn map config that is meaningless once an endpoint device is gone.
 func (d *Database) DeleteDevice(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
-		// Delete all related monitoring data
-		for _, model := range []interface{}{
-			&models.SystemStatus{},
-			&models.InterfaceStats{},
-			&models.VPNStatus{},
-			&models.HAStatus{},
-			&models.HardwareSensor{},
-			&models.ProcessorStats{},
-			&models.Alert{},
-			&models.UptimeRecord{},
-			&models.TrapEvent{},
-			&models.DeviceTunnel{},
-			&models.InterfaceAddress{},
-		} {
-			if err := tx.Where("device_id = ?", id).Delete(model).Error; err != nil {
-				return fmt.Errorf("delete device %d: delete related %T: %w", id, model, err)
-			}
-		}
 		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
 			return fmt.Errorf("delete device %d: delete connections: %w", id, err)
 		}

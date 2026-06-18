@@ -37,9 +37,13 @@ func (d *Database) SavePingStats(stats *models.PingStats) error {
 	return d.db.Save(stats).Error
 }
 
-func (d *Database) GetPingStatsByTarget(deviceID uint, probeID uint, targetIP string) (*models.PingStats, error) {
+// GetPingStatsByTarget returns the single ping-stats series for a device+target,
+// independent of which probe collected it. Ping stats are unified per
+// (device_id, target_ip) so reachability history stays continuous across probe
+// replacements (see migration v3). probe_id is last-writer provenance only.
+func (d *Database) GetPingStatsByTarget(deviceID uint, targetIP string) (*models.PingStats, error) {
 	var stats models.PingStats
-	err := d.db.Where("device_id = ? AND probe_id = ? AND target_ip = ?", deviceID, probeID, targetIP).First(&stats).Error
+	err := d.db.Where("device_id = ? AND target_ip = ?", deviceID, targetIP).First(&stats).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

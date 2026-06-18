@@ -231,6 +231,80 @@ func (d *Database) DeleteProbe(id uint) error {
 	})
 }
 
+// DecommissionProbe retires a probe (decommissioned/replaced) WITHOUT deleting
+// its row or any telemetry, so historical running totals still include it. Like
+// DeleteProbe it refuses while devices are still assigned (ErrProbeHasDevices):
+// the operator must first reassign those devices to the replacement probe. Use
+// this — not DeleteProbe — for an in-service probe, so no data is ever lost.
+func (d *Database) DecommissionProbe(id uint) error {
+	var deviceCount int64
+	if err := d.db.Model(&models.Device{}).Where("probe_id = ?", id).Count(&deviceCount).Error; err != nil {
+		return fmt.Errorf("decommission probe %d: count assigned devices: %w", id, err)
+	}
+	if deviceCount > 0 {
+		return fmt.Errorf("%w: %d device(s) still assigned", ErrProbeHasDevices, deviceCount)
+	}
+	now := time.Now().UTC()
+	return d.db.Model(&models.Probe{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"decommissioned_at": now,
+			"enabled":           false,
+			"status":            "offline",
+		}).Error
+}
+
+// RecommissionProbe reverses DecommissionProbe (clears decommissioned_at and
+// re-enables the probe). The probe must still re-register/heartbeat to come
+// back online.
+func (d *Database) RecommissionProbe(id uint) error {
+	return d.db.Model(&models.Probe{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"decommissioned_at": nil,
+			"enabled":           true,
+		}).Error
+}
+
+// TelemetryTotals is the orphan-safe, probe-independent running total of
+// ingested telemetry rows. Counts are over ALL rows regardless of whether the
+// probe that collected them still exists, so the dashboard "Data Totals" never
+// drop when a probe is decommissioned or deleted.
+type TelemetryTotals struct {
+	Syslog       int64 `json:"syslog"`
+	Traps        int64 `json:"traps"`
+	Flows        int64 `json:"flows"`
+	Pings        int64 `json:"pings"`
+	SyslogLastHr int64 `json:"syslog_last_hour"`
+	TrapsLastHr  int64 `json:"traps_last_hour"`
+	FlowsLastHr  int64 `json:"flows_last_hour"`
+	PingsLastHr  int64 `json:"pings_last_hour"`
+}
+
+// GetTelemetryTotals returns all-time and last-hour counts across every probe's
+// telemetry with NO probe filter (see TelemetryTotals).
+func (d *Database) GetTelemetryTotals() (*TelemetryTotals, error) {
+	hourAgo := time.Now().UTC().Add(-1 * time.Hour)
+	t := &TelemetryTotals{}
+	type spec struct {
+		model    interface{}
+		total    *int64
+		lastHour *int64
+	}
+	for _, s := range []spec{
+		{&models.SyslogMessage{}, &t.Syslog, &t.SyslogLastHr},
+		{&models.TrapEvent{}, &t.Traps, &t.TrapsLastHr},
+		{&models.FlowSample{}, &t.Flows, &t.FlowsLastHr},
+		{&models.PingResult{}, &t.Pings, &t.PingsLastHr},
+	} {
+		if err := d.db.Model(s.model).Count(s.total).Error; err != nil {
+			return nil, fmt.Errorf("telemetry totals: count %T: %w", s.model, err)
+		}
+		if err := d.db.Model(s.model).Where("timestamp > ?", hourAgo).Count(s.lastHour).Error; err != nil {
+			return nil, fmt.Errorf("telemetry totals: last-hour count %T: %w", s.model, err)
+		}
+	}
+	return t, nil
+}
+
 func (d *Database) GetProbesBySite(siteID uint) ([]models.Probe, error) {
 	var probes []models.Probe
 	err := d.db.Where("site_id = ?", siteID).Find(&probes).Error

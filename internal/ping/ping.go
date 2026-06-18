@@ -186,7 +186,9 @@ func (p *PingCollector) pingTarget(fg models.Device, probe models.Probe) {
 }
 
 func (p *PingCollector) updateStats(deviceID uint, probeID uint, targetIP string, latency float64, packetLoss float64) {
-	existing, err := p.DB.GetPingStatsByTarget(deviceID, probeID, targetIP)
+	// Single ping series per (device, target), regardless of probe — see
+	// handlers_data.go updatePingStats and migration v3. probe_id is provenance.
+	existing, err := p.DB.GetPingStatsByTarget(deviceID, targetIP)
 	if err != nil {
 		log.Printf("[Ping] Failed to get existing stats: %v", err)
 		return
@@ -221,6 +223,7 @@ func (p *PingCollector) updateStats(deviceID uint, probeID uint, targetIP string
 	existing.AvgLatency = newAvg
 	existing.PacketLoss = packetLoss
 	existing.Samples = newSamples
+	existing.ProbeID = probeID // last-writer provenance
 	existing.UpdatedAt = time.Now()
 
 	if err := p.DB.SavePingStats(existing); err != nil {

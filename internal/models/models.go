@@ -531,6 +531,12 @@ type Probe struct {
 	TFTPServerIP     string     `json:"tftp_server_ip"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+	// DecommissionedAt marks a probe as retired (decommissioned/replaced)
+	// WITHOUT deleting its row or any of its telemetry, so historical running
+	// totals continue to include it. Non-null => decommissioned: hidden from
+	// active probe lists and excluded from the "active probes" count, but its
+	// data is preserved. Cleared by RecommissionProbe.
+	DecommissionedAt *time.Time `json:"decommissioned_at,omitempty" gorm:"index"`
 }
 
 type ProbeSite struct {
@@ -577,10 +583,14 @@ type PingResult struct {
 }
 
 type PingStats struct {
-	ID         uint      `json:"id" gorm:"primaryKey"`
-	DeviceID   uint      `json:"device_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:1"`
-	ProbeID    uint      `json:"probe_id" gorm:"index;index:idx_pingstats_device_probe_target,priority:2"`
-	TargetIP   string    `json:"target_ip" gorm:"index:idx_pingstats_device_probe_target,priority:3"`
+	ID uint `json:"id" gorm:"primaryKey"`
+	// Ping stats are a single continuous series per (device_id, target_ip) so a
+	// device's reachability history stays unified across probe replacements.
+	// probe_id is kept as last-writer provenance only — it is NOT part of the
+	// uniqueness key (see migration v3 unify_ping_stats_by_device_target).
+	DeviceID   uint      `json:"device_id" gorm:"index:idx_pingstats_device_target,unique,priority:1"`
+	ProbeID    uint      `json:"probe_id" gorm:"index"`
+	TargetIP   string    `json:"target_ip" gorm:"index:idx_pingstats_device_target,unique,priority:2"`
 	MinLatency float64   `json:"min_latency"`
 	MaxLatency float64   `json:"max_latency"`
 	AvgLatency float64   `json:"avg_latency"`

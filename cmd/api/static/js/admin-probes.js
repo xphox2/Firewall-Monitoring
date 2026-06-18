@@ -20,109 +20,46 @@
     }
 
     function loadProbeSummaryStats() {
-        var approvedProbes = currentProbes.filter(function(p) { return p.approval_status === 'approved'; });
-        if (approvedProbes.length === 0) {
-            document.getElementById('probe-summary-stats').innerHTML =
-                '<div class="stat-card accent-blue">' +
-                    '<div class="stat-icon">📄</div>' +
+        // "Data Totals (All Probes)" is an orphan-safe running total: it counts
+        // ALL telemetry regardless of which probe collected it (or whether that
+        // probe still exists), so the numbers never drop when a probe is
+        // decommissioned or deleted. See GET /api/probes/stats/global.
+        function renderSummary(t) {
+            function card(icon, accent, label, total, lastHr) {
+                return '<div class="stat-card ' + accent + '">' +
+                    '<div class="stat-icon">' + icon + '</div>' +
                     '<div class="stat-content">' +
-                        '<div class="stat-label">Syslog</div>' +
-                        '<div class="stat-value">0</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="stat-card accent-green">' +
-                    '<div class="stat-icon">⚡</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Traps</div>' +
-                        '<div class="stat-value">0</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="stat-card accent-blue">' +
-                    '<div class="stat-icon">🔄</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Flows</div>' +
-                        '<div class="stat-value">0</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="stat-card accent-green">' +
-                    '<div class="stat-icon">📶</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Pings</div>' +
-                        '<div class="stat-value">0</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">0 last hr</div>' +
+                        '<div class="stat-label">' + label + '</div>' +
+                        '<div class="stat-value">' + (total || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + (lastHr || 0).toLocaleString() + ' last hr</div>' +
                     '</div>' +
                 '</div>';
-            return;
-        }
-
-        var totalSyslog = 0, totalTraps = 0, totalFlows = 0, totalPings = 0;
-        var lastHourSyslog = 0, lastHourTraps = 0, lastHourFlows = 0, lastHourPings = 0;
-        var failed = 0;
-
-        function renderSummary() {
-            var failedNote = failed > 0 ? ' (' + failed + ' offline)' : '';
+            }
             document.getElementById('probe-summary-stats').innerHTML =
-                '<div class="stat-card accent-blue">' +
-                    '<div class="stat-icon">📄</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Syslog' + failedNote + '</div>' +
-                        '<div class="stat-value">' + totalSyslog.toLocaleString() + '</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourSyslog.toLocaleString() + ' last hr</div>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="stat-card accent-green">' +
-                    '<div class="stat-icon">⚡</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Traps' + failedNote + '</div>' +
-                        '<div class="stat-value">' + totalTraps.toLocaleString() + '</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourTraps.toLocaleString() + ' last hr</div>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="stat-card accent-blue">' +
-                    '<div class="stat-icon">🔄</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Flows' + failedNote + '</div>' +
-                        '<div class="stat-value">' + totalFlows.toLocaleString() + '</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourFlows.toLocaleString() + ' last hr</div>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="stat-card accent-green">' +
-                    '<div class="stat-icon">📶</div>' +
-                    '<div class="stat-content">' +
-                        '<div class="stat-label">Pings' + failedNote + '</div>' +
-                        '<div class="stat-value">' + totalPings.toLocaleString() + '</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + lastHourPings.toLocaleString() + ' last hr</div>' +
-                    '</div>' +
-                '</div>';
+                card('📄', 'accent-blue', 'Syslog', t.syslog, t.syslog_last_hour) +
+                card('⚡', 'accent-green', 'Traps', t.traps, t.traps_last_hour) +
+                card('🔄', 'accent-blue', 'Flows', t.flows, t.flows_last_hour) +
+                card('📶', 'accent-green', 'Pings', t.pings, t.pings_last_hour);
         }
 
-        // AUDIT-064: one batched request for all approved probes instead of an
-        // N+1 (one /probes/:id/stats per probe — 20 probes = 20 round-trips).
-        var ids = approvedProbes.map(function(p) { return p.id; });
+        AC.apiFetch(API_BASE + '/probes/stats/global').then(function(r) {
+            renderSummary((r && r.data) ? r.data : {});
+        }).catch(function() {
+            renderSummary({});
+        });
+
+        // Per-probe stats power the individual probe cards. AUDIT-064: one
+        // batched request instead of N round-trips. Decommissioned probes are
+        // excluded here (their card isn't shown) but still counted in the totals
+        // above via the orphan-safe global endpoint.
+        var statProbes = currentProbes.filter(function(p) { return p.approval_status === 'approved' && !p.decommissioned_at; });
+        var ids = statProbes.map(function(p) { return p.id; });
+        if (ids.length === 0) { return; }
         AC.apiFetch(API_BASE + '/probes/stats?ids=' + ids.join(',')).then(function(r) {
             probeStatsMap = {};
-            (r && r.data ? r.data : []).forEach(function(d) {
-                var lh = d.last_hour || {};
-                totalSyslog += d.syslog || 0;
-                totalTraps += d.traps || 0;
-                totalFlows += d.flows || 0;
-                totalPings += d.pings || 0;
-                lastHourSyslog += lh.syslog || 0;
-                lastHourTraps += lh.traps || 0;
-                lastHourFlows += lh.flows || 0;
-                lastHourPings += lh.pings || 0;
-
-                probeStatsMap[d.probe_id] = d;
-            });
-            renderSummary();
+            (r && r.data ? r.data : []).forEach(function(d) { probeStatsMap[d.probe_id] = d; });
             renderProbes(currentProbes);
-        }).catch(function() {
-            failed = approvedProbes.length;
-            renderSummary();
-        });
+        }).catch(function() {});
     }
 
     function loadSites() {
@@ -167,8 +104,11 @@
                 statusBadge = '<span class="badge unknown">' + (p.status || 'OFFLINE').toUpperCase() + '</span>';
             }
 
+            var isDecommissioned = !!p.decommissioned_at;
             var approvalBadge = '';
-            if (approvalStatus === 'approved') {
+            if (isDecommissioned) {
+                approvalBadge = '<span class="badge unknown" title="Retired — data preserved, hidden from active lists">DECOMMISSIONED</span>';
+            } else if (approvalStatus === 'approved') {
                 approvalBadge = '<span class="badge approved">APPROVED</span>';
             } else if (approvalStatus === 'rejected') {
                 approvalBadge = '<span class="badge rejected">REJECTED</span>';
@@ -203,13 +143,26 @@
 
             var desc = p.description ? AC.escapeHtml(p.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
 
-            var buttons = '<button class="btn sm secondary" data-action="deploy-info" data-id="' + p.id + '">Deploy Info</button>';
-            if (approvalStatus === 'pending') {
-                buttons += '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
-                    '<button class="btn sm danger" data-action="reject-probe" data-id="' + p.id + '">Reject</button>';
+            // Decommissioned probes only offer Restore (no Deploy/Edit). Active
+            // probes that ever collected (approved) are retired via Decommission,
+            // which preserves their data; only never-used pending/rejected probes
+            // expose a hard Delete.
+            var buttons;
+            if (isDecommissioned) {
+                buttons = '<button class="btn sm" data-action="recommission-probe" data-id="' + p.id + '">Restore</button>';
+            } else {
+                buttons = '<button class="btn sm secondary" data-action="deploy-info" data-id="' + p.id + '">Deploy Info</button>';
+                if (approvalStatus === 'pending') {
+                    buttons += '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
+                        '<button class="btn sm danger" data-action="reject-probe" data-id="' + p.id + '">Reject</button>';
+                }
+                buttons += '<button class="btn sm secondary" data-action="edit-probe" data-id="' + p.id + '">Edit</button>';
+                if (approvalStatus === 'approved') {
+                    buttons += '<button class="btn sm danger" data-action="decommission-probe" data-id="' + p.id + '">Decommission</button>';
+                } else {
+                    buttons += '<button class="btn sm danger" data-action="delete-probe" data-id="' + p.id + '">Delete</button>';
+                }
             }
-            buttons += '<button class="btn sm secondary" data-action="edit-probe" data-id="' + p.id + '">Edit</button>' +
-                '<button class="btn sm danger" data-action="delete-probe" data-id="' + p.id + '">Delete</button>';
 
             return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:250px;padding:20px;">' +
                 '<div>' +
@@ -424,6 +377,40 @@
         });
     }
 
+    // Decommission retires a replaced probe WITHOUT deleting any data — the
+    // probe's telemetry stays counted in the running totals; it's just hidden
+    // from the active lists. This is the right action for an in-service probe.
+    function decommissionProbe(id) {
+        AC.confirm('Decommission this probe? Its historical data is kept and still counts toward the totals — the probe is just retired and hidden from the active list. Reassign its devices to the replacement probe first.', {
+            title: 'Decommission probe?',
+            confirmLabel: 'Decommission',
+            danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            AC.apiFetch(API_BASE + '/probes/' + id + '/decommission', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).then(function() {
+                loadProbes();
+                AC.showSuccess('Probe decommissioned (data preserved)');
+            }).catch(function(err) {
+                AC.showError('Error decommissioning probe: ' + err.message);
+            });
+        });
+    }
+
+    function recommissionProbe(id) {
+        AC.apiFetch(API_BASE + '/probes/' + id + '/recommission', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        }).then(function() {
+            loadProbes();
+            AC.showSuccess('Probe restored');
+        }).catch(function(err) {
+            AC.showError('Error restoring probe: ' + err.message);
+        });
+    }
+
     function approveProbe(id) {
         AC.apiFetch(API_BASE + '/probes/' + id + '/approve', {
             method: 'POST',
@@ -473,10 +460,18 @@
         });
         var tab = document.querySelector('.filter-tab[data-filter="' + filter + '"]');
         if (tab) tab.classList.add('active');
+        if (filter === 'decommissioned') {
+            renderProbes(currentProbes.filter(function(p) { return !!p.decommissioned_at; }));
+            return;
+        }
+        // Decommissioned probes are hidden from the active tabs (all/pending/
+        // approved/rejected) — they live under their own tab. Their data still
+        // counts in the totals via the orphan-safe global endpoint.
+        var active = currentProbes.filter(function(p) { return !p.decommissioned_at; });
         if (filter === 'all') {
-            renderProbes(currentProbes);
+            renderProbes(active);
         } else {
-            renderProbes(currentProbes.filter(function(p) {
+            renderProbes(active.filter(function(p) {
                 return (p.approval_status || 'pending') === filter;
             }));
         }
@@ -490,6 +485,8 @@
         'close-deploy-modal': function() { closeDeployModal(); },
         'edit-probe': function(el) { editProbe(parseInt(el.dataset.id)); },
         'delete-probe': function(el) { deleteProbe(parseInt(el.dataset.id)); },
+        'decommission-probe': function(el) { decommissionProbe(parseInt(el.dataset.id)); },
+        'recommission-probe': function(el) { recommissionProbe(parseInt(el.dataset.id)); },
         'deploy-info': function(el) { showDeployInfo(parseInt(el.dataset.id)); },
         'approve-probe': function(el) { approveProbe(parseInt(el.dataset.id)); },
         'reject-probe': function(el) { rejectProbe(parseInt(el.dataset.id)); },

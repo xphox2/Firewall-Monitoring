@@ -392,7 +392,11 @@
             if (!dashResult) return;
             var raw = dashResult.data;
             var data = raw.dashboard || raw;
-            var probes = probesResult && probesResult.data ? probesResult.data : [];
+            var allProbes = probesResult && probesResult.data ? probesResult.data : [];
+            // Decommissioned probes are retired: excluded from the dashboard's
+            // active probe count and health cards. Their telemetry is preserved
+            // and still counts in the global Syslog/Trap totals below.
+            var probes = allProbes.filter(function(p) { return !p.decommissioned_at; });
 
             var deviceList = data.devices || [];
             document.getElementById('total-devices').textContent = deviceList.length || 0;

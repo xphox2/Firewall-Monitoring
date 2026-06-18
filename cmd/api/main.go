@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.421"
+const ServerVersion = "0.10.422"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -690,9 +690,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.DELETE("/api/probes/:id", handler.DeleteProbe)
 		admin.GET("/api/probes/:id", handler.GetProbe)
 		admin.POST("/api/probes/test", handler.TestProbeConnection)
-		admin.GET("/api/probes/stats", handler.GetProbesStatsBatch) // AUDIT-064: batch stats (static path, sibling of /:id)
+		admin.GET("/api/probes/stats", handler.GetProbesStatsBatch)       // AUDIT-064: batch stats (static path, sibling of /:id)
+		admin.GET("/api/probes/stats/global", handler.GetTelemetryTotals) // orphan-safe running totals (probe-independent)
 		admin.POST("/api/probes/:id/approve", handler.ApproveProbe)
 		admin.POST("/api/probes/:id/reject", handler.RejectProbe)
+		admin.POST("/api/probes/:id/decommission", handler.DecommissionProbe)
+		admin.POST("/api/probes/:id/recommission", handler.RecommissionProbe)
 		admin.POST("/api/probes/:id/regenerate-key", handler.RegenerateProbeKey)
 
 		admin.GET("/api/syslog", handler.GetSyslogMessages)

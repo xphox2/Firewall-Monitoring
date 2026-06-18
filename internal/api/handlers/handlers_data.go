@@ -235,7 +235,10 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 }
 
 func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, latency, packetLoss float64) {
-	existing, err := h.db.GetPingStatsByTarget(deviceID, probeID, targetIP)
+	// Ping stats are a single series per (device, target) — the row is updated
+	// regardless of which probe sends the sample, so replacing a probe keeps one
+	// continuous running series. probe_id is stamped as last-writer provenance.
+	existing, err := h.db.GetPingStatsByTarget(deviceID, targetIP)
 	if err != nil {
 		log.Printf("Failed to get existing ping stats: %v", err)
 		return
@@ -265,6 +268,7 @@ func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, laten
 	existing.AvgLatency = ((existing.AvgLatency * float64(existing.Samples)) + latency) / float64(newSamples)
 	existing.PacketLoss = packetLoss
 	existing.Samples = newSamples
+	existing.ProbeID = probeID // last-writer provenance
 	existing.UpdatedAt = time.Now()
 
 	if err := h.db.SavePingStats(existing); err != nil {

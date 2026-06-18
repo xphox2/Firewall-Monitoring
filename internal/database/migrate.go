@@ -660,3 +660,103 @@ func (d *Database) migrateProbeKeysToHash() {
 		log.Printf("AUDIT-017: hashed %d plaintext probe key(s) and %d registration setting(s) at rest", hashedRows, hashedSettings)
 	}
 }
+
+// migrateUnifyPingStats (v3) re-keys ping stats from (device_id, probe_id,
+// target_ip) to a single continuous series per (device_id, target_ip), so a
+// device's reachability history stays unified across probe replacements and the
+// device page stops showing one duplicate row per probe. It (1) merges existing
+// duplicate rows in memory — min(min), max(max), sample-weighted avg latency &
+// packet loss, sum(samples), latest updated_at/probe_id — then (2) swaps the
+// uniqueness index. Idempotent: re-running merges nothing (already unique) and
+// the IF (NOT) EXISTS index swaps are no-ops. ping_stats is small + unpartitioned.
+func (d *Database) migrateUnifyPingStats() error {
+	var all []models.PingStats
+	if err := d.db.Find(&all).Error; err != nil {
+		return fmt.Errorf("unify ping stats: load: %w", err)
+	}
+	type key struct {
+		dev    uint
+		target string
+	}
+	groups := map[key][]models.PingStats{}
+	for _, s := range all {
+		k := key{s.DeviceID, s.TargetIP}
+		groups[k] = append(groups[k], s)
+	}
+
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		for _, rows := range groups {
+			if len(rows) < 2 {
+				continue
+			}
+			survivor := rows[0]
+			minLat, maxLat := rows[0].MinLatency, rows[0].MaxLatency
+			maxUpd := rows[0].UpdatedAt
+			var sumSamples int
+			var wAvg, wLoss float64
+			for _, r := range rows {
+				if r.UpdatedAt.After(survivor.UpdatedAt) {
+					survivor = r // latest writer wins for the survivor row + probe_id
+				}
+				if r.MinLatency < minLat {
+					minLat = r.MinLatency
+				}
+				if r.MaxLatency > maxLat {
+					maxLat = r.MaxLatency
+				}
+				if r.UpdatedAt.After(maxUpd) {
+					maxUpd = r.UpdatedAt
+				}
+				sumSamples += r.Samples
+				wAvg += r.AvgLatency * float64(r.Samples)
+				wLoss += r.PacketLoss * float64(r.Samples)
+			}
+			avg, loss := survivor.AvgLatency, survivor.PacketLoss
+			if sumSamples > 0 {
+				avg = wAvg / float64(sumSamples)
+				loss = wLoss / float64(sumSamples)
+			}
+			if err := tx.Model(&models.PingStats{}).Where("id = ?", survivor.ID).Updates(map[string]interface{}{
+				"min_latency": minLat,
+				"max_latency": maxLat,
+				"avg_latency": avg,
+				"packet_loss": loss,
+				"samples":     sumSamples,
+				"updated_at":  maxUpd,
+			}).Error; err != nil {
+				return fmt.Errorf("unify ping stats: update survivor %d: %w", survivor.ID, err)
+			}
+			for _, r := range rows {
+				if r.ID == survivor.ID {
+					continue
+				}
+				if err := tx.Delete(&models.PingStats{}, r.ID).Error; err != nil {
+					return fmt.Errorf("unify ping stats: delete dup %d: %w", r.ID, err)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// Swap the uniqueness index. DROP/CREATE IF (NOT) EXISTS is idempotent and
+	// valid on both Postgres and SQLite.
+	if err := d.db.Exec(`DROP INDEX IF EXISTS idx_pingstats_device_probe_target`).Error; err != nil {
+		return fmt.Errorf("unify ping stats: drop old index: %w", err)
+	}
+	if err := d.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pingstats_device_target ON ping_stats (device_id, target_ip)`).Error; err != nil {
+		return fmt.Errorf("unify ping stats: create new index: %w", err)
+	}
+	return nil
+}
+
+// migrateProbeDecommissionedAt (v4) adds Probe.decommissioned_at (+ its index)
+// to existing databases. The v1 baseline AutoMigrate doesn't re-run once
+// recorded, so a new column needs its own migration; AutoMigrate only adds
+// what's missing, so this is idempotent. Fresh installs already have it from the
+// baseline run against the current model.
+func (d *Database) migrateProbeDecommissionedAt() error {
+	return d.db.AutoMigrate(&models.Probe{})
+}
