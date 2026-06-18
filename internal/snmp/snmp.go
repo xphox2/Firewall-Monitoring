@@ -2,6 +2,7 @@ package snmp
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +74,30 @@ func safeString(v interface{}) string {
 		return s
 	}
 	return ""
+}
+
+// safeFloat coerces an SNMP PDU value to a float64. Some vendors return
+// numeric sensor readings as a DisplayString (gosnmp delivers OctetString as
+// []byte) — FortiGate's fgHwSensorEntValue is "52.500000", not an integer.
+// gosnmp.ToBigInt returns 0 for a []byte and also for any non-integer numeric
+// string (strconv.ParseInt rejects the decimal point), which silently zeroed
+// every temperature/voltage reading. Parse text values as floats; numeric PDU
+// types (Integer/Gauge/Counter) fall through to the integer path.
+func safeFloat(v interface{}) float64 {
+	switch x := v.(type) {
+	case []byte:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(string(x)), 64)
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		return f
+	case float32:
+		return float64(x)
+	case float64:
+		return x
+	default:
+		return float64(gosnmp.ToBigInt(v).Int64())
+	}
 }
 
 type SNMPClient struct {
