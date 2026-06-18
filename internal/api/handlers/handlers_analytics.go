@@ -309,14 +309,36 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	}
 
 	hours := httputil.ParseHours(c)
-	var deviceID uint
+
+	// Build the same filter set the Flow Samples list honors, so the Flows
+	// page's shared filter row narrows the aggregate views too.
+	var filter database.FlowStatsFilter
 	if did := c.Query("device_id"); did != "" {
 		if v, err := strconv.ParseUint(did, 10, 32); err == nil {
-			deviceID = uint(v)
+			filter.DeviceID = uint(v)
 		}
 	}
+	if pid := c.Query("probe_id"); pid != "" {
+		if v, err := strconv.ParseUint(pid, 10, 32); err == nil {
+			filter.ProbeID = uint(v)
+		}
+	}
+	if proto := c.Query("protocol"); proto != "" {
+		if v, err := strconv.ParseUint(proto, 10, 8); err == nil {
+			p := uint8(v)
+			filter.Protocol = &p
+		}
+	}
+	if dport := c.Query("dst_port"); dport != "" {
+		if v, err := strconv.ParseUint(dport, 10, 16); err == nil {
+			p := uint16(v)
+			filter.DstPort = &p
+		}
+	}
+	filter.SrcAddr = c.Query("src_addr")
+	filter.DstAddr = c.Query("dst_addr")
 
-	stats, err := db.GetFlowStats(hours, deviceID)
+	stats, err := db.GetFlowStats(hours, filter)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get flow stats", err)
 		return

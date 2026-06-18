@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -91,22 +92,75 @@ func topAddrsByBytesRollup(base func() *gorm.DB, addrCol string, limit int) []Ke
 	return out
 }
 
-// GetFlowStats returns aggregated flow statistics, optionally filtered by device.
+// FlowStatsFilter narrows GetFlowStats to a subset of flows. All fields are
+// optional; the zero value means "no filter" for that dimension. These mirror
+// the filters the Flow Samples list honors, so the Flows page's shared filter
+// row drives the aggregate views (top talkers, conversations, chart) too.
+type FlowStatsFilter struct {
+	DeviceID uint    // device_id (flow_samples + flow_rollups)
+	ProbeID  uint    // probe_id  (flow_samples only — forces raw-only when set)
+	Protocol *uint8  // IP protocol number; nil = all
+	DstPort  *uint16 // destination port; nil = all
+	SrcAddr  string  // source IP or CIDR (cidrToLikePattern semantics)
+	DstAddr  string  // destination IP or CIDR
+}
+
+// flowAddrFilter applies an IP/CIDR filter on an address column. It reuses
+// cidrToLikePattern (the same helper the connection-detail flow queries use) so
+// the conversations/top-talker views filter addresses identically to how the
+// samples list does. An unparseable value falls back to an exact match (no
+// rows) rather than silently dropping the filter.
+func flowAddrFilter(q *gorm.DB, column, val string) *gorm.DB {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return q
+	}
+	pattern := cidrToLikePattern(val)
+	if pattern == "" {
+		return q.Where(column+" = ?", val)
+	}
+	if strings.Contains(pattern, "%") {
+		return q.Where(column+" LIKE ? ESCAPE '\\'", pattern)
+	}
+	return q.Where(column+" = ?", pattern)
+}
+
+// GetFlowStats returns aggregated flow statistics, optionally narrowed by filter.
 // It queries both raw flow_samples (recent) and flow_rollups (older data).
-func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, error) {
+func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	result := &FlowStatsResult{}
 
 	// Determine which data source to use:
 	// - hours <= 1: raw samples only (rollups haven't consumed them yet)
 	// - hours > 1: union raw samples + rollups
-	useRollups := hours > 1
+	// A probe_id filter forces raw-only: flow_rollups has no probe_id column, so
+	// it can't honor that filter without leaking rows the operator excluded.
+	useRollups := hours > 1 && filter.ProbeID == 0
+
+	// applyCommonFilters writes the filters shared by flow_samples and
+	// flow_rollups (both carry device_id / src_addr / dst_addr / dst_port /
+	// protocol). probe_id is applied separately on the raw base only.
+	applyCommonFilters := func(q *gorm.DB) *gorm.DB {
+		if filter.DeviceID > 0 {
+			q = q.Where("device_id = ?", filter.DeviceID)
+		}
+		if filter.Protocol != nil {
+			q = q.Where("protocol = ?", *filter.Protocol)
+		}
+		if filter.DstPort != nil {
+			q = q.Where("dst_port = ?", *filter.DstPort)
+		}
+		q = flowAddrFilter(q, "src_addr", filter.SrcAddr)
+		q = flowAddrFilter(q, "dst_addr", filter.DstAddr)
+		return q
+	}
 
 	// --- Raw flow_samples base ---
 	newRawBase := func() *gorm.DB {
-		q := d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff)
-		if deviceID > 0 {
-			q = q.Where("device_id = ?", deviceID)
+		q := applyCommonFilters(d.db.Model(&models.FlowSample{}).Where("timestamp > ?", cutoff))
+		if filter.ProbeID > 0 {
+			q = q.Where("probe_id = ?", filter.ProbeID)
 		}
 		return q
 	}
@@ -120,11 +174,7 @@ func (d *Database) GetFlowStats(hours int, deviceID uint) (*FlowStatsResult, err
 		rollupInterval = "1d"
 	}
 	newRollupBase := func() *gorm.DB {
-		q := d.db.Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type = ?", cutoff, rollupInterval)
-		if deviceID > 0 {
-			q = q.Where("device_id = ?", deviceID)
-		}
-		return q
+		return applyCommonFilters(d.db.Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type = ?", cutoff, rollupInterval))
 	}
 
 	// Combined aggregates: count, bytes, unique src/dst from raw samples

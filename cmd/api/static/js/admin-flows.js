@@ -371,8 +371,16 @@
     }
 
     function statsURL() {
+        // Stats drives the aggregate views (top talkers, conversations, chart).
+        // It honors the same filter set as the samples list so the shared filter
+        // row narrows both tabs — except src_port, which rollups don't store.
         var params = ['hours=' + encodeURIComponent(state.hours)];
         if (state.device_id) params.push('device_id=' + encodeURIComponent(state.device_id));
+        if (state.probe_id)  params.push('probe_id='  + encodeURIComponent(state.probe_id));
+        if (state.protocol)  params.push('protocol='  + encodeURIComponent(state.protocol));
+        if (state.src)       params.push('src_addr='  + encodeURIComponent(state.src));
+        if (state.dst)       params.push('dst_addr='  + encodeURIComponent(state.dst));
+        if (state.dport)     params.push('dst_port='  + encodeURIComponent(state.dport));
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
