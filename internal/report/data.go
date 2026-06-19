@@ -65,6 +65,18 @@ func baselineRange() (rangeStr string, bucketSeconds float64) {
 	return "30d", 3600
 }
 
+// BuildSeasonalProfileFromChart converts interface chart buckets (cumulative
+// counters) into a seasonal throughput profile via computeTraffic. bucketSeconds
+// is the bucket width (3600 for hourly). Returns nil when there isn't enough
+// data to form a profile. Used by the poller's real-time spike detector.
+func BuildSeasonalProfileFromChart(buckets []database.InterfaceChartBucket, bucketSeconds float64) *SeasonalProfile {
+	_, _, _, series, times := computeTraffic(buckets, bucketSeconds)
+	if len(series) < minSeasonalSamples {
+		return nil
+	}
+	return BuildSeasonalProfile(series, times)
+}
+
 // computeTraffic derives honest traffic figures from a series of interface
 // chart buckets whose values are cumulative octet counters. It returns total
 // bytes transferred, peak/avg throughput (bps), and the per-bucket throughput

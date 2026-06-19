@@ -27,21 +27,92 @@ type Poller struct {
 	db             *database.Database
 	alertManager   *alerts.AlertManager
 	notifier       *notifier.Notifier
-	rollingStats   *report.RollingStats
+	spikeDetector  *report.SeasonalSpikeDetector
 	prevIfaceStats map[string]*models.InterfaceStats // "deviceID_ifName" -> previous stats
 	ifaceStatsMu   sync.RWMutex
 	stopChan       chan struct{}
 }
 
 func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager, notif *notifier.Notifier) *Poller {
-	return &Poller{
+	p := &Poller{
 		cfg:            cfg,
 		db:             db,
 		alertManager:   am,
 		notifier:       notif,
-		rollingStats:   report.NewRollingStats(120),
 		prevIfaceStats: make(map[string]*models.InterfaceStats),
 		stopChan:       make(chan struct{}),
+	}
+	// Real-time spike detector: judges live throughput against a per-interface
+	// seasonal (weekday, hour) baseline, refreshed every 6h from 30 days of
+	// hourly history, with a 30-minute re-fire cooldown.
+	p.spikeDetector = report.NewSeasonalSpikeDetector(6*time.Hour, 30*time.Minute, func(key string) *report.SeasonalProfile {
+		var deviceID uint
+		var ifIndex int
+		if _, err := fmt.Sscanf(key, "%d:%d", &deviceID, &ifIndex); err != nil || p.db == nil {
+			return nil
+		}
+		buckets, err := p.db.GetInterfaceChartData(deviceID, ifIndex, "30d")
+		if err != nil || len(buckets) == 0 {
+			return nil
+		}
+		return report.BuildSeasonalProfileFromChart(buckets, 3600)
+	})
+	return p
+}
+
+// humanBps renders a bits-per-second value compactly for alert messages.
+func humanBps(bps float64) string {
+	switch {
+	case bps >= 1e9:
+		return fmt.Sprintf("%.2f Gbps", bps/1e9)
+	case bps >= 1e6:
+		return fmt.Sprintf("%.1f Mbps", bps/1e6)
+	case bps >= 1e3:
+		return fmt.Sprintf("%.0f kbps", bps/1e3)
+	default:
+		return fmt.Sprintf("%.0f bps", bps)
+	}
+}
+
+// emitSpikeAlert saves and sends one sustained-spike alert.
+func (p *Poller) emitSpikeAlert(device *models.Device, iface *models.InterfaceStats, dec report.SpikeDecision) {
+	alert := models.Alert{
+		Timestamp:    time.Now(),
+		DeviceID:     iface.DeviceID,
+		AlertType:    "TRAFFIC_SPIKE",
+		Severity:     dec.Severity,
+		Message:      fmt.Sprintf("Sustained traffic spike on %s: %s (typical ~%s for this time)", iface.Name, humanBps(dec.Value), humanBps(dec.Mean)),
+		MetricName:   fmt.Sprintf("traffic_%s", iface.Name),
+		CurrentValue: dec.Value,
+		Threshold:    dec.Mean,
+	}
+	if p.db != nil {
+		p.db.SaveAlert(&alert)
+	}
+	nc := notifier.SnapshotConfig(&p.cfg.Alerts)
+	if err := p.notifier.SendAlert(&alert, nc); err != nil {
+		log.Printf("Device %s: spike alert send error - %v", device.Name, err)
+	}
+}
+
+// emitSpikeResolve records that a previously-alerted spike has cleared.
+func (p *Poller) emitSpikeResolve(device *models.Device, iface *models.InterfaceStats) {
+	now := time.Now()
+	alert := models.Alert{
+		Timestamp:  now,
+		DeviceID:   iface.DeviceID,
+		AlertType:  "TRAFFIC_SPIKE",
+		Severity:   "info",
+		Message:    fmt.Sprintf("Traffic on %s returned to normal", iface.Name),
+		MetricName: fmt.Sprintf("traffic_%s", iface.Name),
+		ResolvedAt: &now,
+	}
+	if p.db != nil {
+		p.db.SaveAlert(&alert)
+	}
+	nc := notifier.SnapshotConfig(&p.cfg.Alerts)
+	if err := p.notifier.SendAlert(&alert, nc); err != nil {
+		log.Printf("Device %s: spike resolve send error - %v", device.Name, err)
 	}
 }
 
@@ -343,34 +414,55 @@ func (p *Poller) pollDevice(device *models.Device) {
 			}
 			p.ifaceStatsMu.RUnlock()
 		}
-		// Real-time spike detection on interface traffic
-		if p.cfg.Alerts.SpikeAlertEnabled && p.rollingStats != nil && p.alertManager != nil {
-			threshold := p.cfg.Alerts.SpikeStdDevThreshold
-			if threshold <= 0 {
-				threshold = 3.0
+		// Real-time spike detection on interface traffic. Throughput is derived
+		// from counter deltas (NOT raw cumulative counters), judged against a
+		// seasonal (weekday, hour) baseline, and only alerted once it has been
+		// sustained for SpikeMinDurationMinutes — so recurring/scheduled traffic
+		// and momentary blips don't cause alert panic.
+		if p.cfg.Alerts.SpikeAlertEnabled && p.spikeDetector != nil {
+			k := p.cfg.Alerts.SpikeStdDevThreshold
+			if k <= 0 {
+				k = 3.0
 			}
-			for _, iface := range interfaces {
+			minDur := time.Duration(p.cfg.Alerts.SpikeMinDurationMinutes) * time.Minute
+			if minDur <= 0 {
+				minDur = 15 * time.Minute
+			}
+			pollNow := time.Now()
+			for i := range interfaces {
+				iface := &interfaces[i]
 				if iface.Status != "up" {
 					continue
 				}
-				spike := p.rollingStats.AddAndCheck(iface.DeviceID, iface.Name, iface.InBytes, iface.OutBytes, threshold)
-				if spike != nil {
-					spikeAlert := models.Alert{
-						Timestamp:    spike.Timestamp,
-						DeviceID:     iface.DeviceID,
-						AlertType:    "TRAFFIC_SPIKE",
-						Severity:     spike.Severity,
-						Message:      fmt.Sprintf("Traffic spike on %s: %.0f bytes (mean: %.0f, σ: %.0f)", iface.Name, spike.Value, spike.Mean, spike.StdDev),
-						MetricName:   fmt.Sprintf("traffic_%s", iface.Name),
-						CurrentValue: spike.Value,
-					}
-					if p.db != nil {
-						p.db.SaveAlert(&spikeAlert)
-					}
-					nc := notifier.SnapshotConfig(&p.cfg.Alerts)
-					if err := p.notifier.SendAlert(&spikeAlert, nc); err != nil {
-						log.Printf("Device %s: spike alert send error - %v", device.Name, err)
-					}
+				p.ifaceStatsMu.RLock()
+				prev := p.prevIfaceStats[fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)]
+				var prevBytes float64
+				var prevTS time.Time
+				hasPrev := prev != nil
+				if hasPrev {
+					prevBytes = float64(prev.InBytes + prev.OutBytes)
+					prevTS = prev.Timestamp
+				}
+				p.ifaceStatsMu.RUnlock()
+				if !hasPrev {
+					continue // need a prior sample to derive throughput
+				}
+				elapsed := pollNow.Sub(prevTS).Seconds()
+				if elapsed <= 0 {
+					continue
+				}
+				delta := float64(iface.InBytes+iface.OutBytes) - prevBytes
+				if delta < 0 {
+					delta = 0 // counter reset / wrap
+				}
+				bps := delta * 8 / elapsed
+
+				dec := p.spikeDetector.Observe(fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index), pollNow, bps, k, minDur)
+				switch {
+				case dec.Fire:
+					p.emitSpikeAlert(device, iface, dec)
+				case dec.Resolve:
+					p.emitSpikeResolve(device, iface)
 				}
 			}
 		}

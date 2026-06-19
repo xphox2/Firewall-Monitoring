@@ -175,6 +175,137 @@ func (p *SeasonalProfile) IsAnomalous(t time.Time, bps, k float64) (bool, string
 	}
 }
 
+// SpikeDecision is the outcome of feeding one live throughput sample to a
+// SeasonalSpikeDetector.
+type SpikeDecision struct {
+	Fire     bool   // raise a new sustained-spike alert now
+	Resolve  bool   // the previously-alerted spike has cleared
+	Severity string // "warning" | "critical" (set when Fire)
+	Value    float64
+	Mean     float64
+	StdDev   float64
+}
+
+type seasonalState struct {
+	profile        *SeasonalProfile
+	profileAt      time.Time
+	recent         []float64 // rolling fallback when seasonal history is thin
+	anomalousSince time.Time
+	alerting       bool
+	lastAlertAt    time.Time
+}
+
+// SeasonalSpikeDetector judges live per-interface throughput against a seasonal
+// (weekday, hour) baseline and only raises a spike once it has been sustained
+// for at least minDuration — then suppresses re-fires until traffic returns to
+// normal (emitting one Resolve) or the cooldown elapses. This is what turns the
+// real-time alert from per-poll panic into one alert per genuine, sustained,
+// time-of-day-unusual event.
+type SeasonalSpikeDetector struct {
+	mu              sync.Mutex
+	states          map[string]*seasonalState
+	refreshInterval time.Duration
+	cooldown        time.Duration
+	maxRecent       int
+	profileFor      func(key string) *SeasonalProfile
+}
+
+// NewSeasonalSpikeDetector builds a detector. profileFor lazily supplies (and is
+// re-called every refreshInterval) the seasonal baseline for a key; it may
+// return nil, in which case a rolling fallback band is used until history
+// accrues. cooldown bounds re-firing after a resolve.
+func NewSeasonalSpikeDetector(refreshInterval, cooldown time.Duration, profileFor func(key string) *SeasonalProfile) *SeasonalSpikeDetector {
+	if refreshInterval <= 0 {
+		refreshInterval = 6 * time.Hour
+	}
+	return &SeasonalSpikeDetector{
+		states:          make(map[string]*seasonalState),
+		refreshInterval: refreshInterval,
+		cooldown:        cooldown,
+		maxRecent:       180,
+		profileFor:      profileFor,
+	}
+}
+
+// Observe feeds one live throughput sample (bps) for key at time now. k is the
+// std-dev threshold; minDuration is how long a spike must persist before it
+// alerts. It returns at most one Fire or one Resolve per call.
+func (d *SeasonalSpikeDetector) Observe(key string, now time.Time, bps, k float64, minDuration time.Duration) SpikeDecision {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	st := d.states[key]
+	if st == nil {
+		st = &seasonalState{}
+		d.states[key] = st
+	}
+
+	if d.profileFor != nil && (st.profile == nil || now.Sub(st.profileAt) >= d.refreshInterval) {
+		if p := d.profileFor(key); p != nil {
+			st.profile = p
+		}
+		st.profileAt = now
+	}
+
+	// Resolve the expected band: seasonal first, then a rolling fallback from
+	// recent samples (computed before recording the current value so it can't
+	// bias its own baseline).
+	mean, std, ok := st.profile.Band(now)
+	if !ok {
+		mean, std, ok = rollingBand(st.recent)
+	}
+	st.recent = append(st.recent, bps)
+	if len(st.recent) > d.maxRecent {
+		st.recent = st.recent[len(st.recent)-d.maxRecent:]
+	}
+
+	anomalous, severity := false, "warning"
+	if ok && std > 0 {
+		switch {
+		case bps > mean+k*2*std:
+			anomalous, severity = true, "critical"
+		case bps > mean+k*std:
+			anomalous, severity = true, "warning"
+		}
+	}
+
+	if !anomalous {
+		st.anomalousSince = time.Time{}
+		if st.alerting {
+			st.alerting = false
+			return SpikeDecision{Resolve: true}
+		}
+		return SpikeDecision{}
+	}
+
+	if st.anomalousSince.IsZero() {
+		st.anomalousSince = now
+	}
+	if st.alerting {
+		return SpikeDecision{} // already alerted for this ongoing spike
+	}
+	if now.Sub(st.anomalousSince) < minDuration {
+		return SpikeDecision{} // not sustained long enough yet
+	}
+	if d.cooldown > 0 && !st.lastAlertAt.IsZero() && now.Sub(st.lastAlertAt) < d.cooldown {
+		return SpikeDecision{} // within cooldown of the last alert
+	}
+
+	st.alerting = true
+	st.lastAlertAt = now
+	return SpikeDecision{Fire: true, Severity: severity, Value: bps, Mean: mean, StdDev: std}
+}
+
+// rollingBand computes a mean/stddev from prior samples, requiring at least 10
+// so a fresh detector doesn't alert on noise before history accrues.
+func rollingBand(prior []float64) (mean, std float64, ok bool) {
+	if len(prior) < 10 {
+		return 0, 0, false
+	}
+	mean, std = meanStdDev(prior)
+	return mean, std, std > 0
+}
+
 // detectSpikesTimeOfDay flags throughput in the most recent `hours` of the
 // series that is anomalous *for its weekday and time of day*, learned from the
 // preceding days in the same series. Recurring scheduled traffic (e.g. a nightly

@@ -174,6 +174,76 @@ func TestSeasonalProfileBandFallback(t *testing.T) {
 	}
 }
 
+// TestSeasonalSpikeDetector_SustainedGateAndCooldown verifies the real-time
+// detector only fires after a spike is sustained ≥ minDuration, fires once per
+// event, resolves when traffic normalizes, and respects the cooldown.
+func TestSeasonalSpikeDetector_SustainedGateAndCooldown(t *testing.T) {
+	// Baseline: a week of hourly ~100 Mbps (small jitter) across every hour.
+	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	var bs []float64
+	var bt []time.Time
+	for i := 0; i < 7*24; i++ {
+		bs = append(bs, 100e6+float64(i%5-2)*1e6)
+		bt = append(bt, base.Add(time.Duration(i)*time.Hour))
+	}
+	profile := BuildSeasonalProfile(bs, bt)
+
+	d := NewSeasonalSpikeDetector(time.Hour, 30*time.Minute, func(string) *SeasonalProfile { return profile })
+	const (
+		key  = "1:2"
+		k    = 2.0
+		high = 900e6
+	)
+	minDur := 15 * time.Minute
+	now := time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)
+
+	at := func(m int) time.Time { return now.Add(time.Duration(m) * time.Minute) }
+
+	if d.Observe(key, at(0), high, k, minDur).Fire {
+		t.Fatal("must not fire immediately")
+	}
+	if d.Observe(key, at(10), high, k, minDur).Fire {
+		t.Fatal("must not fire before 15 min sustained")
+	}
+	if dec := d.Observe(key, at(15), high, k, minDur); !dec.Fire {
+		t.Fatalf("must fire once sustained ≥15 min; got %+v", dec)
+	}
+	if d.Observe(key, at(16), high, k, minDur).Fire {
+		t.Fatal("must not re-fire while already alerting")
+	}
+	if dec := d.Observe(key, at(20), 100e6, k, minDur); !dec.Resolve {
+		t.Fatalf("must resolve when traffic normalizes; got %+v", dec)
+	}
+	// Anomalous again from t=21; within cooldown (last alert t=15, cooldown 30m).
+	for _, m := range []int{21, 30, 40} {
+		if d.Observe(key, at(m), high, k, minDur).Fire {
+			t.Fatalf("must not fire within cooldown (t=%dm)", m)
+		}
+	}
+	if dec := d.Observe(key, at(50), high, k, minDur); !dec.Fire {
+		t.Fatalf("must fire again after cooldown + sustained; got %+v", dec)
+	}
+}
+
+// TestSeasonalSpikeDetector_RollingFallback verifies that with no seasonal
+// profile, the detector still gates on the rolling fallback band (and never
+// alerts before it has enough samples).
+func TestSeasonalSpikeDetector_RollingFallback(t *testing.T) {
+	d := NewSeasonalSpikeDetector(time.Hour, 0, func(string) *SeasonalProfile { return nil })
+	base := time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC)
+	minDur := 0 * time.Minute // isolate the band logic from the duration gate
+	// Feed 15 normal samples to build the rolling band (no alerts — under 10 then within band).
+	for i := 0; i < 15; i++ {
+		if dec := d.Observe("9:9", base.Add(time.Duration(i)*time.Minute), 100e6+float64(i%3)*1e6, 2.0, minDur); dec.Fire {
+			t.Fatalf("normal traffic must not fire (i=%d)", i)
+		}
+	}
+	// Now a large sustained jump should fire via the rolling fallback band.
+	if dec := d.Observe("9:9", base.Add(20*time.Minute), 5e9, 2.0, minDur); !dec.Fire {
+		t.Fatalf("rolling fallback should fire on a large jump; got %+v", dec)
+	}
+}
+
 func TestDistinctDays(t *testing.T) {
 	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	times := []time.Time{

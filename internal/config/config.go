@@ -191,8 +191,9 @@ type AlertsConfig struct {
 	ReportRecipients    string // comma-separated, defaults to SMTPTo
 	ReportTimezone      string // IANA timezone, default UTC
 	// Spike detection
-	SpikeStdDevThreshold float64
-	SpikeAlertEnabled    bool
+	SpikeStdDevThreshold    float64
+	SpikeAlertEnabled       bool
+	SpikeMinDurationMinutes int // a real-time spike must persist this long before it alerts
 }
 
 type UptimeConfig struct {
@@ -356,6 +357,7 @@ func Load() *Config {
 			ReportTimezone:           getEnv("REPORT_TIMEZONE", "UTC"),
 			SpikeStdDevThreshold:     getFloatEnv("SPIKE_STDDEV_THRESHOLD", 3.0),
 			SpikeAlertEnabled:        getBoolEnv("SPIKE_ALERT_ENABLED", false),
+			SpikeMinDurationMinutes:  getIntEnv("SPIKE_MIN_DURATION_MINUTES", 15),
 			ProbeDataLagAlertMinutes: getIntEnv("PROBE_DATA_LAG_ALERT_MINUTES", 60),
 		},
 		Uptime: UptimeConfig{

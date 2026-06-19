@@ -401,7 +401,7 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",
 		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
 		"report_weekly_day", "report_recipients", "report_timezone",
-		"spike_stddev_threshold", "spike_alert_enabled",
+		"spike_stddev_threshold", "spike_alert_enabled", "spike_min_duration_minutes",
 	}).Find(&settings).Error; err != nil {
 		log.Printf("RefreshThresholds: failed to read settings: %v", err)
 		return
@@ -483,6 +483,10 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 			}
 		case "spike_alert_enabled":
 			am.config.Alerts.SpikeAlertEnabled = s.Value == "true"
+		case "spike_min_duration_minutes":
+			if v, err := strconv.Atoi(s.Value); err == nil && v > 0 {
+				am.config.Alerts.SpikeMinDurationMinutes = v
+			}
 		}
 	}
 }
