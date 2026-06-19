@@ -102,6 +102,57 @@ func TestParseIPv6_TruncatedExtHeader(t *testing.T) {
 	}
 }
 
+// TestParseIPv4_6in4InnerDecode verifies a 6in4 tunnel (IPv4 protocol 41
+// carrying IPv6) is decoded to its inner conversation: real upper-layer
+// protocol, inner IPv6 addresses, and inner ports — not just "IPv6" (41).
+func TestParseIPv4_6in4InnerDecode(t *testing.T) {
+	tcp := make([]byte, 20)
+	binary.BigEndian.PutUint16(tcp[0:], 7000)
+	binary.BigEndian.PutUint16(tcp[2:], 8443)
+	tcp[13] = 0x10 // ACK
+	inner := buildIPv6(6 /* inner = TCP */, tcp)
+
+	ip := make([]byte, 20)
+	ip[0] = 0x45
+	ip[9] = 41 // 6in4 (IPv6 encapsulation)
+	copy(ip[12:16], net.IPv4(203, 0, 113, 1).To4())
+	copy(ip[16:20], net.IPv4(203, 0, 113, 2).To4())
+
+	var f ParsedFlow
+	parseIPv4(append(ip, inner...), &f)
+
+	if f.Protocol != 6 {
+		t.Errorf("Protocol = %d, want 6 (inner TCP) — 6in4 not decoded", f.Protocol)
+	}
+	if f.SrcAddr != "2001:db8::1" || f.DstAddr != "2001:db8::2" {
+		t.Errorf("inner addresses not decoded: src=%q dst=%q", f.SrcAddr, f.DstAddr)
+	}
+	if f.SrcPort != 7000 || f.DstPort != 8443 {
+		t.Errorf("inner ports = %d->%d, want 7000->8443", f.SrcPort, f.DstPort)
+	}
+}
+
+// TestParseIPv4_6in4Truncated verifies that when the inner IPv6 header is
+// truncated out of the sampled bytes, decoding falls back to the outer IPv4
+// tunnel endpoints and protocol 41 without panicking.
+func TestParseIPv4_6in4Truncated(t *testing.T) {
+	ip := make([]byte, 20)
+	ip[0] = 0x45
+	ip[9] = 41
+	copy(ip[12:16], net.IPv4(203, 0, 113, 1).To4())
+	copy(ip[16:20], net.IPv4(203, 0, 113, 2).To4())
+
+	var f ParsedFlow
+	parseIPv4(append(ip, make([]byte, 10)...), &f) // inner IPv6 only 10 bytes
+
+	if f.Protocol != 41 {
+		t.Errorf("Protocol = %d, want 41 (fallback on truncated inner)", f.Protocol)
+	}
+	if f.SrcAddr != "203.0.113.1" || f.DstAddr != "203.0.113.2" {
+		t.Errorf("expected outer IPv4 fallback addrs, got src=%q dst=%q", f.SrcAddr, f.DstAddr)
+	}
+}
+
 // TestParseIPv6_TooShort verifies a sub-40-byte header is rejected cleanly.
 func TestParseIPv6_TooShort(t *testing.T) {
 	var f ParsedFlow

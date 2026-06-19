@@ -373,6 +373,16 @@ func parseIPv4(data []byte, flow *ParsedFlow) {
 	flow.SrcAddr = net.IP(data[12:16]).String()
 	flow.DstAddr = net.IP(data[16:20]).String()
 
+	// 6in4: an IPv4 packet whose protocol is 41 carries a full IPv6 packet.
+	// Decode the inner IPv6 so the flow reflects the real conversation (inner
+	// src/dst, upper-layer protocol, ports) instead of just "IPv6". parseIPv6
+	// overwrites SrcAddr/DstAddr/Protocol/ports; a truncated inner header
+	// leaves the outer IPv4 tunnel endpoints and protocol 41 as a fallback.
+	if flow.Protocol == 41 {
+		parseIPv6(data[ihl:], flow)
+		return
+	}
+
 	parseTransport(data[ihl:], flow)
 }
 

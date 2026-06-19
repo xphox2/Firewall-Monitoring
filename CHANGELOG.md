@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.429] - 2026-06-18
+### Changed
+- **sFlow: 6in4 tunnels are now decoded to their inner protocol instead of showing as "IPv6" (proto 41).** The bundled probe decoder (`internal/sflow/sflow.go`) now, when an IPv4 packet's protocol is 41 (IPv6 encapsulation), recurses into the inner IPv6 packet so the flow reflects the real conversation — inner IPv6 src/dst, the actual upper-layer protocol (TCP/UDP/ICMPv6), and ports — rather than a generic "IPv6 / port 0/0" entry. Truncated inner headers fall back to the outer IPv4 tunnel endpoints + protocol 41 (no panic). Mirrors the remote collector decoder (Firewall-Collector v1.2.118). Tests: `TestParseIPv4_6in4InnerDecode`, `TestParseIPv4_6in4Truncated`.
+
 ## [0.10.428] - 2026-06-18
 ### Fixed
 - **Flows page: clicking a protocol in the Protocols list now filters/unfilters for every protocol (IPv6, IGMP, AH, SCTP, …), not just TCP/UDP/ICMP/GRE/ESP — and those protocols no longer appear falsely "selected."** The frontend `PROTOCOLS` map in `admin-flows.js` only listed 7 protocols, but the breakdown comes from the backend's fuller `protoNames` map. For any protocol missing from the frontend map (e.g. **IPv6 / proto 41**), the name→number reverse lookup returned `''`, so its row had an empty filter value: clicking it set the protocol filter to `''` (= "All") — a no-op — and because the default protocol filter is also `''`, the row rendered with the `active` highlight by default (the "IPv6 is auto-selected" symptom). Expanded `PROTOCOLS` to mirror the backend map and taught `protocolNumber` to parse the backend's `"Proto N"` fallback, so every protocol the breakdown can show is now clickable/toggleable and only highlights when actually filtered. Frontend-only.
