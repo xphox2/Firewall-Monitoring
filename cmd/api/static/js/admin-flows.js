@@ -882,8 +882,18 @@
         return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' +
                pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     }
+    // IP protocol number -> name. MUST mirror the backend's protoNames map
+    // (internal/database/flows.go): the Protocols top-talker rows arrive from
+    // /flows/stats as NAMES, and clicking one reverse-maps the name back to a
+    // number to drive the filter. Any protocol missing here is unfilterable AND
+    // renders falsely "active" — its empty reverse-lookup value ('') matches the
+    // default empty protocol filter. (This is what made "IPv6" appear
+    // pre-selected and refuse to filter when the map lacked 41.)
     var PROTOCOLS = {
-        '1':'ICMP', '6':'TCP', '17':'UDP', '47':'GRE', '50':'ESP', '58':'ICMPv6', '89':'OSPF'
+        '0':'HOPOPT', '1':'ICMP', '2':'IGMP', '4':'IPv4', '6':'TCP', '8':'EGP',
+        '17':'UDP', '41':'IPv6', '43':'IPv6-Route', '44':'IPv6-Frag', '47':'GRE',
+        '50':'ESP', '51':'AH', '58':'ICMPv6', '59':'IPv6-NoNxt', '60':'IPv6-Opts',
+        '88':'EIGRP', '89':'OSPF', '103':'PIM', '112':'VRRP', '132':'SCTP', '137':'MPLS-in-IP'
     };
     function protocolName(p) {
         if (p == null || p === '') return '';
@@ -892,13 +902,19 @@
     }
     function protocolNumber(name) {
         // Reverse lookup — used when clicking a top-protocol row whose key is
-        // a NAME ("TCP") that needs to become a NUMBER ("6") for the filter.
+        // a NAME ("TCP", "IPv6") that needs to become a NUMBER ("6", "41") for
+        // the filter.
         if (name == null) return '';
+        var s = String(name);
         for (var k in PROTOCOLS) {
-            if (PROTOCOLS[k] === name) return k;
+            if (PROTOCOLS[k] === s) return k;
         }
-        // If it's already a number, just return it.
-        return /^\d+$/.test(String(name)) ? String(name) : '';
+        // Backend emits "Proto N" for numbers it doesn't name — extract N so
+        // even unmapped protocols stay filterable.
+        var m = /^Proto (\d+)$/.exec(s);
+        if (m) return m[1];
+        // Already a bare number?
+        return /^\d+$/.test(s) ? s : '';
     }
 
     function deviceLabel(id) {

@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.428] - 2026-06-18
+### Fixed
+- **Flows page: clicking a protocol in the Protocols list now filters/unfilters for every protocol (IPv6, IGMP, AH, SCTP, …), not just TCP/UDP/ICMP/GRE/ESP — and those protocols no longer appear falsely "selected."** The frontend `PROTOCOLS` map in `admin-flows.js` only listed 7 protocols, but the breakdown comes from the backend's fuller `protoNames` map. For any protocol missing from the frontend map (e.g. **IPv6 / proto 41**), the name→number reverse lookup returned `''`, so its row had an empty filter value: clicking it set the protocol filter to `''` (= "All") — a no-op — and because the default protocol filter is also `''`, the row rendered with the `active` highlight by default (the "IPv6 is auto-selected" symptom). Expanded `PROTOCOLS` to mirror the backend map and taught `protocolNumber` to parse the backend's `"Proto N"` fallback, so every protocol the breakdown can show is now clickable/toggleable and only highlights when actually filtered. Frontend-only.
+
 ## [0.10.427] - 2026-06-18
 ### Fixed
 - **sFlow: IPv6 traffic no longer collapses into bogus "HOPOPT" / port-0 flows, and the Flows page Protocols breakdown stops being dominated by HOPOPT.** Two parts:
