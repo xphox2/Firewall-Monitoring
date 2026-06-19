@@ -179,6 +179,21 @@
  * admin-design-system.css. Only the page-specific wrapper margin lives here. */
 .fwmon-bandwidth-card { margin-bottom: 16px; }
 
+/* admin.html ships a legacy inline `<style>` rule `.chart-card { height: 340px }`
+ * (for old fixed-size Chart.js canvases). Because it's an inline block loaded
+ * after every external stylesheet, it wins the cascade and pins this card to
+ * 340px — too short for the uPlot bandwidth chart plus its live legend, so the
+ * x-axis labels and legend overflowed below the card and were covered by the
+ * Top Sources / Top Destinations cards. The two-class selector here (0,2,0)
+ * outranks that single-class legacy rule (0,1,0) regardless of order, letting
+ * the card grow to fit its content. Scoped to the bandwidth card so the legacy
+ * fixed-height behaviour elsewhere is untouched. */
+.fwmon-flows .fwmon-bandwidth-card {
+    height: auto;
+    min-height: 280px;
+    overflow: visible;
+}
+
 /* === Top-talker grid === */
 .fwmon-flows-toptalk-grid {
     display: grid;
