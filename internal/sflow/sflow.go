@@ -343,11 +343,16 @@ func (r *SFlowReceiver) parseRawPacketHeader(data []byte, agentIP string, sampli
 			ipStart = 18
 		}
 
-		if etherType == 0x0800 { // IPv4
+		switch etherType {
+		case 0x0800: // IPv4
 			parseIPv4(header[ipStart:], flow)
+		case 0x86DD: // IPv6
+			parseIPv6(header[ipStart:], flow)
 		}
 	case 11: // IPv4
 		parseIPv4(header, flow)
+	case 12: // IPv6
+		parseIPv6(header, flow)
 	}
 
 	return flow
@@ -368,8 +373,69 @@ func parseIPv4(data []byte, flow *ParsedFlow) {
 	flow.SrcAddr = net.IP(data[12:16]).String()
 	flow.DstAddr = net.IP(data[16:20]).String()
 
-	transport := data[ihl:]
+	parseTransport(data[ihl:], flow)
+}
 
+// isIPv6ExtHeader reports whether an IPv6 "Next Header" value is an extension
+// header (which chains to a further header) rather than an upper-layer protocol.
+// ESP (50) is deliberately excluded: its payload is encrypted, so the chain
+// cannot be walked past it. No-Next-Header (59) is also terminal.
+func isIPv6ExtHeader(nh uint8) bool {
+	switch nh {
+	case 0, // Hop-by-Hop Options
+		43,  // Routing
+		44,  // Fragment
+		51,  // Authentication Header
+		60,  // Destination Options
+		135: // Mobility
+		return true
+	}
+	return false
+}
+
+// parseIPv6 extracts src/dst IP, the real upper-layer protocol, and ports from
+// an IPv6 header. It walks the extension-header chain so a packet carrying e.g.
+// a Hop-by-Hop Options header (Next Header = 0, common for MLD/multicast,
+// Router Alert, jumbograms) is not mis-recorded as protocol 0 (HOPOPT) with no
+// ports. Sampled headers are truncated, so every read is bounds-checked and the
+// walk is capped against malformed/looping chains.
+func parseIPv6(data []byte, flow *ParsedFlow) {
+	if len(data) < 40 {
+		return
+	}
+
+	flow.SrcAddr = net.IP(data[8:24]).String()
+	flow.DstAddr = net.IP(data[24:40]).String()
+
+	nextHeader := data[6]
+	offset := 40
+	for i := 0; i < 8 && isIPv6ExtHeader(nextHeader); i++ {
+		if offset+2 > len(data) {
+			break // can't read this ext header — keep nextHeader as best effort
+		}
+		var extLen int
+		switch nextHeader {
+		case 44: // Fragment header is always 8 bytes
+			extLen = 8
+		case 51: // Authentication Header: (length + 2) 4-byte units
+			extLen = (int(data[offset+1]) + 2) * 4
+		default: // Hop-by-Hop(0), Routing(43), Dest-Opts(60), Mobility(135)
+			extLen = (int(data[offset+1]) + 1) * 8
+		}
+		nextHeader = data[offset]
+		offset += extLen
+	}
+
+	flow.Protocol = nextHeader
+	if offset <= len(data) {
+		parseTransport(data[offset:], flow)
+	}
+}
+
+// parseTransport reads TCP/UDP ports (and TCP flags) from the L4 header,
+// dispatching on flow.Protocol. Other protocols (ICMP/ICMPv6/GRE/ESP/…) have
+// no ports and are left as-is.
+func parseTransport(transport []byte, flow *ParsedFlow) {
 	switch flow.Protocol {
 	case 6: // TCP
 		if len(transport) >= 14 {

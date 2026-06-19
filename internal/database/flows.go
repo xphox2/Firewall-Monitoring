@@ -275,12 +275,18 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		return newRollupBase().Where("dst_port != 0")
 	}
 
-	// Protocol distribution (from raw; supplement with rollups)
+	// Protocol distribution (from raw; supplement with rollups).
+	// Exclude protocol 0 (HOPOPT): it is never a legitimate terminal protocol
+	// in a flow record — it only appears when an IPv6 packet's Hop-by-Hop
+	// extension header was mistaken for the upper-layer protocol (see the
+	// collector's IPv6 extension-header walk fix) or a packet was unparseable.
+	// Leaving it in let it dominate the breakdown. Other portless protocols
+	// (ICMP/GRE/ESP/OSPF) are intentionally kept.
 	var protocols []struct {
 		Protocol uint8
 		Count    int64
 	}
-	if err := newRawBase().Select("protocol, COUNT(*) as count").Group("protocol").
+	if err := newRawBase().Where("protocol <> 0").Select("protocol, COUNT(*) as count").Group("protocol").
 		Order("count DESC").Limit(10).Scan(&protocols).Error; err != nil {
 		log.Printf("Flow stats protocol distribution: %v", err)
 	}
@@ -289,7 +295,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Protocol uint8
 			Count    int64
 		}
-		newRollupBase().Select("protocol, SUM(flow_count) as count").Group("protocol").
+		newRollupBase().Where("protocol <> 0").Select("protocol, SUM(flow_count) as count").Group("protocol").
 			Order("count DESC").Limit(10).Scan(&rollupProtos)
 		// Merge rollup protocol counts into raw
 		protoMap := make(map[uint8]int64)
