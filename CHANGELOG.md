@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.437] - 2026-06-19
+### Fixed
+- **Dashboard probe-health "+N / hr" values no longer wrap onto two lines.** In the narrow 4-column probe-stat grid, the space before `hr` was a valid line-break point, so a value like `+25,320 / hr` could split (`+25,320 /` on line 1, `hr` on line 2). Added `white-space: nowrap` to the `.last-hour` style in both the dashboard probe cards (`.probe-card .probe-stat .lbl .last-hour`) and the probe detail modal (`.detail-stat .detail-lbl .last-hour`) in `web/admin/admin.html`. CSS-only; the parent `.probe-stat` already has `overflow: hidden`, so extreme values clip rather than break the grid layout.
+
 ## [0.10.436] - 2026-06-18
 ### Added
 - **Report traffic spikes now show the source/destination/port/protocol of the traffic, so you can triage from the report without logging into the firewall.** A spike is detected from SNMP interface byte counters (which carry no per-conversation detail), but that detail lives in sFlow — so the report now **correlates** each device's spikes with flow data: it queries the top conversations on the spiking interface during the spike window (`GetInterfaceFlowConversations` in `internal/database/flows.go` — matches input *or* output ifIndex, excludes port-0/0, ranks by bytes) and lists them under the device's "Traffic Spikes" as **"Top Flows During Spikes (sampled)"** (e.g. `10.0.0.5 → 203.0.113.9:443 · TCP · 12.4 GB`). Appears only when sFlow data exists for that device/window (degrades silently otherwise). Wired through `DeviceReportData.SpikeFlows` → `DeviceCard.SpikeFlows` → `template_report.go`; figures are sampled (sFlow), shown for ranking/triage. Tests: `GetInterfaceFlowConversations` (filtering/ranking/window/port-0) and report render (rows present with flows, absent without).
