@@ -2381,14 +2381,15 @@
             // Spike detection settings
             document.getElementById('settings-spike').innerHTML = [
                 { key: 'spike_alert_enabled', label: 'Enable Spike Alerts', type: 'checkbox' },
-                { key: 'spike_stddev_threshold', label: 'Standard Deviation Threshold (1.0-10.0)', type: 'number', value: '3.0' }
+                { key: 'spike_stddev_threshold', label: 'Standard Deviation Threshold (1.0-10.0)', type: 'number', value: '3.0', min: '1', max: '10', step: '0.1' },
+                { key: 'spike_min_duration_minutes', label: 'Minimum Sustained Duration (minutes)', type: 'number', value: '15', min: '1', max: '1440', step: '1' }
             ].map(function(s) {
                 var found = settings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : (s.value || '');
                 if (s.type === 'checkbox') {
                     return '<div class="toggle-row"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + (savedVal === 'true' ? 'checked' : '') + '></div>';
                 }
-                return '<div class="setting-item"><label>' + s.label + '</label><input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" step="0.1" min="1" max="10"></div>';
+                return '<div class="setting-item"><label>' + s.label + '</label><input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" step="' + s.step + '" min="' + s.min + '" max="' + s.max + '"></div>';
             }).join('');
 
             return apiFetch(API_BASE + '/display-settings');

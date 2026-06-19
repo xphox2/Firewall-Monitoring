@@ -75,33 +75,34 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 
 	allowedKeys := map[string]bool{
-		"cpu_threshold":           true,
-		"memory_threshold":        true,
-		"disk_threshold":          true,
-		"session_threshold":       true,
-		"email_enabled":           true,
-		"smtp_host":               true,
-		"smtp_port":               true,
-		"smtp_username":           true,
-		"smtp_password":           true,
-		"smtp_from":               true,
-		"smtp_to":                 true,
-		"slack_webhook":           true,
-		"discord_webhook":         true,
-		"webhook_url":             true,
-		"public_refresh_interval": true,
-		"public_show_vpn":         true,
-		"public_show_connections": true,
-		"public_interfaces":       true,
-		"display_timezone":        true,
-		"report_daily_enabled":    true,
-		"report_daily_time":       true,
-		"report_weekly_enabled":   true,
-		"report_weekly_day":       true,
-		"report_recipients":       true,
-		"report_timezone":         true,
-		"spike_stddev_threshold":  true,
-		"spike_alert_enabled":     true,
+		"cpu_threshold":              true,
+		"memory_threshold":           true,
+		"disk_threshold":             true,
+		"session_threshold":          true,
+		"email_enabled":              true,
+		"smtp_host":                  true,
+		"smtp_port":                  true,
+		"smtp_username":              true,
+		"smtp_password":              true,
+		"smtp_from":                  true,
+		"smtp_to":                    true,
+		"slack_webhook":              true,
+		"discord_webhook":            true,
+		"webhook_url":                true,
+		"public_refresh_interval":    true,
+		"public_show_vpn":            true,
+		"public_show_connections":    true,
+		"public_interfaces":          true,
+		"display_timezone":           true,
+		"report_daily_enabled":       true,
+		"report_daily_time":          true,
+		"report_weekly_enabled":      true,
+		"report_weekly_day":          true,
+		"report_recipients":          true,
+		"report_timezone":            true,
+		"spike_stddev_threshold":     true,
+		"spike_alert_enabled":        true,
+		"spike_min_duration_minutes": true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -141,6 +142,12 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			v, err := strconv.ParseFloat(s.Value, 64)
 			if err != nil || v < 1.0 || v > 10.0 {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_stddev_threshold: must be 1.0-10.0"))
+				return
+			}
+		case "spike_min_duration_minutes":
+			v, err := strconv.Atoi(s.Value)
+			if err != nil || v < 1 || v > 1440 {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_min_duration_minutes: must be 1-1440"))
 				return
 			}
 		case "report_daily_time":

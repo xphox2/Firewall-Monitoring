@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.435] - 2026-06-18
+### Added
+- **Spike-alert settings are now editable in the admin Settings UI.** The Spike Detection section (admin → Settings) already exposed *Enable Spike Alerts* and *Standard Deviation Threshold*; added a **Minimum Sustained Duration (minutes)** field (the `spike_min_duration_minutes` knob from v0.10.434) so operators can tune how long a spike must persist before it alerts without setting an env var. The shared number-input renderer now takes per-field min/max/step (the threshold stays 1–10 step 0.1; duration is 1–1440 step 1) — `cmd/api/static/js/admin-main.js`. Backend `UpdateSettings` allows + validates the new key (1–1440), and the poller already picks it up live via `RefreshThresholds`. No env var or restart needed.
+
 ## [0.10.434] - 2026-06-18
 ### Fixed
 - **Real-time TRAFFIC_SPIKE alerts no longer panic: fixed the counter bug, made them weekly-periodic + tolerant, and gated them on 15-minute sustained duration with cooldown/auto-resolve.** The poller's real-time spike check (`cmd/poller/main.go`) had the bug the report fixed long ago — it fed **raw cumulative SNMP octet counters** into a std-dev test (counters only climb → fired on nearly every poll), with **no cooldown/dedup/recovery** (could re-alert every 60s) and **always "warning."** Rebuilt around a new `report.SeasonalSpikeDetector`:
