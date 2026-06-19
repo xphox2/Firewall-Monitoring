@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.431] - 2026-06-18
+### Changed
+- **Report charts are now large and readable instead of tiny/squished.** The three SVG charts in the report (alert timeline, per-device CPU/Memory history, and throughput) were rendered in ~105–120px-tall boxes with a ~70px plot area and 9px axis labels, so the lines were flattened and the labels nearly illegible. Bumped them to ~200–220px tall with proportionally larger plot areas, 12px axis labels, thicker (2.25px) trend lines, and more spacing for the x-axis labels and CPU/Mem legend (`internal/report/svg_charts.go`). No data or layout changes elsewhere.
+
 ## [0.10.430] - 2026-06-18
 ### Changed
 - **Redesigned the daily/weekly report (`/admin/reports`, email, and PDF) as a light, document-grade "operations brief."** The old report used a near-black dashboard look that (a) read as a generic template and (b) printed/exported badly — `@media print` forced a white background but left the near-white body text, so "Export PDF" produced washed-out, low-contrast output. The report is now light-first (white paper on a soft gray field) and prints cleanly as dark ink on white. Key changes (`internal/report/template_report.go`, `model.go`, `svg_charts.go`):

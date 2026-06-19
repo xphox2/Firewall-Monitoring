@@ -37,12 +37,12 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 		}
 	}
 
-	width := 632
-	height := 120
-	plotXStart := 45
-	plotXEnd := 620
-	plotYStart := 10
-	plotYEnd := 95
+	width := 640
+	height := 200
+	plotXStart := 48
+	plotXEnd := 624
+	plotYStart := 18
+	plotYEnd := 158
 
 	plotWidth := plotXEnd - plotXStart
 	plotHeight := plotYEnd - plotYStart
@@ -55,7 +55,7 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 		<style>
 			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
 			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
-			.axis-label { fill: #64748b; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+			.axis-label { fill: #64748b; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 			.alert-bar { transition: fill-opacity 0.15s; cursor: pointer; }
 			.alert-bar:hover { fill-opacity: 0.85; }
 			.tooltip-trigger { fill: transparent; cursor: pointer; }
@@ -118,8 +118,8 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 	for i, b := range buckets {
 		if b.Label != "" {
 			tickX := float64(plotXStart) + float64(i)*barWidth + barWidth/2
-			sb.WriteString(fmt.Sprintf(`<line x1="%.2f" y1="%d" x2="%.2f" y2="%d" class="axis-line" />`, tickX, plotYEnd, tickX, plotYEnd+3))
-			sb.WriteString(fmt.Sprintf(`<text x="%.2f" y="%d" class="axis-label" text-anchor="middle">%s</text>`, tickX, plotYEnd+13, b.Label))
+			sb.WriteString(fmt.Sprintf(`<line x1="%.2f" y1="%d" x2="%.2f" y2="%d" class="axis-line" />`, tickX, plotYEnd, tickX, plotYEnd+5))
+			sb.WriteString(fmt.Sprintf(`<text x="%.2f" y="%d" class="axis-label" text-anchor="middle">%s</text>`, tickX, plotYEnd+18, b.Label))
 		}
 	}
 
@@ -144,12 +144,12 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 		}
 	}
 
-	width := 632
-	height := 105
-	plotXStart := 65
-	plotXEnd := 620
-	plotYStart := 10
-	plotYEnd := 80
+	width := 640
+	height := 200
+	plotXStart := 72
+	plotXEnd := 624
+	plotYStart := 18
+	plotYEnd := 150
 
 	plotWidth := plotXEnd - plotXStart
 	plotHeight := plotYEnd - plotYStart
@@ -170,8 +170,8 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 		<style>
 			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
 			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
-			.axis-label { fill: #64748b; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-			.trend-line { stroke: #1e3a5f; stroke-width: 1.75; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+			.axis-label { fill: #64748b; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+			.trend-line { stroke: #1e3a5f; stroke-width: 2.25; fill: none; stroke-linejoin: round; stroke-linecap: round; }
 			.trend-area { fill: url(#tf-grad-%s); }
 			.hover-slice { fill: transparent; cursor: crosshair; }
 			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
@@ -224,9 +224,9 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 			layout = "Jan 2 15:04"
 		}
 
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="start">%s</text>`, plotXStart, plotYEnd+13, startTime.Format(layout)))
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="middle">%s</text>`, plotXStart+plotWidth/2, plotYEnd+13, midTime.Format(layout)))
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="end">%s</text>`, plotXEnd, plotYEnd+13, endTime.Format(layout)))
+		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="start">%s</text>`, plotXStart, plotYEnd+18, startTime.Format(layout)))
+		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="middle">%s</text>`, plotXStart+plotWidth/2, plotYEnd+18, midTime.Format(layout)))
+		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="end">%s</text>`, plotXEnd, plotYEnd+18, endTime.Format(layout)))
 	}
 
 	// 5. Interactive Tooltip Overlay slices
@@ -261,12 +261,12 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		`)
 	}
 
-	width := 632
-	height := 105
-	plotXStart := 65
-	plotXEnd := 620
-	plotYStart := 10
-	plotYEnd := 80
+	width := 640
+	height := 220
+	plotXStart := 72
+	plotXEnd := 624
+	plotYStart := 18
+	plotYEnd := 150
 
 	plotWidth := plotXEnd - plotXStart
 	plotHeight := plotYEnd - plotYStart
@@ -294,10 +294,10 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		<style>
 			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
 			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
-			.axis-label { fill: #64748b; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-			.cpu-line { stroke: #dc2626; stroke-width: 1.75; fill: none; stroke-linejoin: round; }
+			.axis-label { fill: #64748b; font-size: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+			.cpu-line { stroke: #dc2626; stroke-width: 2.25; fill: none; stroke-linejoin: round; }
 			.cpu-area { fill: url(#cpu-grad-%s); }
-			.mem-line { stroke: #2563eb; stroke-width: 1.75; fill: none; stroke-linejoin: round; }
+			.mem-line { stroke: #2563eb; stroke-width: 2.25; fill: none; stroke-linejoin: round; }
 			.mem-area { fill: url(#mem-grad-%s); }
 			.hover-slice { fill: transparent; cursor: crosshair; }
 			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
@@ -366,9 +366,9 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 			layout = "Jan 2 15:04"
 		}
 
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="start">%s</text>`, plotXStart, plotYEnd+13, startTime.Format(layout)))
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="middle">%s</text>`, plotXStart+plotWidth/2, plotYEnd+13, midTime.Format(layout)))
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="end">%s</text>`, plotXEnd, plotYEnd+13, endTime.Format(layout)))
+		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="start">%s</text>`, plotXStart, plotYEnd+18, startTime.Format(layout)))
+		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="middle">%s</text>`, plotXStart+plotWidth/2, plotYEnd+18, midTime.Format(layout)))
+		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="axis-label" text-anchor="end">%s</text>`, plotXEnd, plotYEnd+18, endTime.Format(layout)))
 	}
 
 	// 6. Interactive Tooltip Overlay slices
@@ -401,7 +401,7 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 	}
 
 	// 7. Legend
-	legendY := plotYEnd + 22
+	legendY := plotYEnd + 34
 	sb.WriteString(fmt.Sprintf(`
 		<g transform="translate(%d, %d)">
 			<rect x="0" y="-6" width="12" height="4" fill="#dc2626" rx="1" />
