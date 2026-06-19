@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.432] - 2026-06-18
+### Changed
+- **Report traffic-spike detection is now time-of-day aware, so recurring scheduled traffic (e.g. nightly backups) is no longer flagged as anomalous.** The detector was a single-window rolling standard-deviation test over just the report window — a nightly backup rising above the quiet evening before it was flagged (often "critical") every night, even though it's expected. Detection now learns each interface's normal level **per hour-of-day** from a multi-day baseline (`internal/report/spike.go` `detectSpikesTimeOfDay`): the busiest interface is pulled over a longer hourly window (7 days for the daily report, 30 days for the weekly — `baselineRangeForHours` in `data.go`), and a report-window point is only flagged if it exceeds the typical level *for that hour* across prior days. So a 2am backup that looks like every other night's 2am is left alone, while an unusual surge at a normally-quiet hour is still caught. The report window is excluded from its own baseline (a surge can't normalize against itself), and detection falls back to the original rolling-window method when there's under 3 days of history (fresh installs). Tests: `spike_timeofday_test.go` (recurring backup suppressed + daytime surge flagged; fallback; `distinctDays`).
+
 ## [0.10.431] - 2026-06-18
 ### Changed
 - **Report charts are now large and readable instead of tiny/squished.** The three SVG charts in the report (alert timeline, per-device CPU/Memory history, and throughput) were rendered in ~105–120px-tall boxes with a ~70px plot area and 9px axis labels, so the lines were flattened and the labels nearly illegible. Bumped them to ~200–220px tall with proportionally larger plot areas, 12px axis labels, thicker (2.25px) trend lines, and more spacing for the x-axis labels and CPU/Mem legend (`internal/report/svg_charts.go`). No data or layout changes elsewhere.

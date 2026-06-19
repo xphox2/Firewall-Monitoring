@@ -74,6 +74,95 @@ func detectSpikesInSeries(values []float64, times []time.Time, stddevThreshold f
 	return spikes
 }
 
+// distinctDays counts the unique calendar days present in the timestamps.
+func distinctDays(times []time.Time) int {
+	seen := make(map[int]struct{})
+	for _, t := range times {
+		if t.IsZero() {
+			continue
+		}
+		seen[t.Year()*1000+t.YearDay()] = struct{}{}
+	}
+	return len(seen)
+}
+
+// detectSpikesTimeOfDay flags throughput in the most recent `hours` of the
+// series that is anomalous *for its time of day*, learned from the preceding
+// days in the same series. This is the key difference from detectSpikesInSeries:
+// recurring scheduled traffic (e.g. a nightly backup) becomes part of its own
+// hour-of-day baseline and is no longer flagged, while an unusual surge at a
+// normally-quiet hour still is.
+//
+// series/times should span several days at a consistent (hourly) cadence — the
+// report passes the interface's multi-day chart. Points within the last `hours`
+// are the report window under test; everything before is the baseline (the
+// window itself is excluded so a surge can't normalize against itself). Falls
+// back to the rolling-window detector when there isn't at least 3 days of prior
+// history to form a stable time-of-day norm.
+func detectSpikesTimeOfDay(series []float64, times []time.Time, hours int, stddevThreshold float64, ifName string) []TrafficSpike {
+	if stddevThreshold <= 0 || len(series) < 3 || len(times) != len(series) {
+		return nil
+	}
+
+	maxT := times[len(times)-1]
+	testStart := maxT.Add(-time.Duration(hours) * time.Hour)
+
+	// Build the per-hour-of-day baseline from days strictly before the report
+	// window, and collect the window's points to test.
+	perHour := make(map[int][]float64)
+	var priorTimes, testTimes []time.Time
+	var testVals []float64
+	for i, v := range series {
+		t := times[i]
+		if t.IsZero() {
+			continue
+		}
+		if t.Before(testStart) {
+			perHour[t.Hour()] = append(perHour[t.Hour()], v)
+			priorTimes = append(priorTimes, t)
+		} else {
+			testVals = append(testVals, v)
+			testTimes = append(testTimes, t)
+		}
+	}
+	if len(testVals) == 0 {
+		return nil
+	}
+
+	// Without enough prior history, fall back to the single-window detector on
+	// the report window so spikes are still surfaced on fresh installs.
+	if distinctDays(priorTimes) < 3 {
+		return detectSpikesInSeries(testVals, testTimes, stddevThreshold, ifName)
+	}
+
+	var spikes []TrafficSpike
+	for i, v := range testVals {
+		win := perHour[testTimes[i].Hour()]
+		if len(win) < 3 {
+			continue // too few baseline samples for this hour to judge
+		}
+		mean, stddev := meanStdDev(win)
+		if stddev == 0 {
+			continue
+		}
+		if v > mean+stddevThreshold*stddev {
+			severity := "warning"
+			if v > mean+stddevThreshold*2*stddev {
+				severity = "critical"
+			}
+			spikes = append(spikes, TrafficSpike{
+				Timestamp: testTimes[i],
+				Interface: ifName,
+				Value:     v,
+				Mean:      mean,
+				StdDev:    stddev,
+				Severity:  severity,
+			})
+		}
+	}
+	return spikes
+}
+
 func meanStdDev(values []float64) (float64, float64) {
 	if len(values) == 0 {
 		return 0, 0
