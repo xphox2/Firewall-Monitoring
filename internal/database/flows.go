@@ -657,3 +657,45 @@ type FlowConversation struct {
 	Bytes    uint64 `json:"bytes"`
 	Packets  uint64 `json:"packets"`
 }
+
+// GetInterfaceFlowConversations returns the top sFlow conversations seen on a
+// device's interface (matched on input OR output ifIndex) within [from, to],
+// ranked by bytes. It gives the report per-spike "what was the traffic" context
+// so an operator can triage without logging into the firewall. Port-0/0
+// (portless/local) flows are excluded. Returns an empty slice when there is no
+// flow data (e.g. sFlow not enabled for the device) — never an error for that.
+func (d *Database) GetInterfaceFlowConversations(deviceID uint, ifIndex int, from, to time.Time, limit int) ([]FlowConversation, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	var rows []struct {
+		SrcAddr  string
+		DstAddr  string
+		DstPort  uint16
+		Protocol uint8
+		Bytes    uint64
+		Packets  uint64
+	}
+	if err := d.db.Model(&models.FlowSample{}).
+		Where("device_id = ? AND (input_if_index = ? OR output_if_index = ?) AND timestamp BETWEEN ? AND ? AND NOT (src_port = 0 AND dst_port = 0)",
+			deviceID, ifIndex, ifIndex, from, to).
+		Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
+		Group("src_addr, dst_addr, dst_port, protocol").
+		Order("bytes DESC").
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]FlowConversation, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, FlowConversation{
+			SrcAddr:  r.SrcAddr,
+			DstAddr:  r.DstAddr,
+			DstPort:  r.DstPort,
+			Protocol: protoName(r.Protocol),
+			Bytes:    r.Bytes,
+			Packets:  r.Packets,
+		})
+	}
+	return out, nil
+}

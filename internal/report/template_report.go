@@ -293,7 +293,21 @@ const reportTemplateSrc = `
 {{template "eyebrow" "Traffic Spikes"}}
 {{range .Spikes}}{{template "spikegroup" .}}{{end}}
 {{end}}
+
+{{if .SpikeFlows}}
+{{template "eyebrow" "Top Flows During Spikes (sampled)"}}
+{{range .SpikeFlows}}{{template "spikeflow" .}}{{end}}
 {{end}}
+{{end}}
+
+{{define "spikeflow"}}<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:5px;"><tr>
+  <td style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:11.5px;color:#0f172a;vertical-align:middle;">
+    {{.Src}} <span style="color:#94a3b8;">&rarr;</span> {{.Dst}}
+  </td>
+  <td align="right" style="font-size:11px;color:#64748b;white-space:nowrap;vertical-align:middle;padding-left:10px;">
+    {{.Protocol}} &middot; <span style="color:#0f172a;font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;">{{.BytesHuman}}</span>
+  </td>
+</tr></table>{{end}}
 
 {{define "mini"}}<td width="25%" style="text-align:center;{{if .First}}padding:0 4px 0 0;{{else}}padding:0 4px;{{end}}">
   <div style="border:1px solid #e6eaf1;background:#ffffff;border-radius:6px;padding:9px 6px;">

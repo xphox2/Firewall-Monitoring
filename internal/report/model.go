@@ -117,7 +117,18 @@ type DeviceCard struct {
 	HasSparkline   bool
 	Talkers        []TopTalker
 	Spikes         []SpikeGroup
+	SpikeFlows     []SpikeFlow // top sFlow conversations seen during this device's spikes
 	Timezone       string
+}
+
+// SpikeFlow is one sampled flow conversation observed on an interface during a
+// traffic spike. Surfaced in the report so an operator can tell at a glance what
+// the spiking traffic was (and whether it warrants logging into the firewall).
+type SpikeFlow struct {
+	Src        string // source address
+	Dst        string // destination address:port
+	Protocol   string
+	BytesHuman string
 }
 
 // BuildReportModel assembles a ReportModel from gathered per-device data.
@@ -219,6 +230,7 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 			MemHistory:     dd.MemHistory,
 			SysTimes:       dd.SysTimes,
 			Spikes:         devGroups,
+			SpikeFlows:     dd.SpikeFlows,
 			Timezone:       tz,
 		}
 		card.HasSparkline = len(card.Sparkline) > 0

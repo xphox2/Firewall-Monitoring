@@ -30,6 +30,7 @@ type DeviceReportData struct {
 	AlertCount   int
 	Alerts       []models.Alert
 	Spikes       []TrafficSpike
+	SpikeFlows   []SpikeFlow // top sFlow conversations during the spike window (if sFlow data exists)
 
 	// Bandwidth (image-free, v0.10.236)
 	Talkers        []IfaceTraffic // top interfaces by bytes transferred
@@ -63,6 +64,27 @@ func rangeForHours(hours int) (rangeStr string, bucketSeconds float64) {
 // just the last `hours`.
 func baselineRange() (rangeStr string, bucketSeconds float64) {
 	return "30d", 3600
+}
+
+// spikeWindow returns the [earliest, latest] timestamps across a set of spikes,
+// extending the end by one hour to cover the full (hourly) bucket of the last
+// spike — the window used to pull correlated sFlow conversations.
+func spikeWindow(spikes []TrafficSpike) (from, to time.Time) {
+	for _, s := range spikes {
+		if s.Timestamp.IsZero() {
+			continue
+		}
+		if from.IsZero() || s.Timestamp.Before(from) {
+			from = s.Timestamp
+		}
+		if s.Timestamp.After(to) {
+			to = s.Timestamp
+		}
+	}
+	if !to.IsZero() {
+		to = to.Add(time.Hour)
+	}
+	return from, to
 }
 
 // BuildSeasonalProfileFromChart converts interface chart buckets (cumulative
@@ -206,6 +228,28 @@ func GatherDeviceData(db *database.Database, device *models.Device, hours int, p
 					data.Spikes = detectSpikesTimeOfDay(bSeries, bTimes, hours, spikeThreshold, ti.Name)
 				} else {
 					data.Spikes = detectSpikesInSeries(series, times, spikeThreshold, ti.Name)
+				}
+
+				// Correlate spikes with sFlow: pull the top conversations on this
+				// interface during the spike window so the report shows what the
+				// traffic was (src→dst:port/proto). Best-effort — no flow data
+				// (sFlow off for this device) just leaves SpikeFlows empty.
+				if len(data.Spikes) > 0 {
+					from, to := spikeWindow(data.Spikes)
+					if convos, ferr := db.GetInterfaceFlowConversations(device.ID, ti.Index, from, to, 5); ferr == nil {
+						for _, c := range convos {
+							dst := c.DstAddr
+							if c.DstPort > 0 {
+								dst = fmt.Sprintf("%s:%d", c.DstAddr, c.DstPort)
+							}
+							data.SpikeFlows = append(data.SpikeFlows, SpikeFlow{
+								Src:        c.SrcAddr,
+								Dst:        dst,
+								Protocol:   c.Protocol,
+								BytesHuman: formatBytes(float64(c.Bytes)),
+							})
+						}
+					}
 				}
 			}
 		}

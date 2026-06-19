@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.436] - 2026-06-18
+### Added
+- **Report traffic spikes now show the source/destination/port/protocol of the traffic, so you can triage from the report without logging into the firewall.** A spike is detected from SNMP interface byte counters (which carry no per-conversation detail), but that detail lives in sFlow — so the report now **correlates** each device's spikes with flow data: it queries the top conversations on the spiking interface during the spike window (`GetInterfaceFlowConversations` in `internal/database/flows.go` — matches input *or* output ifIndex, excludes port-0/0, ranks by bytes) and lists them under the device's "Traffic Spikes" as **"Top Flows During Spikes (sampled)"** (e.g. `10.0.0.5 → 203.0.113.9:443 · TCP · 12.4 GB`). Appears only when sFlow data exists for that device/window (degrades silently otherwise). Wired through `DeviceReportData.SpikeFlows` → `DeviceCard.SpikeFlows` → `template_report.go`; figures are sampled (sFlow), shown for ranking/triage. Tests: `GetInterfaceFlowConversations` (filtering/ranking/window/port-0) and report render (rows present with flows, absent without).
+
 ## [0.10.435] - 2026-06-18
 ### Added
 - **Spike-alert settings are now editable in the admin Settings UI.** The Spike Detection section (admin → Settings) already exposed *Enable Spike Alerts* and *Standard Deviation Threshold*; added a **Minimum Sustained Duration (minutes)** field (the `spike_min_duration_minutes` knob from v0.10.434) so operators can tune how long a spike must persist before it alerts without setting an env var. The shared number-input renderer now takes per-field min/max/step (the threshold stays 1–10 step 0.1; duration is 1–1440 step 1) — `cmd/api/static/js/admin-main.js`. Backend `UpdateSettings` allows + validates the new key (1–1440), and the poller already picks it up live via `RefreshThresholds`. No env var or restart needed.
