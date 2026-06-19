@@ -55,14 +55,14 @@ func rangeForHours(hours int) (rangeStr string, bucketSeconds float64) {
 	return "24h", 60 // minute buckets
 }
 
-// baselineRangeForHours picks a multi-day, hourly history window for time-of-day
-// spike baselining — long enough to learn each hour's normal level across
-// several days so recurring scheduled traffic isn't flagged as anomalous.
-func baselineRangeForHours(hours int) (rangeStr string, bucketSeconds float64) {
-	if hours >= 168 {
-		return "30d", 3600 // weekly report → 30 days of hourly history
-	}
-	return "7d", 3600 // daily report → 7 days of hourly history
+// baselineRangeForHours picks a multi-day, hourly history window for seasonal
+// spike baselining. 30 days of hourly history gives ~4 samples per (weekday,
+// hour) slot — enough to learn each weekday's normal time-of-day profile (so a
+// workload that pauses on weekends, or a backup that runs a little late, isn't
+// flagged). Used for both daily and weekly reports; the test window is still
+// just the last `hours`.
+func baselineRange() (rangeStr string, bucketSeconds float64) {
+	return "30d", 3600
 }
 
 // computeTraffic derives honest traffic figures from a series of interface
@@ -188,7 +188,7 @@ func GatherDeviceData(db *database.Database, device *models.Device, hours int, p
 				// (e.g. nightly backups) isn't flagged as anomalous. Falls back
 				// to the single-window detector when history is thin or the
 				// baseline query fails.
-				baseRange, baseBucket := baselineRangeForHours(hours)
+				baseRange, baseBucket := baselineRange()
 				if bd, berr := db.GetInterfaceChartData(device.ID, ti.Index, baseRange); berr == nil {
 					_, _, _, bSeries, bTimes := computeTraffic(bd, baseBucket)
 					data.Spikes = detectSpikesTimeOfDay(bSeries, bTimes, hours, spikeThreshold, ti.Name)

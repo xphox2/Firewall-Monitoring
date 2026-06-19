@@ -81,6 +81,99 @@ func TestDetectSpikesTimeOfDay_FallsBackWithoutHistory(t *testing.T) {
 	}
 }
 
+// genHourly builds `days` of hourly samples ending at `end` (exclusive of the
+// hour after end), using valueAt(dayIndex, weekday, hour) to pick each value.
+func genHourly(end time.Time, days int, valueAt func(day, weekday, hour int) float64) ([]float64, []time.Time) {
+	start := end.Add(-time.Duration(days*24-1) * time.Hour)
+	n := days * 24
+	series := make([]float64, 0, n)
+	times := make([]time.Time, 0, n)
+	for i := 0; i < n; i++ {
+		ts := start.Add(time.Duration(i) * time.Hour)
+		series = append(series, valueAt(i/24, int(ts.Weekday()), ts.Hour()))
+		times = append(times, ts)
+	}
+	return series, times
+}
+
+// TestDetectSpikesTimeOfDay_WeekdayAware verifies weekly periodicity: a normal
+// Monday-morning workload is NOT flagged (it matches prior Mondays) even though
+// weekends are quiet, while an unusual surge at a normally-quiet Monday hour IS.
+func TestDetectSpikesTimeOfDay_WeekdayAware(t *testing.T) {
+	// End on a Monday 23:00 so the test window (last 24h) is a Monday.
+	end := time.Date(2026, 6, 15, 23, 0, 0, 0, time.UTC) // 2026-06-15 is a Monday
+	if end.Weekday() != time.Monday {
+		t.Fatalf("test setup: expected Monday, got %s", end.Weekday())
+	}
+	isToday := func(day int) bool { return day == 27 } // last of 28 days
+	// idle has a small, nonzero spread (real traffic is never perfectly flat),
+	// so a quiet hour's baseline has a usable stddev.
+	idle := func(day, hour int) float64 { return 100e6 + float64((day*7+hour)%5-2)*1e6 }
+
+	series, times := genHourly(end, 28, func(day, weekday, hour int) float64 {
+		weekdayBusy := weekday >= int(time.Monday) && weekday <= int(time.Friday) && hour == 9
+		if isToday(day) {
+			switch hour {
+			case 9:
+				return 500e6 // normal Monday ramp
+			case 3:
+				return 600e6 // surge at a normally-quiet Monday hour
+			default:
+				return 100e6 // idle, at the baseline mean
+			}
+		}
+		if weekdayBusy {
+			return 500e6 // weekdays ramp at 09:00; weekends stay quiet
+		}
+		return idle(day, hour)
+	})
+
+	spikes := detectSpikesTimeOfDay(series, times, 24, 2.0, "wan1")
+	if len(spikes) != 1 {
+		t.Fatalf("expected exactly 1 spike (the 03:00 surge); the normal Monday 09:00 ramp must NOT flag. got %d: %+v", len(spikes), spikes)
+	}
+	if spikes[0].Timestamp.Hour() != 3 {
+		t.Errorf("spike at hour %d, want 3", spikes[0].Timestamp.Hour())
+	}
+}
+
+// TestDetectSpikesTimeOfDay_TimingTolerance verifies the ±1h tolerance: a backup
+// that normally runs at 02:00 but tonight runs at 03:00 (delayed) is NOT flagged.
+func TestDetectSpikesTimeOfDay_TimingTolerance(t *testing.T) {
+	end := time.Date(2026, 6, 15, 23, 0, 0, 0, time.UTC)
+	isToday := func(day int) bool { return day == 27 }
+
+	series, times := genHourly(end, 28, func(day, weekday, hour int) float64 {
+		if isToday(day) {
+			if hour == 3 {
+				return 880e6 // backup ran an hour late tonight
+			}
+			return 100e6 // including a quiet 02:00 (didn't run at the usual time)
+		}
+		if hour == 2 {
+			return 880e6 // backup normally at 02:00 every prior day
+		}
+		return 100e6
+	})
+
+	spikes := detectSpikesTimeOfDay(series, times, 24, 2.0, "wan1")
+	for _, s := range spikes {
+		t.Errorf("delayed backup at %02d:00 should be tolerated (±1h), but was flagged: %+v", s.Timestamp.Hour(), s)
+	}
+}
+
+func TestSeasonalProfileBandFallback(t *testing.T) {
+	// Only 2 samples in any slot -> Band reports not-enough-history.
+	base := time.Date(2026, 6, 1, 2, 0, 0, 0, time.UTC)
+	p := BuildSeasonalProfile(
+		[]float64{100e6, 110e6},
+		[]time.Time{base, base.Add(24 * time.Hour)},
+	)
+	if _, _, ok := p.Band(base.Add(48 * time.Hour)); ok {
+		t.Errorf("Band should report ok=false with < %d samples", minSeasonalSamples)
+	}
+}
+
 func TestDistinctDays(t *testing.T) {
 	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	times := []time.Time{
