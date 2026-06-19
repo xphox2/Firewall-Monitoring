@@ -30,6 +30,12 @@ type ReportModel struct {
 	CriticalAlerts int
 	FleetUptimePct float64
 
+	// Status verdict — the plain-language headline the report leads with.
+	// Level is "ok" / "warn" / "crit"; the template colors the band from it.
+	StatusLevel    string
+	StatusHeadline string
+	StatusDetail   string
+
 	// Bandwidth & Traffic
 	PeakThroughput string // human-readable, e.g. "842.0 Mbps"
 	TotalTransfer  string // human-readable, e.g. "1.2 TB"
@@ -256,7 +262,49 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 		m.FleetUptimePct = uptimeSum / float64(uptimeCount)
 	}
 
+	m.computeStatusVerdict()
+
 	return m
+}
+
+// computeStatusVerdict derives the report's headline health verdict from the
+// fleet KPIs. Priority: offline devices or critical alerts → critical; any
+// other alert/spike activity → minor; otherwise nominal.
+func (m *ReportModel) computeStatusVerdict() {
+	switch {
+	case m.OfflineDevices > 0 || m.CriticalAlerts > 0:
+		m.StatusLevel = "crit"
+		m.StatusHeadline = "Attention required"
+	case m.TotalAlerts > 0 || m.SpikeTotal > 0:
+		m.StatusLevel = "warn"
+		m.StatusHeadline = "Operational — minor activity"
+	default:
+		m.StatusLevel = "ok"
+		m.StatusHeadline = "All systems nominal"
+	}
+
+	parts := make([]string, 0, 4)
+	if m.OfflineDevices == 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d devices online", m.OnlineDevices, m.TotalDevices))
+	} else {
+		parts = append(parts, fmt.Sprintf("%d of %d online, %d offline", m.OnlineDevices, m.TotalDevices, m.OfflineDevices))
+	}
+	if m.CriticalAlerts > 0 {
+		parts = append(parts, fmt.Sprintf("%d critical", m.CriticalAlerts))
+	}
+	parts = append(parts, fmt.Sprintf("%d alert%s in %dh", m.TotalAlerts, plural(m.TotalAlerts), m.Hours))
+	if m.SpikeTotal > 0 {
+		parts = append(parts, fmt.Sprintf("%d traffic spike%s", m.SpikeTotal, plural(m.SpikeTotal)))
+	}
+	parts = append(parts, fmt.Sprintf("%.2f%% fleet uptime", m.FleetUptimePct))
+	m.StatusDetail = strings.Join(parts, " · ")
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func isCriticalAlert(a models.Alert) bool {

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.430] - 2026-06-18
+### Changed
+- **Redesigned the daily/weekly report (`/admin/reports`, email, and PDF) as a light, document-grade "operations brief."** The old report used a near-black dashboard look that (a) read as a generic template and (b) printed/exported badly — `@media print` forced a white background but left the near-white body text, so "Export PDF" produced washed-out, low-contrast output. The report is now light-first (white paper on a soft gray field) and prints cleanly as dark ink on white. Key changes (`internal/report/template_report.go`, `model.go`, `svg_charts.go`):
+  - **Letterhead**: a serif (Georgia) report title with a brand eyebrow, dateline, range chip, and a navy rule — reads like a briefing, not a dashboard.
+  - **Status verdict band** (new signature element): a plain-language fleet-health headline the report leads with — "All systems nominal" / "Operational — minor activity" / "Attention required" — colored green/amber/red by severity, with a one-line summary. Backed by new `ReportModel` fields (`StatusLevel`/`StatusHeadline`/`StatusDetail`) computed in `BuildReportModel` (offline devices or critical alerts → critical; other alert/spike activity → minor; else nominal).
+  - **Typography & data**: monospace, tabular metrics for KPIs/values; system-sans body; serif section headers. KPI strip shows Offline/Critical muted at zero and in red above zero.
+  - **Charts restyled for light**: alert timeline (amber/red bars), throughput (navy area), CPU/Memory (red/blue) now use light gridlines and readable dark labels instead of white-on-dark.
+  - Email-safe (tables + inline styles, no external assets) and print-safe, so it renders identically in the email body, the admin iframe, and a printed PDF. Updated `render_validate_test.go` for the new section labels.
+
 ## [0.10.429] - 2026-06-18
 ### Changed
 - **sFlow: 6in4 tunnels are now decoded to their inner protocol instead of showing as "IPv6" (proto 41).** The bundled probe decoder (`internal/sflow/sflow.go`) now, when an IPv4 packet's protocol is 41 (IPv6 encapsulation), recurses into the inner IPv6 packet so the flow reflects the real conversation — inner IPv6 src/dst, the actual upper-layer protocol (TCP/UDP/ICMPv6), and ports — rather than a generic "IPv6 / port 0/0" entry. Truncated inner headers fall back to the outer IPv4 tunnel endpoints + protocol 41 (no panic). Mirrors the remote collector decoder (Firewall-Collector v1.2.118). Tests: `TestParseIPv4_6in4InnerDecode`, `TestParseIPv4_6in4Truncated`.

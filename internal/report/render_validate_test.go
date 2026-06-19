@@ -156,7 +156,7 @@ func TestReportHTMLWellFormed(t *testing.T) {
 			// 8. Expected executive sections + data points rendered.
 			for _, want := range []string{
 				"Firewall Monitor", "Bandwidth &amp; Traffic", "Top Talkers",
-				"Traffic Spikes", "Alert Timeline", "Devices",
+				"Traffic Spikes", "Alert Activity", "Device Detail",
 				"fw-edge-01", "ONLINE", "OFFLINE", "v0.10.408",
 				"CPU &amp; Memory History",
 			} {

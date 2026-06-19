@@ -24,7 +24,7 @@ func safeID(s string) string {
 func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 	if len(buckets) == 0 {
 		return template.HTML(`
-			<div style="border: 1px dashed rgba(255,255,255,0.1); border-radius: 6px; padding: 30px; text-align: center; color: #8b949e; font-size: 13px;">
+			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 30px; text-align: center; color: #64748b; font-size: 13px;">
 				No alerts recorded in this window.
 			</div>
 		`)
@@ -53,9 +53,9 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 	// CSS styles for smooth hover effects
 	sb.WriteString(`
 		<style>
-			.grid-line { stroke: rgba(255, 255, 255, 0.08); stroke-width: 1; stroke-dasharray: 2,2; }
-			.axis-line { stroke: rgba(255, 255, 255, 0.15); stroke-width: 1; }
-			.axis-label { fill: #8b949e; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
+			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
+			.axis-label { fill: #64748b; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 			.alert-bar { transition: fill-opacity 0.15s; cursor: pointer; }
 			.alert-bar:hover { fill-opacity: 0.85; }
 			.tooltip-trigger { fill: transparent; cursor: pointer; }
@@ -100,9 +100,9 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 		}
 		by := float64(plotYEnd) - hVal
 
-		color := "#7dd3fc" // warning blue
+		color := "#d97706" // warning amber
 		if b.Crit {
-			color = "#fca5a5" // critical red/pink
+			color = "#dc2626" // critical red
 		}
 
 		// Draw the bar with tooltip
@@ -131,7 +131,7 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 	if len(card.SparklineRaw) == 0 {
 		return template.HTML(`
-			<div style="border: 1px dashed rgba(255,255,255,0.1); border-radius: 6px; padding: 20px; text-align: center; color: #8b949e; font-size: 11px;">
+			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
 				No throughput statistics recorded.
 			</div>
 		`)
@@ -163,18 +163,18 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 	sb.WriteString(fmt.Sprintf(`
 		<defs>
 			<linearGradient id="tf-grad-%s" x1="0%%" y1="0%%" x2="0%%" y2="100%%">
-				<stop offset="0%%" stop-color="#7dd3fc" stop-opacity="0.35"/>
-				<stop offset="100%%" stop-color="#7dd3fc" stop-opacity="0.0"/>
+				<stop offset="0%%" stop-color="#1e3a5f" stop-opacity="0.35"/>
+				<stop offset="100%%" stop-color="#1e3a5f" stop-opacity="0.0"/>
 			</linearGradient>
 		</defs>
 		<style>
-			.grid-line { stroke: rgba(255, 255, 255, 0.06); stroke-width: 1; stroke-dasharray: 2,2; }
-			.axis-line { stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
-			.axis-label { fill: #8b949e; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-			.trend-line { stroke: #7dd3fc; stroke-width: 1.75; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
+			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
+			.axis-label { fill: #64748b; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+			.trend-line { stroke: #1e3a5f; stroke-width: 1.75; fill: none; stroke-linejoin: round; stroke-linecap: round; }
 			.trend-area { fill: url(#tf-grad-%s); }
 			.hover-slice { fill: transparent; cursor: crosshair; }
-			.hover-slice:hover { fill: rgba(255, 255, 255, 0.04); }
+			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
 		</style>
 	`, idSafe, idSafe))
 
@@ -255,7 +255,7 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 	if len(card.CPUHistory) == 0 && len(card.MemHistory) == 0 {
 		return template.HTML(`
-			<div style="border: 1px dashed rgba(255,255,255,0.1); border-radius: 6px; padding: 20px; text-align: center; color: #8b949e; font-size: 11px;">
+			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
 				No CPU/Memory statistics recorded.
 			</div>
 		`)
@@ -283,24 +283,24 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 	sb.WriteString(fmt.Sprintf(`
 		<defs>
 			<linearGradient id="cpu-grad-%s" x1="0%%" y1="0%%" x2="0%%" y2="100%%">
-				<stop offset="0%%" stop-color="#fca5a5" stop-opacity="0.15"/>
-				<stop offset="100%%" stop-color="#fca5a5" stop-opacity="0.0"/>
+				<stop offset="0%%" stop-color="#dc2626" stop-opacity="0.15"/>
+				<stop offset="100%%" stop-color="#dc2626" stop-opacity="0.0"/>
 			</linearGradient>
 			<linearGradient id="mem-grad-%s" x1="0%%" y1="0%%" x2="0%%" y2="100%%">
-				<stop offset="0%%" stop-color="#fcd34d" stop-opacity="0.15"/>
-				<stop offset="100%%" stop-color="#fcd34d" stop-opacity="0.0"/>
+				<stop offset="0%%" stop-color="#2563eb" stop-opacity="0.15"/>
+				<stop offset="100%%" stop-color="#2563eb" stop-opacity="0.0"/>
 			</linearGradient>
 		</defs>
 		<style>
-			.grid-line { stroke: rgba(255, 255, 255, 0.06); stroke-width: 1; stroke-dasharray: 2,2; }
-			.axis-line { stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
-			.axis-label { fill: #8b949e; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-			.cpu-line { stroke: #fca5a5; stroke-width: 1.75; fill: none; stroke-linejoin: round; }
+			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
+			.axis-line { stroke: #cbd5e1; stroke-width: 1; }
+			.axis-label { fill: #64748b; font-size: 9px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+			.cpu-line { stroke: #dc2626; stroke-width: 1.75; fill: none; stroke-linejoin: round; }
 			.cpu-area { fill: url(#cpu-grad-%s); }
-			.mem-line { stroke: #fcd34d; stroke-width: 1.75; fill: none; stroke-linejoin: round; }
+			.mem-line { stroke: #2563eb; stroke-width: 1.75; fill: none; stroke-linejoin: round; }
 			.mem-area { fill: url(#mem-grad-%s); }
 			.hover-slice { fill: transparent; cursor: crosshair; }
-			.hover-slice:hover { fill: rgba(255, 255, 255, 0.04); }
+			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
 		</style>
 	`, idSafe, idSafe, idSafe, idSafe))
 
@@ -404,10 +404,10 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 	legendY := plotYEnd + 22
 	sb.WriteString(fmt.Sprintf(`
 		<g transform="translate(%d, %d)">
-			<rect x="0" y="-6" width="12" height="4" fill="#fca5a5" rx="1" />
+			<rect x="0" y="-6" width="12" height="4" fill="#dc2626" rx="1" />
 			<text x="16" y="0" class="axis-label" alignment-baseline="middle">CPU Usage</text>
 			
-			<rect x="85" y="-6" width="12" height="4" fill="#fcd34d" rx="1" />
+			<rect x="85" y="-6" width="12" height="4" fill="#2563eb" rx="1" />
 			<text x="101" y="0" class="axis-label" alignment-baseline="middle">Memory Usage</text>
 		</g>
 	`, plotXStart, legendY))
