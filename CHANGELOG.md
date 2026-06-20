@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.439] - 2026-06-19
+### Added
+- **`configcheck` tool to validate firewall config change-detection against real backups (`cmd/configcheck`).** Point it at two config files — `go run ./cmd/configcheck --vendor fortigate old.conf new.conf` — and it normalizes both, reports whether they would raise a config-change alert, prints the exact residual line diff that survived normalization (so you can see *why* an alert fired), and flags capture-mode mismatches. Built to triage false-positive config-change alerts from the field and to confirm a new volatile pattern is neutralized before shipping. Backed by a new reusable `configdiff.Analyze(vendor, a, b) Report` engine.
+### Fixed
+- **Eliminated three FortiGate config-change false-positive sources discovered from real FGT60F-7.4.12 backups.** The normalizer (`internal/configdiff/vendor_fortigate.go`) now: (1) **strips the per-admin `config gui-dashboard ... end` block** — pure GUI widget layout that FortiOS omits from `show full-configuration` but includes in a plain `show`, the single largest diff source between capture modes (depth-counted `config`/`end` matching, robust to nesting/indentation); (2) **masks `set last-updated <epoch>`** GUI widget timestamps that bump on every dashboard interaction; (3) **strips an echoed CLI prompt** (e.g. `FW-HOME # `) from console-captured backups so the following `#config-version` header still normalizes. On the real sample pair these cut the residual diff from 100 lines to 10 (all remaining lines explained by capture-mode difference).
+- **Capture-mode mismatch detection (`configdiff.CaptureModeDetector`).** A new optional vendor capability classifies a FortiGate backup as `full-configuration` vs `show` by counting `set` lines in `config system global` (real samples: 207 vs 18; threshold 80). When the two backups were captured in different modes, `Analyze` flags it loudly — those can never hash-match regardless of normalization, so the fix is collector-side (capture consistently), not a phantom config change.
+
 ## [0.10.438] - 2026-06-19
 ### Reverted
 - **Reverted the v0.10.437 dashboard probe-health wrap change.** The `white-space: nowrap` added to the `.last-hour` styles in `web/admin/admin.html` is removed, restoring the original layout (which the operator preferred). No render or version-significant behavior change beyond reverting that one CSS tweak.
