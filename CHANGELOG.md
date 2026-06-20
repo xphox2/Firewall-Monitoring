@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.438] - 2026-06-19
+### Reverted
+- **Reverted the v0.10.437 dashboard probe-health wrap change.** The `white-space: nowrap` added to the `.last-hour` styles in `web/admin/admin.html` is removed, restoring the original layout (which the operator preferred). No render or version-significant behavior change beyond reverting that one CSS tweak.
+
 ## [0.10.437] - 2026-06-19
 ### Fixed
 - **Dashboard probe-health "+N / hr" values no longer wrap onto two lines.** In the narrow 4-column probe-stat grid, the space before `hr` was a valid line-break point, so a value like `+25,320 / hr` could split (`+25,320 /` on line 1, `hr` on line 2). Added `white-space: nowrap` to the `.last-hour` style in both the dashboard probe cards (`.probe-card .probe-stat .lbl .last-hour`) and the probe detail modal (`.detail-stat .detail-lbl .last-hour`) in `web/admin/admin.html`. CSS-only; the parent `.probe-stat` already has `overflow: hidden`, so extreme values clip rather than break the grid layout.
