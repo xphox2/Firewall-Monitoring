@@ -2,6 +2,7 @@ package configdiff
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -44,6 +45,21 @@ type Report struct {
 	// instead of letting it look like a real config change.
 	CaptureModeMismatch bool   `json:"capture_mode_mismatch"`
 	CaptureModeReason   string `json:"capture_mode_reason,omitempty"`
+
+	// ObjectChanges is the per-object semantic diff, populated only for vendors
+	// whose normalizer implements ObjectParser. When empty the caller should fall
+	// back to the line-level OnlyInA/OnlyInB view. Summary aggregates the changes.
+	ObjectChanges []ObjectChange `json:"object_changes,omitempty"`
+	Summary       ChangeSummary  `json:"summary"`
+}
+
+// ChangeSummary aggregates the object-level diff for at-a-glance triage.
+type ChangeSummary struct {
+	Added       int    `json:"added"`
+	Removed     int    `json:"removed"`
+	Modified    int    `json:"modified"`
+	MaxSeverity string `json:"max_severity"` // info|medium|high|critical
+	Impact      string `json:"impact"`       // concatenated >= medium summaries
 }
 
 // Analyze normalizes both configs with the vendor normalizer and reports whether
@@ -78,7 +94,38 @@ func Analyze(vendor string, a, b []byte) Report {
 					"both backups the same way; this is not a real config change.", ma, mb)
 		}
 	}
+
+	if changes, ok := DiffObjects(vendor, a, b); ok {
+		rep.ObjectChanges = changes
+		rep.Summary = summarizeChanges(changes)
+	}
 	return rep
+}
+
+// summarizeChanges aggregates an object-level diff: per-op counts, the highest
+// severity present, and the concatenated security-relevant (>= medium) impacts.
+func summarizeChanges(changes []ObjectChange) ChangeSummary {
+	s := ChangeSummary{MaxSeverity: SeverityInfo}
+	var impacts []string
+	for _, ch := range changes {
+		switch ch.Op {
+		case "added":
+			s.Added++
+		case "removed":
+			s.Removed++
+		case "modified":
+			s.Modified++
+		}
+		if severityRank[ch.Risk.Severity] > severityRank[s.MaxSeverity] {
+			s.MaxSeverity = ch.Risk.Severity
+		}
+		if severityRank[ch.Risk.Severity] >= severityRank[SeverityMedium] {
+			impacts = append(impacts, ch.Risk.Summary)
+		}
+	}
+	sort.Strings(impacts)
+	s.Impact = strings.Join(impacts, "; ")
+	return s
 }
 
 // lineSet returns the set of non-empty, whitespace-trimmed lines in a normalized

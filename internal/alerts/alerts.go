@@ -676,8 +676,25 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
 }
 
-// CheckConfigRevision creates a CONFIG_CHANGE alert when the config checksum differs from the previous.
-func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newChecksum string) {
+// ConfigChangeInfo carries the semantic classification and attribution of a
+// detected config change so the CONFIG_CHANGE alert can be severity-driven and
+// accountable. All fields are optional — a zero value reproduces the legacy
+// always-"warning", checksum-only alert. Severity uses the configdiff scale
+// (info|medium|high|critical); the alerts layer maps it to info|warning|critical
+// without importing configdiff.
+type ConfigChangeInfo struct {
+	Severity   string // configdiff severity of the most significant change
+	Impact     string // human-readable "security impact" summary
+	ChangedBy  string // admin user, if attributed
+	Method     string // GUI | CLI(ssh) | jsconsole | API
+	Attributed bool   // a matching authenticated session was found
+}
+
+// CheckConfigRevision creates a CONFIG_CHANGE alert when the config checksum
+// differs from the previous. The alert severity reflects the security impact of
+// the change, and the message reports who made it (or flags it as a possible
+// out-of-band change when no authenticated session was found).
+func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newChecksum string, info ConfigChangeInfo) {
 	if am.db == nil {
 		return
 	}
@@ -707,13 +724,59 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 	if len(newChecksum) >= 8 {
 		newShort = newChecksum[:8]
 	}
+
+	severity := configSeverityToAlert(info.Severity)
+	who := "unknown user"
+	if info.ChangedBy != "" {
+		who = info.ChangedBy
+		if info.Method != "" {
+			who += " via " + info.Method
+		}
+	}
+	msg := fmt.Sprintf("Config change detected on %s by %s (checksum %s → %s)", device.Name, who, oldShort, newShort)
+	if info.Impact != "" {
+		msg += ". Impact: " + info.Impact
+	}
+	if !info.Attributed {
+		// No authenticated admin session matched this change — escalate one notch
+		// and flag it as a possible out-of-band / unauthorized change.
+		severity = escalateSeverity(severity)
+		msg += " [no authenticated admin session found — possible out-of-band change]"
+	}
+
 	am.saveAlert(&models.Alert{
 		DeviceID:  deviceID,
 		AlertType: "CONFIG_CHANGE",
-		Severity:  "warning",
-		Message:   fmt.Sprintf("Config change detected on %s: checksum changed from %s to %s", device.Name, oldShort, newShort),
+		Severity:  severity,
+		Message:   msg,
 		Timestamp: time.Now(),
 	})
+}
+
+// configSeverityToAlert maps a configdiff severity onto the alert vocabulary
+// (info | warning | critical). Empty/unknown defaults to "warning" to preserve
+// the legacy behavior.
+func configSeverityToAlert(sev string) string {
+	switch sev {
+	case "info":
+		return "info"
+	case "high", "critical":
+		return "critical"
+	case "medium", "":
+		return "warning"
+	default:
+		return "warning"
+	}
+}
+
+// escalateSeverity bumps an alert severity one notch toward critical.
+func escalateSeverity(sev string) string {
+	switch sev {
+	case "info":
+		return "warning"
+	default:
+		return "critical"
+	}
 }
 
 // CheckProbeDataFlow checks all approved probes and alerts if any have not sent

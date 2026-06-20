@@ -10,6 +10,7 @@
 //
 //	go run ./cmd/configcheck --vendor fortigate old.conf new.conf
 //	go run ./cmd/configcheck --vendor fortigate --max 50 a.conf b.conf
+//	go run ./cmd/configcheck --objects --vendor fortigate old.conf new.conf
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"firewall-mon/internal/configdiff"
 )
@@ -24,6 +26,7 @@ import (
 func main() {
 	vendor := flag.String("vendor", "fortigate", "device vendor (fortigate, paloalto, cisco_asa, ...)")
 	max := flag.Int("max", 40, "max residual diff lines to print per side (0 = all)")
+	objects := flag.Bool("objects", false, "print the per-object semantic diff + risk classification instead of the line diff")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: configcheck [--vendor V] [--max N] <configA> <configB>\n")
 		flag.PrintDefaults()
@@ -66,11 +69,43 @@ func main() {
 		fmt.Println("          " + rep.CaptureModeReason)
 	}
 
-	printSide("only in A (removed)", rep.OnlyInA, *max)
-	printSide("only in B (added)", rep.OnlyInB, *max)
+	if *objects {
+		printObjects(rep)
+	} else {
+		printSide("only in A (removed)", rep.OnlyInA, *max)
+		printSide("only in B (added)", rep.OnlyInB, *max)
+	}
 
 	if !rep.Match {
 		os.Exit(1)
+	}
+}
+
+// printObjects renders the semantic per-object diff and its risk classification.
+func printObjects(rep configdiff.Report) {
+	if len(rep.ObjectChanges) == 0 {
+		fmt.Println("\n(no per-object diff — vendor has no object parser, or no object-level changes)")
+		return
+	}
+	s := rep.Summary
+	fmt.Printf("\nOBJECTS:  %d added, %d removed, %d modified  (max severity: %s)\n",
+		s.Added, s.Removed, s.Modified, s.MaxSeverity)
+	if s.Impact != "" {
+		fmt.Printf("IMPACT:   %s\n", s.Impact)
+	}
+	for _, ch := range rep.ObjectChanges {
+		fmt.Printf("\n  [%s] %-8s %s  (%s/%s)\n",
+			strings.ToUpper(ch.Op), ch.Risk.Severity, ch.Path, ch.Risk.Category, ch.Risk.Summary)
+		for _, d := range ch.Attrs {
+			switch {
+			case d.Old == "":
+				fmt.Printf("      + %s = %s\n", d.Key, d.New)
+			case d.New == "":
+				fmt.Printf("      - %s = %s\n", d.Key, d.Old)
+			default:
+				fmt.Printf("      ~ %s : %s -> %s\n", d.Key, d.Old, d.New)
+			}
+		}
 	}
 }
 

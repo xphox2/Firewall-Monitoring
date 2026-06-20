@@ -1005,6 +1005,21 @@ type DeviceConfigRevision struct {
 	FirstSeenAt    time.Time `json:"first_seen_at"`
 	LastVerifiedAt time.Time `json:"last_verified_at"`
 	VerifyCount    int       `json:"verify_count"`
+
+	// Change attribution (v0.10.440+): who made the change, from where, and how,
+	// correlated from FortiGate config-change syslog events at insert time.
+	//
+	// AttributionChecked records whether correlation was actually attempted for
+	// this row — only true for a real insert-change. It disambiguates the two
+	// reasons ChangedBy can be empty: a first-seen/merged row that was never
+	// correlated (AttributionChecked=false → "unknown"), versus a real change
+	// with no matching authenticated session (AttributionChecked=true,
+	// Attributed=false → a possible out-of-band/unauthorized change).
+	ChangedBy          string `json:"changed_by"`
+	ChangedFrom        string `json:"changed_from"`  // source IP
+	ChangeMethod       string `json:"change_method"` // GUI | CLI(ssh) | jsconsole | API
+	Attributed         bool   `json:"attributed"`
+	AttributionChecked bool   `json:"attribution_checked"`
 }
 
 type ProcessStats struct {

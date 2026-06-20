@@ -760,3 +760,11 @@ func (d *Database) migrateUnifyPingStats() error {
 func (d *Database) migrateProbeDecommissionedAt() error {
 	return d.db.AutoMigrate(&models.Probe{})
 }
+
+// migrateConfigRevisionAttribution (v5) adds the change-attribution columns
+// (changed_by, changed_from, change_method, attributed, attribution_checked) to
+// existing device_config_revisions tables. AutoMigrate only adds what's missing,
+// so this is idempotent; fresh installs already have them from the baseline run.
+func (d *Database) migrateConfigRevisionAttribution() error {
+	return d.db.AutoMigrate(&models.DeviceConfigRevision{})
+}

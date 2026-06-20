@@ -1366,6 +1366,15 @@
                     var firstSeen = r.first_seen_at || r.timestamp;
                     var lastVerified = r.last_verified_at || r.timestamp;
 
+                    var changedByCell;
+                    if (r.changed_by) {
+                        changedByCell = esc(r.changed_by) + (r.change_method ? ' <span style="color:#8b949e">(' + esc(r.change_method) + ')</span>' : '');
+                    } else if (r.attribution_checked && r.attributed === false) {
+                        changedByCell = '<span style="color:#a371f7" title="No authenticated admin session matched this change">⚠ out-of-band</span>';
+                    } else {
+                        changedByCell = '<span style="color:#8b949e">—</span>';
+                    }
+
                     return '<tr>' +
                         '<td><input type="radio" name="cfgFrom" value="' + r.id + '" data-action="cfg-compare-from"' + fromChecked + '></td>' +
                         '<td><input type="radio" name="cfgTo"   value="' + r.id + '" data-action="cfg-compare-to"' + toChecked + '></td>' +
@@ -1374,6 +1383,7 @@
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:#c9d1d9;padding:2px 6px;border-radius:4px;font-size:0.72rem" title="Number of polls that confirmed this state">' + verifyCount + '×</span></td>' +
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + triggerColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(trigger) + '</span></td>' +
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + qualityColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(quality) + '</span></td>' +
+                        '<td style="white-space:nowrap;font-size:0.8rem">' + changedByCell + '</td>' +
                         '<td>' + formatBytes(r.length) + '</td>' +
                         '<td>' +
                         '<button class="btn secondary text-[0.78rem] mr-1" data-action="view-config-revision" data-id="' + r.id + '">View</button>' +
@@ -1500,7 +1510,8 @@
             meta.innerHTML = '<span style="color:#f85149">From #' + esc(String(fromRev.id || '?')) + '</span> ' + formatTime(fromRev.timestamp) +
                 ' (' + esc(fromRev.trigger_source || 'poll') + ', ' + esc(fromRev.backup_quality || 'full') + ')' +
                 ' &nbsp;→&nbsp; <span style="color:#3fb950">To #' + esc(String(toRev.id || '?')) + '</span> ' + formatTime(toRev.timestamp) +
-                ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')';
+                ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')' +
+                attributionBadge(toRev);
 
             // Fast path: matching normalized checksums means there were NO real
             // configuration changes between these two backups — only FortiGate's
@@ -1546,8 +1557,29 @@
 
             var maskedFrom = maskVolatile(fromText, patterns);
             var maskedTo   = maskVolatile(toText,   patterns);
+            var rawHTML    = computeMaskedDiff(maskedFrom, maskedTo);
 
-            body.innerHTML = computeMaskedDiff(maskedFrom, maskedTo);
+            // Preferred view: the per-object semantic diff (parsed + classified
+            // server-side). Falls back to the raw line diff for vendors without an
+            // object parser, or when the only difference is volatile noise.
+            var changes  = (data && data.object_changes) || [];
+            var summary  = (data && data.summary) || {};
+            var hasObjects = changes.length > 0;
+            var objectHTML = hasObjects
+                ? renderObjectDiff(changes, summary)
+                : '<div style="padding:20px;color:#8b949e;font-family:sans-serif">No object-level changes detected — the difference is volatile-only, or this vendor has no object parser yet. See the <strong>Raw diff</strong>.</div>';
+
+            var toggle =
+                '<div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid #30363d;font-family:sans-serif">' +
+                    '<button id="cd-btn-obj" data-action="cd-view" data-view="obj" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:5px 12px;background:#21262d;color:#c9d1d9">Object view</button>' +
+                    '<button id="cd-btn-raw" data-action="cd-view" data-view="raw" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:5px 12px;background:#21262d;color:#c9d1d9">Raw diff</button>' +
+                '</div>';
+
+            body.innerHTML = toggle +
+                '<div id="cd-objects">' + objectHTML + '</div>' +
+                '<div id="cd-raw" style="display:none">' + rawHTML + '</div>';
+
+            window.__cdView(hasObjects ? 'obj' : 'raw');
         } catch (err) {
             console.error('Diff render failed:', err, 'data:', data);
             body.innerHTML = '<div style="color:#f85149;padding:20px;font-family:sans-serif">' +
@@ -1621,6 +1653,94 @@
         if (parts.length === 0) return '<div style="color:#8b949e;padding:20px">No differences found</div>';
         return parts.join('');
     }
+
+    // sevColor maps a configdiff severity to a display color.
+    function sevColor(s) {
+        return s === 'critical' ? '#f85149'
+             : s === 'high'     ? '#ff7b72'
+             : s === 'medium'   ? '#d2992a'
+             :                    '#6e7681';
+    }
+
+    // attributionBadge renders the change-attribution badge for a revision, using
+    // the tri-state: attributed (who/how), checked-but-unmatched (out-of-band), or
+    // never-checked (nothing — e.g. a first-seen/merged row). attribution_checked
+    // disambiguates an empty changed_by so we never mislabel an un-correlated row.
+    function attributionBadge(rev) {
+        if (!rev) return '';
+        if (rev.changed_by) {
+            var who = esc(rev.changed_by) + (rev.change_method ? ' via ' + esc(rev.change_method) : '');
+            return ' &nbsp; <span style="background:#1f6feb;color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem">changed by ' + who + '</span>';
+        }
+        if (rev.attribution_checked && rev.attributed === false) {
+            return ' &nbsp; <span style="background:#8957e5;color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem" title="No authenticated admin session matched this change">⚠ possible out-of-band change</span>';
+        }
+        return '';
+    }
+
+    // renderObjectDiff builds the per-object semantic diff view: a summary banner,
+    // then collapsible per-object cards grouped by kind, each showing its risk
+    // badge and attribute-level before/after.
+    function renderObjectDiff(changes, summary) {
+        var out = [];
+        var sev = summary.max_severity || 'info';
+        out.push('<div style="margin:12px;padding:12px;border-radius:8px;background:#161b22;border-left:4px solid ' + sevColor(sev) + ';font-family:sans-serif">' +
+            '<strong style="color:#c9d1d9">' + (summary.added || 0) + ' added · ' + (summary.removed || 0) + ' removed · ' + (summary.modified || 0) + ' modified</strong>' +
+            ' &nbsp; <span style="background:' + sevColor(sev) + ';color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem">' + esc(sev) + '</span>' +
+            (summary.impact ? '<div style="margin-top:8px;color:#8b949e;font-size:0.88rem">' + esc(summary.impact) + '</div>' : '') +
+            '</div>');
+
+        var lastKind = null;
+        changes.forEach(function(ch, idx) {
+            if (ch.kind !== lastKind) {
+                out.push('<div style="margin:14px 12px 4px;color:#58a6ff;font-family:monospace;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(ch.kind) + '</div>');
+                lastKind = ch.kind;
+            }
+            var opColor = ch.op === 'added' ? '#3fb950' : ch.op === 'removed' ? '#f85149' : '#58a6ff';
+            var rsev = (ch.risk && ch.risk.severity) || 'info';
+            out.push('<div style="margin:0 12px 8px;border:1px solid #30363d;border-radius:8px;overflow:hidden">');
+            out.push('<div data-action="cd-toggle" data-idx="' + idx + '" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;font-family:sans-serif">' +
+                '<span style="color:' + opColor + ';font-weight:600;font-size:0.78rem;min-width:74px">' + esc((ch.op || '').toUpperCase()) + '</span>' +
+                '<span style="color:#c9d1d9;font-family:monospace">' + esc(ch.name || ch.path) + '</span>' +
+                '<span style="background:' + sevColor(rsev) + ';color:#fff;border-radius:10px;padding:1px 8px;font-size:0.74rem">' + esc(rsev) + '</span>' +
+                ((ch.risk && ch.risk.summary) ? '<span style="color:#8b949e;font-size:0.82rem;margin-left:auto;text-align:right">' + esc(ch.risk.summary) + '</span>' : '') +
+                '</div>');
+            out.push('<div id="cd-card-b-' + idx + '" style="display:none;padding:6px 12px;background:#0d1117">');
+            out.push('<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.85rem">');
+            (ch.attrs || []).forEach(function(d) {
+                var oldc = d.old ? '<span style="color:#ff7b72">' + esc(d.old) + '</span>' : '<span style="color:#8b949e">—</span>';
+                var newc = d.new ? '<span style="color:#3fb950">' + esc(d.new) + '</span>' : '<span style="color:#8b949e">—</span>';
+                out.push('<tr>' +
+                    '<td style="color:#8b949e;padding:2px 10px 2px 0;vertical-align:top;white-space:nowrap">' + esc(d.key) + '</td>' +
+                    '<td style="padding:2px 6px;vertical-align:top">' + oldc + '</td>' +
+                    '<td style="color:#8b949e;padding:2px 6px">→</td>' +
+                    '<td style="padding:2px 6px;vertical-align:top">' + newc + '</td>' +
+                    '</tr>');
+            });
+            out.push('</table></div></div>');
+        });
+        return out.join('');
+    }
+
+    // __cdToggle expands/collapses one object card's attribute table.
+    window.__cdToggle = function(i) {
+        var e = document.getElementById('cd-card-b-' + i);
+        if (e) e.style.display = (e.style.display === 'none' ? 'block' : 'none');
+    };
+
+    // __cdView switches between the object view and the raw line diff.
+    window.__cdView = function(which) {
+        var o = document.getElementById('cd-objects');
+        var r = document.getElementById('cd-raw');
+        var bo = document.getElementById('cd-btn-obj');
+        var br = document.getElementById('cd-btn-raw');
+        if (!o || !r) return;
+        var raw = which === 'raw';
+        o.style.display = raw ? 'none' : 'block';
+        r.style.display = raw ? 'block' : 'none';
+        if (bo) bo.style.background = raw ? '#21262d' : '#1f6feb';
+        if (br) br.style.background = raw ? '#1f6feb' : '#21262d';
+    };
 
     window.viewConfigRevision = function(revId) {
         fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId + '/view', { credentials: 'same-origin' })
@@ -2069,6 +2189,14 @@
         },
         'close-config-modal': function() {
             AC.closeModal('config-modal');
+        },
+        // Config-diff modal: switch object/raw view, expand/collapse a card.
+        // data-action delegation (not inline onclick) per AUDIT-053.
+        'cd-view': function(el) {
+            window.__cdView(el.dataset.view);
+        },
+        'cd-toggle': function(el) {
+            window.__cdToggle(parseInt(el.dataset.idx, 10));
         }
     });
 

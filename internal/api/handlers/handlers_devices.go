@@ -800,6 +800,11 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 	}
 	patterns := configdiff.VolatilePatternsFor(vendor)
 
+	// Semantic per-object diff + risk classification, computed server-side (the
+	// FortiGate config parser lives in Go, not the browser). Empty for vendors
+	// without an object parser — the UI then falls back to the line diff.
+	rep := configdiff.Analyze(vendor, []byte(fromRev.ConfigText), []byte(toRev.ConfigText))
+
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"from": gin.H{
 			"id":                  fromRev.ID,
@@ -808,6 +813,10 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 			"normalized_checksum": fromRev.NormalizedChecksum,
 			"trigger_source":      fromRev.TriggerSource,
 			"backup_quality":      fromRev.BackupQuality,
+			"changed_by":          fromRev.ChangedBy,
+			"change_method":       fromRev.ChangeMethod,
+			"attributed":          fromRev.Attributed,
+			"attribution_checked": fromRev.AttributionChecked,
 			"config_text":         fromRev.ConfigText,
 		},
 		"to": gin.H{
@@ -817,10 +826,16 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 			"normalized_checksum": toRev.NormalizedChecksum,
 			"trigger_source":      toRev.TriggerSource,
 			"backup_quality":      toRev.BackupQuality,
+			"changed_by":          toRev.ChangedBy,
+			"change_method":       toRev.ChangeMethod,
+			"attributed":          toRev.Attributed,
+			"attribution_checked": toRev.AttributionChecked,
 			"config_text":         toRev.ConfigText,
 		},
 		"vendor":            vendor,
 		"volatile_patterns": patterns,
+		"object_changes":    rep.ObjectChanges,
+		"summary":           rep.Summary,
 	}))
 }
 

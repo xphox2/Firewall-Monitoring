@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/httputil"
@@ -747,6 +748,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		mergedID       uint
 		mergedAction   string // "merge" | "insert-first" | "insert-change" | "insert-suspect"
 		prevNormalized string
+		prevConfigText string
 	)
 
 	txErr := h.db.Gorm().Transaction(func(tx *gorm.DB) error {
@@ -762,6 +764,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		hasPrev := err == nil
 		if hasPrev {
 			prevNormalized = prevRev.NormalizedChecksum
+			prevConfigText = prevRev.ConfigText
 		}
 
 		// MERGE path: same vendor-normalized state, validation OK.
@@ -836,8 +839,32 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 	// CONFIG_CHANGE alert there would be misleading because we can't actually
 	// confirm what changed.
 	if mergedAction == "insert-change" {
+		// Classify the security impact (per-object semantic diff) and attribute
+		// the change to an admin via FortiGate config-change syslog events.
+		info := alerts.ConfigChangeInfo{Attributed: true}
+		if changes, ok := configdiff.DiffObjects(vendor, []byte(prevConfigText), []byte(rev.ConfigText)); ok {
+			overall, _ := configdiff.ClassifyChanges(changes)
+			info.Severity = overall.Severity
+			info.Impact = overall.Summary
+		}
+		// Correlation was attempted for this real change — record that, so the UI
+		// can distinguish "no session found (out-of-band)" from "never checked".
+		attrUpdates := map[string]interface{}{"attribution_checked": true}
+		if att, found := h.attributeConfigChange(rev.DeviceID, now); found {
+			info.ChangedBy = att.User
+			info.Method = att.Method
+			info.Attributed = true
+			attrUpdates["changed_by"] = att.User
+			attrUpdates["changed_from"] = att.Source
+			attrUpdates["change_method"] = att.Method
+			attrUpdates["attributed"] = true
+		} else {
+			info.Attributed = false
+		}
+		h.db.Gorm().Model(&models.DeviceConfigRevision{}).Where("id = ?", mergedID).Updates(attrUpdates)
+
 		if h.alertManager != nil {
-			h.alertManager.CheckConfigRevision(rev.DeviceID, prevNormalized, rev.NormalizedChecksum)
+			h.alertManager.CheckConfigRevision(rev.DeviceID, prevNormalized, rev.NormalizedChecksum, info)
 		}
 	}
 
@@ -853,6 +880,37 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		"trigger_source":      rev.TriggerSource,
 		"backup_quality":      rev.BackupQuality,
 	}))
+}
+
+// attributeConfigChange correlates a detected config change with the most recent
+// FortiGate config-change syslog event for the device, to populate who/how/from.
+// FortiGate emits these audit events natively (no TACACS+ required); the messages
+// are already stored server-side in syslog_messages. found is false when no
+// matching authenticated session exists within the lookback window — a possible
+// out-of-band change.
+func (h *Handler) attributeConfigChange(deviceID uint, when time.Time) (ev configdiff.FortiAuditEvent, found bool) {
+	if h.db == nil {
+		return ev, false
+	}
+	// A change-detection backup can lag the actual edit (poll cadence), so look
+	// back generously but accept only events at/just-after the edit.
+	start := when.Add(-15 * time.Minute)
+	end := when.Add(2 * time.Minute)
+	var msgs []models.SyslogMessage
+	if err := h.db.Gorm().
+		Where("device_id = ? AND timestamp >= ? AND timestamp <= ?", deviceID, start, end).
+		Order("timestamp DESC").Limit(100).Find(&msgs).Error; err != nil {
+		return ev, false
+	}
+	for _, m := range msgs {
+		if parsed := configdiff.ParseFortiAuditEvent(m.Message); parsed.IsConfigChange {
+			if parsed.Source == "" {
+				parsed.Source = m.SourceIP
+			}
+			return parsed, true
+		}
+	}
+	return ev, false
 }
 
 func (h *Handler) ReceiveProcessSnapshot(c *gin.Context) {
