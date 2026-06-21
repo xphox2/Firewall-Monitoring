@@ -1108,6 +1108,9 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 		"loopback0": true, "lo": true, "lo0": true,
 		"mgmt": true, "mgmt0": true, "management": true,
 		"null0": true, "": true,
+		// FortiLink (firewall <-> FortiSwitch fabric) is named identically on
+		// every FortiGate, so name-matching would falsely connect any two units.
+		"fortilink": true,
 	}
 	// FortiGate system interfaces follow *.root / *.vdom pattern — skip all of them
 	isSystemIface := func(normalized string) bool {
@@ -1294,6 +1297,25 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 	return created
 }
 
+// isFabricInterface reports whether an interface is a device-to-fabric link that
+// must never be treated as an inter-device LAN adjacency. FortiLink interfaces
+// (firewall <-> FortiSwitch) are conventionally named "fortilink" and ship with
+// default IPs (169.254.x, 10.255.x) that are identical on every FortiGate, so two
+// same-site units would otherwise be falsely cross-connected through them. Link-
+// local addresses (169.254.0.0/16, RFC 3927) are likewise never a routed
+// inter-device LAN segment.
+func isFabricInterface(ifName, ipAddr string) bool {
+	if strings.EqualFold(strings.TrimSpace(ifName), "fortilink") {
+		return true
+	}
+	if ip := net.ParseIP(ipAddr); ip != nil {
+		if v4 := ip.To4(); v4 != nil && v4[0] == 169 && v4[1] == 254 {
+			return true
+		}
+	}
+	return false
+}
+
 // detectPhysicalConnections finds LAN-segment interfaces on same-site devices
 // that share an IP subnet and creates auto-detected connections.
 func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
@@ -1379,6 +1401,9 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 		pif, ok := ifLookup[key]
 		if !ok {
 			continue // not a physical interface
+		}
+		if isFabricInterface(pif.name, addr.IPAddress) {
+			continue // FortiLink/link-local fabric link, not an inter-device LAN
 		}
 		ip := net.ParseIP(addr.IPAddress)
 		mask := net.ParseIP(addr.NetMask)

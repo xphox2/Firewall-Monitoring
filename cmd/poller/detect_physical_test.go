@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,71 @@ func TestDetectPhysicalConnections_FortiGateSwitchInterface(t *testing.T) {
 	pair := map[uint]bool{c.SourceDeviceID: true, c.DestDeviceID: true}
 	if !pair[vm.ID] || !pair[existing.ID] {
 		t.Errorf("connection is between %d and %d, want %d and %d", c.SourceDeviceID, c.DestDeviceID, vm.ID, existing.ID)
+	}
+}
+
+// TestDetectPhysicalConnections_ExcludesFortiLinkAndLinkLocal guards against the
+// FortiLink false positive observed in the field: every FortiGate has a
+// "fortilink" interface on a default subnet (and HA/sync links on 169.254/16)
+// that is identical across units, so two same-site firewalls must NOT be
+// connected through it — only through their real shared LAN.
+func TestDetectPhysicalConnections_ExcludesFortiLinkAndLinkLocal(t *testing.T) {
+	p, db := newTestPoller(t, nil)
+
+	site := &models.Site{Name: "HQ"}
+	if err := db.CreateSite(site); err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	mk := func(name, ip string) models.Device {
+		d := models.Device{Name: name, IPAddress: ip, Vendor: "fortigate", Enabled: true, SiteID: &site.ID}
+		if err := db.CreateDevice(&d); err != nil {
+			t.Fatalf("create device %s: %v", name, err)
+		}
+		return d
+	}
+	fw1 := mk("fw1", "192.168.5.1")
+	fw2 := mk("fw2", "192.168.5.2")
+
+	now := time.Now()
+	if err := db.SaveInterfaceStats([]models.InterfaceStats{
+		// Real shared LAN on the internal switch -> must connect.
+		{DeviceID: fw1.ID, Index: 1, Name: "internal", TypeName: "bridge", Status: "up", Timestamp: now},
+		{DeviceID: fw2.ID, Index: 1, Name: "internal", TypeName: "bridge", Status: "up", Timestamp: now},
+		// FortiLink fabric link, default identical subnet -> must NOT connect.
+		{DeviceID: fw1.ID, Index: 2, Name: "fortilink", TypeName: "lag", Status: "down", Timestamp: now},
+		{DeviceID: fw2.ID, Index: 2, Name: "fortilink", TypeName: "lag", Status: "down", Timestamp: now},
+		// Link-local (169.254/16) HA/sync interface -> must NOT connect.
+		{DeviceID: fw1.ID, Index: 3, Name: "ha", TypeName: "bridge", Status: "up", Timestamp: now},
+		{DeviceID: fw2.ID, Index: 3, Name: "ha", TypeName: "bridge", Status: "up", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interface stats: %v", err)
+	}
+	if err := db.SaveInterfaceAddresses([]models.InterfaceAddress{
+		{DeviceID: fw1.ID, IfIndex: 1, IPAddress: "192.168.5.1", NetMask: "255.255.255.0", Timestamp: now},
+		{DeviceID: fw2.ID, IfIndex: 1, IPAddress: "192.168.5.2", NetMask: "255.255.255.0", Timestamp: now},
+		{DeviceID: fw1.ID, IfIndex: 2, IPAddress: "10.255.1.1", NetMask: "255.255.255.0", Timestamp: now},
+		{DeviceID: fw2.ID, IfIndex: 2, IPAddress: "10.255.1.1", NetMask: "255.255.255.0", Timestamp: now},
+		{DeviceID: fw1.ID, IfIndex: 3, IPAddress: "169.254.1.1", NetMask: "255.255.255.0", Timestamp: now},
+		{DeviceID: fw2.ID, IfIndex: 3, IPAddress: "169.254.1.2", NetMask: "255.255.255.0", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interface addresses: %v", err)
+	}
+
+	p.detectPhysicalConnections([]models.Device{fw1, fw2})
+
+	conns, err := db.GetAllConnections()
+	if err != nil {
+		t.Fatalf("get connections: %v", err)
+	}
+	if len(conns) != 1 {
+		t.Fatalf("got %d connections, want exactly 1 (only the real LAN, not fortilink/link-local)", len(conns))
+	}
+	c := conns[0]
+	if !strings.Contains(c.TunnelNames, "internal") {
+		t.Errorf("connection interfaces = %q, want the real LAN (internal)", c.TunnelNames)
+	}
+	if strings.Contains(c.TunnelNames, "fortilink") || strings.Contains(c.TunnelNames, "ha") {
+		t.Errorf("connection interfaces = %q, must not include fortilink/link-local", c.TunnelNames)
 	}
 }
 
