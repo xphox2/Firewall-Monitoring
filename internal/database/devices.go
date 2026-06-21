@@ -45,6 +45,52 @@ func (d *Database) ResolveDeviceByIP(ip string) uint {
 	return 0
 }
 
+// ResolveDevicesByIPs resolves many IPs to device IDs in two queries total,
+// instead of the two-query lookup ResolveDeviceByIP issues per IP. Management IP
+// (devices table) takes precedence over interface addresses, matching
+// ResolveDeviceByIP. IPs with no match are simply absent from the returned map.
+// Used by the batched probe-ingestion handlers (syslog/flows) to avoid an N+1
+// query per message.
+func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
+	result := make(map[string]uint, len(ips))
+	if len(ips) == 0 {
+		return result
+	}
+
+	// Management IPs first.
+	var devices []struct {
+		ID        uint
+		IPAddress string
+	}
+	d.db.Model(&models.Device{}).Select("id", "ip_address").Where("ip_address IN ?", ips).Scan(&devices)
+	for _, dev := range devices {
+		if dev.IPAddress != "" && result[dev.IPAddress] == 0 {
+			result[dev.IPAddress] = dev.ID
+		}
+	}
+
+	// Interface addresses for any IP not already matched by a management IP.
+	remaining := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if result[ip] == 0 {
+			remaining = append(remaining, ip)
+		}
+	}
+	if len(remaining) > 0 {
+		var addrs []struct {
+			DeviceID  uint
+			IPAddress string
+		}
+		d.db.Model(&models.InterfaceAddress{}).Select("device_id", "ip_address").Where("ip_address IN ?", remaining).Scan(&addrs)
+		for _, a := range addrs {
+			if a.IPAddress != "" && result[a.IPAddress] == 0 {
+				result[a.IPAddress] = a.DeviceID
+			}
+		}
+	}
+	return result
+}
+
 func (d *Database) CreateDevice(device *models.Device) error {
 	d.EncryptDeviceSecrets(device)
 	err := d.db.Create(device).Error
