@@ -2409,12 +2409,25 @@
     }
 
     // ---- Device Modal ----
+    // Show "leave blank to keep current" hints next to secret fields only when
+    // editing (on a new device there is nothing to keep).
+    function toggleSecretHints(isEdit) {
+        ['community-note', 'ssh-password-note', 'v3-auth-note', 'v3-priv-note'].forEach(function(noteId) {
+            var el = document.getElementById(noteId);
+            if (el) el.style.display = isEdit ? '' : 'none';
+        });
+    }
+
     function showDeviceModal(id) {
         AC.openModal('device-modal');
         document.getElementById('device-modal-title').textContent = id ? 'Edit Device' : 'Add Device';
         populateProbeSelect('device-probe');
         populateSiteSelect('device-site');
 
+        // Secret fields are blank on edit; a "leave blank to keep current" hint is
+        // shown only when editing. Entering a value is the only way to change a
+        // secret — see the device-form submit handler.
+        toggleSecretHints(!!id);
         if (id) {
             var d = currentDevices.find(function(d) { return d.id === id; });
             document.getElementById('device-id').value = d.id;
@@ -2422,7 +2435,7 @@
             document.getElementById('device-ip').value = d.ip_address;
             document.getElementById('device-snmp-port').value = d.snmp_port || 161;
             document.getElementById('device-snmp-version').value = d.snmp_version || '2c';
-            document.getElementById('device-community').value = d.snmp_community || 'public';
+            document.getElementById('device-community').value = ''; // blank on edit — leave blank to keep current
             document.getElementById('device-v3-username').value = d.snmpv3_username || '';
             document.getElementById('device-v3-auth-type').value = d.snmpv3_auth_type || '';
             document.getElementById('device-v3-auth-pass').value = '';
@@ -2522,7 +2535,6 @@
                 ip_address: document.getElementById('device-ip').value,
                 snmp_port: parseInt(document.getElementById('device-snmp-port').value),
                 snmp_version: snmpVersion,
-                snmp_community: document.getElementById('device-community').value,
                 vendor: document.getElementById('device-vendor').value || 'fortigate',
                 location: document.getElementById('device-location').value,
                 description: document.getElementById('device-description').value,
@@ -2530,6 +2542,12 @@
                 enabled: document.getElementById('device-enabled').checked,
                 public_visible: document.getElementById('device-public-visible').checked
             };
+            // Secrets are sent only when the user actually entered a new value, so
+            // editing any other field never overwrites a stored secret. (The
+            // server also drops blanks/masks, but not sending them at all is
+            // cleaner and keeps the masked placeholder from being re-persisted.)
+            var community = document.getElementById('device-community').value;
+            if (community && !/^\*+$/.test(community)) data.snmp_community = community;
             if (snmpVersion === '3') {
                 data.snmpv3_username = document.getElementById('device-v3-username').value;
                 data.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
@@ -2554,16 +2572,19 @@
             data.ssh_poll_interval = parseInt(document.getElementById('device-ssh-poll-interval').value) || 900;
             data.ssh_poll_enabled = document.getElementById('device-ssh-poll-enabled').checked;
 
-            // Validate SSH polling requires credentials
+            // SSH polling needs credentials, but on EDIT a blank password means
+            // "keep the stored one" — never force re-entry just to save an
+            // unrelated change. Only require a password when there are no stored
+            // credentials yet: a new device, or an existing one that has no SSH
+            // username on record.
             if (data.ssh_poll_enabled) {
-                var existingPw = document.getElementById('device-ssh-password').value;
-                var isMasked = /^\*+$/.test(existingPw);
-                // Need either new password entered OR existing username (implies password already set)
                 if (!sshUsername) {
                     alert('SSH Username is required when SSH polling is enabled');
                     return;
                 }
-                if (!sshPassword && !isMasked && id) {
+                var existingDevice = id ? currentDevices.find(function(x) { return x.id == id; }) : null;
+                var hasStoredSSH = !!(existingDevice && existingDevice.ssh_username);
+                if (!sshPassword && !hasStoredSSH) {
                     alert('SSH Password is required when SSH polling is enabled');
                     return;
                 }

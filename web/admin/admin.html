@@ -1000,8 +1000,8 @@
                     </select>
                 </div>
                 <div class="form-group" id="community-group">
-                    <label for="device-community">SNMP Community</label>
-                    <input type="text" id="device-community" value="public" autocomplete="one-time-code">
+                    <label for="device-community">SNMP Community <span id="community-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                    <input type="text" id="device-community" value="public" autocomplete="one-time-code" placeholder="Enter a new community only if changing">
                 </div>
                 <div id="snmpv3-fields" style="display:none">
                     <div class="form-row">
@@ -1023,8 +1023,8 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="device-v3-auth-pass">Auth Password</label>
-                        <input type="password" id="device-v3-auth-pass" autocomplete="new-password">
+                        <label for="device-v3-auth-pass">Auth Password <span id="v3-auth-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                        <input type="password" id="device-v3-auth-pass" autocomplete="new-password" placeholder="Enter a new password only if changing">
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -1038,8 +1038,8 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="device-v3-priv-pass">Privacy Password</label>
-                            <input type="password" id="device-v3-priv-pass" autocomplete="new-password">
+                            <label for="device-v3-priv-pass">Privacy Password <span id="v3-priv-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                            <input type="password" id="device-v3-priv-pass" autocomplete="new-password" placeholder="Enter a new password only if changing">
                         </div>
                     </div>
                 </div>
@@ -1092,8 +1092,8 @@
                             <input type="text" id="device-ssh-username" autocomplete="one-time-code">
                         </div>
                         <div class="form-group">
-                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:#8b949e;font-weight:normal">— leave blank to keep current password</span></label>
-                            <input type="password" id="device-ssh-password" autocomplete="new-password" placeholder="Enter new SSH password only if changing">
+                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                            <input type="password" id="device-ssh-password" autocomplete="new-password" placeholder="Enter a new password only if changing">
                         </div>
                     </div>
                     <div class="form-row">
