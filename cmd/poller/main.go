@@ -652,9 +652,10 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 		log.Printf("VPN auto-detect: failed to get VPN statuses - %v", err)
 		return 0
 	}
-	if len(vpnStatuses) == 0 {
-		return 0
-	}
+	// NB: do NOT early-return when vpnStatuses is empty. Dial-up/interface-mode
+	// spokes expose no fgVpnTunTable rows, so the remote-gateway strategies below
+	// no-op for them — but the tunnel-overlay phase further down still maps them
+	// from the IP-MIB tunnel-interface addresses, which are always present.
 
 	// Index VPN tunnels by device ID for bidirectional checking
 	vpnByDevice := make(map[uint][]models.VPNStatus)
@@ -922,6 +923,94 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 					pi.anyUp = true
 				}
 				break
+			}
+		}
+	}
+
+	// Phase 4: tunnel-interface overlay matching.
+	// The strategies above all key on a tunnel's remote-gateway IP (fgVpnTunTable),
+	// which is frequently empty — interface-mode/dial-up spokes expose no rows, so
+	// hub-and-spoke IPSec goes undetected. The tunnel interfaces themselves, though,
+	// reliably carry an overlay IP in the standard IP-MIB (a hub e.g.
+	// 192.168.255.1/24, each spoke 192.168.255.x/32). Two devices whose tunnel
+	// interfaces share an overlay subnet are IPSec-connected, so match a spoke's
+	// address inside a hub's tunnel network. This is cross-site by nature (no
+	// same-site guard) and complements, never overrides, the pairs found above.
+	if ifaces, ifErr := p.db.GetAllLatestInterfaces(); ifErr != nil {
+		log.Printf("VPN auto-detect: failed to get interfaces for tunnel-overlay match - %v", ifErr)
+	} else {
+		type tunIf struct{ name, status string }
+		tunnelIface := make(map[string]tunIf) // "deviceID:ifIndex" → tunnel interface
+		for _, iface := range ifaces {
+			if strings.EqualFold(iface.TypeName, "tunnel") {
+				tunnelIface[fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index)] = tunIf{iface.Name, iface.Status}
+			}
+		}
+		type tunAddr struct {
+			deviceID uint
+			ip       net.IP
+			network  *net.IPNet
+			name     string
+			up       bool
+		}
+		var tunAddrs []tunAddr
+		for _, addr := range ifAddrs {
+			tif, ok := tunnelIface[fmt.Sprintf("%d:%d", addr.DeviceID, addr.IfIndex)]
+			if !ok || isFabricInterface("", addr.IPAddress) {
+				continue
+			}
+			ip := net.ParseIP(addr.IPAddress)
+			mask := net.ParseIP(addr.NetMask)
+			if ip == nil || mask == nil {
+				continue
+			}
+			ip4, mask4 := ip.To4(), mask.To4()
+			if ip4 == nil || mask4 == nil {
+				continue
+			}
+			tunAddrs = append(tunAddrs, tunAddr{
+				deviceID: addr.DeviceID,
+				ip:       ip4,
+				network:  &net.IPNet{IP: ip4.Mask(net.IPMask(mask4)), Mask: net.IPMask(mask4)},
+				name:     tif.name,
+				up:       tif.status == "up",
+			})
+		}
+		for i := 0; i < len(tunAddrs); i++ {
+			for j := i + 1; j < len(tunAddrs); j++ {
+				a, b := tunAddrs[i], tunAddrs[j]
+				if a.deviceID == b.deviceID {
+					continue
+				}
+				// Same overlay if either address sits inside the other's subnet
+				// (hub /24 contains spoke /32). Two distinct /32 spokes never
+				// contain each other, so they are not falsely linked to each other.
+				if !a.network.Contains(b.ip) && !b.network.Contains(a.ip) {
+					continue
+				}
+				key := pairKey(a.deviceID, b.deviceID)
+				if _, exists := pairs[key]; exists {
+					continue // already matched by a remote-gateway strategy
+				}
+				srcID, dstID := a.deviceID, b.deviceID
+				if srcID > dstID {
+					srcID, dstID = dstID, srcID
+				}
+				pi := &pairInfo{
+					sourceID:    srcID,
+					destID:      dstID,
+					tunnelNames: make(map[string]bool),
+					matchMethod: "tunnel_overlay",
+					connType:    "ipsec",
+					anyUp:       a.up || b.up,
+				}
+				if a.name != "" {
+					pi.tunnelNames[a.name] = true
+				}
+				if b.name != "" {
+					pi.tunnelNames[b.name] = true
+				}
+				pairs[key] = pi
 			}
 		}
 	}
