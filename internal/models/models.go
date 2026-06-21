@@ -423,16 +423,20 @@ type Device struct {
 	SSHPort         int    `json:"ssh_port" gorm:"default:22"`
 	SSHPollEnabled  bool   `json:"ssh_poll_enabled" gorm:"default:false"`
 	SSHPollInterval int    `json:"ssh_poll_interval" gorm:"default:900"`
-	// SSHHostKey is the pinned SSH host-key fingerprint (e.g. "SHA256:...") the
-	// collector last reported for this device. Trust-on-first-use: blank until
-	// the first observation. A reported fingerprint that differs raises a
-	// CRITICAL SSH_HOST_KEY_CHANGED alert and then re-pins. Public data — stored
-	// plaintext, NOT encrypted like the SSH password.
-	SSHHostKey string    `json:"ssh_host_key"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	LastPolled time.Time `json:"last_polled"`
-	Status     string    `json:"status" gorm:"default:unknown"`
+	// SSHHostKeys is the newline-joined set of known-good SSH host-key
+	// fingerprints ("SHA256:...") for this device. A device legitimately has
+	// more than one when it is a FortiGate HA cluster — each member presents its
+	// own key — so the server learns each via trust-on-first-use rather than
+	// treating any change as suspicious. A reported fingerprint not in this set
+	// raises an SSH_HOST_KEY_CHANGED alert (CRITICAL if unexplained, WARNING if
+	// it correlates with a recent HA failover) and is then added. Blank until the
+	// first observation. Public data — stored plaintext (column kept as
+	// ssh_host_key), NOT encrypted like the SSH password.
+	SSHHostKeys string    `gorm:"column:ssh_host_key" json:"ssh_host_keys"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	LastPolled  time.Time `json:"last_polled"`
+	Status      string    `json:"status" gorm:"default:unknown"`
 }
 
 type DeviceTunnel struct {
