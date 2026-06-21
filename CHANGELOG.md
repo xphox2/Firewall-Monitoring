@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.447] - 2026-06-21
+### Changed
+- **Upgraded `gosnmp` v1.40.0 → v1.43.2 to match the version the Firewall-Collector already runs in production.** The server (poller, trap-receiver) and the collector both poll the same firewalls over SNMP; pinning them to the same `gosnmp` release removes a source of subtle protocol-parsing differences between the two SNMP stacks. No code changes were required; `go build ./...`, `go vet`, and the full test suite pass on the new version.
+
 ## [0.10.446] - 2026-06-21
 ### Changed
 - **Probe syslog and flow ingestion resolves unknown source IPs in one batched query instead of a lookup per record (`internal/api/handlers/handlers_data.go`, `internal/database/devices.go`).** `ReceiveSyslogMessages` and `ReceiveFlowSamples` called `ResolveDeviceByIP` once per device-less record — two queries each — so a 1,000-record batch could issue up to 2,000 lookups, multiplied across every batch at high volume. They now gather the distinct unresolved IPs and call a new `Database.ResolveDevicesByIPs`, which returns an `ip → device_id` map in two queries total (management IP first, then interface addresses — same precedence as `ResolveDeviceByIP`). Resolution results are unchanged; only the query count drops. (Flow samples with a zero timestamp in a batch now share one capture instant, matching the syslog handler.) Covered by a new precedence test.
