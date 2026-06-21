@@ -34,13 +34,8 @@ type VendorProfile interface {
 	VPNBaseOID() string
 	ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatus
 
-	// SSL-VPN
-	SSLVPNBaseOID() string
-	ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int)
-	ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus
-
-	// All VPN tunnels (IPSec + SSL-VPN) with proper type detection
-	GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error)
+	// All VPN tunnels (IPSec + GRE) with proper type detection
+	GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error)
 
 	// Hardware sensors
 	HWSensorBaseOID() string

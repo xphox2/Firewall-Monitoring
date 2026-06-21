@@ -105,23 +105,13 @@ func (sw *SonicWallProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSt
 	return parseSonicWallVPNFromSATable(pdus)
 }
 
-func (sw *SonicWallProfile) SSLVPNBaseOID() string { return "" }
-
-func (sw *SonicWallProfile) ParseSSLVPNStatus(_ []gosnmp.SnmpPDU) (int, int) {
-	return 0, 0
-}
-
-func (sw *SonicWallProfile) ParseSSLVPNTunnels(_ []gosnmp.SnmpPDU) []models.VPNStatus {
-	return nil
-}
-
-func (sw *SonicWallProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+func (sw *SonicWallProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
 	pdus, err := s.Walk(swBaseOIDVPNSA)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, err
 	}
 	tunnels := parseSonicWallVPNFromSATable(pdus)
-	return tunnels, 0, 0, nil
+	return tunnels, nil
 }
 
 // sonicSAData holds per-SA data from the sonicSAStatTable.

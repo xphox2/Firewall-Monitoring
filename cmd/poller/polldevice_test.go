@@ -22,8 +22,8 @@ func (fakePollerSNMP) GetInterfaceStats() ([]models.InterfaceStats, error) {
 func (fakePollerSNMP) GetInterfaceAddresses() ([]models.InterfaceAddress, error) {
 	return []models.InterfaceAddress{{IPAddress: "10.0.0.1"}}, nil
 }
-func (fakePollerSNMP) GetAllVPNTunnels() ([]models.VPNStatus, int, int, error) {
-	return []models.VPNStatus{{}}, 0, 0, nil
+func (fakePollerSNMP) GetAllVPNTunnels() ([]models.VPNStatus, error) {
+	return []models.VPNStatus{{}}, nil
 }
 func (fakePollerSNMP) GetHardwareSensors(...string) ([]models.HardwareSensor, error) {
 	return []models.HardwareSensor{{}}, nil

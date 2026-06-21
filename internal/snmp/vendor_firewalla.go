@@ -160,17 +160,7 @@ func (fw *FirewallaProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNSt
 
 // SSL-VPN: Not applicable for Firewalla.
 
-func (fw *FirewallaProfile) SSLVPNBaseOID() string { return "" }
-
-func (fw *FirewallaProfile) ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int) {
-	return 0, 0
-}
-
-func (fw *FirewallaProfile) ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
-	return nil
-}
-
-func (fw *FirewallaProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+func (fw *FirewallaProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
 	return linuxGetAllVPNTunnels(s)
 }
 
