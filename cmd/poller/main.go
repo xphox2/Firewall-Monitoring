@@ -22,6 +22,23 @@ import (
 	"firewall-mon/internal/snmp"
 )
 
+// deviceSNMP is the subset of *snmp.SNMPClient that pollDevice uses. Declaring
+// it as an interface lets tests inject a fake client in place of a live SNMP
+// connection. *snmp.SNMPClient satisfies it implicitly.
+type deviceSNMP interface {
+	GetSystemStatus(vendor ...string) (*models.SystemStatus, error)
+	GetInterfaceStats() ([]models.InterfaceStats, error)
+	GetInterfaceAddresses() ([]models.InterfaceAddress, error)
+	GetAllVPNTunnels() ([]models.VPNStatus, int, int, error)
+	GetHardwareSensors(vendor ...string) ([]models.HardwareSensor, error)
+	GetProcessorStats(vendor ...string) ([]models.ProcessorStats, error)
+	Close() error
+}
+
+// snmpDialer constructs a deviceSNMP from an SNMP config. Defaults to a live
+// client (snmp.NewSNMPClient); tests override it with a fake.
+type snmpDialer func(cfg *config.Config) (deviceSNMP, error)
+
 type Poller struct {
 	cfg            *config.Config
 	db             *database.Database
@@ -31,6 +48,10 @@ type Poller struct {
 	prevIfaceStats map[string]*models.InterfaceStats // "deviceID_ifName" -> previous stats
 	ifaceStatsMu   sync.RWMutex
 	stopChan       chan struct{}
+
+	// Injectable seam so pollDevice can be tested without a live SNMP
+	// connection. Wired to snmp.NewSNMPClient in NewPoller; overridden in tests.
+	newSNMP snmpDialer
 }
 
 func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager, notif *notifier.Notifier) *Poller {
@@ -41,6 +62,14 @@ func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManage
 		notifier:       notif,
 		prevIfaceStats: make(map[string]*models.InterfaceStats),
 		stopChan:       make(chan struct{}),
+	}
+	// Wire the SNMP dialer to the live client; tests override p.newSNMP.
+	p.newSNMP = func(cfg *config.Config) (deviceSNMP, error) {
+		cl, err := snmp.NewSNMPClient(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return cl, nil
 	}
 	// Real-time spike detector: judges live throughput against a per-interface
 	// seasonal (weekday, hour) baseline, refreshed every 6h from 30 days of
@@ -377,7 +406,7 @@ func (p *Poller) pollDevice(device *models.Device) {
 		},
 	}
 
-	client, err := snmp.NewSNMPClient(cfg)
+	client, err := p.newSNMP(cfg)
 	if err != nil {
 		log.Printf("Device %s (%s): failed to connect - %v", device.Name, device.IPAddress, err)
 		p.updateDeviceStatus(device, "offline")
@@ -553,40 +582,45 @@ func (p *Poller) pollDevice(device *models.Device) {
 	}
 
 	// Collect hardware sensors
-	sensors, err := client.GetHardwareSensors(vendor)
-	if err != nil {
-		log.Printf("Device %s: hardware sensor poll error - %v", device.Name, err)
-	} else if len(sensors) > 0 {
-		now := time.Now()
-		for i := range sensors {
-			sensors[i].DeviceID = device.ID
-			sensors[i].Timestamp = now
-		}
-		if p.db != nil {
-			if err := p.db.SaveHardwareSensors(sensors); err != nil {
-				log.Printf("Device %s: failed to save hardware sensors - %v", device.Name, err)
-			}
-		}
-	}
+	pollAndSave(
+		func() ([]models.HardwareSensor, error) { return client.GetHardwareSensors(vendor) },
+		func(s *models.HardwareSensor, now time.Time) { s.DeviceID = device.ID; s.Timestamp = now },
+		p.db.SaveHardwareSensors, p.db != nil, device.Name, "hardware sensor", "hardware sensors")
 
 	// Collect processor stats (CPU cores, NP/SPU ASICs)
-	procStats, err := client.GetProcessorStats(vendor)
-	if err != nil {
-		log.Printf("Device %s: processor stats poll error - %v", device.Name, err)
-	} else if len(procStats) > 0 {
-		now := time.Now()
-		for i := range procStats {
-			procStats[i].DeviceID = device.ID
-			procStats[i].Timestamp = now
-		}
-		if p.db != nil {
-			if err := p.db.SaveProcessorStats(procStats); err != nil {
-				log.Printf("Device %s: failed to save processor stats - %v", device.Name, err)
-			}
-		}
-	}
+	pollAndSave(
+		func() ([]models.ProcessorStats, error) { return client.GetProcessorStats(vendor) },
+		func(s *models.ProcessorStats, now time.Time) { s.DeviceID = device.ID; s.Timestamp = now },
+		p.db.SaveProcessorStats, p.db != nil, device.Name, "processor stats", "processor stats")
 
 	p.updateDeviceStatus(device, "online")
+}
+
+// pollAndSave collects one optional metric set, and if it is non-empty stamps
+// each record with the device ID and a single poll timestamp and saves it.
+// A collection error is logged and the metric skipped; an empty result is
+// skipped silently; the save is gated on hasDB and its failure is logged.
+// pollLabel/saveLabel let each call keep its original log wording. get/stamp/
+// save are closures because Go generics cannot call a method or set a struct
+// field generically.
+func pollAndSave[T any](get func() ([]T, error), stamp func(*T, time.Time), save func([]T) error, hasDB bool, devName, pollLabel, saveLabel string) {
+	items, err := get()
+	if err != nil {
+		log.Printf("Device %s: %s poll error - %v", devName, pollLabel, err)
+		return
+	}
+	if len(items) == 0 {
+		return
+	}
+	now := time.Now()
+	for i := range items {
+		stamp(&items[i], now)
+	}
+	if hasDB {
+		if err := save(items); err != nil {
+			log.Printf("Device %s: failed to save %s - %v", devName, saveLabel, err)
+		}
+	}
 }
 
 // detectVPNConnections matches VPN tunnel remote IPs to known device IPs

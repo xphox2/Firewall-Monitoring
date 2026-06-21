@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.449] - 2026-06-21
+### Changed
+- **Made the SNMP poller's `pollDevice` testable and consolidated its uniform metric blocks (`cmd/poller/main.go`, `cmd/poller/polldevice_test.go`).** `pollDevice` constructed a live `*snmp.SNMPClient` directly, so it had no test coverage. A `deviceSNMP` interface now describes the getters it uses, and the `Poller` carries a `newSNMP` dialer wired to `snmp.NewSNMPClient` in `NewPoller` and overridable in tests; the device save path keeps using the real `*database.Database` (tests use the in-memory one). The two uniform `GetX → stamp → save` blocks (hardware sensors, processor stats) now go through a generic `pollAndSave` helper that preserves each block's exact log wording; the special blocks stay inline (system-status and interface-stats early-return on error and run alert/spike checks, interface-addresses logs a count, VPN has a multi-value return and SSL-VPN update). Adds the first `pollDevice` characterization tests: a full poll persists every metric type and marks the device online, and a connect failure marks it offline and saves nothing. Behavior unchanged (`*snmp.SNMPClient` satisfies the interface).
+
 ## [0.10.448] - 2026-06-21
 ### Fixed
 - **`CheckProbeDataFlow` no longer reads the policy cache and the alert cooldown/active-state maps without holding the alert-manager lock (`internal/alerts/alerts.go`).** The probe-data-lag loop called `resolveAlertConfig` (reads `policyCache`) and wrote `lastAlert`/`activeAlerts` outside `am.mu`, while every other firing path holds the lock — a latent data race with concurrent alert checks. The resolve, cooldown check, and state writes now run under one `am.mu` section, matching the rest of the manager.
