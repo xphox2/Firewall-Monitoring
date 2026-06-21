@@ -1294,7 +1294,7 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 	return created
 }
 
-// detectPhysicalConnections finds Ethernet/LAG interfaces on same-site devices
+// detectPhysicalConnections finds LAN-segment interfaces on same-site devices
 // that share an IP subnet and creates auto-detected connections.
 func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 	if p.db == nil || len(devices) == 0 {
@@ -1327,7 +1327,16 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 		return *da.SiteID == *db.SiteID
 	}
 
-	// Build lookup: (DeviceID, IfIndex) → interface entry (Ethernet/LAG only)
+	// Build lookup: (DeviceID, IfIndex) → interface entry, restricted to interface
+	// types that carry a LAN-segment (broadcast-domain) L3 address. On FortiGate
+	// the LAN IP almost never sits on a bare Ethernet port: it lives on the
+	// hardware/software switch ("internal"/"lan", reported as ifType 209 bridge)
+	// or on a VLAN sub-interface (ifType 135 l2vlan); some setups use a software
+	// switch/zone (ifType 53 propVirtual). All of these are valid shared-subnet
+	// LAN segments, so we match on them too — not just ethernet/lag. Tunnel/GRE/
+	// loopback/MPLS and the overlay-over-tunnel types (l3ipvlan, vxlan) are
+	// deliberately excluded: they are point-to-point or overlay carriers, not LAN
+	// segments, and are handled by the VPN/overlay detectors.
 	type physIface struct {
 		deviceID uint
 		ifIndex  int
@@ -1335,7 +1344,13 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 		typeName string
 		status   string
 	}
-	physicalTypes := map[string]bool{"ethernet": true, "lag": true}
+	physicalTypes := map[string]bool{
+		"ethernet":    true,
+		"lag":         true,
+		"bridge":      true, // FortiGate hardware/software switch (e.g. "internal")
+		"l2vlan":      true, // VLAN sub-interface holding the LAN gateway IP
+		"propVirtual": true, // software switch / zone
+	}
 	ifLookup := make(map[string]*physIface) // "deviceID:ifIndex" → entry
 	for _, iface := range ifaces {
 		tn := strings.ToLower(iface.TypeName)
