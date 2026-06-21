@@ -24,7 +24,6 @@ COPY web ./web
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o fwmon-api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o fwmon-poller ./cmd/poller
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o fwmon-trap ./cmd/trap-receiver
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o fwmon-probe ./cmd/probe
 
 # Stage 2: Final Alpine image with embedded PostgreSQL
 FROM alpine:3.19
@@ -40,7 +39,6 @@ WORKDIR /app
 COPY --from=builder /build/fwmon-api .
 COPY --from=builder /build/fwmon-poller .
 COPY --from=builder /build/fwmon-trap .
-COPY --from=builder /build/fwmon-probe .
 COPY web ./web
 COPY config.env.example ./config.env.example
 

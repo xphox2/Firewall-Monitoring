@@ -42,11 +42,9 @@ func TestOpenTelemetryTracingWired_AUDIT150(t *testing.T) {
 		t.Error("cmd/api/main.go must call tracing.Init and install tracing.GinMiddleware (AUDIT-150).")
 	}
 
-	// probe relay wraps its transport for the cross-process probe→api span.
-	relay := read("../relay/relay.go")
-	if !strings.Contains(relay, "tracing.WrapTransport(") {
-		t.Error("relay.go must wrap its HTTP transport with tracing.WrapTransport (AUDIT-150).")
-	}
+	// (The bundled probe's relay client that wrapped its transport for the
+	// cross-process probe→api span was removed with cmd/probe; the production
+	// probe is the Firewall-Collector repo, which carries its own tracing seam.)
 
 	// slog handler stamps trace/span IDs from the span context.
 	logg := read("../logging/logging.go")

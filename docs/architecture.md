@@ -18,7 +18,7 @@ flowchart TB
     end
 
     subgraph site["Remote site"]
-        PROBE["fwmon-probe<br/>(collector)"]
+        PROBE["firewall-collector<br/>(sibling repo)"]
     end
 
     subgraph server["Central server (single container)"]
@@ -67,7 +67,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant P as fwmon-probe
+    participant P as firewall-collector
     participant A as fwmon-api
     participant D as PostgreSQL
     participant Op as Operator
@@ -137,7 +137,7 @@ sequenceDiagram
 | Database access + migrations | `internal/database/` |
 | Alert thresholds + state machine | `internal/alerts/` |
 | Notifications | `internal/notifier/` |
-| Probe relay client | `internal/relay/` |
+| Probe wire contract (DTOs + schema version) | `internal/relay/` |
 | Config-backup change detection | `internal/configdiff/` |
 | Persisted secrets (JWT / admin) | `internal/secrets/` |
 | Frontend (admin SPA + wallboard) | `cmd/api/static/`, `web/` |

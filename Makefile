@@ -58,12 +58,11 @@ build: ## Build all binaries into ./bin (reproducible, canonical fwmon-* names)
 	# AUDIT-104: emit the canonical `fwmon-*` names the rest of the project
 	# uses (Dockerfile, deploy.sh, the systemd units). `go build -o bin/
 	# ./cmd/...` would name them after their directories (api/poller/
-	# trap-receiver/probe), which `make install` and the tarball can't then
+	# trap-receiver), which `make install` and the tarball can't then
 	# find and which wouldn't match the systemd ExecStart paths.
 	$(GO) build $(GOFLAGS_REPRO) -o $(BIN_DIR)/fwmon-api    ./cmd/api
 	$(GO) build $(GOFLAGS_REPRO) -o $(BIN_DIR)/fwmon-poller ./cmd/poller
 	$(GO) build $(GOFLAGS_REPRO) -o $(BIN_DIR)/fwmon-trap   ./cmd/trap-receiver
-	$(GO) build $(GOFLAGS_REPRO) -o $(BIN_DIR)/fwmon-probe  ./cmd/probe
 
 .PHONY: vet
 vet: ## go vet
@@ -106,14 +105,13 @@ install: build ## Install binaries + web assets natively (PREFIX, DESTDIR)
 	install -m 0755 $(BIN_DIR)/fwmon-api    $(BINDIR)/fwmon-api
 	install -m 0755 $(BIN_DIR)/fwmon-poller $(BINDIR)/fwmon-poller
 	install -m 0755 $(BIN_DIR)/fwmon-trap   $(BINDIR)/fwmon-trap
-	install -m 0755 $(BIN_DIR)/fwmon-probe  $(BINDIR)/fwmon-probe
 	cp -r web $(SHAREDIR)/web
 	install -m 0644 config.env.example $(SHAREDIR)/config.env.example
 	@echo "Installed to $(DESTDIR)$(PREFIX). Copy $(SHAREDIR)/config.env.example to /etc/firewall-mon/config.env and edit it."
 
 .PHONY: uninstall
 uninstall: ## Remove a native install (PREFIX, DESTDIR)
-	rm -f $(BINDIR)/fwmon-api $(BINDIR)/fwmon-poller $(BINDIR)/fwmon-trap $(BINDIR)/fwmon-probe
+	rm -f $(BINDIR)/fwmon-api $(BINDIR)/fwmon-poller $(BINDIR)/fwmon-trap
 	rm -rf $(SHAREDIR)
 
 .PHONY: tarball

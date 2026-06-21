@@ -20,12 +20,10 @@ func TestBackoffJitter_CallSites_AUDIT088(t *testing.T) {
 		mustNot     string
 		why         string
 	}{
-		{
-			path:        "../relay/relay.go",
-			mustContain: "jitter(time.Duration(retries+1) * time.Second)",
-			mustNot:     "time.Sleep(time.Duration(retries+1) * time.Second)",
-			why:         "relay sendBatch retries must use jittered backoff (AUDIT-088), not a deterministic per-attempt sleep.",
-		},
+		// The bundled probe's relay client (and its jittered sendBatch) was
+		// removed with cmd/probe; the production probe is the Firewall-Collector
+		// repo, which has its own AUDIT-088 guard. Only the in-repo IRC backoff
+		// remains to pin here.
 		{
 			path:        "../irc/bot.go",
 			mustContain: "jitter(1 * time.Second)",
