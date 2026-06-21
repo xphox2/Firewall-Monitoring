@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.454] - 2026-06-21
+### Fixed
+- **Editing a device no longer forces you to re-enter secrets to save an unrelated change (`web/admin/admin.html`, `cmd/api/static/js/admin-main.js`).** The device-edit form blocked saving an SSH-polling device with *"SSH Password is required when SSH polling is enabled"* whenever the (always-blanked-on-edit) SSH password field was empty — so changing the SNMP community, say, demanded re-typing the SSH password. The backend was already correct (it's a partial update that drops blank/masked secrets — v0.10.324), so this was purely the front end. The edit flow is now consistent and professional: **every** secret field (SNMP community, SNMPv3 auth/privacy passwords, SSH password) is blank on edit with a "leave blank to keep current" hint shown only when editing, and a secret is **sent to the server only if you actually type a new value** — so unrelated edits never resend the `********` mask or overwrite a stored secret. An SSH password is required only when there are no stored credentials yet (a new device, or one with no SSH username on record), not on every edit.
+
 ## [0.10.453] - 2026-06-21
 ### Fixed
 - **The admin Sites page (`/admin/sites`) was missing its "+ Add Site" button (`web/admin/sites.html`).** All the create-site machinery already existed — the `CreateSite` handler + `POST /api/sites` route on the backend, and `showAddModal`/the `show-add-modal` event handler/the `site-modal` form in `admin-sites.js` (the empty-state even read "Click '+ Add Site' to create one") — but no button in the page header actually triggered it, so there was no way to add a site from the UI. Added the button to the page header, matching the Probes page pattern.
