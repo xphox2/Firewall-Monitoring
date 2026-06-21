@@ -275,7 +275,7 @@ func (am *AlertManager) globalThresholdForType(alertType string) float64 {
 func defaultSeverityForType(alertType string) string {
 	switch alertType {
 	case "DISK_HIGH", "INTERFACE_DOWN", "VPN_TUNNEL_DOWN", "DEVICE_OFFLINE",
-		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL":
+		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL", "SSH_HOST_KEY_CHANGED":
 		return "critical"
 	case "SYSLOG_ALERT":
 		return "warning"
