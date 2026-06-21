@@ -258,6 +258,18 @@ func (p *Poller) pollAllDevices() {
 	}
 	wg.Wait()
 
+	// Drop previous-interface baselines for devices/interfaces no longer polled
+	// so prevIfaceStats cannot grow without bound across the poller's lifetime
+	// (a decommissioned device or a removed dynamic tunnel would otherwise leave
+	// its entry behind forever). Live interfaces re-stamp their Timestamp every
+	// cycle; use a generous TTL so a transient poll outage doesn't discard a
+	// still-useful baseline.
+	ifaceTTL := 12 * p.cfg.SNMP.PollInterval
+	if ifaceTTL < time.Hour {
+		ifaceTTL = time.Hour
+	}
+	p.pruneStaleIfaceStats(ifaceTTL)
+
 	// Mark probe-assigned devices offline if their last_polled is stale.
 	// Uses 3× poll interval as the threshold (minimum 5 minutes).
 	//
@@ -330,6 +342,21 @@ func (p *Poller) pollAllDevices() {
 	if p.alertManager != nil {
 		p.alertManager.CheckEscalations()
 		p.alertManager.CheckProbeDataFlow()
+	}
+}
+
+// pruneStaleIfaceStats removes previous-interface-stats entries that have not
+// been refreshed within ttl. Live interfaces re-stamp their entry every poll
+// cycle, so anything older belongs to a device or interface that is no longer
+// polled and would otherwise accumulate in the map for the life of the process.
+func (p *Poller) pruneStaleIfaceStats(ttl time.Duration) {
+	cutoff := time.Now().Add(-ttl)
+	p.ifaceStatsMu.Lock()
+	defer p.ifaceStatsMu.Unlock()
+	for key, st := range p.prevIfaceStats {
+		if st == nil || st.Timestamp.Before(cutoff) {
+			delete(p.prevIfaceStats, key)
+		}
 	}
 }
 

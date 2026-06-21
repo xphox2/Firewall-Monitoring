@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.445] - 2026-06-20
+### Fixed
+- **Poller no longer accumulates previous-interface-stats entries indefinitely (`cmd/poller/main.go`).** `prevIfaceStats` — the per-interface baseline used for throughput-delta and error-rate checks — was written every poll cycle but never pruned, so a decommissioned device or a removed dynamic tunnel left its entry in the map for the life of the process (a slow memory leak in the long-running poller). Each cycle now drops entries not refreshed within a generous TTL (12× the poll interval, minimum 1h); live interfaces re-stamp every cycle so active baselines are retained. Covered by a new unit test.
+
 ## [0.10.444] - 2026-06-20
 ### Fixed
 - **`metrics.RegisterDBPool` no longer panics (and crashes the API) on a non-duplicate registration error (`internal/metrics/metrics.go`).** A duplicate registration was already swallowed, but any *other* `prometheus.Register` error (a name collision with a different collector, registry corruption) hit a bare `panic(err)` — taking down the whole API process over a lost observability gauge. Now logged via `slog.Warn` and skipped: the pool's gauges go missing, but the process the gauges exist to monitor keeps serving. CTO-loop Tier 0 (B6).
