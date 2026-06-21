@@ -156,17 +156,7 @@ func (p *PfSenseProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStatu
 	return parseBSDVPNFromInterfacePDUs(pdus)
 }
 
-func (p *PfSenseProfile) SSLVPNBaseOID() string { return "" }
-
-func (p *PfSenseProfile) ParseSSLVPNStatus(pdus []gosnmp.SnmpPDU) (int, int) {
-	return 0, 0
-}
-
-func (p *PfSenseProfile) ParseSSLVPNTunnels(pdus []gosnmp.SnmpPDU) []models.VPNStatus {
-	return nil
-}
-
-func (p *PfSenseProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+func (p *PfSenseProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
 	return bsdGetAllVPNTunnels(s)
 }
 

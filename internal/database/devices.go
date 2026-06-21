@@ -114,14 +114,6 @@ func (d *Database) UpdateDeviceStatus(id uint, status string, lastPolled time.Ti
 	}).Error
 }
 
-// UpdateDeviceSSLVPN updates SSL-VPN user/session counts for a device.
-func (d *Database) UpdateDeviceSSLVPN(id uint, users, tunnels int) error {
-	return d.db.Model(&models.Device{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"sslvpn_users":   users,
-		"sslvpn_tunnels": tunnels,
-	}).Error
-}
-
 // MarkStaleProbeDevicesOffline marks probe-assigned devices as "offline" if
 // their last_polled timestamp is older than the given threshold, and returns
 // the devices that transitioned online -> offline on this call.

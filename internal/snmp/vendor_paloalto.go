@@ -122,17 +122,7 @@ func (p *PaloAltoProfile) ParseVPNStatus(pdus []gosnmp.SnmpPDU) []models.VPNStat
 	return parsePaloAltoVPNFromInterfacePDUs(pdus)
 }
 
-func (p *PaloAltoProfile) SSLVPNBaseOID() string { return "" }
-
-func (p *PaloAltoProfile) ParseSSLVPNStatus(_ []gosnmp.SnmpPDU) (int, int) {
-	return 0, 0
-}
-
-func (p *PaloAltoProfile) ParseSSLVPNTunnels(_ []gosnmp.SnmpPDU) []models.VPNStatus {
-	return nil
-}
-
-func (p *PaloAltoProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+func (p *PaloAltoProfile) GetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
 	return paGetAllVPNTunnels(s)
 }
 
@@ -240,10 +230,10 @@ func getOrCreatePAIf(m map[int]*paIfData, idx int) *paIfData {
 }
 
 // paGetAllVPNTunnels walks IF-MIB to discover tunnel.* VPN interfaces.
-func paGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+func paGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
 	pdus, err := s.Walk(BaseOIDInterface)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, err
 	}
 
 	// Also walk ifXTable for 64-bit counters
@@ -253,7 +243,7 @@ func paGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
 	}
 
 	tunnels := parsePaloAltoVPNFromInterfacePDUs(pdus)
-	return tunnels, 0, 0, nil
+	return tunnels, nil
 }
 
 // Hardware sensors: ENTITY-SENSOR-MIB for temperature, fan, voltage, power.

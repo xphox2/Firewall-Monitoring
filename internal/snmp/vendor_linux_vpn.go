@@ -166,10 +166,10 @@ func getOrCreateLinuxIf(m map[int]*linuxIfData, idx int) *linuxIfData {
 
 // linuxGetAllVPNTunnels walks IF-MIB to discover VPN interfaces on Linux.
 // Used by Firewalla's GetAllVPNTunnels implementation.
-func linuxGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) {
+func linuxGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, error) {
 	pdus, err := s.Walk(BaseOIDInterface)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, err
 	}
 
 	// Also walk ifXTable for 64-bit counters and interface names
@@ -179,5 +179,5 @@ func linuxGetAllVPNTunnels(s *SNMPClient) ([]models.VPNStatus, int, int, error) 
 	}
 
 	tunnels := parseLinuxVPNFromInterfacePDUs(pdus)
-	return tunnels, 0, 0, nil
+	return tunnels, nil
 }

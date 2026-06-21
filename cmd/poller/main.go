@@ -29,7 +29,7 @@ type deviceSNMP interface {
 	GetSystemStatus(vendor ...string) (*models.SystemStatus, error)
 	GetInterfaceStats() ([]models.InterfaceStats, error)
 	GetInterfaceAddresses() ([]models.InterfaceAddress, error)
-	GetAllVPNTunnels() ([]models.VPNStatus, int, int, error)
+	GetAllVPNTunnels() ([]models.VPNStatus, error)
 	GetHardwareSensors(vendor ...string) ([]models.HardwareSensor, error)
 	GetProcessorStats(vendor ...string) ([]models.ProcessorStats, error)
 	Close() error
@@ -551,8 +551,8 @@ func (p *Poller) pollDevice(device *models.Device) {
 		log.Printf("Device %s: %d interface addresses collected", device.Name, len(ifAddrs))
 	}
 
-	// Collect all VPN tunnel status (IPSec + SSL-VPN with proper type detection)
-	vpnStatuses, sslvpnUsers, sslvpnTunnels, err := client.GetAllVPNTunnels()
+	// Collect all VPN tunnel status (IPSec + GRE with proper type detection)
+	vpnStatuses, err := client.GetAllVPNTunnels()
 	if err != nil {
 		log.Printf("Device %s: VPN walk error - %v", device.Name, err)
 	} else if len(vpnStatuses) > 0 {
@@ -568,16 +568,6 @@ func (p *Poller) pollDevice(device *models.Device) {
 		}
 		if p.alertManager != nil {
 			p.alertManager.CheckVPNStatus(vpnStatuses, device.SiteID)
-		}
-	}
-
-	// Update SSL-VPN user/session counts
-	if sslvpnUsers > 0 || sslvpnTunnels > 0 {
-		log.Printf("Device %s: SSL-VPN: %d users, %d active sessions", device.Name, sslvpnUsers, sslvpnTunnels)
-		if p.db != nil {
-			if err := p.db.UpdateDeviceSSLVPN(device.ID, sslvpnUsers, sslvpnTunnels); err != nil {
-				log.Printf("Device %s: failed to update SSL-VPN status - %v", device.Name, err)
-			}
 		}
 	}
 

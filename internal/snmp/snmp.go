@@ -421,36 +421,12 @@ func (s *SNMPClient) GetVPNStatus(vendor ...string) ([]models.VPNStatus, error) 
 	return profile.ParseVPNStatus(pdus), nil
 }
 
-func (s *SNMPClient) GetAllVPNTunnels() ([]models.VPNStatus, int, int, error) {
+func (s *SNMPClient) GetAllVPNTunnels() ([]models.VPNStatus, error) {
 	profile := s.resolveVendor("")
 	if profile == nil {
-		return nil, 0, 0, fmt.Errorf("no vendor profile available")
+		return nil, fmt.Errorf("no vendor profile available")
 	}
 	return profile.GetAllVPNTunnels(s)
-}
-
-func (s *SNMPClient) GetSSLVPNStatus(vendor ...string) (int, int, error) {
-	v := ""
-	if len(vendor) > 0 {
-		v = vendor[0]
-	}
-	profile := s.resolveVendor(v)
-	if profile == nil {
-		return 0, 0, fmt.Errorf("no vendor profile available")
-	}
-
-	baseOID := profile.SSLVPNBaseOID()
-	if baseOID == "" {
-		return 0, 0, nil // vendor doesn't support SSL-VPN polling
-	}
-
-	pdus, err := s.Walk(baseOID)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to walk SSL-VPN table: %w", err)
-	}
-
-	users, sessions := profile.ParseSSLVPNStatus(pdus)
-	return users, sessions, nil
 }
 
 func getOrCreateVPN(m map[int]*models.VPNStatus, index int) *models.VPNStatus {
