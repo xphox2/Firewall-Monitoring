@@ -190,50 +190,39 @@ func (h *Handler) GetSyslogMessages(c *gin.Context) {
 	hours := httputil.ParseHours(c)
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	query := db.Gorm().Order("timestamp DESC").Where("timestamp >= ?", cutoff)
-
-	if probeID := c.Query("probe_id"); probeID != "" {
-		query = query.Where("probe_id = ?", probeID)
-	}
-	if deviceID := c.Query("device_id"); deviceID != "" {
-		query = query.Where("device_id = ?", deviceID)
-	}
-	if severity := c.Query("severity"); severity != "" {
-		if s, err := strconv.Atoi(severity); err == nil {
-			query = query.Where("severity <= ?", s)
+	// Apply the SAME filters to both the list query and the COUNT query. These
+	// were previously two hand-copied filter blocks; keeping them in one closure
+	// removes the drift hazard where editing one (e.g. adding a filter) but not
+	// the other would silently desync the pager total from the rows returned.
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		q = q.Where("timestamp >= ?", cutoff)
+		if probeID := c.Query("probe_id"); probeID != "" {
+			q = q.Where("probe_id = ?", probeID)
 		}
-	}
-	if search := c.Query("search"); search != "" {
-		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(search)
-		like := "%" + escaped + "%"
-		query = query.Where("message LIKE ? ESCAPE '\\' OR hostname LIKE ? ESCAPE '\\' OR app_name LIKE ? ESCAPE '\\'", like, like, like)
+		if deviceID := c.Query("device_id"); deviceID != "" {
+			q = q.Where("device_id = ?", deviceID)
+		}
+		if severity := c.Query("severity"); severity != "" {
+			if s, err := strconv.Atoi(severity); err == nil {
+				q = q.Where("severity <= ?", s)
+			}
+		}
+		if search := c.Query("search"); search != "" {
+			escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(search)
+			like := "%" + escaped + "%"
+			q = q.Where("message LIKE ? ESCAPE '\\' OR hostname LIKE ? ESCAPE '\\' OR app_name LIKE ? ESCAPE '\\'", like, like, like)
+		}
+		return q
 	}
 
 	var messages []models.SyslogMessage
-	if err := query.Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
+	if err := applyFilters(db.Gorm().Order("timestamp DESC")).Limit(limit).Offset(offset).Find(&messages).Error; err != nil {
 		httputil.InternalError(c, "Failed to get syslog messages", err)
 		return
 	}
 
 	var total int64
-	countQuery := db.Gorm().Model(&models.SyslogMessage{}).Where("timestamp >= ?", cutoff)
-	if probeID := c.Query("probe_id"); probeID != "" {
-		countQuery = countQuery.Where("probe_id = ?", probeID)
-	}
-	if deviceID := c.Query("device_id"); deviceID != "" {
-		countQuery = countQuery.Where("device_id = ?", deviceID)
-	}
-	if severity := c.Query("severity"); severity != "" {
-		if s, err := strconv.Atoi(severity); err == nil {
-			countQuery = countQuery.Where("severity <= ?", s)
-		}
-	}
-	if search := c.Query("search"); search != "" {
-		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(search)
-		like := "%" + escaped + "%"
-		countQuery = countQuery.Where("message LIKE ? ESCAPE '\\' OR hostname LIKE ? ESCAPE '\\' OR app_name LIKE ? ESCAPE '\\'", like, like, like)
-	}
-	countQuery.Count(&total)
+	applyFilters(db.Gorm().Model(&models.SyslogMessage{})).Count(&total)
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"messages": messages, "total": total}))
 }

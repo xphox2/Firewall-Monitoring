@@ -29,35 +29,55 @@ type fortigateNormalizer struct{}
 
 func (fortigateNormalizer) Vendor() string { return "fortigate" }
 
+// Volatile pattern bodies are declared ONCE here so the compiled regexes used by
+// Normalize (which feed the change-detection hash) and the VolatilePattern
+// strings returned to the UI can never silently drift apart — editing the body
+// in one place but not the other was a latent bug where the masked-in-UI region
+// would stop matching what the hash actually neutralized. The line-anchored
+// patterns are compiled with a `(?m)` prefix below; the UI receives the bare
+// body (the frontend applies multiline mode itself). The PEM body carries its
+// own `(?s)` flag because both consumers need dot-matches-newline.
+const (
+	fortiEncBody           = `^(\s*set\s+\S+\s+ENC\s+)\S+\s*$`
+	fortiConfigVersionBody = `^(#config-version=).*$`
+	fortiConfFileVerBody   = `^(#conf_file_ver=).*$`
+	fortiPrivateEncKeyBody = `^(#private-encryption-key=).*$`
+	fortiLastLoginBody     = `^(\s*set\s+last-login\s+).*$`
+	fortiLastUpdatedBody   = `^(\s*set\s+last-updated\s+).*$`
+	fortiSystemTimeBody    = `^(\s*!System time:\s*).*$`
+	fortiPromptPrefixBody  = `^[A-Za-z0-9._-]+(?: \([A-Za-z0-9._:/-]+\))? # `
+	fortiPemBlockBody      = `(?s)(\s*set\s+\S+\s+"-----BEGIN[^"\r\n]+-----)[^"]*?(-----END[^"\r\n]+-----")`
+)
+
 var (
 	// `set <field> ENC <base64-blob>` — credential ciphertext. Random IV per emission.
-	fortiEncLineRegex = regexp.MustCompile(`(?m)^(\s*set\s+\S+\s+ENC\s+)\S+\s*$`)
+	fortiEncLineRegex = regexp.MustCompile(`(?m)` + fortiEncBody)
 
 	// `#config-version=...` and `#conf_file_ver=...` — header lines that include
 	// monotonically-changing version numbers and timestamps unrelated to config content.
-	fortiConfigVersionRegex = regexp.MustCompile(`(?m)^(#config-version=).*$`)
-	fortiConfFileVerRegex   = regexp.MustCompile(`(?m)^(#conf_file_ver=).*$`)
+	fortiConfigVersionRegex = regexp.MustCompile(`(?m)` + fortiConfigVersionBody)
+	fortiConfFileVerRegex   = regexp.MustCompile(`(?m)` + fortiConfFileVerBody)
 
 	// `#private-encryption-key=...` — only present when private-data-encryption is enabled.
 	// The key itself is admin-supplied and we shouldn't hash it.
-	fortiPrivateEncKeyRegex = regexp.MustCompile(`(?m)^(#private-encryption-key=).*$`)
+	fortiPrivateEncKeyRegex = regexp.MustCompile(`(?m)` + fortiPrivateEncKeyBody)
 
 	// `set last-login ...` — drifts on every login event.
-	fortiLastLoginRegex = regexp.MustCompile(`(?m)^(\s*set\s+last-login\s+).*$`)
+	fortiLastLoginRegex = regexp.MustCompile(`(?m)` + fortiLastLoginBody)
 
 	// `set last-updated <epoch>` — Unix timestamp inside GUI dashboard widgets
 	// (and a few other tables). Bumped on any dashboard interaction, unrelated to
 	// firewall/security configuration. Left visible it false-alerts on every save.
-	fortiLastUpdatedRegex = regexp.MustCompile(`(?m)^(\s*set\s+last-updated\s+).*$`)
+	fortiLastUpdatedRegex = regexp.MustCompile(`(?m)` + fortiLastUpdatedBody)
 
 	// A FortiOS CLI prompt echoed into a console-captured backup, e.g.
 	// `FW-HOME # #config-version=...` or `FW-HOME (global) # config system ...`.
 	// The prompt is a capture artifact, not config content; stripping it lets the
 	// rest of the line (notably the #config-version header) normalize correctly.
-	fortiPromptPrefixRegex = regexp.MustCompile(`(?m)^[A-Za-z0-9._-]+(?: \([A-Za-z0-9._:/-]+\))? # `)
+	fortiPromptPrefixRegex = regexp.MustCompile(`(?m)` + fortiPromptPrefixBody)
 
 	// `!System time:` — ad-hoc timestamp banners some FortiOS builds inject.
-	fortiSystemTimeRegex = regexp.MustCompile(`(?m)^(\s*!System time:\s*).*$`)
+	fortiSystemTimeRegex = regexp.MustCompile(`(?m)` + fortiSystemTimeBody)
 
 	// Multi-line PEM-bearing fields. Covers `set private-key` (body re-encrypted
 	// with random IV every backup), `set ca`, `set csr`, `set certificate`, and
@@ -73,9 +93,7 @@ var (
 	// adjacent PEM blocks (e.g. `set ca` immediately followed by `set csr`)
 	// into a single capture, masking the second field name and losing the
 	// boundary between them.
-	fortiPemBlockRegex = regexp.MustCompile(
-		`(?s)(\s*set\s+\S+\s+"-----BEGIN[^"\r\n]+-----)[^"]*?(-----END[^"\r\n]+-----")`,
-	)
+	fortiPemBlockRegex = regexp.MustCompile(fortiPemBlockBody)
 
 	// Password-masking marker (FortiOS 7.2.1+ optional feature). Presence in the
 	// backup means the backup is NOT restorable — restore requires re-entering
@@ -119,16 +137,16 @@ func (fortigateNormalizer) Normalize(raw []byte) ([]byte, string) {
 
 func (fortigateNormalizer) VolatilePatterns() []VolatilePattern {
 	return []VolatilePattern{
-		{Name: "enc", Description: "AES-encrypted secret with random IV", Regex: `^(\s*set\s+\S+\s+ENC\s+)\S+\s*$`},
-		{Name: "config-version", Description: "FortiOS config-version header", Regex: `^(#config-version=).*$`},
-		{Name: "conf-file-ver", Description: "FortiOS conf_file_ver header", Regex: `^(#conf_file_ver=).*$`},
-		{Name: "private-encryption-key", Description: "Admin-supplied private-data-encryption key", Regex: `^(#private-encryption-key=).*$`},
-		{Name: "last-login", Description: "Per-admin last-login timestamp", Regex: `^(\s*set\s+last-login\s+).*$`},
-		{Name: "last-updated", Description: "GUI widget last-updated Unix timestamp", Regex: `^(\s*set\s+last-updated\s+).*$`},
-		{Name: "system-time", Description: "FortiOS system-time banner", Regex: `^(\s*!System time:\s*).*$`},
-		{Name: "prompt-prefix", Description: "Console CLI prompt echoed into a captured backup", Regex: `^[A-Za-z0-9._-]+(?: \([A-Za-z0-9._:/-]+\))? # `},
+		{Name: "enc", Description: "AES-encrypted secret with random IV", Regex: fortiEncBody},
+		{Name: "config-version", Description: "FortiOS config-version header", Regex: fortiConfigVersionBody},
+		{Name: "conf-file-ver", Description: "FortiOS conf_file_ver header", Regex: fortiConfFileVerBody},
+		{Name: "private-encryption-key", Description: "Admin-supplied private-data-encryption key", Regex: fortiPrivateEncKeyBody},
+		{Name: "last-login", Description: "Per-admin last-login timestamp", Regex: fortiLastLoginBody},
+		{Name: "last-updated", Description: "GUI widget last-updated Unix timestamp", Regex: fortiLastUpdatedBody},
+		{Name: "system-time", Description: "FortiOS system-time banner", Regex: fortiSystemTimeBody},
+		{Name: "prompt-prefix", Description: "Console CLI prompt echoed into a captured backup", Regex: fortiPromptPrefixBody},
 		{Name: "gui-dashboard", Description: "Per-admin GUI dashboard layout block (omitted by `show full-configuration`)", Regex: `(?s)^(\s*)config gui-dashboard\b.*?^\1end$`},
-		{Name: "pem-block", Description: "PEM-bearing field (private-key, ca, csr, certificate) — body masked, BEGIN/END preserved", Regex: `(?s)(\s*set\s+\S+\s+"-----BEGIN[^"\r\n]+-----)[^"]*?(-----END[^"\r\n]+-----")`},
+		{Name: "pem-block", Description: "PEM-bearing field (private-key, ca, csr, certificate) — body masked, BEGIN/END preserved", Regex: fortiPemBlockBody},
 	}
 }
 

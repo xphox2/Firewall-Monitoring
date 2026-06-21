@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"firewall-mon/internal/auth"
 )
@@ -129,22 +130,39 @@ func LoadOrGenerate(envValue, baseDir, filename string) (value string, source So
 		_ = tmp.Close()
 		return "", 0, fmt.Errorf("write temp secret %s: %w", tmpPath, wErr)
 	}
+	// fsync the data blocks BEFORE os.Link publishes the dirent. Without this,
+	// on some filesystems (notably Windows, and on any platform after a crash)
+	// the hard link can become visible while the inode's data blocks are still
+	// buffered, so a racing re-reader or a post-crash reader observes the file
+	// present but zero-length — the root cause of the intermittent
+	// "empty after concurrent write" flake. Sync makes the content durable
+	// before it is reachable through `path`.
+	if sErr := tmp.Sync(); sErr != nil {
+		_ = tmp.Close()
+		return "", 0, fmt.Errorf("sync temp secret %s: %w", tmpPath, sErr)
+	}
 	if cErr := tmp.Close(); cErr != nil {
 		return "", 0, fmt.Errorf("close temp secret %s: %w", tmpPath, cErr)
 	}
 	if linkErr := os.Link(tmpPath, path); linkErr != nil {
 		if errors.Is(linkErr, os.ErrExist) {
-			// Another process won the race; its file is fully written (we never
-			// publish an empty one), so re-read and use its value.
-			data, rErr := os.ReadFile(path)
-			if rErr != nil {
-				return "", 0, fmt.Errorf("re-read secret %s after race: %w", path, rErr)
+			// Another process won the race; it fsyncs before linking, so its
+			// file is normally fully durable by the time we observe ErrExist.
+			// Retry a few times anyway to absorb any residual read-after-link
+			// visibility lag instead of hard-failing on a transient empty read.
+			for attempt := 0; ; attempt++ {
+				data, rErr := os.ReadFile(path)
+				if rErr != nil {
+					return "", 0, fmt.Errorf("re-read secret %s after race: %w", path, rErr)
+				}
+				if trimmed := strings.TrimSpace(string(data)); trimmed != "" {
+					return trimmed, FromFile, nil
+				}
+				if attempt >= 4 {
+					return "", 0, fmt.Errorf("secret file %s is empty after concurrent write", path)
+				}
+				time.Sleep(5 * time.Millisecond)
 			}
-			trimmed := strings.TrimSpace(string(data))
-			if trimmed == "" {
-				return "", 0, fmt.Errorf("secret file %s is empty after concurrent write", path)
-			}
-			return trimmed, FromFile, nil
 		}
 		return "", 0, fmt.Errorf("link secret into place %s: %w", path, linkErr)
 	}

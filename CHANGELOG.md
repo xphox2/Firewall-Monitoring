@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.445] - 2026-06-20
+### Fixed
+- **Poller no longer accumulates previous-interface-stats entries indefinitely (`cmd/poller/main.go`).** `prevIfaceStats` — the per-interface baseline used for throughput-delta and error-rate checks — was written every poll cycle but never pruned, so a decommissioned device or a removed dynamic tunnel left its entry in the map for the life of the process (a slow memory leak in the long-running poller). Each cycle now drops entries not refreshed within a generous TTL (12× the poll interval, minimum 1h); live interfaces re-stamp every cycle so active baselines are retained. Covered by a new unit test.
+
+## [0.10.444] - 2026-06-20
+### Fixed
+- **`metrics.RegisterDBPool` no longer panics (and crashes the API) on a non-duplicate registration error (`internal/metrics/metrics.go`).** A duplicate registration was already swallowed, but any *other* `prometheus.Register` error (a name collision with a different collector, registry corruption) hit a bare `panic(err)` — taking down the whole API process over a lost observability gauge. Now logged via `slog.Warn` and skipped: the pool's gauges go missing, but the process the gauges exist to monitor keeps serving. CTO-loop Tier 0 (B6).
+
+## [0.10.443] - 2026-06-20
+### Changed
+- **FortiGate config-diff volatile patterns are now declared once and shared between the hash normalizer and the UI (`internal/configdiff/vendor_fortigate.go`).** Each volatile pattern body (ENC ciphertext, config-version/conf_file_ver headers, private-encryption-key, last-login, last-updated, system-time, prompt-prefix, PEM block) existed as two hand-copied copies: the compiled `regexp` used by `Normalize` (which feeds the change-detection hash) and the string returned by `VolatilePatterns()` (which the compare UI uses to highlight masked regions). Editing one but not the other would silently desync what the UI shows as masked from what the hash actually neutralizes. Extracted each body into a single `const`; the compiled regexes prepend `(?m)` (the PEM body keeps its own `(?s)`), and `VolatilePatterns` references the same consts. Verified byte-identical to the previous patterns — zero behavior change. CTO-loop Tier 0 (B3).
+
+## [0.10.442] - 2026-06-20
+### Changed
+- **`GetSyslogMessages` now applies its filters through a single closure shared by the list query and the COUNT query (`internal/api/handlers/handlers_analytics.go`).** The four filters (probe_id, device_id, severity, search) plus the time-window cutoff were previously hand-copied into two separate `gorm` query builders. They were identical, so totals were correct today — but editing one block and not the other (e.g. adding a filter) would silently desync the pager total from the rows returned. Extracted one local `applyFilters(q)` so both queries provably share the same predicates. Behavior-preserving; no API change. CTO-loop Tier 0 (B2).
+
+## [0.10.441] - 2026-06-20
+### Fixed
+- **`secrets.LoadOrGenerate` now fsyncs the secret before publishing it, fixing the intermittent "secret file empty after concurrent write" flake (`internal/secrets/secrets.go`).** The generate path writes the token to a temp file and `os.Link`s it into place so the final file only ever appears fully-written. But it never called `tmp.Sync()` before the link, so on some filesystems (notably Windows, and on any platform after a crash) the hard-linked directory entry could become visible while the inode's data blocks were still buffered — a racing re-reader or a post-crash reader would then see the file present but zero-length. Added `tmp.Sync()` before `os.Link`, so the content is durable before it is reachable, and made the race-loser's re-read retry a few times (5×5ms) instead of hard-failing on a transient empty read. This is a real durability fix, not only a test stabilizer (`go test -race` could never have caught it — it is filesystem visibility, not a Go memory race). First item of the v0.10.441+ adversarial CTO-loop refactor pass.
+
 ## [0.10.440] - 2026-06-20
 ### Added
 - **Semantic, per-object config diff for FortiGate (replaces the line-only diff in the compare view).** A new object parser (`internal/configdiff/parse_fortigate.go`, exposed via the optional `configdiff.ObjectParser` capability) turns a FortiOS config into vendor-neutral `ConfigObject`s — firewall policies, address objects, interfaces, admins, IPsec tunnels, BGP neighbors, singleton settings blocks — by depth-walking `config/edit/next/end` and flattening nested blocks into dotted attribute keys. `configdiff.DiffObjects` then reports per-object **added / removed / modified** with attribute-level before/after, parsing the *normalized* text so ENC/IV churn never shows as a phantom change. The compare modal now defaults to a collapsible, risk-badged **Object view** (grouped by kind) with a **Raw diff** toggle that preserves the previous line view. Vendors without a parser fall back to the line diff automatically.
