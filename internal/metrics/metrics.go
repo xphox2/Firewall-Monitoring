@@ -14,6 +14,7 @@ package metrics
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -69,6 +70,11 @@ func Middleware() gin.HandlerFunc {
 // idle connections, wait count, wait duration, and the close counters) for the
 // given pool. No-op if db is nil; idempotent — a duplicate registration is
 // swallowed rather than panicking, so callers don't have to guard re-entry.
+//
+// A non-duplicate registration error (name collision with a different
+// collector, registry corruption) is logged and skipped rather than panicking:
+// /metrics is observability, and losing one pool's gauges must never take down
+// the API process that the gauges exist to monitor.
 func RegisterDBPool(db *sql.DB, name string) {
 	if db == nil {
 		return
@@ -77,7 +83,8 @@ func RegisterDBPool(db *sql.DB, name string) {
 	if err := prometheus.Register(c); err != nil {
 		var already prometheus.AlreadyRegisteredError
 		if !errors.As(err, &already) {
-			panic(err)
+			slog.Warn("metrics: failed to register DB pool collector; pool gauges unavailable",
+				"pool", name, "error", err)
 		}
 	}
 }
