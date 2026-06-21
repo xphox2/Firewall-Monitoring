@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.442] - 2026-06-20
+### Changed
+- **`GetSyslogMessages` now applies its filters through a single closure shared by the list query and the COUNT query (`internal/api/handlers/handlers_analytics.go`).** The four filters (probe_id, device_id, severity, search) plus the time-window cutoff were previously hand-copied into two separate `gorm` query builders. They were identical, so totals were correct today — but editing one block and not the other (e.g. adding a filter) would silently desync the pager total from the rows returned. Extracted one local `applyFilters(q)` so both queries provably share the same predicates. Behavior-preserving; no API change. CTO-loop Tier 0 (B2).
+
 ## [0.10.441] - 2026-06-20
 ### Fixed
 - **`secrets.LoadOrGenerate` now fsyncs the secret before publishing it, fixing the intermittent "secret file empty after concurrent write" flake (`internal/secrets/secrets.go`).** The generate path writes the token to a temp file and `os.Link`s it into place so the final file only ever appears fully-written. But it never called `tmp.Sync()` before the link, so on some filesystems (notably Windows, and on any platform after a crash) the hard-linked directory entry could become visible while the inode's data blocks were still buffered — a racing re-reader or a post-crash reader would then see the file present but zero-length. Added `tmp.Sync()` before `os.Link`, so the content is durable before it is reachable, and made the race-loser's re-read retry a few times (5×5ms) instead of hard-failing on a transient empty read. This is a real durability fix, not only a test stabilizer (`go test -race` could never have caught it — it is filesystem visibility, not a Go memory race). First item of the v0.10.441+ adversarial CTO-loop refactor pass.
