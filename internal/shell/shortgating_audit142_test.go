@@ -12,9 +12,8 @@ import (
 // if a gated file drops its testing.Short() skip.
 func TestShortGatingAdopted_AUDIT142(t *testing.T) {
 	mustGate := []string{
-		"../database/batcher_test.go",                // time.Sleep / concurrency batcher tests
-		"../snmp/trap_test.go",                       // rate-limiter refill timing + concurrency
-		"../../cmd/probe/probe_ctx_audit087_test.go", // 5s bounded-drain test
+		"../database/batcher_test.go", // time.Sleep / concurrency batcher tests
+		"../snmp/trap_test.go",        // rate-limiter refill timing + concurrency
 	}
 	for _, path := range mustGate {
 		data, err := os.ReadFile(path)

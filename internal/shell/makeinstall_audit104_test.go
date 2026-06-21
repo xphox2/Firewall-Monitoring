@@ -30,7 +30,7 @@ func TestMakefileNativeInstall_AUDIT104(t *testing.T) {
 
 	// The build target must emit the canonical fwmon-* names so install /
 	// tarball / the systemd ExecStart paths line up.
-	for _, name := range []string{"fwmon-api", "fwmon-poller", "fwmon-trap", "fwmon-probe"} {
+	for _, name := range []string{"fwmon-api", "fwmon-poller", "fwmon-trap"} {
 		if !strings.Contains(mf, "$(BIN_DIR)/"+name) {
 			t.Errorf("Makefile build target does not produce %q (AUDIT-104): native install references the canonical fwmon-* names.", name)
 		}

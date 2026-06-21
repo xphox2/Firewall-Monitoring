@@ -8,7 +8,7 @@ Email the maintainers privately at the address listed in `LICENSE` / git log, or
 
 Include:
 
-- A description of the issue and the affected component (`cmd/api`, `cmd/poller`, `cmd/trap-receiver`, `cmd/probe`, or a vendored asset).
+- A description of the issue and the affected component (`cmd/api`, `cmd/poller`, `cmd/trap-receiver`, or a vendored asset).
 - The version (`git describe --tags` or the value of `ServerVersion` from `cmd/api/main.go:34` in your deployment).
 - Reproduction steps. A minimal proof-of-concept is appreciated.
 - Whether you have observed the issue in production or only in a lab.
@@ -39,7 +39,6 @@ In scope:
 - The `cmd/api` HTTP server (admin panel + ingestion).
 - The `cmd/poller` SNMP polling daemon.
 - The `cmd/trap-receiver` SNMP trap listener (UDP 162).
-- The `cmd/probe` collector binary.
 - Default configuration in `config.env.example`, `docker-compose.yml`, and `Dockerfile`.
 - Build-time supply chain (`go.mod`, vendored JS in `cmd/api/static/`).
 

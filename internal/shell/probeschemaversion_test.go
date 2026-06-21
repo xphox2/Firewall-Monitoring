@@ -18,12 +18,16 @@ import (
 // mislabeled itself "AUDIT-065", which is an unrelated, already-resolved
 // frontend finding — this feature is intentionally not tied to that ID.)
 func TestProbeSchemaVersionHandshake(t *testing.T) {
+	// internal/relay/relay.go is now the wire-contract definitions only (the
+	// bundled probe client that advertised SchemaVersionMax on register was
+	// removed with cmd/probe). It still owns the consts and the SchemaVersion
+	// field on the request/response DTOs; the production probe lives in the
+	// Firewall-Collector repo.
 	relaySrc := readFile(t, "../../internal/relay/relay.go")
 	for _, needle := range []string{
 		"SchemaVersionMin = 1",
 		"SchemaVersionMax = 1",
 		"SchemaVersion int `json:\"schema_version,omitempty\"`",
-		"SchemaVersion: SchemaVersionMax",
 	} {
 		if !strings.Contains(relaySrc, needle) {
 			t.Errorf("internal/relay/relay.go missing %q (schema_version handshake)", needle)

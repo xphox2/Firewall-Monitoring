@@ -4,8 +4,8 @@
 > reception, alerting, config-change tracking, and uptime — run centrally
 > or distributed via lightweight remote probes.**
 >
-> This repo builds the **central server** (4 Go binaries: `fwmon-api`,
-> `fwmon-poller`, `fwmon-trap`, `fwmon-probe`) and ships the admin UI
+> This repo builds the **central server** (3 Go binaries: `fwmon-api`,
+> `fwmon-poller`, `fwmon-trap`) and ships the admin UI
 > and the public GridStack dashboard. The **probe** half of the project
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
@@ -26,7 +26,7 @@ the edge**, this repo **runs at HQ**.
 | | Server (this repo) | Probe (sibling) |
 |---|---|---|
 | Role | Store, alert, visualize, configure | Listen at the edge, relay to HQ |
-| Binaries | `fwmon-api`, `fwmon-poller`, `fwmon-trap`, `fwmon-probe` | `firewall-collector`, `firewall-collector-diag-backup`, `firewall-collector-tftp-test` |
+| Binaries | `fwmon-api`, `fwmon-poller`, `fwmon-trap` | `firewall-collector`, `firewall-collector-diag-backup`, `firewall-collector-tftp-test` |
 | Listens on | 8080/tcp, 162/udp, 514/udp+tcp, 6343/udp, 8089/tcp | 162/udp, 514/tcp+udp, 6343/udp, 69/udp |
 | Talks to | The device (SNMP/SSH/TFTP); the probe (HTTPS) | The server (HTTPS, mTLS) |
 | Docs | this README + [docs/](docs/STRUCTURE.md) | [README](https://github.com/xphox2/Firewall-Collector/blob/master/README.md) + [docs/](https://github.com/xphox2/Firewall-Collector/blob/master/docs/STRUCTURE.md) |
