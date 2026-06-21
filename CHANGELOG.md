@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.448] - 2026-06-21
+### Fixed
+- **`CheckProbeDataFlow` no longer reads the policy cache and the alert cooldown/active-state maps without holding the alert-manager lock (`internal/alerts/alerts.go`).** The probe-data-lag loop called `resolveAlertConfig` (reads `policyCache`) and wrote `lastAlert`/`activeAlerts` outside `am.mu`, while every other firing path holds the lock — a latent data race with concurrent alert checks. The resolve, cooldown check, and state writes now run under one `am.mu` section, matching the rest of the manager.
+### Changed
+- **Extracted the repeated post-unlock "save each fired alert and send it unless suppressed" loop into `AlertManager.dispatchFired` (`internal/alerts/alerts.go`).** `CheckSystemStatus`, `CheckInterfaceStatus`, `CheckInterfaceErrors`, and `CheckVPNStatus` each carried a byte-identical copy of this dispatch loop (differing only in the log label). They now call the shared helper. Behavior is unchanged — alerts are still collected under the lock and dispatched after release; covered by a new `CheckInterfaceStatus` characterization test asserting the fire-once-then-cooldown path.
+
 ## [0.10.447] - 2026-06-21
 ### Changed
 - **Upgraded `gosnmp` v1.40.0 → v1.43.2 to match the version the Firewall-Collector already runs in production.** The server (poller, trap-receiver) and the collector both poll the same firewalls over SNMP; pinning them to the same `gosnmp` release removes a source of subtle protocol-parsing differences between the two SNMP stacks. No code changes were required; `go build ./...`, `go vet`, and the full test suite pass on the new version.

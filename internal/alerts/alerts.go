@@ -97,15 +97,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 	}
 	am.mu.Unlock()
 
-	for i := range fired {
-		am.saveAlert(&fired[i].alert)
-		if !fired[i].alert.Suppressed {
-			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
-			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
-				log.Printf("Failed to send alert %s: %v", fired[i].alert.AlertType, err)
-			}
-		}
-	}
+	am.dispatchFired(fired, globalNC, "system")
 
 	// Recovery checks — batch resolve under one lock, skip if in maintenance
 	am.mu.Lock()
@@ -172,15 +164,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	}
 	am.mu.Unlock()
 
-	for i := range fired {
-		am.saveAlert(&fired[i].alert)
-		if !fired[i].alert.Suppressed {
-			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
-			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
-				log.Printf("Failed to send interface alert %s: %v", fired[i].alert.AlertType, err)
-			}
-		}
-	}
+	am.dispatchFired(fired, globalNC, "interface")
 
 	// Recovery: interfaces that are now up
 	for _, iface := range interfaces {
@@ -297,15 +281,7 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 	}
 	am.mu.Unlock()
 
-	for i := range fired {
-		am.saveAlert(&fired[i].alert)
-		if !fired[i].alert.Suppressed {
-			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
-			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
-				log.Printf("Failed to send interface error alert: %v", err)
-			}
-		}
-	}
+	am.dispatchFired(fired, globalNC, "interface error")
 	return nil
 }
 
@@ -575,6 +551,22 @@ func (am *AlertManager) saveAlert(alert *models.Alert) {
 	}
 }
 
+// dispatchFired persists each fired alert and sends it unless suppressed. The
+// batch Check* methods collect alerts under am.mu and then call this AFTER
+// releasing the lock, so the (potentially slow) notifier send never blocks other
+// alert checks. label identifies the source in the send-failure log line.
+func (am *AlertManager) dispatchFired(fired []firedEntry, globalNC notifier.NotifyConfig, label string) {
+	for i := range fired {
+		am.saveAlert(&fired[i].alert)
+		if !fired[i].alert.Suppressed {
+			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
+			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
+				log.Printf("Failed to send %s alert %s: %v", label, fired[i].alert.AlertType, err)
+			}
+		}
+	}
+}
+
 func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *uint) error {
 	var fired []firedEntry
 
@@ -609,15 +601,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 	}
 	am.mu.Unlock()
 
-	for i := range fired {
-		am.saveAlert(&fired[i].alert)
-		if !fired[i].alert.Suppressed {
-			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
-			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
-				log.Printf("Failed to send VPN alert: %v", err)
-			}
-		}
-	}
+	am.dispatchFired(fired, globalNC, "VPN")
 
 	// Recovery: VPN tunnels that are now up
 	for _, vpn := range vpnStatuses {
@@ -811,18 +795,23 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		}
 
 		key := fmt.Sprintf("probe_data_lag_%d", probe.ID)
+
+		// Resolve config, check the cooldown, and record the firing state all
+		// under am.mu — these read policyCache and the lastAlert/activeAlerts
+		// maps, which other goroutines mutate. This block previously ran
+		// unlocked, a latent data race with concurrent alert checks.
+		am.mu.Lock()
 		resolved := am.resolveAlertConfig(0, &probe.SiteID, "PROBE_DATA_LAG")
-		if !resolved.AlertEnabled {
-			continue
-		}
-
 		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-		if !am.canAlertWithCooldown(key, now, cooldown) {
+		canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
+		if canSend {
+			am.lastAlert[key] = now
+			am.activeAlerts[key] = true
+		}
+		am.mu.Unlock()
+		if !canSend {
 			continue
 		}
-
-		am.lastAlert[key] = now
-		am.activeAlerts[key] = true
 
 		alert := models.Alert{
 			Timestamp:  now,
