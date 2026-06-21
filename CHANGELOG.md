@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.443] - 2026-06-20
+### Changed
+- **FortiGate config-diff volatile patterns are now declared once and shared between the hash normalizer and the UI (`internal/configdiff/vendor_fortigate.go`).** Each volatile pattern body (ENC ciphertext, config-version/conf_file_ver headers, private-encryption-key, last-login, last-updated, system-time, prompt-prefix, PEM block) existed as two hand-copied copies: the compiled `regexp` used by `Normalize` (which feeds the change-detection hash) and the string returned by `VolatilePatterns()` (which the compare UI uses to highlight masked regions). Editing one but not the other would silently desync what the UI shows as masked from what the hash actually neutralizes. Extracted each body into a single `const`; the compiled regexes prepend `(?m)` (the PEM body keeps its own `(?s)`), and `VolatilePatterns` references the same consts. Verified byte-identical to the previous patterns — zero behavior change. CTO-loop Tier 0 (B3).
+
 ## [0.10.442] - 2026-06-20
 ### Changed
 - **`GetSyslogMessages` now applies its filters through a single closure shared by the list query and the COUNT query (`internal/api/handlers/handlers_analytics.go`).** The four filters (probe_id, device_id, severity, search) plus the time-window cutoff were previously hand-copied into two separate `gorm` query builders. They were identical, so totals were correct today — but editing one block and not the other (e.g. adding a filter) would silently desync the pager total from the rows returned. Extracted one local `applyFilters(q)` so both queries provably share the same predicates. Behavior-preserving; no API change. CTO-loop Tier 0 (B2).
