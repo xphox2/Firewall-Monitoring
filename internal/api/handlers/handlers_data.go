@@ -73,13 +73,32 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		}
 	}
 	now := time.Now()
+	// Pre-resolve the source IPs of device-less messages in one batch query
+	// rather than a lookup per message (an N+1 at high syslog volume). Indexing
+	// a nil map returns 0, so the per-message assignment below stays simple.
+	var ipToDevice map[string]uint
+	if h.db != nil {
+		ipSet := make(map[string]struct{})
+		for i := range messages {
+			if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {
+				ipSet[messages[i].SourceIP] = struct{}{}
+			}
+		}
+		if len(ipSet) > 0 {
+			ips := make([]string, 0, len(ipSet))
+			for ip := range ipSet {
+				ips = append(ips, ip)
+			}
+			ipToDevice = h.db.ResolveDevicesByIPs(ips)
+		}
+	}
 	for i := range messages {
 		messages[i].ProbeID = probe.ID
 		if messages[i].Timestamp.IsZero() {
 			messages[i].Timestamp = now
 		}
-		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" && h.db != nil {
-			if devID := h.db.ResolveDeviceByIP(messages[i].SourceIP); devID > 0 {
+		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {
+			if devID := ipToDevice[messages[i].SourceIP]; devID > 0 {
 				messages[i].DeviceID = devID
 			}
 		}
@@ -164,15 +183,33 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		samples = samples[:1000]
 	}
 	allowedDevices := h.probeDeviceIDs(probe.ID)
+	// Server-side device-resolution fallback for unresolved samples, batched into
+	// one query for the whole payload instead of a lookup per sample.
+	var ipToDevice map[string]uint
+	if h.db != nil {
+		ipSet := make(map[string]struct{})
+		for i := range samples {
+			if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" {
+				ipSet[samples[i].SamplerAddress] = struct{}{}
+			}
+		}
+		if len(ipSet) > 0 {
+			ips := make([]string, 0, len(ipSet))
+			for ip := range ipSet {
+				ips = append(ips, ip)
+			}
+			ipToDevice = h.db.ResolveDevicesByIPs(ips)
+		}
+	}
+	now := time.Now()
 	filtered := samples[:0]
 	for i := range samples {
 		samples[i].ProbeID = probe.ID
 		if samples[i].Timestamp.IsZero() {
-			samples[i].Timestamp = time.Now()
+			samples[i].Timestamp = now
 		}
-		// Server-side device resolution fallback for unresolved samples
-		if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" && h.db != nil {
-			if devID := h.db.ResolveDeviceByIP(samples[i].SamplerAddress); devID > 0 {
+		if samples[i].DeviceID == 0 && samples[i].SamplerAddress != "" {
+			if devID := ipToDevice[samples[i].SamplerAddress]; devID > 0 {
 				samples[i].DeviceID = devID
 			}
 		}

@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.446] - 2026-06-21
+### Changed
+- **Probe syslog and flow ingestion resolves unknown source IPs in one batched query instead of a lookup per record (`internal/api/handlers/handlers_data.go`, `internal/database/devices.go`).** `ReceiveSyslogMessages` and `ReceiveFlowSamples` called `ResolveDeviceByIP` once per device-less record — two queries each — so a 1,000-record batch could issue up to 2,000 lookups, multiplied across every batch at high volume. They now gather the distinct unresolved IPs and call a new `Database.ResolveDevicesByIPs`, which returns an `ip → device_id` map in two queries total (management IP first, then interface addresses — same precedence as `ResolveDeviceByIP`). Resolution results are unchanged; only the query count drops. (Flow samples with a zero timestamp in a batch now share one capture instant, matching the syslog handler.) Covered by a new precedence test.
+
 ## [0.10.445] - 2026-06-20
 ### Fixed
 - **Poller no longer accumulates previous-interface-stats entries indefinitely (`cmd/poller/main.go`).** `prevIfaceStats` — the per-interface baseline used for throughput-delta and error-rate checks — was written every poll cycle but never pruned, so a decommissioned device or a removed dynamic tunnel left its entry in the map for the life of the process (a slow memory leak in the long-running poller). Each cycle now drops entries not refreshed within a generous TTL (12× the poll interval, minimum 1h); live interfaces re-stamp every cycle so active baselines are retained. Covered by a new unit test.
