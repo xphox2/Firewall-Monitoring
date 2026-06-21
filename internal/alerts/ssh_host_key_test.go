@@ -6,40 +6,46 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// TestCheckSSHHostKeyChanged verifies the alert is CRITICAL, device-scoped, and
-// cooldown-gated to fire once per change window.
+// TestCheckSSHHostKeyChanged verifies severity classification: an unexplained
+// new key is CRITICAL, a key correlated with an HA failover is WARNING, and the
+// per-(device,fingerprint) cooldown gates a repeat of the same key.
 func TestCheckSSHHostKeyChanged(t *testing.T) {
 	am, db := newTestManager(t)
 	dev := &models.Device{Name: "fw1", IPAddress: "10.0.0.1"}
 	dev.ID = 1
 
-	if err := am.CheckSSHHostKeyChanged(dev, "SHA256:old", "SHA256:new"); err != nil {
+	alertsFor := func(severity string) int64 {
+		t.Helper()
+		var n int64
+		db.Gorm().Model(&models.Alert{}).
+			Where("alert_type = ? AND severity = ?", "SSH_HOST_KEY_CHANGED", severity).Count(&n)
+		return n
+	}
+
+	// Unexplained new key -> CRITICAL.
+	if err := am.CheckSSHHostKeyChanged(dev, "SHA256:aaa", false); err != nil {
 		t.Fatalf("CheckSSHHostKeyChanged: %v", err)
 	}
-
-	var alerts []models.Alert
-	if err := db.Gorm().Where("alert_type = ?", "SSH_HOST_KEY_CHANGED").Find(&alerts).Error; err != nil {
-		t.Fatalf("query alerts: %v", err)
-	}
-	if len(alerts) != 1 {
-		t.Fatalf("got %d SSH_HOST_KEY_CHANGED alerts, want 1", len(alerts))
-	}
-	if alerts[0].Severity != "critical" {
-		t.Errorf("severity = %q, want critical", alerts[0].Severity)
-	}
-	if alerts[0].DeviceID != 1 {
-		t.Errorf("device id = %d, want 1", alerts[0].DeviceID)
+	if got := alertsFor("critical"); got != 1 {
+		t.Fatalf("critical alerts = %d, want 1", got)
 	}
 
-	// A second change within the cooldown window is gated (the server also
-	// re-pins, so in practice it fires once; this pins the cooldown guard too).
-	if err := am.CheckSSHHostKeyChanged(dev, "SHA256:old", "SHA256:new"); err != nil {
-		t.Fatalf("CheckSSHHostKeyChanged (2): %v", err)
+	// Same fingerprint again within cooldown -> gated.
+	if err := am.CheckSSHHostKeyChanged(dev, "SHA256:aaa", false); err != nil {
+		t.Fatalf("CheckSSHHostKeyChanged (repeat): %v", err)
 	}
-	if err := db.Gorm().Where("alert_type = ?", "SSH_HOST_KEY_CHANGED").Find(&alerts).Error; err != nil {
-		t.Fatalf("query alerts: %v", err)
+	if got := alertsFor("critical"); got != 1 {
+		t.Errorf("after repeat within cooldown: critical alerts = %d, want still 1", got)
 	}
-	if len(alerts) != 1 {
-		t.Errorf("after second call within cooldown: %d alerts, want still 1", len(alerts))
+
+	// A different new key correlated with an HA failover -> WARNING.
+	if err := am.CheckSSHHostKeyChanged(dev, "SHA256:bbb", true); err != nil {
+		t.Fatalf("CheckSSHHostKeyChanged (ha): %v", err)
+	}
+	if got := alertsFor("warning"); got != 1 {
+		t.Errorf("warning alerts = %d, want 1 (HA failover)", got)
+	}
+	if got := alertsFor("critical"); got != 1 {
+		t.Errorf("critical alerts = %d, want still 1", got)
 	}
 }

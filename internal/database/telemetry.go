@@ -309,3 +309,24 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 	err := d.db.Where("(device_id, timestamp) IN (?)", sub).Find(&statuses).Error
 	return statuses, err
 }
+
+// RecentHAFailover reports whether the device's HA cluster changed its active
+// member (master serial) within the window — i.e. a failover happened recently.
+// True when the ha_status history for the device holds two or more distinct
+// non-empty master serials in the window. Used to classify a newly-observed SSH
+// host key as an expected HA failover (member units have distinct host keys) vs
+// a possible MITM. Returns false for non-HA devices (no ha_status rows) and on
+// any query error, so the caller defaults to the more suspicious classification.
+func (d *Database) RecentHAFailover(deviceID uint, window time.Duration) bool {
+	if d.db == nil {
+		return false
+	}
+	var distinct int64
+	if err := d.db.Model(&models.HAStatus{}).
+		Where("device_id = ? AND timestamp >= ? AND master_serial <> ''", deviceID, time.Now().Add(-window)).
+		Distinct("master_serial").
+		Count(&distinct).Error; err != nil {
+		return false
+	}
+	return distinct >= 2
+}

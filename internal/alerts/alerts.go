@@ -665,10 +665,12 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 // transient, point-in-time alert (cooldown-gated, no recovery state): the caller
 // re-pins the new fingerprint after this returns, so it fires once per change.
 // oldFP/newFP are SSH host-key fingerprints (e.g. "SHA256:...").
-func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, oldFP, newFP string) error {
+func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, newFP string, haFailover bool) error {
 	am.mu.Lock()
 	now := time.Now()
-	key := fmt.Sprintf("ssh_host_key_%d", device.ID)
+	// Cooldown keyed per (device, fingerprint) so each distinct new key alerts
+	// once even if several appear in quick succession.
+	key := fmt.Sprintf("ssh_host_key_%d_%s", device.ID, newFP)
 	resolved := am.resolveAlertConfig(device.ID, device.SiteID, "SSH_HOST_KEY_CHANGED")
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
@@ -682,12 +684,21 @@ func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, oldFP, new
 		return nil
 	}
 
+	// A new key that correlates with a recent HA failover is an expected event
+	// (cluster members present distinct host keys) — WARNING, not CRITICAL.
+	severity := resolved.Severity
+	message := fmt.Sprintf("SSH host key changed for device %s (%s): new fingerprint %s, with no matching HA failover. If this was not a planned change, treat the device admin credentials as exposed and rotate them.", device.Name, device.IPAddress, newFP)
+	if haFailover {
+		severity = "warning"
+		message = fmt.Sprintf("New SSH host key %s observed for device %s (%s), correlated with a recent HA failover — learned as a known cluster-member key.", newFP, device.Name, device.IPAddress)
+	}
+
 	alert := models.Alert{
 		Timestamp:  now,
 		DeviceID:   device.ID,
 		AlertType:  "SSH_HOST_KEY_CHANGED",
-		Severity:   resolved.Severity,
-		Message:    fmt.Sprintf("SSH host key changed for device %s (%s): %s → %s. If this was not a planned firmware change, treat the device admin credentials as exposed and rotate them.", device.Name, device.IPAddress, oldFP, newFP),
+		Severity:   severity,
+		Message:    message,
 		MetricName: "ssh_host_key",
 		PolicyID:   resolved.PolicyID,
 		Suppressed: resolved.InMaintenance,

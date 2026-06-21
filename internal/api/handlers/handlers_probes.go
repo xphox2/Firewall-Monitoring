@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -684,22 +685,43 @@ func (h *Handler) processObservedHostKeys(probeID uint, observed map[uint]string
 		if err := h.db.Gorm().Where("id = ? AND probe_id = ?", deviceID, probeID).First(&device).Error; err != nil {
 			continue // not this probe's device, or it no longer exists
 		}
-		switch {
-		case device.SSHHostKey == "":
-			// First observation — pin it, no alert.
-			h.db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).Update("ssh_host_key", fp)
-		case device.SSHHostKey == fp:
-			// Unchanged — nothing to do.
-		default:
-			// Changed — alert once, then re-pin to the new fingerprint.
-			if h.alertManager != nil {
-				if err := h.alertManager.CheckSSHHostKeyChanged(&device, device.SSHHostKey, fp); err != nil {
-					log.Printf("ProbeHeartbeat: SSH host-key alert for device %d: %v", device.ID, err)
-				}
-			}
-			h.db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).Update("ssh_host_key", fp)
+
+		known := splitHostKeys(device.SSHHostKeys)
+		if slices.Contains(known, fp) {
+			continue // already a known-good key for this device — no-op
+		}
+
+		firstContact := len(known) == 0
+		known = append(known, fp)
+		h.db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).Update("ssh_host_key", strings.Join(known, "\n"))
+
+		if firstContact || h.alertManager == nil {
+			continue // trust-on-first-use: learn the first key silently
+		}
+
+		// A new key that correlates with a recent HA failover is expected
+		// (cluster members present distinct host keys) → WARNING; an unexplained
+		// new key → CRITICAL "possible MITM". RecentHAFailover returns false for
+		// non-HA devices, so they default to CRITICAL.
+		haFailover := h.db.RecentHAFailover(device.ID, time.Hour)
+		if err := h.alertManager.CheckSSHHostKeyChanged(&device, fp, haFailover); err != nil {
+			log.Printf("ProbeHeartbeat: SSH host-key alert for device %d: %v", device.ID, err)
 		}
 	}
+}
+
+// splitHostKeys parses the newline-joined known-host-key set, dropping blanks.
+func splitHostKeys(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // authenticateProbeByBearer extracts the Bearer token from the Authorization header
