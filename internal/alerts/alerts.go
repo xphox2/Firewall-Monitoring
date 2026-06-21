@@ -660,6 +660,49 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
 }
 
+// CheckSSHHostKeyChanged fires a CRITICAL alert when a device's reported SSH
+// host-key fingerprint differs from the one previously pinned. It is a
+// transient, point-in-time alert (cooldown-gated, no recovery state): the caller
+// re-pins the new fingerprint after this returns, so it fires once per change.
+// oldFP/newFP are SSH host-key fingerprints (e.g. "SHA256:...").
+func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, oldFP, newFP string) error {
+	am.mu.Lock()
+	now := time.Now()
+	key := fmt.Sprintf("ssh_host_key_%d", device.ID)
+	resolved := am.resolveAlertConfig(device.ID, device.SiteID, "SSH_HOST_KEY_CHANGED")
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	if canSend {
+		am.lastAlert[key] = now
+	}
+	am.mu.Unlock()
+
+	if !canSend || !resolved.AlertEnabled {
+		return nil
+	}
+
+	alert := models.Alert{
+		Timestamp:  now,
+		DeviceID:   device.ID,
+		AlertType:  "SSH_HOST_KEY_CHANGED",
+		Severity:   resolved.Severity,
+		Message:    fmt.Sprintf("SSH host key changed for device %s (%s): %s → %s. If this was not a planned firmware change, treat the device admin credentials as exposed and rotate them.", device.Name, device.IPAddress, oldFP, newFP),
+		MetricName: "ssh_host_key",
+		PolicyID:   resolved.PolicyID,
+		Suppressed: resolved.InMaintenance,
+	}
+
+	am.saveAlert(&alert)
+	if !alert.Suppressed {
+		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+		if err := am.notifier.SendAlert(&alert, nc); err != nil {
+			log.Printf("Failed to send SSH host-key change alert: %v", err)
+		}
+	}
+	return nil
+}
+
 // ConfigChangeInfo carries the semantic classification and attribution of a
 // detected config change so the CONFIG_CHANGE alert can be severity-driven and
 // accountable. All fields are optional — a zero value reproduces the legacy

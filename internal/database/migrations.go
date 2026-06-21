@@ -54,6 +54,7 @@ var registeredMigrations = []migration{
 	{version: 3, name: "unify_ping_stats_by_device_target", run: (*Database).migrateUnifyPingStats},
 	{version: 4, name: "probe_decommissioned_at", run: (*Database).migrateProbeDecommissionedAt},
 	{version: 5, name: "config_revision_attribution", run: (*Database).migrateConfigRevisionAttribution},
+	{version: 6, name: "device_ssh_host_key", run: (*Database).migrateDeviceSSHHostKey},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

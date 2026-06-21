@@ -121,6 +121,9 @@ type RegistrationResponse struct {
 type HeartbeatRequest struct {
 	ProbeID uint   `json:"probe_id"`
 	Status  string `json:"status"`
+	// ObservedHostKeys maps device ID -> the SSH host-key fingerprint the probe
+	// last observed for it (SSH host-key change detection). Optional.
+	ObservedHostKeys map[uint]string `json:"observed_host_keys,omitempty"`
 }
 
 type DeviceInfo struct {

@@ -394,39 +394,45 @@ type AuditLog struct {
 }
 
 type Device struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	Name            string    `json:"name" gorm:"uniqueIndex;not null"`
-	Hostname        string    `json:"hostname"`
-	IPAddress       string    `json:"ip_address" gorm:"not null"`
-	SNMPPort        int       `json:"snmp_port" gorm:"default:161"`
-	SNMPCommunity   string    `json:"snmp_community"`
-	SNMPVersion     string    `json:"snmp_version" gorm:"default:2c"`
-	SNMPV3Username  string    `json:"snmpv3_username"`
-	SNMPV3AuthType  string    `json:"snmpv3_auth_type"`
-	SNMPV3AuthPass  string    `json:"snmpv3_auth_pass"`
-	SNMPV3PrivType  string    `json:"snmpv3_priv_type"`
-	SNMPV3PrivPass  string    `json:"snmpv3_priv_pass"`
-	Enabled         bool      `json:"enabled" gorm:"default:true"`
-	PublicVisible   bool      `json:"public_visible" gorm:"default:true"`
-	Vendor          string    `json:"vendor" gorm:"default:fortigate"`
-	SiteID          *uint     `json:"site_id" gorm:"index"`
-	Site            *Site     `json:"site,omitempty" gorm:"foreignKey:SiteID"`
-	ProbeID         *uint     `json:"probe_id" gorm:"index"`
-	Probe           *Probe    `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
-	Location        string    `json:"location"`
-	Description     string    `json:"description"`
-	WanSpeedMbps    int       `json:"wan_speed_mbps" gorm:"default:1000"` // WAN link speed in Mbps (default 1Gbps)
-	SSLVPNUsers     int       `json:"sslvpn_users" gorm:"default:0"`
-	SSLVPNTunnels   int       `json:"sslvpn_tunnels" gorm:"default:0"`
-	SSHUsername     string    `json:"ssh_username"`
-	SSHPassword     string    `json:"ssh_password"`
-	SSHPort         int       `json:"ssh_port" gorm:"default:22"`
-	SSHPollEnabled  bool      `json:"ssh_poll_enabled" gorm:"default:false"`
-	SSHPollInterval int       `json:"ssh_poll_interval" gorm:"default:900"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	LastPolled      time.Time `json:"last_polled"`
-	Status          string    `json:"status" gorm:"default:unknown"`
+	ID              uint   `json:"id" gorm:"primaryKey"`
+	Name            string `json:"name" gorm:"uniqueIndex;not null"`
+	Hostname        string `json:"hostname"`
+	IPAddress       string `json:"ip_address" gorm:"not null"`
+	SNMPPort        int    `json:"snmp_port" gorm:"default:161"`
+	SNMPCommunity   string `json:"snmp_community"`
+	SNMPVersion     string `json:"snmp_version" gorm:"default:2c"`
+	SNMPV3Username  string `json:"snmpv3_username"`
+	SNMPV3AuthType  string `json:"snmpv3_auth_type"`
+	SNMPV3AuthPass  string `json:"snmpv3_auth_pass"`
+	SNMPV3PrivType  string `json:"snmpv3_priv_type"`
+	SNMPV3PrivPass  string `json:"snmpv3_priv_pass"`
+	Enabled         bool   `json:"enabled" gorm:"default:true"`
+	PublicVisible   bool   `json:"public_visible" gorm:"default:true"`
+	Vendor          string `json:"vendor" gorm:"default:fortigate"`
+	SiteID          *uint  `json:"site_id" gorm:"index"`
+	Site            *Site  `json:"site,omitempty" gorm:"foreignKey:SiteID"`
+	ProbeID         *uint  `json:"probe_id" gorm:"index"`
+	Probe           *Probe `json:"probe,omitempty" gorm:"foreignKey:ProbeID"`
+	Location        string `json:"location"`
+	Description     string `json:"description"`
+	WanSpeedMbps    int    `json:"wan_speed_mbps" gorm:"default:1000"` // WAN link speed in Mbps (default 1Gbps)
+	SSLVPNUsers     int    `json:"sslvpn_users" gorm:"default:0"`
+	SSLVPNTunnels   int    `json:"sslvpn_tunnels" gorm:"default:0"`
+	SSHUsername     string `json:"ssh_username"`
+	SSHPassword     string `json:"ssh_password"`
+	SSHPort         int    `json:"ssh_port" gorm:"default:22"`
+	SSHPollEnabled  bool   `json:"ssh_poll_enabled" gorm:"default:false"`
+	SSHPollInterval int    `json:"ssh_poll_interval" gorm:"default:900"`
+	// SSHHostKey is the pinned SSH host-key fingerprint (e.g. "SHA256:...") the
+	// collector last reported for this device. Trust-on-first-use: blank until
+	// the first observation. A reported fingerprint that differs raises a
+	// CRITICAL SSH_HOST_KEY_CHANGED alert and then re-pins. Public data — stored
+	// plaintext, NOT encrypted like the SSH password.
+	SSHHostKey string    `json:"ssh_host_key"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	LastPolled time.Time `json:"last_polled"`
+	Status     string    `json:"status" gorm:"default:unknown"`
 }
 
 type DeviceTunnel struct {

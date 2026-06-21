@@ -629,6 +629,10 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 	var req struct {
 		ProbeID uint   `json:"probe_id"`
 		Status  string `json:"status"`
+		// ObservedHostKeys maps device ID -> the SSH host-key fingerprint the
+		// probe last saw for it (SSH host-key change detection). Optional;
+		// absent for probes that don't report it.
+		ObservedHostKeys map[uint]string `json:"observed_host_keys"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		probeErr(c, http.StatusBadRequest, "Invalid request")
@@ -658,7 +662,44 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		"status":    status,
 	})
 
+	if len(req.ObservedHostKeys) > 0 {
+		h.processObservedHostKeys(probe.ID, req.ObservedHostKeys)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// processObservedHostKeys applies the SSH host-key change-detection rule for the
+// fingerprints a probe reported on its heartbeat. For each device assigned to
+// this probe: a blank stored key is pinned (trust-on-first-use); an unchanged
+// key is a no-op; a changed key fires one CRITICAL SSH_HOST_KEY_CHANGED alert
+// and then re-pins to the new fingerprint. Devices not assigned to this probe
+// are ignored, so a probe can only report for its own devices.
+func (h *Handler) processObservedHostKeys(probeID uint, observed map[uint]string) {
+	for deviceID, fp := range observed {
+		if fp == "" {
+			continue
+		}
+		var device models.Device
+		if err := h.db.Gorm().Where("id = ? AND probe_id = ?", deviceID, probeID).First(&device).Error; err != nil {
+			continue // not this probe's device, or it no longer exists
+		}
+		switch {
+		case device.SSHHostKey == "":
+			// First observation — pin it, no alert.
+			h.db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).Update("ssh_host_key", fp)
+		case device.SSHHostKey == fp:
+			// Unchanged — nothing to do.
+		default:
+			// Changed — alert once, then re-pin to the new fingerprint.
+			if h.alertManager != nil {
+				if err := h.alertManager.CheckSSHHostKeyChanged(&device, device.SSHHostKey, fp); err != nil {
+					log.Printf("ProbeHeartbeat: SSH host-key alert for device %d: %v", device.ID, err)
+				}
+			}
+			h.db.Gorm().Model(&models.Device{}).Where("id = ?", device.ID).Update("ssh_host_key", fp)
+		}
+	}
 }
 
 // authenticateProbeByBearer extracts the Bearer token from the Authorization header
