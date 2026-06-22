@@ -301,11 +301,15 @@
             }},
             // Tunnel bundle edges — thicker pipe
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            // Direct connection edges — bezier so parallel same-pair direct links stack/offset instead of overlapping into one line
+            { selector: 'edge[edgeType="connection"]', style: { 'curve-style': 'bezier', 'control-point-step-size': 18 } },
             // Connection type colors
             { selector: 'edge[connType="ipsec"]', style: { 'line-color': TYPE_COLORS.ipsec } },
             { selector: 'edge[connType="ssl"]', style: { 'line-color': TYPE_COLORS.ssl } },
             { selector: 'edge[connType="vxlan"]', style: { 'line-color': TYPE_COLORS.vxlan, 'line-style': 'dashed', 'line-dash-pattern': [8, 4] } },
             { selector: 'edge[connType="l2vlan"]', style: { 'line-color': TYPE_COLORS.l2vlan } },
+            // bridge (Software Switch) is the same VLAN-layer direct link as l2vlan — same teal color, stacked alongside it
+            { selector: 'edge[connType="bridge"]', style: { 'line-color': TYPE_COLORS.bridge } },
             { selector: 'edge[connType="l3ipvlan"]', style: { 'line-color': TYPE_COLORS.l3ipvlan, 'line-style': 'dashed', 'line-dash-pattern': [12, 4] } },
             { selector: 'edge[connType="gre"]', style: { 'line-color': TYPE_COLORS.gre } },
             { selector: 'edge[connType="wan"]', style: { 'line-color': TYPE_COLORS.wan } },
