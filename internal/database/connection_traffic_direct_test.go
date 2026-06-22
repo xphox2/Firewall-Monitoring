@@ -51,6 +51,17 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 	// source-perspective aggregate (would mix directions / double-count).
 	seedIface(2, "port1", 5, []uint64{9000, 9000, 9000, 9000})
 
+	// Interface addresses let the UI pair the two ends by shared subnet.
+	// dev1/port1 and dev2/port1 sit on 10.0.5.0/24 (the network joining them).
+	addr := func(dev uint, ifIndex int, ip, mask string) {
+		if err := d.db.Create(&models.InterfaceAddress{DeviceID: dev, IfIndex: ifIndex, IPAddress: ip, NetMask: mask, Timestamp: base}).Error; err != nil {
+			t.Fatalf("seed addr %s: %v", ip, err)
+		}
+	}
+	addr(1, 5, "10.0.5.1", "255.255.255.0")
+	addr(1, 6, "10.0.6.1", "255.255.255.0")
+	addr(2, 5, "10.0.5.2", "255.255.255.0")
+
 	rows, err := d.GetConnectionTraffic(conn.ID, "24h")
 	if err != nil {
 		t.Fatalf("GetConnectionTraffic: %v", err)
@@ -97,6 +108,39 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 	}
 	if len(detail.SourceTunnels) != 0 || len(detail.DestTunnels) != 0 {
 		t.Error("direct link must not carry tunnels")
+	}
+
+	// Each end must expose its IP + the shared network so the UI can pair them.
+	var p1 *ConnInterfaceRef
+	for i := range detail.Interfaces {
+		if detail.Interfaces[i].DeviceID == 1 && detail.Interfaces[i].IfName == "port1" {
+			p1 = &detail.Interfaces[i]
+		}
+	}
+	if p1 == nil {
+		t.Fatal("device 1 port1 not in resolved interfaces")
+	}
+	if p1.IPAddress != "10.0.5.1" {
+		t.Errorf("port1 ip = %q, want 10.0.5.1", p1.IPAddress)
+	}
+	if p1.Subnet != "10.0.5.0/24" {
+		t.Errorf("port1 subnet = %q, want 10.0.5.0/24 (the network pairing the two ends)", p1.Subnet)
+	}
+}
+
+func TestComputeNetworkCIDR(t *testing.T) {
+	cases := []struct{ ip, mask, want string }{
+		{"10.0.5.1", "255.255.255.0", "10.0.5.0/24"},
+		{"192.168.1.55", "255.255.255.128", "192.168.1.0/25"},
+		{"172.16.4.9", "255.255.0.0", "172.16.0.0/16"},
+		{"10.0.0.1", "", ""},
+		{"", "255.255.255.0", ""},
+		{"not-an-ip", "255.255.255.0", ""},
+	}
+	for _, c := range cases {
+		if got := computeNetworkCIDR(c.ip, c.mask); got != c.want {
+			t.Errorf("computeNetworkCIDR(%q,%q) = %q, want %q", c.ip, c.mask, got, c.want)
+		}
 	}
 }
 

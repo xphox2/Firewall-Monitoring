@@ -43,12 +43,31 @@ type ConnInterfaceRef struct {
 	DeviceName string `json:"device_name"`
 	IfName     string `json:"if_name"`
 	IfIndex    int    `json:"if_index"`
+	IPAddress  string `json:"ip_address"` // interface's IP on the shared LAN segment
+	Subnet     string `json:"subnet"`     // network CIDR (e.g. 10.0.5.0/24) — the network that pairs the two ends
 	Speed      uint64 `json:"speed"`
 	Status     string `json:"status"`
 	InBytes    uint64 `json:"in_bytes"`
 	OutBytes   uint64 `json:"out_bytes"`
 	InErrors   uint64 `json:"in_errors"`
 	OutErrors  uint64 `json:"out_errors"`
+}
+
+// computeNetworkCIDR reduces an interface IP + dotted-decimal mask to its
+// network address in CIDR form (the same key the physical detector groups on).
+// Returns "" for non-IPv4 or unparseable input.
+func computeNetworkCIDR(ipStr, maskStr string) string {
+	ip := net.ParseIP(strings.TrimSpace(ipStr))
+	mask := net.ParseIP(strings.TrimSpace(maskStr))
+	if ip == nil || mask == nil {
+		return ""
+	}
+	ip4, mask4 := ip.To4(), mask.To4()
+	if ip4 == nil || mask4 == nil {
+		return ""
+	}
+	ones, _ := net.IPMask(mask4).Size()
+	return fmt.Sprintf("%s/%d", ip4.Mask(net.IPMask(mask4)).String(), ones)
 }
 
 // ConnectionDetailResult holds full detail for a connection including matching tunnels.
@@ -139,11 +158,18 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 				continue
 			}
 			seen[key] = true
+			// Resolve the interface's IP + network so the UI can pair the two
+			// ends by the LAN segment that joins them (the detector's grouping key).
+			var addr models.InterfaceAddress
+			d.db.Where("device_id = ? AND if_index = ?", dv.id, st.Index).
+				Order("timestamp DESC").Limit(1).First(&addr)
 			refs = append(refs, ConnInterfaceRef{
 				DeviceID:   dv.id,
 				DeviceName: dv.name,
 				IfName:     st.Name,
 				IfIndex:    st.Index,
+				IPAddress:  addr.IPAddress,
+				Subnet:     computeNetworkCIDR(addr.IPAddress, addr.NetMask),
 				Speed:      st.Speed,
 				Status:     st.Status,
 				InBytes:    st.InBytes,

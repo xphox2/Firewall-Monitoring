@@ -280,7 +280,7 @@
                 // interfaces (from interface_stats) into the second tab.
                 const ifaces = data.interfaces || [];
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
-                renderPanelInterfaceTab(ifaces, srcName, dstName);
+                renderPanelInterfaceTab(ifaces, c, srcName, dstName);
                 if (p2Tab) p2Tab.style.display = 'none';
             } else {
                 // Tunnel / overlay / off-net: group Phase 2 selectors under their
@@ -472,40 +472,26 @@
         tbody.innerHTML = html;
     }
 
-    // renderPanelInterfaceTab replaces the second tab's body with a single table
-    // of the direct link's member interfaces (interface_stats), each expandable
-    // to a per-interface traffic chart — mirroring the tunnel-row UX.
-    function renderPanelInterfaceTab(ifaces, srcName, dstName) {
-        const container = document.getElementById('ptab-tunnels');
-        if (!container) return;
-        container.innerHTML = `
-            <table class="vpn-detail-table" id="ptab-ifaces">
-                <thead><tr><th></th><th>Interface</th><th>Device</th><th>Speed</th><th>Status</th><th>In</th><th>Out</th><th>Errors</th></tr></thead>
-                <tbody></tbody>
-            </table>`;
-        const tbody = container.querySelector('#ptab-ifaces tbody');
-        if (!ifaces.length) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#768390;padding:16px;">No interface telemetry for this link</td></tr>';
-            return;
-        }
-        let html = '';
-        ifaces.forEach((f, i) => {
-            const rowId = `iface-row-${i}`;
+    // ifaceRowsHtml renders the expandable per-interface rows for one side of a
+    // network segment. `rowKey` makes each row id unique across segments.
+    function ifaceRowsHtml(ifaces, rowKey) {
+        return ifaces.map((f, i) => {
+            const rowId = `iface-${rowKey}-${i}`;
             const up = f.status === 'up';
-            const statusBadge = `<span class="badge ${up ? 'up' : 'down'}">${(f.status || 'unknown').toUpperCase()}</span>`;
+            const statusBadge = `<span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(f.status || 'unknown').toUpperCase()}</span>`;
             const errs = (f.in_errors || 0) + (f.out_errors || 0);
-            const errCell = errs > 0 ? `<span style="color:#d29922;">${window.formatNum(errs)}</span>` : '0';
+            const errCell = errs > 0 ? `<span style="color:#d29922;">${window.formatNum(errs)} err</span>` : '';
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-iface-chart" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}" data-range="${r}">${lbl}</div>`;
-            html += `
+            return `
                 <tr class="panel-tunnel-row" data-action="dp-toggle-iface" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}">
                     <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
                     <td style="font-family:monospace;">${window.escapeHtml(f.if_name)}</td>
-                    <td style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(f.device_name || '-')}</td>
-                    <td style="font-size:0.78rem;">${formatSpeed(f.speed)}</td>
+                    <td style="font-family:monospace;font-size:0.76rem;color:#58a6ff;">${window.escapeHtml(f.ip_address || '-')}</td>
+                    <td style="font-size:0.76rem;">${formatSpeed(f.speed)}</td>
                     <td>${statusBadge}</td>
                     <td>${window.formatBytes(f.in_bytes)}</td>
                     <td>${window.formatBytes(f.out_bytes)}</td>
-                    <td>${errCell}</td>
+                    <td style="font-size:0.74rem;">${errCell}</td>
                 </tr>
                 <tr class="panel-tunnel-expand" id="${rowId}">
                     <td colspan="8">
@@ -515,8 +501,71 @@
                         <div class="panel-chart-container" style="height:150px;"><canvas id="pchart-${rowId}"></canvas></div>
                     </td>
                 </tr>`;
+        }).join('');
+    }
+
+    function ifaceSideTable(title, ifaces, rowKey) {
+        const head = `<div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(title)}</div>`;
+        if (!ifaces.length) {
+            return head + '<div style="color:#768390;font-size:0.76rem;padding:6px 2px;">— end not monitored —</div>';
+        }
+        return head + `<table class="vpn-detail-table" style="margin:0;"><thead><tr><th></th><th>Interface</th><th>IP</th><th>Speed</th><th>Status</th><th>In</th><th>Out</th><th></th></tr></thead><tbody>${ifaceRowsHtml(ifaces, rowKey)}</tbody></table>`;
+    }
+
+    // renderPanelInterfaceTab groups the direct link's member interfaces by the
+    // network (IP subnet) that joins the two devices, so each card makes the
+    // pairing explicit: "switch-a · port1 (10.0.5.1) ⇄ switch-b · port3
+    // (10.0.5.2)" on network 10.0.5.0/24. Each interface stays expandable to its
+    // own traffic chart. Interfaces with no IP on a shared subnet fall into a
+    // final "unpaired" card.
+    function renderPanelInterfaceTab(ifaces, c, srcName, dstName) {
+        const container = document.getElementById('ptab-tunnels');
+        if (!container) return;
+        if (!ifaces.length) {
+            container.innerHTML = '<div style="text-align:center;color:#768390;padding:16px;">No interface telemetry for this link</div>';
+            return;
+        }
+        const srcId = c.source_device_id, dstId = c.dest_device_id;
+
+        // Group by subnet, preserving first-seen order; unpaired (no subnet) last.
+        const groups = {}, order = [];
+        ifaces.forEach(f => {
+            const key = f.subnet || '__none__';
+            if (!groups[key]) { groups[key] = []; order.push(key); }
+            groups[key].push(f);
         });
-        tbody.innerHTML = html;
+        order.sort((a, b) => (a === '__none__' ? 1 : 0) - (b === '__none__' ? 1 : 0));
+
+        let html = '';
+        order.forEach((key, gi) => {
+            const members = groups[key];
+            const srcSide = members.filter(f => f.device_id === srcId);
+            const dstSide = members.filter(f => f.device_id === dstId);
+            const isNet = key !== '__none__';
+
+            let header;
+            if (isNet) {
+                const paired = srcSide.length && dstSide.length;
+                header = `
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                        <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">&#127760; ${window.escapeHtml(key)}</span>
+                        <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:${paired ? '#2dd4bf' : '#768390'};">&harr;</span> ${window.escapeHtml(dstName)}</span>
+                        ${paired ? '' : '<span style="font-size:0.7rem;color:#d29922;">only one end monitored</span>'}
+                    </div>`;
+            } else {
+                header = '<div style="font-size:0.8rem;color:#d29922;margin-bottom:8px;">Interfaces with no IP on a shared network (unpaired)</div>';
+            }
+
+            html += `
+                <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:10px;">
+                    ${header}
+                    <div class="tunnel-columns">
+                        <div class="tunnel-col">${ifaceSideTable(srcName, srcSide, `${gi}-s`)}</div>
+                        <div class="tunnel-col">${ifaceSideTable(dstName, dstSide, `${gi}-d`)}</div>
+                    </div>
+                </div>`;
+        });
+        container.innerHTML = html;
     }
 
     function togglePanelInterface(rowId, deviceId, ifIndex) {

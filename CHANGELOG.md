@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.467] - 2026-06-22
+### Changed
+- **Direct-link Interfaces tab now groups interfaces by the network that joins the two devices, instead of a flat undifferentiated list.** It was impossible to tell which interface on one side paired with which on the other. The detail now resolves each interface's IP + network from `interface_addresses` (new `ip_address`/`subnet` on `ConnInterfaceRef`, `computeNetworkCIDR` in `internal/database/connection_detail.go`) and the UI (`diagram-panels.js` `renderPanelInterfaceTab`) renders **one card per IP subnet** — e.g. `🌐 10.0.5.0/24 · switch-a ↔ switch-b` — with the source-side interface(s) and dest-side interface(s) shown side by side (interface name + IP + speed + status + in/out), each still expandable to its own traffic chart. Interfaces whose end isn't monitored show "only one end monitored"; interfaces with no IP on a shared subnet fall into a final "unpaired" card. This makes the device↔network↔device pairing explicit.
+- Tests: `connection_traffic_direct_test.go` now asserts `ip_address`/`subnet` resolution; added `TestComputeNetworkCIDR`.
+
 ## [0.10.466] - 2026-06-22
 ### Added
 - **Connection-map link details are now type-aware — a VLAN/ethernet/LAG link no longer renders the (empty) IPSec tunnel panel.** Every connection type is sorted into one of four telemetry *families* that decide which data source and detail view it gets (`internal/database/connection_detail.go` `connectionFamily`):
