@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.464] - 2026-06-22
+### Changed
+- **The L3VLAN legend swatch is now dashed to mirror the map (`web/admin/admin.html`).** The `l3ipvlan` overlay is drawn as a dashed pink line on the Connection Map; its legend button now uses a dashed border (`border-style:dashed`) so the swatch matches the line style, not just the color.
+
 ## [0.10.463] - 2026-06-22
 ### Added
 - **Added an L3VLAN entry to the Connection Map legend/filter bar (`web/admin/admin.html`).** The `l3ipvlan` overlay type (VXLAN-over-IPSec, drawn pink-dashed `#f472b6` on the map) was rendered but had no legend swatch or filter toggle. Added a button (`data-type="l3ipvlan"`, label "L3VLAN") next to VXLAN, using the exact map color; it filters via the existing per-type toggle path — no JS change required.
