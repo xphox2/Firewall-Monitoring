@@ -507,17 +507,31 @@
     function ifaceSideTable(title, ifaces, rowKey) {
         const head = `<div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(title)}</div>`;
         if (!ifaces.length) {
-            return head + '<div style="color:#768390;font-size:0.76rem;padding:6px 2px;">— end not monitored —</div>';
+            return head + '<div style="color:#768390;font-size:0.76rem;padding:6px 2px;">— no interfaces reported —</div>';
         }
         return head + `<table class="vpn-detail-table" style="margin:0;"><thead><tr><th></th><th>Interface</th><th>IP</th><th>Speed</th><th>Status</th><th>In</th><th>Out</th><th></th></tr></thead><tbody>${ifaceRowsHtml(ifaces, rowKey)}</tbody></table>`;
     }
 
-    // renderPanelInterfaceTab groups the direct link's member interfaces by the
-    // network (IP subnet) that joins the two devices, so each card makes the
-    // pairing explicit: "switch-a · port1 (10.0.5.1) ⇄ switch-b · port3
-    // (10.0.5.2)" on network 10.0.5.0/24. Each interface stays expandable to its
-    // own traffic chart. Interfaces with no IP on a shared subnet fall into a
-    // final "unpaired" card.
+    function ifaceSegmentCard(header, srcName, dstName, srcSide, dstSide, rowKey) {
+        return `
+            <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:10px;">
+                ${header}
+                <div class="tunnel-columns">
+                    <div class="tunnel-col">${ifaceSideTable(srcName, srcSide, `${rowKey}-s`)}</div>
+                    <div class="tunnel-col">${ifaceSideTable(dstName, dstSide, `${rowKey}-d`)}</div>
+                </div>
+            </div>`;
+    }
+
+    // renderPanelInterfaceTab makes the device↔network↔device pairing explicit.
+    // A subnet that appears on BOTH ends becomes a confident "network segment"
+    // card — e.g. 🌐 10.0.5.0/24 · switch-a ⇄ switch-b — with the source-side and
+    // dest-side interfaces side by side, each expandable to its own chart.
+    // Everything else (L2 links with no IP, or a subnet seen on just one end) is
+    // collected into a single "Other interfaces" card that still shows both
+    // devices' columns — we never imply an end is unmonitored just because a
+    // subnet didn't line up. A genuinely empty side simply reads "no interfaces
+    // reported".
     function renderPanelInterfaceTab(ifaces, c, srcName, dstName) {
         const container = document.getElementById('ptab-tunnels');
         if (!container) return;
@@ -526,45 +540,38 @@
             return;
         }
         const srcId = c.source_device_id, dstId = c.dest_device_id;
+        const onSrc = f => f.device_id === srcId;
+        const onDst = f => f.device_id === dstId;
 
-        // Group by subnet, preserving first-seen order; unpaired (no subnet) last.
-        const groups = {}, order = [];
+        // A subnet is a confident pairing only if it has an interface on BOTH ends.
+        const bySubnet = {}, subnetOrder = [];
         ifaces.forEach(f => {
-            const key = f.subnet || '__none__';
-            if (!groups[key]) { groups[key] = []; order.push(key); }
-            groups[key].push(f);
+            if (!f.subnet) return;
+            if (!bySubnet[f.subnet]) { bySubnet[f.subnet] = []; subnetOrder.push(f.subnet); }
+            bySubnet[f.subnet].push(f);
         });
-        order.sort((a, b) => (a === '__none__' ? 1 : 0) - (b === '__none__' ? 1 : 0));
+        const pairedSubnets = subnetOrder.filter(s => bySubnet[s].some(onSrc) && bySubnet[s].some(onDst));
+        const pairedSet = new Set(pairedSubnets);
 
         let html = '';
-        order.forEach((key, gi) => {
-            const members = groups[key];
-            const srcSide = members.filter(f => f.device_id === srcId);
-            const dstSide = members.filter(f => f.device_id === dstId);
-            const isNet = key !== '__none__';
-
-            let header;
-            if (isNet) {
-                const paired = srcSide.length && dstSide.length;
-                header = `
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-                        <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">&#127760; ${window.escapeHtml(key)}</span>
-                        <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:${paired ? '#2dd4bf' : '#768390'};">&harr;</span> ${window.escapeHtml(dstName)}</span>
-                        ${paired ? '' : '<span style="font-size:0.7rem;color:#d29922;">only one end monitored</span>'}
-                    </div>`;
-            } else {
-                header = '<div style="font-size:0.8rem;color:#d29922;margin-bottom:8px;">Interfaces with no IP on a shared network (unpaired)</div>';
-            }
-
-            html += `
-                <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:10px;">
-                    ${header}
-                    <div class="tunnel-columns">
-                        <div class="tunnel-col">${ifaceSideTable(srcName, srcSide, `${gi}-s`)}</div>
-                        <div class="tunnel-col">${ifaceSideTable(dstName, dstSide, `${gi}-d`)}</div>
-                    </div>
+        pairedSubnets.forEach((subnet, gi) => {
+            const members = bySubnet[subnet];
+            const header = `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                    <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">&#127760; ${window.escapeHtml(subnet)}</span>
+                    <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:#2dd4bf;">&harr;</span> ${window.escapeHtml(dstName)}</span>
                 </div>`;
+            html += ifaceSegmentCard(header, srcName, dstName, members.filter(onSrc), members.filter(onDst), `seg${gi}`);
         });
+
+        // Leftovers: interfaces not in a confidently-paired subnet.
+        const rest = ifaces.filter(f => !(f.subnet && pairedSet.has(f.subnet)));
+        if (rest.length) {
+            const label = pairedSubnets.length ? 'Other interfaces' : 'Interfaces on this link';
+            const hint = pairedSubnets.length ? ' (not on a shared IP network — e.g. Layer 2 links)' : '';
+            const header = `<div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px;">${label}<span style="color:#768390;font-size:0.72rem;">${hint}</span></div>`;
+            html += ifaceSegmentCard(header, srcName, dstName, rest.filter(onSrc), rest.filter(onDst), 'rest');
+        }
         container.innerHTML = html;
     }
 

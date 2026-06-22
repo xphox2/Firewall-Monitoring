@@ -113,21 +113,32 @@ func connectionFamily(connType string) string {
 	}
 }
 
+// normalizeIfName strips formatting differences so the same logical interface
+// matches across devices and across the name stored in a connection vs the name
+// in interface_stats (vlan500, "vlan 500", vlan.500, vlan-500, VLAN500 all match
+// as "vlan500"). Mirrors the poller's overlay-detector normalization so the
+// detail view resolves the same pairs the detector did.
+func normalizeIfName(name string) string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.NewReplacer(" ", "", ".", "", "-", "", "_", "").Replace(n)
+}
+
 // resolveConnectionInterfaces resolves a direct connection's interface names
-// (stored comma-separated in conn.TunnelNames by the physical detector) to the
-// latest interface_stats snapshot on each endpoint device. Deduplicated by
-// (device_id, ifIndex); a name with no stats row is skipped.
+// (stored comma-separated in conn.TunnelNames by the physical/overlay detectors)
+// to the latest interface_stats snapshot on each endpoint device. Matching is
+// normalized, so an interface named differently on each device (vlan100 vs
+// VLAN-100) still resolves on BOTH ends. Deduplicated by (device_id, ifIndex).
 func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []ConnInterfaceRef {
 	if conn.TunnelNames == "" {
 		return nil
 	}
-	var names []string
+	targets := make(map[string]bool)
 	for _, n := range strings.Split(conn.TunnelNames, ",") {
 		if n = strings.TrimSpace(n); n != "" {
-			names = append(names, n)
+			targets[normalizeIfName(n)] = true
 		}
 	}
-	if len(names) == 0 {
+	if len(targets) == 0 {
 		return nil
 	}
 
@@ -146,12 +157,12 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 	seen := make(map[string]bool)
 	var refs []ConnInterfaceRef
 	for _, dv := range devs {
-		for _, name := range names {
-			var st models.InterfaceStats
-			err := d.db.Where("device_id = ? AND name = ?", dv.id, name).
-				Order("timestamp DESC").Limit(1).First(&st).Error
-			if err != nil {
-				continue // this name isn't an interface on this device
+		// Match against the device's CURRENT interface set (latest snapshot), so
+		// any interface whose normalized name is in the connection's name list is
+		// resolved regardless of literal spelling differences between devices.
+		for _, st := range d.latestInterfacesForDevice(dv.id) {
+			if !targets[normalizeIfName(st.Name)] {
+				continue
 			}
 			key := fmt.Sprintf("%d:%d", dv.id, st.Index)
 			if seen[key] {
@@ -180,6 +191,18 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 		}
 	}
 	return refs
+}
+
+// latestInterfacesForDevice returns the device's interface_stats rows from its
+// most recent poll timestamp (the current interface set).
+func (d *Database) latestInterfacesForDevice(deviceID uint) []models.InterfaceStats {
+	var latest models.InterfaceStats
+	if err := d.db.Where("device_id = ?", deviceID).Order("timestamp DESC").Limit(1).First(&latest).Error; err != nil {
+		return nil
+	}
+	var rows []models.InterfaceStats
+	d.db.Where("device_id = ? AND timestamp = ?", deviceID, latest.Timestamp).Find(&rows)
+	return rows
 }
 
 // interfacesForDevice returns the subset of refs on a single device. Used to

@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.468] - 2026-06-22
+### Fixed
+- **Direct-link interfaces failed to pair, falsely showing "end not monitored" on the peer (e.g. DC2-FW1 ↔ DC2-FW2).** Three compounding causes, all fixed:
+  1. **Overlay detector stored only one side's interface name** (`cmd/poller/main.go` `detectOverlayConnections`): for `name_match` links (l2vlan/bridge/vxlan/l3ipvlan) it recorded `a.name` but not `b.name`, so `TunnelNames` omitted the peer's interface and the far end couldn't be resolved. Now stores **both** endpoints' names (matching the physical detector).
+  2. **The detail resolver matched interface names with exact SQL equality** while the detector matches *normalized* names — so a link named `vlan100` on one device and `VLAN-100` on the other never resolved the second end. `resolveConnectionInterfaces` (`internal/database/connection_detail.go`) now matches **normalized** names against each device's latest interface set (new `normalizeIfName`, `latestInterfacesForDevice`), resolving both ends regardless of spelling.
+  3. **The UI implied an end was unmonitored whenever a subnet didn't line up.** `renderPanelInterfaceTab` (`diagram-panels.js`) now only builds a "network segment" card for a subnet present on **both** ends; all other interfaces (Layer-2 links with no IP, or one-sided subnets) go into a single **"Other interfaces"** card that still shows both devices' columns. A side only reads "no interfaces reported" when it genuinely has none — no more misleading "end not monitored".
+- Tests: `TestResolveConnectionInterfaces_NormalizedBothEnds` (cross-spelling pairing).
+
 ## [0.10.467] - 2026-06-22
 ### Changed
 - **Direct-link Interfaces tab now groups interfaces by the network that joins the two devices, instead of a flat undifferentiated list.** It was impossible to tell which interface on one side paired with which on the other. The detail now resolves each interface's IP + network from `interface_addresses` (new `ip_address`/`subnet` on `ConnInterfaceRef`, `computeNetworkCIDR` in `internal/database/connection_detail.go`) and the UI (`diagram-panels.js` `renderPanelInterfaceTab`) renders **one card per IP subnet** — e.g. `🌐 10.0.5.0/24 · switch-a ↔ switch-b` — with the source-side interface(s) and dest-side interface(s) shown side by side (interface name + IP + speed + status + in/out), each still expandable to its own traffic chart. Interfaces whose end isn't monitored show "only one end monitored"; interfaces with no IP on a shared subnet fall into a final "unpaired" card. This makes the device↔network↔device pairing explicit.

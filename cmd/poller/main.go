@@ -1341,7 +1341,13 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 					}
 					pairAccum[key] = pi
 				}
+				// Record BOTH endpoints' interface names so the connection
+				// detail can resolve and pair each side. Storing only a.name
+				// (the historic behavior) left the peer's interface — and thus
+				// the far end of the link — unresolvable when the two devices
+				// name the interface differently (e.g. vlan100 vs VLAN-100).
 				pi.ifNames[a.name] = true
+				pi.ifNames[b.name] = true
 				if a.status == "up" && b.status == "up" {
 					pi.anyUp = true
 				}

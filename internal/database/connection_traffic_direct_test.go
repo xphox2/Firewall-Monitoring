@@ -128,6 +128,54 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 	}
 }
 
+// TestResolveConnectionInterfaces_NormalizedBothEnds covers the "end not
+// monitored" bug: a name_match L2 link (e.g. DC2-FW1 <-> DC2-FW2) where the two
+// devices spell the interface differently and TunnelNames may list only one
+// spelling. Both ends must still resolve via normalized matching.
+func TestResolveConnectionInterfaces_NormalizedBothEnds(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.db.Create(&models.Device{ID: 1, Name: "DC2-FW1"}).Error; err != nil {
+		t.Fatalf("dev1: %v", err)
+	}
+	if err := d.db.Create(&models.Device{ID: 2, Name: "DC2-FW2"}).Error; err != nil {
+		t.Fatalf("dev2: %v", err)
+	}
+	conn := models.DeviceConnection{
+		Name: "DC2-FW1 <-> DC2-FW2", SourceDeviceID: 1, DestDeviceID: 2,
+		ConnectionType: "l2vlan", Status: "up",
+		TunnelNames: "vlan100", // only one literal spelling stored
+		MatchMethod: "name_match", AutoDetected: true,
+	}
+	if err := d.db.Create(&conn).Error; err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	ts := time.Now().Add(-time.Minute)
+	// Same logical interface, spelled differently per device.
+	if err := d.db.Create(&models.InterfaceStats{DeviceID: 1, Name: "vlan100", Index: 7, Status: "up", Timestamp: ts}).Error; err != nil {
+		t.Fatalf("if1: %v", err)
+	}
+	if err := d.db.Create(&models.InterfaceStats{DeviceID: 2, Name: "VLAN-100", Index: 9, Status: "up", Timestamp: ts}).Error; err != nil {
+		t.Fatalf("if2: %v", err)
+	}
+
+	refs := d.resolveConnectionInterfaces(&conn)
+	var haveSrc, haveDst bool
+	for _, r := range refs {
+		if r.DeviceID == 1 {
+			haveSrc = true
+		}
+		if r.DeviceID == 2 {
+			haveDst = true
+		}
+	}
+	if !haveSrc {
+		t.Error("source end (DC2-FW1 vlan100) did not resolve")
+	}
+	if !haveDst {
+		t.Error("dest end (DC2-FW2 VLAN-100) did not resolve — normalized match failed (the 'end not monitored' bug)")
+	}
+}
+
 func TestComputeNetworkCIDR(t *testing.T) {
 	cases := []struct{ ip, mask, want string }{
 		{"10.0.5.1", "255.255.255.0", "10.0.5.0/24"},
