@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.465] - 2026-06-22
+### Changed
+- **The Connection Map legend now mirrors every link's line *style*, not just its color (`web/admin/admin.html`).** The two remaining dashed-on-the-map types had solid legend swatches: **VXLAN** (drawn dashed `#f0abfc`) and **Off-net** (drawn dashed `#4ade80`) now use dashed borders, matching L3VLAN. The legend is now fully faithful to the map across all seven entries — solid for IPSec/SSL/GRE/Direct, dashed for the VXLAN/L3VLAN/Off-net overlays — in both color and stroke style.
+
 ## [0.10.464] - 2026-06-22
 ### Changed
 - **The L3VLAN legend swatch is now dashed to mirror the map (`web/admin/admin.html`).** The `l3ipvlan` overlay is drawn as a dashed pink line on the Connection Map; its legend button now uses a dashed border (`border-style:dashed`) so the swatch matches the line style, not just the color.
