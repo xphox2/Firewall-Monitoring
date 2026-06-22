@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.461] - 2026-06-22
+### Changed
+- **All direct (same-site LAN) links on the connection map now share one teal color (`cmd/api/static/js/diagram-cytoscape.js`).** Following the bridge/l2vlan unification in 0.10.460, the two remaining direct-link types — `ethernet` (was slate `#94a3b8`) and `lag` (was amber `#fcd34d`) — are now also teal `#2dd4bf`, so every `DIRECT_TYPES` link (ethernet, lag, l2vlan, bridge) reads as the same class of connection at a glance. Physical links remain distinguishable by line width (lag = 4px, ethernet = 2px); only the color was unified. Tunnel/overlay/off-net link colors are unchanged.
+
 ## [0.10.460] - 2026-06-22
 ### Fixed
 - **Direct VLAN-layer links on the connection map now render in one consistent color and stack instead of overlapping (`cmd/api/static/js/diagram-cytoscape.js`).** A `bridge` (FortiGate "Software Switch") link and an `l2vlan` link between the same device pair are the same VLAN-layer LAN segment, and `TYPE_COLORS` already defined both as teal `#2dd4bf` — but the Cytoscape stylesheet had a `line-color` rule only for `edge[connType="l2vlan"]`, with no matching rule for `bridge`. So bridge edges fell through to the default grey edge color while l2vlan edges were teal, making the two look like different kinds of link. Added the missing `edge[connType="bridge"]` color rule so both direct VLAN links draw teal. Separately, direct connection edges (`edgeType="connection"`) inherited the default `curve-style: straight`, so multiple parallel direct links between the same pair were drawn on top of each other; they now use `curve-style: bezier` with a `control-point-step-size`, which fans parallel same-pair direct links into a neat stack. Single direct links are unaffected (a lone bezier edge renders straight).

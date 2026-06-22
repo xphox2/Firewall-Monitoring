@@ -30,12 +30,12 @@
         gre: '#c4b5fd',   // violet-300
         tunnel: '#94a3b8', // slate-400
         vxlan: '#f0abfc',  // fuchsia-300
-        l2vlan: '#2dd4bf', // teal-400
+        l2vlan: '#2dd4bf', // teal-400 (direct)
         l3ipvlan: '#f472b6', // pink-400
-        bridge: '#2dd4bf', // teal-400
+        bridge: '#2dd4bf', // teal-400 (direct)
         wan: '#fb923c',    // orange-400
-        lag: '#fcd34d',    // amber-300
-        ethernet: '#94a3b8',
+        lag: '#2dd4bf',    // teal-400 (direct — physical, distinguished by width)
+        ethernet: '#2dd4bf', // teal-400 (direct — physical, distinguished by width)
         offnet: '#4ade80'  // green-400
     };
 
