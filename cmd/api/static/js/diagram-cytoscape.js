@@ -705,6 +705,13 @@
 
     function toggleType(type) {
         if (type === 'all') { hiddenTypes = {}; }
+        else if (type === 'direct') {
+            // "Direct" is a legend group covering all DIRECT_TYPES (ethernet, lag,
+            // l2vlan, bridge) — they share one color on the map, so they toggle as one.
+            var keys = Object.keys(DIRECT_TYPES);
+            var anyVisible = keys.some(function(t) { return !hiddenTypes[t]; });
+            keys.forEach(function(t) { if (anyVisible) hiddenTypes[t] = true; else delete hiddenTypes[t]; });
+        }
         else { if (hiddenTypes[type]) delete hiddenTypes[type]; else hiddenTypes[type] = true; }
         applyFilters(); updateToolbarButtons();
     }
@@ -719,7 +726,11 @@
     function updateToolbarButtons() {
         document.querySelectorAll('[data-action="dg-filter-type"]').forEach(function(btn) {
             var type = btn.dataset.type;
-            btn.classList.toggle('active', type === 'all' ? Object.keys(hiddenTypes).length === 0 : !hiddenTypes[type]);
+            var active;
+            if (type === 'all') active = Object.keys(hiddenTypes).length === 0;
+            else if (type === 'direct') active = Object.keys(DIRECT_TYPES).some(function(t) { return !hiddenTypes[t]; });
+            else active = !hiddenTypes[type];
+            btn.classList.toggle('active', active);
         });
     }
 

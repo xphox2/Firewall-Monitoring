@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.462] - 2026-06-22
+### Changed
+- **The Connection Map legend/filter bar now matches the actual map colors and the unified direct-link color (`web/admin/admin.html`, `cmd/api/static/js/diagram-cytoscape.js`).** Two problems were fixed: (1) every legend swatch used a stale GitHub-era palette (e.g. IPSec `#58a6ff`, SSL `#d29922`, L2VLAN/Bridge `#39d4e0`, Off-net `#3fb950`) that never matched the Cytoscape `TYPE_COLORS` actually drawn on the map — swatches are now synced to the real values (IPSec `#7dd3fc`, SSL `#fdba74`, GRE `#c4b5fd`, VXLAN `#f0abfc`, Off-net `#4ade80`). (2) The separate **L2VLAN** and **Bridge** buttons are replaced by a single teal **Direct** button (`data-type="direct"`) reflecting that ethernet, LAG, L2VLAN, and bridge now render as one direct color (0.10.460–461). Clicking **Direct** toggles all four `DIRECT_TYPES` as a group (`toggleType`/`updateToolbarButtons` gained group handling), so ethernet/LAG links — previously not filterable at all — are now covered. No backend or detection changes.
+
 ## [0.10.461] - 2026-06-22
 ### Changed
 - **All direct (same-site LAN) links on the connection map now share one teal color (`cmd/api/static/js/diagram-cytoscape.js`).** Following the bridge/l2vlan unification in 0.10.460, the two remaining direct-link types — `ethernet` (was slate `#94a3b8`) and `lag` (was amber `#fcd34d`) — are now also teal `#2dd4bf`, so every `DIRECT_TYPES` link (ethernet, lag, l2vlan, bridge) reads as the same class of connection at a glance. Physical links remain distinguishable by line width (lag = 4px, ethernet = 2px); only the color was unified. Tunnel/overlay/off-net link colors are unchanged.
