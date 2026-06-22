@@ -30,6 +30,41 @@
         return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h` : `${Math.floor(s / 60)}m`;
     }
 
+    function formatSpeed(bitsPerSec) {
+        if (!bitsPerSec) return '-';
+        const u = ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps'];
+        let v = bitsPerSec, i = 0;
+        while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+        return (v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i];
+    }
+
+    // familyOf mirrors the backend connectionFamily (internal/database/connection_detail.go):
+    // it selects which telemetry source + detail view a connection uses.
+    function familyOf(connType) {
+        switch ((connType || '').toLowerCase().trim()) {
+            case 'vxlan': case 'l3ipvlan': return 'overlay';
+            case 'ethernet': case 'lag': case 'l2vlan': case 'bridge': case 'wan': return 'direct';
+            case 'offnet': return 'offnet';
+            default: return 'tunnel'; // ipsec/ssl/gre/tunnel + unknown
+        }
+    }
+
+    // Per-family chrome: relabels the count KPI and the second tab so the same
+    // panel frame reads correctly for tunnels, overlays, direct links, and
+    // off-net. Direct/off-net never have Phase 2, so that tab stays hidden.
+    function applyFamilyChrome(family) {
+        const countLabel = document.getElementById('pkpi-count-label');
+        const secondTab = document.querySelector('#rich-panel-tabs .panel-tab[data-tab="tunnels"]');
+        const cfg = {
+            tunnel:  { count: 'Phase 1', tab: 'Tunnels' },
+            overlay: { count: 'Carrier',  tab: 'Carrier' },
+            direct:  { count: 'Interfaces', tab: 'Interfaces' },
+            offnet:  { count: 'Peers',    tab: 'Peers' }
+        }[family] || { count: 'Tunnels', tab: 'Tunnels' };
+        if (countLabel) countLabel.textContent = cfg.count;
+        if (secondTab) secondTab.textContent = cfg.tab;
+    }
+
     function closeRichPanel() {
         destroyPanelCharts();
         currentPanelConnId = null;
@@ -140,7 +175,7 @@
                 <div class="panel-kpi-grid">
                     <div class="panel-kpi-card"><div class="kpi-label">Bytes In</div><div class="kpi-value accent" id="pkpi-bytes-in">--</div></div>
                     <div class="panel-kpi-card"><div class="kpi-label">Bytes Out</div><div class="kpi-value good" id="pkpi-bytes-out">--</div></div>
-                    <div class="panel-kpi-card"><div class="kpi-label">Tunnels</div><div class="kpi-value" id="pkpi-tunnels">--</div></div>
+                    <div class="panel-kpi-card"><div class="kpi-label" id="pkpi-count-label">Tunnels</div><div class="kpi-value" id="pkpi-tunnels">--</div></div>
                     <div class="panel-kpi-card"><div class="kpi-label">Status</div><div class="kpi-value" id="pkpi-status">--</div></div>
                 </div>
                 <div class="panel-tabs" id="rich-panel-tabs">
@@ -217,6 +252,7 @@
             </div>
         `;
 
+        applyFamilyChrome(familyOf(conn.connection_type));
         renderPanelBridge('panel-bridge-container', srcName, dstName, conn.status, conn.connection_type);
         loadPanelDetail(conn.id, conn);
         loadPanelTrafficChart(conn.id, '24h');
@@ -231,22 +267,37 @@
             const srcName = c.source_device?.name || conn.source_device?.name || 'Device ' + c.source_device_id;
             const dstName = c.dest_device?.name || conn.dest_device?.name || 'Device ' + c.dest_device_id;
 
+            const family = data.family || familyOf(c.connection_type);
             document.getElementById('pkpi-bytes-in').textContent = window.formatBytes(data.total_bytes_in);
             document.getElementById('pkpi-bytes-out').textContent = window.formatBytes(data.total_bytes_out);
-            const tunnelCount = (data.source_tunnels?.length || 0) + (data.dest_tunnels?.length || 0);
-            document.getElementById('pkpi-tunnels').textContent = tunnelCount;
             const statusEl = document.getElementById('pkpi-status');
             statusEl.innerHTML = `<span class="badge ${c.status}" style="font-size:0.75rem;">${(c.status || 'unknown').toUpperCase()}</span>`;
 
-            document.getElementById('ptab-src-title').textContent = `Source Tunnels (${srcName})`;
-            document.getElementById('ptab-dst-title').textContent = `Dest Tunnels (${dstName})`;
-            renderPanelTunnelTable('ptab-src-tunnels', data.source_tunnels || [], c.source_device_id);
-            renderPanelTunnelTable('ptab-dst-tunnels', data.dest_tunnels || [], c.dest_device_id);
-
-            const p2 = data.phase2_matches || [];
             const p2Tab = document.getElementById('ptab-phase2-tab');
-            if (p2Tab) p2Tab.style.display = p2.length > 0 ? '' : 'none';
-            if (p2.length > 0) renderPanelPhase2(p2, srcName, dstName);
+
+            if (family === 'direct') {
+                // Direct links carry interfaces, not tunnels — render the member
+                // interfaces (from interface_stats) into the second tab.
+                const ifaces = data.interfaces || [];
+                document.getElementById('pkpi-tunnels').textContent = ifaces.length;
+                renderPanelInterfaceTab(ifaces, srcName, dstName);
+                if (p2Tab) p2Tab.style.display = 'none';
+            } else {
+                // Tunnel / overlay / off-net: group Phase 2 selectors under their
+                // Phase 1 (one graph per Phase 1 — Phase 2 selectors share it).
+                const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
+                document.getElementById('pkpi-tunnels').textContent = countPhase1(srcT) + countPhase1(dstT);
+                const tnoun = family === 'overlay' ? 'Carrier' : 'Source Tunnels';
+                const dnoun = family === 'overlay' ? 'Carrier (remote)' : 'Dest Tunnels';
+                document.getElementById('ptab-src-title').textContent = `${tnoun} (${srcName})`;
+                document.getElementById('ptab-dst-title').textContent = `${dnoun} (${dstName})`;
+                renderPanelTunnelTable('ptab-src-tunnels', srcT, c.source_device_id, family);
+                renderPanelTunnelTable('ptab-dst-tunnels', dstT, c.dest_device_id, family);
+
+                const p2 = data.phase2_matches || [];
+                if (p2Tab) p2Tab.style.display = p2.length > 0 ? '' : 'none';
+                if (p2.length > 0) renderPanelPhase2(p2, srcName, dstName);
+            }
 
             const flowsTab = document.getElementById('ptab-flows-tab');
             if (flowsTab) flowsTab.style.display = data.has_flow_data ? '' : 'none';
@@ -350,39 +401,160 @@
         if (currentPanelConnId) loadPanelFlowStats(currentPanelConnId, hours);
     }
 
-    function renderPanelTunnelTable(tableId, tunnels, deviceId) {
+    // groupByPhase1 collapses Phase 2 selectors that share a Phase 1 IKE gateway
+    // into one group. Multiple Phase 2 selectors under one Phase 1 share a single
+    // counter series, so the UI shows ONE graph per Phase 1 (keyed off a
+    // representative selector) and lists the selectors as non-graphed children.
+    function groupByPhase1(tunnels) {
+        const groups = {}, order = [];
+        (tunnels || []).forEach(t => {
+            const key = (t.phase1_name && t.phase1_name.trim()) || t.tunnel_name;
+            if (!groups[key]) { groups[key] = []; order.push(key); }
+            groups[key].push(t);
+        });
+        return order.map(k => ({ phase1: k, phase2: groups[k] }));
+    }
+
+    function countPhase1(tunnels) { return groupByPhase1(tunnels).length; }
+
+    function renderPanelTunnelTable(tableId, tunnels, deviceId, family) {
         const tbody = document.querySelector(`#${tableId} tbody`);
+        const noun = family === 'overlay' ? 'carrier tunnels' : 'tunnels';
         if (!tunnels.length) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#768390;padding:16px;">No tunnels</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#768390;padding:16px;">No ${noun}</td></tr>`;
             return;
         }
         let html = '';
-        tunnels.forEach((t, i) => {
-            const rowId = `${tableId}-row-${i}`;
-            const statusBadge = t.status === 'up' || t.state === 'up' ? '<span class="badge up">UP</span>' : '<span class="badge down">DOWN</span>';
+        groupByPhase1(tunnels).forEach((g, gi) => {
+            const rowId = `${tableId}-row-${gi}`;
+            const rep = g.phase2[0].tunnel_name; // representative selector — shared counter series
+            const anyUp = g.phase2.some(t => t.status === 'up' || t.state === 'up');
+            const statusBadge = anyUp ? '<span class="badge up">UP</span>' : '<span class="badge down">DOWN</span>';
+            const sumIn = g.phase2.reduce((a, t) => a + (t.bytes_in || 0), 0);
+            const sumOut = g.phase2.reduce((a, t) => a + (t.bytes_out || 0), 0);
+            const remoteIP = g.phase2[0].remote_ip || '-';
+            const selCount = g.phase2.length;
+            const label = window.escapeHtml(g.phase1) + (selCount > 1 ? ` <span style="color:#768390;font-size:0.72rem;">(${selCount} selectors)</span>` : '');
+            const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}" data-range="${r}">${lbl}</div>`;
             html += `
-                <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}">
+                <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}">
                     <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
-                    <td>${window.escapeHtml(t.tunnel_name)}</td>
+                    <td>${label}</td>
                     <td>${statusBadge}</td>
-                    <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(t.remote_ip || '-')}</td>
-                    <td>${window.formatBytes(t.bytes_in)}</td>
-                    <td>${window.formatBytes(t.bytes_out)}</td>
-                </tr>
+                    <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(remoteIP)}</td>
+                    <td>${window.formatBytes(sumIn)}</td>
+                    <td>${window.formatBytes(sumOut)}</td>
+                </tr>`;
+            // Phase 2 selector child rows (subnets) — informational, no graph.
+            g.phase2.forEach(t => {
+                if (!t.local_subnet && !t.remote_subnet) return;
+                const sUp = t.status === 'up' || t.state === 'up';
+                html += `
+                <tr class="panel-tunnel-p2child">
+                    <td></td>
+                    <td style="font-family:monospace;font-size:0.74rem;color:#8b949e;padding-left:14px;">&#8627; ${window.escapeHtml(t.local_subnet || '?')} &rarr; ${window.escapeHtml(t.remote_subnet || '?')}</td>
+                    <td><span class="badge ${sUp ? 'up' : 'down'}" style="font-size:0.6rem;">${sUp ? 'UP' : 'DOWN'}</span></td>
+                    <td></td>
+                    <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_in)}</td>
+                    <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_out)}</td>
+                </tr>`;
+            });
+            html += `
                 <tr class="panel-tunnel-expand" id="${rowId}">
                     <td colspan="6">
                         <div class="panel-range-pills" style="margin-bottom:6px;">
-                            <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="1h">1h</div>
-                            <div class="panel-range-pill active" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="24h">24h</div>
-                            <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="7d">7d</div>
-                            <div class="panel-range-pill" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}" data-range="30d">30d</div>
+                            ${pill('1h', '1h', false)}${pill('24h', '24h', true)}${pill('7d', '7d', false)}${pill('30d', '30d', false)}
                         </div>
                         <div class="panel-chart-container" style="height:150px;"><canvas id="pchart-${rowId}"></canvas></div>
                     </td>
-                </tr>
-            `;
+                </tr>`;
         });
         tbody.innerHTML = html;
+    }
+
+    // renderPanelInterfaceTab replaces the second tab's body with a single table
+    // of the direct link's member interfaces (interface_stats), each expandable
+    // to a per-interface traffic chart — mirroring the tunnel-row UX.
+    function renderPanelInterfaceTab(ifaces, srcName, dstName) {
+        const container = document.getElementById('ptab-tunnels');
+        if (!container) return;
+        container.innerHTML = `
+            <table class="vpn-detail-table" id="ptab-ifaces">
+                <thead><tr><th></th><th>Interface</th><th>Device</th><th>Speed</th><th>Status</th><th>In</th><th>Out</th><th>Errors</th></tr></thead>
+                <tbody></tbody>
+            </table>`;
+        const tbody = container.querySelector('#ptab-ifaces tbody');
+        if (!ifaces.length) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#768390;padding:16px;">No interface telemetry for this link</td></tr>';
+            return;
+        }
+        let html = '';
+        ifaces.forEach((f, i) => {
+            const rowId = `iface-row-${i}`;
+            const up = f.status === 'up';
+            const statusBadge = `<span class="badge ${up ? 'up' : 'down'}">${(f.status || 'unknown').toUpperCase()}</span>`;
+            const errs = (f.in_errors || 0) + (f.out_errors || 0);
+            const errCell = errs > 0 ? `<span style="color:#d29922;">${window.formatNum(errs)}</span>` : '0';
+            const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-iface-chart" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}" data-range="${r}">${lbl}</div>`;
+            html += `
+                <tr class="panel-tunnel-row" data-action="dp-toggle-iface" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}">
+                    <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
+                    <td style="font-family:monospace;">${window.escapeHtml(f.if_name)}</td>
+                    <td style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(f.device_name || '-')}</td>
+                    <td style="font-size:0.78rem;">${formatSpeed(f.speed)}</td>
+                    <td>${statusBadge}</td>
+                    <td>${window.formatBytes(f.in_bytes)}</td>
+                    <td>${window.formatBytes(f.out_bytes)}</td>
+                    <td>${errCell}</td>
+                </tr>
+                <tr class="panel-tunnel-expand" id="${rowId}">
+                    <td colspan="8">
+                        <div class="panel-range-pills" style="margin-bottom:6px;">
+                            ${pill('1h', '1h', false)}${pill('24h', '24h', true)}${pill('7d', '7d', false)}${pill('30d', '30d', false)}
+                        </div>
+                        <div class="panel-chart-container" style="height:150px;"><canvas id="pchart-${rowId}"></canvas></div>
+                    </td>
+                </tr>`;
+        });
+        tbody.innerHTML = html;
+    }
+
+    function togglePanelInterface(rowId, deviceId, ifIndex) {
+        const expandRow = document.getElementById(rowId);
+        const chev = document.getElementById('pchev-' + rowId);
+        if (expandRow.classList.contains('open')) {
+            expandRow.classList.remove('open');
+            if (chev) chev.classList.remove('open');
+        } else {
+            expandRow.classList.add('open');
+            if (chev) chev.classList.add('open');
+            if (!panelChartInstances['iface-' + rowId]) {
+                loadPanelInterfaceChart(rowId, deviceId, ifIndex, '24h');
+            }
+        }
+    }
+
+    async function loadPanelInterfaceChart(rowId, deviceId, ifIndex, range) {
+        try {
+            const resp = await window.apiFetch(`${window.API_BASE}/devices/${deviceId}/interfaces/${ifIndex}/chart?range=${range}`);
+            const data = resp && resp.data ? resp.data : resp;
+            if (!Array.isArray(data)) return;
+            const canvas = document.getElementById('pchart-' + rowId);
+            if (!canvas) return;
+            if (panelChartInstances['iface-' + rowId]) panelChartInstances['iface-' + rowId].destroy();
+            const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
+            panelChartInstances['iface-' + rowId] = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'In', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
+                        { label: 'Out', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                    ]
+                },
+                options: panelChartOptions()
+            });
+        } catch (e) { console.error('Interface chart failed:', e); }
     }
 
     function togglePanelTunnel(rowId, deviceId, tunnelName) {
@@ -571,6 +743,14 @@
             pills.forEach(function(p) { p.classList.remove('active'); });
             el.classList.add('active');
             loadPanelTunnelChart(el.dataset.row, parseInt(el.dataset.device), el.dataset.tunnel, el.dataset.range);
+        } else if (action === 'dp-toggle-iface') {
+            togglePanelInterface(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex));
+        } else if (action === 'dp-iface-chart') {
+            e.stopPropagation();
+            var ipills = el.parentElement.querySelectorAll('.panel-range-pill');
+            ipills.forEach(function(p) { p.classList.remove('active'); });
+            el.classList.add('active');
+            loadPanelInterfaceChart(el.dataset.row, parseInt(el.dataset.device), parseInt(el.dataset.ifindex), el.dataset.range);
         }
     });
 
@@ -583,6 +763,8 @@
         setPanelFlowRange,
         togglePanelTunnel,
         loadPanelTunnelChart,
+        togglePanelInterface,
+        loadPanelInterfaceChart,
         destroyPanelCharts,
         getCurrentPanelConnId,
         setCurrentPanelConnId

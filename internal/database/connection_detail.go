@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,11 +31,33 @@ type Phase2Match struct {
 	DstUptime    uint64 `json:"dst_uptime"`
 }
 
+// ConnInterfaceRef describes one physical/virtual interface that carries a
+// direct (ethernet/lag/l2vlan/bridge/wan) connection. Direct links have no
+// vpn_status rows — their telemetry lives in interface_stats — so the detail
+// view graphs and lists these instead of tunnels. Resolved from the latest
+// interface_stats snapshot for each interface name in the connection's
+// TunnelNames (which, for direct links, holds interface names — see
+// cmd/poller physical detector).
+type ConnInterfaceRef struct {
+	DeviceID   uint   `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	IfName     string `json:"if_name"`
+	IfIndex    int    `json:"if_index"`
+	Speed      uint64 `json:"speed"`
+	Status     string `json:"status"`
+	InBytes    uint64 `json:"in_bytes"`
+	OutBytes   uint64 `json:"out_bytes"`
+	InErrors   uint64 `json:"in_errors"`
+	OutErrors  uint64 `json:"out_errors"`
+}
+
 // ConnectionDetailResult holds full detail for a connection including matching tunnels.
 type ConnectionDetailResult struct {
 	Connection      models.DeviceConnection `json:"connection"`
+	Family          string                  `json:"family"` // tunnel | overlay | direct | offnet — drives which detail view the UI renders
 	SourceTunnels   []models.VPNStatus      `json:"source_tunnels"`
 	DestTunnels     []models.VPNStatus      `json:"dest_tunnels"`
+	Interfaces      []ConnInterfaceRef      `json:"interfaces,omitempty"` // populated for the "direct" family only
 	TotalBytesIn    uint64                  `json:"total_bytes_in"`
 	TotalBytesOut   uint64                  `json:"total_bytes_out"`
 	TotalPacketsIn  uint64                  `json:"total_packets_in"`
@@ -43,6 +66,108 @@ type ConnectionDetailResult struct {
 	ThroughputOut   float64                 `json:"throughput_out"`
 	HasFlowData     bool                    `json:"has_flow_data"`
 	Phase2Matches   []Phase2Match           `json:"phase2_matches"`
+}
+
+// connectionFamily maps a connection_type to one of four telemetry families
+// that determine which data source and detail view a connection uses:
+//
+//	tunnel  — ipsec/ssl/gre/tunnel: counters in vpn_status, keyed per tunnel_name
+//	          (= Phase 2 selector), aggregated per Phase 1 in the UI.
+//	overlay — vxlan/l3ipvlan: no counter of their own; they ride inside a
+//	          carrier tunnel, so they graph the carrier's vpn_status (resolved
+//	          by the existing peer-remote-IP tunnel matching).
+//	direct  — ethernet/lag/l2vlan/bridge/wan: counters in interface_stats,
+//	          keyed per (device_id, ifIndex). No tunnels/phase2.
+//	offnet  — aggregate of unmatched remote peers.
+//
+// Unknown/empty types fall back to "tunnel" (the historical default).
+func connectionFamily(connType string) string {
+	switch strings.ToLower(strings.TrimSpace(connType)) {
+	case "vxlan", "l3ipvlan":
+		return "overlay"
+	case "ethernet", "lag", "l2vlan", "bridge", "wan":
+		return "direct"
+	case "offnet":
+		return "offnet"
+	default: // ipsec, ssl, gre, tunnel, and any unknown value
+		return "tunnel"
+	}
+}
+
+// resolveConnectionInterfaces resolves a direct connection's interface names
+// (stored comma-separated in conn.TunnelNames by the physical detector) to the
+// latest interface_stats snapshot on each endpoint device. Deduplicated by
+// (device_id, ifIndex); a name with no stats row is skipped.
+func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []ConnInterfaceRef {
+	if conn.TunnelNames == "" {
+		return nil
+	}
+	var names []string
+	for _, n := range strings.Split(conn.TunnelNames, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+
+	type dev struct {
+		id   uint
+		name string
+	}
+	devs := []dev{{conn.SourceDeviceID, ""}, {conn.DestDeviceID, ""}}
+	if conn.SourceDevice != nil {
+		devs[0].name = conn.SourceDevice.Name
+	}
+	if conn.DestDevice != nil {
+		devs[1].name = conn.DestDevice.Name
+	}
+
+	seen := make(map[string]bool)
+	var refs []ConnInterfaceRef
+	for _, dv := range devs {
+		for _, name := range names {
+			var st models.InterfaceStats
+			err := d.db.Where("device_id = ? AND name = ?", dv.id, name).
+				Order("timestamp DESC").Limit(1).First(&st).Error
+			if err != nil {
+				continue // this name isn't an interface on this device
+			}
+			key := fmt.Sprintf("%d:%d", dv.id, st.Index)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			refs = append(refs, ConnInterfaceRef{
+				DeviceID:   dv.id,
+				DeviceName: dv.name,
+				IfName:     st.Name,
+				IfIndex:    st.Index,
+				Speed:      st.Speed,
+				Status:     st.Status,
+				InBytes:    st.InBytes,
+				OutBytes:   st.OutBytes,
+				InErrors:   st.InErrors,
+				OutErrors:  st.OutErrors,
+			})
+		}
+	}
+	return refs
+}
+
+// interfacesForDevice returns the subset of refs on a single device. Used to
+// build a directionally-coherent aggregate: summing both endpoints of a direct
+// link would mix in/out (A's out ≈ B's in), so the Overview graph and KPIs use
+// one device's interfaces while the Interfaces tab still lists both ends.
+func interfacesForDevice(refs []ConnInterfaceRef, deviceID uint) []ConnInterfaceRef {
+	var out []ConnInterfaceRef
+	for _, r := range refs {
+		if r.DeviceID == deviceID {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // collectDeviceIPs returns all known IPs for a device (management + interface addresses).
@@ -69,7 +194,27 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		return nil, err
 	}
 
-	result := &ConnectionDetailResult{Connection: conn}
+	result := &ConnectionDetailResult{Connection: conn, Family: connectionFamily(conn.ConnectionType)}
+
+	// Direct links (ethernet/lag/l2vlan/bridge/wan) carry no VPN tunnels — their
+	// telemetry lives in interface_stats. Resolve the member interfaces, derive
+	// the byte KPIs from one endpoint (avoids in/out double-count), and skip the
+	// tunnel-matching path entirely.
+	if result.Family == "direct" {
+		result.Interfaces = d.resolveConnectionInterfaces(&conn)
+		primary := interfacesForDevice(result.Interfaces, conn.SourceDeviceID)
+		if len(primary) == 0 {
+			primary = interfacesForDevice(result.Interfaces, conn.DestDeviceID)
+		}
+		for _, r := range primary {
+			result.TotalBytesIn += r.InBytes
+			result.TotalBytesOut += r.OutBytes
+		}
+		var flowCount int64
+		d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Limit(1).Count(&flowCount)
+		result.HasFlowData = flowCount > 0
+		return result, nil
+	}
 
 	// Get latest VPN statuses for both devices
 	srcTunnels, _ := d.GetLatestVPNStatuses(conn.SourceDeviceID)
@@ -326,8 +471,78 @@ func (d *Database) getConnectionTunnelNames(connID uint) (srcDeviceID, dstDevice
 	return
 }
 
-// GetConnectionTraffic returns aggregated VPN chart data for all matching tunnels in a connection.
+// rangeToHours maps the connection-traffic range presets to a lookback in hours.
+func rangeToHours(rangeStr string) int {
+	switch rangeStr {
+	case "1h":
+		return 1
+	case "7d":
+		return 168
+	case "30d":
+		return 720
+	default: // 24h
+		return 24
+	}
+}
+
+// interfaceTrafficWindow aggregates per-interface chart buckets (from
+// GetInterfaceChartWindow) into a single series in the same shape the VPN
+// traffic chart returns, so the frontend renders direct links identically.
+// Buckets align across interfaces because they share one [from,to] window and
+// adaptive bucket size; rows are merged by bucket string and returned sorted.
+func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr string) ([]VPNChartBucket, error) {
+	if len(refs) == 0 {
+		return []VPNChartBucket{}, nil
+	}
+	to := time.Now()
+	from := to.Add(-time.Duration(rangeToHours(rangeStr)) * time.Hour)
+
+	agg := make(map[string]*VPNChartBucket)
+	for _, r := range refs {
+		buckets, err := d.GetInterfaceChartWindow(r.DeviceID, r.IfIndex, from, to)
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range buckets {
+			e := agg[b.Bucket]
+			if e == nil {
+				e = &VPNChartBucket{Bucket: b.Bucket, BucketMs: b.BucketMs}
+				agg[b.Bucket] = e
+			}
+			e.InBytes += b.InBytes
+			e.OutBytes += b.OutBytes
+			e.InPackets += b.InPackets
+			e.OutPackets += b.OutPackets
+		}
+	}
+
+	out := make([]VPNChartBucket, 0, len(agg))
+	for _, v := range agg {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].BucketMs < out[j].BucketMs })
+	return out, nil
+}
+
+// GetConnectionTraffic returns aggregated chart data for a connection. Tunnel,
+// overlay and off-net connections aggregate vpn_status (overlays graph their
+// carrier tunnel, matched by peer remote IP); direct links aggregate
+// interface_stats for their member interfaces on one endpoint.
 func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChartBucket, error) {
+	// Direct links graph interface_stats, not vpn_status.
+	var conn models.DeviceConnection
+	if err := d.db.Preload("SourceDevice").Preload("DestDevice").First(&conn, connID).Error; err != nil {
+		return nil, err
+	}
+	if connectionFamily(conn.ConnectionType) == "direct" {
+		refs := d.resolveConnectionInterfaces(&conn)
+		primary := interfacesForDevice(refs, conn.SourceDeviceID)
+		if len(primary) == 0 {
+			primary = interfacesForDevice(refs, conn.DestDeviceID)
+		}
+		return d.interfaceTrafficWindow(primary, rangeStr)
+	}
+
 	srcDeviceID, dstDeviceID, srcTunnelNames, dstTunnelNames, err := d.getConnectionTunnelNames(connID)
 	if err != nil {
 		return nil, err

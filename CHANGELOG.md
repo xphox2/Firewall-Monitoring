@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.466] - 2026-06-22
+### Added
+- **Connection-map link details are now type-aware — a VLAN/ethernet/LAG link no longer renders the (empty) IPSec tunnel panel.** Every connection type is sorted into one of four telemetry *families* that decide which data source and detail view it gets (`internal/database/connection_detail.go` `connectionFamily`):
+  - **direct** (ethernet/lag/l2vlan/bridge/wan) — graphs **`interface_stats`** for its member interfaces (resolved from the interface names in `TunnelNames`) instead of `vpn_status`, which has no rows for these links. The second tab becomes **Interfaces**: per-interface rows (device, speed, status, in/out, errors) each expandable to a per-interface traffic chart (reuses `GET /api/devices/:id/interfaces/:ifIndex/chart`).
+  - **tunnel** (ipsec/ssl/gre/tunnel) — the **Tunnels** tab now groups Phase 2 selectors under their **Phase 1**: one graph per Phase 1 (selectors sharing a Phase 1 share a single counter series — there is no separate per-Phase-2 series), with the selectors listed beneath as non-graphed subnet rows. The count KPI shows Phase 1 count.
+  - **overlay** (vxlan/l3ipvlan) — graphs its **carrier tunnel** (matched by peer remote IP); tab/labels read "Carrier".
+  - **offnet** — labelled "Peers".
+- The Overview traffic graph, range pills (1h/24h/7d/30d) and chart styling are identical across all families — `GetConnectionTraffic` now branches by family and returns the same `{in_bytes, out_bytes, bucket_ms}` shape for interface-sourced links (new `interfaceTrafficWindow`, summed over one endpoint's interfaces to keep in/out directionally coherent).
+- Regression tests: `connection_traffic_direct_test.go` (direct link pulls `interface_stats`, merge/aggregation, family classifier).
+
 ## [0.10.465] - 2026-06-22
 ### Changed
 - **The Connection Map legend now mirrors every link's line *style*, not just its color (`web/admin/admin.html`).** The two remaining dashed-on-the-map types had solid legend swatches: **VXLAN** (drawn dashed `#f0abfc`) and **Off-net** (drawn dashed `#4ade80`) now use dashed borders, matching L3VLAN. The legend is now fully faithful to the map across all seven entries — solid for IPSec/SSL/GRE/Direct, dashed for the VXLAN/L3VLAN/Off-net overlays — in both color and stroke style.
