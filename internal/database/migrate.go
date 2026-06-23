@@ -813,3 +813,18 @@ func (d *Database) migrateFlowSamplesSamplingRateScale() error {
 	log.Printf("migrate v7 flow_samples scaling: %d rows backfilled (bytes=frame_length*sampling_rate, packets=sampling_rate)", result.RowsAffected)
 	return nil
 }
+
+// migrateFlowAgentDropsTable (v8) creates the flow_agent_drops table for
+// per-(agent, sampling_rate) rolling-window aggregate of sFlow sample-pool
+// drops (sFlow v5 §3.1.1). The CTO-loop audit (2026-06-22, taocp [MEDIUM] #5
+// + consolidated C-3) found the drops field was invisible end-to-end;
+// this table is the storage layer that lets alert policies and the NOC
+// surface agent-side congestion.
+//
+// Idempotency: AutoMigrate is idempotent — it adds only what's missing.
+// Fresh installs get the table from the AutoMigrate loop in
+// migrateBaseline (via the allModels slice), so this migration is a
+// no-op there too (still recorded as v8 in schema_migrations).
+func (d *Database) migrateFlowAgentDropsTable() error {
+	return d.db.AutoMigrate(&models.AgentDrops{})
+}

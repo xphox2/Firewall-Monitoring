@@ -35,6 +35,7 @@ var flowSamplesCopyColumns = []string{
 	"input_if_index",
 	"output_if_index",
 	"tcp_flags",
+	"drops",
 	"created_at",
 }
 
@@ -70,6 +71,7 @@ func saveFlowSamplesPGX(ctx context.Context, pool *pgxpool.Pool, samples []model
 			s.InputIfIndex,
 			s.OutputIfIndex,
 			s.TCPFlags,
+			s.Drops,
 			now,
 		}
 	}
