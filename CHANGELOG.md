@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.472] - 2026-06-22
+
+### Changed
+- **sFlow: bulk insert of `flow_samples` now uses the Postgres COPY protocol via a dedicated `*pgxpool.Pool` instead of GORM's per-row `Create`.** ~5-10× throughput on the same payload; eliminates per-row INSERT round-trips and the per-row transaction overhead. The pgx pool is opened alongside the GORM pool in `Connect` with the same connection settings and `statement_timeout` (AUDIT-037); failed pool init logs a warning and falls back to GORM `Create` (slow but correct). The SQLite test backend has `pgxPool == nil` and uses the GORM path — no test-time regression. `pgx` was already a transitive dependency on disk; this PR moves it to a direct dependency (`go.mod`). Tests: `TestFlowSamplesCopyColumns_OrderAndFieldTypes` (static check that the column list matches `models.FlowSample` field order — pgx binds columns positionally so a reorder is a silent corruption), `TestSaveFlowSamples_EmptyInputShortCircuits` (nil/empty input), `TestSaveFlowSamples_GORMFallbackOnSQLite` (the SQLite lane still works). Closes the CTO-loop audit's [critical] #4 (`docs/cto-loop-2026-06-22-taocp.md`).
+
 ## [0.10.471] - 2026-06-22
 
 ### Fixed
