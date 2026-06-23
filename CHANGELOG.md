@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.475] - 2026-06-23
+
+### Fixed
+- **Top-N lists now use `sort.SliceStable` so equal-ranked entries keep a deterministic order across otherwise-identical requests.** CTO-loop audit (2026-06-22, taocp [medium] #7, Lesson 5.2): `sort.Slice` is not a stable sort, so two protocols/conversations/events/talkers with identical counts could swap positions request-to-request. Converted the four count/value-ranked top-N sorts — `TopProtocols` and `mergeKeyCounts` (`internal/database/flows.go`), device `Events` (`internal/database/devices.go`), and report Fleet Top Talkers (`internal/report/model.go`). The time-bucket sort in `flows.go` (unique bucket keys, no ties) is intentionally left as `sort.Slice`. No behavior change for non-tied data; protects any future paginated top-N endpoint from non-deterministic ordering.
 ## [0.10.474] - 2026-06-23
 
 ### Changed
