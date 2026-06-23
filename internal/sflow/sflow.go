@@ -321,8 +321,22 @@ func (r *SFlowReceiver) parseRawPacketHeader(data []byte, agentIP string, sampli
 		InputIfIndex:  inputIf,
 		OutputIfIndex: outputIf,
 		FrameLength:   frameLength,
-		Bytes:         uint64(frameLength),
-		Packets:       1,
+	}
+
+	// Per sFlow v5 semantics (RFC 3176), a single sampled flow record
+	// represents `sampling_rate` packets of `frame_length` bytes each.
+	// The collector (Firewall-Collector/internal/sflow/sflow.go:301-309)
+	// applies this scaling on its side; the server MUST do the same so
+	// SUM(bytes) / SUM(packets) on the read path produces real traffic
+	// volume, not 1/Nth of it. Previously the server stored frameLength
+	// verbatim, under-reporting by 1:N (e.g. 512× at 1:512 sampling).
+	// See tasks/lessons.md "sFlow packets × sampling_rate is non-negotiable".
+	if frameLength > 0 && samplingRate > 1 {
+		flow.Bytes = uint64(frameLength) * uint64(samplingRate)
+		flow.Packets = uint64(samplingRate)
+	} else if frameLength > 0 {
+		flow.Bytes = uint64(frameLength)
+		flow.Packets = 1
 	}
 
 	// Parse based on header protocol
