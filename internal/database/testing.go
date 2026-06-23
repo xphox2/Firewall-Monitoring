@@ -41,6 +41,7 @@ func NewDatabaseForTesting(t interface {
 		&models.TrapEvent{},
 		&models.SyslogMessage{},
 		&models.FlowSample{},
+		&models.AgentDrops{},
 		&models.Alert{},
 		&models.AlertPolicy{},
 		&models.AlertRule{},

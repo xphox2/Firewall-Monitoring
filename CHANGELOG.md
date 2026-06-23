@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.473] - 2026-06-22
+
+### Added
+- **sFlow: `drops` field is now persisted per sample, and a new `flow_agent_drops` table aggregates them per-(agent, sampling_rate, minute).** sFlow v5 §3.1.1 puts a running counter of packets the agent had to drop between samples because it couldn't keep up. The CTO-loop audit (2026-06-22, taocp [critical] #3 + consolidated C-3) found the server was completely blind to this signal — agent-side congestion was undetectable. This PR ships the data path: (1) `models.FlowSample.Drops uint64` (`json:"drops,omitempty"`, forward-compatible: pre-adopting collectors see no wire key) plus `relay.FlowSample.Drops` for documentation parity, (2) the COPY column list in `saveFlowSamplesPGX` extended so the new field rides the bulk path, (3) new `models.AgentDrops` + new `flow_agent_drops` table (migration v8, AutoMigrate so it's idempotent), (4) `SaveAgentDrops` / `GetAgentDropsRecent` methods on the database. The companion collector-side change (collector v1.2.131, already shipped) emits the field with `omitempty`. Alert-policy hook (`SFLOW_AGENT_DROPS`) and NOC strip widget deferred to follow-up PRs — this one ships the storage and read path only. Tests: `TestAgentDrops_RoundTrip` (inserts 4 rows, queries 5m window, verifies out-of-window rows are filtered and the 3 in-window rows are returned in DESC order), `TestAgentDrops_EmptyResultIsCleanNil` (no rows → no error), `TestFlowSamplesCopyColumns_OrderAndFieldTypes` (extended to include `drops` so the column list still pins to the struct order).
+
 ## [0.10.472] - 2026-06-22
 
 ### Changed

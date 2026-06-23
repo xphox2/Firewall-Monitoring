@@ -684,20 +684,56 @@ type FlowSample struct {
 	// btree indexes every connection stats click was a full scan of
 	// flow_samples. A prefix `LIKE 'x%'` is sargable on a btree, so these help
 	// on both Postgres and SQLite.
-	SrcAddr       string    `json:"src_addr" gorm:"index:idx_flow_src_addr"`
-	DstAddr       string    `json:"dst_addr" gorm:"index:idx_flow_dst_addr"`
-	SrcPort       uint16    `json:"src_port"`
-	DstPort       uint16    `json:"dst_port"`
-	Protocol      uint8     `json:"protocol"`
-	Bytes         uint64    `json:"bytes"`
-	Packets       uint64    `json:"packets"`
-	InputIfIndex  uint32    `json:"input_if_index"`
-	OutputIfIndex uint32    `json:"output_if_index"`
-	TCPFlags      uint8     `json:"tcp_flags"`
-	CreatedAt     time.Time `json:"created_at"`
+	SrcAddr       string `json:"src_addr" gorm:"index:idx_flow_src_addr"`
+	DstAddr       string `json:"dst_addr" gorm:"index:idx_flow_dst_addr"`
+	SrcPort       uint16 `json:"src_port"`
+	DstPort       uint16 `json:"dst_port"`
+	Protocol      uint8  `json:"protocol"`
+	Bytes         uint64 `json:"bytes"`
+	Packets       uint64 `json:"packets"`
+	InputIfIndex  uint32 `json:"input_if_index"`
+	OutputIfIndex uint32 `json:"output_if_index"`
+	TCPFlags      uint8  `json:"tcp_flags"`
+	// Drops is the sFlow v5 §3.1.1 sample-pool drops counter for this
+	// individual sample (RFC 3176). Non-zero values indicate the agent
+	// had to drop packets between this sample and the previous one
+	// because it couldn't keep up. The CTO-loop audit (2026-06-22,
+	// taocp [MEDIUM] #5 + consolidated C-3) found this field was being
+	// read by the collector parser and discarded; the server now
+	// persists it so aggregate `drops_last_5m` per agent can drive
+	// alerts and NOC widgets. omitempty keeps the wire contract
+	// forward-compatible: pre-adopting collectors that don't send the
+	// field see no JSON key and continue to function unchanged.
+	Drops     uint64    `json:"drops,omitempty" gorm:"column:drops;default:0;not null"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }
+
+// AgentDrops is a rolling-window aggregate of sFlow agent drops, the
+// running counter of packets the agent had to discard because it
+// couldn't keep up with the sampled rate (sFlow v5 §3.1.1).
+//
+// One row per (agent, sampling_rate) tuple per minute-window (the
+// caller buckets). The CTO-loop audit (2026-06-22, taocp [MEDIUM] #5
+// + consolidated C-3) found this data was previously invisible —
+// agent-side congestion was undetectable. Storing it here lets alert
+// policies fire on `drops_last_5m` and surfaces it in the NOC strip.
+//
+// The flow_agent_drops table is intentionally NOT partitioned (see
+// docs/SFLOW-NOC-REDESIGN-PLAN.md §6.2). Per-(agent, sampling_rate)
+// row count is bounded by the number of monitored agents (typical
+// deployments: tens to low hundreds); no monthly rollup needed.
+type AgentDrops struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	AgentAddress string    `json:"agent_address" gorm:"size:64;index:idx_agent_drops_lookup,priority:1"`
+	SamplingRate uint32    `json:"sampling_rate" gorm:"index:idx_agent_drops_lookup,priority:2"`
+	WindowStart  time.Time `json:"window_start" gorm:"index:idx_agent_drops_lookup,priority:3;index:idx_agent_drops_window"`
+	DropsCount   uint64    `json:"drops_count"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (AgentDrops) TableName() string { return "flow_agent_drops" }
 
 type FlowRollup struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`

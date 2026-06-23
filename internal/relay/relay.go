@@ -92,6 +92,13 @@ type FlowSample struct {
 	DstMask         uint8     `json:"dst_mask"`
 	TOS             uint8     `json:"tos"`
 	TCPFlags        uint8     `json:"tcp_flags"`
+	// Drops is the sFlow v5 §3.1.1 sample-pool drops counter (RFC 3176):
+	// the running count of packets the agent had to discard between this
+	// sample and the previous one because it couldn't keep up. Added to
+	// the wire contract in v0.10.473 (collector v1.2.131); omitempty
+	// keeps the contract forward-compatible — pre-adopting collectors
+	// see no `drops` key and continue to function unchanged.
+	Drops uint64 `json:"drops,omitempty"`
 }
 
 type RegistrationRequest struct {
