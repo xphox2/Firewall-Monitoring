@@ -16,7 +16,7 @@ type ResolvedAlertConfig struct {
 	PolicyID          *uint
 	AlertEnabled      bool
 	Threshold         float64
-	Severity          string
+	Severity          models.Severity
 	CooldownMinutes   int
 	NotifyEmail       bool
 	NotifySlack       bool
@@ -103,7 +103,7 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 
 // resolveAlertConfig computes the effective alert configuration for a given device and alert type.
 // Resolution order: Device Override → Site Override → Policy AlertRule → Policy defaults → Global defaults
-func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertType string) ResolvedAlertConfig {
+func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertType models.AlertType) ResolvedAlertConfig {
 	resolved := ResolvedAlertConfig{
 		AlertEnabled:    true,
 		CooldownMinutes: 5,
@@ -237,7 +237,7 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 			types := strings.Split(w.AlertTypes, ",")
 			found := false
 			for _, t := range types {
-				if strings.TrimSpace(t) == alertType {
+				if strings.TrimSpace(t) == string(alertType) {
 					found = true
 					break
 				}
@@ -257,7 +257,7 @@ func (am *AlertManager) findPolicy(id uint) *models.AlertPolicy {
 	return am.policyCache.policyByID[id]
 }
 
-func (am *AlertManager) globalThresholdForType(alertType string) float64 {
+func (am *AlertManager) globalThresholdForType(alertType models.AlertType) float64 {
 	switch alertType {
 	case "CPU_HIGH":
 		return am.config.Alerts.CPUThreshold
@@ -272,7 +272,7 @@ func (am *AlertManager) globalThresholdForType(alertType string) float64 {
 	}
 }
 
-func defaultSeverityForType(alertType string) string {
+func defaultSeverityForType(alertType models.AlertType) models.Severity {
 	switch alertType {
 	case "DISK_HIGH", "INTERFACE_DOWN", "VPN_TUNNEL_DOWN", "DEVICE_OFFLINE",
 		"SYSLOG_EMERGENCY", "SYSLOG_CRITICAL", "SSH_HOST_KEY_CHANGED":
@@ -286,7 +286,7 @@ func defaultSeverityForType(alertType string) string {
 
 // overrideThreshold returns the override threshold for the given alert type if > 0.
 // Works for both device and site configs by accepting raw field values.
-func overrideThreshold(current float64, alertType string, cpu, mem, disk float64, sess int) float64 {
+func overrideThreshold(current float64, alertType models.AlertType, cpu, mem, disk float64, sess int) float64 {
 	switch alertType {
 	case "CPU_HIGH":
 		if cpu > 0 {

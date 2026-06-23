@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.474] - 2026-06-23
+
+### Changed
+- **Alert types, severities, and IRC command types are now Go typed strings (`type AlertType string`, `type Severity string`, `type CommandType string`) backed by named constants.** Previously these were bare `string` fields and parameters threaded through `internal/{alerts,notifier,report,irc,database}` and the handlers — a typo in a switch arm (`"CPU_HGIH"`) or a crossed assignment (severity into the alert-type column) compiled cleanly and only surfaced at runtime. They are now named string types (`internal/models/models.go`) with constant sets (`AlertTypeCPUHigh`, `SeverityCritical`, `CommandTypeStatus`, …); the model fields `Alert.AlertType/Severity`, `AlertRule.AlertType/Severity`, `IRCCommand.CommandType`, and the carrier `alerts.ResolvedAlertConfig.Severity` plus the policy-resolution helpers (`resolveAlertConfig`, `defaultSeverityForType`, `globalThresholdForType`, `overrideThreshold`, `configSeverityToAlert`, `escalateSeverity`) now use the typed forms, so the compiler rejects mismatches. **No wire or DB format change** — typed strings JSON-marshal and GORM-scan to the identical underlying value, so persisted rows and API payloads are byte-for-byte unchanged. Trap- and configdiff-domain severities (different vocabularies) are converted explicitly at their boundaries. Closes the CTO-loop audit's [medium]/[low] stringly-typed-enum findings (`docs/cto-loop-2026-06-22-design-patterns.md`). All existing tests pass unchanged (only two test files needed typed map keys / boundary conversions).
+
 ## [0.10.473] - 2026-06-22
 
 ### Added

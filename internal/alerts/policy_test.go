@@ -1,6 +1,10 @@
 package alerts
 
-import "testing"
+import (
+	"testing"
+
+	"firewall-mon/internal/models"
+)
 
 // AUDIT-117: first tests for internal/alerts — covering the two pure policy
 // helpers that decide severity and threshold overrides. These are the
@@ -9,7 +13,7 @@ import "testing"
 
 func TestDefaultSeverityForType_AUDIT117(t *testing.T) {
 	t.Parallel()
-	cases := map[string]string{
+	cases := map[models.AlertType]models.Severity{
 		"DISK_HIGH":        "critical",
 		"INTERFACE_DOWN":   "critical",
 		"VPN_TUNNEL_DOWN":  "critical",

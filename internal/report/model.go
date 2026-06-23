@@ -320,7 +320,7 @@ func plural(n int) string {
 }
 
 func isCriticalAlert(a models.Alert) bool {
-	return strings.EqualFold(a.Severity, "critical")
+	return strings.EqualFold(string(a.Severity), "critical")
 }
 
 // barsFromTalkers converts IfaceTraffic to display bars scaled within the set.
