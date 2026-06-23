@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -28,6 +30,13 @@ type Database struct {
 	syslogBatch *BatchInserter[models.SyslogMessage]
 	trapBatch   *BatchInserter[models.TrapEvent]
 	pingBatch   *BatchInserter[models.PingResult]
+	// pgxPool is the dedicated *pgxpool.Pool used for high-throughput bulk
+	// inserts via the COPY protocol (SaveFlowSamples on the hot path). It is
+	// nil on the SQLite test backend (NewDatabaseForTesting) and on any
+	// Postgres connection that failed to initialize the pool — both
+	// fall back to GORM's per-row Create. PostgreSQL production connects
+	// always set this.
+	pgxPool *pgxpool.Pool
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -184,6 +193,20 @@ func Connect(cfg *config.Config) (*Database, error) {
 
 	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial}
 
+	// Initialize the pgx pool alongside GORM. pgxpool gives us direct access
+	// to the Postgres COPY protocol for bulk inserts (SaveFlowSamples on the
+	// sFlow hot path). GORM's own postgres driver uses lib/pq under the hood
+	// and doesn't expose CopyFrom, so we maintain a separate pool with the
+	// same connection settings. Pool sizing tracks the GORM pool: MaxOpenConns
+	// (default 25) with a small floor of 2 so even a 1-conn GORM pool gets
+	// parallel COPY capacity.
+	if pgxPool, pgxErr := openPGXPool(cfg, maxOpen); pgxErr != nil {
+		log.Printf("WARNING: failed to open pgxpool for COPY inserts (%v); SaveFlowSamples will fall back to GORM Create (5-10x slower on hot path)", pgxErr)
+	} else {
+		d.pgxPool = pgxPool
+		log.Printf("Database: pgxpool opened for bulk COPY inserts")
+	}
+
 	// Initialize batch inserters
 	d.syslogBatch = NewBatchInserter[models.SyslogMessage](500, 2*time.Second, func(items []models.SyslogMessage) error {
 		return d.db.Create(&items).Error
@@ -196,6 +219,70 @@ func Connect(cfg *config.Config) (*Database, error) {
 	})
 
 	return d, nil
+}
+
+// openPGXPool opens a dedicated *pgxpool.Pool alongside the GORM connection
+// for use by SaveFlowSamples' COPY-protocol bulk insert (the audit's
+// sFlow-bulk-insert-pgx-copyfrom requirement). The DSN mirrors the GORM one
+// (host/port/user/password/dbname/sslmode/statement_timeout). Pool sizing
+// tracks the GORM pool's MaxOpenConns with a floor of 2 so even a 1-conn
+// GORM pool gets parallel COPY capacity.
+//
+// Returns an error (and a nil pool) if the connection fails — the caller
+// logs a warning and falls back to GORM Create. A failed pgx pool must
+// never prevent the GORM connection from succeeding; the GORM path is the
+// historical baseline and the pgx path is a performance optimization.
+func openPGXPool(cfg *config.Config, maxOpen int) (*pgxpool.Pool, error) {
+	// Build a pgx URL-style DSN. pgx accepts both URL and libpq key=value
+	// formats; URL is cleaner here.
+	pgxCfg, err := pgxpool.ParseConfig(buildPGXURL(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("pgxpool parse dsn: %w", err)
+	}
+	// AUDIT-037: per-connection statement timeout, matching GORM. pgx's
+	// config field is in milliseconds.
+	if cfg.Database.StatementTimeout > 0 {
+		pgxCfg.ConnConfig.RuntimeParams["statement_timeout"] = fmt.Sprintf("%d", cfg.Database.StatementTimeout.Milliseconds())
+	}
+	// Pool sizing: match the GORM pool. Floor of 2 so even a 1-conn GORM
+	// pool (test lane) gets parallel COPY capacity. Cap at 25 to match the
+	// legacy default.
+	if maxOpen < 2 {
+		maxOpen = 2
+	}
+	if maxOpen > 25 {
+		maxOpen = 25
+	}
+	pgxCfg.MaxConns = int32(maxOpen)
+	pgxCfg.MinConns = 1
+	pgxCfg.MaxConnLifetime = 5 * time.Minute
+	pgxCfg.MaxConnIdleTime = 1 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), pgxCfg)
+	if err != nil {
+		return nil, fmt.Errorf("pgxpool.NewWithConfig: %w", err)
+	}
+	// Verify the pool with a Ping. A connection that opens but can't
+	// authenticate is worse than no pool at all (silent fallback to slow path).
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pool.Ping(pingCtx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("pgxpool.Ping: %w", err)
+	}
+	return pool, nil
+}
+
+// buildPGXURL assembles a postgres:// URL from the cfg fields. Uses net/url
+// so password special characters (e.g. `?`, `#`, `%`) are correctly percent-
+// escaped. Mirrors the GORM DSN-construction logic so the same connect string
+// reaches both pools.
+func buildPGXURL(cfg *config.Config) string {
+	user := url.QueryEscape(cfg.Database.User)
+	password := url.QueryEscape(cfg.Database.Password)
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		user, password, cfg.Database.Host, cfg.Database.Port,
+		url.PathEscape(cfg.Database.Name), cfg.Database.SSLMode)
 }
 
 // NewDatabase connects, applies any pending migrations (AUDIT-044 versioned
@@ -418,6 +505,13 @@ func (d *Database) Close() error {
 	}
 	if d.pingBatch != nil {
 		d.pingBatch.Stop()
+	}
+
+	// Close the pgx pool first so any in-flight COPY is drained before
+	// the underlying socket closes.
+	if d.pgxPool != nil {
+		d.pgxPool.Close()
+		d.pgxPool = nil
 	}
 
 	sqlDB, err := d.db.DB()

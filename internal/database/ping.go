@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -182,11 +183,34 @@ func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) 
 	return messages, err
 }
 
+// SaveFlowSamples persists a batch of sFlow samples. On PostgreSQL it uses
+// the dedicated *pgxpool.Pool (initialized in Connect) and the COPY protocol
+// for ~5-10x throughput over GORM's per-row Create (per the CTO-loop audit
+// at docs/cto-loop-2026-06-22-taocp.md [critical] #4 — the 100k samples/sec
+// design target requires this fast path). On the SQLite test backend the
+// pgxPool is nil and we fall back to GORM Create, which works correctly but
+// is the slow path; this is intentional (tests use SQLite in-memory and the
+// performance differential doesn't matter).
+//
+// The GORM session's context (set via WithContext, AUDIT-032) propagates to
+// pgx via the Statement.Context lookup, so a client disconnect on the HTTP
+// handler cancels the in-flight COPY and frees the pooled connection — same
+// cancellation contract as the GORM path.
 func (d *Database) SaveFlowSamples(samples []models.FlowSample) error {
 	if len(samples) == 0 {
 		return nil
 	}
-	return d.db.Create(&samples).Error
+	if d.pgxPool == nil {
+		// SQLite / no-pool fallback. The slow path; correct.
+		return d.db.Create(&samples).Error
+	}
+	// Extract the GORM session context so pgx honors the same deadline /
+	// cancellation as the GORM session (AUDIT-032 invariant).
+	ctx := d.db.Statement.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return saveFlowSamplesPGX(ctx, d.pgxPool, samples)
 }
 
 func (d *Database) GetFlowSamples(limit int) ([]models.FlowSample, error) {
