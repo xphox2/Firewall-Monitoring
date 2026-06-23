@@ -536,15 +536,19 @@
             </div>`;
     }
 
-    // renderPanelInterfaceTab makes the device↔network↔device pairing explicit.
-    // A subnet that appears on BOTH ends becomes a confident "network segment"
-    // card — e.g. 🌐 10.0.5.0/24 · switch-a ⇄ switch-b — with the source-side and
-    // dest-side interfaces side by side, each expandable to its own chart.
-    // Everything else (L2 links with no IP, or a subnet seen on just one end) is
-    // collected into a single "Other interfaces" card that still shows both
-    // devices' columns — we never imply an end is unmonitored just because a
-    // subnet didn't line up. A genuinely empty side simply reads "no interfaces
-    // reported".
+    // jsNormalizeIfName mirrors the backend normalizeIfName so the UI can pair
+    // interfaces the same way the detector matched them (vlan100 ≈ VLAN-100).
+    function jsNormalizeIfName(name) {
+        return (name || '').toLowerCase().trim().replace(/[ ._-]/g, '');
+    }
+
+    // renderPanelInterfaceTab makes the device↔segment↔device pairing explicit.
+    // It pairs interfaces the same way the detector matched them: first by shared
+    // IP subnet (ethernet/lag subnet_match), then — for what's left — by shared
+    // normalized interface name (l2vlan/bridge/vxlan name_match, which often have
+    // no IP). Each matched pair becomes a card with the source-side and dest-side
+    // interfaces side by side, each expandable to its own chart. Anything that
+    // genuinely can't be paired falls into a final "Other interfaces" card.
     function renderPanelInterfaceTab(ifaces, c, srcName, dstName) {
         const container = document.getElementById('ptab-tunnels');
         if (!container) return;
@@ -556,32 +560,56 @@
         const onSrc = f => f.device_id === srcId;
         const onDst = f => f.device_id === dstId;
 
-        // A subnet is a confident pairing only if it has an interface on BOTH ends.
-        const bySubnet = {}, subnetOrder = [];
-        ifaces.forEach(f => {
-            if (!f.subnet) return;
-            if (!bySubnet[f.subnet]) { bySubnet[f.subnet] = []; subnetOrder.push(f.subnet); }
-            bySubnet[f.subnet].push(f);
-        });
-        const pairedSubnets = subnetOrder.filter(s => bySubnet[s].some(onSrc) && bySubnet[s].some(onDst));
-        const pairedSet = new Set(pairedSubnets);
+        const used = new Set();
+        const cards = []; // { kind:'net'|'name', label, src:[], dst:[] }
+
+        // tryPair groups still-unused interfaces by keyFn and emits a card for any
+        // group that has an interface on BOTH ends.
+        function tryPair(keyFn, kind) {
+            const groups = {}, order = [];
+            ifaces.forEach((f, idx) => {
+                if (used.has(idx)) return;
+                const k = keyFn(f);
+                if (!k) return;
+                if (!groups[k]) { groups[k] = []; order.push(k); }
+                groups[k].push(idx);
+            });
+            order.forEach(k => {
+                const idxs = groups[k];
+                const s = idxs.filter(i => onSrc(ifaces[i]));
+                const dd = idxs.filter(i => onDst(ifaces[i]));
+                if (s.length && dd.length) {
+                    idxs.forEach(i => used.add(i));
+                    cards.push({
+                        kind,
+                        label: kind === 'net' ? k : ifaces[s[0]].if_name,
+                        src: s.map(i => ifaces[i]),
+                        dst: dd.map(i => ifaces[i])
+                    });
+                }
+            });
+        }
+        tryPair(f => f.subnet || null, 'net');                    // pass 1: shared IP network
+        tryPair(f => jsNormalizeIfName(f.if_name) || null, 'name'); // pass 2: shared interface name
 
         let html = '';
-        pairedSubnets.forEach((subnet, gi) => {
-            const members = bySubnet[subnet];
+        cards.forEach((card, gi) => {
+            const icon = card.kind === 'net' ? '&#127760;' : '&#128279;'; // 🌐 network vs 🔗 shared interface
+            const sub = card.kind === 'net' ? 'network' : 'interface';
             const header = `
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-                    <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">&#127760; ${window.escapeHtml(subnet)}</span>
+                    <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">${icon} ${window.escapeHtml(card.label)}</span>
+                    <span style="font-size:0.7rem;color:#768390;text-transform:uppercase;letter-spacing:0.3px;">${sub}</span>
                     <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:#2dd4bf;">&harr;</span> ${window.escapeHtml(dstName)}</span>
                 </div>`;
-            html += ifaceSegmentCard(header, srcName, dstName, members.filter(onSrc), members.filter(onDst), `seg${gi}`);
+            html += ifaceSegmentCard(header, srcName, dstName, card.src, card.dst, `seg${gi}`);
         });
 
-        // Leftovers: interfaces not in a confidently-paired subnet.
-        const rest = ifaces.filter(f => !(f.subnet && pairedSet.has(f.subnet)));
+        // Leftovers: interfaces that couldn't be paired by subnet or name.
+        const rest = ifaces.filter((f, idx) => !used.has(idx));
         if (rest.length) {
-            const label = pairedSubnets.length ? 'Other interfaces' : 'Interfaces on this link';
-            const hint = pairedSubnets.length ? ' (not on a shared IP network — e.g. Layer 2 links)' : '';
+            const label = cards.length ? 'Other interfaces' : 'Interfaces on this link';
+            const hint = cards.length ? ' (could not be paired to the other end)' : '';
             const header = `<div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px;">${label}<span style="color:#768390;font-size:0.72rem;">${hint}</span></div>`;
             html += ifaceSegmentCard(header, srcName, dstName, rest.filter(onSrc), rest.filter(onDst), 'rest');
         }

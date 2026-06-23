@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.470] - 2026-06-22
+### Fixed
+- **Direct-link Interfaces tab stopped pairing — it showed two unlinked columns.** Regression from v0.10.468: paired "network segment" cards required a shared **IP subnet** on both ends, but Layer-2 links (VLAN/bridge, no IP) never matched, so every interface fell into the single two-column "Other interfaces" card with nothing visibly paired. `renderPanelInterfaceTab` (`diagram-panels.js`) now pairs the way the detector actually matched the link — **two passes: first by shared IP subnet, then by shared (normalized) interface name** — so L2 `name_match` links pair by interface name (🔗 vlan100 · DC2-FW1 ↔ DC2-FW2) and ethernet/lag pair by network (🌐 10.0.5.0/24). Only interfaces that genuinely can't be paired to the other end fall into "Other interfaces".
+
 ## [0.10.469] - 2026-06-22
 ### Added
 - **VXLAN/L3VLAN overlay links now show real overlay detail instead of just borrowing the carrier tunnel's graph.** The Overlay tab now surfaces, per endpoint device, data drawn from two sources:
