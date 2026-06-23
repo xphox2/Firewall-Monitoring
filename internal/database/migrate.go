@@ -776,3 +776,40 @@ func (d *Database) migrateDeviceSSHHostKey() error {
 func (d *Database) migrateConfigRevisionAttribution() error {
 	return d.db.AutoMigrate(&models.DeviceConfigRevision{})
 }
+
+// migrateFlowSamplesSamplingRateScale (v7) backfills flow_samples so that
+// existing rows conform to the new sFlow sampling-rate scaling convention:
+// the bytes/packets columns now hold `frame_length × sampling_rate` and
+// `sampling_rate` respectively (instead of the raw `frame_length` and `1`).
+// The CTO-loop audit (2026-06-22, cto-loop-2026-06-22-taocp.md [critical] #1
+// and #2) found the server had been storing frame_length verbatim, so every
+// dashboard chart / top-N list under-reported real traffic by 1:N.
+//
+// Idempotency: the WHERE clause selects only rows that haven't been migrated
+// yet (sampling_rate > 1 AND packets = 1). New inserts already write
+// Packets = sampling_rate (the parser change in internal/sflow/sflow.go),
+// so they never match the predicate. sampling_rate = 1 rows are a no-op
+// (scaling by 1 is identity) and packets = 1 stays correct.
+//
+// Fresh installs: no rows in flow_samples at the time the baseline v1
+// migration runs, so this UPDATE matches zero rows and is a no-op (still
+// recorded as v7 in schema_migrations).
+func (d *Database) migrateFlowSamplesSamplingRateScale() error {
+	if !d.dialect.IsPostgres() {
+		// SQLite (test backend): still run — the SQL is identical and the
+		// production path uses Postgres, but tests that pre-seed flow_samples
+		// benefit from the backfill running the same way.
+	}
+
+	result := d.db.Exec(`
+		UPDATE flow_samples
+		SET bytes = bytes * sampling_rate,
+		    packets = sampling_rate
+		WHERE sampling_rate > 1 AND packets = 1
+	`)
+	if result.Error != nil {
+		return fmt.Errorf("migrate v7 flow_samples scaling: %w", result.Error)
+	}
+	log.Printf("migrate v7 flow_samples scaling: %d rows backfilled (bytes=frame_length*sampling_rate, packets=sampling_rate)", result.RowsAffected)
+	return nil
+}
