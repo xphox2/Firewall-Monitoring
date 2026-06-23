@@ -22,6 +22,15 @@ import (
 // the public schema to a clean slate, runs migrations, and returns a migrated
 // *Database with Close registered for cleanup. Safe to call from any package's
 // integration suite.
+//
+// SHARED-DATABASE CONTRACT: the reset below is `DROP SCHEMA public CASCADE`, and
+// it runs OUTSIDE the migration advisory lock. Every package that uses this
+// harness points at the same TEST_PG_DSN database, so two integration package
+// binaries running concurrently will reset each other's schema mid-migration
+// (nondeterministic "relation ... does not exist", historically surfacing in
+// TestPostgresIntegration/PopulatedTableSkipped). The CI and Makefile invocations
+// therefore pass `go test -p 1` to run the integration packages one at a time.
+// If you add a third integration package or drop `-p 1`, this race comes back.
 func NewIntegrationDB(tb testing.TB) *Database {
 	tb.Helper()
 	dsn := strings.TrimSpace(os.Getenv("TEST_PG_DSN"))

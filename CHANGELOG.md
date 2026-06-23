@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.476] - 2026-06-23
+
+### Fixed
+- **CI `Integration (PostgreSQL)` lane is no longer persistently red — root-caused to a shared-database race, not the "flake" it was labelled.** The job runs `go test -tags=integration ./internal/database/... ./internal/api/handlers/...`, and `go test` runs those two package binaries concurrently. Both call `NewIntegrationDB`, which does an unsynchronized `DROP SCHEMA public CASCADE` on the *same* `TEST_PG_DSN` database — so one process's reset would nuke the other's in-flight migration, producing nondeterministic `relation "schema_migrations"/"system_status" does not exist (SQLSTATE 42P01)` failures in `TestPostgresIntegration/PopulatedTableSkipped` (master had been red for 8+ consecutive runs; reruns never cleared it). Fix: pass `go test -p 1` in `.github/workflows/ci.yml` and the `test-integration` Make target so the integration package binaries run one at a time (a single owner of the shared schema). Documented the shared-database contract on `NewIntegrationDB` so the constraint is discoverable. No production-code change.
+
 ## [0.10.475] - 2026-06-23
 
 ### Fixed

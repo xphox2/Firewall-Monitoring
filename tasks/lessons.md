@@ -1,5 +1,15 @@
 # Lessons
 
+## A "flaky" test that never goes green on rerun is a real bug — re-diagnose, don't keep rerunning (2026-06-23)
+
+**Context:** `TestPostgresIntegration/PopulatedTableSkipped` was documented as an intermittent flake with the remedy "do a full `gh run rerun`, it usually goes green." By 2026-06-23 that remedy was stale: master had been red on the PG lane for 8+ consecutive runs and reruns never cleared it. The "flake" was a real, persistent **shared-database race** — `go test ./pkgA/... ./pkgB/...` runs the two package binaries concurrently, and both `NewIntegrationDB`s did an unsynchronized `DROP SCHEMA public CASCADE` on the same `TEST_PG_DSN`, so one process reset the other's in-flight migration. Nondeterministic *which* relation was reported missing (`schema_migrations` vs `system_status`) — the tell of a concurrency bug, not container timing.
+
+**Rule:** the moment a "flake" stops being cleared by a rerun (say, 3+ consecutive failures of the same subtest), STOP rerunning and re-root-cause it. Treat "rerun fixes it" as a hypothesis with an expiry, not a standing instruction. A check that's red on master for days is a broken signal, not noise.
+
+**Tells of a shared-resource test race (vs. timing flake):** (a) the *identity* of the missing/failing object changes run to run; (b) the failure tracks to a globally shared resource (one DB/file/port) touched by >1 concurrently-run test binary; (c) `go test` was given multiple packages in one invocation (it parallelizes package binaries by default). Fix with `-p 1` to serialize, or give each binary its own isolated resource. Don't reach for per-DB locks alone — the destructive reset often runs OUTSIDE the lock.
+
+**Also:** when CI has a lane that's red on master yet PRs keep merging (as here, #30–#34), that lane is not a merge gate. Confirm which checks actually gate merges before treating a red X as blocking.
+
 ## ALWAYS verify CI on BOTH repos after every push (2026-06-11)
 
 **Rule:** After every `git push` to either repo (Firewall-Mon or Firewall-Collector), I MUST verify the CI run for that push goes green, and if it fails, fix it before considering the task done. Don't push-and-forget.
