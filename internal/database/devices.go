@@ -259,7 +259,7 @@ func (d *Database) GetConnectionEvents(srcDeviceID, dstDeviceID uint, hours int)
 	}
 
 	// Sort by timestamp descending
-	sort.Slice(events, func(i, j int) bool {
+	sort.SliceStable(events, func(i, j int) bool {
 		return events[i].Timestamp.After(events[j].Timestamp)
 	})
 

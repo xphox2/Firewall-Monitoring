@@ -242,7 +242,7 @@ func BuildReportModel(devices []models.Device, deviceData []*DeviceReportData, t
 	m.SpikeIfaceCount = len(m.SpikeGroups) + m.SpikeMore
 
 	// Fleet Top Talkers — sort by bytes transferred, keep the busiest 8.
-	sort.Slice(fleetTalkers, func(a, b int) bool {
+	sort.SliceStable(fleetTalkers, func(a, b int) bool {
 		return fleetTalkers[a].t.TotalBytes > fleetTalkers[b].t.TotalBytes
 	})
 	if len(fleetTalkers) > 8 {

@@ -312,7 +312,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 				Count    int64
 			}{proto, count})
 		}
-		sort.Slice(protocols, func(i, j int) bool { return protocols[i].Count > protocols[j].Count })
+		sort.SliceStable(protocols, func(i, j int) bool { return protocols[i].Count > protocols[j].Count })
 		if len(protocols) > 10 {
 			protocols = protocols[:10]
 		}
@@ -428,7 +428,7 @@ func mergeKeyCounts(a, b []KeyCount, limit int) []KeyCount {
 		merged = append(merged, KeyCount{Key: k, Count: c})
 	}
 	// Sort descending by count
-	sort.Slice(merged, func(i, j int) bool { return merged[i].Count > merged[j].Count })
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Count > merged[j].Count })
 	if len(merged) > limit {
 		merged = merged[:limit]
 	}
