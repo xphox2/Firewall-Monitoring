@@ -31,12 +31,15 @@ gh run watch "$RUN_ID" --exit-status --interval 15
 
 **Rule:** A green local `go test ./...` is necessary but NOT sufficient. After pushing, always confirm the CI `Integration (PostgreSQL)` job specifically. When writing/seeding test data that crosses a FK (probe→site, device→probe, etc.), set the FK to a real seeded row even if SQLite would tolerate `0`/NULL.
 
-## Cross-repo changelog formats differ — know which repo you're in (2026-06-11)
+## Cross-repo CHANGELOG formats now match — both use per-version sections at top (2026-06-22)
 
-- **Firewall-Collector**: clean `## X.Y.Z - date` per-version headers, newest first, NO `[Unreleased]`, NO changelog test.
-- **Firewall-Mon (server)**: Keep-A-Changelog — `## [Unreleased]` MUST be the first section (enforced by `TestChangelog_KeepAChangelogHeader_AUDIT110`), released versions as `## [x.y.z] - date` below. New entries accumulate under `[Unreleased]` grouped by `### Added/Changed/Fixed` with the version tagged inline `(vX.Y.Z)`.
+- **Both repos**: per-version sections at the top, newest first. **No `[Unreleased]` accumulator.**
+- **Server**: `## [X.Y.Z] - DATE` format. `TestChangelog_KeepAChangelogHeader_AUDIT110` (`internal/shell/changelog_audit110_test.go:24-25`) enforces the FIRST `## [...]` section must be a concrete version, NOT `## [Unreleased]`.
+- **Collector**: `## X.Y.Z - DATE` format (no brackets). No static guard exists; convention only.
 
-Do not apply the collector's format to the server (or vice-versa) without also changing the server's AUDIT-110 test.
+**The maintainer removed the original Keep-A-Changelog `[Unreleased]` convention on 2026-06-11** because it had drifted into a catch-all blob and diverged from the collector's format (see `CHANGELOG.md:277`). The earlier lessons.md entry that said "`[Unreleased]` MUST be the first section" was **wrong as of that date** and is replaced by this rule.
+
+When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) section at the top. The server's AUDIT-110 test will fail if you (a) put `[Unreleased]` first, or (b) put a non-version `## [...]` section first.
 
 ## sFlow packets × sampling_rate is non-negotiable (2026-06-11)
 
