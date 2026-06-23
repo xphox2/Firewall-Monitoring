@@ -236,6 +236,60 @@ func TestBuildOverlayInfo(t *testing.T) {
 	}
 }
 
+// TestResolveConnectionInterfaces_KindVlanParent verifies interfaces are
+// enriched with kind (SNMP TypeName), VLAN id (SNMP, else config), and parent
+// (config) so the UI can group a VLAN sub-interface with its parent bridge.
+func TestResolveConnectionInterfaces_KindVlanParent(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.db.Create(&models.Device{ID: 1, Name: "FW1", Vendor: "fortigate"}).Error; err != nil {
+		t.Fatalf("dev: %v", err)
+	}
+	if err := d.db.Create(&models.Device{ID: 2, Name: "FW2", Vendor: "fortigate"}).Error; err != nil {
+		t.Fatalf("dev2: %v", err)
+	}
+	conn := models.DeviceConnection{
+		Name: "FW1 <-> FW2", SourceDeviceID: 1, DestDeviceID: 2,
+		ConnectionType: "l2vlan", Status: "up",
+		TunnelNames: "HOSTING-BLOCK-2, HOSTING_BLOCK-2", MatchMethod: "name_match", AutoDetected: true,
+	}
+	if err := d.db.Create(&conn).Error; err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	ts := time.Now().Add(-time.Minute)
+	// Bridge + its VLAN sub-interface on FW1.
+	if err := d.db.Create(&models.InterfaceStats{DeviceID: 1, Name: "HOSTING-BLOCK-2", Index: 5, TypeName: "bridge", Status: "up", Timestamp: ts}).Error; err != nil {
+		t.Fatalf("if bridge: %v", err)
+	}
+	if err := d.db.Create(&models.InterfaceStats{DeviceID: 1, Name: "HOSTING_BLOCK-2", Index: 6, TypeName: "l2vlan", VLANID: 200, Status: "up", Timestamp: ts}).Error; err != nil {
+		t.Fatalf("if vlan: %v", err)
+	}
+	// Config gives the VLAN's parent (and would supply vlanid if SNMP lacked it).
+	cfg := "config system interface\n edit \"HOSTING_BLOCK-2\"\n set interface \"HOSTING-BLOCK-2\"\n set vlanid 200\n set type vlan\n next\nend\n"
+	if err := d.db.Create(&models.DeviceConfigRevision{DeviceID: 1, Timestamp: time.Now(), ConfigText: cfg}).Error; err != nil {
+		t.Fatalf("cfg: %v", err)
+	}
+
+	refs := d.resolveConnectionInterfaces(&conn)
+	var bridge, vlan *ConnInterfaceRef
+	for i := range refs {
+		switch refs[i].IfName {
+		case "HOSTING-BLOCK-2":
+			bridge = &refs[i]
+		case "HOSTING_BLOCK-2":
+			vlan = &refs[i]
+		}
+	}
+	if bridge == nil || vlan == nil {
+		t.Fatalf("expected both bridge and vlan refs, got %d refs", len(refs))
+	}
+	if bridge.Kind != "bridge" {
+		t.Errorf("bridge kind = %q, want bridge", bridge.Kind)
+	}
+	if vlan.Kind != "l2vlan" || vlan.VlanID != 200 || vlan.Parent != "HOSTING-BLOCK-2" {
+		t.Errorf("vlan enrichment wrong: kind=%q vlan=%d parent=%q", vlan.Kind, vlan.VlanID, vlan.Parent)
+	}
+}
+
 func TestComputeNetworkCIDR(t *testing.T) {
 	cases := []struct{ ip, mask, want string }{
 		{"10.0.5.1", "255.255.255.0", "10.0.5.0/24"},

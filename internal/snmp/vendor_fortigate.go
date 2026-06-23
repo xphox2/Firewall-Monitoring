@@ -780,6 +780,77 @@ func ParseFortiGateVxlanConfig(configText string) []FortiGateVxlan {
 	return vxlans
 }
 
+// FortiGateInterface captures the relationship-relevant fields of one
+// `config system interface` entry: its parent interface (the interface it is
+// bound to — set for VLAN sub-interfaces), its VLAN id, and its FortiGate type
+// (vlan, hard-switch, aggregate, …). Lets the connection detail recognize that
+// a VLAN sub-interface and its parent bridge are the same logical segment.
+type FortiGateInterface struct {
+	Name   string
+	Parent string // set interface "X" — the underlying interface this rides on
+	VLANID int    // set vlanid N
+	Type   string // set type vlan|hard-switch|aggregate|...
+}
+
+// ParseFortiGateInterfaceConfig extracts every `config system interface` entry's
+// name, parent, vlanid and type. Nested blocks (config ipv6, secondaryip,
+// member, …) inside an edit are skipped via depth tracking so their `end` does
+// not terminate the section early.
+func ParseFortiGateInterfaceConfig(configText string) []FortiGateInterface {
+	if configText == "" {
+		return nil
+	}
+	var out []FortiGateInterface
+	inBlock := false
+	inEdit := false
+	depth := 0 // nested-config depth within the current edit
+	var cur FortiGateInterface
+
+	for _, raw := range strings.Split(configText, "\n") {
+		line := strings.TrimSpace(raw)
+		if !inBlock {
+			if line == "config system interface" {
+				inBlock = true
+			}
+			continue
+		}
+		if !inEdit {
+			if strings.HasPrefix(line, "edit ") {
+				cur = FortiGateInterface{Name: strings.Trim(strings.TrimPrefix(line, "edit "), "\"")}
+				inEdit = true
+				depth = 0
+			} else if line == "end" {
+				break // end of the section
+			}
+			continue
+		}
+		// inside an edit
+		switch {
+		case strings.HasPrefix(line, "config "):
+			depth++
+		case line == "end":
+			if depth > 0 {
+				depth--
+			}
+		case depth > 0:
+			// inside a nested block (ipv6/secondaryip/member) — ignore
+		case strings.HasPrefix(line, "set interface "):
+			cur.Parent = strings.Trim(strings.TrimPrefix(line, "set interface "), "\"")
+		case strings.HasPrefix(line, "set vlanid "):
+			if v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "set vlanid "))); err == nil {
+				cur.VLANID = v
+			}
+		case strings.HasPrefix(line, "set type "):
+			cur.Type = strings.Trim(strings.TrimPrefix(line, "set type "), "\"")
+		case line == "next":
+			out = append(out, cur)
+			cur = FortiGateInterface{}
+			inEdit = false
+		}
+	}
+	return out
+}
+
 func IsFortiGateVxlanInterface(configText string, ifaceName string) bool {
 	vxlans := ParseFortiGateVxlanConfig(configText)
 	for _, v := range vxlans {

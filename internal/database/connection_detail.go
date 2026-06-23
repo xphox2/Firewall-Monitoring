@@ -46,6 +46,9 @@ type ConnInterfaceRef struct {
 	IfIndex    int    `json:"if_index"`
 	IPAddress  string `json:"ip_address"` // interface's IP on the shared LAN segment
 	Subnet     string `json:"subnet"`     // network CIDR (e.g. 10.0.5.0/24) — the network that pairs the two ends
+	Kind       string `json:"kind"`       // ifType name: l2vlan | bridge | lag | ethernet | …
+	VlanID     int    `json:"vlan_id"`    // VLAN id (SNMP dot1qPvid, else config) — groups same-VLAN ifaces
+	Parent     string `json:"parent"`     // parent interface this rides on (config: set interface) — groups sub-iface with its bridge
 	Speed      uint64 `json:"speed"`
 	Status     string `json:"status"`
 	InBytes    uint64 `json:"in_bytes"`
@@ -178,11 +181,21 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 	seen := make(map[string]bool)
 	var refs []ConnInterfaceRef
 	for _, dv := range devs {
+		// Config-derived parent/vlan map (normalized name → interface config).
+		// Lets us recognize that a VLAN sub-interface and its parent bridge are
+		// the same logical segment. Absent/masked config simply leaves them empty.
+		ifCfg := make(map[string]snmp.FortiGateInterface)
+		if rev, err := d.GetLatestConfigRevision(dv.id); err == nil && rev != nil && rev.ConfigText != "" {
+			for _, ic := range snmp.ParseFortiGateInterfaceConfig(rev.ConfigText) {
+				ifCfg[normalizeIfName(ic.Name)] = ic
+			}
+		}
 		// Match against the device's CURRENT interface set (latest snapshot), so
 		// any interface whose normalized name is in the connection's name list is
 		// resolved regardless of literal spelling differences between devices.
 		for _, st := range d.latestInterfacesForDevice(dv.id) {
-			if !targets[normalizeIfName(st.Name)] {
+			nn := normalizeIfName(st.Name)
+			if !targets[nn] {
 				continue
 			}
 			key := fmt.Sprintf("%d:%d", dv.id, st.Index)
@@ -195,6 +208,15 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 			var addr models.InterfaceAddress
 			d.db.Where("device_id = ? AND if_index = ?", dv.id, st.Index).
 				Order("timestamp DESC").Limit(1).First(&addr)
+
+			vlanID := st.VLANID
+			parent := ""
+			if ic, ok := ifCfg[nn]; ok {
+				parent = ic.Parent
+				if vlanID == 0 {
+					vlanID = ic.VLANID
+				}
+			}
 			refs = append(refs, ConnInterfaceRef{
 				DeviceID:   dv.id,
 				DeviceName: dv.name,
@@ -202,6 +224,9 @@ func (d *Database) resolveConnectionInterfaces(conn *models.DeviceConnection) []
 				IfIndex:    st.Index,
 				IPAddress:  addr.IPAddress,
 				Subnet:     computeNetworkCIDR(addr.IPAddress, addr.NetMask),
+				Kind:       st.TypeName,
+				VlanID:     vlanID,
+				Parent:     parent,
 				Speed:      st.Speed,
 				Status:     st.Status,
 				InBytes:    st.InBytes,

@@ -485,6 +485,22 @@
         tbody.innerHTML = html;
     }
 
+    // kindLabel maps an ifType name to a short human label.
+    function kindLabel(kind) {
+        return ({ l2vlan: 'VLAN', l3ipvlan: 'L3VLAN', bridge: 'Bridge', propVirtual: 'SoftSwitch', lag: 'LAG', ethernet: 'Physical', tunnel: 'Tunnel', vxlan: 'VXLAN' })[kind] || kind || '';
+    }
+
+    // ifaceMeta builds the kind/VLAN/parent annotation under an interface name,
+    // making the interface's role and relationships explicit.
+    function ifaceMeta(f) {
+        const bits = [];
+        const k = kindLabel(f.kind);
+        if (k) bits.push(k);
+        if (f.vlan_id > 0) bits.push('VLAN ' + f.vlan_id);
+        if (f.parent) bits.push('&#8627; ' + window.escapeHtml(f.parent));
+        return bits.join('<span style="color:#30363d;"> · </span>');
+    }
+
     // ifaceRowsHtml renders the expandable per-interface rows for one side of a
     // network segment. `rowKey` makes each row id unique across segments.
     function ifaceRowsHtml(ifaces, rowKey) {
@@ -494,11 +510,12 @@
             const statusBadge = `<span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(f.status || 'unknown').toUpperCase()}</span>`;
             const errs = (f.in_errors || 0) + (f.out_errors || 0);
             const errCell = errs > 0 ? `<span style="color:#d29922;">${window.formatNum(errs)} err</span>` : '';
+            const meta = ifaceMeta(f);
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-iface-chart" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}" data-range="${r}">${lbl}</div>`;
             return `
                 <tr class="panel-tunnel-row" data-action="dp-toggle-iface" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}">
                     <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
-                    <td style="font-family:monospace;">${window.escapeHtml(f.if_name)}</td>
+                    <td><div style="font-family:monospace;">${window.escapeHtml(f.if_name)}</div>${meta ? `<div style="font-size:0.66rem;color:#768390;">${meta}</div>` : ''}</td>
                     <td style="font-family:monospace;font-size:0.76rem;color:#58a6ff;">${window.escapeHtml(f.ip_address || '-')}</td>
                     <td style="font-size:0.76rem;">${formatSpeed(f.speed)}</td>
                     <td>${statusBadge}</td>
@@ -542,13 +559,29 @@
         return (name || '').toLowerCase().trim().replace(/[ ._-]/g, '');
     }
 
-    // renderPanelInterfaceTab makes the device↔segment↔device pairing explicit.
-    // It pairs interfaces the same way the detector matched them: first by shared
-    // IP subnet (ethernet/lag subnet_match), then — for what's left — by shared
-    // normalized interface name (l2vlan/bridge/vxlan name_match, which often have
-    // no IP). Each matched pair becomes a card with the source-side and dest-side
-    // interfaces side by side, each expandable to its own chart. Anything that
-    // genuinely can't be paired falls into a final "Other interfaces" card.
+    // segmentLabel picks the clearest identity for a group of interfaces that
+    // form one logical segment: the bridge/switch name > VLAN id > subnet > name.
+    function segmentLabel(members) {
+        const bridge = members.find(f => f.kind === 'bridge' || f.kind === 'propVirtual');
+        const vlans = [...new Set(members.filter(f => f.vlan_id > 0).map(f => f.vlan_id))];
+        if (bridge) return { icon: '&#128279;', label: bridge.if_name, sub: vlans.length === 1 ? 'VLAN ' + vlans[0] : 'bridge' }; // 🔗
+        if (vlans.length === 1) return { icon: '&#127991;', label: 'VLAN ' + vlans[0], sub: 'vlan' };        // 🏷
+        const subnet = (members.find(f => f.subnet) || {}).subnet;
+        if (subnet) return { icon: '&#127760;', label: subnet, sub: 'network' };                             // 🌐
+        const parent = (members.find(f => f.parent) || {}).parent;
+        if (parent) return { icon: '&#128279;', label: parent, sub: 'parent interface' };
+        return { icon: '&#128279;', label: (members[0] || {}).if_name || 'segment', sub: 'interface' };
+    }
+
+    // renderPanelInterfaceTab groups interfaces into logical segments and makes
+    // the device↔segment↔device pairing explicit. Interfaces are merged into the
+    // same segment when they share a VLAN id OR a parent/root interface name
+    // (union-find over both signals), so a VLAN sub-interface and its parent
+    // bridge — and the same segment across the two devices, even when named
+    // differently — collapse into one card instead of showing as separate items.
+    // Each segment present on both ends is a paired card; the rest fall into a
+    // combined "Other interfaces" card. Every interface stays expandable to its
+    // own chart and is annotated with its kind / VLAN / parent.
     function renderPanelInterfaceTab(ifaces, c, srcName, dstName) {
         const container = document.getElementById('ptab-tunnels');
         if (!container) return;
@@ -560,58 +593,53 @@
         const onSrc = f => f.device_id === srcId;
         const onDst = f => f.device_id === dstId;
 
-        const used = new Set();
-        const cards = []; // { kind:'net'|'name', label, src:[], dst:[] }
+        // Union-find: merge interfaces that are the same logical segment. Signals:
+        //  - same normalized interface name (separator diffs / same name on both ends)
+        //  - a sub-interface with its parent, but ONLY when the parent interface is
+        //    itself present (bridge + its VLAN) — never merge two VLANs just because
+        //    they happen to share a parent string (distinct VLANs on a trunk)
+        //  - same VLAN id (same broadcast domain across devices)
+        //  - same IP subnet
+        const uf = ifaces.map((_, i) => i);
+        const find = x => { while (uf[x] !== x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; };
+        const union = (a, b) => { uf[find(a)] = find(b); };
+        const nameIdx = {}; // normalized name → representative index (built first)
+        ifaces.forEach((f, i) => { const n = jsNormalizeIfName(f.if_name); if (n && nameIdx[n] == null) nameIdx[n] = i; });
+        const byVlan = {}, bySubnet = {};
+        ifaces.forEach((f, i) => {
+            const n = jsNormalizeIfName(f.if_name);
+            if (n && nameIdx[n] != null) union(i, nameIdx[n]);
+            if (f.parent) { const p = jsNormalizeIfName(f.parent); if (nameIdx[p] != null) union(i, nameIdx[p]); }
+            if (f.vlan_id > 0) { if (byVlan[f.vlan_id] != null) union(i, byVlan[f.vlan_id]); else byVlan[f.vlan_id] = i; }
+            if (f.subnet) { if (bySubnet[f.subnet] != null) union(i, bySubnet[f.subnet]); else bySubnet[f.subnet] = i; }
+        });
+        const groupsMap = {};
+        ifaces.forEach((f, i) => { const r = find(i); (groupsMap[r] = groupsMap[r] || []).push(f); });
+        const groups = Object.values(groupsMap);
 
-        // tryPair groups still-unused interfaces by keyFn and emits a card for any
-        // group that has an interface on BOTH ends.
-        function tryPair(keyFn, kind) {
-            const groups = {}, order = [];
-            ifaces.forEach((f, idx) => {
-                if (used.has(idx)) return;
-                const k = keyFn(f);
-                if (!k) return;
-                if (!groups[k]) { groups[k] = []; order.push(k); }
-                groups[k].push(idx);
-            });
-            order.forEach(k => {
-                const idxs = groups[k];
-                const s = idxs.filter(i => onSrc(ifaces[i]));
-                const dd = idxs.filter(i => onDst(ifaces[i]));
-                if (s.length && dd.length) {
-                    idxs.forEach(i => used.add(i));
-                    cards.push({
-                        kind,
-                        label: kind === 'net' ? k : ifaces[s[0]].if_name,
-                        src: s.map(i => ifaces[i]),
-                        dst: dd.map(i => ifaces[i])
-                    });
-                }
-            });
-        }
-        tryPair(f => f.subnet || null, 'net');                    // pass 1: shared IP network
-        tryPair(f => jsNormalizeIfName(f.if_name) || null, 'name'); // pass 2: shared interface name
-
-        let html = '';
-        cards.forEach((card, gi) => {
-            const icon = card.kind === 'net' ? '&#127760;' : '&#128279;'; // 🌐 network vs 🔗 shared interface
-            const sub = card.kind === 'net' ? 'network' : 'interface';
-            const header = `
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-                    <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">${icon} ${window.escapeHtml(card.label)}</span>
-                    <span style="font-size:0.7rem;color:#768390;text-transform:uppercase;letter-spacing:0.3px;">${sub}</span>
-                    <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:#2dd4bf;">&harr;</span> ${window.escapeHtml(dstName)}</span>
-                </div>`;
-            html += ifaceSegmentCard(header, srcName, dstName, card.src, card.dst, `seg${gi}`);
+        let html = '', gi = 0;
+        const leftover = [];
+        groups.forEach(members => {
+            const s = members.filter(onSrc), dd = members.filter(onDst);
+            if (s.length && dd.length) {
+                const seg = segmentLabel(members);
+                const header = `
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                        <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">${seg.icon} ${window.escapeHtml(seg.label)}</span>
+                        <span style="font-size:0.7rem;color:#768390;text-transform:uppercase;letter-spacing:0.3px;">${seg.sub}</span>
+                        <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:#2dd4bf;">&harr;</span> ${window.escapeHtml(dstName)}</span>
+                    </div>`;
+                html += ifaceSegmentCard(header, srcName, dstName, s, dd, `seg${gi++}`);
+            } else {
+                leftover.push(...members);
+            }
         });
 
-        // Leftovers: interfaces that couldn't be paired by subnet or name.
-        const rest = ifaces.filter((f, idx) => !used.has(idx));
-        if (rest.length) {
-            const label = cards.length ? 'Other interfaces' : 'Interfaces on this link';
-            const hint = cards.length ? ' (could not be paired to the other end)' : '';
+        if (leftover.length) {
+            const label = gi ? 'Other interfaces' : 'Interfaces on this link';
+            const hint = gi ? ' (could not be paired to the other end)' : '';
             const header = `<div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px;">${label}<span style="color:#768390;font-size:0.72rem;">${hint}</span></div>`;
-            html += ifaceSegmentCard(header, srcName, dstName, rest.filter(onSrc), rest.filter(onDst), 'rest');
+            html += ifaceSegmentCard(header, srcName, dstName, leftover.filter(onSrc), leftover.filter(onDst), 'rest');
         }
         container.innerHTML = html;
     }

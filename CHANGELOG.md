@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.471] - 2026-06-22
+### Added
+- **Direct-link interfaces are now grouped into logical segments by VLAN id and parent interface — a VLAN sub-interface and its parent bridge (e.g. `HOSTING-BLOCK-2` + `HOSTING_BLOCK-2`) are recognized as one thing instead of two separate items.** Each interface now carries `kind` (SNMP ifType: VLAN/Bridge/LAG/Physical/…), `vlan_id` (SNMP `dot1qPvid`, else config), and `parent` (config `set interface`) on `ConnInterfaceRef` (`internal/database/connection_detail.go`). A new `ParseFortiGateInterfaceConfig` (`internal/snmp/vendor_fortigate.go`) extracts each `config system interface` entry's parent/vlanid/type (handling nested `config` blocks).
+- The Interfaces tab (`diagram-panels.js` `renderPanelInterfaceTab`) now merges interfaces into one segment via union-find over **same VLAN id**, **same IP subnet**, **same (normalized) name**, and **sub-interface↔parent when the parent is present** — so a bridge and its VLAN collapse into one card, and the same VLAN across two devices pairs even when named differently. Distinct VLANs trunked on a shared parent are NOT falsely merged. Each interface row is annotated with its kind / VLAN / parent.
+
 ## [0.10.470] - 2026-06-22
 ### Fixed
 - **Direct-link Interfaces tab stopped pairing — it showed two unlinked columns.** Regression from v0.10.468: paired "network segment" cards required a shared **IP subnet** on both ends, but Layer-2 links (VLAN/bridge, no IP) never matched, so every interface fell into the single two-column "Other interfaces" card with nothing visibly paired. `renderPanelInterfaceTab` (`diagram-panels.js`) now pairs the way the detector actually matched the link — **two passes: first by shared IP subnet, then by shared (normalized) interface name** — so L2 `name_match` links pair by interface name (🔗 vlan100 · DC2-FW1 ↔ DC2-FW2) and ethernet/lag pair by network (🌐 10.0.5.0/24). Only interfaces that genuinely can't be paired to the other end fall into "Other interfaces".
