@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/snmp"
 
 	"gorm.io/gorm"
 )
@@ -70,6 +71,25 @@ func computeNetworkCIDR(ipStr, maskStr string) string {
 	return fmt.Sprintf("%s/%d", ip4.Mask(net.IPMask(mask4)).String(), ones)
 }
 
+// OverlayInfo describes one overlay interface (VXLAN / L3VLAN) endpoint, built
+// from the device's SSH-captured config (VNI, carrier interface, UDP dstport,
+// VTEP peers) plus its SNMP interface_stats counters. Lets the detail view
+// explain an overlay beyond the carrier tunnel it rides on.
+type OverlayInfo struct {
+	DeviceID     uint     `json:"device_id"`
+	DeviceName   string   `json:"device_name"`
+	Type         string   `json:"type"` // vxlan | l3ipvlan
+	Name         string   `json:"name"` // overlay interface name
+	VNI          int      `json:"vni,omitempty"`
+	CarrierIface string   `json:"carrier_iface,omitempty"` // underlying interface the overlay is bound to
+	DestPort     int      `json:"dest_port,omitempty"`
+	RemoteVTEPs  []string `json:"remote_vteps,omitempty"`
+	IfIndex      int      `json:"if_index,omitempty"` // interface_stats index — lets the UI graph the overlay iface itself
+	InBytes      uint64   `json:"in_bytes"`
+	OutBytes     uint64   `json:"out_bytes"`
+	Status       string   `json:"status"`
+}
+
 // ConnectionDetailResult holds full detail for a connection including matching tunnels.
 type ConnectionDetailResult struct {
 	Connection      models.DeviceConnection `json:"connection"`
@@ -77,6 +97,7 @@ type ConnectionDetailResult struct {
 	SourceTunnels   []models.VPNStatus      `json:"source_tunnels"`
 	DestTunnels     []models.VPNStatus      `json:"dest_tunnels"`
 	Interfaces      []ConnInterfaceRef      `json:"interfaces,omitempty"` // populated for the "direct" family only
+	Overlays        []OverlayInfo           `json:"overlays,omitempty"`   // populated for the "overlay" family only
 	TotalBytesIn    uint64                  `json:"total_bytes_in"`
 	TotalBytesOut   uint64                  `json:"total_bytes_out"`
 	TotalPacketsIn  uint64                  `json:"total_packets_in"`
@@ -205,6 +226,74 @@ func (d *Database) latestInterfacesForDevice(deviceID uint) []models.InterfaceSt
 	return rows
 }
 
+// buildOverlayInfo enriches an overlay (vxlan/l3ipvlan) connection with per-end
+// detail drawn from two sources: the device's SSH-captured FortiGate config
+// (VNI, carrier interface, UDP dstport, VTEP peer IPs) and its SNMP
+// interface_stats (the overlay interface's own index/counters/status). The
+// overlay interface names come from the connection's TunnelNames (set by the
+// overlay detector), matched normalized so spelling differences don't matter.
+func (d *Database) buildOverlayInfo(conn *models.DeviceConnection) []OverlayInfo {
+	if conn.TunnelNames == "" {
+		return nil
+	}
+	targets := make(map[string]bool)
+	for _, n := range strings.Split(conn.TunnelNames, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			targets[normalizeIfName(n)] = true
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	type dev struct {
+		id   uint
+		name string
+	}
+	devs := []dev{{conn.SourceDeviceID, ""}, {conn.DestDeviceID, ""}}
+	if conn.SourceDevice != nil {
+		devs[0].name = conn.SourceDevice.Name
+	}
+	if conn.DestDevice != nil {
+		devs[1].name = conn.DestDevice.Name
+	}
+
+	var out []OverlayInfo
+	for _, dv := range devs {
+		// Config-derived VXLAN map for this device, keyed by normalized name.
+		vxByName := make(map[string]snmp.FortiGateVxlan)
+		if rev, err := d.GetLatestConfigRevision(dv.id); err == nil && rev != nil && rev.ConfigText != "" {
+			for _, v := range snmp.ParseFortiGateVxlanConfig(rev.ConfigText) {
+				vxByName[normalizeIfName(v.Name)] = v
+			}
+		}
+		for _, st := range d.latestInterfacesForDevice(dv.id) {
+			nn := normalizeIfName(st.Name)
+			if !targets[nn] {
+				continue
+			}
+			info := OverlayInfo{
+				DeviceID:   dv.id,
+				DeviceName: dv.name,
+				Type:       conn.ConnectionType,
+				Name:       st.Name,
+				IfIndex:    st.Index,
+				InBytes:    st.InBytes,
+				OutBytes:   st.OutBytes,
+				Status:     st.Status,
+			}
+			if cfg, ok := vxByName[nn]; ok {
+				info.VNI = cfg.VXLANID
+				info.CarrierIface = cfg.Interface
+				info.DestPort = cfg.DestinationPort
+				info.RemoteVTEPs = cfg.RemoteIPs
+			}
+			out = append(out, info)
+		}
+	}
+	return out
+}
+
 // interfacesForDevice returns the subset of refs on a single device. Used to
 // build a directionally-coherent aggregate: summing both endpoints of a direct
 // link would mix in/out (A's out ≈ B's in), so the Overview graph and KPIs use
@@ -244,6 +333,12 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 	}
 
 	result := &ConnectionDetailResult{Connection: conn, Family: connectionFamily(conn.ConnectionType)}
+
+	// Overlay links (vxlan/l3ipvlan) ride a carrier tunnel (still matched below)
+	// but also have their own identity — enrich from config + SNMP.
+	if result.Family == "overlay" {
+		result.Overlays = d.buildOverlayInfo(&conn)
+	}
 
 	// Direct links (ethernet/lag/l2vlan/bridge/wan) carry no VPN tunnels — their
 	// telemetry lives in interface_stats. Resolve the member interfaces, derive

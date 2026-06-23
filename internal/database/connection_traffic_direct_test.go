@@ -176,6 +176,66 @@ func TestResolveConnectionInterfaces_NormalizedBothEnds(t *testing.T) {
 	}
 }
 
+// TestBuildOverlayInfo verifies an overlay (vxlan) connection is enriched from
+// the device config (VNI, carrier iface, dstport, VTEPs) and SNMP (the overlay
+// interface's own index/counters), surfaced on ConnectionDetailResult.Overlays.
+func TestBuildOverlayInfo(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	if err := d.db.Create(&models.Device{ID: 1, Name: "HUB-FW1", Vendor: "fortigate"}).Error; err != nil {
+		t.Fatalf("dev1: %v", err)
+	}
+	if err := d.db.Create(&models.Device{ID: 2, Name: "SPOKE-FW1", Vendor: "fortigate"}).Error; err != nil {
+		t.Fatalf("dev2: %v", err)
+	}
+	conn := models.DeviceConnection{
+		Name: "HUB-FW1 <-> SPOKE-FW1", SourceDeviceID: 1, DestDeviceID: 2,
+		ConnectionType: "vxlan", Status: "up", TunnelNames: "vxlan-ov",
+		MatchMethod: "name_match", AutoDetected: true,
+	}
+	if err := d.db.Create(&conn).Error; err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	cfg := "config system vxlan\n edit \"vxlan-ov\"\n set interface \"ipsec-hub\"\n set vxlan-id 7000\n set remote-ip \"198.51.100.9\"\n set dstport 4789\n next\nend\n"
+	if err := d.db.Create(&models.DeviceConfigRevision{DeviceID: 1, Timestamp: time.Now(), ConfigText: cfg}).Error; err != nil {
+		t.Fatalf("cfg rev: %v", err)
+	}
+	if err := d.db.Create(&models.InterfaceStats{DeviceID: 1, Name: "vxlan-ov", Index: 12, Status: "up", InBytes: 555, OutBytes: 222, Timestamp: time.Now().Add(-time.Minute)}).Error; err != nil {
+		t.Fatalf("ifstat: %v", err)
+	}
+
+	detail, err := d.GetConnectionDetail(conn.ID)
+	if err != nil {
+		t.Fatalf("GetConnectionDetail: %v", err)
+	}
+	if detail.Family != "overlay" {
+		t.Fatalf("family = %q, want overlay", detail.Family)
+	}
+	var hub *OverlayInfo
+	for i := range detail.Overlays {
+		if detail.Overlays[i].DeviceID == 1 {
+			hub = &detail.Overlays[i]
+		}
+	}
+	if hub == nil {
+		t.Fatal("no overlay info for HUB-FW1")
+	}
+	if hub.VNI != 7000 {
+		t.Errorf("VNI = %d, want 7000", hub.VNI)
+	}
+	if hub.CarrierIface != "ipsec-hub" {
+		t.Errorf("carrier = %q, want ipsec-hub", hub.CarrierIface)
+	}
+	if hub.DestPort != 4789 {
+		t.Errorf("dstport = %d, want 4789", hub.DestPort)
+	}
+	if len(hub.RemoteVTEPs) != 1 || hub.RemoteVTEPs[0] != "198.51.100.9" {
+		t.Errorf("VTEPs = %v, want [198.51.100.9]", hub.RemoteVTEPs)
+	}
+	if hub.IfIndex != 12 || hub.InBytes != 555 || hub.OutBytes != 222 {
+		t.Errorf("SNMP counters/index mismatch: %+v", hub)
+	}
+}
+
 func TestComputeNetworkCIDR(t *testing.T) {
 	cases := []struct{ ip, mask, want string }{
 		{"10.0.5.1", "255.255.255.0", "10.0.5.0/24"},

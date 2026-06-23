@@ -692,6 +692,7 @@ type FortiGateVxlan struct {
 	Interface       string
 	VXLANID         int
 	DestinationPort int
+	RemoteIPs       []string // VTEP peer IPs (set remote-ip "a" "b" ...)
 }
 
 func ParseFortiGateVxlanConfig(configText string) []FortiGateVxlan {
@@ -746,6 +747,22 @@ func ParseFortiGateVxlanConfig(configText string) []FortiGateVxlan {
 				if strings.HasPrefix(line, "set destination-port ") {
 					if port, err := strconv.Atoi(strings.TrimPrefix(line, "set destination-port ")); err == nil {
 						currentVxlan.DestinationPort = port
+					}
+					continue
+				}
+				// FortiOS spells the UDP port "dstport" (4789 default).
+				if strings.HasPrefix(line, "set dstport ") {
+					if port, err := strconv.Atoi(strings.TrimPrefix(line, "set dstport ")); err == nil {
+						currentVxlan.DestinationPort = port
+					}
+					continue
+				}
+				// VTEP peers: set remote-ip "10.1.1.2" "10.1.1.3"
+				if strings.HasPrefix(line, "set remote-ip ") {
+					for _, tok := range strings.Fields(strings.TrimPrefix(line, "set remote-ip ")) {
+						if ip := strings.Trim(tok, "\""); ip != "" {
+							currentVxlan.RemoteIPs = append(currentVxlan.RemoteIPs, ip)
+						}
 					}
 					continue
 				}

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.469] - 2026-06-22
+### Added
+- **VXLAN/L3VLAN overlay links now show real overlay detail instead of just borrowing the carrier tunnel's graph.** The Overlay tab now surfaces, per endpoint device, data drawn from two sources:
+  - **From the SSH-captured FortiGate config** (`config system vxlan`): the **VNI** (`vxlan-id`), the **carrier interface** the overlay is bound to (`set interface`), the **UDP port** (`dstport`, default 4789), and the **remote VTEP peer IPs** (`set remote-ip`). `ParseFortiGateVxlanConfig` (`internal/snmp/vendor_fortigate.go`) was extended to capture the VTEP list and `dstport` (it previously dropped both).
+  - **From SNMP** (`interface_stats`): the overlay interface's own status, byte counters, and an expandable per-interface **traffic chart**.
+  - Below the overlay cards, the **carrier tunnel** it actually rides on is still shown (the encrypted IPSec path), so you see both the overlay identity and its transport in one place.
+- Backend: `OverlayInfo` on `ConnectionDetailResult`, populated by `buildOverlayInfo` (`internal/database/connection_detail.go`) which joins config + interface_stats by normalized interface name. Frontend: `renderPanelOverlayTab` (`diagram-panels.js`); overlay charts load lazily when the tab is shown.
+- Tests: `TestParseFortiGateVxlanConfig_Details` (VTEP/dstport parsing), `TestBuildOverlayInfo` (config + SNMP enrichment end-to-end).
+
 ## [0.10.468] - 2026-06-22
 ### Fixed
 - **Direct-link interfaces failed to pair, falsely showing "end not monitored" on the peer (e.g. DC2-FW1 ↔ DC2-FW2).** Three compounding causes, all fixed:

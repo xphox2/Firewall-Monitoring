@@ -4,6 +4,7 @@
 
     let panelChartInstances = {};
     let currentPanelConnId = null;
+    let pendingOverlayCharts = []; // overlay iface charts to load when the Overlay tab is first shown (avoids 0-size render on a hidden tab)
 
     function destroyPanelCharts() {
         Object.values(panelChartInstances).forEach(c => { if (c?.destroy) c.destroy(); });
@@ -57,7 +58,7 @@
         const secondTab = document.querySelector('#rich-panel-tabs .panel-tab[data-tab="tunnels"]');
         const cfg = {
             tunnel:  { count: 'Phase 1', tab: 'Tunnels' },
-            overlay: { count: 'Carrier',  tab: 'Carrier' },
+            overlay: { count: 'Overlay',  tab: 'Overlay' },
             direct:  { count: 'Interfaces', tab: 'Interfaces' },
             offnet:  { count: 'Peers',    tab: 'Peers' }
         }[family] || { count: 'Tunnels', tab: 'Tunnels' };
@@ -107,6 +108,9 @@
     function switchPanelTab(tabName) {
         document.querySelectorAll('#rich-panel-tabs .panel-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
         document.querySelectorAll('#rich-panel-content .panel-tab-content').forEach(c => c.classList.toggle('active', c.id === 'ptab-' + tabName));
+        if (tabName === 'tunnels') {
+            flushOverlayCharts();
+        }
         if (tabName === 'flows' && currentPanelConnId && !panelChartInstances['proto']) {
             loadPanelFlowStats(currentPanelConnId, 24);
         }
@@ -153,6 +157,7 @@
 
     async function showRichConnDetailPanel(conn) {
         destroyPanelCharts();
+        pendingOverlayCharts = [];
         currentPanelConnId = conn.id;
         const panel = document.getElementById('conn-detail-panel-container');
         const srcName = conn.source_device?.name || 'Device ' + conn.source_device_id;
@@ -281,6 +286,14 @@
                 const ifaces = data.interfaces || [];
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
                 renderPanelInterfaceTab(ifaces, c, srcName, dstName);
+                if (p2Tab) p2Tab.style.display = 'none';
+            } else if (family === 'overlay') {
+                // Overlay (VXLAN/L3VLAN): show config + SNMP-derived overlay
+                // detail (VNI, carrier iface, VTEPs) plus the carrier tunnel.
+                const overlays = data.overlays || [];
+                const srcT = data.source_tunnels || [], dstT = data.dest_tunnels || [];
+                document.getElementById('pkpi-tunnels').textContent = overlays.length || (countPhase1(srcT) + countPhase1(dstT));
+                renderPanelOverlayTab(data, c, srcName, dstName);
                 if (p2Tab) p2Tab.style.display = 'none';
             } else {
                 // Tunnel / overlay / off-net: group Phase 2 selectors under their
@@ -573,6 +586,77 @@
             html += ifaceSegmentCard(header, srcName, dstName, rest.filter(onSrc), rest.filter(onDst), 'rest');
         }
         container.innerHTML = html;
+    }
+
+    // renderPanelOverlayTab shows VXLAN/L3VLAN overlay detail derived from the
+    // FortiGate config (VNI, carrier interface, UDP dstport, remote VTEP peers)
+    // and SNMP (the overlay interface's own counters + chart), followed by the
+    // carrier tunnel(s) the overlay actually rides on.
+    function renderPanelOverlayTab(data, c, srcName, dstName) {
+        const container = document.getElementById('ptab-tunnels');
+        if (!container) return;
+        const overlays = data.overlays || [];
+        const typeLabel = t => (t === 'l3ipvlan' ? 'L3VLAN' : 'VXLAN');
+        const kv = (label, val) => `<div><div style="font-size:0.66rem;color:#768390;text-transform:uppercase;letter-spacing:0.4px;">${label}</div><div style="font-size:0.82rem;color:#e6edf3;font-family:'JetBrains Mono',monospace;">${val}</div></div>`;
+
+        let html = '';
+        if (!overlays.length) {
+            html += '<div style="color:#768390;padding:8px 2px;font-size:0.8rem;">No overlay interface detail available — config not captured for these devices (the carrier tunnel is shown below).</div>';
+        }
+        overlays.forEach((o, i) => {
+            const rowId = 'ov-' + i;
+            const up = o.status === 'up';
+            const vteps = (o.remote_vteps || []).length
+                ? o.remote_vteps.map(ip => `<span style="font-family:monospace;font-size:0.74rem;color:#58a6ff;">${window.escapeHtml(ip)}</span>`).join('<span style="color:#30363d;"> · </span>')
+                : '<span style="color:#768390;">— not in captured config —</span>';
+            const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-iface-chart" data-row="${rowId}" data-device="${o.device_id}" data-ifindex="${o.if_index}" data-range="${r}">${lbl}</div>`;
+            html += `
+                <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:10px;">
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+                        <span style="font-size:0.66rem;font-weight:700;letter-spacing:0.5px;color:#f0abfc;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:2px 7px;">${typeLabel(o.type)}</span>
+                        <span style="font-family:monospace;font-size:0.85rem;font-weight:600;color:#e6edf3;">${window.escapeHtml(o.name)}</span>
+                        <span style="font-size:0.78rem;color:#8b949e;">on ${window.escapeHtml(o.device_name || '-')}</span>
+                        <span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(o.status || 'unknown').toUpperCase()}</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:10px;margin-bottom:10px;">
+                        ${kv('VNI', o.vni ? o.vni : '—')}
+                        ${kv('Carrier iface', o.carrier_iface ? window.escapeHtml(o.carrier_iface) : '—')}
+                        ${kv('UDP port', o.dest_port ? o.dest_port : '4789')}
+                        ${kv('In', window.formatBytes(o.in_bytes))}
+                        ${kv('Out', window.formatBytes(o.out_bytes))}
+                    </div>
+                    <div style="margin-bottom:${o.if_index ? '10px' : '0'};"><span style="font-size:0.66rem;color:#768390;text-transform:uppercase;letter-spacing:0.4px;">Remote VTEPs</span>&nbsp; ${vteps}</div>
+                    ${o.if_index ? `
+                    <div class="panel-range-pills" style="margin-bottom:6px;">${pill('1h', '1h', false)}${pill('24h', '24h', true)}${pill('7d', '7d', false)}${pill('30d', '30d', false)}</div>
+                    <div class="panel-chart-container" style="height:140px;"><canvas id="pchart-${rowId}"></canvas></div>` : ''}
+                </div>`;
+        });
+
+        const tunHead = `<thead><tr><th></th><th>Tunnel</th><th>Status</th><th>Remote IP</th><th>In</th><th>Out</th></tr></thead><tbody></tbody>`;
+        html += `
+            <div style="margin-top:6px;">
+                <h5 style="font-size:0.82rem;color:#8b949e;margin:0 0 6px 0;">Carrier tunnel <span style="color:#768390;font-weight:400;font-size:0.72rem;">— the encrypted path the overlay rides on</span></h5>
+                <div class="tunnel-columns">
+                    <div class="tunnel-col"><div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(srcName)}</div><table class="vpn-detail-table" id="ov-src-tunnels">${tunHead}</table></div>
+                    <div class="tunnel-col"><div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(dstName)}</div><table class="vpn-detail-table" id="ov-dst-tunnels">${tunHead}</table></div>
+                </div>
+            </div>`;
+        container.innerHTML = html;
+
+        renderPanelTunnelTable('ov-src-tunnels', data.source_tunnels || [], c.source_device_id, 'overlay');
+        renderPanelTunnelTable('ov-dst-tunnels', data.dest_tunnels || [], c.dest_device_id, 'overlay');
+
+        // Defer chart loads until the Overlay tab is visible (see switchPanelTab).
+        pendingOverlayCharts = overlays
+            .map((o, i) => ({ rowId: 'ov-' + i, deviceId: o.device_id, ifIndex: o.if_index }))
+            .filter(x => x.ifIndex);
+    }
+
+    function flushOverlayCharts() {
+        if (!pendingOverlayCharts.length) return;
+        const pending = pendingOverlayCharts;
+        pendingOverlayCharts = [];
+        pending.forEach(x => loadPanelInterfaceChart(x.rowId, x.deviceId, x.ifIndex, '24h'));
     }
 
     function togglePanelInterface(rowId, deviceId, ifIndex) {
