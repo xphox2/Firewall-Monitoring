@@ -46,7 +46,10 @@ test-integration: ## Run the Postgres integration suite (AUDIT-118; needs TEST_P
 	#     -e POSTGRES_DB=firewall_mon_test postgres:16
 	# Without TEST_PG_DSN the suite compiles and skips. Deliberately NOT part of
 	# `qa` so the default contributor gate stays database-free.
-	$(GO) test -tags=integration -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/...
+	# -p 1: both packages reset the SAME TEST_PG_DSN schema (DROP SCHEMA public
+	# CASCADE) in NewIntegrationDB, so they must not run concurrently — one binary
+	# at a time keeps a single owner of the shared database. See ci.yml.
+	$(GO) test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/...
 
 # AUDIT-102: -trimpath strips local filesystem paths and -buildvcs=false
 # keeps VCS state out of the binary, so builds are reproducible across hosts.

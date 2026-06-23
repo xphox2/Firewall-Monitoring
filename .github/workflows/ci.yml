@@ -108,7 +108,13 @@ jobs:
       - name: Integration tests
         env:
           TEST_PG_DSN: postgres://firewall_mon:firewall_mon@localhost:5432/firewall_mon_test?sslmode=disable
-        run: go test -tags=integration -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/...
+        # -p 1 serializes the package test binaries. Both packages' NewIntegrationDB
+        # does an unsynchronized `DROP SCHEMA public CASCADE` on the same TEST_PG_DSN
+        # database; running them concurrently lets one process's reset nuke the
+        # other's in-flight migration (nondeterministic "relation ... does not exist"
+        # in TestPostgresIntegration/PopulatedTableSkipped). One binary at a time =
+        # one owner of the shared schema at a time.
+        run: go test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/...
 
   vuln-scan:
     name: govulncheck
