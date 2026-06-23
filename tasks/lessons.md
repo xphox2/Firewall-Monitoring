@@ -41,6 +41,24 @@ gh run watch "$RUN_ID" --exit-status --interval 15
 
 When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) section at the top. The server's AUDIT-110 test will fail if you (a) put `[Unreleased]` first, or (b) put a non-version `## [...]` section first.
 
+## `TestPostgresIntegration/PopulatedTableSkipped` is flaky; do NOT panic on transient failure (2026-06-22)
+
+**Context:** the CTO-loop audit follow-up (2026-06-22 session) shipped 5 PRs to the server repo. The Postgres `Integration (PostgreSQL)` CI lane flaked on `TestPostgresIntegration/PopulatedTableSkipped` 3 times during that session:
+
+- Phase 3 (PR #1, v0.10.471, sampling_rate scaling): failed once, passed on retry with identical code.
+- Phase 5 (PR #3, v0.10.473, drops field): failed on pre-merge (after gofmt amend) retry, then failed post-merge on master.
+
+**The failure is unrelated to PR code.** It's the `runMigrationList([v1])` call inside `PopulatedTableSkipped`'s `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` block failing with "relation schema_migrations does not exist" at the INSERT step — but the CREATE TABLE IF NOT EXISTS runs in the same function before the INSERT. The most likely cause is connection-pool staleness on the throwaway GORM connection that survives the DROP+CREATE.
+
+**The rule for future runs:**
+
+1. **Do not panic on a single PopulatedTableSkipped failure.** Treat the first failure as a flake candidate; retry before bisecting code.
+2. **Pre-merge CI green = ship.** If the pre-merge CI is green for the PR's actual code, the post-merge master failure (when it's PopulatedTableSkipped) is almost certainly the same flake. The PR was correctly validated.
+3. **Capture the flake in a lesson if it hits 3+ times in one session.** (This entry is itself the lesson.)
+4. **If the post-merge master CI fails on the same flake, push an empty retrigger commit; if that passes, the PR is good.** Revert the empty commit before moving on.
+
+**Why this is in lessons.md:** the prior assumption "PopulatedTableSkipped has been green on master for the last 3 runs" was wrong — it's flaky on master too. The 3 consecutive master-successes before this session were coincidence. AUDIT-118 already documented `PopulatedTableSkipped`'s destructive nature (it must run LAST); the audit did not capture the intermittent `relation "schema_migrations" does not exist` failure mode. **Open follow-up:** file a separate ticket to harden `runMigrationList` against connection-pool staleness after `DROP SCHEMA` (e.g., invalidate the pool, or re-issue `createSchemaMigrationsDDL` on the same connection that's about to do the INSERT).
+
 ## sFlow packets × sampling_rate is non-negotiable (2026-06-11)
 
 **Context:** the sFlow reporting redesign (see `tasks/SFLOW-NOC-REDESIGN-PLAN.md`).
