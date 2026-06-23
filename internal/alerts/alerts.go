@@ -45,17 +45,17 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *uint) error {
 	type metricCheck struct {
-		alertType string
+		alertType models.AlertType
 		metricKey string
 		metric    string
 		current   float64
 	}
 
 	checks := []metricCheck{
-		{"CPU_HIGH", fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage},
-		{"MEMORY_HIGH", fmt.Sprintf("memory_high_%d", status.DeviceID), "memory_usage", status.MemoryUsage},
-		{"DISK_HIGH", fmt.Sprintf("disk_high_%d", status.DeviceID), "disk_usage", status.DiskUsage},
-		{"SESSIONS_HIGH", fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount)},
+		{models.AlertTypeCPUHigh, fmt.Sprintf("cpu_high_%d", status.DeviceID), "cpu_usage", status.CPUUsage},
+		{models.AlertTypeMemoryHigh, fmt.Sprintf("memory_high_%d", status.DeviceID), "memory_usage", status.MemoryUsage},
+		{models.AlertTypeDiskHigh, fmt.Sprintf("disk_high_%d", status.DeviceID), "disk_usage", status.DiskUsage},
+		{models.AlertTypeSessionsHigh, fmt.Sprintf("sessions_high_%d", status.DeviceID), "session_count", float64(status.SessionCount)},
 	}
 
 	var fired []firedEntry
@@ -74,7 +74,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 			cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 			if am.canAlertWithCooldown(chk.metricKey, now, cooldown) {
 				msg := fmt.Sprintf("%s is %.1f (threshold: %.1f)", chk.metric, chk.current, resolved.Threshold)
-				if chk.alertType == "SESSIONS_HIGH" {
+				if chk.alertType == models.AlertTypeSessionsHigh {
 					msg = fmt.Sprintf("Session count is %d (threshold: %d)", int(chk.current), int(resolved.Threshold))
 				}
 				alert := models.Alert{
@@ -194,7 +194,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 
 	am.mu.Lock()
 	now := time.Now()
-	resolved := am.resolveAlertConfig(trap.DeviceID, siteID, trap.TrapType)
+	resolved := am.resolveAlertConfig(trap.DeviceID, siteID, models.AlertType(trap.TrapType))
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
@@ -210,8 +210,8 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	alert := models.Alert{
 		Timestamp:  trap.Timestamp,
 		DeviceID:   trap.DeviceID,
-		AlertType:  trap.TrapType,
-		Severity:   trap.Severity,
+		AlertType:  models.AlertType(trap.TrapType),
+		Severity:   models.Severity(trap.Severity),
 		Message:    trap.Message,
 		MetricName: "snmp_trap",
 		PolicyID:   resolved.PolicyID,
@@ -293,7 +293,7 @@ func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) e
 
 	severityNames := map[int]string{0: "EMERGENCY", 1: "ALERT", 2: "CRITICAL"}
 	sevName := severityNames[msg.Severity]
-	alertType := "SYSLOG_" + sevName
+	alertType := models.AlertType("SYSLOG_" + sevName)
 
 	key := fmt.Sprintf("syslog_%d_%s_%d", msg.DeviceID, msg.AppName, msg.Severity)
 
@@ -481,7 +481,7 @@ func (am *AlertManager) SetCooldown(duration time.Duration) {
 // stored in Alert.MetricName, e.g. "interface_<name>", "vpn_<tunnel>", "device_status").
 // Without it, a recovery for one interface would wrongly resolve every INTERFACE_DOWN
 // alert on the device.
-func (am *AlertManager) sendRecovery(key, alertType, metricName, message string, deviceID uint) {
+func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, metricName, message string, deviceID uint) {
 	am.mu.Lock()
 	wasActive := am.activeAlerts[key]
 	if wasActive {
@@ -794,7 +794,7 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 // configSeverityToAlert maps a configdiff severity onto the alert vocabulary
 // (info | warning | critical). Empty/unknown defaults to "warning" to preserve
 // the legacy behavior.
-func configSeverityToAlert(sev string) string {
+func configSeverityToAlert(sev string) models.Severity {
 	switch sev {
 	case "info":
 		return "info"
@@ -808,7 +808,7 @@ func configSeverityToAlert(sev string) string {
 }
 
 // escalateSeverity bumps an alert severity one notch toward critical.
-func escalateSeverity(sev string) string {
+func escalateSeverity(sev models.Severity) models.Severity {
 	switch sev {
 	case "info":
 		return "warning"

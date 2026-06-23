@@ -5,6 +5,60 @@ import (
 	"time"
 )
 
+// AlertType is the typed enum of alert categories raised by the AlertManager.
+// It is a named string so a typo in a switch arm or assignment is a compile
+// error. Wire/DB encoding is identical to a plain string (JSON + GORM scan the
+// underlying value), so persisted rows and API payloads are unchanged.
+type AlertType string
+
+const (
+	AlertTypeCPUHigh            AlertType = "CPU_HIGH"
+	AlertTypeMemoryHigh         AlertType = "MEMORY_HIGH"
+	AlertTypeDiskHigh           AlertType = "DISK_HIGH"
+	AlertTypeSessionsHigh       AlertType = "SESSIONS_HIGH"
+	AlertTypeDeviceOffline      AlertType = "DEVICE_OFFLINE"
+	AlertTypeInterfaceDown      AlertType = "INTERFACE_DOWN"
+	AlertTypeInterfaceErrors    AlertType = "INTERFACE_ERRORS"
+	AlertTypeVPNTunnelDown      AlertType = "VPN_TUNNEL_DOWN"
+	AlertTypeConfigChange       AlertType = "CONFIG_CHANGE"
+	AlertTypeSSHHostKeyChanged  AlertType = "SSH_HOST_KEY_CHANGED"
+	AlertTypeTrafficSpike       AlertType = "TRAFFIC_SPIKE"
+	AlertTypeProbeDataLag       AlertType = "PROBE_DATA_LAG"
+	AlertTypeProbeDataTruncated AlertType = "PROBE_DATA_TRUNCATED"
+	AlertTypeHAHeartbeatFail    AlertType = "HA_HEARTBEAT_FAIL"
+	AlertTypeHAMemberDown       AlertType = "HA_MEMBER_DOWN"
+	AlertTypeHAMemberUp         AlertType = "HA_MEMBER_UP"
+	AlertTypeHAStateChange      AlertType = "HA_STATE_CHANGE"
+	AlertTypeHASwitch           AlertType = "HA_SWITCH"
+	AlertTypeSyslogEmergency    AlertType = "SYSLOG_EMERGENCY"
+	AlertTypeSyslogCritical     AlertType = "SYSLOG_CRITICAL"
+	AlertTypeSyslogAlert        AlertType = "SYSLOG_ALERT"
+	AlertTypeSFlowAgentDrops    AlertType = "SFLOW_AGENT_DROPS"
+	AlertTypeTestAlert          AlertType = "TEST_ALERT"
+)
+
+// Severity is the typed enum of alert severities. Underlying values match the
+// historical strings ("info" | "warning" | "critical"); arbitrary strings
+// remain representable via conversion so no value is lost on scan.
+type Severity string
+
+const (
+	SeverityInfo     Severity = "info"
+	SeverityWarning  Severity = "warning"
+	SeverityCritical Severity = "critical"
+)
+
+// CommandType is the typed enum of IRC bot command kinds.
+type CommandType string
+
+const (
+	CommandTypeStatic CommandType = "static"
+	CommandTypeStatus CommandType = "status"
+	CommandTypeStats  CommandType = "stats"
+	CommandTypeCustom CommandType = "custom"
+	CommandTypeHelp   CommandType = "help"
+)
+
 type SystemStatus struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	Timestamp    time.Time `json:"timestamp" gorm:"index:idx_sysstatus_device_ts,priority:2"`
@@ -210,8 +264,8 @@ type Alert struct {
 	Timestamp       time.Time  `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2;index:idx_alert_unack,priority:3"`
 	DeviceID        uint       `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
 	ProbeID         *uint      `json:"probe_id" gorm:"index"`
-	AlertType       string     `json:"alert_type"`
-	Severity        string     `json:"severity"`
+	AlertType       AlertType  `json:"alert_type"`
+	Severity        Severity   `json:"severity"`
 	Message         string     `json:"message"`
 	MetricName      string     `json:"metric_name"`
 	Threshold       float64    `json:"threshold"`
@@ -263,9 +317,9 @@ func (AlertPolicy) TableName() string { return "alert_policies" }
 type AlertRule struct {
 	ID              uint      `json:"id" gorm:"primaryKey"`
 	PolicyID        uint      `json:"policy_id" gorm:"uniqueIndex:idx_policy_alert_type,priority:1;not null"`
-	AlertType       string    `json:"alert_type" gorm:"uniqueIndex:idx_policy_alert_type,priority:2;not null"`
+	AlertType       AlertType `json:"alert_type" gorm:"uniqueIndex:idx_policy_alert_type,priority:2;not null"`
 	Enabled         bool      `json:"enabled" gorm:"default:true"`
-	Severity        string    `json:"severity"`
+	Severity        Severity  `json:"severity"`
 	Threshold       float64   `json:"threshold"`
 	NotifyEmail     *bool     `json:"notify_email"`
 	NotifySlack     *bool     `json:"notify_slack"`
@@ -963,15 +1017,15 @@ type IRCChannel struct {
 func (IRCChannel) TableName() string { return "irc_channels" }
 
 type IRCCommand struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Command     string    `json:"command" gorm:"not null;uniqueIndex"` // e.g., "!status", "!help", "!stats"
-	Description string    `json:"description"`
-	Response    string    `json:"response"`                           // Response template or command to execute
-	CommandType string    `json:"command_type" gorm:"default:static"` // static, status, stats, custom
-	Enabled     bool      `json:"enabled" gorm:"default:true"`
-	AdminOnly   bool      `json:"admin_only" gorm:"default:false"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          uint        `json:"id" gorm:"primaryKey"`
+	Command     string      `json:"command" gorm:"not null;uniqueIndex"` // e.g., "!status", "!help", "!stats"
+	Description string      `json:"description"`
+	Response    string      `json:"response"`                           // Response template or command to execute
+	CommandType CommandType `json:"command_type" gorm:"default:static"` // static, status, stats, custom
+	Enabled     bool        `json:"enabled" gorm:"default:true"`
+	AdminOnly   bool        `json:"admin_only" gorm:"default:false"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 func (IRCCommand) TableName() string { return "irc_commands" }

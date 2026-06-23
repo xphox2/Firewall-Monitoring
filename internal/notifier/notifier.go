@@ -146,7 +146,7 @@ func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 		s = strings.ReplaceAll(s, "\n", "")
 		return s
 	}
-	subject := fmt.Sprintf("[%s] Firewall Alert: %s", sanitize(alert.Severity), sanitize(alert.AlertType))
+	subject := fmt.Sprintf("[%s] Firewall Alert: %s", sanitize(string(alert.Severity)), sanitize(string(alert.AlertType)))
 	body := fmt.Sprintf(`
 Firewall Monitoring Alert
 ===========================

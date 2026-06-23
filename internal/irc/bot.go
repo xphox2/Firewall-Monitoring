@@ -486,7 +486,7 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 			if c.Enabled {
 				desc := c.Description
 				if desc == "" {
-					desc = c.CommandType
+					desc = string(c.CommandType)
 				}
 				cmds = append(cmds, fmt.Sprintf("  %s - %s", name, desc))
 			}
