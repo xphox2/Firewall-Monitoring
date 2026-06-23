@@ -216,8 +216,8 @@ func (d *Database) GetConnectionEvents(srcDeviceID, dstDeviceID uint, hours int)
 			Timestamp: a.Timestamp,
 			Source:    "alert",
 			DeviceID:  a.DeviceID,
-			Severity:  a.Severity,
-			Type:      a.AlertType,
+			Severity:  string(a.Severity),
+			Type:      string(a.AlertType),
 			Message:   a.Message,
 		})
 	}

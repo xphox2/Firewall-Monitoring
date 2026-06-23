@@ -194,8 +194,8 @@ func seedAlertsWithMix(t *testing.T, h *Handler, deviceID uint) {
 	for i, m := range mix {
 		a := &models.Alert{
 			DeviceID:     deviceID,
-			AlertType:    m.alertType,
-			Severity:     m.severity,
+			AlertType:    models.AlertType(m.alertType),
+			Severity:     models.Severity(m.severity),
 			Message:      "seeded alert",
 			Timestamp:    time.Now(),
 			Acknowledged: m.acked,

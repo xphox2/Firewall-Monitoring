@@ -60,7 +60,7 @@ type CriticalAlertData struct {
 func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentHistory []models.SystemStatus) (string, string, []notifier.Attachment, error) {
 	data := CriticalAlertData{
 		Timestamp:    alert.Timestamp.Format(time.RFC3339),
-		AlertType:    alert.AlertType,
+		AlertType:    string(alert.AlertType),
 		DeviceName:   device.Name,
 		DeviceIP:     device.IPAddress,
 		Message:      alert.Message,
@@ -92,7 +92,7 @@ func BuildCriticalAlertEmail(alert *models.Alert, device *models.Device, recentH
 	}
 
 	subject := fmt.Sprintf("[CRITICAL] %s — %s (%s)",
-		notifier.SanitizeHeader(alert.AlertType),
+		notifier.SanitizeHeader(string(alert.AlertType)),
 		notifier.SanitizeHeader(device.Name),
 		notifier.SanitizeHeader(device.IPAddress))
 	return subject, buf.String(), attachments, nil

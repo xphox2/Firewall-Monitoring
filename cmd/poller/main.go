@@ -109,7 +109,7 @@ func (p *Poller) emitSpikeAlert(device *models.Device, iface *models.InterfaceSt
 		Timestamp:    time.Now(),
 		DeviceID:     iface.DeviceID,
 		AlertType:    "TRAFFIC_SPIKE",
-		Severity:     dec.Severity,
+		Severity:     models.Severity(dec.Severity),
 		Message:      fmt.Sprintf("Sustained traffic spike on %s: %s (typical ~%s for this time)", iface.Name, humanBps(dec.Value), humanBps(dec.Mean)),
 		MetricName:   fmt.Sprintf("traffic_%s", iface.Name),
 		CurrentValue: dec.Value,
@@ -1680,7 +1680,7 @@ func (p *Poller) sendCriticalAlertEmail(device *models.Device, alertType, messag
 	alert := &models.Alert{
 		Timestamp: time.Now(),
 		DeviceID:  device.ID,
-		AlertType: alertType,
+		AlertType: models.AlertType(alertType),
 		Severity:  "critical",
 		Message:   message,
 	}
