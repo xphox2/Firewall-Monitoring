@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.489] - 2026-06-24
+
+### Security
+- **Bumped `github.com/jackc/pgx/v5` v5.6.0 → v5.10.0 to clear GO-2026-4771 / GO-2026-4772 (CVE-2026-33815 / CVE-2026-33816) (2026-06-23 audit).** v5.6.0 carried two unpatched advisories (fixed upstream in v5.9.0). `govulncheck` had been exiting 0 because the vulnerable symbols sit on the import tier and Firewall-Mon uses pgx as a *client* (the COPY/`pgxpool` path), so the code never called the affected functions — but the dependency itself was flagged by module-tier scanners. After the bump `govulncheck ./...` reports **no vulnerabilities**, `go build`/`go vet`/full `go test ./...` and the pgx COPY-path tests (`TestFlowSamplesCopyColumns_OrderAndFieldTypes`, `TestSaveFlowSamples_*`) all pass, and `THIRD-PARTY-NOTICES.md` is updated to v5.10.0. `go mod tidy` made no other direct-dependency changes.
+
 ## [0.10.488] - 2026-06-24
 
 ### Changed

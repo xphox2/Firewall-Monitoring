@@ -103,7 +103,7 @@ Compiled output included as `cmd/api/static/css/tailwind.css`. Build-time only.
 | [github.com/glebarez/sqlite](https://github.com/glebarez/sqlite) | v1.11.0 | MIT |
 | [github.com/golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) | v5.2.2 | MIT |
 | [github.com/gosnmp/gosnmp](https://github.com/gosnmp/gosnmp) | v1.43.2 | BSD-2-Clause |
-| [github.com/jackc/pgx/v5](https://github.com/jackc/pgx) | v5.6.0 | MIT |
+| [github.com/jackc/pgx/v5](https://github.com/jackc/pgx) | v5.10.0 | MIT |
 | [github.com/prometheus/client_golang](https://github.com/prometheus/client_golang) | v1.23.2 | Apache-2.0 |
 | [github.com/thoj/go-ircevent](https://github.com/thoj/go-ircevent) | v0.0.0-20210723 | BSD-3-Clause |
 | [github.com/wcharczuk/go-chart/v2](https://github.com/wcharczuk/go-chart) | v2.1.2 | MIT |
