@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.485] - 2026-06-23
+
+### Fixed
+- **Syslog aggregation no longer silently drops groups beyond the first page (2026-06-23 audit, M2).** `aggregateSyslogToSummary` (`internal/database/syslog_agg.go`) deleted ALL matching raw informational rows *inside each page's transaction*, so the moment page 1 committed it wiped every still-un-summarized group — any distinct `(bucket, device, severity, facility, app)` groups beyond the first page (`pageSize=10000`) were deleted without ever being counted, losing those message counts from the summaries. The delete now happens ONCE after the whole page loop (reading over the still-intact `syslog_messages`, exactly like the working `aggregateFlowsToRollup`), so every group is summarized regardless of page count. Regression test `syslog_agg_m2_test.go` shrinks the page size and seeds more groups than one page to prove no group is lost.
+
+### Changed
+- **`aggregateRollupsUp` now paginates the high-cardinality 5-tuple GROUP BY (2026-06-23 audit, M1).** Promoting flow rollups (5min→hourly→daily) previously loaded *every* group into one slice in a single transaction with no `Limit`, unlike its sibling `aggregateFlowsToRollup` — a long backlog could materialize millions of groups in memory. It now reads in 50k-group pages (over the stable `interval_type = src` source set) and deletes the consumed source rollups once after the loop.
+
 ## [0.10.484] - 2026-06-23
 
 ### Changed
