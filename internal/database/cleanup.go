@@ -66,6 +66,19 @@ var cleanupDeleteBatchSize = 10000
 // per-batch `SET LOCAL lock_timeout` bounds lock waits, and a 100ms sleep
 // between batches yields to other writers.
 func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) error {
+	return d.batchedDeleteOlderThanWhere(model, cutoff, "")
+}
+
+// batchedDeleteOlderThanWhere is batchedDeleteOlderThan with an extra predicate
+// ANDed onto the `timestamp < cutoff` selector. Used by the syslog cleanup,
+// whose dual critical(<6)/info(>=6) retention windows need a severity filter —
+// previously those deletes were single unbounded DELETEs on syslog_messages
+// (the table that dominates DB size), which on a populated prod table take one
+// long lock touching millions of rows, block ingestion, burst the WAL, and can
+// be killed by statement_timeout then re-attempted every cleanup tick
+// (crash-loop shape). Routing them through the same 10k-row batched loop with
+// `lock_timeout='5s'` and an inter-batch sleep keeps each statement short.
+func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
 	for {
 		var affected int64
@@ -75,7 +88,11 @@ func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) e
 					return e
 				}
 			}
-			sub := tx.Model(model).Select("id").Where("timestamp < ?", cutoff).Limit(batchSize)
+			sub := tx.Model(model).Select("id").Where("timestamp < ?", cutoff)
+			if extraWhere != "" {
+				sub = sub.Where(extraWhere, args...)
+			}
+			sub = sub.Limit(batchSize)
 			res := tx.Where("id IN (?)", sub).Delete(model)
 			affected = res.RowsAffected
 			return res.Error
@@ -245,7 +262,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	// Critical syslog (severity 0-5): delete after SyslogCriticalDays (0 = never delete)
 	if ret.SyslogCriticalDays > 0 {
 		criticalCutoff := time.Now().AddDate(0, 0, -ret.SyslogCriticalDays)
-		if err := d.db.Where("timestamp < ? AND severity < 6", criticalCutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+		if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, criticalCutoff, "severity < 6"); err != nil {
 			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
 		}
 	}
@@ -257,7 +274,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		infoDays = 7 // default fallback
 	}
 	infoCutoff := time.Now().AddDate(0, 0, -infoDays)
-	if err := d.db.Where("timestamp < ? AND severity >= 6", infoCutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, infoCutoff, "severity >= 6"); err != nil {
 		return fmt.Errorf("failed to cleanup informational syslog_message: %w", err)
 	}
 
@@ -274,14 +291,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff); err != nil {
 		log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
 	}
-	if err := d.db.Where("timestamp < ?", summaryCutoff).Delete(&models.SyslogSummary{}).Error; err != nil {
+	if err := d.batchedDeleteOlderThan(&models.SyslogSummary{}, summaryCutoff); err != nil {
 		return fmt.Errorf("failed to cleanup syslog_summary: %w", err)
 	}
 
 	// Legacy SyslogDays applies only when neither new config is set (backwards compat)
 	if ret.SyslogDays > 0 && ret.SyslogCriticalDays == 0 && ret.SyslogInfoDays == 0 {
 		cutoff := time.Now().AddDate(0, 0, -ret.SyslogDays)
-		if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+		if err := d.batchedDeleteOlderThan(&models.SyslogMessage{}, cutoff); err != nil {
 			return fmt.Errorf("failed to cleanup syslog_message: %w", err)
 		}
 	}

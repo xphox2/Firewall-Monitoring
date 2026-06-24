@@ -348,6 +348,32 @@ func (am *AlertManager) canAlertWithCooldown(key string, now time.Time, cooldown
 	return true
 }
 
+// dbCooldownActive reports whether a still-open alert for the same
+// (device, alertType, metric) already exists in the DB with a timestamp inside
+// the cooldown window ending at ref. It backstops the in-memory cooldown across
+// a process restart: AlertManager cooldown state (lastAlert/activeAlerts) lives
+// only in memory, so after a poller/API restart every still-breaching condition
+// would re-fire at once — a notification storm (one email/Slack/Discord/IRC per
+// breaching condition, and a per-cycle storm under a crash-loop). Consulting the
+// DB makes a restart transparent: the within-cooldown duplicate is suppressed,
+// while the normal periodic reminder still fires once the window elapses (older
+// open rows fall outside it). Only persistent STATE alerts (thresholds,
+// interface/VPN down, device offline) are deduped here; event/transient alerts
+// (traps, syslog, SSH host-key, config-change) fire on arrival and must not be
+// collapsed. Queried only on the rare about-to-notify path, so it adds no cost
+// to the common "condition healthy / within cooldown" cycles.
+func (am *AlertManager) dbCooldownActive(deviceID uint, alertType models.AlertType, metricName string, ref time.Time, cooldown time.Duration) bool {
+	if am.db == nil || cooldown <= 0 {
+		return false
+	}
+	var cnt int64
+	am.db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND timestamp > ?",
+			deviceID, alertType, metricName, ref.Add(-cooldown)).
+		Count(&cnt)
+	return cnt > 0
+}
+
 // PruneExpiredCooldowns removes expired cooldown entries to prevent unbounded map growth.
 func (am *AlertManager) PruneExpiredCooldowns() {
 	am.mu.Lock()
@@ -557,6 +583,14 @@ func (am *AlertManager) saveAlert(alert *models.Alert) {
 // alert checks. label identifies the source in the send-failure log line.
 func (am *AlertManager) dispatchFired(fired []firedEntry, globalNC notifier.NotifyConfig, label string) {
 	for i := range fired {
+		// Cross-restart dedup: skip the save+send if this state alert was already
+		// raised (and is still open) within its cooldown window — see
+		// dbCooldownActive. The in-memory cooldown set by the gate suppresses
+		// duplicates only within this process; the DB check covers a restart.
+		cooldown := time.Duration(fired[i].resolved.CooldownMinutes) * time.Minute
+		if am.dbCooldownActive(fired[i].alert.DeviceID, fired[i].alert.AlertType, fired[i].alert.MetricName, fired[i].alert.Timestamp, cooldown) {
+			continue
+		}
 		am.saveAlert(&fired[i].alert)
 		if !fired[i].alert.Suppressed {
 			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
@@ -641,6 +675,15 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 		MetricName: "device_status",
 		PolicyID:   resolved.PolicyID,
 		Suppressed: resolved.InMaintenance,
+	}
+
+	// Cross-restart dedup (see dbCooldownActive): DEVICE_OFFLINE is the canonical
+	// persistent-state alert — without this, a poller restart re-pages for every
+	// device still offline. The in-memory gate above already set lastAlert[key]
+	// (reusing its cooldown here), so this DB check only gates the first
+	// post-restart fire.
+	if am.dbCooldownActive(device.ID, "DEVICE_OFFLINE", "device_status", now, cooldown) {
+		return nil
 	}
 
 	am.saveAlert(&alert)
