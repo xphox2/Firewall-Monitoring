@@ -1,7 +1,7 @@
 # sFlow NOC Reporting — Full Redesign Plan
 
 **Status:** design / pre-implementation
-**Author:** CTO-loop planning session, 2026-06-11
+**Author:** audit planning session, 2026-06-11
 **Target repo:** `Firewall-Mon` (this repo)
 **Sibling repo coordination:** `Firewall-Collector` at `E:\Golang\OpenCode\Firewall-Collector`
 **Target ship window:** 5 minor releases (`0.11.0` → `0.15.0`) over ~8–9 weeks
@@ -12,7 +12,7 @@
 
 Firewall-Mon's current sFlow reporting treats sFlow as "snmp-with-packets" and stops at the first record type. The result is a dashboard that **understates real traffic by 1:512** (bytes never multiplied by sampling rate), **invisibly drops IPv6 traffic**, **throws away counter samples** (so sFlow's own interface bandwidth is never used), and **discards the drops counter** (so agent-side sample loss is invisible). This plan replaces the existing pipeline with a 5-phase rewrite that fixes the data correctness bugs, captures the full sFlow v5 record catalog, adds a Go in-memory real-time aggregator, ships a new `/admin/noc` page purpose-built for the 6-zone NOC layout proven by Akvorado and sFlow-RT, and hardens the receiver to 100k+ samples/sec on commodity hardware without changing the wire protocol (30s JSON batches stay).
 
-**Why now:** at 100k+ samples/sec the existing single-goroutine parser is the bottleneck. At 1:512 sampling the bytes bug alone hides ~50 Gbps of real traffic. The audit (`tasks/CTO-LOOP-2026-06-11.md`) flagged 8.5% test coverage on `internal/sflow` as a High-priority item that can't be addressed without a rewrite. The right time to do the rewrite is the same release cycle as the correctness fix.
+**Why now:** at 100k+ samples/sec the existing single-goroutine parser is the bottleneck. At 1:512 sampling the bytes bug alone hides ~50 Gbps of real traffic. The audit (`tasks/audit-2026-06-11.md`) flagged 8.5% test coverage on `internal/sflow` as a High-priority item that can't be addressed without a rewrite. The right time to do the rewrite is the same release cycle as the correctness fix.
 
 **What we explicitly do NOT do:** add Kafka, ClickHouse, Vue/React/Svelte, ML-based anomaly detection, IPFIX/NetFlow support, gRPC streaming transport, or a new click-to-filter DSL.
 
@@ -107,7 +107,7 @@ estimated_bytes = sample_bytes * N     — what crossed the wire
 
 ## 4. Current state audit
 
-The 2026-06-11 audit (`tasks/CTO-LOOP-2026-06-11.md`) and a deep-read of the sFlow code surface 15 issues, ranked by severity.
+The 2026-06-11 audit (`tasks/audit-2026-06-11.md`) and a deep-read of the sFlow code surface 15 issues, ranked by severity.
 
 | # | Bug | File:line | Severity | Phase |
 |---|---|---|---|---|
@@ -1762,7 +1762,7 @@ For a P1 incident (sFlow data wrong):
 19. [github.com/ntop/ntopng](https://github.com/ntop/ntopng) — ntopng NMS (C++/Lua + Vue)
 20. [Jasinska, "sFlow, I can feel your traffic"](https://www.sflow.org/detectWave/index.htm) — 23C3 / AMS-IX paper (2006)
 21. Hofstede et al., "Flow Monitoring Explained: From Packet Capture to Data Analysis with NetFlow and IPFIX", IEEE COMST 2014
-22. `tasks/CTO-LOOP-2026-06-11.md` — The current audit report that surfaced these findings
+22. `tasks/audit-2026-06-11.md` — The current audit report that surfaced these findings
 
 ---
 
