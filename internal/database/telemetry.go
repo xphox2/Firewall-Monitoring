@@ -14,6 +14,17 @@ func (d *Database) SaveSystemStatus(status *models.SystemStatus) error {
 	return d.db.Create(status).Error
 }
 
+// SaveSystemStatuses batch-inserts a slice of system-status rows in a single
+// statement, instead of one Create per row (M4 of the 2026-06-23 audit) — the
+// ingestion handler accepts up to 100 rows per request. Mirrors the other
+// high-volume batch savers (SaveInterfaceStats, SaveFlowSamples, …).
+func (d *Database) SaveSystemStatuses(statuses []models.SystemStatus) error {
+	if len(statuses) == 0 {
+		return nil
+	}
+	return d.db.Create(&statuses).Error
+}
+
 func (d *Database) GetSystemStatus(limit int) ([]models.SystemStatus, error) {
 	var statuses []models.SystemStatus
 	err := d.db.Order("timestamp DESC").Limit(limit).Find(&statuses).Error

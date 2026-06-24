@@ -395,3 +395,14 @@ func (d *Database) GetDevicesByProbe(probeID uint) ([]models.Device, error) {
 	}
 	return devices, err
 }
+
+// GetDeviceIDsByProbe returns just the IDs of the devices assigned to a probe.
+// It is the hot-path counterpart to GetDevicesByProbe for the ingestion
+// allow-list check (probeDeviceIDs), which only needs the ID set: it skips the
+// `Preload("Site")` JOIN and the per-device AES-GCM secret decryption that
+// GetDevicesByProbe performs on every call (~18 ingestion handlers invoke it).
+func (d *Database) GetDeviceIDsByProbe(probeID uint) ([]uint, error) {
+	var ids []uint
+	err := d.db.Model(&models.Device{}).Where("probe_id = ?", probeID).Pluck("id", &ids).Error
+	return ids, err
+}

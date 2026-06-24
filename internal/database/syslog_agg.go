@@ -11,6 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// syslogAggPageSize bounds how many distinct groups aggregateSyslogToSummary
+// reads per page. A package var (not a const) so tests can shrink it to exercise
+// the multi-page path. Defaults to 10000.
+var syslogAggPageSize = 10000
+
 // RunSyslogAggregationCycle aggregates old informational syslog into summaries for scalability.
 // Called every 5 minutes by the poller:
 //  1. Raw informational (severity 6-7) older than SyslogInfoDays → hourly summaries
@@ -72,7 +77,7 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 	}
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
-	const pageSize = 10000
+	pageSize := syslogAggPageSize
 	offset := 0
 	totalGroups := 0
 
@@ -93,18 +98,15 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 			break
 		}
 
-		// Wrap insert+delete in a transaction for atomicity per page
-		// Note: This deletes ALL informational messages < cutoff for simplicity.
-		// If this page fails, messages will be re-aggregated on next cycle (potential duplicates, but safe).
+		// Insert this page's summaries only. The raw rows are deleted ONCE after
+		// the whole loop (below), not here. The pre-fix code deleted ALL matching
+		// rows inside this per-page transaction, so the moment page 1 committed it
+		// wiped every still-un-summarized group — any distinct groups beyond the
+		// first page were silently dropped without ever being counted (M2 of the
+		// 2026-06-23 audit). Reading over the still-intact syslog_messages keeps
+		// the OFFSET pagination correct, exactly like aggregateFlowsToRollup.
 		if err := d.db.Transaction(func(tx *gorm.DB) error {
-			if err := batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt); err != nil {
-				return fmt.Errorf("syslog aggregation: insert %s summaries: %w", intervalType, err)
-			}
-			// Delete informational messages older than cutoff
-			if err := tx.Where("timestamp < ? AND severity >= 6", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
-				return fmt.Errorf("delete raw syslog after aggregation: %w", err)
-			}
-			return nil
+			return batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt)
 		}); err != nil {
 			log.Printf("Syslog aggregation: transaction error: %v", err)
 			return totalGroups > 0, err
@@ -119,6 +121,12 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 
 	if totalGroups == 0 {
 		return false, nil
+	}
+
+	// Delete the consumed raw informational messages once, after every group has
+	// been summarized (mirrors aggregateFlowsToRollup's post-loop delete).
+	if err := d.db.Where("timestamp < ? AND severity >= 6", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
+		log.Printf("Syslog aggregation: error deleting consumed raw messages: %v", err)
 	}
 
 	log.Printf("Syslog aggregation: aggregated %d groups from raw syslog into %s summaries", totalGroups, intervalType)

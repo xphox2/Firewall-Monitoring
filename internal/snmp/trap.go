@@ -33,8 +33,17 @@ const (
 const (
 	defaultTrapRatePerSec = 10.0
 	defaultTrapBurst      = 50.0
-	maxRateLimitedIPs     = 10000
+
+	// rlBucketIdleTTL: a per-IP bucket idle this long has fully refilled, so
+	// dropping it is lossless (a returning IP gets a fresh bucket). rlSweepInterval
+	// throttles the O(n) idle sweep so a sustained flood can't make it run per packet.
+	rlBucketIdleTTL = 5 * time.Minute
+	rlSweepInterval = 1 * time.Minute
 )
+
+// maxRateLimitedIPs caps the per-source-IP bucket map (AUDIT-012). A var, not a
+// const, so tests can shrink it to exercise the cap/sweep path.
+var maxRateLimitedIPs = 10000
 
 // ipBucket is one source IP's token bucket for the trap-receive rate limit.
 type ipBucket struct {
@@ -51,10 +60,11 @@ type TrapReceiver struct {
 	// attacker who can reach UDP/162 can flood the listener with crafted
 	// packets — the parsed trap rows hit the DB / alerting / IRC, which
 	// is a DoS amplification.
-	rlMu      sync.Mutex
-	rlBuckets map[string]*ipBucket
-	rlRate    float64
-	rlBurst   float64
+	rlMu        sync.Mutex
+	rlBuckets   map[string]*ipBucket
+	rlRate      float64
+	rlBurst     float64
+	rlLastSweep time.Time
 }
 
 func NewTrapReceiver(cfg *config.Config) (*TrapReceiver, error) {
@@ -86,7 +96,21 @@ func (t *TrapReceiver) allow(ip string) bool {
 	b, ok := t.rlBuckets[ip]
 	if !ok {
 		if len(t.rlBuckets) >= maxRateLimitedIPs {
-			return false
+			// Before rejecting a new IP at the cap, sweep idle buckets so a past
+			// spoofed-IP flood doesn't permanently lock out every new legitimate
+			// device until restart (2026-06-23 audit, M9 — "durable denial-of-trap").
+			// Throttled to one O(n) pass per rlSweepInterval.
+			if now.Sub(t.rlLastSweep) >= rlSweepInterval {
+				for k, kb := range t.rlBuckets {
+					if now.Sub(kb.last) >= rlBucketIdleTTL {
+						delete(t.rlBuckets, k)
+					}
+				}
+				t.rlLastSweep = now
+			}
+			if len(t.rlBuckets) >= maxRateLimitedIPs {
+				return false
+			}
 		}
 		t.rlBuckets[ip] = &ipBucket{tokens: t.rlBurst - 1, last: now}
 		return true

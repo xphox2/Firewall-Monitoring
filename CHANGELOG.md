@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.486] - 2026-06-23
+
+### Fixed
+- **Trap-receiver rate-limiter recovers from a spoofed-IP flood instead of locking out new devices forever (2026-06-23 audit, M9).** The per-source-IP token-bucket map (`internal/snmp/trap.go`) is capped at `maxRateLimitedIPs` (10000); once a flood of unique spoofed source IPs filled it, every NEW legitimate device IP was rejected at the cap until the process restarted — a durable denial-of-trap. Before rejecting a new IP at the cap, the limiter now sweeps idle buckets (any IP not seen within `rlBucketIdleTTL` = 5m has fully refilled, so dropping it is lossless), throttled to one O(n) pass per `rlSweepInterval` (1m) so a sustained flood can't turn it into per-packet work. A flood of *active* IPs still rejects new IPs (it never evicts a currently-active bucket — legitimate active senders are not degraded), but the lockout now clears automatically once the flood subsides. Regression tests in `trap_ratelimit_sweep_test.go` (idle sweep admits a new IP; active buckets are spared).
+
+## [0.10.485] - 2026-06-23
+
+### Fixed
+- **Syslog aggregation no longer silently drops groups beyond the first page (2026-06-23 audit, M2).** `aggregateSyslogToSummary` (`internal/database/syslog_agg.go`) deleted ALL matching raw informational rows *inside each page's transaction*, so the moment page 1 committed it wiped every still-un-summarized group — any distinct `(bucket, device, severity, facility, app)` groups beyond the first page (`pageSize=10000`) were deleted without ever being counted, losing those message counts from the summaries. The delete now happens ONCE after the whole page loop (reading over the still-intact `syslog_messages`, exactly like the working `aggregateFlowsToRollup`), so every group is summarized regardless of page count. Regression test `syslog_agg_m2_test.go` shrinks the page size and seeds more groups than one page to prove no group is lost.
+
+### Changed
+- **`aggregateRollupsUp` now paginates the high-cardinality 5-tuple GROUP BY (2026-06-23 audit, M1).** Promoting flow rollups (5min→hourly→daily) previously loaded *every* group into one slice in a single transaction with no `Limit`, unlike its sibling `aggregateFlowsToRollup` — a long backlog could materialize millions of groups in memory. It now reads in 50k-group pages (over the stable `interval_type = src` source set) and deletes the consumed source rollups once after the loop.
+
+## [0.10.484] - 2026-06-23
+
+### Changed
+- **Probe ingestion DB round-trips cut on three hot paths (2026-06-23 audit, M3/M4/M5).**
+  - **M3:** `probeDeviceIDs` (called by ~18 ingestion handlers on every request to build the per-probe device allow-list) now uses a new `GetDeviceIDsByProbe` that `Pluck`s just the IDs — skipping the `Preload("Site")` JOIN and the per-device AES-GCM secret decryption that `GetDevicesByProbe` did only to read `d.ID`.
+  - **M4:** `ReceivePingResults` no longer does a serial read-modify-write per result (~2N DB round-trips for N pings). New `updatePingStatsBatch` folds the whole batch per `(device, target)` and does one read + one write per distinct target. The folded min/max/avg/sample-count is mathematically identical to the per-sample running average; last-writer `PacketLoss`/`ProbeID` semantics preserved.
+  - **M5:** `ReceiveSystemStatuses` now batch-inserts via a new `SaveSystemStatuses` (one statement, up to 100 rows) instead of a `Create` per row, and marks the senders online with a single `WHERE id IN (...)` update instead of one per device.
+  - Regression tests: `handlers_ingestion_perf_test.go` (fold correctness + grouping + existing-series merge; ID-only allow-list query). No wire/DB-format change.
+
 ## [0.10.483] - 2026-06-23
 
 ### Changed

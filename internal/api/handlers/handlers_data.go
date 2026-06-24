@@ -276,53 +276,87 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save ping results", err)
 		return
 	}
-	// Aggregate into PingStats
-	for _, r := range filtered {
-		h.updatePingStats(r.DeviceID, probe.ID, r.TargetIP, r.Latency, r.PacketLoss)
-	}
+	// Aggregate into PingStats — fold the whole batch per target (M4).
+	h.updatePingStatsBatch(probe.ID, filtered)
 	log.Printf("ReceivePingResults: probe %d saved %d results", probe.ID, len(filtered))
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
-func (h *Handler) updatePingStats(deviceID, probeID uint, targetIP string, latency, packetLoss float64) {
-	// Ping stats are a single series per (device, target) — the row is updated
-	// regardless of which probe sends the sample, so replacing a probe keeps one
-	// continuous running series. probe_id is stamped as last-writer provenance.
-	existing, err := h.db.GetPingStatsByTarget(deviceID, targetIP)
-	if err != nil {
-		log.Printf("Failed to get existing ping stats: %v", err)
-		return
+// pingAgg folds a batch's samples for one (device, target) before touching the DB.
+type pingAgg struct {
+	min, max, sum float64
+	count         int
+	lastLoss      float64
+}
+
+// updatePingStatsBatch folds a batch of ping results into the per-(device,target)
+// running PingStats series with ONE read + ONE write per distinct target, instead
+// of a serial read-modify-write per result (M4 of the 2026-06-23 audit; up to
+// ~2N DB round-trips for N results). The folded min/max/avg/sample-count is
+// mathematically identical to applying the samples one at a time, since the
+// running average ((A·S + Σ) / (S + K)) is associative. PacketLoss/ProbeID keep
+// the original last-writer semantics (the last sample for that target in the
+// batch). Ping stats are a single series per (device, target) regardless of which
+// probe sent the sample, so replacing a probe keeps one continuous series.
+func (h *Handler) updatePingStatsBatch(probeID uint, results []models.PingResult) {
+	groups := make(map[uint]map[string]*pingAgg)
+	for i := range results {
+		r := &results[i]
+		byTarget := groups[r.DeviceID]
+		if byTarget == nil {
+			byTarget = make(map[string]*pingAgg)
+			groups[r.DeviceID] = byTarget
+		}
+		a := byTarget[r.TargetIP]
+		if a == nil {
+			a = &pingAgg{min: r.Latency, max: r.Latency}
+			byTarget[r.TargetIP] = a
+		}
+		a.min = math.Min(a.min, r.Latency)
+		a.max = math.Max(a.max, r.Latency)
+		a.sum += r.Latency
+		a.count++
+		a.lastLoss = r.PacketLoss // last-writer provenance, batch order preserved
 	}
 
-	if existing == nil {
-		stats := &models.PingStats{
-			DeviceID:   deviceID,
-			ProbeID:    probeID,
-			TargetIP:   targetIP,
-			MinLatency: latency,
-			MaxLatency: latency,
-			AvgLatency: latency,
-			PacketLoss: packetLoss,
-			Samples:    1,
-			UpdatedAt:  time.Now(),
-		}
-		if err := h.db.SavePingStats(stats); err != nil {
-			log.Printf("Failed to save new ping stats: %v", err)
-		}
-		return
-	}
+	now := time.Now()
+	for deviceID, byTarget := range groups {
+		for targetIP, a := range byTarget {
+			existing, err := h.db.GetPingStatsByTarget(deviceID, targetIP)
+			if err != nil {
+				log.Printf("updatePingStatsBatch: get existing (device %d target %s): %v", deviceID, targetIP, err)
+				continue
+			}
+			if existing == nil {
+				stats := &models.PingStats{
+					DeviceID:   deviceID,
+					ProbeID:    probeID,
+					TargetIP:   targetIP,
+					MinLatency: a.min,
+					MaxLatency: a.max,
+					AvgLatency: a.sum / float64(a.count),
+					PacketLoss: a.lastLoss,
+					Samples:    a.count,
+					UpdatedAt:  now,
+				}
+				if err := h.db.SavePingStats(stats); err != nil {
+					log.Printf("updatePingStatsBatch: save new (device %d target %s): %v", deviceID, targetIP, err)
+				}
+				continue
+			}
 
-	newSamples := existing.Samples + 1
-	existing.MinLatency = math.Min(existing.MinLatency, latency)
-	existing.MaxLatency = math.Max(existing.MaxLatency, latency)
-	existing.AvgLatency = ((existing.AvgLatency * float64(existing.Samples)) + latency) / float64(newSamples)
-	existing.PacketLoss = packetLoss
-	existing.Samples = newSamples
-	existing.ProbeID = probeID // last-writer provenance
-	existing.UpdatedAt = time.Now()
-
-	if err := h.db.SavePingStats(existing); err != nil {
-		log.Printf("Failed to update ping stats: %v", err)
+			newSamples := existing.Samples + a.count
+			existing.MinLatency = math.Min(existing.MinLatency, a.min)
+			existing.MaxLatency = math.Max(existing.MaxLatency, a.max)
+			existing.AvgLatency = ((existing.AvgLatency * float64(existing.Samples)) + a.sum) / float64(newSamples)
+			existing.PacketLoss = a.lastLoss
+			existing.Samples = newSamples
+			existing.ProbeID = probeID // last-writer provenance
+			existing.UpdatedAt = now
+			if err := h.db.SavePingStats(existing); err != nil {
+				log.Printf("updatePingStatsBatch: update (device %d target %s): %v", deviceID, targetIP, err)
+			}
+		}
 	}
 }
 
@@ -444,36 +478,44 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 	}
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
-	saved := 0
-	deviceIDs := make(map[uint]bool)
+	now := time.Now()
+	filtered := statuses[:0]
+	deviceIDSet := make(map[uint]struct{})
 	for i := range statuses {
 		if statuses[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[statuses[i].DeviceID] {
 			continue // skip data for devices not assigned to this probe
 		}
 		if statuses[i].Timestamp.IsZero() {
-			statuses[i].Timestamp = time.Now()
+			statuses[i].Timestamp = now
 		}
-		if err := h.db.SaveSystemStatus(&statuses[i]); err != nil {
-			log.Printf("Probe %d: failed to save system status for device %d: %v", probe.ID, statuses[i].DeviceID, err)
-			continue
-		}
-		saved++
+		filtered = append(filtered, statuses[i])
 		if statuses[i].DeviceID > 0 {
-			deviceIDs[statuses[i].DeviceID] = true
+			deviceIDSet[statuses[i].DeviceID] = struct{}{}
 		}
 	}
 
-	// Mark devices that sent data as online
-	now := time.Now()
-	for deviceID := range deviceIDs {
-		h.db.Gorm().Model(&models.Device{}).Where("id = ?", deviceID).Updates(map[string]interface{}{
+	// One batch insert instead of a Create per row (M4).
+	if err := h.db.SaveSystemStatuses(filtered); err != nil {
+		log.Printf("Probe %d: failed to batch save system statuses: %v", probe.ID, err)
+		httputil.InternalError(c, "Failed to save system statuses", err)
+		return
+	}
+
+	// Mark the devices that sent data as online — one UPDATE for the whole set
+	// (a `WHERE id IN (...)`) instead of one per distinct device.
+	if len(deviceIDSet) > 0 {
+		ids := make([]uint, 0, len(deviceIDSet))
+		for id := range deviceIDSet {
+			ids = append(ids, id)
+		}
+		h.db.Gorm().Model(&models.Device{}).Where("id IN ?", ids).Updates(map[string]interface{}{
 			"status":      "online",
 			"last_polled": now,
 		})
 	}
 
-	log.Printf("Probe %d: saved %d/%d system status records (devices: %v)", probe.ID, saved, len(statuses), deviceIDs)
-	c.JSON(http.StatusOK, response.Success(gin.H{"saved": saved}))
+	log.Printf("Probe %d: saved %d/%d system status records", probe.ID, len(filtered), len(statuses))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {

@@ -611,39 +611,59 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 	}
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
-	var rows []rollupRow
-	if err := d.db.Model(&models.FlowRollup{}).
-		Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-		Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, " +
-			"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
-			"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
-		Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
-		Scan(&rows).Error; err != nil {
-		log.Printf("Flow rollup: error scanning %s rollups: %v", srcInterval, err)
-		return false
-	}
+	// Paginate the high-cardinality 5-tuple GROUP BY so a long backlog doesn't
+	// materialize millions of groups in one slice held in one long transaction
+	// (M1 of the 2026-06-23 audit). The read filters interval_type = srcInterval
+	// while we insert dstInterval rows into the same table, so the source set is
+	// stable across pages; the consumed source rows are deleted ONCE after every
+	// page is promoted (mirrors aggregateFlowsToRollup).
+	const pageSize = 50000
+	offset := 0
+	totalGroups := 0
 
-	if len(rows) == 0 {
-		return false
-	}
-
-	// Wrap insert+delete in a transaction for atomicity
-	if err := d.db.Transaction(func(tx *gorm.DB) error {
-		if err := batchInsertRollups(tx, rows, dstInterval, bucketFmt); err != nil {
-			return fmt.Errorf("aggregate rollups %s→%s: insert: %w", srcInterval, dstInterval, err)
+	for {
+		var rows []rollupRow
+		if err := d.db.Model(&models.FlowRollup{}).
+			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, " +
+				"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
+				"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
+			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
+			Limit(pageSize).Offset(offset).
+			Scan(&rows).Error; err != nil {
+			log.Printf("Flow rollup: error scanning %s rollups: %v", srcInterval, err)
+			return totalGroups > 0
 		}
-		// Delete consumed source rollups within the same transaction
-		if err := tx.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-			Delete(&models.FlowRollup{}).Error; err != nil {
-			return fmt.Errorf("delete consumed %s rollups: %w", srcInterval, err)
+
+		if len(rows) == 0 {
+			break
 		}
-		return nil
-	}); err != nil {
-		log.Printf("Flow rollup: transaction error promoting %s to %s: %v", srcInterval, dstInterval, err)
+
+		if err := d.db.Transaction(func(tx *gorm.DB) error {
+			return batchInsertRollups(tx, rows, dstInterval, bucketFmt)
+		}); err != nil {
+			log.Printf("Flow rollup: transaction error promoting %s to %s: %v", srcInterval, dstInterval, err)
+			return totalGroups > 0
+		}
+
+		totalGroups += len(rows)
+		if len(rows) < pageSize {
+			break
+		}
+		offset += pageSize
+	}
+
+	if totalGroups == 0 {
 		return false
 	}
 
-	log.Printf("Flow rollup: promoted %d groups from %s to %s rollups", len(rows), srcInterval, dstInterval)
+	// Delete the consumed source rollups once, after every page is promoted.
+	if err := d.db.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
+		Delete(&models.FlowRollup{}).Error; err != nil {
+		log.Printf("Flow rollup: error deleting consumed %s rollups: %v", srcInterval, err)
+	}
+
+	log.Printf("Flow rollup: promoted %d groups from %s to %s rollups", totalGroups, srcInterval, dstInterval)
 	return true
 }
 
