@@ -10,7 +10,7 @@ import (
 )
 
 // TestReceiveSyslog_DeviceNotOwnedByProbe_Filtered is the regression for the
-// 2026-06-23 CTO-loop H1 finding: ReceiveSyslogMessages was the only ingestion
+// 2026-06-23 audit H1 finding: ReceiveSyslogMessages was the only ingestion
 // handler that did NOT enforce the per-probe device allow-list, so a probe could
 // POST syslog attributed to ANY device (alert injection + forged config-change
 // attribution against another site's device). The handler now mirrors its

@@ -751,7 +751,7 @@ type FlowSample struct {
 	// Drops is the sFlow v5 §3.1.1 sample-pool drops counter for this
 	// individual sample (RFC 3176). Non-zero values indicate the agent
 	// had to drop packets between this sample and the previous one
-	// because it couldn't keep up. The CTO-loop audit (2026-06-22,
+	// because it couldn't keep up. The audit (2026-06-22,
 	// taocp [MEDIUM] #5 + consolidated C-3) found this field was being
 	// read by the collector parser and discarded; the server now
 	// persists it so aggregate `drops_last_5m` per agent can drive
@@ -769,7 +769,7 @@ func (FlowSample) TableName() string { return "flow_samples" }
 // couldn't keep up with the sampled rate (sFlow v5 §3.1.1).
 //
 // One row per (agent, sampling_rate) tuple per minute-window (the
-// caller buckets). The CTO-loop audit (2026-06-22, taocp [MEDIUM] #5
+// caller buckets). The audit (2026-06-22, taocp [MEDIUM] #5
 // + consolidated C-3) found this data was previously invisible —
 // agent-side congestion was undetectable. Storing it here lets alert
 // policies fire on `drops_last_5m` and surfaces it in the NOC strip.

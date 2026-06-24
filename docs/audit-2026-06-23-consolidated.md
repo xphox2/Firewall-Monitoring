@@ -4,7 +4,7 @@
 - **Server** — `Firewall-Mon` (Go module `firewall-mon`, ~v0.10.476): API, poller, trap-receiver, embedded web UI, central store + alerting brain.
 - **Collector** — `Firewall-Collector` (Go module `firewall-collector`, ~v1.2.131): stateless remote edge probe.
 
-Consolidated multi-agent-consensus report. A collector-scoped copy lives at `Firewall-Collector/docs/cto-loop-2026-06-23-consolidated.md`. The master feature inventory + roadmap lives at `Firewall-Mon/docs/FEATURE-ROADMAP.md`.
+Consolidated multi-agent-consensus report. A collector-scoped copy lives at `Firewall-Collector/docs/audit-2026-06-23-consolidated.md`. The master feature inventory + roadmap lives at `Firewall-Mon/docs/FEATURE-ROADMAP.md`.
 
 ---
 

@@ -781,7 +781,7 @@ func (d *Database) migrateConfigRevisionAttribution() error {
 // existing rows conform to the new sFlow sampling-rate scaling convention:
 // the bytes/packets columns now hold `frame_length × sampling_rate` and
 // `sampling_rate` respectively (instead of the raw `frame_length` and `1`).
-// The CTO-loop audit (2026-06-22, cto-loop-2026-06-22-taocp.md [critical] #1
+// The audit (2026-06-22, audit-2026-06-22-taocp.md [critical] #1
 // and #2) found the server had been storing frame_length verbatim, so every
 // dashboard chart / top-N list under-reported real traffic by 1:N.
 //
@@ -816,7 +816,7 @@ func (d *Database) migrateFlowSamplesSamplingRateScale() error {
 
 // migrateFlowAgentDropsTable (v8) creates the flow_agent_drops table for
 // per-(agent, sampling_rate) rolling-window aggregate of sFlow sample-pool
-// drops (sFlow v5 §3.1.1). The CTO-loop audit (2026-06-22, taocp [MEDIUM] #5
+// drops (sFlow v5 §3.1.1). The audit (2026-06-22, taocp [MEDIUM] #5
 // + consolidated C-3) found the drops field was invisible end-to-end;
 // this table is the storage layer that lets alert policies and the NOC
 // surface agent-side congestion.

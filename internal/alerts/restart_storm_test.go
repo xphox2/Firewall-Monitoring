@@ -10,7 +10,7 @@ import (
 	"firewall-mon/internal/notifier"
 )
 
-// Regression suite for the 2026-06-23 CTO-loop H7 finding: AlertManager cooldown
+// Regression suite for the 2026-06-23 audit H7 finding: AlertManager cooldown
 // state (lastAlert/activeAlerts) is in-memory only, so a poller/API restart used
 // to re-fire a fresh notification for every still-breaching condition. The fix
 // is a DB-backed cooldown check (dbCooldownActive) at the send chokepoints that

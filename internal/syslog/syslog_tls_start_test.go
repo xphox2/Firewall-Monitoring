@@ -48,7 +48,7 @@ func writeSelfSignedCert(t *testing.T) (certPath, keyPath string) {
 }
 
 // TestStart_TLSListenFailure_ReturnsError is the regression for the 2026-06-23
-// CTO-loop H5 finding: in the UseTLS path, `cert, err := tls.LoadX509KeyPair(...)`
+// audit H5 finding: in the UseTLS path, `cert, err := tls.LoadX509KeyPair(...)`
 // declared a NEW err scoped to the if-block, so the subsequent
 // `s.listener, err = tls.Listen(...)` wrote that shadow and the outer err
 // (checked after the block) stayed nil. Start() then returned success and logged
