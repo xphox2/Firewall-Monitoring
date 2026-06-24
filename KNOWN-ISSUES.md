@@ -20,16 +20,6 @@ balancer need to disable the trap-receiver in some instances
 (AUDIT-040 has more). The native systemd path is one service per
 binary, so the issue is Docker-only.
 
-### SQLite is the test backend only; production is Postgres
-
-Tests in `internal/database/testing.go` open `:memory:` SQLite
-databases. Postgres-specific features (advisory locks for the
-poller leader, partitioning for the time-series tables, window
-functions for the time-series chart SQL) are untested. The CI
-pipeline (v0.10.255) runs `go test` against SQLite only; a future
-commit (AUDIT-118 deferred) would add a Postgres integration test
-that catches the SQLite/Postgres dialect differences.
-
 ### Embedded Postgres uses a randomly-generated password (AUDIT-093)
 
 The Dockerfile's embedded Postgres auto-generates a 32-char random

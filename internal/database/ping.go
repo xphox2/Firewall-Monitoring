@@ -186,7 +186,7 @@ func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) 
 // SaveFlowSamples persists a batch of sFlow samples. On PostgreSQL it uses
 // the dedicated *pgxpool.Pool (initialized in Connect) and the COPY protocol
 // for ~5-10x throughput over GORM's per-row Create (per the audit
-// at docs/audit-2026-06-22-taocp.md [critical] #4 — the 100k samples/sec
+// at docs/audit-archive/audit-2026-06-22-taocp.md [critical] #4 — the 100k samples/sec
 // design target requires this fast path). On the SQLite test backend the
 // pgxPool is nil and we fall back to GORM Create, which works correctly but
 // is the slow path; this is intentional (tests use SQLite in-memory and the

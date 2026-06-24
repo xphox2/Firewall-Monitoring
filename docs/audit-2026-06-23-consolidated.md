@@ -1,5 +1,15 @@
 # Internal Audit — 2026-06-23 (Consolidated, Dual-Repo)
 
+> **Status (updated 2026-06-24).** The HIGH cluster is resolved and shipped:
+> H1/H4/H5 in v0.10.477, H6 in v0.10.478, H7 in v0.10.479, H8 in v0.10.480
+> (see `CHANGELOG.md`). Mediums M1–M5 shipped in v0.10.484/485, M9 in v0.10.486,
+> and M11 (poller/trap `/metrics`+`/healthz`+`/readyz`) in v0.10.487. The
+> genuinely-open **server** items remaining are: **M8** (fail-fast/health signal
+> on undecryptable `{enc}` secrets), the **server `alpine` 3.19 → 3.21** base
+> bump, the **`pgx` CVE** bump, plus the **LOW dead-code deletions**. Those are
+> tracked in [`FEATURE-ROADMAP.md` → Open audit follow-ups](FEATURE-ROADMAP.md#open-audit-follow-ups-2026-06).
+> The body below is the original report, kept as-shipped for provenance.
+
 **Scope:** Both repositories of the firewall-monitoring product.
 - **Server** — `Firewall-Mon` (Go module `firewall-mon`, ~v0.10.476): API, poller, trap-receiver, embedded web UI, central store + alerting brain.
 - **Collector** — `Firewall-Collector` (Go module `firewall-collector`, ~v1.2.131): stateless remote edge probe.

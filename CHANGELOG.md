@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.488] - 2026-06-24
+
+### Changed
+- **Documentation accuracy pass + audit-report consolidation.** Brought the docs in line with current code and cut single-purpose-file sprawl (docs only — no code change):
+  - **Accuracy:** README/FEATURES version markers refreshed (badge → 0.10.487); removed the long-gone `cmd/probe` from trees/stats (3 fwmon daemons, not 4); fixed the SNMP vendor tables (6 vendors with a registered `VendorProfile`; `cisco_asa` is config-diff-only; dropped dead `linux_vpn`/`bsd_vpn`) and the FEATURES stats contradiction; "21 packages"→23, "70+ shell tests"→98, "14 of 170 open audit"→0/170; added the new poller/trap `/metrics`+`/healthz`+`/readyz` (v0.10.487) to README/FEATURES/OPERATIONS/architecture; corrected OPERATIONS claims that X-Request-ID (AUDIT-135) and versioned migrations (AUDIT-044) were "not yet shipped" (both shipped); CONTRIBUTING/SECURITY `main.go:34`→`:39` and removed the bogus Dockerfile-version-bump step; removed the resolved AUDIT-118 entry from KNOWN-ISSUES.
+  - **THIRD-PARTY-NOTICES:** updated all direct-dep versions to match `go.mod` and added the missing direct deps with licenses (`prometheus/client_golang`, the `go.opentelemetry.io/otel*` modules — Apache-2.0; `glebarez/sqlite` — MIT; `jackc/pgx/v5` — now direct).
+  - **Consolidation:** archived the three `docs/audit-2026-06-22-*.md` reports → `docs/audit-archive/` and `tasks/{audit-2026-06-10,audit-2026-06-11,audit-2026-06-11-test-coverage,RELIABILITY-2026-06-11}.md` → `tasks/archive/` (with the still-open items — M8, alpine bump, pgx CVE, the Handler/database splits, the test-coverage backlog, REL-01/REL-04 — pulled into a new "Open audit follow-ups" section of `FEATURE-ROADMAP.md`); moved the obsolete `docs/UPGRADE-2026-06.md` → `docs/archive/` and repointed its links to `OPERATIONS.md`; folded `docs/SECURITY-VERIFICATION.md` into `OPERATIONS.md`; and annotated the live `docs/audit-2026-06-23-consolidated.md` with resolved/open status. `docs/AUDIT.md` (the AUDIT-NNN ledger), `tasks/SFLOW-NOC-REDESIGN-PLAN.md`, and `tasks/lessons.md` are unchanged.
+
 ## [0.10.487] - 2026-06-24
 
 ### Added

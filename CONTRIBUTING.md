@@ -50,7 +50,7 @@ If unsure, open a [discussion](https://github.com/xphox2/Firewall-Monitoring/dis
    CGO_ENABLED=1 go test -race -count=1 ./...
    ```
 4. **Update `CHANGELOG.md`** with a new entry **at the top of the file** describing the change. Use the version pattern `[0.10.N+1] - YYYY-MM-DD`. Include the AUDIT-NNN ID if applicable.
-5. **Bump `ServerVersion`** in `cmd/api/main.go:34` and the matching `org.opencontainers.image.version` label in `Dockerfile:48` to the version your CHANGELOG entry uses.
+5. **Bump `ServerVersion`** in `cmd/api/main.go:39` to the version your CHANGELOG entry uses. (The Dockerfile uses `ARG VERSION=dev` and needs no edit — the build stamps the version in.)
 6. **For resolved audit items**, append a row to the "Resolved findings" table in `docs/AUDIT.md` and a line to the "Progress log" at the bottom — both with the version and commit SHA. (You can leave SHA `(pending)` in the PR; a maintainer will update on merge.)
 7. **Open the PR**. Title format: `vX.Y.Z: AUDIT-NNN - short description` or `vX.Y.Z: <area> - short description` for non-audit work.
 8. **CI** runs `go build`, `go test -race`, `gofmt -l`, `go vet`, `govulncheck` on every PR — must be green before merge.

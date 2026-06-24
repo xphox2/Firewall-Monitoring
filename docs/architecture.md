@@ -7,9 +7,10 @@ How Firewall-Mon's processes, data stores, and external systems fit together
 
 ## Components & data flow
 
-Four Go binaries share one database. Firewalls are monitored **directly** (the
-central poller polls them over SNMP) or **remotely** (a probe at the site polls
-them and relays the data back).
+Three long-running server daemons (`fwmon-api`, `fwmon-poller`, `fwmon-trap`)
+share one database; `configcheck` is a one-shot CLI, not a daemon. Firewalls are
+monitored **directly** (the central poller polls them over SNMP) or **remotely**
+(a probe at the site polls them and relays the data back).
 
 ```mermaid
 flowchart TB

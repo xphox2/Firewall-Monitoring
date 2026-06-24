@@ -99,20 +99,27 @@ Compiled output included as `cmd/api/static/css/tailwind.css`. Build-time only.
 
 | Package | Version | License |
 |---|---|---|
-| [github.com/gin-gonic/gin](https://github.com/gin-gonic/gin) | v1.9.1 | MIT |
-| [github.com/golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) | v5.2.0 | MIT |
-| [github.com/gosnmp/gosnmp](https://github.com/gosnmp/gosnmp) | v1.37.0 | BSD-2-Clause |
+| [github.com/gin-gonic/gin](https://github.com/gin-gonic/gin) | v1.10.1 | MIT |
+| [github.com/glebarez/sqlite](https://github.com/glebarez/sqlite) | v1.11.0 | MIT |
+| [github.com/golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) | v5.2.2 | MIT |
+| [github.com/gosnmp/gosnmp](https://github.com/gosnmp/gosnmp) | v1.43.2 | BSD-2-Clause |
+| [github.com/jackc/pgx/v5](https://github.com/jackc/pgx) | v5.6.0 | MIT |
+| [github.com/prometheus/client_golang](https://github.com/prometheus/client_golang) | v1.23.2 | Apache-2.0 |
 | [github.com/thoj/go-ircevent](https://github.com/thoj/go-ircevent) | v0.0.0-20210723 | BSD-3-Clause |
 | [github.com/wcharczuk/go-chart/v2](https://github.com/wcharczuk/go-chart) | v2.1.2 | MIT |
-| [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) | v0.31.0 | BSD-3-Clause |
-| [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) | v0.25.0 | BSD-3-Clause |
+| [go.opentelemetry.io/otel](https://github.com/open-telemetry/opentelemetry-go) | v1.44.0 | Apache-2.0 |
+| [go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp](https://github.com/open-telemetry/opentelemetry-go) | v1.44.0 | Apache-2.0 |
+| [go.opentelemetry.io/otel/sdk](https://github.com/open-telemetry/opentelemetry-go) | v1.44.0 | Apache-2.0 |
+| [go.opentelemetry.io/otel/trace](https://github.com/open-telemetry/opentelemetry-go) | v1.44.0 | Apache-2.0 |
+| [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) | v0.51.0 | BSD-3-Clause |
+| [golang.org/x/net](https://pkg.go.dev/golang.org/x/net) | v0.55.0 | BSD-3-Clause |
 | [golang.org/x/time](https://pkg.go.dev/golang.org/x/time) | v0.5.0 | BSD-3-Clause |
 | [gorm.io/driver/postgres](https://gorm.io/) | v1.6.0 | MIT |
 | [gorm.io/gorm](https://gorm.io/) | v1.31.1 | MIT |
 
 ### Indirect dependencies
 
-The above pull in 43 indirect dependencies; full list and their versions are in `go.mod`. License terms for each are available at `https://pkg.go.dev/<module-path>?tab=licenses`. Notable transitive dependencies include `bytedance/sonic` (Apache-2.0), `jackc/pgx/v5` (MIT), `modernc.org/sqlite` (BSD-3-Clause), `google/uuid` (BSD-3-Clause), and `klauspost/cpuid` (MIT).
+The above pull in ~60 indirect dependencies; the full list and their versions are in `go.mod`. License terms for each are available at `https://pkg.go.dev/<module-path>?tab=licenses`. Notable transitive dependencies include `bytedance/sonic` (Apache-2.0), `modernc.org/sqlite` (BSD-3-Clause), `google/uuid` (BSD-3-Clause), `prometheus/client_model` / `prometheus/common` (Apache-2.0), and `klauspost/cpuid` (MIT).
 
 ---
 
@@ -140,7 +147,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-Applies to: Chart.js, @kurkle/color, chartjs-plugin-zoom, uPlot, Cytoscape.js, cytoscape-fcose, cose-base, Gridstack.js, Tailwind CSS, gin, golang-jwt, wcharczuk/go-chart, gorm.
+Applies to: Chart.js, @kurkle/color, chartjs-plugin-zoom, uPlot, Cytoscape.js, cytoscape-fcose, cose-base, Gridstack.js, Tailwind CSS, gin, glebarez/sqlite, golang-jwt, jackc/pgx/v5, wcharczuk/go-chart, gorm.
 
 ### BSD-2-Clause
 
@@ -206,7 +213,7 @@ Applies to: thoj/go-ircevent, golang.org/x/crypto, golang.org/x/net, golang.org/
 
 Full text: https://www.apache.org/licenses/LICENSE-2.0.txt
 
-Applies to: layout-base (including the embedded JAMA SVD routine).
+Applies to: layout-base (including the embedded JAMA SVD routine), prometheus/client_golang, and the `go.opentelemetry.io/otel*` modules (otel, otel/sdk, otel/trace, and the OTLP HTTP trace exporter).
 
 ### SIL Open Font License 1.1
 

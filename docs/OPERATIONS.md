@@ -43,6 +43,9 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
   binary, so a browser refresh alone won't update the UI).
 - **Container:** `docker ps` health column, and `docker logs <container>` for
   the three daemons' stdout + PostgreSQL (see Debug logging).
+- **Poller / trap-receiver:** both now expose `/healthz`, `/readyz`, and
+  Prometheus `/metrics` on their own listeners (`POLLER_METRICS_ADDR` default
+  `:9101`, `TRAP_METRICS_ADDR` default `:9102`; set either to `off` to disable).
 
 ---
 
@@ -71,7 +74,9 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
   (retained on the bind mount even with `logging_collector = off` — AUDIT-095).
 - **HTTP:** the API runs gin in **release mode** (hardcoded) — there is no
   `GIN_MODE=debug` toggle. Per-request method/path/status/latency is logged by
-  the `RequestLogger` middleware. (Per-request IDs are AUDIT-135, not yet shipped.)
+  the `RequestLogger` middleware. Per-request IDs (`X-Request-ID` propagation,
+  AUDIT-135) **are** shipped — the correlation ID appears in each request's
+  structured log line and in the `X-Request-ID` response header.
 
 ---
 
@@ -161,7 +166,10 @@ effect on an already-initialized install. To reset:
 2. Pull/rebuild the image (`docker compose pull && docker compose up -d`, or
    `make docker`).
 3. The entrypoint runs `AutoMigrate` + idempotent index/partition repair on
-   boot — no manual migration step today (golang-migrate adoption is AUDIT-044).
+   boot — no manual migration step is required. Versioned, recorded migrations
+   (the `schema_migrations` table + advisory-lock-gated runner, AUDIT-044) are
+   shipped; `fwmon-api migrate` / `migrate-status` expose the runner for manual
+   inspection.
 4. Confirm `GET /api/version` shows the new version and `/api/health` is 200.
 5. **Roll back** by redeploying the previous image tag; the DB is
    forward-compatible within a minor series (AutoMigrate only adds).
@@ -236,3 +244,79 @@ actionable error. This is the default and recommended behavior.
    `PROBE_SERVER_URL` on each collector).
 
 **RPO** is your `pg_dump` cadence — schedule it (e.g. hourly) for low data loss.
+
+---
+
+## Pre-release / deployment security checklist
+
+A sign-off checklist for a hardened production deployment. The implemented
+controls below ship in the current release; the "verify in production" items are
+operator actions.
+
+### Implemented controls (shipped)
+
+**Authentication & authorization**
+- JWT-based authentication with secure cookies.
+- Account lockout after 5 failed attempts (configurable).
+- Password hashing with bcrypt (cost 12).
+- Session tokens with 24h expiry.
+- Admin-only routes protected by middleware.
+
+**Input validation & protection**
+- CSRF protection with token validation on admin mutations.
+- Rate limiting (per-IP LRU cap; separate login/public/probe buckets — the
+  thresholds are configurable, not fixed literals; see `config.env.example`).
+- Request body size limits.
+- SQL-injection prevention via parameterized queries (GORM).
+
+**Network security**
+- Secure HTTP headers (HSTS, CSP nonce, X-Frame-Options, X-Content-Type-Options).
+- TLS support (in-process or via reverse proxy — see [`nginx.conf`](nginx.conf)).
+- CORS configuration (`CORS_ALLOWED_ORIGINS`).
+- Client-IP tracking for the audit log.
+
+**Data protection**
+- Secure cookie settings (HttpOnly, Secure, SameSite).
+- JWT secret auto-generated and persisted if not set explicitly.
+- No sensitive data in logs (`httputil.InternalError` never leaks the underlying error).
+- Environment-based configuration for secrets; encrypted-at-rest stored secrets
+  (AES-256-GCM).
+
+**Deployment security**
+- Rootless hardened container (dedicated `fwmon` user).
+- File permissions set correctly (0600 on secret files).
+- systemd service isolation (`NoNewPrivileges`, `ProtectSystem=strict`, …).
+
+**Audit trail**
+- Login-attempt logging.
+- Append-only, route-template-labelled admin-action audit log.
+- Trap-event logging.
+
+### Verify in production (operator actions)
+
+1. Change the default admin password and set a non-default `ADMIN_USERNAME`.
+2. Set a strong `JWT_SECRET_KEY` (and an explicit `ENCRYPTION_KEY` — see Upgrade).
+3. Enable TLS/SSL (in-process or via the reverse proxy).
+4. Configure host firewall rules (expose only the ports you enable).
+5. Set up log monitoring.
+6. Schedule regular security reviews.
+7. Keep dependencies updated (CI runs `govulncheck` on every PR).
+
+### Smoke tests
+
+```bash
+# Rate limiting (expect 429s once the bucket is exhausted)
+for i in $(seq 1 30); do curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/auth/login; done
+
+# Authentication (expect 401 on bad credentials)
+curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"wrong"}'
+
+# Admin protection (expect 401/redirect without a session)
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/admin/api/dashboard
+
+# CSRF (expect rejection without a CSRF token)
+curl -s -X POST http://localhost:8080/admin/api/logout \
+  -H "Content-Type: application/json"
+```
