@@ -1,4 +1,4 @@
-# CTO-Loop Audit — 2026-06-23 (Consolidated, Dual-Repo)
+# Internal Audit — 2026-06-23 (Consolidated, Dual-Repo)
 
 **Scope:** Both repositories of the firewall-monitoring product.
 - **Server** — `Firewall-Mon` (Go module `firewall-mon`, ~v0.10.476): API, poller, trap-receiver, embedded web UI, central store + alerting brain.
