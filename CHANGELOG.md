@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.484] - 2026-06-23
+
+### Changed
+- **Probe ingestion DB round-trips cut on three hot paths (2026-06-23 audit, M3/M4/M5).**
+  - **M3:** `probeDeviceIDs` (called by ~18 ingestion handlers on every request to build the per-probe device allow-list) now uses a new `GetDeviceIDsByProbe` that `Pluck`s just the IDs — skipping the `Preload("Site")` JOIN and the per-device AES-GCM secret decryption that `GetDevicesByProbe` did only to read `d.ID`.
+  - **M4:** `ReceivePingResults` no longer does a serial read-modify-write per result (~2N DB round-trips for N pings). New `updatePingStatsBatch` folds the whole batch per `(device, target)` and does one read + one write per distinct target. The folded min/max/avg/sample-count is mathematically identical to the per-sample running average; last-writer `PacketLoss`/`ProbeID` semantics preserved.
+  - **M5:** `ReceiveSystemStatuses` now batch-inserts via a new `SaveSystemStatuses` (one statement, up to 100 rows) instead of a `Create` per row, and marks the senders online with a single `WHERE id IN (...)` update instead of one per device.
+  - Regression tests: `handlers_ingestion_perf_test.go` (fold correctness + grouping + existing-series merge; ID-only allow-list query). No wire/DB-format change.
+
 ## [0.10.483] - 2026-06-23
 
 ### Changed
