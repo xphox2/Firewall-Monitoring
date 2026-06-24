@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.478] - 2026-06-23
+
+### Fixed
+- **Syslog retention no longer issues a single unbounded DELETE on the DB's largest table (CTO-loop 2026-06-23, H6).** Four syslog cleanup deletes in `internal/database/cleanup.go` (critical `severity < 6`, informational `severity >= 6`, the `syslog_summaries` purge, and the legacy `SyslogDays` path) bypassed the AUDIT-038 `batchedDeleteOlderThan` helper that every other high-volume table uses. On a populated prod database that meant one DELETE touching millions of rows in the straddling partition: a long lock window that blocks ingestion, a large WAL burst, and — under the 30s `statement_timeout` — a query that gets killed and re-attempted every cleanup tick (crash-loop shape). Added `batchedDeleteOlderThanWhere(model, cutoff, extraWhere, args...)` (the existing `batchedDeleteOlderThan` is now a thin wrapper) so the severity-scoped syslog deletes run in the same 10k-row batches with `SET LOCAL lock_timeout='5s'` and an inter-batch sleep. Same rows deleted as before — only the locking/batching changes. Regression test `cleanup_syslog_batched_test.go` verifies the severity predicate is honored and recent rows are spared.
+
 ## [0.10.477] - 2026-06-23
 
 ### Fixed
