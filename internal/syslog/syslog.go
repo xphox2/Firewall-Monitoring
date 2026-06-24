@@ -70,9 +70,13 @@ func (s *SyslogReceiver) Start() error {
 
 	var err error
 	if s.Config.UseTLS {
-		cert, err := tls.LoadX509KeyPair(s.Config.CertFile, s.Config.KeyFile)
-		if err != nil {
-			return fmt.Errorf("failed to load TLS certificates: %w", err)
+		// Use a distinct error var: `cert, err :=` here would declare a NEW err
+		// scoped to this block, so the `s.listener, err = tls.Listen(...)` below
+		// would write that shadow and the outer err (checked after the block)
+		// would stay nil — Start() returning success on a failed TLS listen.
+		cert, certErr := tls.LoadX509KeyPair(s.Config.CertFile, s.Config.KeyFile)
+		if certErr != nil {
+			return fmt.Errorf("failed to load TLS certificates: %w", certErr)
 		}
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},

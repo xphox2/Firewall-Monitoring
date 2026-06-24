@@ -72,6 +72,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, originalLen, 1000)
 		}
 	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	// Pre-resolve the source IPs of device-less messages in one batch query
 	// rather than a lookup per message (an N+1 at high syslog volume). Indexing
@@ -92,6 +93,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 			ipToDevice = h.db.ResolveDevicesByIPs(ips)
 		}
 	}
+	filtered := messages[:0]
 	for i := range messages {
 		messages[i].ProbeID = probe.ID
 		if messages[i].Timestamp.IsZero() {
@@ -102,23 +104,33 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 				messages[i].DeviceID = devID
 			}
 		}
+		// Reject any DeviceID (body-supplied or IP-resolved) the probe doesn't
+		// own — the global ResolveDevicesByIPs lookup can map a source IP to a
+		// device assigned to a different probe, and a crafted body can spoof one
+		// outright. Without this, a probe could inject SYSLOG_CRITICAL alerts and
+		// forge config-change attribution against another site's device. Mirrors
+		// the allow-list enforcement every sibling ingestion handler already does.
+		if messages[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[messages[i].DeviceID] {
+			continue
+		}
+		filtered = append(filtered, messages[i])
 	}
-	if err := h.db.SaveSyslogMessages(messages); err != nil {
+	if err := h.db.SaveSyslogMessages(filtered); err != nil {
 		log.Printf("Failed to batch save syslog messages: %v", err)
 		httputil.InternalError(c, "Failed to save syslog messages", err)
 		return
 	}
 	// Fire alerts for critical syslog messages (severity 0-2)
 	if h.alertManager != nil {
-		for i := range messages {
-			if messages[i].Severity <= 2 {
-				if err := h.alertManager.ProcessSyslog(&messages[i], nil); err != nil {
+		for i := range filtered {
+			if filtered[i].Severity <= 2 {
+				if err := h.alertManager.ProcessSyslog(&filtered[i], nil); err != nil {
 					log.Printf("Failed to process syslog alert: %v", err)
 				}
 			}
 		}
 	}
-	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(messages)}))
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
 func (h *Handler) ReceiveTrapEvents(c *gin.Context) {

@@ -172,6 +172,19 @@ func (m *Manager) loadCommands() {
 	m.mu.Unlock()
 }
 
+// lookupCommand returns the enabled command registered under name (already
+// lowercased), read under the Manager's own mutex. onPrivmsg runs on the IRC
+// read-loop goroutine while loadCommands replaces m.commands under m.mu from
+// API handlers (ReloadCommands). Reading the map under any other lock — as the
+// old b.mu.RLock did — provides no mutual exclusion against that writer and
+// triggers Go's unrecoverable "concurrent map read and map write".
+func (m *Manager) lookupCommand(name string) (*models.IRCCommand, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cmd, ok := m.commands[name]
+	return cmd, ok
+}
+
 func (m *Manager) reconnectLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -436,9 +449,7 @@ func (b *Bot) onPrivmsg(e *irc.Event) {
 	}
 
 	cmdStr := strings.ToLower(parts[0])
-	b.mu.RLock()
-	cmd, exists := b.manager.commands[cmdStr]
-	b.mu.RUnlock()
+	cmd, exists := b.manager.lookupCommand(cmdStr)
 
 	if !exists {
 		b.Conn.Notice(target, fmt.Sprintf("Unknown command: %s", parts[0]))
