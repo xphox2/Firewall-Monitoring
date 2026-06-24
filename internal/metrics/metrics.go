@@ -14,6 +14,7 @@ package metrics
 import (
 	"database/sql"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -98,4 +99,48 @@ func RegisterDBPool(db *sql.DB, name string) {
 // aggregate timings/counters and route *templates*.
 func Handler() http.Handler {
 	return promhttp.Handler()
+}
+
+// StartObservabilityServer stands up a lightweight HTTP server exposing
+// /metrics (Prometheus, incl. the Go runtime/process collectors), /healthz
+// (liveness — 200 while the process is up), and /readyz (readiness via the
+// supplied probe; 200 when ready, 503 otherwise). It exists for the daemon
+// binaries (poller, trap-receiver) that have no Gin router of their own, so they
+// are no longer black boxes to Prometheus and container orchestrators
+// (2026-06-23 audit, M11). An empty addr returns nil (disabled). The returned
+// *http.Server can be Shutdown by the caller on graceful exit. Like the API
+// /metrics, this is unauthenticated by design — protect it at the network layer.
+func StartObservabilityServer(addr, component string, ready func() bool) *http.Server {
+	if addr == "" {
+		return nil
+	}
+	srv := &http.Server{Addr: addr, Handler: ObservabilityHandler(ready), ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		slog.Info("observability server started", "component", component, "addr", addr, "endpoints", "/metrics /healthz /readyz")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("observability server failed", "component", component, "addr", addr, "err", err)
+		}
+	}()
+	return srv
+}
+
+// ObservabilityHandler builds the daemon observability mux: /metrics (Prometheus),
+// /healthz (liveness), and /readyz (readiness via ready; nil ready ⇒ always 200).
+func ObservabilityHandler(ready func() bool) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", Handler())
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if ready == nil || ready() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "ready")
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "not ready")
+	})
+	return mux
 }

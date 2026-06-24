@@ -1,19 +1,46 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/secrets"
 	"firewall-mon/internal/snmp"
 )
+
+// trapMetricsAddr resolves the trap-receiver observability bind address.
+// TRAP_METRICS_ADDR overrides the default; "off" disables it (M11).
+func trapMetricsAddr() string {
+	addr := os.Getenv("TRAP_METRICS_ADDR")
+	if addr == "" {
+		addr = ":9102"
+	}
+	if addr == "off" {
+		return ""
+	}
+	return addr
+}
+
+// shutdownObs gracefully stops an observability server (nil-safe).
+func shutdownObs(srv *http.Server) {
+	if srv == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	_ = srv.Shutdown(ctx)
+	cancel()
+}
 
 func main() {
 	cfg := config.Load()
@@ -58,6 +85,10 @@ func main() {
 	// the rest of the stack runs normally. Set SNMP_TRAP_COMMUNITY to enable.
 	if !trapReceiver.Enabled() {
 		log.Printf("SNMP trap ingestion DISABLED: SNMP_TRAP_COMMUNITY is not set, so no trap listener is opened (AUDIT-012: an empty community would accept any spoofable packet on port 162). Set SNMP_TRAP_COMMUNITY to enable. Idling.")
+		// M11: still expose /metrics /healthz /readyz while idling so the daemon
+		// is observable (and reports "up") even with trap ingestion off.
+		obsSrv := metrics.StartObservabilityServer(trapMetricsAddr(), "trap-receiver", nil)
+		defer shutdownObs(obsSrv)
 		<-quit
 		log.Println("Trap receiver exited")
 		return
@@ -76,6 +107,18 @@ func main() {
 		log.Fatalf("trap-receiver: failed to initialize database: %v", err)
 	}
 	defer db.Close()
+
+	// M11: expose /metrics /healthz /readyz so the trap-receiver isn't a black
+	// box. /readyz pings the DB; /metrics carries the trap rate-limiter and Go
+	// runtime collectors.
+	if sqlDB, dberr := db.Gorm().DB(); dberr == nil {
+		metrics.RegisterDBPool(sqlDB, "fwmon_trap")
+	}
+	obsSrv := metrics.StartObservabilityServer(trapMetricsAddr(), "trap-receiver", func() bool {
+		sqlDB, derr := db.Gorm().DB()
+		return derr == nil && sqlDB.Ping() == nil
+	})
+	defer shutdownObs(obsSrv)
 
 	notif := notifier.NewNotifier(cfg)
 	alertManager := alerts.NewAlertManager(cfg, notif, db)
