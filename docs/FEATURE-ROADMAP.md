@@ -1,6 +1,6 @@
 # Firewall-Mon — Master Feature Inventory & Roadmap
 
-**Last updated:** 2026-06-23 (dual-repo CTO-loop audit).
+**Last updated:** 2026-06-23 (dual-repo internal audit).
 
 Two-repo product. **Server** = `Firewall-Mon` (Go module `firewall-mon`, ~v0.10.476): central store + brain + UI. **Collector** = `Firewall-Collector` (`firewall-collector`, ~v1.2.131): stateless remote edge probe. Some ingestion capabilities exist in **both** (server can ingest directly OR receive relayed from a probe).
 
