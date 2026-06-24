@@ -24,7 +24,17 @@ services:
       # a dedicated partition with adequate free space — syslog_messages alone
       # can grow into the GB range. See `.env.example` and CHANGELOG v0.10.201.
       - ${DATA_DIR:-./data}:/data
-      - ./config:/config
+      # CONFIG_DIR holds /config/config.env, which entrypoint.sh seeds with a
+      # RANDOM JWT_SECRET_KEY on first run when none is supplied. The AES-256 key
+      # that encrypts every {enc} secret (SNMP/IRC/SMTP) is derived from that
+      # value, so this directory MUST persist and MUST move together with
+      # DATA_DIR. Pre-v0.10.480 this mount was hardcoded `./config` while DATA_DIR
+      # was relocatable — a deploy-from-a-new-dir regenerated the key and left
+      # every credential in the relocated DB permanently undecryptable. Set
+      # CONFIG_DIR alongside DATA_DIR in .env, or set JWT_SECRET_KEY/ENCRYPTION_KEY
+      # explicitly so continuity never depends on this directory. See
+      # docs/UPGRADE-2026-06.md and CHANGELOG v0.10.480.
+      - ${CONFIG_DIR:-./config}:/config
     # AUDIT-096: explicit healthcheck in compose, redundant with the
     # HEALTHCHECK directive baked into the Dockerfile (v0.10.264). We
     # duplicate it here for two reasons:

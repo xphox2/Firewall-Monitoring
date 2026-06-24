@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.480] - 2026-06-23
+
+### Fixed
+- **The `/config` bind-mount is now parametrizable (`CONFIG_DIR`), removing the ENCRYPTION_KEY-continuity trap (CTO-loop 2026-06-23, H8).** `entrypoint.sh` seeds `/config/config.env` with a random `JWT_SECRET_KEY` on first run when none is supplied, and the AES-256 key that encrypts every `{enc}` secret (SNMP/IRC/SMTP) derives from it — but `docker-compose.yml` hardcoded `./config:/config` while `DATA_DIR` was relocatable. Deploying from a new directory therefore regenerated the key while the relocated database still held ciphertext under the old key, leaving every credential permanently undecryptable (`decryptField` logs an error and returns empty, so it surfaces later as silently-broken polling rather than a startup failure). The mount is now `${CONFIG_DIR:-./config}:/config` with a prominent continuity warning, and `.env.example` documents that `CONFIG_DIR` must move together with `DATA_DIR` — plus the safest option of pinning `JWT_SECRET_KEY`/`ENCRYPTION_KEY` explicitly so continuity never depends on a surviving bind-mount. Infra/docs only; no code or crypto-path change. (The defense-in-depth fail-fast guard for the "{enc} present but no key resolves" case — audit M8 — is tracked separately.)
+
 ## [0.10.479] - 2026-06-23
 
 ### Fixed
