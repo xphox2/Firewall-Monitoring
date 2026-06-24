@@ -10,7 +10,7 @@ import (
 // TestAgentDrops_RoundTrip pins the data path for the new
 // flow_agent_drops table (migration v8). SaveAgentDrops persists a
 // (agent, sampling_rate, window) aggregate; GetAgentDropsRecent reads
-// them back ordered by window DESC. The CTO-loop audit (2026-06-22,
+// them back ordered by window DESC. The audit (2026-06-22,
 // taocp [MEDIUM] #5) found this data was previously invisible —
 // agent-side congestion was undetectable end-to-end. This test
 // exercises both the SQLite test path (no pgx pool) and the GORM

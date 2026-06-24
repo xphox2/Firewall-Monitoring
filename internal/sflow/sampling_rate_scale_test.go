@@ -6,7 +6,7 @@ import (
 )
 
 // TestParseRawPacketHeader_BytesScaledBySamplingRate is the regression
-// for the CTO-loop audit finding (2026-06-22, taocp [critical] #1):
+// for the audit finding (2026-06-22, taocp [critical] #1):
 // the server's sFlow parser stored `Bytes = frameLength` verbatim, so
 // every dashboard value under-reported real traffic by 1:N. This test
 // pins the new convention: a sampled flow record stores

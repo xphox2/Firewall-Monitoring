@@ -8,7 +8,7 @@ import (
 )
 
 // TestBatchedDeleteOlderThanWhere_SyslogSeverity is the regression for the
-// 2026-06-23 CTO-loop H6 finding: the syslog retention deletes were single
+// 2026-06-23 audit H6 finding: the syslog retention deletes were single
 // unbounded DELETEs on syslog_messages (the table that dominates DB size).
 // They now route through batchedDeleteOlderThanWhere with a severity predicate.
 // This verifies the predicate is honored (only matching severities deleted) and

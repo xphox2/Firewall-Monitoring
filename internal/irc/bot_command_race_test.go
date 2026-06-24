@@ -8,7 +8,7 @@ import (
 )
 
 // TestManager_LookupCommand_RaceFree is the regression for the 2026-06-23
-// CTO-loop H4 finding: onPrivmsg read Manager.commands under the per-Bot mutex
+// audit H4 finding: onPrivmsg read Manager.commands under the per-Bot mutex
 // (b.mu) while loadCommands replaces the same map under the Manager mutex
 // (m.mu). Two different locks are not mutual exclusion, so a `!command` arriving
 // while an admin saved/reloaded commands triggered Go's unrecoverable

@@ -8,7 +8,7 @@ import (
 )
 
 // TestMigrateFlowSamplesSamplingRateScale_ScalesAndIsIdempotent is the
-// regression for the CTO-loop audit (2026-06-22, taocp [critical] #2):
+// regression for the audit (2026-06-22, taocp [critical] #2):
 // the v7 migration must backfill existing flow_samples rows so bytes
 // becomes `frame_length * sampling_rate` and packets becomes
 // `sampling_rate`. Without this migration, new inserts are scaled (per
