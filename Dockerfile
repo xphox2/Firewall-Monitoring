@@ -26,7 +26,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o fwmon-trap ./cmd/trap-receiver
 
 # Stage 2: Final Alpine image with embedded PostgreSQL
-FROM alpine:3.19
+# alpine 3.21 — 3.19 reached end-of-life ~Nov 2025 (2026-06-23 audit, M13).
+# Verified against the alpine 3.21 package index that every package below still
+# resolves: postgresql16 / postgresql16-contrib are 16.14-r0 in 3.21 main, so
+# PostgreSQL stays at MAJOR 16 — existing PGDATA directories remain compatible
+# and no pg_upgrade is required on deploy. su-exec (0.2-r3) is also in 3.21 main.
+FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates bash wget su-exec postgresql16 postgresql16-contrib
 

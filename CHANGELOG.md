@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.490] - 2026-06-24
+
+### Changed
+- **Runtime base image bumped `alpine:3.19` → `alpine:3.21` (2026-06-23 audit, M13).** alpine 3.19 reached end-of-life ~Nov 2025 (no security backports). The server image bundles `postgresql16`/`postgresql16-contrib` + `su-exec`, so the bump was gated on those still resolving: verified against the alpine 3.21 package index that `postgresql16` and `postgresql16-contrib` are **16.14-r0 in 3.21 main** and `su-exec` is **0.2-r3 in 3.21 main** (the rest — ca-certificates/bash/wget — are core). **PostgreSQL stays at major 16**, so existing `PGDATA` directories remain compatible and **no `pg_upgrade` is needed** on deploy. NOTE: there is no Docker-image build in CI, so this could not be build-verified in the pipeline — the verification rests on the package-index check above; the definitive confirmation is the next image build (`docker build -t firewall-mon:latest .`). Adding a CI image-build job (and Renovate/Dependabot for the base image) is a recommended follow-up so future base bumps are build-gated.
+
 ## [0.10.489] - 2026-06-24
 
 ### Security

@@ -4,10 +4,11 @@
 > H1/H4/H5 in v0.10.477, H6 in v0.10.478, H7 in v0.10.479, H8 in v0.10.480
 > (see `CHANGELOG.md`). Mediums M1–M5 shipped in v0.10.484/485, M9 in v0.10.486,
 > and M11 (poller/trap `/metrics`+`/healthz`+`/readyz`) in v0.10.487. The
-> genuinely-open **server** items remaining are: **M8** (fail-fast/health signal
-> on undecryptable `{enc}` secrets), the **server `alpine` 3.19 → 3.21** base
-> bump, the **`pgx` CVE** bump, plus the **LOW dead-code deletions**. Those are
-> tracked in [`FEATURE-ROADMAP.md` → Open audit follow-ups](FEATURE-ROADMAP.md#open-audit-follow-ups-2026-06).
+> `pgx` CVE bump shipped in v0.10.489 and the server `alpine` 3.19 → 3.21 base
+> bump in v0.10.490. The one genuinely-open **server** item remaining is **M8**
+> (fail-fast/health signal on undecryptable `{enc}` secrets), plus the **LOW
+> dead-code deletions** — tracked in
+> [`FEATURE-ROADMAP.md` → Open audit follow-ups](FEATURE-ROADMAP.md#open-audit-follow-ups-2026-06).
 > The body below is the original report, kept as-shipped for provenance.
 
 **Scope:** Both repositories of the firewall-monitoring product.
