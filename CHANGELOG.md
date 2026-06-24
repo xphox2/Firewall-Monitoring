@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.479] - 2026-06-23
+
+### Fixed
+- **AlertManager no longer re-fires a notification storm on every poller/API restart (CTO-loop 2026-06-23, H7).** Cooldown state (`lastAlert`/`activeAlerts`) lives only in memory, and the fire path gated solely on the in-memory `canAlertWithCooldown` (true when the key is absent). After a restart those maps are empty, so every still-breaching condition (device offline, interface/VPN down, CPU/memory/disk/session thresholds) re-fired a fresh email/Slack/Discord/IRC notification at once — and under the statement-timeout crash-loop, a fresh storm every cycle. Added `dbCooldownActive(deviceID, alertType, metricName, ref, cooldown)`, consulted at the send chokepoints (`dispatchFired` for the batch state alerts; `CheckDeviceOffline` inline): if a still-open alert for the same `(device, type, metric)` already exists within the cooldown window it suppresses the duplicate save+send. A restart is now transparent (operator-chosen behavior) — the within-cooldown duplicate is dropped, but the normal periodic reminder still fires once the window elapses (older open rows fall outside it), so a long-running issue is never silently forgotten. Event/transient alerts (SNMP traps, syslog, SSH host-key change, config-change) fire on arrival and are intentionally NOT deduped. The DB read happens only on the rare about-to-notify path. Regression tests in `restart_storm_test.go` cover the window/scope/resolved semantics, end-to-end restart suppression via `dispatchFired`, and the post-cooldown reminder.
+
 ## [0.10.478] - 2026-06-23
 
 ### Fixed
