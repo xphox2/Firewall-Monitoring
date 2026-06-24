@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen)](https://github.com/xphox2/Firewall-Monitoring/actions)
-[![Version](https://img.shields.io/badge/version-0.10.385-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.10.487-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25.11+-00ADD8)](go.mod)
 
@@ -63,7 +63,7 @@ standing up a heavyweight NMS.
 | Multi-vendor firewall SNMP profiles | ✅ (Forti/Palo/ASA/+generic) | generic SNMP | generic SNMP | generic SNMP | generic SNMP | generic SNMP | ✗ | ✗ |
 | Config-change tracking | ✅ (per-vendor normalized) | partial | plugins | partial | ✅ (Oxidized) | partial | ✗ | ✗ |
 | Syslog + sFlow ingest | ✅ | add-on | plugins | add-on | partial | add-on | ✗ | ✗ |
-| Footprint | Light (4 Go binaries) | Heavy | Medium | Medium | Medium | Medium | Light | n/a |
+| Footprint | Light (3 Go daemons) | Heavy | Medium | Medium | Medium | Medium | Light | n/a |
 
 This project is intentionally **narrow and firewall-first**: it does a
 few things (firewall health, VPN/connection mapping, config drift,
@@ -83,8 +83,9 @@ public AUDIT-NNN row exists.
 
 - **[Server] SNMP polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256)
   on `SNMP_POLL_INTERVAL` (default 60s). Per-device `VendorProfile`
-  registry with FortiGate, Palo Alto, Cisco ASA, pfSense, OPNsense,
-  SonicWall, Firewalla, generic Linux/BSD VPN.
+  registry. SNMP-pollable profiles: FortiGate, Palo Alto, SonicWall,
+  pfSense, OPNsense, Firewalla, plus a generic SNMP profile. Cisco ASA is
+  supported for config-diff only (no SNMP polling profile).
 - **[Server] SNMP trap receiver** (UDP/162). V1 enterprise + V2c
   specific-trap, per-source-IP rate limit, community filter (required,
   AUDIT-012).
@@ -208,6 +209,9 @@ public AUDIT-NNN row exists.
 - **[Server] Prometheus `/metrics`** (request-latency histogram by
   matched route template, DB-pool gauges, Go runtime + process
   collectors, AUDIT-077).
+- **[Server] Poller + trap-receiver `/metrics`, `/healthz`, `/readyz`**
+  (v0.10.487; `POLLER_METRICS_ADDR` default `:9101`, `TRAP_METRICS_ADDR`
+  default `:9102`; set to `off` to disable).
 - **[Server] Structured logging** (slog) with request-ID correlation.
 
 The full **website-ready** feature inventory (with status, role, and
@@ -221,7 +225,7 @@ firewall-mon/
 ├── cmd/
 │   ├── api/           # Main API server (Gin web server) — auth, REST, admin UI
 │   ├── poller/        # SNMP polling daemon (advisory-lock leader)
-│   ├── probe/         # Remote site probe collector (server-side implementation)
+│   ├── configcheck/   # Config-backup validation CLI
 │   └── trap-receiver/ # SNMP trap listener
 ├── internal/
 │   ├── config/        # Configuration management
@@ -253,8 +257,8 @@ registration, poll cycle, alert firing/recovery) is in
 
 ### Prerequisites
 
-- **Go 1.21+** (uses `log/slog`-era stdlib; `go.mod` pins the exact
-  minor; CI is on 1.25.11).
+- **Go 1.25.11** (the version pinned in `go.mod`; uses `log/slog`-era
+  stdlib; CI builds on the same toolchain).
 - **Linux server** (tested on Ubuntu/Debian). The native installer uses
   **systemd**; macOS/Windows can build and run the binaries but the
   `make install` / `deploy.sh install` unit files are Linux-only.
@@ -302,7 +306,7 @@ The first boot auto-generates the admin password and writes it to
 ```bash
 ./deploy.sh build          # build all binaries into ./bin
 # or
-make build                 # reproducible build of the four fwmon-* binaries
+make build                 # reproducible build of the three fwmon-* binaries
 ```
 
 ### Test
@@ -370,7 +374,7 @@ The Docker image is `:latest` by default; for reproducibility pin to
 the matching `:0.10.x` tag. The collector and the server can be
 upgraded in either order — the `schema_version` handshake is symmetric
 and both directions are backward-compatible. The
-[production upgrade runbook](docs/UPGRADE-2026-06.md) is the
+[operations runbook](docs/OPERATIONS.md#upgrade) is the
 operator-facing step-by-step (backup, migrate, restart, verify).
 
 ```bash
@@ -488,7 +492,7 @@ The grouped overview below covers every category.
 - [docs/FORTIGATE-SNMP-SETUP.md](docs/FORTIGATE-SNMP-SETUP.md) — FortiGate device-side setup.
 - [docs/FEATURES.md](docs/FEATURES.md) — website-ready feature inventory.
 - [docs/AUDIT.md](docs/AUDIT.md) — public-release audit and progress log.
-- [docs/UPGRADE-2026-06.md](docs/UPGRADE-2026-06.md) — June 2026 production upgrade runbook.
+- [docs/OPERATIONS.md §Upgrade](docs/OPERATIONS.md#upgrade) — production upgrade runbook.
 - [MIGRATING.md](MIGRATING.md) — probe↔server wire format (`schema_version`).
 - [KNOWN-ISSUES.md](KNOWN-ISSUES.md) — current limitations with AUDIT-NNN cross-links.
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — vendored browser-side assets.

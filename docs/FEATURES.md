@@ -26,7 +26,7 @@
 | Feature | Status | Role | Since |
 |---|---|---|---|
 | SNMP polling (v1 / v2c / v3, MD5/SHA/SHA2, DES/AES/AES192/256) | Stable | [Server] | 0.1 |
-| Per-device vendor OID profile (FortiGate, Palo Alto, Cisco ASA, pfSense, OPNsense, SonicWall, Firewalla, generic Linux/BSD VPN) | Stable | [Server] | 0.1 |
+| Per-device SNMP vendor OID profile (FortiGate, Palo Alto, SonicWall, pfSense, OPNsense, Firewalla, generic) | Stable | [Server] | 0.1 |
 | SNMP trap receiver (UDP/162, V1 enterprise + V2c specific-trap, per-source-IP rate-limit, community filter) | Stable | [Server] | 0.1 |
 | Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, `SYSLOG_ALLOWED_SOURCES` allow-list | Stable | [Server] | 0.1 |
 | sFlow v5 datagram parser | Stable | [Server] | 0.1 |
@@ -150,25 +150,27 @@
 | `GET /api/health` (Postgres ping, 1s timeout) | Stable | [Server] | 0.1 (AUDIT-091) |
 | Docker `HEALTHCHECK` calls `/api/health` (30s interval, 3s timeout, 3 retries) | Stable | [Server] | 0.10.264 |
 | Prometheus `/metrics` (request-latency histogram by matched route template, DB-pool gauges, Go runtime + process collectors) | Stable | [Server] | 0.10.373 (AUDIT-077) |
+| Poller + trap-receiver `/metrics` + `/healthz` + `/readyz` (`POLLER_METRICS_ADDR` `:9101`, `TRAP_METRICS_ADDR` `:9102`, `off` disables) | Stable | [Server] | 0.10.487 |
 | Structured logging (slog) with request-ID correlation | Stable | [Server] | 0.1 |
 
 ## Vendor profiles
 
-The server ships with a `VendorProfile` registry. The list is verified
-in `internal/snmp/vendor_test.go`.
+The server ships with a SNMP `VendorProfile` registry. The list is verified
+in `internal/snmp/vendor_test.go`. Six vendors have a registered SNMP polling
+profile; `cisco_asa` is supported for config-diff only and has **no** SNMP
+profile (see [config-diff-roadmap.md](config-diff-roadmap.md) and the
+`validVendors` list in `internal/api/handlers/handlers.go`).
 
-| Vendor | Profile | HA | SD-WAN | Security stats | License | VPN |
+| Vendor | SNMP profile | HA | SD-WAN | Security stats | License | VPN |
 |---|---|---|---|---|---|---|
 | **fortigate** (default) | full | ✅ | ✅ | ✅ | ✅ | site-to-site + dialup + SSL |
 | **paloalto** | full | ✅ | ✅ | ✅ | ✅ | site-to-site + SSL |
-| **cisco_asa** | full | ✅ (failover) | — | — | — | site-to-site |
+| **sonicwall** | full | ✅ | — | — | ✅ | site-to-site |
 | **pfsense** | full | ✅ (CARP) | — | — | — | IPsec |
 | **opnsense** | full | ✅ (CARP) | — | — | — | IPsec |
-| **sonicwall** | full | ✅ | — | — | ✅ | site-to-site |
 | **firewalla** | basic | — | — | — | — | — |
 | **generic** | system-stats only | — | — | — | — | — |
-| **linux_vpn** | basic | — | — | — | — | IPsec / WireGuard (generic) |
-| **bsd_vpn** | basic | — | — | — | — | IPsec (generic) |
+| **cisco_asa** | _config-diff only — no SNMP profile_ | — | — | — | — | — |
 
 To add a vendor: see [custom-vendor.md](custom-vendor.md).
 
@@ -191,12 +193,12 @@ To add a vendor: see [custom-vendor.md](custom-vendor.md).
 |---|---|---|
 | Go source lines (server, non-test) | ~45,000 | `find . -name '*.go' ! -name '*_test.go' -exec wc -l {} +` |
 | Go source lines (server, with tests) | ~67,000 | same with `*_test.go` |
-| Internal packages | 21 | `internal/{alerts,api/handlers,api/middleware,audit,auth,config,configdiff,database,httputil,irc,metrics,models,notifier,ping,relay,report,secrets,sflow,shell,snmp,syslog,uptime}` |
-| Binaries built | 4 | `cmd/{api,poller,trap-receiver,probe}` |
-| Vendors with full VendorProfile | 3 | fortigate, paloalto, sonicwall |
-| Static guard tests in `internal/shell` | 70+ | `ls internal/shell/*_test.go` |
+| Internal packages | 23 | `internal/{alerts,api,audit,auth,config,configdiff,database,httputil,irc,logging,metrics,models,notifier,ping,relay,report,secrets,sflow,shell,snmp,syslog,tracing,uptime}` (`api` groups `handlers`/`middleware`/`response`) |
+| Binaries built | 3 fwmon daemons | `cmd/{api,poller,trap-receiver}` (`cmd/configcheck` is a CLI; `cmd/probe` was removed) |
+| Vendors with a registered SNMP `VendorProfile` | 6 | fortigate, paloalto, sonicwall, pfsense, opnsense, firewalla (cisco_asa is config-diff only) |
+| Static guard tests in `internal/shell` | 98 | `ls internal/shell/*_test.go` |
 | API endpoints | ~174 | `cmd/api/main.go` |
-| Open audit findings (as of v0.10.383) | 14 of 170 | [AUDIT.md](AUDIT.md) Part I |
+| Open audit findings | 0 of 170 (all resolved) | [AUDIT.md](AUDIT.md) Part I |
 
 ## Known limitations (catalogued in [KNOWN-ISSUES.md](../KNOWN-ISSUES.md))
 

@@ -31,9 +31,13 @@ runtime (the collector talks HTTP to the server).
 | FortiGate device setup (SNMP, syslog, SSH, TFTP) | [FORTIGATE-SNMP-SETUP.md](FORTIGATE-SNMP-SETUP.md) | [FORTIGATE-SETUP.md](https://github.com/xphox2/Firewall-Collector/blob/master/docs/FORTIGATE-SETUP.md) (collector-side) |
 | Database migrations | [partition-migration.md](partition-migration.md) | n/a |
 | Production-hardened nginx config | [nginx.conf](nginx.conf) | n/a |
-| Production upgrade runbook | [UPGRADE-2026-06.md](UPGRADE-2026-06.md) | n/a |
-| Pre-release security checklist | [SECURITY-VERIFICATION.md](SECURITY-VERIFICATION.md) | n/a |
-| Audit log (resolving 170 findings) | [AUDIT.md](AUDIT.md) | n/a |
+| Production upgrade runbook | [OPERATIONS.md §Upgrade](OPERATIONS.md#upgrade) (the standalone `UPGRADE-2026-06.md` is archived under [archive/](archive/UPGRADE-2026-06.md)) | n/a |
+| Pre-release security checklist | [OPERATIONS.md §Pre-release / deployment security checklist](OPERATIONS.md#pre-release--deployment-security-checklist) | n/a |
+| Config-diff roadmap (NOC/SOC-grade design) | [config-diff-roadmap.md](config-diff-roadmap.md) | n/a |
+| Audit log (170/170 findings resolved) | [AUDIT.md](AUDIT.md) | n/a |
+| Living feature inventory & roadmap | [FEATURE-ROADMAP.md](FEATURE-ROADMAP.md) | n/a |
+| Latest internal audit (2026-06-23, live) | [audit-2026-06-23-consolidated.md](audit-2026-06-23-consolidated.md) | n/a |
+| Historical audit reports (point-in-time) | [audit-archive/](audit-archive/README.md) | n/a |
 
 ## Filename case convention (known inconsistency)
 

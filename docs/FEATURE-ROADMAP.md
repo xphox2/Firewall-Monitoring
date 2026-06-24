@@ -1,6 +1,6 @@
 # Firewall-Mon — Master Feature Inventory & Roadmap
 
-**Last updated:** 2026-06-23 (dual-repo internal audit).
+**Last updated:** 2026-06-24 (docs cleanup; open-audit follow-ups absorbed).
 
 Two-repo product. **Server** = `Firewall-Mon` (Go module `firewall-mon`, ~v0.10.476): central store + brain + UI. **Collector** = `Firewall-Collector` (`firewall-collector`, ~v1.2.131): stateless remote edge probe. Some ingestion capabilities exist in **both** (server can ingest directly OR receive relayed from a probe).
 
@@ -109,6 +109,42 @@ Maturity legend: **Stable** = shipping; **Beta** = shipping with a known follow-
 | `safego.Go` panic-recovery on long-lived goroutines | Collector | Stable | |
 | Operator CLI tooling | Both | Stable | Collector: `ssh-test`/`diag-backup`/`tftp-test`. Server: `configcheck`/`migrate`/`migrate-status`. |
 | Deployment/release tooling | Both | Stable | Server: compose (+proxy), `deploy.sh` systemd, embedded PG, nginx.conf. Collector: rootless image, auto-pushed tags. |
+
+---
+
+## Open audit follow-ups (2026-06)
+
+Still-open server items carried forward from the now-archived audit reports
+(`docs/audit-archive/`) and the live `docs/audit-2026-06-23-consolidated.md`, so
+nothing is lost when those point-in-time reports are retired. Concise; each line
+is one tracked item.
+
+- **M8 — startup fail-fast / health signal on undecryptable `{enc}` secrets.** A
+  rotated/lost `ENCRYPTION_KEY` makes every stored secret fail-closed silently;
+  surface it as a startup error and a `/readyz` degradation rather than silent
+  polling/notification failure.
+- **Server Dockerfile base bump `alpine:3.19` → `3.21`.** Needs an image build to
+  confirm the `postgresql16*` apk packages still resolve on 3.21 before merging.
+- **`jackc/pgx/v5` v5.6.0 CVE bump + `govulncheck` gate.** Bump pgx past the
+  advisory and ensure the CVE is caught by the CI `govulncheck` step.
+- **Handler God-Object split + `internal/database` package split.** Large
+  refactors: continue decomposing the handlers struct and the database package
+  along domain lines (already partially done — AUDIT-072).
+- **Test-coverage backlog.** `internal/relay`, `internal/notifier`, the
+  `internal/sflow` parser, and the SNMP vendor parsers remain thin; add
+  table-driven + fuzz coverage.
+- **REL-01 — server-daemon panic recovery.** Long-lived goroutines in the poller,
+  trap-receiver, IRC manager, report scheduler, and batcher have no `recover()`;
+  a single panic takes the whole daemon down. (Confirmed still open: no `safeGo`
+  helper or `recover()` in those goroutines.)
+- **REL-04 — `statement_timeout` on the maintenance DDL paths.** The
+  `SET statement_timeout = 0` discipline is applied to the migration-lock and
+  interface-address dedupe paths but **not** to `convertEmptyTableToPartitioned`,
+  `EnsurePartitions`, `ConfigureAutovacuum`, or `dropPartitionsOlderThan` — on a
+  busy large DB those can hit the 30s default and 57014. (Confirmed still open.)
+- **LOW dead-code deletions** (e.g. the relay `StartCollector`/
+  `runCollectorHandler` busy-loop, unregistered `linux_vpn`/`bsd_vpn` vendor
+  stubs).
 
 ---
 

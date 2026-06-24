@@ -9,7 +9,7 @@ Email the maintainers privately at the address listed in `LICENSE` / git log, or
 Include:
 
 - A description of the issue and the affected component (`cmd/api`, `cmd/poller`, `cmd/trap-receiver`, or a vendored asset).
-- The version (`git describe --tags` or the value of `ServerVersion` from `cmd/api/main.go:34` in your deployment).
+- The version (`git describe --tags` or the value of `ServerVersion` from `cmd/api/main.go:39` in your deployment).
 - Reproduction steps. A minimal proof-of-concept is appreciated.
 - Whether you have observed the issue in production or only in a lab.
 - Any mitigations you have already deployed.
