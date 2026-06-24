@@ -1,6 +1,6 @@
 # Firewall-Mon Test Coverage Review (2026-06-11)
 
-Method: re-ran `go test -coverprofile=coverage.out ./...` (and `-count=1 -short`); inspected every critical package, every handler method, every test file, and the new v0.10.409/v0.10.410 tests in detail. Head SHA `8e0cfff` (the doc-only `tasks/CTO-LOOP-2026-06-10.md` save commit, on top of v0.10.410's chart-window work).
+Method: re-ran `go test -coverprofile=coverage.out ./...` (and `-count=1 -short`); inspected every critical package, every handler method, every test file, and the new v0.10.409/v0.10.410 tests in detail. Head SHA `8e0cfff` (the doc-only `tasks/audit-2026-06-10.md` save commit, on top of v0.10.410's chart-window work).
 
 Aggregate: the prior audit's numbers are **almost entirely correct** — the small upticks (relay 1.8 → 1.8%, ping 0 → 0%, sflow 8.5 → 8.5%) and small drops (syslog 26.6 → 26.6%, api/handlers 13.7 → 13.7%) are noise. The blocker (relay at 1.8%) is still here, with **zero new test coverage added** in 24 days despite multiple releases touching the same code path (v0.10.382 schema_version handshake, v0.10.401 e2e test for the server side, v0.10.405 prod crash-loop triage).
 
@@ -258,7 +258,7 @@ func TestCompoundAuth_PassesHostToInner(t *testing.T) { /* server.Name = "evil" 
 - All `Receive*` not in the tested trio (see TC-N3)
 - All `Settings` (4 funcs), `PublicDisplay` (1), `Test*` (3 SSRF-vector funcs tested only for the negative path)
 
-The reason it's not catastrophic: the **handler boilerplate is short** (most are 5-15 LoC) and most delegate to the `database` package, which IS tested (where the test exists). The high-impact ones to add are the 14 `Receive*` (TC-N3), the IRC `SendIRCMessage` (security H-4 from the CTO loop, no max length), and the public `GetPublicConnections` (security H-1).
+The reason it's not catastrophic: the **handler boilerplate is short** (most are 5-15 LoC) and most delegate to the `database` package, which IS tested (where the test exists). The high-impact ones to add are the 14 `Receive*` (TC-N3), the IRC `SendIRCMessage` (security H-4 from the internal audit, no max length), and the public `GetPublicConnections` (security H-1).
 **Risk:** A handler refactor (e.g. JSON-tag rename) in any of these silently breaks the admin UI for that feature.
 **Fix:** The `testhelper_test.go` `doTestRequest` is already set up; a single `doAdminTestRequest` helper for non-probe routes is already there. A 5-minute copy-paste per handler is feasible. Priority: 14 `Receive*` (TC-N3), 4 IRC, 1 `GetPublicConnections` (security H-1).
 **Effort:** L (3+ days at 1 handler/test pair each), but the high-value subset is M (1.5 days).

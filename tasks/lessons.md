@@ -53,7 +53,7 @@ When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) se
 
 ## `TestPostgresIntegration/PopulatedTableSkipped` is flaky; do NOT panic on transient failure (2026-06-22)
 
-**Context:** the CTO-loop audit follow-up (2026-06-22 session) shipped 5 PRs to the server repo. The Postgres `Integration (PostgreSQL)` CI lane flaked on `TestPostgresIntegration/PopulatedTableSkipped` 3 times during that session:
+**Context:** the audit follow-up (2026-06-22 session) shipped 5 PRs to the server repo. The Postgres `Integration (PostgreSQL)` CI lane flaked on `TestPostgresIntegration/PopulatedTableSkipped` 3 times during that session:
 
 - Phase 3 (PR #1, v0.10.471, sampling_rate scaling): failed once, passed on retry with identical code.
 - Phase 5 (PR #3, v0.10.473, drops field): failed on pre-merge (after gofmt amend) retry, then failed post-merge on master.
@@ -93,7 +93,7 @@ When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) se
 
 ## The bundled `cmd/probe` should be deleted (2026-06-11)
 
-**Context:** the 2026-06-11 CTO-loop audit (CHANGELOG v0.10.412 XR-1).
+**Context:** the 2026-06-11 audit (CHANGELOG v0.10.412 XR-1).
 
 **The mistake:** this repo ships a bundled `cmd/probe` binary that's a stale fork of pre-collector code (~800 LoC). It does not send the `Authorization: Bearer` header the server requires. The production probe is the sibling `Firewall-Collector` repo. The bundled probe is a footgun.
 

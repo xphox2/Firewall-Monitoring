@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.483] - 2026-06-23
+
+### Changed
+- **Renamed the internal `tasks/` audit-planning notes to the `audit-*` scheme** (`tasks/audit-2026-06-10.md`, `tasks/audit-2026-06-11.md`, `tasks/audit-2026-06-11-test-coverage.md`) and swept the last internal-nickname references from `tasks/` content — completing the rename so no working nickname remains anywhere in the tree. This also fixes a pre-existing mismatch where the changelog already referenced `tasks/audit-2026-06-11.md`. Internal notes only; no code or behavior change.
+
 ## [0.10.482] - 2026-06-23
 
 ### Changed

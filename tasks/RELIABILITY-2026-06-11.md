@@ -1,6 +1,6 @@
 # Firewall-Mon Reliability Review (2026-06-11)
 
-Read-only re-audit of `E:\Golang\OpenCode\Firewall-Mon` focused on stability and reliability, following up the 2026-06-10 audit (`tasks/CTO-LOOP-2026-06-10.md`) and the two recent fixes it requested (AUDIT-094 entrypoint fail-fast + v0.10.391 statement-timeout on the lock-conn / dedupe tx).
+Read-only re-audit of `E:\Golang\OpenCode\Firewall-Mon` focused on stability and reliability, following up the 2026-06-10 audit (`tasks/audit-2026-06-10.md`) and the two recent fixes it requested (AUDIT-094 entrypoint fail-fast + v0.10.391 statement-timeout on the lock-conn / dedupe tx).
 
 Build status verified by reading source: `gin.Default()` includes `gin.Recovery()`, so the HTTP path is panic-safe. Long-lived background goroutines (poller, report scheduler, IRC bot, login-attempt pruner, trap callback, batcher ticker, retention sweep on the poller) have **no `recover()` anywhere** — a single nil deref in the alert evaluator or an out-of-bounds in the connection-detail diff path will crash the whole process.
 
@@ -32,7 +32,7 @@ Confirmed correct as-shipped:
   - On API exit, `teardown` runs and `exit 1` so Docker's `restart: unless-stopped` brings up a fresh complete stack.
   - The non-essential daemons (poller, trap) dying no longer tears down the API. A "traps disabled" degradation stays visible in the UI instead of looping every few seconds.
 
-Edge case worth flagging in a future CTO loop, not a fix-now: if the **poller** dies and never comes back, the API's data goes stale silently — there is no `MAILTO`-style alert on poller death. The `AUDIT-040` advisory-lock check is the only thing that prevents the operator from seeing this in a UI that's been "online" for 3 days.
+Edge case worth flagging in a future internal audit, not a fix-now: if the **poller** dies and never comes back, the API's data goes stale silently — there is no `MAILTO`-style alert on poller death. The `AUDIT-040` advisory-lock check is the only thing that prevents the operator from seeing this in a UI that's been "online" for 3 days.
 
 ### v0.10.391 statement-timeout verification
 
@@ -163,7 +163,7 @@ status, err := m.statusFn()  // outside the lock
 ### [high] REL-07 — `Handler.h.mu` is uneven; `h.alertManager`, `h.notifier`, `h.version` are set under the lock but read without it
 **File:** `internal/api/handlers/handlers.go:24-101, 73-99`
 **Category:** race
-**Failure mode:** Audit finding "L-5" (CTO-LOOP-2026-06-10.md) called out partial coverage: `h.mu` only protects 4 of 8 fields. On close re-read, the actually-racy fields are zero in practice (SetAlertManager, SetNotifier, SetVersion are called once in `main()` after `NewHandler` and before `setupRoutes`, and the HTTP server hasn't started accepting connections yet). But:
+**Failure mode:** Audit finding "L-5" (audit-2026-06-10.md) called out partial coverage: `h.mu` only protects 4 of 8 fields. On close re-read, the actually-racy fields are zero in practice (SetAlertManager, SetNotifier, SetVersion are called once in `main()` after `NewHandler` and before `setupRoutes`, and the HTTP server hasn't started accepting connections yet). But:
 - `GetIRCManager` (line 70) reads `h.ircManager` under `h.mu.RLock()`. If a future `RestartBot` handler wants to call `SetIRCManager` (e.g. on config save to wire a new manager), the writer-vs-reader race is real.
 - `GetHealth` (line 112) reads `h.snmpClient`, `h.db` under `h.mu.RLock()`. Same story for `h.db` if any future code path mutates it.
 - The bigger issue is *consistency*: a reader of `h.alertManager` (e.g. `handlers_data.go:71`) does `h.alertManager != nil && originalLen > 1200` without a lock. If a follow-up call site ever calls `SetAlertManager` while traffic is live (e.g. a config-driven runtime re-wire), the alert-manager pointer read is torn on architectures with weak memory ordering.
