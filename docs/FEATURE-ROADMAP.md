@@ -123,10 +123,11 @@ is one tracked item.
   rotated/lost `ENCRYPTION_KEY` makes every stored secret fail-closed silently;
   surface it as a startup error and a `/readyz` degradation rather than silent
   polling/notification failure.
-- **Server Dockerfile base bump `alpine:3.19` → `3.21`.** Needs an image build to
-  confirm the `postgresql16*` apk packages still resolve on 3.21 before merging.
-- **`jackc/pgx/v5` v5.6.0 CVE bump + `govulncheck` gate.** Bump pgx past the
-  advisory and ensure the CVE is caught by the CI `govulncheck` step.
+- ~~Server Dockerfile base bump `alpine:3.19` → `3.21`~~ — **DONE v0.10.490**
+  (`postgresql16`/`-contrib` verified at 16.14-r0 in alpine 3.21 main, so PG
+  stays at major 16 and PGDATA is unchanged).
+- ~~`jackc/pgx/v5` v5.6.0 CVE bump~~ — **DONE v0.10.489** (→ v5.10.0, clears
+  CVE-2026-33815/33816; `govulncheck ./...` reports no vulnerabilities).
 - **Handler God-Object split + `internal/database` package split.** Large
   refactors: continue decomposing the handlers struct and the database package
   along domain lines (already partially done — AUDIT-072).
