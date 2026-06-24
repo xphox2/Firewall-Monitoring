@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/report"
@@ -1748,6 +1750,31 @@ func main() {
 	}
 	log.Println("Database connected")
 	defer db.Close()
+
+	// M11: expose /metrics /healthz /readyz so the poller (AlertManager +
+	// polling + batchers) is observable to Prometheus/orchestrators instead of a
+	// black box. POLLER_METRICS_ADDR overrides the default; "off" disables it.
+	pollerMetricsAddr := os.Getenv("POLLER_METRICS_ADDR")
+	if pollerMetricsAddr == "" {
+		pollerMetricsAddr = ":9101"
+	}
+	if pollerMetricsAddr == "off" {
+		pollerMetricsAddr = ""
+	}
+	if sqlDB, dberr := db.Gorm().DB(); dberr == nil {
+		metrics.RegisterDBPool(sqlDB, "fwmon_poller")
+	}
+	obsSrv := metrics.StartObservabilityServer(pollerMetricsAddr, "poller", func() bool {
+		sqlDB, derr := db.Gorm().DB()
+		return derr == nil && sqlDB.Ping() == nil
+	})
+	defer func() {
+		if obsSrv != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = obsSrv.Shutdown(ctx)
+			cancel()
+		}
+	}()
 
 	notif := notifier.NewNotifier(cfg)
 	alertManager := alerts.NewAlertManager(cfg, notif, db)

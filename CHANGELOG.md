@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.487] - 2026-06-24
+
+### Added
+- **The poller and trap-receiver daemons now expose `/metrics`, `/healthz`, and `/readyz` (2026-06-23 audit, M11).** Observability previously lived only in the API binary, so the poller (AlertManager + polling + batchers) and the trap-receiver were black boxes to Prometheus and container orchestrators — less observable than the remote collector. Added `metrics.StartObservabilityServer` / `ObservabilityHandler` (in `internal/metrics`) and wired both daemons to it: `/metrics` carries the Go runtime/process collectors plus each daemon's DB-pool stats (registered as `fwmon_poller` / `fwmon_trap`), `/healthz` is liveness, and `/readyz` pings the DB (the idling trap-receiver — no `SNMP_TRAP_COMMUNITY` — still serves them and reports ready). Bind addresses default to `:9101` (poller) and `:9102` (trap-receiver); override with `POLLER_METRICS_ADDR` / `TRAP_METRICS_ADDR`, or set them to `off` to disable. Unauthenticated by design like the API `/metrics` — protect at the network layer. Tests in `observability_m11_test.go`.
+
 ## [0.10.486] - 2026-06-23
 
 ### Fixed
