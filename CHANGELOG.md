@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.486] - 2026-06-23
+
+### Fixed
+- **Trap-receiver rate-limiter recovers from a spoofed-IP flood instead of locking out new devices forever (2026-06-23 audit, M9).** The per-source-IP token-bucket map (`internal/snmp/trap.go`) is capped at `maxRateLimitedIPs` (10000); once a flood of unique spoofed source IPs filled it, every NEW legitimate device IP was rejected at the cap until the process restarted — a durable denial-of-trap. Before rejecting a new IP at the cap, the limiter now sweeps idle buckets (any IP not seen within `rlBucketIdleTTL` = 5m has fully refilled, so dropping it is lossless), throttled to one O(n) pass per `rlSweepInterval` (1m) so a sustained flood can't turn it into per-packet work. A flood of *active* IPs still rejects new IPs (it never evicts a currently-active bucket — legitimate active senders are not degraded), but the lockout now clears automatically once the flood subsides. Regression tests in `trap_ratelimit_sweep_test.go` (idle sweep admits a new IP; active buckets are spared).
+
 ## [0.10.485] - 2026-06-23
 
 ### Fixed
