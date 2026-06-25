@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.492] - 2026-06-25
+
+### Tests
+- **Test-coverage backlog (2026-06-23 audit follow-up): raised coverage on the four thin packages.** Additive tests plus one small testability refactor; no behavioural change.
+  - **`internal/notifier` 1.8% → 48.2%.** Extracted the per-channel payload builders (`buildSlackPayload`/`buildDiscordPayload`/`buildWebhookPayload`/`buildEmailSubjectBody`), the severity→colour maps, and the channel-routing decision (`channelEligibility`) into pure functions (the `sendX` methods now call them — wire JSON shape unchanged), then table-tested them. Added full coverage of the LOGIN/PLAIN SMTP-auth state machines (`loginAuth`, `compoundAuth`: host/TLS gates, mechanism selection, step sequencing), `SnapshotConfig`, and an httptest-backed `SendAlert` fan-out + error-propagation test. New: `smtp_auth_test.go`, `payloads_test.go`.
+  - **`internal/sflow` 35.9% → 69.4%.** New `datagram_test.go` builds raw sFlow v5 datagrams (RFC 3176) to drive the previously-0% `parseDatagram` and `parseFlowSample` end-to-end (standard + expanded flow samples), plus malformed/truncated/wrong-version/bad-address-type guards, counter-sample skipping, nil-handler early return, and the uncovered `parseRawPacketHeader` dispatch branches (VLAN-tagged IPv4, direct-IPv4, short-header guards).
+  - **`internal/snmp` 10.8% → 20.1%.** New `helpers_coverage_test.go` table-tests the pure shared helpers (`safeString`, `safeFloat` incl. the DisplayString-decimal path, `formatMAC`, `getIndexFromOID`, `isValidPDU`), the per-vendor pure functions (`buildCIDR`, SonicWall IP/subnet/sensor-type formatters, Palo Alto sensor meta/scale, BSD/Linux VPN-interface classifiers, Firewalla/pfSense/OPNsense version extractors), and the PDU-driven `SonicWallProfile.ParseHardwareSensors` + default-vendor `FortiGateProfile.ParseSystemStatus` (incl. the disk-percentage and divide-by-zero guards).
+  - **`internal/relay` 0% → wire-contract locked.** New `relay_test.go` pins the schema-version handshake invariants (`Min ≤ Max`, `≥ 1`) and the JSON `omitempty` contracts the collector depends on (`schema_version` absent when zero, `FlowSample.drops` forward-compat, `observed_host_keys`), plus a `FlowSample` round-trip. (Pure-DTO package — no executable statements to "cover", but the wire format is now guarded against silent drift.)
+
 ## [0.10.491] - 2026-06-24
 
 ### Added

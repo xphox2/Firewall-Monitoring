@@ -98,14 +98,24 @@ func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
 	}
 }
 
+// channelEligibility decides which channels an alert should fan out to, given a
+// config snapshot. A channel fires when its destination is configured (email
+// enabled / webhook URL present) AND — when a policy is active — that policy
+// enables the channel. With no active policy the legacy global-config behaviour
+// applies (destination presence alone). Pure: extracted from SendAlert so the
+// routing matrix is unit-testable without performing any sends.
+func channelEligibility(nc NotifyConfig) (email, slack, discord, webhook bool) {
+	email = nc.EmailEnabled && (!nc.PolicyActive || nc.EnableEmail)
+	slack = nc.SlackWebhookURL != "" && (!nc.PolicyActive || nc.EnableSlack)
+	discord = nc.DiscordWebhookURL != "" && (!nc.PolicyActive || nc.EnableDiscord)
+	webhook = nc.WebHookURL != "" && (!nc.PolicyActive || nc.EnableWebhook)
+	return
+}
+
 func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	var errs []error
 
-	// Determine per-channel eligibility: policy-driven or legacy
-	sendEmail := nc.EmailEnabled && (!nc.PolicyActive || nc.EnableEmail)
-	sendSlack := nc.SlackWebhookURL != "" && (!nc.PolicyActive || nc.EnableSlack)
-	sendDiscord := nc.DiscordWebhookURL != "" && (!nc.PolicyActive || nc.EnableDiscord)
-	sendWebhook := nc.WebHookURL != "" && (!nc.PolicyActive || nc.EnableWebhook)
+	sendEmail, sendSlack, sendDiscord, sendWebhook := channelEligibility(nc)
 
 	if sendEmail {
 		if err := n.sendEmail(alert, nc); err != nil {
@@ -135,19 +145,14 @@ func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	return nil
 }
 
-func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
-	if nc.SMTPHost == "" {
-		return nil
-	}
-
-	// Sanitize header values to prevent email header injection
-	sanitize := func(s string) string {
-		s = strings.ReplaceAll(s, "\r", "")
-		s = strings.ReplaceAll(s, "\n", "")
-		return s
-	}
-	subject := fmt.Sprintf("[%s] Firewall Alert: %s", sanitize(string(alert.Severity)), sanitize(string(alert.AlertType)))
-	body := fmt.Sprintf(`
+// buildEmailSubjectBody renders the plain-text alert email. Header-bound values
+// (severity, alert type) are run through SanitizeHeader so a device-controlled
+// string can't fold a new header into the Subject line (AUDIT-014). Pure —
+// extracted from sendEmail for unit testing.
+func buildEmailSubjectBody(alert *models.Alert) (subject, body string) {
+	subject = fmt.Sprintf("[%s] Firewall Alert: %s",
+		SanitizeHeader(string(alert.Severity)), SanitizeHeader(string(alert.AlertType)))
+	body = fmt.Sprintf(`
 Firewall Monitoring Alert
 ===========================
 
@@ -163,6 +168,15 @@ Threshold: %.2f
 This is an automated alert from your Firewall monitoring system.
 `, alert.AlertType, alert.Severity, alert.Timestamp.Format(time.RFC3339),
 		alert.Message, alert.MetricName, alert.CurrentValue, alert.Threshold)
+	return subject, body
+}
+
+func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
+	if nc.SMTPHost == "" {
+		return nil
+	}
+
+	subject, body := buildEmailSubjectBody(alert)
 
 	addr := fmt.Sprintf("%s:%d", nc.SMTPHost, nc.SMTPPort)
 
@@ -187,18 +201,26 @@ This is an automated alert from your Firewall monitoring system.
 	return nil
 }
 
-func (n *Notifier) sendSlack(alert *models.Alert, nc NotifyConfig) error {
-	color := "#36a64f"
-	if alert.Severity == "warning" {
-		color = "#ff9800"
-	} else if alert.Severity == "critical" {
-		color = "#f44336"
+// severityToSlackColor maps an alert severity to the Slack attachment bar
+// colour (hex). Unknown/info severities fall back to green.
+func severityToSlackColor(sev models.Severity) string {
+	switch sev {
+	case "warning":
+		return "#ff9800"
+	case "critical":
+		return "#f44336"
+	default:
+		return "#36a64f"
 	}
+}
 
-	payload := map[string]interface{}{
+// buildSlackPayload constructs the Slack incoming-webhook JSON body for an
+// alert. Pure — extracted from sendSlack so the wire shape is locked by tests.
+func buildSlackPayload(alert *models.Alert) map[string]interface{} {
+	return map[string]interface{}{
 		"attachments": []map[string]interface{}{
 			{
-				"color":  color,
+				"color":  severityToSlackColor(alert.Severity),
 				"title":  fmt.Sprintf("Firewall Alert: %s", alert.AlertType),
 				"text":   alert.Message,
 				"footer": "Firewall Monitor",
@@ -210,8 +232,10 @@ func (n *Notifier) sendSlack(alert *models.Alert, nc NotifyConfig) error {
 			},
 		},
 	}
+}
 
-	return n.postJSON(nc.SlackWebhookURL, payload)
+func (n *Notifier) sendSlack(alert *models.Alert, nc NotifyConfig) error {
+	return n.postJSON(nc.SlackWebhookURL, buildSlackPayload(alert))
 }
 
 // postJSON marshals payload to JSON and POSTs it to url, returning an error on
@@ -240,20 +264,28 @@ func (n *Notifier) postJSON(url string, payload interface{}) error {
 	return nil
 }
 
-func (n *Notifier) sendDiscord(alert *models.Alert, nc NotifyConfig) error {
-	color := 3066993
-	if alert.Severity == "warning" {
-		color = 15105570
-	} else if alert.Severity == "critical" {
-		color = 15158332
+// severityToDiscordColor maps an alert severity to the Discord embed colour
+// (decimal RGB). Unknown/info severities fall back to green (3066993).
+func severityToDiscordColor(sev models.Severity) int {
+	switch sev {
+	case "warning":
+		return 15105570
+	case "critical":
+		return 15158332
+	default:
+		return 3066993
 	}
+}
 
-	payload := map[string]interface{}{
+// buildDiscordPayload constructs the Discord webhook JSON body for an alert.
+// Pure — extracted from sendDiscord so the wire shape is locked by tests.
+func buildDiscordPayload(alert *models.Alert) map[string]interface{} {
+	return map[string]interface{}{
 		"embeds": []map[string]interface{}{
 			{
 				"title":       fmt.Sprintf("Firewall Alert: %s", alert.AlertType),
 				"description": alert.Message,
-				"color":       color,
+				"color":       severityToDiscordColor(alert.Severity),
 				"timestamp":   alert.Timestamp.Format(time.RFC3339),
 				"footer": map[string]interface{}{
 					"text": "Firewall Monitor",
@@ -264,12 +296,16 @@ func (n *Notifier) sendDiscord(alert *models.Alert, nc NotifyConfig) error {
 			},
 		},
 	}
-
-	return n.postJSON(nc.DiscordWebhookURL, payload)
 }
 
-func (n *Notifier) sendWebhook(alert *models.Alert, nc NotifyConfig) error {
-	payload := map[string]interface{}{
+func (n *Notifier) sendDiscord(alert *models.Alert, nc NotifyConfig) error {
+	return n.postJSON(nc.DiscordWebhookURL, buildDiscordPayload(alert))
+}
+
+// buildWebhookPayload constructs the generic webhook JSON body for an alert.
+// Pure — extracted from sendWebhook so the wire shape is locked by tests.
+func buildWebhookPayload(alert *models.Alert) map[string]interface{} {
+	return map[string]interface{}{
 		"alert_type":    alert.AlertType,
 		"severity":      alert.Severity,
 		"message":       alert.Message,
@@ -278,8 +314,10 @@ func (n *Notifier) sendWebhook(alert *models.Alert, nc NotifyConfig) error {
 		"threshold":     alert.Threshold,
 		"current_value": alert.CurrentValue,
 	}
+}
 
-	return n.postJSON(nc.WebHookURL, payload)
+func (n *Notifier) sendWebhook(alert *models.Alert, nc NotifyConfig) error {
+	return n.postJSON(nc.WebHookURL, buildWebhookPayload(alert))
 }
 
 // SendHTMLEmail sends an HTML email with optional inline image attachments.

@@ -48,3 +48,7 @@ IRC-FORMAT.txt
 # Admin password file (written at runtime)
 .admin-password
 node_modules/
+
+# Go coverage artifacts (go test -cover -coverprofile)
+coverage.out
+coverage.html
