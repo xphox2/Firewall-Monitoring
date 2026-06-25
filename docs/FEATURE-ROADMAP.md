@@ -130,10 +130,11 @@ tracked item; resolved ones are struck through with the shipping version.
 | Server `alpine` 3.19 → 3.21 base bump | ✅ DONE v0.10.490 |
 | `jackc/pgx/v5` CVE bump | ✅ DONE v0.10.489 |
 | Handler God-Object + `internal/database` split | 🔲 OPEN (large refactor) |
-| Test-coverage backlog (relay/notifier/sflow/vendor) | 🔲 OPEN |
+| Test-coverage backlog (relay/notifier/sflow/snmp) | 🟡 substantially addressed v0.10.492 (snmp headroom remains) |
 
-The two remaining open items are large, ongoing refactors rather than discrete
-bugs; everything else from the 2026-06-23 audit is shipped. Detail per item:
+The one fully-open item is a large, ongoing refactor; the test-coverage backlog
+was substantially addressed in v0.10.492 (only the network-bound `snmp` paths
+remain). Everything else from the 2026-06-23 audit is shipped. Detail per item:
 
 - ~~**M8 — startup fail-fast / health signal on undecryptable `{enc}` secrets**~~
   — **DONE v0.10.491**. A persisted key-check value (`encryption_key_canary`
@@ -152,9 +153,18 @@ bugs; everything else from the 2026-06-23 audit is shipped. Detail per item:
 - **Handler God-Object split + `internal/database` package split.** Large
   refactors: continue decomposing the handlers struct and the database package
   along domain lines (already partially done — AUDIT-072).
-- **Test-coverage backlog.** `internal/relay`, `internal/notifier`, the
-  `internal/sflow` parser, and the SNMP vendor parsers remain thin; add
-  table-driven + fuzz coverage.
+- 🟡 **Test-coverage backlog — substantially addressed v0.10.492.** Table-driven
+  coverage added across all four packages: `internal/notifier` 1.8% → 48.2%
+  (pure payload builders + SMTP LOGIN/PLAIN auth + `SendAlert` fan-out),
+  `internal/sflow` 35.9% → 69.4% (RFC 3176 datagram fixtures drive the
+  previously-0% `parseDatagram`/`parseFlowSample`), `internal/snmp` 10.8% →
+  20.1% (pure helpers + per-vendor formatters/classifiers + `ParseSystemStatus`/
+  `ParseHardwareSensors`), and `internal/relay` 0% → wire-contract locked
+  (schema-version + `omitempty` JSON contracts). **Remaining headroom:** the
+  `snmp` package stays at ~20% because most of it is live `Walk`/`Get` network
+  methods that need a device (or an injectable client interface) to exercise;
+  pushing it higher means refactoring those toward a mockable walker, tracked as
+  future work rather than a discrete audit item.
 - ~~**REL-01 — server-daemon panic recovery**~~ — **DONE v0.10.491**. New
   `logging.SafeGo(name, fn)` / `logging.Recover(name)` helpers wrap the
   long-lived goroutines (poller cycle, report scheduler daily/weekly, syslog

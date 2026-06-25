@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.493] - 2026-06-25
+
+### Docs
+- **Marked the test-coverage backlog as substantially addressed in `FEATURE-ROADMAP.md` (Open audit follow-ups).** Updated the status-at-a-glance row to 🟡 (v0.10.492) and expanded the detail bullet with the per-package before/after numbers (notifier 1.8→48.2%, sflow 35.9→69.4%, snmp 10.8→20.1%, relay 0→wire-contract locked) and the explicit remaining headroom: the `snmp` package stays ~20% because most of it is live `Walk`/`Get` network methods that need a device or an injectable walker to exercise. Keeps the done-vs-outstanding picture current; no code change.
+
 ## [0.10.492] - 2026-06-25
 
 ### Tests
