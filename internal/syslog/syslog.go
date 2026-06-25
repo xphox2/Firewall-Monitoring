@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
 )
 
@@ -92,7 +93,7 @@ func (s *SyslogReceiver) Start() error {
 	}
 
 	s.running.Store(true)
-	go s.acceptLoop()
+	logging.SafeGo("syslog-accept", s.acceptLoop) // REL-01
 
 	log.Printf("Syslog receiver started on %s (TLS: %v)", addr, s.Config.UseTLS)
 	return nil
@@ -134,6 +135,7 @@ func (s *SyslogReceiver) acceptLoop() {
 		}
 		s.connWg.Add(1)
 		go func() {
+			defer logging.Recover("syslog-conn") // REL-01
 			defer s.connWg.Done()
 			s.handleConnection(conn)
 		}()
@@ -440,7 +442,7 @@ func (u *UDPSyslogReceiver) Start() error {
 
 	u.running.Store(true)
 	u.wg.Add(1)
-	go u.readLoop()
+	logging.SafeGo("syslog-udp", u.readLoop) // REL-01 (readLoop owns the wg.Done)
 
 	log.Printf("UDP syslog receiver started on %s", addr)
 	return nil

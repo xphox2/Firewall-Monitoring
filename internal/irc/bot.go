@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
 
 	"github.com/thoj/go-ircevent"
@@ -96,9 +97,11 @@ func (m *Manager) decryptServerSecrets(s *models.IRCServer) {
 }
 
 func (m *Manager) Start() {
-	go m.loadAndStartBots()
-	go m.reconnectLoop()
-	go m.statusLoop()
+	// REL-01: a panic in any manager loop must stay contained — it would
+	// otherwise crash the whole cmd/api process.
+	logging.SafeGo("irc-load-bots", m.loadAndStartBots)
+	logging.SafeGo("irc-reconnect", m.reconnectLoop)
+	logging.SafeGo("irc-status", m.statusLoop)
 }
 
 func (m *Manager) Stop() {
@@ -126,6 +129,7 @@ func (m *Manager) loadAndStartBots() {
 			m.bots[server.ID] = bot
 			m.wg.Add(1)
 			go func(b *Bot) {
+				defer logging.Recover("irc-bot") // REL-01
 				defer m.wg.Done()
 				b.Start()
 			}(bot)
@@ -202,6 +206,7 @@ func (m *Manager) reconnectLoop() {
 				if needsReconnect {
 					m.wg.Add(1)
 					go func(b *Bot) {
+						defer logging.Recover("irc-bot") // REL-01
 						defer m.wg.Done()
 						b.Start()
 					}(bot)
@@ -390,7 +395,7 @@ func (b *Bot) Start() {
 		return
 	}
 
-	go conn.Loop()
+	logging.SafeGo("irc-conn-loop", conn.Loop) // REL-01
 }
 
 func (b *Bot) Stop() {

@@ -114,15 +114,36 @@ Maturity legend: **Stable** = shipping; **Beta** = shipping with a known follow-
 
 ## Open audit follow-ups (2026-06)
 
-Still-open server items carried forward from the now-archived audit reports
+Server items carried forward from the now-archived audit reports
 (`docs/audit-archive/`) and the live `docs/audit-2026-06-23-consolidated.md`, so
-nothing is lost when those point-in-time reports are retired. Concise; each line
-is one tracked item.
+nothing is lost when those point-in-time reports are retired. Each line is one
+tracked item; resolved ones are struck through with the shipping version.
 
-- **M8 — startup fail-fast / health signal on undecryptable `{enc}` secrets.** A
-  rotated/lost `ENCRYPTION_KEY` makes every stored secret fail-closed silently;
-  surface it as a startup error and a `/readyz` degradation rather than silent
-  polling/notification failure.
+**Status at a glance (updated 2026-06-24):**
+
+| Item | State |
+|---|---|
+| M8 — fail-fast / health on undecryptable secrets | ✅ DONE v0.10.491 |
+| REL-01 — daemon panic recovery (`SafeGo`) | ✅ DONE v0.10.491 |
+| REL-04 — `statement_timeout` on maintenance DDL | ✅ DONE v0.10.491 |
+| LOW dead-code deletions | ✅ closed — not deletable (see below) |
+| Server `alpine` 3.19 → 3.21 base bump | ✅ DONE v0.10.490 |
+| `jackc/pgx/v5` CVE bump | ✅ DONE v0.10.489 |
+| Handler God-Object + `internal/database` split | 🔲 OPEN (large refactor) |
+| Test-coverage backlog (relay/notifier/sflow/vendor) | 🔲 OPEN |
+
+The two remaining open items are large, ongoing refactors rather than discrete
+bugs; everything else from the 2026-06-23 audit is shipped. Detail per item:
+
+- ~~**M8 — startup fail-fast / health signal on undecryptable `{enc}` secrets**~~
+  — **DONE v0.10.491**. A persisted key-check value (`encryption_key_canary`
+  SystemSetting) is decrypted at startup (`Database.VerifyEncryptionKey`): a
+  rotated/lost `ENCRYPTION_KEY` now makes the poller and trap-receiver
+  fail-fast (loud `log.Fatal`) instead of polling with empty creds, and the API
+  stays up but reports `encryption:false` on `GET /api/health` (+ new
+  `/api/readyz` alias) so it returns 503 instead of serving "healthy". Legacy
+  keys in `ENCRYPTION_KEY_HISTORY` satisfy the check, matching real secret
+  decryptability. Regression test: `crypto_canary_test.go`.
 - ~~Server Dockerfile base bump `alpine:3.19` → `3.21`~~ — **DONE v0.10.490**
   (`postgresql16`/`-contrib` verified at 16.14-r0 in alpine 3.21 main, so PG
   stays at major 16 and PGDATA is unchanged).
@@ -134,18 +155,29 @@ is one tracked item.
 - **Test-coverage backlog.** `internal/relay`, `internal/notifier`, the
   `internal/sflow` parser, and the SNMP vendor parsers remain thin; add
   table-driven + fuzz coverage.
-- **REL-01 — server-daemon panic recovery.** Long-lived goroutines in the poller,
-  trap-receiver, IRC manager, report scheduler, and batcher have no `recover()`;
-  a single panic takes the whole daemon down. (Confirmed still open: no `safeGo`
-  helper or `recover()` in those goroutines.)
-- **REL-04 — `statement_timeout` on the maintenance DDL paths.** The
-  `SET statement_timeout = 0` discipline is applied to the migration-lock and
-  interface-address dedupe paths but **not** to `convertEmptyTableToPartitioned`,
-  `EnsurePartitions`, `ConfigureAutovacuum`, or `dropPartitionsOlderThan` — on a
-  busy large DB those can hit the 30s default and 57014. (Confirmed still open.)
-- **LOW dead-code deletions** (e.g. the relay `StartCollector`/
-  `runCollectorHandler` busy-loop, unregistered `linux_vpn`/`bsd_vpn` vendor
-  stubs).
+- ~~**REL-01 — server-daemon panic recovery**~~ — **DONE v0.10.491**. New
+  `logging.SafeGo(name, fn)` / `logging.Recover(name)` helpers wrap the
+  long-lived goroutines (poller cycle, report scheduler daily/weekly, syslog
+  TCP-accept + UDP read loops, sFlow read loop, IRC manager load/reconnect/
+  status loops + per-bot + conn loop, DB batch flusher, API login-attempt
+  pruner). A panic is now contained to its goroutine, logged with a stack at
+  error level, and no longer aborts the whole process. (The HTTP request path
+  is already covered by `gin.Recovery()`.) Regression test: `safego_test.go`.
+- ~~**REL-04 — `statement_timeout` on the maintenance DDL paths**~~ — **DONE
+  v0.10.491**. New `Database.execMaintenanceDDL` lifts the timeout
+  (`SET LOCAL statement_timeout = 0`, Postgres-only, tx-scoped) for
+  `EnsurePartitions` (partition + index creates), `ConfigureAutovacuum`, and
+  `dropPartitionsOlderThan`; `convertEmptyTableToPartitioned` lifts it inside
+  its existing transaction. Maintenance DDL on a large/busy DB no longer aborts
+  with 57014 at the 30s default.
+- ~~**LOW dead-code deletions**~~ — **closed, no action**. Adversarial
+  re-verification (2026-06-24) found neither item is deletable: the relay
+  `StartCollector`/`runCollectorHandler` busy-loop was already removed with
+  `cmd/probe` in commit `493ef87` (2026-06-21), and `linux_vpn`/`bsd_vpn` are
+  **not** unregistered stubs — they are live shared helpers called by the
+  registered `firewalla` (linux_vpn) and `pfsense`/`opnsense` (bsd_vpn) vendor
+  profiles, so deleting them breaks the build. The original finding was
+  inaccurate.
 
 ---
 

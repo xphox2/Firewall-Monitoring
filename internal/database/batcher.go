@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"firewall-mon/internal/logging"
 )
 
 // BatchInserter buffers items of type T and flushes them in batches,
@@ -46,6 +48,10 @@ func NewBatchInserter[T any](maxSize int, flushInterval time.Duration, flushFn f
 	}
 
 	go func() {
+		// REL-01: a panic in flushFn must not crash the whole process. Recover
+		// logs it with a stack and lets the deferred close(doneCh) below still
+		// run, so Stop() unblocks instead of the binary aborting.
+		defer logging.Recover("db-batcher")
 		ticker := time.NewTicker(flushInterval)
 		defer ticker.Stop()
 		// AUDIT-006: close doneCh ONLY after the final Flush completes.

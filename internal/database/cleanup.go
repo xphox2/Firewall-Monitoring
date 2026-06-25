@@ -150,7 +150,7 @@ func (d *Database) dropPartitionsOlderThan(table string, cutoff time.Time) (bool
 		if upper.After(cutoff) {
 			continue // range reaches into the retention window — keep it
 		}
-		if err := d.db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, ch.Name)).Error; err != nil {
+		if err := d.execMaintenanceDDL(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, ch.Name)); err != nil {
 			return true, fmt.Errorf("drop old partition %s: %w", ch.Name, err)
 		}
 		log.Printf("cleanup: dropped old partition %s (range entirely before %s)", ch.Name, cutoff.Format("2006-01-02"))

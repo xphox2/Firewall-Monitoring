@@ -106,6 +106,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("trap-receiver: failed to initialize database: %v", err)
 	}
+	// M8: a wrong/lost ENCRYPTION_KEY means stored secrets are unreadable
+	// across the whole deployment. Fail-fast and loud rather than run degraded.
+	if ok, detail := db.EncryptionVerified(); !ok {
+		log.Fatalf("trap-receiver: FATAL: %s", detail)
+	}
 	defer db.Close()
 
 	// M11: expose /metrics /healthz /readyz so the trap-receiver isn't a black

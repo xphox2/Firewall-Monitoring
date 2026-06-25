@@ -5,9 +5,14 @@
 > (see `CHANGELOG.md`). Mediums M1–M5 shipped in v0.10.484/485, M9 in v0.10.486,
 > and M11 (poller/trap `/metrics`+`/healthz`+`/readyz`) in v0.10.487. The
 > `pgx` CVE bump shipped in v0.10.489 and the server `alpine` 3.19 → 3.21 base
-> bump in v0.10.490. The one genuinely-open **server** item remaining is **M8**
-> (fail-fast/health signal on undecryptable `{enc}` secrets), plus the **LOW
-> dead-code deletions** — tracked in
+> bump in v0.10.490. **M8** (fail-fast/health on undecryptable `{enc}` secrets),
+> **REL-01** (daemon panic recovery), and **REL-04** (`statement_timeout` on the
+> maintenance DDL paths) all shipped in **v0.10.491**. The **LOW dead-code
+> deletions** item is closed as not-actionable (the relay busy-loop was already
+> removed in `493ef87`; `linux_vpn`/`bsd_vpn` are live shared vendor helpers, not
+> dead stubs). No discrete **server** bug findings remain open — only the two
+> large ongoing refactors (handler/database God-object split, test-coverage
+> backlog), tracked in
 > [`FEATURE-ROADMAP.md` → Open audit follow-ups](FEATURE-ROADMAP.md#open-audit-follow-ups-2026-06).
 > The body below is the original report, kept as-shipped for provenance.
 

@@ -143,7 +143,23 @@ func (h *Handler) GetHealth(c *gin.Context) {
 		health["db_error"] = "database not initialized"
 	}
 	health["database"] = dbOK
-	if !dbOK {
+
+	// M8: surface the encryption key-check verdict. A rotated/lost
+	// ENCRYPTION_KEY makes every stored secret silently undecryptable; the
+	// poller/trap-receiver fail-fast on this, but the API stays up so an
+	// operator can fix the key — so it reports the failure here (503) instead
+	// of serving "healthy" while every SNMP poll quietly fails.
+	encOK := true
+	if h.db != nil {
+		var encDetail string
+		encOK, encDetail = h.db.EncryptionVerified()
+		health["encryption"] = encOK
+		if !encOK {
+			health["encryption_error"] = encDetail
+		}
+	}
+
+	if !dbOK || !encOK {
 		health["status"] = "unhealthy"
 		c.JSON(http.StatusServiceUnavailable, response.Success(health))
 		return
