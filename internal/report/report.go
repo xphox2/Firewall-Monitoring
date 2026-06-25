@@ -8,6 +8,7 @@ import (
 
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/notifier"
 )
 
@@ -32,8 +33,10 @@ func NewReportScheduler(cfg *config.Config, db *database.Database, notif *notifi
 
 // Start launches the daily and weekly report goroutines.
 func (rs *ReportScheduler) Start() {
-	go rs.runDaily()
-	go rs.runWeekly()
+	// REL-01: a panic in either scheduler loop must not crash the whole poller
+	// process — contain and log it instead.
+	logging.SafeGo("report-daily", rs.runDaily)
+	logging.SafeGo("report-weekly", rs.runWeekly)
 	log.Println("Report scheduler started")
 }
 

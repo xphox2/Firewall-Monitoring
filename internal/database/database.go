@@ -37,6 +37,14 @@ type Database struct {
 	// fall back to GORM's per-row Create. PostgreSQL production connects
 	// always set this.
 	pgxPool *pgxpool.Pool
+
+	// M8 encryption key-check verdict, set once by VerifyEncryptionKey at
+	// startup and read by EncryptionVerified (health/readiness, daemon
+	// fail-fast). encKeyBroken=true means the configured key chain provably
+	// cannot decrypt this database's {enc} secrets. Zero value (test harness,
+	// check not run) reports verified.
+	encKeyBroken bool
+	encKeyDetail string
 }
 
 func (d *Database) Gorm() *gorm.DB {
@@ -298,6 +306,16 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 
 	if err := d.RunMigrations(); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	// M8: verify the configured ENCRYPTION_KEY can still decrypt this
+	// database's secrets, and cache the verdict (EncryptionVerified). Run in
+	// EVERY process — before the startup-setup lock below, which only one wins
+	// — because each binary reads secrets and must know the key is good. This
+	// only logs/records; poller & trap-receiver fail-fast on the verdict, the
+	// API surfaces it on /health. The canary write (first run) is idempotent.
+	if err := d.VerifyEncryptionKey(); err != nil {
+		log.Printf("Encryption key verification: %v", err)
 	}
 
 	// The chatty post-migration setup steps (partitions, autovacuum, legacy

@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.490"
+const ServerVersion = "0.10.491"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -294,7 +294,7 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 
 	// Periodically prune expired login attempts to prevent unbounded map growth
-	go func() {
+	logging.SafeGo("login-attempt-pruner", func() { // REL-01
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -305,7 +305,7 @@ func main() {
 				return
 			}
 		}
-	}()
+	})
 
 	// Clear plaintext password from memory after initialization
 	cfg.Auth.AdminPassword = ""
@@ -537,6 +537,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	api.Use(middleware.RateLimiter(cfg))
 	{
 		api.GET("/health", handler.GetHealth)
+		api.GET("/readyz", handler.GetHealth)                // M8/k8s: readiness alias — same DB + encryption-key gate
 		api.POST("/client-error", handler.ReportClientError) // AUDIT-129: browser JS error beacon (rate-limited, logged)
 
 		public := api.Group("/public")

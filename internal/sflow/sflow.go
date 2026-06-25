@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"firewall-mon/internal/logging"
 )
 
 // ParsedFlow represents a decoded sFlow flow sample with extracted IP header fields.
@@ -118,7 +120,7 @@ func (r *SFlowReceiver) Start() error {
 
 	r.running.Store(true)
 	r.wg.Add(1)
-	go r.readLoop()
+	logging.SafeGo("sflow-read", r.readLoop) // REL-01 (readLoop owns the wg.Done)
 
 	return nil
 }

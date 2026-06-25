@@ -202,6 +202,27 @@ var partitionTables = []partitionDef{
 	{"flow_samples", "timestamp"},
 }
 
+// execMaintenanceDDL runs one maintenance DDL statement with the connection's
+// statement_timeout lifted for just that statement (REL-04). Partition
+// create/drop, autovacuum tuning, and the empty-table partition conversion can
+// each exceed the default 30s statement_timeout (AUDIT-037) on a large or busy
+// database and abort with SQLSTATE 57014 — at startup or in the cleanup cron,
+// exactly when the work must be allowed to finish. SET LOCAL keeps the lifted
+// timeout scoped to this short transaction, so it never leaks back to pooled
+// connections. On non-Postgres backends (SQLite test/dev — no statement_timeout)
+// it runs the statement directly.
+func (d *Database) execMaintenanceDDL(sql string, args ...interface{}) error {
+	if !d.dialect.IsPostgres() {
+		return d.db.Exec(sql, args...).Error
+	}
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+			return fmt.Errorf("lift statement_timeout: %w", err)
+		}
+		return tx.Exec(sql, args...).Error
+	})
+}
+
 // EnsurePartitions creates monthly range partitions for high-volume tables on PostgreSQL.
 // Partitions are created for the current month + 6 months ahead.
 // This is safe for existing servers - it only creates new partitions, never modifies existing data.
@@ -278,7 +299,7 @@ func (d *Database) EnsurePartitions() error {
 				CREATE TABLE %s PARTITION OF %s
 				FOR VALUES FROM ('%s') TO ('%s')`,
 				partitionName, def.tableName, startStr, endStr)
-			if err := d.db.Exec(sql).Error; err != nil {
+			if err := d.execMaintenanceDDL(sql); err != nil {
 				log.Printf("Partition creation warning for %s: %v", partitionName, err)
 				continue
 			}
@@ -328,7 +349,7 @@ func (d *Database) EnsurePartitions() error {
 				if idx.where != "" {
 					createIdxSQL += " WHERE " + idx.where
 				}
-				if err := d.db.Exec(createIdxSQL).Error; err != nil {
+				if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
 					log.Printf("Index creation warning on %s: %v", partitionName, err)
 				}
 			}
@@ -402,6 +423,15 @@ func (d *Database) migratePartitionHighVolume() error {
 // auto-assigning ids. Caller guarantees the table is empty.
 func (d *Database) convertEmptyTableToPartitioned(table, col string) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
+		// REL-04: the rename + LIKE-copy + PK build + drop below can exceed the
+		// 30s statement_timeout (AUDIT-037) on a wide table; lift it for the
+		// duration of this transaction. Postgres-only — the caller is PG-gated
+		// and the DDL is PARTITION BY ...; SET LOCAL stays scoped to this tx.
+		if d.dialect.IsPostgres() {
+			if err := tx.Exec("SET LOCAL statement_timeout = 0").Error; err != nil {
+				return fmt.Errorf("lift statement_timeout: %w", err)
+			}
+		}
 		// Rename the plain table aside and recreate it as a partitioned parent
 		// from the old table's shape. INCLUDING DEFAULTS copies the id serial's
 		// nextval() default so inserts keep auto-assigning ids.
@@ -516,7 +546,7 @@ func (d *Database) ConfigureAutovacuum() error {
 				autovacuum_vacuum_cost_delay = 10,
 				autovacuum_vacuum_cost_limit = 2000
 			)`, table)
-		if err := d.db.Exec(sql).Error; err != nil {
+		if err := d.execMaintenanceDDL(sql); err != nil {
 			// Log but don't fail - table might not exist yet or be a partitioned table
 			log.Printf("Autovacuum config warning for %s: %v", table, err)
 			continue

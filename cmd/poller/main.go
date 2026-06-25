@@ -16,6 +16,7 @@ import (
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/logging"
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
@@ -1748,6 +1749,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	// M8: a poller that can't decrypt device SNMP/SSH credentials polls with
+	// empty secrets and silently marks every device offline. Fail-fast and
+	// loud instead, so the misconfigured ENCRYPTION_KEY is fixed, not chased
+	// for hours through "all devices offline" symptoms.
+	if ok, detail := db.EncryptionVerified(); !ok {
+		log.Fatalf("FATAL: %s", detail)
+	}
 	log.Println("Database connected")
 	defer db.Close()
 
@@ -1784,11 +1792,11 @@ func main() {
 	reportScheduler := report.NewReportScheduler(cfg, db, notif)
 	go reportScheduler.Start()
 
-	go func() {
+	logging.SafeGo("poller", func() { // REL-01: contain a polling-loop panic, don't crash the daemon
 		if err := poller.Start(); err != nil {
 			log.Printf("Poller error: %v", err)
 		}
-	}()
+	})
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
