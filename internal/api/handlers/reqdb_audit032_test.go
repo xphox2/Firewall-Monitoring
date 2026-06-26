@@ -22,11 +22,13 @@ func TestRequestContextBoundary_AUDIT032(t *testing.T) {
 		return string(data)
 	}
 
-	// The helper itself must bind the request context.
+	// The helper itself must bind the request context. reqDB returns the
+	// repository interface (database.Store); WithContextStore wraps the concrete
+	// WithContext(ctx), so the request-context binding is preserved.
 	core := read("handlers.go")
 	if !strings.Contains(core, "func (h *Handler) reqDB(c *gin.Context)") ||
-		!strings.Contains(core, "h.db.WithContext(c.Request.Context())") {
-		t.Error("handlers.go must define reqDB(c) returning h.db.WithContext(c.Request.Context()) (AUDIT-032).")
+		!strings.Contains(core, "h.db.WithContextStore(c.Request.Context())") {
+		t.Error("handlers.go must define reqDB(c) returning h.db.WithContextStore(c.Request.Context()) (AUDIT-032).")
 	}
 
 	// POSITIVE: every browser-facing handler file routes DB work through reqDB.

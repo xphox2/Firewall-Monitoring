@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.494] - 2026-06-25
+
+### Changed
+- **Decoupled the API handlers from the `*database.Database` god-object behind a `database.Store` repository interface (2026-06-23 audit follow-up).** The high-value file-level split (the 4887-line `database.go` and the monolithic `handlers.go` into per-domain files) already shipped as AUDIT-072, leaving both structs lean (10 fields); this addresses the remaining receiver-type coupling — every one of the 171 handler methods previously hung off a concrete `*Database` exposing all 218 methods + the raw `*gorm.DB`. New `internal/database/store.go` defines `Store`, composed of narrow per-domain interfaces (`DeviceStore`, `ProbeStore`, `SiteStore`, `ConnectionStore`, `AlertStore`, `AlertPolicyStore`, `MaintenanceWindowStore`, `TelemetryReadStore`, `ChartStore`, `EventStatsStore`, `IngestStore`, `AuthStore`, `AuditStore`, `SecretStore`, `MaintenanceOpsStore`). **This is pure interface extraction — GORM stays, no query or behaviour changes:** `*database.Database` satisfies `Store` for free (`var _ Store = (*Database)(nil)`), the `Gorm() *gorm.DB` escape hatch is part of the interface, and `WithContextStore` preserves the AUDIT-032 request-context cancellation. Only `Handler.db`'s static type changed (concrete → `database.Store`); `httputil.RequireDB` and `buildReportHTML` were widened to accept the interface (the report subsystem, which needs a richer DB surface than handlers, recovers the concrete type via a single localized assertion). The daemons (poller, trap-receiver) keep the concrete `*database.Database`. Payoff: handlers are now unit-testable with a fake store and no database — demonstrated by `store_fake_test.go` running the real `GetSites` handler against an in-memory fake. Full `go build`/`go vet`/`go test ./...` green.
+
 ## [0.10.493] - 2026-06-25
 
 ### Docs

@@ -30,8 +30,12 @@ type Handler struct {
 	ircManager   *irc.Manager
 	notifier     *notifier.Notifier
 	version      string
-	db           *database.Database
-	mu           sync.RWMutex
+	// db is the repository interface (database.Store), not the concrete
+	// *database.Database god-object — handlers depend on the narrow method set
+	// and can be unit-tested with a fake store. The runtime value is still the
+	// GORM-backed *database.Database supplied by NewHandler.
+	db database.Store
+	mu sync.RWMutex
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
@@ -54,11 +58,11 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 // probe-ingestion handlers (handlers_data.go) deliberately keep using h.db (the
 // durable background context) so a probe's in-flight write over a flaky WAN is
 // never cancelled mid-flight.
-func (h *Handler) reqDB(c *gin.Context) *database.Database {
+func (h *Handler) reqDB(c *gin.Context) database.Store {
 	if h.db == nil {
 		return nil
 	}
-	return h.db.WithContext(c.Request.Context())
+	return h.db.WithContextStore(c.Request.Context())
 }
 
 func (h *Handler) SetIRCManager(mgr *irc.Manager) {

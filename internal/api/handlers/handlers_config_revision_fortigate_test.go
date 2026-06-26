@@ -183,7 +183,7 @@ func setupFortiGateProbeDevice(t *testing.T) (*Handler, *models.Probe, *models.D
 // fails loudly instead of silently sending production noise.
 func TestReceiveConfigRevision_FortiGateIVDrift_MergesIntoLatest(t *testing.T) {
 	h, probe, device := setupFortiGateProbeDevice(t)
-	am := alerts.NewAlertManager(&config.Config{}, nil, h.db)
+	am := alerts.NewAlertManager(&config.Config{}, nil, h.db.(*database.Database))
 	h.SetAlertManager(am)
 
 	body1 := map[string]interface{}{
@@ -259,7 +259,7 @@ func TestReceiveConfigRevision_FortiGateIVDrift_MergesIntoLatest(t *testing.T) {
 // through the merge test.
 func TestReceiveConfigRevision_FortiGateRealChange_FiresExactlyOneAlert(t *testing.T) {
 	h, probe, device := setupFortiGateProbeDevice(t)
-	am := alerts.NewAlertManager(&config.Config{}, nil, h.db)
+	am := alerts.NewAlertManager(&config.Config{}, nil, h.db.(*database.Database))
 	h.SetAlertManager(am)
 
 	doTestRequest(t, h.ReceiveConfigRevision, "POST", "/config-revision", probe.ID, probe.RegistrationKey, map[string]interface{}{
