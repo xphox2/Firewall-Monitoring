@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.497] - 2026-06-25
+
+### Fixed
+- **Flow samples actually failed because the `drops` column was missing from existing `flow_samples` tables — added it (migration v10).** This is the real cause of the probe `Failed to send flows batch: status 500 {"error":"Failed to save flow samples"}` loop; the server log showed `column "drops" of relation "flow_samples" does not exist (SQLSTATE 42703)`. The `Drops` field (sFlow v5 §3.1.1 sample-pool drops) was added to the `FlowSample` model and to `saveFlowSamplesPGX`'s COPY column list in the 2026-06-22 audit, but **no migration ever added the column to databases created before the field existed**: `cmd/api` boots with `RunMigrations()` only (there is no per-startup `AutoMigrate`), and the baseline `AutoMigrate` (v1) had already been recorded as applied, so it never re-ran to pick up the new field. Every COPY then named a column the table lacked and failed at parse time, before any row data was evaluated, so the whole batch 500'd and the collector re-queued it forever. Fix: migration **v10 `flow_samples_add_drops_column`** runs `ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS drops bigint NOT NULL DEFAULT 0` (metadata-only on PostgreSQL 11+, no table rewrite; routed through `execMaintenanceDDL` so the lifted `statement_timeout` covers a partitioned table propagating the ADD; SQLite path uses idempotent `AutoMigrate`). Verified against the live schema with `\d flow_samples`. **Correction to 0.10.496:** the v9 "widen int columns" change was a misdiagnosis — the live schema confirmed GORM's Postgres dialect already maps the unsigned `FlowSample` fields to wide-enough columns (`src_port`/`dst_port` = `integer`, the `uint32` fields = `bigint`), so v9 is a verified no-op (every `ALTER ... TYPE` targets the type the column already has) and was never the fix. It and the explicit `gorm:"type:..."` tags are retained as harmless, defensive pinning of the column widths. `go build` / `go vet` / `go test ./...` green.
+
 ## [0.10.496] - 2026-06-25
 
 ### Fixed
