@@ -36,8 +36,10 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
 
 ## Health & monitoring
 
-- **Liveness/readiness:** `GET /api/health` (DB ping, 503 on failure). The
-  Docker `HEALTHCHECK` already hits it every 30 s.
+- **Liveness/readiness:** `GET /api/health` (also aliased at `GET /api/readyz`).
+  Returns 503 on a DB ping failure **or** when the `ENCRYPTION_KEY` can't decrypt
+  the database's stored secrets (M8); the JSON includes an `"encryption"` boolean.
+  The Docker `HEALTHCHECK` already hits it every 30 s.
 - **Version:** `GET /api/version` returns the running `ServerVersion` — use it
   to confirm a redeploy actually shipped (embedded JS/HTML is compiled into the
   binary, so a browser refresh alone won't update the UI).
@@ -46,6 +48,13 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
 - **Poller / trap-receiver:** both now expose `/healthz`, `/readyz`, and
   Prometheus `/metrics` on their own listeners (`POLLER_METRICS_ADDR` default
   `:9101`, `TRAP_METRICS_ADDR` default `:9102`; set either to `off` to disable).
+- **Encryption-key fail-fast (M8):** unlike the API (which stays up and reports
+  unhealthy), the poller and trap-receiver **exit immediately** (`log.Fatal`) at
+  startup if the configured `ENCRYPTION_KEY` can't decrypt stored secrets — they
+  are useless without device credentials, so they crash-loop loudly rather than
+  poll with empty secrets. Fix by restoring the original `ENCRYPTION_KEY` (or
+  adding the old key to `ENCRYPTION_KEY_HISTORY`); see the **Upgrade** section's
+  `ENCRYPTION_KEY` continuity note below.
 
 ---
 

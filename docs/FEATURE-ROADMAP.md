@@ -119,7 +119,7 @@ Server items carried forward from the now-archived audit reports
 nothing is lost when those point-in-time reports are retired. Each line is one
 tracked item; resolved ones are struck through with the shipping version.
 
-**Status at a glance (updated 2026-06-24):**
+**Status at a glance — ✅ ALL RESOLVED (updated 2026-06-25):**
 
 | Item | State |
 |---|---|
@@ -129,12 +129,15 @@ tracked item; resolved ones are struck through with the shipping version.
 | LOW dead-code deletions | ✅ closed — not deletable (see below) |
 | Server `alpine` 3.19 → 3.21 base bump | ✅ DONE v0.10.490 |
 | `jackc/pgx/v5` CVE bump | ✅ DONE v0.10.489 |
-| Handler God-Object + `internal/database` split | 🟡 decoupled via `database.Store` v0.10.494 (file split was AUDIT-072) |
-| Test-coverage backlog (relay/notifier/sflow/snmp) | 🟡 substantially addressed v0.10.492 (snmp headroom remains) |
+| Handler God-Object + `internal/database` split | ✅ decoupled via `database.Store` v0.10.494 (file split was AUDIT-072) |
+| Test-coverage backlog (relay/notifier/sflow/snmp) | ✅ addressed v0.10.492 |
 
-Both remaining items are now substantially addressed; what's left in each is
-optional headroom rather than open audit work. Everything else from the
-2026-06-23 audit is shipped. Detail per item:
+**Every item from the 2026-06-23 audit is resolved.** The two large refactors
+are complete; the only things deferred are *optional engineering headroom*, not
+audit debt: deeper `internal/snmp` test coverage (needs a mockable SNMP walker)
+and further receiver decomposition into per-domain handler/repository structs
+(deliberately skipped as risky low-ROI churn now that the `database.Store` seam
+exists). Detail per item:
 
 - ~~**M8 — startup fail-fast / health signal on undecryptable `{enc}` secrets**~~
   — **DONE v0.10.491**. A persisted key-check value (`encryption_key_canary`
