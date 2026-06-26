@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.496] - 2026-06-25
+
+### Fixed
+- **Flow samples failed to save with HTTP 500 — `flow_samples` integer columns were too narrow for their unsigned values, aborting the whole pgx COPY batch.** Probes were logging `Failed to send flows batch: status 500 {"error":"Failed to save flow samples"}` and re-queuing the same flows every cycle, so no sFlow data was ever persisted. Root cause: GORM's Postgres dialect picks a column type from a Go int's **bit width and ignores signedness**, so the `FlowSample` UNSIGNED fields were mapped to signed columns one size too small — `src_port`/`dst_port` (`uint16`, 0–65535) → `smallint` (max 32767), and `sequence_number`/`sampling_rate`/`input_if_index`/`output_if_index` (`uint32`, 0–4.29B) → `integer` (max 2.15B). A single realistic value (an ephemeral source port of 54321, or an sFlow sequence number past 2³¹) overflows the column, and because `saveFlowSamplesPGX` inserts via a single `COPY`, that one row fails the entire batch. Fix: pinned the columns to types that hold the full unsigned range via `gorm:"type:integer"` / `gorm:"type:bigint"` tags (correct on fresh installs) and added migration **v9 `flow_samples_widen_int_columns`** — a Postgres `ALTER COLUMN ... TYPE` that widens existing deployments (ports → `integer`, the `uint32` fields → `bigint`). The widening is lossless and `ALTER ... TYPE` is a no-op when the column already matches, so the migration is idempotent; it is Postgres-only (SQLite uses dynamic typing and has nothing to overflow). Added a reflection-based regression test pinning the type tags so a future refactor can't silently drop them. Collector side needed no change — its re-queue behaviour was already correct. `go build` / `go test ./...` green.
+
 ## [0.10.495] - 2026-06-25
 
 ### Docs

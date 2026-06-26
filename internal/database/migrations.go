@@ -57,6 +57,7 @@ var registeredMigrations = []migration{
 	{version: 6, name: "device_ssh_host_key", run: (*Database).migrateDeviceSSHHostKey},
 	{version: 7, name: "flow_samples_sampling_rate_scale", run: (*Database).migrateFlowSamplesSamplingRateScale},
 	{version: 8, name: "flow_agent_drops_table", run: (*Database).migrateFlowAgentDropsTable},
+	{version: 9, name: "flow_samples_widen_int_columns", run: (*Database).migrateFlowSamplesWidenIntColumns},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

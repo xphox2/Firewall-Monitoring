@@ -730,8 +730,18 @@ type FlowSample struct {
 	DeviceID       uint      `json:"device_id" gorm:"index;index:idx_flow_device_ts,priority:1"`
 	ProbeID        uint      `json:"probe_id" gorm:"index"`
 	SamplerAddress string    `json:"sampler_address"`
-	SequenceNumber uint32    `json:"sequence_number"`
-	SamplingRate   uint32    `json:"sampling_rate"`
+	// The uint32 fields below (and the uint16 ports further down) are pinned to
+	// a Postgres column type WIDE ENOUGH for their unsigned range. GORM's
+	// Postgres dialect picks a column type from a Go int's BIT WIDTH alone and
+	// ignores signedness: uint32 -> `integer` (signed, max 2.15B) and uint16 ->
+	// `smallint` (signed, max 32767). But sFlow sequence numbers routinely pass
+	// 2^31 and ephemeral ports run to 65535, so realistic values overflow the
+	// signed column and abort the ENTIRE pgx COPY batch with a 500 — the
+	// collector then re-queues the same flows forever. bigint/integer hold the
+	// full uint32/uint16 ranges. Migration v9 widens existing columns; these
+	// tags fix fresh installs. See saveFlowSamplesPGX.
+	SequenceNumber uint32 `json:"sequence_number" gorm:"type:bigint"`
+	SamplingRate   uint32 `json:"sampling_rate" gorm:"type:bigint"`
 	// AUDIT-034: idx_flow_src_addr / idx_flow_dst_addr back the connection
 	// flow-stats queries, which filter with `src_addr LIKE ? OR dst_addr LIKE ?`
 	// (cidrToLikePattern builds `192.168.1.%`-style prefixes). Without these
@@ -740,13 +750,13 @@ type FlowSample struct {
 	// on both Postgres and SQLite.
 	SrcAddr       string `json:"src_addr" gorm:"index:idx_flow_src_addr"`
 	DstAddr       string `json:"dst_addr" gorm:"index:idx_flow_dst_addr"`
-	SrcPort       uint16 `json:"src_port"`
-	DstPort       uint16 `json:"dst_port"`
+	SrcPort       uint16 `json:"src_port" gorm:"type:integer"`
+	DstPort       uint16 `json:"dst_port" gorm:"type:integer"`
 	Protocol      uint8  `json:"protocol"`
 	Bytes         uint64 `json:"bytes"`
 	Packets       uint64 `json:"packets"`
-	InputIfIndex  uint32 `json:"input_if_index"`
-	OutputIfIndex uint32 `json:"output_if_index"`
+	InputIfIndex  uint32 `json:"input_if_index" gorm:"type:bigint"`
+	OutputIfIndex uint32 `json:"output_if_index" gorm:"type:bigint"`
 	TCPFlags      uint8  `json:"tcp_flags"`
 	// Drops is the sFlow v5 §3.1.1 sample-pool drops counter for this
 	// individual sample (RFC 3176). Non-zero values indicate the agent

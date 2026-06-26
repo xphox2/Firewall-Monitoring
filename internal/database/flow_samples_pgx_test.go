@@ -1,11 +1,45 @@
 package database
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/models"
 )
+
+// TestFlowSample_UnsignedColumnsAreWideEnough pins the gorm column-type
+// overrides that keep UNSIGNED fields from overflowing a too-narrow SIGNED
+// Postgres column. GORM's Postgres dialect picks a column type from a Go int's
+// bit width and ignores signedness, so without these tags uint16 ports land in
+// `smallint` (max 32767, but ports reach 65535) and uint32 fields land in
+// `integer` (max 2.15B, but sFlow sequence numbers pass 2^31). A single
+// out-of-range value aborts the whole pgx COPY batch with a 500 and the
+// collector re-queues forever. If this test fails, a refactor dropped a tag —
+// restore it AND keep migration v9 (flow_samples_widen_int_columns) in sync.
+func TestFlowSample_UnsignedColumnsAreWideEnough(t *testing.T) {
+	want := map[string]string{
+		"SrcPort":        "integer",
+		"DstPort":        "integer",
+		"SequenceNumber": "bigint",
+		"SamplingRate":   "bigint",
+		"InputIfIndex":   "bigint",
+		"OutputIfIndex":  "bigint",
+	}
+	ty := reflect.TypeOf(models.FlowSample{})
+	for fieldName, wantType := range want {
+		f, ok := ty.FieldByName(fieldName)
+		if !ok {
+			t.Errorf("FlowSample has no field %q", fieldName)
+			continue
+		}
+		gormTag := f.Tag.Get("gorm")
+		if !strings.Contains(gormTag, "type:"+wantType) {
+			t.Errorf("FlowSample.%s gorm tag = %q, want it to contain %q", fieldName, gormTag, "type:"+wantType)
+		}
+	}
+}
 
 // TestFlowSamplesCopyColumns_OrderAndFieldTypes pins the column order used
 // by saveFlowSamplesPGX. The pgx CopyFromRows binds columns POSITIONALLY —

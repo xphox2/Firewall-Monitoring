@@ -858,3 +858,49 @@ func (d *Database) migrateFlowSamplesSamplingRateScale() error {
 func (d *Database) migrateFlowAgentDropsTable() error {
 	return d.db.AutoMigrate(&models.AgentDrops{})
 }
+
+// migrateFlowSamplesWidenIntColumns (v9) widens flow_samples integer columns
+// that GORM's baseline AutoMigrate created one size too narrow. GORM's Postgres
+// dialect maps a Go int to a column type by bit width and IGNORES signedness,
+// so the UNSIGNED FlowSample fields landed in signed columns that can't hold
+// their full range:
+//
+//	src_port / dst_port        uint16 -> smallint (max 32767)  but ports reach 65535
+//	sequence_number            uint32 -> integer  (max 2.15B)  but sFlow seq nums pass 2^31
+//	sampling_rate              uint32 -> integer                (same overflow risk)
+//	input_if_index / output_if_index  uint32 -> integer        (same overflow risk)
+//
+// A single out-of-range value (an ephemeral source port of 54321, say) makes
+// the pgx COPY in saveFlowSamplesPGX fail the WHOLE batch with a 500; the
+// collector re-queues the same flows every cycle and no flow data is ever
+// persisted. This widens the columns to types that hold the full unsigned
+// range (ports -> integer, the uint32 fields -> bigint), matching the struct's
+// `gorm:"type:..."` tags that fix fresh installs.
+//
+// Idempotency: Postgres `ALTER COLUMN ... TYPE` is a no-op (no table rewrite)
+// when the column already has the target type, so re-running after a crash —
+// or after the startup AutoMigrate already widened them — is harmless.
+//
+// SQLite (test backend) uses dynamic typing and has no fixed-width integer
+// columns to overflow, and does not support ALTER COLUMN ... TYPE, so this is
+// Postgres-only; on SQLite it is a recorded no-op.
+func (d *Database) migrateFlowSamplesWidenIntColumns() error {
+	if !d.dialect.IsPostgres() {
+		log.Printf("migrate v9 flow_samples widen: non-Postgres backend, skipping (no-op)")
+		return nil
+	}
+	stmt := `
+		ALTER TABLE flow_samples
+			ALTER COLUMN src_port TYPE integer,
+			ALTER COLUMN dst_port TYPE integer,
+			ALTER COLUMN sequence_number TYPE bigint,
+			ALTER COLUMN sampling_rate TYPE bigint,
+			ALTER COLUMN input_if_index TYPE bigint,
+			ALTER COLUMN output_if_index TYPE bigint
+	`
+	if err := d.db.Exec(stmt).Error; err != nil {
+		return fmt.Errorf("migrate v9 flow_samples widen int columns: %w", err)
+	}
+	log.Printf("migrate v9 flow_samples widen: src_port/dst_port -> integer, sequence_number/sampling_rate/input_if_index/output_if_index -> bigint")
+	return nil
+}
