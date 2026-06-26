@@ -123,7 +123,9 @@ func ParseChartWindow(c *gin.Context, defaultRange string) (from, to time.Time) 
 }
 
 // RequireDB checks that db is non-nil. If nil, writes a 503 error and returns false.
-func RequireDB(c *gin.Context, db *database.Database) bool {
+// Accepts the database.Store interface; reqDB returns a true-nil interface when
+// the handler has no DB, so the nil check stays correct (no typed-nil trap).
+func RequireDB(c *gin.Context, db database.Store) bool {
 	if db == nil {
 		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
 		return false

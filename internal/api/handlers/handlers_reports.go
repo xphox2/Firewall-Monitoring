@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -53,7 +54,7 @@ func (h *Handler) reportSpikeThreshold() float64 {
 // document. collapsible wraps per-device detail in <details> for the admin
 // preview. db is the request-scoped handle (AUDIT-032) so the heavy fleet-wide
 // data gather is cancelled if the operator navigates away mid-render.
-func (h *Handler) buildReportHTML(db *database.Database, period string, collapsible bool) (subject, html string, err error) {
+func (h *Handler) buildReportHTML(db database.Store, period string, collapsible bool) (subject, html string, err error) {
 	hours, label := reportWindow(period)
 	tz := h.reportTimezone()
 	spikeThreshold := h.reportSpikeThreshold()
@@ -70,9 +71,18 @@ func (h *Handler) buildReportHTML(db *database.Database, period string, collapsi
 		return "", "", err
 	}
 
+	// The report subsystem (internal/report) reads a richer DB surface than the
+	// handler Store (per-device poll counts, top-talker rollups). The Store
+	// handed in is always the GORM-backed *database.Database, so recover it for
+	// that path; everything else here stays on the interface.
+	cdb, ok := db.(*database.Database)
+	if !ok {
+		return "", "", fmt.Errorf("report: concrete database backend unavailable")
+	}
+
 	deviceData := make([]*report.DeviceReportData, len(devices))
 	for i := range devices {
-		deviceData[i] = report.GatherDeviceData(db, &devices[i], hours, pollInterval, spikeThreshold)
+		deviceData[i] = report.GatherDeviceData(cdb, &devices[i], hours, pollInterval, spikeThreshold)
 	}
 
 	h.mu.RLock()

@@ -1,0 +1,237 @@
+package database
+
+import (
+	"context"
+
+	"gorm.io/gorm"
+
+	"firewall-mon/internal/auth"
+	"firewall-mon/internal/models"
+
+	"time"
+)
+
+// Store is the repository interface the API handlers depend on instead of the
+// concrete *Database god-object. It is satisfied for free by *Database — every
+// method below already exists on it — so this is pure interface extraction: no
+// query, ORM, or behaviour change. GORM remains the persistence layer; the
+// Gorm() escape hatch below hands handlers the raw *gorm.DB exactly as before.
+//
+// The value is decoupling and testability: a handler can be constructed with a
+// fake Store and unit-tested without a live database. Store is composed from
+// narrow per-domain interfaces (DeviceStore, AlertStore, …) so a focused test
+// or future caller can depend on just the slice it needs.
+//
+// Methods that mutate the data layer's wiring (migrations, partition setup,
+// batchers, key chain) are deliberately NOT here — those stay on the concrete
+// *Database used by the daemons (poller/trap-receiver), which never went
+// through this interface.
+type Store interface {
+	DeviceStore
+	ProbeStore
+	SiteStore
+	ConnectionStore
+	AlertStore
+	AlertPolicyStore
+	MaintenanceWindowStore
+	TelemetryReadStore
+	ChartStore
+	EventStatsStore
+	IngestStore
+	AuthStore
+	AuditStore
+	SecretStore
+	MaintenanceOpsStore
+
+	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
+	// (partial updates, one-off lookups). Unchanged escape hatch.
+	Gorm() *gorm.DB
+
+	// WithContextStore returns a request-scoped Store bound to ctx (AUDIT-032/079):
+	// a client disconnect cancels in-flight queries. Mirrors WithContext, but
+	// typed as Store so the handler layer stays on the interface.
+	WithContextStore(ctx context.Context) Store
+}
+
+// Compile-time proof that the concrete database satisfies the interface.
+var _ Store = (*Database)(nil)
+
+// WithContextStore adapts the existing WithContext to the Store interface so the
+// request-scoping plumbing in the handler layer never touches the concrete type.
+func (d *Database) WithContextStore(ctx context.Context) Store {
+	return d.WithContext(ctx)
+}
+
+// DeviceStore covers device CRUD and probe-scoped device lookups.
+type DeviceStore interface {
+	CreateDevice(device *models.Device) error
+	DeleteDevice(id uint) error
+	GetDevice(id uint) (*models.Device, error)
+	GetAllDevices() ([]models.Device, error)
+	GetDeviceIDsByProbe(probeID uint) ([]uint, error)
+	GetDevicesByProbe(probeID uint) ([]models.Device, error)
+	GetDeviceStatuses() ([]map[string]interface{}, error)
+	ResolveDevicesByIPs(ips []string) map[string]uint
+}
+
+// ProbeStore covers probe registration lifecycle.
+type ProbeStore interface {
+	ApproveProbe(probeID uint, approvedBy uint) error
+	CreateProbe(probe *models.Probe) error
+	DecommissionProbe(id uint) error
+	DeleteProbe(id uint) error
+	GetProbe(id uint) (*models.Probe, error)
+	GetProbeByName(name string) (*models.Probe, error)
+	GetAllProbes() ([]models.Probe, error)
+	RecommissionProbe(id uint) error
+	RejectProbe(probeID uint, reason string) error
+}
+
+// SiteStore covers site CRUD.
+type SiteStore interface {
+	CreateSite(site *models.Site) error
+	DeleteSite(id uint) error
+	GetSite(id uint) (*models.Site, error)
+	GetAllSites() ([]models.Site, error)
+	GetSiteByName(name string) (*models.Site, error)
+}
+
+// ConnectionStore covers the network-analyzer connection map and its details.
+type ConnectionStore interface {
+	CreateConnection(conn *models.DeviceConnection) error
+	GetAllConnections() ([]models.DeviceConnection, error)
+	GetConnectionDetail(connID uint) (*ConnectionDetailResult, error)
+	GetConnectionEvents(srcDeviceID, dstDeviceID uint, hours int) ([]ConnectionEvent, error)
+	GetConnectionFlowStats(connID uint, hours int) (*ConnectionFlowResult, error)
+	GetConnectionStatuses() ([]map[string]interface{}, error)
+	GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChartBucket, error)
+}
+
+// AlertStore covers alert acknowledgement, snooze, and notes.
+type AlertStore interface {
+	AcknowledgeAlertEnhanced(id uint, notes string) error
+	AcknowledgeAlertsBulk(ids []uint, notes string) (int64, error)
+	AcknowledgeAlertsByFilter(f AlertFilter, notes string) (int64, error)
+	GetAlerts(limit int, acknowledged *bool) ([]models.Alert, error)
+	UpdateAlertNotes(id uint, notes string) error
+	SnoozeAlert(id uint, until time.Time, by, reason string) error
+	SnoozeAlertsBulk(ids []uint, until time.Time, by, reason string) (int64, error)
+	SnoozeAlertsByFilter(f AlertFilter, until time.Time, by, reason string) (int64, error)
+	UnsnoozeAlert(id uint) error
+}
+
+// AlertPolicyStore covers alert policies, rules, and per-device/site overrides.
+type AlertPolicyStore interface {
+	CreateAlertPolicy(policy *models.AlertPolicy) error
+	DeleteAlertPolicy(id uint) error
+	GetAlertPolicies() ([]models.AlertPolicy, error)
+	GetAlertPolicy(id uint) (*models.AlertPolicy, error)
+	UpdateAlertPolicy(policy *models.AlertPolicy) error
+	BatchUpsertAlertRules(policyID uint, rules []models.AlertRule) error
+	GetDeviceAlertConfig(deviceID uint) (*models.DeviceAlertConfig, error)
+	UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error
+	DeleteDeviceAlertConfig(deviceID uint) error
+	GetSiteAlertConfig(siteID uint) (*models.SiteAlertConfig, error)
+	UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error
+	DeleteSiteAlertConfig(siteID uint) error
+}
+
+// MaintenanceWindowStore covers scheduled maintenance windows.
+type MaintenanceWindowStore interface {
+	CreateMaintenanceWindow(w *models.MaintenanceWindow) error
+	DeleteMaintenanceWindow(id uint) error
+	GetActiveMaintenanceWindows() ([]models.MaintenanceWindow, error)
+	GetMaintenanceWindows() ([]models.MaintenanceWindow, error)
+	UpdateMaintenanceWindow(w *models.MaintenanceWindow) error
+}
+
+// TelemetryReadStore covers the latest/history telemetry reads used by the
+// dashboard, device detail, and analytics pages.
+type TelemetryReadStore interface {
+	GetLatestHAStatus(deviceID uint) ([]models.HAStatus, error)
+	GetLatestInterfaceAddresses() ([]models.InterfaceAddress, error)
+	GetLatestInterfaceStats() ([]models.InterfaceStats, error)
+	GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error)
+	GetLatestSDWANHealth(deviceID uint) ([]models.SDWANHealth, error)
+	GetLatestSecurityStats(deviceID uint) (*models.SecurityStats, error)
+	GetLatestSystemStatus() (*models.SystemStatus, error)
+	GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error)
+	GetAllLatestVPNStatuses() ([]models.VPNStatus, error)
+	GetSystemStatusHistory(deviceID uint, hours int) ([]models.SystemStatus, error)
+	GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error)
+	GetSecurityStatsHistory(deviceID uint, hours int) ([]models.SecurityStats, error)
+	GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error)
+	GetPingStatsByTarget(deviceID uint, targetIP string) (*models.PingStats, error)
+	GetUptimeRecords(limit int) ([]models.UptimeRecord, error)
+	RecentHAFailover(deviceID uint, window time.Duration) bool
+	GetTelemetryTotals() (*TelemetryTotals, error)
+}
+
+// ChartStore covers the adaptive-bucket chart windows and dashboard series.
+type ChartStore interface {
+	GetInterfaceChartWindow(deviceID uint, ifIndex int, from, to time.Time) ([]InterfaceChartBucket, error)
+	GetVPNChartWindow(deviceID uint, tunnelName string, from, to time.Time) ([]VPNChartBucket, error)
+	GetDashboardTimeSeries(hours int) (*DashboardTimeSeries, error)
+}
+
+// EventStatsStore covers the alert/syslog/trap/flow statistics aggregates.
+type EventStatsStore interface {
+	GetAlertStats(hours int, deviceID uint) (*EventStatsResult, error)
+	GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, error)
+	GetTrapStats(hours int, deviceID uint) (*EventStatsResult, error)
+	GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error)
+}
+
+// IngestStore covers the probe-ingestion write path and batch idempotency.
+type IngestStore interface {
+	SaveFlowSamples(samples []models.FlowSample) error
+	SaveHAStatuses(statuses []models.HAStatus) error
+	SaveInterfaceAddresses(addrs []models.InterfaceAddress) error
+	SaveInterfaceStats(stats []models.InterfaceStats) error
+	SaveLicenseInfo(licenses []models.LicenseInfo) error
+	SavePingResults(results []models.PingResult) error
+	SavePingStats(stats *models.PingStats) error
+	SaveProcessorStats(stats []models.ProcessorStats) error
+	SaveSDWANHealth(health []models.SDWANHealth) error
+	SaveSecurityStats(stats []models.SecurityStats) error
+	SaveSyslogMessages(msgs []models.SyslogMessage) error
+	SaveSystemStatuses(statuses []models.SystemStatus) error
+	SaveTrapEvents(traps []models.TrapEvent) error
+	SaveVPNStatuses(statuses []models.VPNStatus) error
+	MarkBatchProcessed(probeID uint, batchID string) error
+	BatchAlreadyProcessed(probeID uint, batchID string) bool
+}
+
+// AuthStore covers admin credential reads/writes used by the auth handlers.
+type AuthStore interface {
+	GetAdminByUsername(username string) (*auth.AdminAuth, error)
+	UpdateAdminPassword(id uint, password string) error
+	IncrementAdminTokenVersion(id uint) error
+	SaveLoginAttempt(attempt *models.LoginAttempt) error
+}
+
+// AuditStore covers the admin-action audit trail.
+type AuditStore interface {
+	GetAuditLogs(actor, action string, since time.Time, limit, offset int) ([]models.AuditLog, int64, error)
+	SaveAuditLog(entry *models.AuditLog) error
+}
+
+// SecretStore covers the field-level encrypt/decrypt helpers handlers use when
+// echoing or storing device/IRC credentials.
+type SecretStore interface {
+	EncryptField(plaintext string) string
+	DecryptField(ciphertext string) string
+	EncryptIRCChannelSecrets(ch *models.IRCChannel)
+	DecryptIRCChannelSecrets(ch *models.IRCChannel)
+	EncryptIRCServerSecrets(s *models.IRCServer)
+	DecryptIRCServerSecrets(s *models.IRCServer)
+}
+
+// MaintenanceOpsStore covers the admin-triggered maintenance operations exposed
+// through the settings/health endpoints.
+type MaintenanceOpsStore interface {
+	CleanupConfigRevisions() error
+	CollapseLegacyConfigRevisionDuplicates() (int64, error)
+	EnsurePartitions() error
+	EncryptionVerified() (bool, string)
+}

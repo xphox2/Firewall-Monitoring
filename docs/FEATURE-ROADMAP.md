@@ -129,12 +129,12 @@ tracked item; resolved ones are struck through with the shipping version.
 | LOW dead-code deletions | ✅ closed — not deletable (see below) |
 | Server `alpine` 3.19 → 3.21 base bump | ✅ DONE v0.10.490 |
 | `jackc/pgx/v5` CVE bump | ✅ DONE v0.10.489 |
-| Handler God-Object + `internal/database` split | 🔲 OPEN (large refactor) |
+| Handler God-Object + `internal/database` split | 🟡 decoupled via `database.Store` v0.10.494 (file split was AUDIT-072) |
 | Test-coverage backlog (relay/notifier/sflow/snmp) | 🟡 substantially addressed v0.10.492 (snmp headroom remains) |
 
-The one fully-open item is a large, ongoing refactor; the test-coverage backlog
-was substantially addressed in v0.10.492 (only the network-bound `snmp` paths
-remain). Everything else from the 2026-06-23 audit is shipped. Detail per item:
+Both remaining items are now substantially addressed; what's left in each is
+optional headroom rather than open audit work. Everything else from the
+2026-06-23 audit is shipped. Detail per item:
 
 - ~~**M8 — startup fail-fast / health signal on undecryptable `{enc}` secrets**~~
   — **DONE v0.10.491**. A persisted key-check value (`encryption_key_canary`
@@ -150,9 +150,20 @@ remain). Everything else from the 2026-06-23 audit is shipped. Detail per item:
   stays at major 16 and PGDATA is unchanged).
 - ~~`jackc/pgx/v5` v5.6.0 CVE bump~~ — **DONE v0.10.489** (→ v5.10.0, clears
   CVE-2026-33815/33816; `govulncheck ./...` reports no vulnerabilities).
-- **Handler God-Object split + `internal/database` package split.** Large
-  refactors: continue decomposing the handlers struct and the database package
-  along domain lines (already partially done — AUDIT-072).
+- 🟡 **Handler God-Object split + `internal/database` package split — decoupled
+  v0.10.494.** The file-level split (4887-line `database.go` + the monolithic
+  `handlers.go` → per-domain files) shipped in AUDIT-072; both structs are
+  already lean (10 fields). v0.10.494 addresses the remaining receiver-type
+  coupling by extracting a `database.Store` repository interface (composed of
+  narrow per-domain interfaces: `DeviceStore`, `AlertStore`, `IngestStore`, …)
+  that the handlers depend on instead of the concrete `*database.Database`.
+  **GORM and every query are unchanged** — `*database.Database` satisfies the
+  interface for free; only `Handler.db`'s static type changed, and a fake `Store`
+  now unit-tests handlers with no database (`store_fake_test.go`). The daemons
+  (poller/trap-receiver) keep the concrete type. **Optional headroom:** fully
+  decomposing the receiver into separate handler structs / repository structs was
+  deliberately not done — it's large, risky churn with limited benefit now that
+  the interface seam exists, and conflicts with the project's keep-it-simple bar.
 - 🟡 **Test-coverage backlog — substantially addressed v0.10.492.** Table-driven
   coverage added across all four packages: `internal/notifier` 1.8% → 48.2%
   (pure payload builders + SMTP LOGIN/PLAIN auth + `SendAlert` fan-out),

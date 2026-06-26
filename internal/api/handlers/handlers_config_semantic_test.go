@@ -9,6 +9,7 @@ import (
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
 )
 
@@ -84,7 +85,7 @@ func TestGetDeviceConfigDiff_ObjectChanges_Shape(t *testing.T) {
 // and that the revision row + alert carry that attribution.
 func TestReceiveConfigRevision_AttributionFromSyslog(t *testing.T) {
 	h, probe, device := setupFortiGateProbeDevice(t)
-	am := alerts.NewAlertManager(&config.Config{}, nil, h.db)
+	am := alerts.NewAlertManager(&config.Config{}, nil, h.db.(*database.Database))
 	h.SetAlertManager(am)
 
 	// First backup establishes the baseline (insert-first, no alert/attribution).
@@ -153,7 +154,7 @@ func TestReceiveConfigRevision_AttributionFromSyslog(t *testing.T) {
 // alert is escalated accordingly.
 func TestReceiveConfigRevision_OutOfBandWhenNoSyslog(t *testing.T) {
 	h, probe, device := setupFortiGateProbeDevice(t)
-	am := alerts.NewAlertManager(&config.Config{}, nil, h.db)
+	am := alerts.NewAlertManager(&config.Config{}, nil, h.db.(*database.Database))
 	h.SetAlertManager(am)
 
 	doTestRequest(t, h.ReceiveConfigRevision, "POST", "/config-revision", probe.ID, probe.RegistrationKey, map[string]interface{}{
