@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.495] - 2026-06-25
+
+### Docs
+- **Documentation accuracy sweep — marked the 2026-06-23 audit fully resolved and reconciled every doc with the current code.** `docs/audit-2026-06-23-consolidated.md` and `docs/FEATURE-ROADMAP.md` now show all server findings (HIGH H1–H8, the MEDIUM cluster incl. M8, REL-01/REL-04, the dependency/base bumps, and both large refactors) as ✅ resolved — the only remaining work is explicitly labelled optional engineering headroom, not audit debt. `docs/AUDIT.md` cross-references the resolved follow-up audit. Corrected stale/inaccurate claims found by a code-vs-docs verification pass: the SNMP vendor list (six registered profiles — FortiGate/Palo Alto/SonicWall/pfSense/OPNsense/Firewalla; **no "generic" SNMP profile**; Cisco ASA is config-diff only) in `README.md`, `docs/FEATURES.md` (support matrix), and the prose; the `VendorProfile` interface in `docs/custom-vendor.md` (dropped the non-existent `SSLVPN*` methods; `GetAllVPNTunnels` returns `([]models.VPNStatus, error)`); the README architecture tree (now lists all 23 `internal/` packages with accurate one-liners, incl. `relay` = probe↔server wire contract); `CONTRIBUTING.md` (Go 1.25+, real test-coverage candidates, removed the false "OPERATIONS.md is missing" note); `THIRD-PARTY-NOTICES.md` (full `go-ircevent` pseudo-version); and `docs/OPERATIONS.md` (health endpoint documents the `/api/readyz` alias, the M8 503-on-undecryptable-secrets behaviour and `"encryption"` JSON field, and the poller/trap fail-fast). Docs-only — no code or behaviour change; version bump for traceability.
+
 ## [0.10.494] - 2026-06-25
 
 ### Changed

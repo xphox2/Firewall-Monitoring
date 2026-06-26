@@ -105,7 +105,7 @@ Compiled output included as `cmd/api/static/css/tailwind.css`. Build-time only.
 | [github.com/gosnmp/gosnmp](https://github.com/gosnmp/gosnmp) | v1.43.2 | BSD-2-Clause |
 | [github.com/jackc/pgx/v5](https://github.com/jackc/pgx) | v5.10.0 | MIT |
 | [github.com/prometheus/client_golang](https://github.com/prometheus/client_golang) | v1.23.2 | Apache-2.0 |
-| [github.com/thoj/go-ircevent](https://github.com/thoj/go-ircevent) | v0.0.0-20210723 | BSD-3-Clause |
+| [github.com/thoj/go-ircevent](https://github.com/thoj/go-ircevent) | v0.0.0-20210723090443-73e444401d64 | BSD-3-Clause |
 | [github.com/wcharczuk/go-chart/v2](https://github.com/wcharczuk/go-chart) | v2.1.2 | MIT |
 | [go.opentelemetry.io/otel](https://github.com/open-telemetry/opentelemetry-go) | v1.44.0 | Apache-2.0 |
 | [go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp](https://github.com/open-telemetry/opentelemetry-go) | v1.44.0 | Apache-2.0 |

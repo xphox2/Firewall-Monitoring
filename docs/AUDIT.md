@@ -8,11 +8,16 @@
 
 | Metric | Value |
 |---|---|
-| Server version | **v0.10.404** |
+| Version when this audit closed | **v0.10.404** (current server: v0.10.495) |
 | Bug findings resolved | **170 / 170  (100%)** ✅ |
 | CRITICAL still open | **0** ✅ |
 | Open bug findings | **0** 🎉 |
 | Feature ideas (F01–F89) | out of scope — future v0.11.0+ |
+
+> **Later follow-up audit also resolved.** A second dual-repo audit on 2026-06-23
+> (`docs/audit-2026-06-23-consolidated.md`) is likewise **fully resolved** — all
+> HIGH/MEDIUM/LOW findings + the two large refactors shipped by v0.10.494. See
+> `docs/FEATURE-ROADMAP.md` → Open audit follow-ups.
 
 **Where the effort stands:**
 - ✅ All 11 CRITICAL deployment blockers — resolved (v0.10.241–292)

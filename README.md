@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen)](https://github.com/xphox2/Firewall-Monitoring/actions)
-[![Version](https://img.shields.io/badge/version-0.10.487-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.10.495-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25.11+-00ADD8)](go.mod)
 
@@ -35,8 +35,8 @@ the edge**, this repo **runs at HQ**.
 
 Self-hosted network/security teams and small-to-mid MSPs running a
 **firewall fleet across multiple sites** — primarily FortiGate today, with
-Palo Alto and Cisco ASA profiles and a generic SNMP profile for anything
-else. It gives you one pane of glass (status, interfaces, VPN tunnels,
+SNMP profiles for Palo Alto, SonicWall, pfSense, OPNsense and Firewalla, plus
+config-diff support for Cisco ASA. It gives you one pane of glass (status, interfaces, VPN tunnels,
 syslog, sFlow, alerts, reports) with **lightweight remote probes** that
 relay SNMP/syslog/sFlow/ICMP from sites you can't poll directly — without
 standing up a heavyweight NMS.
@@ -60,7 +60,7 @@ standing up a heavyweight NMS.
 | License | OSS (MIT) | Commercial | OSS + paid | OSS | OSS | OSS + paid | OSS | SaaS |
 | Self-hosted | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✗ (SaaS) |
 | Multi-site relay probes | ✅ built-in | sensors/remote probes | distributed pollers | proxies | distributed pollers | distributed | ✗ | n/a |
-| Multi-vendor firewall SNMP profiles | ✅ (Forti/Palo/ASA/+generic) | generic SNMP | generic SNMP | generic SNMP | generic SNMP | generic SNMP | ✗ | ✗ |
+| Multi-vendor firewall SNMP profiles | ✅ (Forti/Palo/SonicWall/pfSense/OPNsense/Firewalla) | generic SNMP | generic SNMP | generic SNMP | generic SNMP | generic SNMP | ✗ | ✗ |
 | Config-change tracking | ✅ (per-vendor normalized) | partial | plugins | partial | ✅ (Oxidized) | partial | ✗ | ✗ |
 | Syslog + sFlow ingest | ✅ | add-on | plugins | add-on | partial | add-on | ✗ | ✗ |
 | Footprint | Light (3 Go daemons) | Heavy | Medium | Medium | Medium | Medium | Light | n/a |
@@ -84,7 +84,7 @@ public AUDIT-NNN row exists.
 - **[Server] SNMP polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256)
   on `SNMP_POLL_INTERVAL` (default 60s). Per-device `VendorProfile`
   registry. SNMP-pollable profiles: FortiGate, Palo Alto, SonicWall,
-  pfSense, OPNsense, Firewalla, plus a generic SNMP profile. Cisco ASA is
+  pfSense, OPNsense, Firewalla (six registered profiles). Cisco ASA is
   supported for config-diff only (no SNMP polling profile).
 - **[Server] SNMP trap receiver** (UDP/162). V1 enterprise + V2c
   specific-trap, per-source-IP rate limit, community filter (required,
@@ -227,20 +227,31 @@ firewall-mon/
 │   ├── poller/        # SNMP polling daemon (advisory-lock leader)
 │   ├── configcheck/   # Config-backup validation CLI
 │   └── trap-receiver/ # SNMP trap listener
-├── internal/
-│   ├── config/        # Configuration management
-│   ├── auth/          # JWT authentication & security
-│   ├── snmp/          # SNMP client & trap receiver (FortiGate OIDs)
-│   ├── alerts/        # Alert threshold checking
-│   ├── notifier/      # Email/webhook notifications
+├── internal/          # 23 packages — key ones below
+│   ├── config/        # Configuration management (env vars)
+│   ├── database/      # GORM persistence (SQLite/Postgres) + Store repo interface
+│   ├── auth/          # JWT authentication & lockout
+│   ├── snmp/          # SNMP client + multi-vendor OID profiles
+│   ├── configdiff/    # Vendor-aware config normalization & semantic diff
+│   ├── alerts/        # Alert threshold checking / AlertManager
+│   ├── notifier/      # Email/Slack/Discord/webhook notifications
+│   ├── report/        # Scheduled email/HTML executive reports
+│   ├── irc/           # IRC bot manager
 │   ├── uptime/        # Uptime calculation
-│   ├── models/        # Data structures
-│   ├── relay/         # Probe relay client
+│   ├── models/        # GORM data models
+│   ├── relay/         # Probe↔server wire contract (DTOs + schema_version)
 │   ├── ping/          # ICMP ping collector
-│   ├── syslog/        # Syslog receiver
-│   ├── sflow/         # sFlow receiver
+│   ├── syslog/        # Syslog receiver (TCP/UDP/TLS)
+│   ├── sflow/         # sFlow v5 receiver
+│   ├── secrets/       # JWT/encryption key load-or-generate
+│   ├── audit/         # Append-only admin-action audit log
+│   ├── metrics/       # Prometheus /metrics + observability server
+│   ├── logging/       # slog setup + SafeGo panic recovery
+│   ├── tracing/       # OpenTelemetry (OTLP) tracing
+│   ├── httputil/      # Shared HTTP helpers (SSRF guard, error responses)
+│   ├── shell/         # Static-source guard tests (cross-cutting invariants)
 │   └── api/
-│       ├── handlers/  # HTTP handlers
+│       ├── handlers/  # HTTP handlers (split per domain)
 │       └── middleware/ # Security middleware
 ├── web/
 │   ├── public/        # Public dashboard

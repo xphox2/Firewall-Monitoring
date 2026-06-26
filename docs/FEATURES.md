@@ -26,7 +26,7 @@
 | Feature | Status | Role | Since |
 |---|---|---|---|
 | SNMP polling (v1 / v2c / v3, MD5/SHA/SHA2, DES/AES/AES192/256) | Stable | [Server] | 0.1 |
-| Per-device SNMP vendor OID profile (FortiGate, Palo Alto, SonicWall, pfSense, OPNsense, Firewalla, generic) | Stable | [Server] | 0.1 |
+| Per-device SNMP vendor OID profile (FortiGate, Palo Alto, SonicWall, pfSense, OPNsense, Firewalla) | Stable | [Server] | 0.1 |
 | SNMP trap receiver (UDP/162, V1 enterprise + V2c specific-trap, per-source-IP rate-limit, community filter) | Stable | [Server] | 0.1 |
 | Syslog receiver — TCP + UDP, RFC 5424 + RFC 3164, `SYSLOG_ALLOWED_SOURCES` allow-list | Stable | [Server] | 0.1 |
 | sFlow v5 datagram parser | Stable | [Server] | 0.1 |
@@ -169,8 +169,8 @@ profile (see [config-diff-roadmap.md](config-diff-roadmap.md) and the
 | **pfsense** | full | ✅ (CARP) | — | — | — | IPsec |
 | **opnsense** | full | ✅ (CARP) | — | — | — | IPsec |
 | **firewalla** | basic | — | — | — | — | — |
-| **generic** | system-stats only | — | — | — | — | — |
 | **cisco_asa** | _config-diff only — no SNMP profile_ | — | — | — | — | — |
+| **generic** | _no SNMP profile — config-diff identity-hash only_ | — | — | — | — | — |
 
 To add a vendor: see [custom-vendor.md](custom-vendor.md).
 

@@ -4,7 +4,7 @@ Thanks for considering a contribution. This document covers the dev environment,
 
 ## Dev environment
 
-- **Go**: 1.24+ (check `go.mod` for the exact module-level Go version).
+- **Go**: 1.25+ (check `go.mod` for the exact module-level Go version).
 - **Postgres**: 14+ (production target). Tests use the in-memory SQLite shim — `:memory:` from `modernc.org/sqlite` — so you can `go test ./...` without a live database.
 - **Node**: 20+ only if you need to rebuild `cmd/api/static/css/tailwind.css` via `npm run tailwind`. Most contributors will not touch CSS.
 - **OS**: Linux / macOS / WSL2. Native Windows builds work but a few helper scripts (`deploy.sh`, `entrypoint.sh`) assume bash + `su-exec`.
@@ -21,9 +21,9 @@ go test ./...
 ## What is in scope
 
 - Bug fixes (point to the AUDIT-NNN ID from `docs/AUDIT.md` in the PR title when applicable).
-- Test coverage for previously-untested packages (`internal/auth`, `internal/relay`, `internal/uptime`, `internal/sflow`, `internal/syslog` are good candidates — see AUDIT-117).
+- Test coverage for the still-thin packages (`internal/snmp` vendor poll paths behind a mockable SNMP walker, `internal/notifier` SMTP send, `internal/relay` beyond the wire-contract tests — see the test-coverage notes in `docs/FEATURE-ROADMAP.md`).
 - Vendor profile additions (`internal/snmp/vendor_*.go` + `internal/configdiff/vendor_*.go` — see AUDIT-113 for the "how").
-- Documentation, especially `docs/OPERATIONS.md` (currently missing — see AUDIT-111).
+- Documentation improvements across `docs/` (operator runbooks, the architecture and support-matrix docs, vendor guides).
 
 ## What is out of scope (for now)
 
