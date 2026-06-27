@@ -26,6 +26,10 @@ func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz str
 	m := BuildReportModel(devices, deviceData, tz, hours, period)
 	m.Version = version
 	m.Collapsible = collapsible
+	m.IsEmail = !collapsible
+	for i := range m.Devices {
+		m.Devices[i].IsEmail = m.IsEmail
+	}
 	html, err := RenderReportHTML(m)
 	if err != nil {
 		return "", "", err

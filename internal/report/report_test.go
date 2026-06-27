@@ -194,6 +194,25 @@ func TestRenderReportHTML(t *testing.T) {
 	if strings.Contains(html, "cid:") || strings.Contains(html, "<img") {
 		t.Error("report HTML must not reference images / CID attachments")
 	}
+	if !strings.Contains(html, "<svg") {
+		t.Error("expected web preview to contain SVG charts")
+	}
+
+	// Test IsEmail = true mode (Email version: no SVGs to avoid Gmail clipping)
+	m.IsEmail = true
+	for i := range m.Devices {
+		m.Devices[i].IsEmail = true
+	}
+	htmlEmail, err := RenderReportHTML(m)
+	if err != nil {
+		t.Fatalf("render email: %v", err)
+	}
+	if strings.Contains(htmlEmail, "<svg") {
+		t.Error("expected email report to contain no SVG charts (to prevent Gmail clipping)")
+	}
+	if !strings.Contains(htmlEmail, "Resource Trends") {
+		t.Error("expected email report to contain Resource Trends text summary")
+	}
 }
 
 func TestSVGCharts(t *testing.T) {

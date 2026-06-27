@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.498] - 2026-06-27
+
+### Changed
+- **Operations report redesign — modernized the email/preview HTML and made the email body Gmail-safe.** The shared `internal/report` template (`template_report.go`) was reworked with a Plus Jakarta Sans type system, a gradient brand accent, refreshed verdict/KPI/bandwidth/spike/device styling, a mobile-responsive `@media (max-width:600px)` layout, and a full dark-themed `.admin-preview` skin (plus print-mode overrides) so the in-admin preview matches the console's dark UI. SVG throughput and CPU/Mem charts gained subtle `feDropShadow` filters. **New `IsEmail` rendering mode** (`ReportModel.IsEmail` / `DeviceCard.IsEmail`, set in `BuildReport` when not collapsible): the emailed body now omits all embedded SVG charts — which Gmail clips on large messages — and substitutes compact text summaries (a "Resource Trends" CPU/Mem/busiest-link block, an alert-totals paragraph, and a "view in Web Console" footer note), while the admin web preview keeps the full interactive SVG charts. Email reports remain image-free with zero CID attachments. Tests updated: `report_test.go` asserts the web preview contains `<svg>` and the email body contains none (plus the "Resource Trends" fallback); `render_validate_test.go` skips the strict SVG-XML well-formedness check for `IsEmail` reports and instead asserts no SVG fragments are emitted. `gofmt` / `go build ./...` / `go test ./...` green.
+
 ## [0.10.497] - 2026-06-25
 
 ### Fixed

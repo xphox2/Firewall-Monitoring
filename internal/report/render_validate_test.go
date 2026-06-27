@@ -129,16 +129,22 @@ func TestReportHTMLWellFormed(t *testing.T) {
 			assertBalanced(t, out, label, "g")
 			assertBalanced(t, out, label, "details")
 
-			// 5. Every embedded SVG fragment is well-formed XML (strict).
+			// 5. Every embedded SVG fragment is well-formed XML (strict) if not IsEmail.
 			svgs := svgFragmentRe.FindAllString(out, -1)
-			if len(svgs) == 0 {
-				t.Errorf("%s: expected at least one <svg> chart, found none", label("svg"))
-			}
-			for i, frag := range svgs {
-				if err := xml.Unmarshal([]byte(frag), new(struct {
-					XMLName xml.Name
-				})); err != nil {
-					t.Errorf("%s: SVG fragment #%d is not well-formed XML: %v", label("svg-xml"), i, err)
+			if m.IsEmail {
+				if len(svgs) > 0 {
+					t.Errorf("%s: expected no <svg> charts in email report, found %d", label("svg"), len(svgs))
+				}
+			} else {
+				if len(svgs) == 0 {
+					t.Errorf("%s: expected at least one <svg> chart, found none", label("svg"))
+				}
+				for i, frag := range svgs {
+					if err := xml.Unmarshal([]byte(frag), new(struct {
+						XMLName xml.Name
+					})); err != nil {
+						t.Errorf("%s: SVG fragment #%d is not well-formed XML: %v", label("svg-xml"), i, err)
+					}
 				}
 			}
 

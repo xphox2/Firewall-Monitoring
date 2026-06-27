@@ -21,6 +21,7 @@ type ReportModel struct {
 	Version     string
 	Hours       int
 	Collapsible bool // admin preview wraps device detail in <details>
+	IsEmail     bool // true when rendering for email body (hides SVGs, uses mobile-optimized responsive layout)
 
 	// Fleet KPIs
 	TotalDevices   int
@@ -119,6 +120,7 @@ type DeviceCard struct {
 	Spikes         []SpikeGroup
 	SpikeFlows     []SpikeFlow // top sFlow conversations seen during this device's spikes
 	Timezone       string
+	IsEmail        bool // true when rendering for email body (hides SVGs)
 }
 
 // SpikeFlow is one sampled flow conversation observed on an interface during a

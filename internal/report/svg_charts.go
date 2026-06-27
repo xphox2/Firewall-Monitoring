@@ -166,6 +166,9 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 				<stop offset="0%%" stop-color="#1e3a5f" stop-opacity="0.35"/>
 				<stop offset="100%%" stop-color="#1e3a5f" stop-opacity="0.0"/>
 			</linearGradient>
+			<filter id="shadow-%s" x="-10%%" y="-10%%" width="120%%" height="120%%">
+				<feDropShadow dx="0" dy="3.5" stdDeviation="2.5" flood-color="#1e3a5f" flood-opacity="0.2"/>
+			</filter>
 		</defs>
 		<style>
 			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
@@ -176,7 +179,7 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 			.hover-slice { fill: transparent; cursor: crosshair; }
 			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
 		</style>
-	`, idSafe, idSafe))
+	`, idSafe, idSafe, idSafe))
 
 	// 1. Gridlines
 	yMid := plotYStart + plotHeight/2
@@ -204,7 +207,7 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 	areaD := fmt.Sprintf("%s L %.2f,%d L %d,%d Z", lineD, float64(plotXStart)+float64(nPoints-1)*float64(plotWidth)/float64(nPoints-1), plotYEnd, plotXStart, plotYEnd)
 
 	sb.WriteString(fmt.Sprintf(`<path d="%s" class="trend-area" />`, areaD))
-	sb.WriteString(fmt.Sprintf(`<path d="%s" class="trend-line" />`, lineD))
+	sb.WriteString(fmt.Sprintf(`<path d="%s" class="trend-line" filter="url(#shadow-%s)" />`, lineD, idSafe))
 
 	// 4. Timezone-specific X-Axis labels
 	loc, err := time.LoadLocation(tz)
@@ -290,6 +293,12 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 				<stop offset="0%%" stop-color="#2563eb" stop-opacity="0.15"/>
 				<stop offset="100%%" stop-color="#2563eb" stop-opacity="0.0"/>
 			</linearGradient>
+			<filter id="cpu-shadow-%s" x="-10%%" y="-10%%" width="120%%" height="120%%">
+				<feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-color="#dc2626" flood-opacity="0.12"/>
+			</filter>
+			<filter id="mem-shadow-%s" x="-10%%" y="-10%%" width="120%%" height="120%%">
+				<feDropShadow dx="0" dy="3" stdDeviation="2.5" flood-color="#2563eb" flood-opacity="0.12"/>
+			</filter>
 		</defs>
 		<style>
 			.grid-line { stroke: #e9edf2; stroke-width: 1; stroke-dasharray: 2,2; }
@@ -302,7 +311,7 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 			.hover-slice { fill: transparent; cursor: crosshair; }
 			.hover-slice:hover { fill: rgba(15, 23, 42, 0.05); }
 		</style>
-	`, idSafe, idSafe, idSafe, idSafe))
+	`, idSafe, idSafe, idSafe, idSafe, idSafe, idSafe))
 
 	// 1. Gridlines (at 0%, 50%, 100%)
 	yMid := plotYStart + plotHeight/2
@@ -329,7 +338,7 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		cpuLineD := "M " + strings.Join(cpuPoints, " L ")
 		cpuAreaD := fmt.Sprintf("%s L %.2f,%d L %d,%d Z", cpuLineD, float64(plotXStart)+float64(len(card.CPUHistory)-1)*float64(plotWidth)/float64(len(card.CPUHistory)-1), plotYEnd, plotXStart, plotYEnd)
 		sb.WriteString(fmt.Sprintf(`<path d="%s" class="cpu-area" />`, cpuAreaD))
-		sb.WriteString(fmt.Sprintf(`<path d="%s" class="cpu-line" />`, cpuLineD))
+		sb.WriteString(fmt.Sprintf(`<path d="%s" class="cpu-line" filter="url(#cpu-shadow-%s)" />`, cpuLineD, idSafe))
 	}
 
 	// 4. Render Memory path
@@ -346,7 +355,7 @@ func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
 		memLineD := "M " + strings.Join(memPoints, " L ")
 		memAreaD := fmt.Sprintf("%s L %.2f,%d L %d,%d Z", memLineD, float64(plotXStart)+float64(len(card.MemHistory)-1)*float64(plotWidth)/float64(len(card.MemHistory)-1), plotYEnd, plotXStart, plotYEnd)
 		sb.WriteString(fmt.Sprintf(`<path d="%s" class="mem-area" />`, memAreaD))
-		sb.WriteString(fmt.Sprintf(`<path d="%s" class="mem-line" />`, memLineD))
+		sb.WriteString(fmt.Sprintf(`<path d="%s" class="mem-line" filter="url(#mem-shadow-%s)" />`, memLineD, idSafe))
 	}
 
 	// 5. Timezone-specific X-Axis labels
