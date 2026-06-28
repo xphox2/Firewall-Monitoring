@@ -465,3 +465,38 @@
     stroke: var(--fwmon-series-1);
 }
 
+/* Custom interactive inputs and filter buttons */
+.main-content input[type="text"]:focus, 
+.main-content select:focus {
+    border-color: var(--fwmon-accent) !important;
+    box-shadow: 0 0 0 2px var(--fwmon-accent-shadow) !important;
+    outline: none;
+}
+
+.filter-btn {
+    background: transparent;
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-dim);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.filter-btn:hover {
+    color: var(--fwmon-text);
+    border-color: #484f58;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.filter-btn.active {
+    background: var(--fwmon-accent-bg) !important;
+    border-color: var(--fwmon-accent) !important;
+    color: var(--fwmon-accent) !important;
+}
+

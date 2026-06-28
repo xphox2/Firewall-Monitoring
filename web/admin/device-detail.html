@@ -143,7 +143,7 @@
             </div>
 
             <!-- Consolidated Section Tabs -->
-            <div class="tabs-container">
+            <div class="tabs-container mb-6">
                 <div class="tabs-nav">
                     <div class="tab-item active" data-action="switch-tab" data-tab="interfaces">
                         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
@@ -186,11 +186,25 @@
             <div class="tab-content active" id="tab-interfaces">
                 <!-- Interfaces Table Card -->
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Network Interfaces
-                        <span id="ifaceSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div class="filters flex gap-2 items-center flex-wrap mb-4" id="ifaceFilters"></div>
+                    <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4 flex-wrap gap-2">
+                        <div>
+                            <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-[#58a6ff] rounded-full"></span>
+                                Network Interfaces
+                            </h2>
+                            <p class="text-[0.75rem] text-[#8b949e] mt-1">Throughput rates, configuration parameters, and status indicators across hardware interfaces</p>
+                        </div>
+                        <span id="ifaceSummary" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
+                    </div>
+
+                    <!-- Search and Pills Container -->
+                    <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
+                        <div class="filters flex gap-1.5 items-center flex-wrap" id="ifaceFilters"></div>
+                        <div class="flex gap-2 items-center">
+                            <input type="text" id="ifaceSearch" placeholder="Filter interfaces by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
+                        </div>
+                    </div>
+
                     <div class="table-scroll overflow-x-auto">
                         <table class="w-full border-collapse">
                             <thead>
@@ -219,27 +233,49 @@
             <!-- VPN Tab -->
             <div class="tab-content" id="tab-vpn">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">VPN Tunnels</h2>
+                    <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4 flex-wrap gap-2">
+                        <div>
+                            <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-[#f0abfc] rounded-full"></span>
+                                VPN Tunnels
+                            </h2>
+                            <p class="text-[0.75rem] text-[#8b949e] mt-1">IPsec Phase 1/Phase 2 security association tunnels, routing mode, gateway endpoints, and uptime metrics</p>
+                        </div>
+                        <span id="vpnSummary" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
+                    </div>
+
+                    <!-- Search and Filter Container -->
+                    <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
+                        <div class="flex gap-1.5 items-center flex-wrap">
+                            <button class="filter-btn active" data-vpn-filter="all" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">All</button>
+                            <button class="filter-btn" data-vpn-filter="up" style="background:transparent;border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Up</button>
+                            <button class="filter-btn" data-vpn-filter="down" style="background:transparent;border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Down</button>
+                        </div>
+                        <div class="flex gap-2 items-center">
+                            <input type="text" id="vpnSearch" placeholder="Filter tunnels by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
+                        </div>
+                    </div>
+
                     <div class="overflow-x-auto">
                         <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Phase 1</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Phase 2</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Type</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Interface</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Remote GW</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Mode</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Status</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">State</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Local Subnet</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Remote Subnet</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Bytes In</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Bytes Out</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Uptime</th>
-                            </tr>
-                        </thead>
-                        <tbody id="vpnBody"></tbody>
+                            <thead>
+                                <tr>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Phase 1</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Phase 2</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Type</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Interface</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Remote GW</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Mode</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Status</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">State</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Local Subnet</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Remote Subnet</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Bytes In</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Bytes Out</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Uptime</th>
+                                </tr>
+                            </thead>
+                            <tbody id="vpnBody"></tbody>
                         </table>
                     </div>
                     <div id="vpnEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting VPN tunnel data from probe…</div>
@@ -251,20 +287,32 @@
                 <div class="flex flex-col gap-6 mb-4">
                     <!-- Processor Utilization -->
                     <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
-                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                            Processor Core Utilization
-                            <span id="procSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                        </h2>
+                        <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4">
+                            <div>
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#818cf8] rounded-full"></span>
+                                    Processor Core Utilization
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">Real-time core allocation and processing loads monitored dynamically</p>
+                            </div>
+                            <span id="procSummary" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
+                        </div>
                         <div id="procBars" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
                         <div id="procEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting processor data from poller…</div>
                     </div>
 
                     <!-- Hardware Sensors -->
                     <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
-                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                            Environmental Sensors
-                            <span id="sensorSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                        </h2>
+                        <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4">
+                            <div>
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#5eead4] rounded-full"></span>
+                                    Environmental Sensors
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">Chassis temperature, power supply status, voltage indicators, and fan speed sensors</p>
+                            </div>
+                            <span id="sensorSummary" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
+                        </div>
                         <div id="sensorCards" class="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3"></div>
                         <div id="sensorEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting hardware sensor data. Enable SSH polling to collect sensor info.</div>
                     </div>
@@ -276,17 +324,28 @@
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-4">
                     <!-- Left: Security Statistics (Takes 2 Columns) -->
                     <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 lg:col-span-2">
-                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4">Security Module Statistics</h2>
+                        <div class="card-header border-b border-[#30363d] pb-4 mb-4">
+                            <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-[#f85149] rounded-full"></span>
+                                Security Module Statistics
+                            </h2>
+                            <p class="text-[0.75rem] text-[#8b949e] mt-1">Threat detection rates, web filters, and antivirus intrusion signatures blocked</p>
+                        </div>
                         <div id="securityContent" class="flex flex-col gap-4"></div>
                         <div id="securityEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No security statistics available. Security stats require FortiGate REST API integration.</div>
                     </div>
 
                     <!-- Right: Licenses (Takes 1 Column) -->
                     <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
-                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                            Subscriptions & Licenses
-                            <span id="licenseSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                        </h2>
+                        <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4">
+                            <div>
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#fcd34d] rounded-full"></span>
+                                    Subscriptions & Licenses
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">FortiGuard threat intelligence license status</p>
+                            </div>
+                        </div>
                         <div id="licenseCards" class="flex flex-col gap-3"></div>
                         <div id="licenseEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No license data available. Enable SSH polling to collect license info.</div>
                     </div>
@@ -298,25 +357,31 @@
                 <div class="flex flex-col gap-6 mb-4">
                     <!-- HA Cluster Card -->
                     <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
-                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                            High Availability Cluster
-                            <span id="haHeader" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                        </h2>
+                        <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4">
+                            <div>
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#3fb950] rounded-full"></span>
+                                    High Availability Cluster
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">Cluster member roles, sync heartbeats, and failover status</p>
+                            </div>
+                            <span id="haHeader" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
+                        </div>
                         <div class="overflow-x-auto">
                             <table class="w-full border-collapse">
-                            <thead>
-                                <tr>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Serial</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Hostname</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">CPU %</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Memory %</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Network (kbps)</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sessions</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sync Status</th>
-                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Master</th>
-                                </tr>
-                            </thead>
-                            <tbody id="haBody"></tbody>
+                                <thead>
+                                    <tr>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Serial</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Hostname</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">CPU %</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Memory %</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Network (kbps)</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sessions</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sync Status</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Master</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="haBody"></tbody>
                             </table>
                         </div>
                         <div id="haEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Standalone mode or awaiting HA data</div>
@@ -326,21 +391,27 @@
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <!-- SD-WAN Health -->
                         <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
-                            <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4">SD-WAN Health & Routing</h2>
+                            <div class="card-header border-b border-[#30363d] pb-4 mb-4">
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#58a6ff] rounded-full"></span>
+                                    SD-WAN Health & Routing
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">Interface latency, packet loss, and link health SLA status</p>
+                            </div>
                             <div class="overflow-x-auto">
                                 <table class="w-full border-collapse">
-                                <thead>
-                                    <tr>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Name</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Interface</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">State</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Latency</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Loss</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sent</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Received</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="sdwanBody"></tbody>
+                                    <thead>
+                                        <tr>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Name</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Interface</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">State</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Latency</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Loss</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sent</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Received</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sdwanBody"></tbody>
                                 </table>
                             </div>
                             <div id="sdwanEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No SD-WAN data available. SD-WAN health requires FortiGate REST API integration.</div>
@@ -348,20 +419,26 @@
 
                         <!-- Ping stats -->
                         <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
-                            <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4">Ping Statistics (ICMP Probes)</h2>
+                            <div class="card-header border-b border-[#30363d] pb-4 mb-4">
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#bc8cff] rounded-full"></span>
+                                    Ping SLA Targets
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">Gateway response metrics and packet drop stats from poller targets</p>
+                            </div>
                             <div class="overflow-x-auto">
                                 <table class="w-full border-collapse">
-                                <thead>
-                                    <tr>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Target IP</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Min Latency</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Avg Latency</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Max Latency</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Packet Loss</th>
-                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Samples</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="pingBody"></tbody>
+                                    <thead>
+                                        <tr>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Target IP</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Min Latency</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Avg Latency</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Max Latency</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Packet Loss</th>
+                                            <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Samples</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pingBody"></tbody>
                                 </table>
                             </div>
                             <div id="pingEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting ping data from probe…</div>
@@ -373,31 +450,44 @@
             <!-- Config History Tab -->
             <div class="tab-content" id="tab-config">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Configuration Revision History
-                        <span id="configSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div class="flex items-center gap-3 mb-4 bg-[#0d1117] p-3 rounded-lg border border-[#30363d] flex-wrap">
-                        <button id="configCompareBtn" class="btn sm secondary" disabled>Compare selected</button>
-                        <span id="configCompareHint" class="text-[0.78rem] text-[#8b949e]">Pick two revisions to compare (radio columns).</span>
+                    <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4 flex-wrap gap-2">
+                        <div>
+                            <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-[#c9d1d9] rounded-full"></span>
+                                Configuration Revision History
+                            </h2>
+                            <p class="text-[0.75rem] text-[#8b949e] mt-1">Audit log of system configuration states and automated backup snapshots</p>
+                        </div>
+                        <span id="configSummary" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
                     </div>
+
+                    <!-- Config Comparison Header Panel -->
+                    <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
+                        <div class="flex gap-2 items-center">
+                            <span id="configCompareHint" class="text-[0.78rem] text-[#8b949e]">Pick two revisions below using the radio buttons to compare their differences.</span>
+                        </div>
+                        <div class="flex gap-2 items-center flex-wrap">
+                            <button id="configCompareBtn" class="btn sm secondary" disabled style="padding:5px 12px;border-radius:6px;font-size:0.8rem;cursor:pointer;">Compare Revisions</button>
+                        </div>
+                    </div>
+
                     <div class="overflow-x-auto">
                         <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">From</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">To</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">First seen</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Last verified</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Number of polls / syslog events that have confirmed this state">Verified</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Trigger</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Quality</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Admin who made the change">Changed by</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Size</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="configBody"></tbody>
+                            <thead>
+                                <tr>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">From</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">To</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">First seen</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Last verified</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Number of polls / syslog events that have confirmed this state">Verified</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Trigger</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Quality</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Admin who made the change">Changed by</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Size</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="configBody"></tbody>
                         </table>
                     </div>
                     <div id="configEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No config history available. Enable SSH polling to collect config revisions.</div>
@@ -409,7 +499,7 @@
                 <div class="modal-content" style="width:1400px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="modal-header">
                         <div>
-                            <h2 id="config-diff-modal-title">Configuration Diff</h2>
+                            <h2 id="config-diff-modal-title" class="text-[1.2rem] font-bold text-[#e6edf3]">Configuration Diff</h2>
                             <div style="font-size:0.78rem;color:#8b949e" id="config-diff-meta">&nbsp;</div>
                         </div>
                         <button class="modal-close" data-action="close-config-diff">&times;</button>
@@ -424,21 +514,45 @@
             <!-- Alerts Tab -->
             <div class="tab-content" id="tab-alerts">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        <span>Recent Device Alerts</span>
+                    <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4 flex-wrap gap-2">
+                        <div>
+                            <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                <span class="w-1.5 h-4 bg-[#f85149] rounded-full"></span>
+                                Recent Device Alerts
+                            </h2>
+                            <p class="text-[0.75rem] text-[#8b949e] mt-1">Real-time log of security warnings, connection drops, and hardware critical alerts</p>
+                        </div>
                         <a id="alerts-view-all-link" class="fwmon-link text-[0.8rem] font-normal" href="/admin/alerts">View all alerts for this device →</a>
-                    </h2>
+                    </div>
+
+                    <!-- Alerts Filter Container -->
+                    <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
+                        <div class="flex gap-2 items-center flex-wrap">
+                            <label class="text-[0.82rem] text-[#8b949e]">Severity:</label>
+                            <select id="alertsSeverityFilter" class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none">
+                                <option value="all">All Severities</option>
+                                <option value="critical">Critical</option>
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="info">Info</option>
+                            </select>
+                        </div>
+                        <div class="flex gap-2 items-center">
+                            <input type="text" id="alertsSearch" placeholder="Search alert logs..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
+                        </div>
+                    </div>
+
                     <div class="overflow-x-auto">
                         <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Time</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Type</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Severity</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Message</th>
-                            </tr>
-                        </thead>
-                        <tbody id="alertBody"></tbody>
+                            <thead>
+                                <tr>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Time</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Type</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Severity</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Message</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alertBody"></tbody>
                         </table>
                     </div>
                     <div id="alertEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No recent alerts — device is healthy</div>

@@ -7,6 +7,10 @@
     var deviceData = null;
     var allInterfaces = [];
     var currentFilter = 'all';
+    var vpnSearchQuery = '';
+    var currentVpnFilter = 'all';
+    var alertsSearchQuery = '';
+    var alertsSeverityFilter = 'all';
     var expandedIfIndex = null;
     var ifaceCharts = {};
     var currentChartRange = '24h';
@@ -546,6 +550,19 @@
         else if (filter === 'down') filtered = allInterfaces.filter(function(i) { return i.status === 'down'; });
         else if (filter !== 'all') filtered = allInterfaces.filter(function(i) { return (i.type_name || 'other') === filter; });
 
+        var searchVal = (document.getElementById('ifaceSearch') ? document.getElementById('ifaceSearch').value.toLowerCase().trim() : '');
+        if (searchVal) {
+            filtered = filtered.filter(function(i) {
+                return (i.name || '').toLowerCase().indexOf(searchVal) !== -1 ||
+                       (i.alias || '').toLowerCase().indexOf(searchVal) !== -1;
+            });
+        }
+
+        var summarySpan = document.getElementById('ifaceSummary');
+        if (summarySpan) {
+            summarySpan.textContent = filtered.length + ' shown / ' + allInterfaces.length + ' total';
+        }
+
         var body = document.getElementById('ifaceBody');
         var empty = document.getElementById('ifaceEmpty');
 
@@ -913,12 +930,35 @@
         var body = document.getElementById('vpnBody');
         var empty = document.getElementById('vpnEmpty');
 
-        if (vpn.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        // Apply filters
+        var filtered = vpn;
+        if (currentVpnFilter === 'up') {
+            filtered = vpn.filter(function(v) { return v.status === 'up'; });
+        } else if (currentVpnFilter === 'down') {
+            filtered = vpn.filter(function(v) { return v.status === 'down'; });
+        }
+
+        var searchVal = (document.getElementById('vpnSearch') ? document.getElementById('vpnSearch').value.toLowerCase().trim() : '');
+        if (searchVal) {
+            filtered = filtered.filter(function(v) {
+                return (v.tunnel_name || '').toLowerCase().indexOf(searchVal) !== -1 ||
+                       (v.phase1_name || '').toLowerCase().indexOf(searchVal) !== -1 ||
+                       (v.interface_name || '').toLowerCase().indexOf(searchVal) !== -1 ||
+                       (v.remote_ip || '').toLowerCase().indexOf(searchVal) !== -1;
+            });
+        }
+
+        var summarySpan = document.getElementById('vpnSummary');
+        if (summarySpan) {
+            summarySpan.textContent = filtered.length + ' shown / ' + vpn.length + ' total';
+        }
+
+        if (filtered.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); return; }
         empty.classList.add('hidden');
 
         var html = '';
-        for (var vi = 0; vi < vpn.length; vi++) {
-            var v = vpn[vi];
+        for (var vi = 0; vi < filtered.length; vi++) {
+            var v = filtered[vi];
             var hasTraffic = (v.bytes_in > 0) || (v.bytes_out > 0);
             var state = v.state || (v.status === 'up' ? 'active' : 'inactive');
             var stateClass = (state === 'active' && hasTraffic) ? 'active' : (state === 'active' ? 'up' : 'inactive');
@@ -1106,17 +1146,37 @@
         var body = document.getElementById('alertBody');
         var empty = document.getElementById('alertEmpty');
 
-        if (alerts.length === 0) { body.innerHTML = ''; empty.classList.remove('hidden'); }
-        else { empty.classList.add('hidden'); }
+        // Apply filters
+        var filtered = alerts;
+        if (alertsSeverityFilter !== 'all') {
+            var sev = alertsSeverityFilter.toLowerCase();
+            filtered = filtered.filter(function(a) {
+                return (a.severity || '').toLowerCase() === sev;
+            });
+        }
 
-        body.innerHTML = alerts.map(function(a) {
-            return '<tr>' +
-                '<td style="white-space:nowrap">' + formatTime(a.timestamp) + '</td>' +
-                '<td>' + esc(a.alert_type) + '</td>' +
-                '<td><span class="badge ' + a.severity + '">' + a.severity + '</span></td>' +
-                '<td>' + esc(a.message) + '</td>' +
-            '</tr>';
-        }).join('');
+        if (alertsSearchQuery) {
+            var q = alertsSearchQuery.toLowerCase().trim();
+            filtered = filtered.filter(function(a) {
+                return (a.message || '').toLowerCase().indexOf(q) !== -1 ||
+                       (a.alert_type || '').toLowerCase().indexOf(q) !== -1;
+            });
+        }
+
+        if (filtered.length === 0) {
+            body.innerHTML = '';
+            empty.classList.remove('hidden');
+        } else {
+            empty.classList.add('hidden');
+            body.innerHTML = filtered.map(function(a) {
+                return '<tr>' +
+                    '<td style="white-space:nowrap">' + formatTime(a.timestamp) + '</td>' +
+                    '<td>' + esc(a.alert_type) + '</td>' +
+                    '<td><span class="badge ' + a.severity + '">' + a.severity + '</span></td>' +
+                    '<td>' + esc(a.message) + '</td>' +
+                '</tr>';
+            }).join('');
+        }
 
         // Update "View all alerts" link with the current device filter
         // (v0.10.215, bundle E3). The state key is `device_id` (matches
@@ -1489,7 +1549,13 @@
 
     document.addEventListener('change', function(e) {
         var t = e.target;
-        if (!t || !t.dataset) return;
+        if (!t) return;
+        if (t.id === 'alertsSeverityFilter') {
+            alertsSeverityFilter = t.value;
+            renderAlerts();
+            return;
+        }
+        if (!t.dataset) return;
         if (t.dataset.action === 'cfg-compare-from') {
             configCompareSelection.from = parseInt(t.value, 10);
             updateConfigCompareButton();
@@ -1499,9 +1565,45 @@
         }
     });
 
+    document.addEventListener('input', function(e) {
+        var t = e.target;
+        if (!t) return;
+        if (t.id === 'ifaceSearch') {
+            filterIfaces(currentFilter);
+        } else if (t.id === 'vpnSearch') {
+            vpnSearchQuery = t.value;
+            renderVPN();
+        } else if (t.id === 'alertsSearch') {
+            alertsSearchQuery = t.value;
+            renderAlerts();
+        }
+    });
+
     document.addEventListener('click', function(e) {
         var t = e.target;
         if (!t) return;
+
+        // VPN Filter Pills click handling
+        var vpnBtn = t.closest('[data-vpn-filter]');
+        if (vpnBtn) {
+            currentVpnFilter = vpnBtn.getAttribute('data-vpn-filter');
+            document.querySelectorAll('[data-vpn-filter]').forEach(function(b) {
+                if (b === vpnBtn) {
+                    b.classList.add('active');
+                    b.style.background = '#21262d';
+                    b.style.color = '#e6edf3';
+                    b.style.borderColor = '#30363d';
+                } else {
+                    b.classList.remove('active');
+                    b.style.background = 'transparent';
+                    b.style.color = '#8b949e';
+                    b.style.borderColor = '#30363d';
+                }
+            });
+            renderVPN();
+            return;
+        }
+
         if (t.id === 'configCompareBtn' && !t.disabled) {
             openConfigDiff(configCompareSelection.from, configCompareSelection.to);
         }
