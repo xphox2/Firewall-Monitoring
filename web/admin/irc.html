@@ -7,21 +7,22 @@
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
+    <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
     <style nonce="{{ .Nonce }}">
-        .nav-item:hover { background: #21262d; color: #e6edf3; }
-        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item:hover { background: var(--fwmon-panel-bg); color: var(--fwmon-text); }
+        .nav-item.active { background: rgba(56,139,253,0.15); color: var(--fwmon-accent); }
         .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
-        .btn:hover { background: #2ea043; }
-        .btn.danger:hover { background: #e5534b; }
-        .btn.secondary:hover { background: #30363d; }
-        tr:hover { background: #1c2128; }
-        .tab-btn:hover { color: #e6edf3; }
+        .btn:hover { background: var(--fwmon-btn-ok-hover); }
+        .btn.danger:hover { background: var(--fwmon-sig-crit); }
+        .btn.secondary:hover { background: var(--fwmon-border); }
+        tr:hover { background: var(--fwmon-hover); }
+        .tab-btn:hover { color: var(--fwmon-text); }
         /* AUDIT-049: no .tab-btn.active rule existed, so switchTab()'s
            classList.add('active') had no visual effect and the active
            highlight was hardcoded as Tailwind utilities on the Servers
            button (broken once another tab was clicked). This rule drives
            the highlight for whichever tab carries .active. */
-        .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .tab-btn.active { color: var(--fwmon-accent); border-bottom-color: var(--fwmon-accent); }
     </style>
 </head>
 <body>

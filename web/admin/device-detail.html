@@ -17,6 +17,7 @@
     <!-- v0.10.212: shared design-system primitives now live in their own file. -->
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/admin-device-detail.css">
+    <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
     <style nonce="{{ .Nonce }}">
         @media (max-width: 768px) {
             .sidebar { display: none; }
@@ -255,9 +256,9 @@
                     <!-- Search and Filter Container -->
                     <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
                         <div class="flex gap-1.5 items-center flex-wrap">
-                            <button class="filter-btn active" data-vpn-filter="all" style="background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">All</button>
-                            <button class="filter-btn" data-vpn-filter="up" style="background:transparent;border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Up</button>
-                            <button class="filter-btn" data-vpn-filter="down" style="background:transparent;border:1px solid #30363d;color:#8b949e;padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Down</button>
+                            <button class="filter-btn active" data-vpn-filter="all" style="background:var(--fwmon-panel-bg);border:1px solid var(--fwmon-border);color:var(--fwmon-text);padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">All</button>
+                            <button class="filter-btn" data-vpn-filter="up" style="background:transparent;border:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Up</button>
+                            <button class="filter-btn" data-vpn-filter="down" style="background:transparent;border:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Down</button>
                         </div>
                         <div class="flex gap-2 items-center">
                             <input type="text" id="vpnSearch" placeholder="Filter tunnels by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
@@ -509,13 +510,13 @@
                     <div class="modal-header">
                         <div>
                             <h2 id="config-diff-modal-title" class="text-[1.2rem] font-bold text-[#e6edf3]">Configuration Diff</h2>
-                            <div style="font-size:0.78rem;color:#8b949e" id="config-diff-meta">&nbsp;</div>
+                            <div style="font-size:0.78rem;color:var(--fwmon-text-faint)" id="config-diff-meta">&nbsp;</div>
                         </div>
                         <button class="modal-close" data-action="close-config-diff">&times;</button>
                     </div>
-                    <div id="config-diff-body" style="flex:1;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;font-family:SFMono-Regular,Consolas,Liberation Mono,Menlo,monospace;font-size:0.8rem;line-height:1.4;white-space:pre;min-height:300px;"></div>
-                    <div style="font-size:0.78rem;color:#8b949e;margin-top:12px;">
-                        Lines marked <span style="background:#30363d;color:#8b949e;padding:2px 6px;border-radius:4px">(volatile)</span> change every backup due to FortiOS encryption-IV churn — they are not real config changes.
+                    <div id="config-diff-body" style="flex:1;overflow:auto;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;font-family:SFMono-Regular,Consolas,Liberation Mono,Menlo,monospace;font-size:0.8rem;line-height:1.4;white-space:pre;min-height:300px;"></div>
+                    <div style="font-size:0.78rem;color:var(--fwmon-text-faint);margin-top:12px;">
+                        Lines marked <span style="background:var(--fwmon-border);color:var(--fwmon-text-faint);padding:2px 6px;border-radius:4px">(volatile)</span> change every backup due to FortiOS encryption-IV churn — they are not real config changes.
                     </div>
                 </div>
             </div>

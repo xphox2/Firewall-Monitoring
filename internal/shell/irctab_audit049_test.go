@@ -30,9 +30,11 @@ func TestIRCTab_ActiveRuleExists_AUDIT049(t *testing.T) {
 		t.Errorf("irc.html still hardcodes the active border utility `border-b-2 border-[#58a6ff]` on a tab button (AUDIT-049): the `.tab-btn.active` CSS rule should drive the highlight instead.")
 	}
 	for _, sig := range []string{
-		"AUDIT-049",                    // traceability
-		".tab-btn.active {",            // the fix
-		"border-bottom-color: #58a6ff", // the rule actually sets the highlight
+		"AUDIT-049",         // traceability
+		".tab-btn.active {", // the fix
+		// The highlight color is now a Console design token (v0.10.499); the
+		// rule still sets border-bottom-color, just via var(--fwmon-accent).
+		"border-bottom-color: var(--fwmon-accent)",
 	} {
 		if !strings.Contains(body, sig) {
 			t.Errorf("irc.html missing the %q signal (AUDIT-049): a `.tab-btn.active` rule must style the active tab and reference the audit ID.", sig)

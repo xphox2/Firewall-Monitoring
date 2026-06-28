@@ -1,0 +1,62 @@
+/* admin-tw-bridge.css — Tailwind arbitrary-hex → Console token bridge.
+ *
+ * Several admin pages (device-detail, connections, probes, sites, irc, login,
+ * and a few admin.html modals) use literal-hex Tailwind utilities baked into
+ * the precompiled tailwind.css — e.g. class="bg-[#161b22]". The hex can't be
+ * retokenized at the class name, so we repoint each compiled selector to a
+ * Console role token here.
+ *
+ * This file MUST be linked LAST on every admin page (after tailwind.css), so
+ * these equal-specificity (single-class) rules win by source order. The
+ * var(--fwmon-*) tokens resolve independently of stylesheet order, so they
+ * just need :root (admin-design-system.css) present anywhere on the page.
+ *
+ * When new arbitrary-hex utilities appear, add the mapping here rather than
+ * hardcoding a fresh hex in markup.
+ */
+
+/* ---- backgrounds ---- */
+.bg-\[\#0d1117\]  { background-color: var(--fwmon-bg); }
+.bg-\[\#161b22\]  { background-color: var(--fwmon-card-bg); }
+.bg-\[\#21262d\]  { background-color: var(--fwmon-panel-bg); }
+.bg-\[\#30363d\]  { background-color: var(--fwmon-border); }
+.bg-\[\#c9d1d9\]  { background-color: var(--fwmon-text-dim); }
+.bg-\[\#238636\]  { background-color: var(--fwmon-btn-ok); }
+.bg-\[\#3fb950\]  { background-color: var(--fwmon-sig-ok); }
+.bg-\[\#f85149\]  { background-color: var(--fwmon-sig-crit); }
+.bg-\[\#da3633\]  { background-color: var(--fwmon-sig-crit); }
+.bg-\[\#58a6ff\]  { background-color: var(--fwmon-accent); }
+.bg-\[\#fcd34d\]  { background-color: var(--fwmon-sig-warn); }
+.bg-\[\#9e6a03\]  { background-color: var(--fwmon-sig-warn); }
+.bg-\[\#f0abfc\]  { background-color: var(--fwmon-series-6); }
+.bg-\[\#5eead4\]  { background-color: var(--fwmon-series-8); }
+.bg-\[\#818cf8\]  { background-color: var(--fwmon-series-5); }
+.bg-\[\#bc8cff\]  { background-color: var(--fwmon-series-5); }
+
+/* ---- hover backgrounds ---- */
+.hover\:bg-\[\#30363d\]:hover { background-color: var(--fwmon-border); }
+.hover\:bg-\[\#484f58\]:hover { background-color: var(--fwmon-border-strong); }
+.hover\:bg-\[\#2ea043\]:hover { background-color: var(--fwmon-btn-ok-hover); }
+.hover\:bg-\[\#e5534b\]:hover { background-color: color-mix(in srgb, var(--fwmon-sig-crit) 82%, #fff); }
+.hover\:bg-\[\#bb8009\]:hover { background-color: color-mix(in srgb, var(--fwmon-sig-warn) 85%, #fff); }
+
+/* ---- text ---- */
+.text-\[\#e6edf3\] { color: var(--fwmon-text); }
+.text-\[\#c9d1d9\] { color: var(--fwmon-text-dim); }
+.text-\[\#8b949e\] { color: var(--fwmon-text-faint); }
+.text-\[\#58a6ff\] { color: var(--fwmon-accent); }
+.text-\[\#7dd3fc\] { color: var(--fwmon-accent); }
+.text-\[\#f85149\] { color: var(--fwmon-sig-crit); }
+.text-\[\#fcd34d\] { color: var(--fwmon-sig-warn); }
+.text-\[\#86efac\] { color: var(--fwmon-sig-ok); }
+.text-\[\#c4b5fd\] { color: var(--fwmon-series-5); }
+
+/* ---- hover text ---- */
+.hover\:text-\[\#e6edf3\]:hover { color: var(--fwmon-text); }
+.hover\:text-\[\#c4b5fd\]:hover { color: var(--fwmon-series-5); }
+
+/* ---- borders ---- */
+.border-\[\#30363d\] { border-color: var(--fwmon-border); }
+.border-\[\#484f58\] { border-color: var(--fwmon-border-strong); }
+.border-\[\#58a6ff\] { border-color: var(--fwmon-accent); }
+.focus\:border-\[\#58a6ff\]:focus { border-color: var(--fwmon-accent); }

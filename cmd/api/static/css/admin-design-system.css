@@ -87,6 +87,11 @@
     /* On-accent text: dark, because volt is a bright fill. */
     --fwmon-on-accent:     #06222b;
 
+    /* Solid action-button greens (legacy create/confirm buttons keep white
+     * text, so these stay dark enough for legible white-on-green). */
+    --fwmon-btn-ok:        #218a5a;
+    --fwmon-btn-ok-hover:  #28a06a;
+
     /* Functional signal ramp — ordered thermal severity scale. */
     --fwmon-sig-ok:    #36c98a; /* online / up / nominal */
     --fwmon-sig-info:  #6ca8c4; /* info / notice */
@@ -141,6 +146,9 @@
     --fwmon-accent-bg:     rgba(14, 155, 184, 0.12);
     --fwmon-accent-shadow: rgba(14, 155, 184, 0.22);
     --fwmon-on-accent:     #ffffff;
+
+    --fwmon-btn-ok:        #0f7a4c;
+    --fwmon-btn-ok-hover:  #0c6640;
 
     --fwmon-sig-ok:    #138a5e;
     --fwmon-sig-info:  #2e6e8e;
@@ -1039,19 +1047,6 @@ body {
 .signal-chip.emerg,
 .signal-chip.emergency { --chip: var(--fwmon-sig-emerg); }
 
-/* ============================================================
- * Tailwind arbitrary-hex bridge
- * ============================================================
- * A few modal / bulk-action elements in admin.html use literal-hex Tailwind
- * utilities (e.g. class="bg-[#161b22]") that are baked into the precompiled
- * tailwind.css and can't be retokenized at the class name. Repoint them to
- * Console tokens here. This stylesheet loads AFTER tailwind.css, so these
- * equal-specificity rules win by source order and the elements theme cleanly.
- */
-.bg-\[\#0d1117\]     { background-color: var(--fwmon-bg); }
-.bg-\[\#161b22\]     { background-color: var(--fwmon-card-bg); }
-.border-\[\#30363d\] { border-color: var(--fwmon-border); }
-.border-\[\#58a6ff\] { border-color: var(--fwmon-accent); }
-.text-\[\#8b949e\]   { color: var(--fwmon-text-faint); }
-.text-\[\#c9d1d9\]   { color: var(--fwmon-text-dim); }
-.text-\[\#e6edf3\]   { color: var(--fwmon-text); }
+/* The Tailwind arbitrary-hex bridge lives in its own stylesheet
+ * (admin-tw-bridge.css) loaded LAST on every admin page, because some pages
+ * link tailwind.css AFTER this file — a bridge here would lose the cascade. */

@@ -7,12 +7,13 @@
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
+    <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
     <style nonce="{{ .Nonce }}">
-        .gauge-bg { fill: none; stroke: #21262d; stroke-width: 6; }
+        .gauge-bg { fill: none; stroke: var(--fwmon-panel-bg); stroke-width: 6; }
         .gauge-fill { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 0.5s; }
         .tunnel-expand { display: none; }
         .tunnel-expand.open { display: table-row; }
-        .tunnel-expand td { padding: 0; border-bottom: 1px solid #30363d; }
+        .tunnel-expand td { padding: 0; border-bottom: 1px solid var(--fwmon-border); }
         /* v0.10.230: chevron rotation on tunnel-row expand. JS toggles
          * .open on the .chevron span (admin-connection-detail.js:262/265).
          * The matching rule existed only as `.panel-tunnel-row .chevron.open`
@@ -20,8 +21,8 @@
          * on this page — clicking a tunnel row expanded the detail but
          * the ► glyph stayed pointing right instead of becoming ▼. */
         .tunnel-row { cursor: pointer; }
-        .tunnel-row:hover td { background: #1c2128; }
-        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #8b949e; margin-right: 4px; }
+        .tunnel-row:hover td { background: var(--fwmon-hover); }
+        .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: var(--fwmon-text-faint); margin-right: 4px; }
         .chevron.open { transform: rotate(90deg); }
         /* v0.10.228: same display reset as admin.html — admin-shared.css's
          * .stat-card { display: flex } was leaking through because this
@@ -29,13 +30,13 @@
          * icon-flex layout (all are label-above-value), but the :has()
          * exception is kept consistent so adding an icon-tile later works
          * without further CSS surgery. */
-        .stat-card { display: block; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .stat-card { display: block; background: var(--fwmon-bg); border: 1px solid var(--fwmon-border); border-radius: 8px; padding: 16px; }
         .stat-card:has(.stat-icon) { display: flex; align-items: center; gap: 14px; }
-        .stat-card .stat-label { font-size: 0.72rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
-        .section-tab { display: inline-block; padding: 10px 20px; font-size: 0.875rem; color: #8b949e; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
-        .section-tab:hover { color: #e6edf3; }
-        .section-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+        .stat-card .stat-label { font-size: 0.72rem; color: var(--fwmon-text-faint); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--fwmon-text); font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
+        .section-tab { display: inline-block; padding: 10px 20px; font-size: 0.875rem; color: var(--fwmon-text-faint); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+        .section-tab:hover { color: var(--fwmon-text); }
+        .section-tab.active { color: var(--fwmon-accent); border-bottom-color: var(--fwmon-accent); }
         /* AUDIT-048: this inline .section-tab rule (display:inline-block) loads
            after admin-shared.css, so it overrides the `.hidden { display:none }`
            that admin-connection-detail.js toggles on #tab-phase2 / #tab-flows.
@@ -45,13 +46,13 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .tunnel-table { width: 100%; border-collapse: collapse; }
-        .tunnel-table th { padding: 8px 12px; text-align: left; font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #30363d; }
-        .tunnel-table td { padding: 10px 12px; font-size: 0.875rem; color: #c9d1d9; border-bottom: 1px solid #21262d; }
-        .tunnel-table tr:hover td { background: #1c2128; }
-        .range-pill { display: inline-block; padding: 6px 14px; border-radius: 9999px; font-size: 0.875rem; cursor: pointer; transition: all 0.15s; background: #21262d; color: #8b949e; border: 1px solid #30363d; }
-        .range-pill:hover { color: #e6edf3; border-color: #8b949e; }
-        .range-pill.active { background: #58a6ff; color: #fff; border-color: #58a6ff; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
+        .tunnel-table th { padding: 8px 12px; text-align: left; font-size: 0.75rem; color: var(--fwmon-text-faint); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--fwmon-border); }
+        .tunnel-table td { padding: 10px 12px; font-size: 0.875rem; color: var(--fwmon-text-dim); border-bottom: 1px solid var(--fwmon-panel-bg); }
+        .tunnel-table tr:hover td { background: var(--fwmon-hover); }
+        .range-pill { display: inline-block; padding: 6px 14px; border-radius: 9999px; font-size: 0.875rem; cursor: pointer; transition: all 0.15s; background: var(--fwmon-panel-bg); color: var(--fwmon-text-faint); border: 1px solid var(--fwmon-border); }
+        .range-pill:hover { color: var(--fwmon-text); border-color: var(--fwmon-text-faint); }
+        .range-pill.active { background: var(--fwmon-accent); color: #fff; border-color: var(--fwmon-accent); }
+        .card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: 8px; padding: 20px; }
     </style>
 </head>
 <body>
@@ -114,13 +115,13 @@
                 <div class="flex gap-6 justify-center">
                     <div class="text-center">
                         <div class="relative w-20 h-20 mx-auto mb-2" id="gauge-in"></div>
-                        <div style="color:#8b949e;font-size:0.875rem;">Inbound</div>
-                        <div style="color:#e6edf3;font-size:1rem;font-weight:600;" id="gauge-in-val">-</div>
+                        <div style="color:var(--fwmon-text-faint);font-size:0.875rem;">Inbound</div>
+                        <div style="color:var(--fwmon-text);font-size:1rem;font-weight:600;" id="gauge-in-val">-</div>
                     </div>
                     <div class="text-center">
                         <div class="relative w-20 h-20 mx-auto mb-2" id="gauge-out"></div>
-                        <div style="color:#8b949e;font-size:0.875rem;">Outbound</div>
-                        <div style="color:#e6edf3;font-size:1rem;font-weight:600;" id="gauge-out-val">-</div>
+                        <div style="color:var(--fwmon-text-faint);font-size:0.875rem;">Outbound</div>
+                        <div style="color:var(--fwmon-text);font-size:1rem;font-weight:600;" id="gauge-out-val">-</div>
                     </div>
                 </div>
             </div>
@@ -153,7 +154,7 @@
         <div class="tab-content" id="tab-content-phase2">
             <div class="card mb-4">
                 <h2 class="text-base font-semibold mb-4">IPSec Phase 2 Selector Matches</h2>
-                <p style="color:#8b949e;font-size:0.875rem;margin-bottom:16px;">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
+                <p style="color:var(--fwmon-text-faint);font-size:0.875rem;margin-bottom:16px;">Matched pairs where source's local subnet = destination's remote subnet (and vice versa), confirming end-to-end IPSec SA alignment.</p>
                 <div id="phase2-matches-container"></div>
             </div>
         </div>

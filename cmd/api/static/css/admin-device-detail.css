@@ -157,9 +157,9 @@
  * the expand panel layout that was supposed to ship in the original
  * interface-row feature. */
 .expand-row > td {
-    background: #0d1117;
+    background: var(--fwmon-bg);
     padding: 16px 20px;
-    border-bottom: 1px solid #30363d;
+    border-bottom: 1px solid var(--fwmon-border);
 }
 
 .expand-content {
@@ -222,7 +222,7 @@
     width: 1px;
     align-self: stretch;
     min-height: 20px;
-    background: #30363d;
+    background: var(--fwmon-border);
 }
 
 /* "drag on chart to zoom" affordance hint — pushed to the right. */
@@ -277,7 +277,7 @@
 }
 
 .device-avatar {
-    background: linear-gradient(135deg, #21262d 0%, #161b22 100%);
+    background: linear-gradient(135deg, var(--fwmon-panel-bg) 0%, var(--fwmon-card-bg) 100%);
     border: 1px solid var(--fwmon-border);
     transition: all 0.3s ease;
 }
@@ -311,7 +311,7 @@
 
 .tab-badge.danger {
     background: rgba(248, 81, 73, 0.16);
-    color: #ff7b72;
+    color: var(--fwmon-sig-crit);
     border-color: rgba(248, 81, 73, 0.35);
 }
 
@@ -345,7 +345,7 @@
 }
 
 .kpi-subcard:hover {
-    border-color: #484f58;
+    border-color: var(--fwmon-border-strong);
     background: rgba(22, 27, 34, 0.7);
     transform: translateY(-1px);
 }
@@ -356,7 +356,7 @@
     -webkit-appearance: none;
     width: 32px;
     height: 18px;
-    background: #30363d;
+    background: var(--fwmon-border);
     border-radius: 18px;
     position: relative;
     cursor: pointer;
@@ -399,7 +399,7 @@
 
 .core-bar-wrapper:hover {
     background: rgba(22, 27, 34, 0.7);
-    border-color: #484f58;
+    border-color: var(--fwmon-border-strong);
 }
 
 /* Table layout adjustments */
@@ -490,7 +490,7 @@
 
 .filter-btn:hover {
     color: var(--fwmon-text);
-    border-color: #484f58;
+    border-color: var(--fwmon-border-strong);
     background: rgba(255, 255, 255, 0.03);
 }
 

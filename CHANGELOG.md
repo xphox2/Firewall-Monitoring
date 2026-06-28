@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.500] - 2026-06-28
+
+### Changed
+- **Console design language — coverage extended to every admin page + Day/Night now correct site-wide.** Follow-up to v0.10.499. The standalone admin pages (`device-detail`, `connection-detail`, `probes`, `sites`, `irc`) had their own inline-`<style>` and Tailwind arbitrary-hex colors still on the old GitHub-dark palette; these are now tokenized to `var(--fwmon-*)`, and a new **`admin-tw-bridge.css`** (linked last on every admin page) maps the precompiled Tailwind arbitrary-hex utilities (`bg-[#161b22]`, `text-[#8b949e]`, …) to Console tokens. `admin-device-detail.css` tokenized too.
+- **Root-cause fix in `tailwind.css`.** The precompiled `tailwind.css` carried a hardcoded `body{background:#0d1117}` plus a full set of hardcoded-GitHub-dark **component classes** (`.card`, `.btn`, `.sidebar`, `.badge`, `.modal-content`, `.form-group`, `.probe-card`, …) that — on pages where it loads after `admin-shared.css` — overrode the tokenized styles and forced the light theme to render dark. The component-class **values** are now tokenized to `var(--fwmon-*)` (the escaped arbitrary-value utility *selectors* are left intact and handled by the bridge). Light mode now resolves correctly on every admin page. `login.html` (a separate self-contained surface) is intentionally untouched.
+- Added white-text-safe `--fwmon-btn-ok` / `--fwmon-btn-ok-hover` action-green tokens (legacy create/confirm buttons keep white text). Updated `TestIRCTab_ActiveRuleExists_AUDIT049` to assert the tokenized `border-bottom-color: var(--fwmon-accent)`. `go build ./...` + `go test ./...` green.
+
 ## [0.10.499] - 2026-06-28
 
 ### Changed
