@@ -1068,7 +1068,7 @@
 
         if (sensors.length === 0) { container.innerHTML = ''; empty.classList.remove('hidden'); return; }
         empty.classList.add('hidden');
-        summary.textContent = sensors.length + ' sensors';
+        if (summary) summary.textContent = sensors.length + ' sensors';
 
         container.innerHTML = sensors.map(function(s) {
             var isAlarm = s.status && s.status.toLowerCase() === 'alarm';
@@ -1358,7 +1358,7 @@
 
         if (!lics.length) { container.innerHTML = ''; empty.classList.remove('hidden'); return; }
         empty.classList.add('hidden');
-        summary.textContent = lics.length + ' licenses';
+        if (summary) summary.textContent = lics.length + ' licenses';
 
         container.innerHTML = lics.map(function(l) {
             var statusColor = '#8b949e';
@@ -1463,9 +1463,11 @@
 
                 // Summary line: each row IS a real change (one row per
                 // logical config state — see merge-into-latest in v0.10.198+).
-                summary.textContent =
-                    revs.length + ' configuration ' + (revs.length === 1 ? 'state' : 'states') +
-                    ' on record';
+                if (summary) {
+                    summary.textContent =
+                        revs.length + ' configuration ' + (revs.length === 1 ? 'state' : 'states') +
+                        ' on record';
+                }
 
                 // Default radio selection: from = second-newest, to = newest.
                 if (configCompareSelection.from === null && revs.length >= 2) {
