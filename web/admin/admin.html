@@ -20,14 +20,14 @@
         @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(63,185,80,0.4); } 50% { box-shadow: 0 0 0 4px rgba(63,185,80,0); } }
         .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
         .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
-        .sidebar-header h2 { color: #58a6ff; font-size: 1.1rem; letter-spacing: -0.3px; }
+        .sidebar-header h2 { color: var(--fwmon-accent, #58a6ff); font-size: 1.1rem; letter-spacing: -0.3px; }
         .sidebar-header .subtitle { color: #8b949e; font-size: 0.7rem; margin-top: 2px; }
         .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
         .nav-section { margin-bottom: 16px; }
         .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #8b949e; padding: 4px 12px 6px; }
         .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
         .nav-item:hover { background: #21262d; color: #e6edf3; }
-        .nav-item.active { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .nav-item.active { background: var(--fwmon-accent-bg, rgba(56,139,253,0.15)); color: var(--fwmon-accent, #58a6ff); }
         .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
         .nav-item.danger { color: #f85149; }
         .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
@@ -52,7 +52,7 @@
         .form-group { margin-bottom: 12px; }
         .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
         .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
-        .form-group input:focus, .form-group select:focus { border-color: #58a6ff; outline: none; }
+        .form-group input:focus, .form-group select:focus { border-color: var(--fwmon-accent, #58a6ff); outline: none; }
         .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
         .toggle-switch input { opacity: 0; width: 0; height: 0; }
@@ -69,10 +69,10 @@
         .badge.offline, .badge.down, .badge.rejected { background: rgba(248,81,73,0.15); color: #f85149; }
         .badge.warning, .badge.pending { background: rgba(210,153,34,0.15); color: #d2992a; }
         .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
-        .badge.info { background: rgba(56,139,253,0.15); color: #58a6ff; }
+        .badge.info { background: var(--fwmon-accent-bg, rgba(56,139,253,0.15)); color: var(--fwmon-accent, #58a6ff); }
         .badge.emergency, .badge.critical { background: rgba(248,81,73,0.25); color: #ff7b72; }
         .badge.error { background: rgba(248,81,73,0.15); color: #f85149; }
-        .badge.notice { background: rgba(56,139,253,0.1); color: #58a6ff; }
+        .badge.notice { background: var(--fwmon-accent-bg, rgba(56,139,253,0.15)); opacity: 0.9; color: var(--fwmon-accent, #58a6ff); }
         .badge.debug { background: rgba(139,148,158,0.1); color: #8b949e; }
         .pulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
         .pulse-dot.online { background: #3fb950; animation: pulse 2s infinite; }
@@ -81,7 +81,7 @@
         .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; margin-top: 16px; }
         .probe-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; min-width: 0; overflow: hidden; }
         .probe-card.clickable { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
-        .probe-card.clickable:hover { border-color: #58a6ff; transform: translateY(-2px); }
+        .probe-card.clickable:hover { border-color: var(--fwmon-accent, #58a6ff); transform: translateY(-2px); }
         .probe-card .probe-name { font-weight: 600; color: #e6edf3; margin-bottom: 6px; font-size: 1rem; display: flex; align-items: center; gap: 8px; word-break: break-word; overflow-wrap: break-word; }
         .probe-card .probe-meta { font-size: 0.78rem; color: #8b949e; margin-bottom: 12px; word-break: break-word; overflow-wrap: break-word; }
         .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; min-width: 0; }
@@ -105,10 +105,10 @@
         .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
         .stat-card .stat-value.good { color: #3fb950; }
         .stat-card .stat-value.bad { color: #f85149; }
-        .stat-card .stat-value.accent { color: #58a6ff; }
+        .stat-card .stat-value.accent { color: var(--fwmon-accent, #58a6ff); }
         .stat-card.accent-green { border-left: 3px solid #3fb950; }
         .stat-card.accent-red { border-left: 3px solid #f85149; }
-        .stat-card.accent-blue { border-left: 3px solid #58a6ff; }
+        .stat-card.accent-blue { border-left: 3px solid var(--fwmon-accent, #58a6ff); }
         .stat-card.accent-gray { border-left: 3px solid #484f58; }
         .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
         .chart-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; height: 340px; }
@@ -219,8 +219,10 @@
          readers pair each label with its control. See scripts/audit056_labels.py
          for the sweep; the invariant (every for= resolves to an id) is pinned by
          TestLabelFor_AUDIT056 in internal/shell/. -->
-    <main class="main" id="main-content" tabindex="-1">
-        <div class="page-header">
+    <main class="main" id="main-content" tabindex="-1" style="position: relative; overflow: hidden;">
+        <div class="glow-bg glow-left"></div>
+        <div class="glow-bg glow-right"></div>
+        <div class="page-header" style="position: relative; z-index: 1;">
             <h1 id="page-title">Dashboard</h1>
         </div>
 

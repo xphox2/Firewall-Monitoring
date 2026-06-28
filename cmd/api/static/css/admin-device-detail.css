@@ -266,3 +266,202 @@
     background: rgba(88, 166, 255, 0.2);
     color: #fff;
 }
+
+/* === Redesigned Dashboard Styles (v1.0.0) === */
+
+.device-banner {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.8) 0%, rgba(13, 17, 23, 0.9) 100%);
+    backdrop-filter: blur(12px);
+    border-radius: 12px;
+    border: 1px solid var(--fwmon-border);
+}
+
+.device-avatar {
+    background: linear-gradient(135deg, #21262d 0%, #161b22 100%);
+    border: 1px solid var(--fwmon-border);
+    transition: all 0.3s ease;
+}
+
+.device-banner:hover .device-avatar {
+    border-color: var(--fwmon-series-1);
+    box-shadow: 0 0 12px rgba(125, 211, 252, 0.35);
+}
+
+/* Tab Badge Pill Indicator */
+.tab-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 0.68rem;
+    font-family: var(--fwmon-font-mono);
+    font-weight: 600;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--fwmon-text-dim);
+    border: 1px solid var(--fwmon-border);
+    margin-left: 6px;
+    transition: all 0.2s ease;
+    vertical-align: middle;
+}
+
+.tab-item.active .tab-badge {
+    background: rgba(125, 211, 252, 0.15);
+    color: #7dd3fc;
+    border-color: rgba(125, 211, 252, 0.3);
+}
+
+.tab-badge.danger {
+    background: rgba(248, 81, 73, 0.16);
+    color: #ff7b72;
+    border-color: rgba(248, 81, 73, 0.35);
+}
+
+.tab-badge.success {
+    background: rgba(63, 185, 80, 0.16);
+    color: #86efac;
+    border-color: rgba(63, 185, 80, 0.3);
+}
+
+/* Glassmorphic KPI Cards */
+.kpi-card {
+    background: rgba(22, 27, 34, 0.65);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 12px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.kpi-card:hover {
+    transform: translateY(-2px);
+    background: rgba(22, 27, 34, 0.85);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+}
+
+.kpi-subcard {
+    background: rgba(13, 17, 23, 0.5);
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(48, 54, 61, 0.7);
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.kpi-subcard:hover {
+    border-color: #484f58;
+    background: rgba(22, 27, 34, 0.7);
+    transform: translateY(-1px);
+}
+
+/* Styled switch for "Public" checkbox in interface list */
+.main-content input[type="checkbox"][data-action="toggle-public-iface"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 32px;
+    height: 18px;
+    background: #30363d;
+    border-radius: 18px;
+    position: relative;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    outline: none;
+    vertical-align: middle;
+}
+
+.main-content input[type="checkbox"][data-action="toggle-public-iface"]:checked {
+    background: var(--fwmon-series-1);
+}
+
+.main-content input[type="checkbox"][data-action="toggle-public-iface"]::before {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #f0f6fc;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s;
+}
+
+.main-content input[type="checkbox"][data-action="toggle-public-iface"]:checked::before {
+    transform: translateX(14px);
+}
+
+/* Core CPU Progress Bars */
+.core-bar-wrapper {
+    background: rgba(13, 17, 23, 0.6);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.2s ease;
+}
+
+.core-bar-wrapper:hover {
+    background: rgba(22, 27, 34, 0.7);
+    border-color: #484f58;
+}
+
+/* Table layout adjustments */
+.main-content table th {
+    background: rgba(22, 27, 34, 0.6);
+    backdrop-filter: blur(4px);
+}
+
+.main-content table tr.clickable {
+    transition: background-color 0.15s ease;
+}
+
+.main-content table tr.clickable:hover {
+    background-color: rgba(125, 211, 252, 0.04) !important;
+}
+
+/* Tabs visual polish */
+.tabs-nav {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--fwmon-border);
+    margin-bottom: 20px;
+    overflow-x: auto;
+    scrollbar-width: none; /* Firefox */
+}
+
+.tabs-nav::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+.tab-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--fwmon-text-dim);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.tab-item:hover {
+    color: var(--fwmon-text);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.tab-item.active {
+    color: var(--fwmon-series-1);
+    border-bottom-color: var(--fwmon-series-1);
+    background: rgba(125, 211, 252, 0.03);
+}
+
+.tab-icon {
+    width: 16px;
+    height: 16px;
+    transition: stroke 0.2s ease;
+}
+
+.tab-item.active .tab-icon {
+    stroke: var(--fwmon-series-1);
+}
+

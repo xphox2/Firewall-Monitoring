@@ -39,159 +39,158 @@
         </div>
     </div>
 
-    <main class="main-content p-6" id="main-content" tabindex="-1">
+    <main class="main-content p-6" id="main-content" tabindex="-1" style="position: relative; overflow: hidden;">
+        <div class="glow-bg glow-left"></div>
+        <div class="glow-bg glow-right"></div>
         <div id="loading" class="loading text-center p-[30px] text-[#8b949e]">Loading device details...</div>
         <div id="error" class="error bg-[rgba(248,81,73,0.1)] border border-[rgba(248,81,73,0.3)] text-[#f85149] p-4 rounded-lg mb-5 hidden"></div>
 
         <div id="content" class="hidden">
             <!-- Header -->
-            <div class="mb-2">
+            <div class="mb-3">
                 <a href="/admin/devices" class="back-link text-[#58a6ff] no-underline text-[0.88rem] hover:underline">&larr; Back to Devices</a>
             </div>
-            <div class="device-header flex items-center gap-4 flex-wrap mb-6">
-                <h1 id="deviceName" class="text-[1.5rem] font-semibold text-[#e6edf3]"></h1>
-                <span id="deviceStatus" class="badge inline-block px-[10px] py-[3px] rounded-xl text-[0.75rem] font-semibold uppercase tracking-[0.3px]"></span>
-                <span id="deviceSshLaunch"></span>
-                <div class="device-meta flex gap-4 items-center flex-wrap">
-                    <span id="deviceIP" class="text-[0.82rem] text-[#8b949e]"></span>
-                    <span id="deviceProbe" class="text-[0.82rem] text-[#8b949e]"></span>
-                    <span id="deviceSite" class="text-[0.82rem] text-[#8b949e]"></span>
-                    <span id="devicePolled" class="text-[0.82rem] text-[#8b949e]"></span>
+
+            <!-- Redesigned Device Header Banner -->
+            <div class="device-banner p-6 mb-6 flex items-center justify-between flex-wrap gap-4 shadow-lg">
+                <div class="flex items-center gap-4 flex-wrap">
+                    <div class="device-avatar w-12 h-12 rounded-lg flex items-center justify-center font-bold text-[1.4rem] text-[#7dd3fc]">
+                        FW
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-3 flex-wrap">
+                            <h1 id="deviceName" class="text-[1.6rem] font-bold text-[#e6edf3] leading-none m-0"></h1>
+                            <span id="deviceStatus" class="badge inline-block px-3 py-1 rounded-full text-[0.75rem] font-semibold uppercase tracking-[0.5px] shadow-sm"></span>
+                            <span id="deviceSshLaunch"></span>
+                        </div>
+                        <div class="device-meta flex gap-4 items-center flex-wrap mt-2 text-[#8b949e] text-[0.82rem]">
+                            <span class="flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-[#58a6ff]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg> <span id="deviceIP"></span></span>
+                            <span class="flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-[#86efac]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg> <span id="deviceProbe"></span></span>
+                            <span class="flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-[#fcd34d]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> <span id="deviceSite"></span></span>
+                            <span class="flex items-center gap-1.5"><svg class="w-3.5 h-3.5 text-[#c4b5fd]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> <span id="devicePolled"></span></span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- System Status Cards -->
-            <!-- AUDIT-068: overflow-x-auto so the auto-fit stat grids scroll
-                 instead of bursting the layout on sub-200px viewports (or when
-                 a long firmware/value string makes a card wider than the
-                 viewport). The data tables below are already wrapped. -->
-            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 mb-4 overflow-x-auto" id="systemStats">
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">CPU Usage</div>
-                    <div class="gauge relative w-20 h-20 mx-auto" id="cpuGauge"></div>
+            <!-- Redesigned KPI Metrics Dashboard -->
+            <!-- AUDIT-068: stat grids use overflow-x-auto to prevent layout bursting on narrow viewports -->
+            <div class="kpi-dashboard mb-6 flex flex-col gap-4">
+                <!-- Tier 1: Core Utilization Gauges & Primary Stats -->
+                <div class="stat-grid grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto" id="systemStats">
+                    <div class="kpi-card p-5 text-center flex flex-col items-center justify-between transition-all">
+                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#7dd3fc]"></span> CPU Usage</div>
+                        <div class="gauge relative w-20 h-20 flex items-center justify-center" id="cpuGauge"></div>
+                    </div>
+                    <div class="kpi-card p-5 text-center flex flex-col items-center justify-between transition-all">
+                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#c4b5fd]"></span> Memory Usage</div>
+                        <div class="gauge relative w-20 h-20 flex items-center justify-center" id="memGauge"></div>
+                    </div>
+                    <div class="kpi-card p-5 text-center flex flex-col items-center justify-between transition-all">
+                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#86efac]"></span> Disk Usage</div>
+                        <div class="gauge relative w-20 h-20 flex items-center justify-center" id="diskGauge"></div>
+                    </div>
+                    <div class="kpi-card p-5 text-center flex flex-col justify-between transition-all">
+                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-[#f0abfc]"></span> Active Sessions</div>
+                        <div class="flex flex-col items-center justify-center flex-1">
+                            <div class="stat-value text-[2rem] font-extrabold text-[#e6edf3] tracking-tight leading-none" id="sessionCount">-</div>
+                            <span class="text-[0.7rem] text-[#8b949e] mt-2 font-mono">concurrent connections</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 text-center flex flex-col justify-between transition-all">
+                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-[#5eead4]"></span> System Uptime</div>
+                        <div class="flex flex-col items-center justify-center flex-1">
+                            <div class="stat-value text-[1.5rem] font-extrabold text-[#e6edf3] tracking-tight leading-none" id="uptimeValue">-</div>
+                            <span class="text-[0.7rem] text-[#8b949e] mt-2 font-mono">since last reboot</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Memory Usage</div>
-                    <div class="gauge relative w-20 h-20 mx-auto" id="memGauge"></div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Disk Usage</div>
-                    <div class="gauge relative w-20 h-20 mx-auto" id="diskGauge"></div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Sessions</div>
-                    <div class="stat-value text-[1.8rem] font-bold text-[#e6edf3]" id="sessionCount">-</div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Uptime</div>
-                    <div class="stat-value text-[1.2rem] font-bold text-[#e6edf3]" id="uptimeValue">-</div>
+
+                <!-- Tier 2: UTM Status & Metadata Details -->
+                <div class="stat-grid grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 overflow-x-auto" id="extendedStats" style="display:none">
+                    <div class="kpi-subcard p-3 text-center transition-all" id="cardFirmware">
+                        <div class="stat-label text-[0.68rem] font-semibold uppercase tracking-[0.5px] text-[#8b949e] mb-1">Firmware</div>
+                        <div class="stat-value text-[0.8rem] font-mono font-bold text-[#e6edf3] truncate" id="firmwareValue" title="-">-</div>
+                    </div>
+                    <div class="kpi-subcard p-3 text-center transition-all" id="cardSessionRate" style="display:none">
+                        <div class="stat-label text-[0.68rem] font-semibold uppercase tracking-[0.5px] text-[#8b949e] mb-1">Session Rates</div>
+                        <div class="stat-value text-[0.8rem] font-mono font-bold text-[#e6edf3] truncate" id="sessionRateValue" title="-">-</div>
+                    </div>
+                    <div class="kpi-subcard p-3 text-center transition-all" id="cardIPv6" style="display:none">
+                        <div class="stat-label text-[0.68rem] font-semibold uppercase tracking-[0.5px] text-[#8b949e] mb-1">IPv6 Sessions</div>
+                        <div class="stat-value text-[0.85rem] font-mono font-bold text-[#e6edf3]" id="ipv6SessionValue">-</div>
+                    </div>
+                    <div class="kpi-subcard p-3 text-center transition-all" id="cardSSLVPN" style="display:none">
+                        <div class="stat-label text-[0.68rem] font-semibold uppercase tracking-[0.5px] text-[#8b949e] mb-1">SSL-VPN Status</div>
+                        <div class="stat-value text-[0.8rem] font-mono font-bold text-[#e6edf3]" id="sslvpnValue">-</div>
+                    </div>
+                    <div class="kpi-subcard p-3 text-center transition-all" id="cardAVSig" style="display:none">
+                        <div class="stat-label text-[0.68rem] font-semibold uppercase tracking-[0.5px] text-[#8b949e] mb-1">AV Signature</div>
+                        <div class="stat-value text-[0.8rem] font-mono font-bold text-[#e6edf3] truncate" id="avSigValue" title="-">-</div>
+                    </div>
+                    <div class="kpi-subcard p-3 text-center transition-all" id="cardIPSSig" style="display:none">
+                        <div class="stat-label text-[0.68rem] font-semibold uppercase tracking-[0.5px] text-[#8b949e] mb-1">IPS Signature</div>
+                        <div class="stat-value text-[0.8rem] font-mono font-bold text-[#e6edf3] truncate" id="ipsSigValue" title="-">-</div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Extended System Status Cards (shown when data exists) -->
-            <div class="stat-grid grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 mb-4 overflow-x-auto" id="extendedStats" style="display:none"><!-- AUDIT-068 -->
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardFirmware">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Firmware</div>
-                    <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="firmwareValue">-</div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardSessionRate" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">Session Rate</div>
-                    <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="sessionRateValue">-</div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardIPv6" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">IPv6 Sessions</div>
-                    <div class="stat-value font-bold text-[#e6edf3]" id="ipv6SessionValue">-</div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardSSLVPN" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">SSL-VPN</div>
-                    <div class="stat-value text-[0.95rem] font-bold text-[#e6edf3]" id="sslvpnValue">-</div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardAVSig" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">AV Signature</div>
-                    <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="avSigValue">-</div>
-                </div>
-                <div class="stat-card bg-[#0d1117] border border-[#30363d] rounded-lg p-4 text-center" id="cardIPSSig" style="display:none">
-                    <div class="stat-label text-[0.72rem] uppercase tracking-[0.5px] text-[#8b949e] mb-2">IPS Signature</div>
-                    <div class="stat-value text-[0.85rem] font-bold text-[#e6edf3]" id="ipsSigValue">-</div>
-                </div>
+            <!-- NOC Charts Dashboard Grid -->
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+                <div id="status-history-section"></div>
+                <div id="network-throughput-section"></div>
+                <div id="cpu-breakdown-section"></div>
             </div>
 
-            <!-- v0.10.205: three above-the-fold charts rendered by uPlot
-                 (admin-device-detail-charts.js → window.FwmonDeviceCharts).
-                 The module replaces each section's innerHTML on init —
-                 these wrappers are just mount points. A shared range pill
-                 bar lives in the Overview header and drives all three; the
-                 panels share a uPlot.sync cursor so brush-zoom is linked. -->
-            <div id="status-history-section"></div>
-            <div id="network-throughput-section"></div>
-            <div id="cpu-breakdown-section"></div>
-
-            <!-- Section Tabs -->
+            <!-- Consolidated Section Tabs -->
             <div class="tabs-container">
                 <div class="tabs-nav">
                     <div class="tab-item active" data-action="switch-tab" data-tab="interfaces">
                         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
                         <span>Interfaces</span>
+                        <span id="interfacesTabBadge" class="tab-badge hidden"></span>
                     </div>
                     <div class="tab-item" data-action="switch-tab" data-tab="vpn">
                         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                         <span>VPN Tunnels</span>
+                        <span id="vpnTabBadge" class="tab-badge hidden"></span>
                     </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="sensors">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/><circle cx="12" cy="12" r="4"/></svg>
-                        <span>Hardware</span>
-                    </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="processors">
+                    <div class="tab-item" data-action="switch-tab" data-tab="resources">
                         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>
-                        <span>Processors</span>
-                    </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="alerts">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                        <span>Alerts</span>
-                    </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="ping">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                        <span>Ping</span>
-                    </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="ha">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                        <span>HA Cluster</span>
+                        <span>System Resources</span>
+                        <span id="resourcesTabBadge" class="tab-badge hidden"></span>
                     </div>
                     <div class="tab-item" data-action="switch-tab" data-tab="security">
                         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                        <span>Security</span>
+                        <span>Security & UTM</span>
+                        <span id="securityTabBadge" class="tab-badge hidden"></span>
                     </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="sdwan">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        <span>SD-WAN</span>
-                    </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="licenses">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                        <span>Licenses</span>
+                    <div class="tab-item" data-action="switch-tab" data-tab="diagnostics">
+                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/><circle cx="12" cy="12" r="4"/></svg>
+                        <span>Diagnostics & HA</span>
+                        <span id="diagnosticsTabBadge" class="tab-badge hidden"></span>
                     </div>
                     <div class="tab-item" data-action="switch-tab" data-tab="config">
                         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                         <span>Config History</span>
                     </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="processes-ssh">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="10" y1="4" x2="10" y2="10"/></svg>
-                        <span>Process Monitor</span>
-                    </div>
-                    <div class="tab-item" data-action="switch-tab" data-tab="iface-err">
-                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                        <span>Interface Errors</span>
+                    <div class="tab-item" data-action="switch-tab" data-tab="alerts">
+                        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <span>Alerts</span>
+                        <span id="alertsTabBadge" class="tab-badge hidden"></span>
                     </div>
                 </div>
             </div>
 
             <!-- Interfaces Tab -->
             <div class="tab-content active" id="tab-interfaces">
+                <!-- Interfaces Table Card -->
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Interfaces
+                        Network Interfaces
                         <span id="ifaceSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
                     </h2>
-                    <div class="filters flex gap-2 items-center flex-wrap mb-3" id="ifaceFilters"></div>
+                    <div class="filters flex gap-2 items-center flex-wrap mb-4" id="ifaceFilters"></div>
                     <div class="table-scroll overflow-x-auto">
                         <table class="w-full border-collapse">
                             <thead>
@@ -247,141 +246,127 @@
                 </div>
             </div>
 
-            <!-- Hardware Sensors Tab -->
-            <div class="tab-content" id="tab-sensors">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Hardware Sensors
-                        <span id="sensorSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div id="sensorCards" class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));"></div>
-                    <div id="sensorEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting hardware sensor data. Enable SSH polling to collect sensor info.</div>
-                </div>
-            </div>
-
-            <!-- Processors Tab -->
-            <div class="tab-content" id="tab-processors">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Processor Usage <span id="procSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span></h2>
-                    <div id="procBars" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px;"></div>
-                    <div id="procEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting processor data from poller…</div>
-                </div>
-            </div>
-
-            <!-- Alerts Tab -->
-            <div class="tab-content" id="tab-alerts">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        <span>Recent Alerts</span>
-                        <a id="alerts-view-all-link" class="fwmon-link text-[0.8rem] font-normal" href="/admin/alerts">View all alerts for this device →</a>
-                    </h2>
-                    <div class="overflow-x-auto">
-                        <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Time</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Type</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Severity</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Message</th>
-                            </tr>
-                        </thead>
-                        <tbody id="alertBody"></tbody>
-                        </table>
+            <!-- System Resources Tab -->
+            <div class="tab-content" id="tab-resources">
+                <div class="flex flex-col gap-6 mb-4">
+                    <!-- Processor Utilization -->
+                    <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                            Processor Core Utilization
+                            <span id="procSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                        </h2>
+                        <div id="procBars" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+                        <div id="procEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting processor data from poller…</div>
                     </div>
-                    <div id="alertEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No recent alerts — device is healthy</div>
-                </div>
-            </div>
 
-            <!-- Ping Tab -->
-            <div class="tab-content" id="tab-ping">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Ping Statistics</h2>
-                    <div class="overflow-x-auto">
-                        <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Target IP</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Min Latency</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Avg Latency</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Max Latency</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Packet Loss</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Samples</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pingBody"></tbody>
-                        </table>
+                    <!-- Hardware Sensors -->
+                    <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                            Environmental Sensors
+                            <span id="sensorSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                        </h2>
+                        <div id="sensorCards" class="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3"></div>
+                        <div id="sensorEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting hardware sensor data. Enable SSH polling to collect sensor info.</div>
                     </div>
-                    <div id="pingEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting ping data from probe…</div>
                 </div>
             </div>
 
-            <!-- HA Cluster Tab -->
-            <div class="tab-content" id="tab-ha">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">HA Cluster <span id="haHeader" class="text-[0.78rem] font-normal text-[#8b949e]"></span></h2>
-                    <div class="overflow-x-auto">
-                        <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Serial</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Hostname</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">CPU %</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Memory %</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Network (kbps)</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sessions</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sync Status</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Master</th>
-                            </tr>
-                        </thead>
-                        <tbody id="haBody"></tbody>
-                        </table>
-                    </div>
-                    <div id="haEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Standalone mode or awaiting HA data</div>
-                </div>
-            </div>
-
-            <!-- Security Tab -->
+            <!-- Security & UTM Tab -->
             <div class="tab-content" id="tab-security">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">Security Statistics</h2>
-                    <div id="securityContent"></div>
-                    <div id="securityEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No security statistics available. Security stats require FortiGate REST API integration (not available via SNMP).</div>
-                </div>
-            </div>
-
-            <!-- SD-WAN Tab -->
-            <div class="tab-content" id="tab-sdwan">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">SD-WAN Health</h2>
-                    <div class="overflow-x-auto">
-                        <table class="w-full border-collapse">
-                        <thead>
-                            <tr>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Name</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Interface</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">State</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Latency (ms)</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Packet Loss (%)</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sent</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Received</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sdwanBody"></tbody>
-                        </table>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-4">
+                    <!-- Left: Security Statistics (Takes 2 Columns) -->
+                    <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 lg:col-span-2">
+                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4">Security Module Statistics</h2>
+                        <div id="securityContent" class="flex flex-col gap-4"></div>
+                        <div id="securityEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No security statistics available. Security stats require FortiGate REST API integration.</div>
                     </div>
-                    <div id="sdwanEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No SD-WAN data available. SD-WAN health requires FortiGate REST API integration (not available via SNMP).</div>
+
+                    <!-- Right: Licenses (Takes 1 Column) -->
+                    <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                            Subscriptions & Licenses
+                            <span id="licenseSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                        </h2>
+                        <div id="licenseCards" class="flex flex-col gap-3"></div>
+                        <div id="licenseEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No license data available. Enable SSH polling to collect license info.</div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Licenses Tab -->
-            <div class="tab-content" id="tab-licenses">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        License Information
-                        <span id="licenseSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div id="licenseCards" class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));"></div>
-                    <div id="licenseEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No license data available. Enable SSH polling to collect license info.</div>
+            <!-- Diagnostics & HA Tab -->
+            <div class="tab-content" id="tab-diagnostics">
+                <div class="flex flex-col gap-6 mb-4">
+                    <!-- HA Cluster Card -->
+                    <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                        <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
+                            High Availability Cluster
+                            <span id="haHeader" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                        </h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full border-collapse">
+                            <thead>
+                                <tr>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Serial</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Hostname</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">CPU %</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Memory %</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Network (kbps)</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sessions</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sync Status</th>
+                                    <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Master</th>
+                                </tr>
+                            </thead>
+                            <tbody id="haBody"></tbody>
+                            </table>
+                        </div>
+                        <div id="haEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Standalone mode or awaiting HA data</div>
+                    </div>
+
+                    <!-- Side-by-Side diagnostic tables -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- SD-WAN Health -->
+                        <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                            <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4">SD-WAN Health & Routing</h2>
+                            <div class="overflow-x-auto">
+                                <table class="w-full border-collapse">
+                                <thead>
+                                    <tr>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Name</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Interface</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">State</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Latency</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Loss</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Sent</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Received</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sdwanBody"></tbody>
+                                </table>
+                            </div>
+                            <div id="sdwanEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No SD-WAN data available. SD-WAN health requires FortiGate REST API integration.</div>
+                        </div>
+
+                        <!-- Ping stats -->
+                        <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                            <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4">Ping Statistics (ICMP Probes)</h2>
+                            <div class="overflow-x-auto">
+                                <table class="w-full border-collapse">
+                                <thead>
+                                    <tr>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Target IP</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Min Latency</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Avg Latency</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Max Latency</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Packet Loss</th>
+                                        <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Samples</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pingBody"></tbody>
+                                </table>
+                            </div>
+                            <div id="pingEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting ping data from probe…</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -389,10 +374,10 @@
             <div class="tab-content" id="tab-config">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Configuration History
+                        Configuration Revision History
                         <span id="configSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
                     </h2>
-                    <div class="flex items-center gap-2 mb-3">
+                    <div class="flex items-center gap-3 mb-4 bg-[#0d1117] p-3 rounded-lg border border-[#30363d] flex-wrap">
                         <button id="configCompareBtn" class="btn sm secondary" disabled>Compare selected</button>
                         <span id="configCompareHint" class="text-[0.78rem] text-[#8b949e]">Pick two revisions to compare (radio columns).</span>
                     </div>
@@ -407,7 +392,7 @@
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Number of polls / syslog events that have confirmed this state">Verified</th>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Trigger</th>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Quality</th>
-                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Admin who made the change, correlated from FortiGate config-change syslog events">Changed by</th>
+                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]" title="Admin who made the change">Changed by</th>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Size</th>
                                 <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Actions</th>
                             </tr>
@@ -419,11 +404,7 @@
                 </div>
             </div>
 
-            <!-- Config Diff Modal — uses the legacy `.modal` / `.modal.active`
-                 CSS pattern (admin-shared.css) which already provides full-screen
-                 fixed positioning, dark overlay, and centered flex layout.
-                 Don't add Tailwind utility classes here — they fight with the
-                 legacy rules on specificity and the modal renders blank. -->
+            <!-- Config Diff Modal -->
             <div class="modal" id="config-diff-modal" role="dialog" aria-modal="true" aria-labelledby="config-diff-modal-title">
                 <div class="modal-content" style="width:1400px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="modal-header">
@@ -440,61 +421,27 @@
                 </div>
             </div>
 
-            <!-- Process Monitor Tab (SSH) -->
-            <div class="tab-content" id="tab-processors-ssh">
+            <!-- Alerts Tab -->
+            <div class="tab-content" id="tab-alerts">
                 <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
                     <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Process Monitor
-                        <span id="procSshSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
+                        <span>Recent Device Alerts</span>
+                        <a id="alerts-view-all-link" class="fwmon-link text-[0.8rem] font-normal" href="/admin/alerts">View all alerts for this device →</a>
                     </h2>
-                    <div class="mb-3">
-                        <label class="text-[0.82rem] text-[#8b949e] mr-2">Time Range:</label>
-                        <select id="proc-ssh-range" class="chart-range-select">
-                            <option value="0.25">15m</option>
-                            <option value="0.5">30m</option>
-                            <option value="1">1h</option>
-                            <option value="6">6h</option>
-                            <option value="12">12h</option>
-                            <option value="24" selected>24h</option>
-                            <option value="168">1w</option>
-                            <option value="720">1m</option>
-                            <option value="2160">3m</option>
-                            <option value="8760">1y</option>
-                        </select>
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
+                        <thead>
+                            <tr>
+                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Time</th>
+                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Type</th>
+                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Severity</th>
+                                <th class="p-2 px-3 text-left border-b border-[#30363d] text-[#8b949e] font-medium text-[0.78rem] uppercase tracking-[0.5px]">Message</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alertBody"></tbody>
+                        </table>
                     </div>
-                    <canvas id="proc-ssh-chart" style="height:340px"></canvas>
-                    <div id="procSshEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No process data available. Enable SSH polling to collect process info.</div>
-                </div>
-            </div>
-
-            <!-- Interface Errors Tab (SSH) -->
-            <div class="tab-content" id="tab-iface-err">
-                <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5 mb-4">
-                    <h2 class="text-[1rem] font-semibold text-[#e6edf3] mb-4 flex justify-between items-center">
-                        Interface Errors
-                        <span id="ifaceErrSummary" class="text-[0.78rem] font-normal text-[#8b949e]"></span>
-                    </h2>
-                    <div class="mb-3">
-                        <label class="text-[0.82rem] text-[#8b949e] mr-2">Interface:</label>
-                        <select id="iface-err-interface" class="bg-[#0d1117] border border-[#30363d] text-[#e6edf3] text-[0.82rem] px-2 py-1 rounded">
-                            <option value="">All Interfaces</option>
-                        </select>
-                        <label class="text-[0.82rem] text-[#8b949e] ml-4 mr-2">Time Range:</label>
-                        <select id="iface-err-range" class="chart-range-select">
-                            <option value="0.25">15m</option>
-                            <option value="0.5">30m</option>
-                            <option value="1">1h</option>
-                            <option value="6">6h</option>
-                            <option value="12">12h</option>
-                            <option value="24" selected>24h</option>
-                            <option value="168">1w</option>
-                            <option value="720">1m</option>
-                            <option value="2160">3m</option>
-                            <option value="8760">1y</option>
-                        </select>
-                    </div>
-                    <canvas id="iface-err-chart" style="height:340px"></canvas>
-                    <div id="ifaceErrEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No interface error data available. Enable SSH polling to collect error stats.</div>
+                    <div id="alertEmpty" class="empty text-center p-10 text-[#8b949e] hidden">No recent alerts — device is healthy</div>
                 </div>
             </div>
 

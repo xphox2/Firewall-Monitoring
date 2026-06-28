@@ -178,8 +178,8 @@
 }
 
 .chart-range-btns .range-btn.active {
-    background: #58a6ff;
-    border-color: #58a6ff;
+    background: var(--fwmon-accent, #58a6ff);
+    border-color: var(--fwmon-accent, #58a6ff);
     color: #fff;
 }
 
@@ -207,8 +207,8 @@
 
 .chart-range-select:focus {
     outline: none;
-    border-color: #58a6ff;
-    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+    border-color: var(--fwmon-accent, #58a6ff);
+    box-shadow: 0 0 0 2px var(--fwmon-accent-shadow, rgba(88, 166, 255, 0.2));
 }
 
 .chart-range-select option {
