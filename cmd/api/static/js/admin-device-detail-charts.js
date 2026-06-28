@@ -237,6 +237,14 @@
     // Data fetch — one round trip per range change feeds all three charts.
     // ----------------------------------------------------------------------
     function load(range) {
+        // Destroy old uPlot chart instances to clear memory and nullify references
+        for (var k in state.charts) {
+            if (state.charts[k]) {
+                try { state.charts[k].destroy(); } catch (e) { /* swallow */ }
+                state.charts[k] = null;
+            }
+        }
+
         var hosts = ['fwmon-chart-overview', 'fwmon-chart-network', 'fwmon-chart-cpu'];
         for (var i = 0; i < hosts.length; i++) {
             var h = document.getElementById(hosts[i]);
