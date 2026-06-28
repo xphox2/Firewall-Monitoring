@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.499] - 2026-06-28
+
+### Changed
+- **Admin SPA visual identity redesign — the "Console" design language.** Replaced the templated GitHub-dark (`#0d1117` + single blue `#58a6ff` accent) look — and the ~850-line `!important` "Premium NOC" override block that defeated the design tokens — with an instrument-console identity built on a real token system. **Palette:** a deep teal-graphite "instrument bezel" base (not GitHub near-black); state is carried by a functional **thermal severity ramp** (jade → amber → orange → red → magenta = heat rising = severity rising) instead of one accent; a single cool "volt" cyan (`#38e1ff`) reserved strictly for interaction (focus/active-nav/links). **Typography:** self-hosted **Archivo** (new `cmd/api/static/fonts/archivo-latin.woff2`) as the broadcast/instrument display face for titles and readouts (replacing the long-dangling, never-loaded "Plus Jakarta Sans" reference); **JetBrains Mono** promoted to first-class for all network data (IPs, ports, byte counts, rates, counts) with `tabular-nums`; a real type/spacing scale replaces ~22 ad-hoc sizes. **Signature element:** a persistent **Vitals Rail** across every SPA view (`#vitals-rail`, populated by `AdminCommon.refreshVitals()` from `/dashboard` + `/probes` + `/syslog/stats`) whose ambient left edge warms with the single worst active severity. **Sidebar** restyled as an instrument channel-strip (engraved section labels, volt signal-tick on the active item, `FIREWALL·MON` lockup + live status dot).
+- **Day/Night theme.** Added a light "daylight brushed-aluminium" variant alongside the default dark NOC theme; both live as `:root[data-theme]` token sets in `admin-design-system.css` (signal ramp + volt darkened for AA on light). A DAY/NIGHT switch in the sidebar footer persists to `localStorage` via `AdminCommon.setTheme()`, with a pre-paint inline script in `admin.html` to avoid a flash. Chart-axis tokens are now theme-aware and a `fwmon:themechange` event is dispatched on toggle.
+- **Token consolidation.** The `admin.html` inline `<style>`, `admin-shared.css`, and `admin-flows.css` now consume `var(--fwmon-*)` role tokens instead of hardcoded hex, so the whole shared design system (and every page that links it) reskins from one place and honors the active theme. Tailwind arbitrary-hex utilities baked into the precompiled `tailwind.css` are bridged to tokens in `admin-design-system.css`. No structural HTML/JS behavior changes. `go build ./...` green.
+
 ## [0.10.498] - 2026-06-27
 
 ### Changed

@@ -1,14 +1,25 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Firewall Monitor - Admin</title>
+    <!-- Apply the saved Day/Night choice before first paint to avoid a flash.
+         Default is dark (NOC). AdminCommon owns the toggle + persistence. -->
+    <script nonce="{{ .Nonce }}">
+        (function () {
+            try {
+                var t = localStorage.getItem('fwmon-theme');
+                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+            } catch (e) { /* storage blocked — keep default dark */ }
+        })();
+    </script>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <!-- v0.10.211: same self-hosted fonts + uPlot stack as device-detail, scoped via admin-flows.css. -->
     <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/static/css/admin-fonts.css">
     <link rel="stylesheet" href="/static/css/uPlot.min.css">
     <!-- v0.10.212: shared design-system primitives now live in their own file. -->
@@ -17,78 +28,110 @@
     <style nonce="{{ .Nonce }}">
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(63,185,80,0.4); } 50% { box-shadow: 0 0 0 4px rgba(63,185,80,0); } }
-        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 100; }
-        .sidebar-header { padding: 20px; border-bottom: 1px solid #30363d; }
-        .sidebar-header h2 { color: var(--fwmon-accent, #58a6ff); font-size: 1.1rem; letter-spacing: -0.3px; }
-        .sidebar-header .subtitle { color: #8b949e; font-size: 0.7rem; margin-top: 2px; }
-        .sidebar-nav { flex: 1; padding: 12px; overflow-y: auto; }
+        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fwmon-sig-ok) 40%, transparent); } 50% { box-shadow: 0 0 0 4px transparent; } }
+        /* Sidebar — instrument channel-strip */
+        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: var(--fwmon-card-bg); border-right: 1px solid var(--fwmon-border); display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 18px 18px 16px; border-bottom: 1px solid var(--fwmon-border); }
+        .sidebar-header h2 { display: flex; align-items: center; gap: 8px; color: var(--fwmon-text); font-family: var(--fwmon-font-heading); font-size: 0.95rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+        .sidebar-header h2::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--fwmon-sig-ok); box-shadow: 0 0 8px var(--fwmon-sig-ok); flex-shrink: 0; animation: pulse 2.4s infinite; }
+        .sidebar-header .subtitle { color: var(--fwmon-text-faint); font-family: var(--fwmon-font-mono); font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; margin-top: 6px; }
+        .sidebar-nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
         .nav-section { margin-bottom: 16px; }
-        .nav-section-title { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #8b949e; padding: 4px 12px 6px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: #8b949e; text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: all 0.15s; cursor: pointer; font-size: 0.88rem; }
-        .nav-item:hover { background: #21262d; color: #e6edf3; }
-        .nav-item.active { background: var(--fwmon-accent-bg, rgba(56,139,253,0.15)); color: var(--fwmon-accent, #58a6ff); }
+        .nav-section-title { font-size: var(--fwmon-t-label); font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; color: var(--fwmon-text-mute); padding: 6px 12px 8px; }
+        .nav-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 14px; color: var(--fwmon-text-faint); text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: background 0.15s, color 0.15s; cursor: pointer; font-size: 0.84rem; }
+        /* Signal tick — lights volt when active */
+        .nav-item::before { content: ""; position: absolute; left: 3px; top: 50%; transform: translateY(-50%); width: 2px; height: 0; border-radius: 2px; background: var(--fwmon-accent); transition: height 0.15s ease; }
+        .nav-item:hover { background: var(--fwmon-hover); color: var(--fwmon-text); }
+        .nav-item.active { background: var(--fwmon-accent-bg); color: var(--fwmon-accent); }
+        .nav-item.active::before { height: 18px; box-shadow: 0 0 8px var(--fwmon-accent); }
         .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
-        .nav-item.danger { color: #f85149; }
-        .nav-item.danger:hover { background: rgba(248,81,73,0.1); }
-        .sidebar-footer { padding: 12px; border-top: 1px solid #30363d; }
-        .main { margin-left: 240px; padding: 24px 28px; min-height: 100vh; }
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .page-header h1 { font-size: 1.5rem; font-weight: 600; color: #e6edf3; }
+        .nav-item.danger { color: var(--fwmon-sig-crit); }
+        .nav-item.danger:hover { background: color-mix(in srgb, var(--fwmon-sig-crit) 12%, transparent); }
+        .sidebar-footer { padding: 10px; border-top: 1px solid var(--fwmon-border); display: flex; flex-direction: column; gap: 4px; }
+        /* Day / Night instrument switch */
+        .theme-switch { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; background: var(--fwmon-panel-bg); border: 1px solid var(--fwmon-border); cursor: pointer; color: var(--fwmon-text-faint); font-family: var(--fwmon-font-mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; user-select: none; }
+        .theme-switch:hover { border-color: var(--fwmon-border-strong); color: var(--fwmon-text); }
+        .theme-switch .ts-icon { font-size: 0.85rem; line-height: 1; }
+        .theme-switch .ts-label { margin-left: auto; color: var(--fwmon-accent); }
+        .main { margin-left: 240px; padding: 22px 28px 32px; min-height: 100vh; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        .page-header h1 { font-family: var(--fwmon-font-heading); font-size: var(--fwmon-t-display); font-weight: 700; letter-spacing: 0.01em; color: var(--fwmon-text); }
         .page { display: none; }
         .page.active { display: block; animation: fadeIn 0.2s ease; }
+        /* ── Vitals rail — persistent network instrument, ambient edge warms with worst severity ── */
+        .vitals-rail { position: relative; display: flex; align-items: stretch; gap: 0; margin-bottom: 22px; background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); overflow: hidden; box-shadow: var(--fwmon-elev-1); }
+        /* the warming edge: a thin left bar tinted by the current worst-severity */
+        .vitals-rail::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--rail-sev, var(--fwmon-sig-ok)); box-shadow: 0 0 16px 1px var(--rail-sev, var(--fwmon-sig-ok)); transition: background 0.6s ease, box-shadow 0.6s ease; }
+        .vitals-rail[data-sev="ok"] { --rail-sev: var(--fwmon-sig-ok); }
+        .vitals-rail[data-sev="warn"] { --rail-sev: var(--fwmon-sig-warn); }
+        .vitals-rail[data-sev="error"] { --rail-sev: var(--fwmon-sig-error); }
+        .vitals-rail[data-sev="crit"] { --rail-sev: var(--fwmon-sig-crit); }
+        .vitals-rail[data-sev="emerg"] { --rail-sev: var(--fwmon-sig-emerg); }
+        .vital { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 11px 18px; border-right: 1px solid var(--fwmon-border); min-width: 0; }
+        .vital:first-child { padding-left: 22px; }
+        .vital:last-child { border-right: none; margin-left: auto; }
+        .vital .v-label { font-family: var(--fwmon-font-mono); font-size: 0.58rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fwmon-text-mute); }
+        .vital .v-value { font-family: var(--fwmon-font-heading); font-size: 1.15rem; font-weight: 700; line-height: 1.05; color: var(--fwmon-text); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+        .vital .v-value .v-sub { font-size: 0.78rem; color: var(--fwmon-text-faint); font-weight: 600; }
+        .vital .v-value.sev { color: var(--rail-sev, var(--fwmon-sig-ok)); text-transform: uppercase; font-size: 0.95rem; letter-spacing: 0.06em; }
+        @media (max-width: 1100px) { .vitals-rail { flex-wrap: wrap; } .vital { flex: 1 1 40%; } .vital:last-child { margin-left: 0; } }
         /* AUDIT-054: .modal / .modal.active / .modal-header / .modal-header h2 /
            .modal-close / .modal-close:hover / .modal-footer were byte-for-byte
            duplicates of admin-shared.css:506-573 — removed so the modal rules
            have a single source of truth. Only .modal-content is kept: it
            intentionally overrides the shared 95vw/90vh with a narrower
            92vw/85vh for this page's wide probe-detail modal. */
-        .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; width: 1000px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
-        .table-wrap { max-height: 500px; overflow-y: auto; border-radius: 6px; }
+        .modal-content { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 24px; width: 1000px; max-width: 92vw; max-height: 85vh; overflow-y: auto; box-shadow: var(--fwmon-elev-2); }
+        .table-wrap { max-height: 500px; overflow-y: auto; border-radius: var(--fwmon-radius-sm); }
         table { width: 100%; border-collapse: collapse; }
-        th { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; background: #161b22; }
-        td { padding: 10px 12px; border-bottom: 1px solid #21262d; font-size: 0.88rem; }
-        tr:hover { background: #1c2128; }
+        th { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--fwmon-border-strong); color: var(--fwmon-text-faint); font-weight: 700; font-size: var(--fwmon-t-label); text-transform: uppercase; letter-spacing: var(--fwmon-track-label); position: sticky; top: 0; background: var(--fwmon-panel-bg); }
+        td { padding: 10px 12px; border-bottom: 1px solid var(--fwmon-border); font-size: 0.84rem; color: var(--fwmon-text-dim); }
+        /* numeric / identifier cells render as instrument data */
+        td.num, th.num { text-align: right; }
+        td.mono, td.num { font-family: var(--fwmon-font-mono); font-variant-numeric: tabular-nums; color: var(--fwmon-text); }
+        tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--fwmon-text) 2.5%, transparent); }
+        tr:hover td { background: var(--fwmon-hover); }
         .form-group { margin-bottom: 12px; }
-        .form-group label { display: block; margin-bottom: 4px; color: #8b949e; font-size: 0.82rem; font-weight: 500; }
-        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.88rem; }
-        .form-group input:focus, .form-group select:focus { border-color: var(--fwmon-accent, #58a6ff); outline: none; }
+        .form-group label { display: block; margin-bottom: 5px; color: var(--fwmon-text-faint); font-size: var(--fwmon-t-label); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 10px; background: var(--fwmon-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius-sm); color: var(--fwmon-text); font-size: 0.88rem; font-family: var(--fwmon-font-ui); }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--fwmon-accent); outline: none; box-shadow: 0 0 0 3px var(--fwmon-accent-bg); }
         .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
         .toggle-switch input { opacity: 0; width: 0; height: 0; }
-        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #30363d; border-radius: 22px; transition: 0.2s; }
-        .toggle-slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #8b949e; border-radius: 50%; transition: 0.2s; }
-        .toggle-switch input:checked + .toggle-slider { background: #238636; }
-        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: #fff; }
-        .toggle-label { display: flex; align-items: center; gap: 10px; cursor: pointer; color: #c9d1d9; font-size: 0.88rem; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: var(--fwmon-border); border-radius: 22px; transition: 0.2s; }
+        .toggle-slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: var(--fwmon-text-faint); border-radius: 50%; transition: 0.2s; }
+        .toggle-switch input:checked + .toggle-slider { background: var(--fwmon-accent); }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); background: var(--fwmon-on-accent); }
+        .toggle-switch input:focus-visible + .toggle-slider { box-shadow: 0 0 0 3px var(--fwmon-accent-bg); }
+        .toggle-label { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--fwmon-text-dim); font-size: 0.88rem; }
         .device-alert-indicator { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-left: 4px; vertical-align: middle; }
-        .device-alert-indicator.muted { background: #f85149; }
-        .device-alert-indicator.custom { background: #d2992a; }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
-        .badge.online, .badge.up, .badge.approved { background: rgba(63,185,80,0.15); color: #3fb950; }
-        .badge.offline, .badge.down, .badge.rejected { background: rgba(248,81,73,0.15); color: #f85149; }
-        .badge.warning, .badge.pending { background: rgba(210,153,34,0.15); color: #d2992a; }
-        .badge.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
-        .badge.info { background: var(--fwmon-accent-bg, rgba(56,139,253,0.15)); color: var(--fwmon-accent, #58a6ff); }
-        .badge.emergency, .badge.critical { background: rgba(248,81,73,0.25); color: #ff7b72; }
-        .badge.error { background: rgba(248,81,73,0.15); color: #f85149; }
-        .badge.notice { background: var(--fwmon-accent-bg, rgba(56,139,253,0.15)); opacity: 0.9; color: var(--fwmon-accent, #58a6ff); }
-        .badge.debug { background: rgba(139,148,158,0.1); color: #8b949e; }
+        .device-alert-indicator.muted { background: var(--fwmon-sig-crit); }
+        .device-alert-indicator.custom { background: var(--fwmon-sig-warn); }
+        /* Badges ride the thermal severity ramp (jade → amber → orange → red → magenta) */
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: var(--fwmon-t-label); font-weight: 600; text-transform: uppercase; letter-spacing: var(--fwmon-track-label); border: 1px solid color-mix(in srgb, var(--b) 32%, transparent); background: color-mix(in srgb, var(--b) 14%, transparent); color: var(--b); --b: var(--fwmon-text-faint); }
+        .badge.online, .badge.up, .badge.approved { --b: var(--fwmon-sig-ok); }
+        .badge.offline, .badge.down, .badge.rejected { --b: var(--fwmon-sig-crit); }
+        .badge.warning, .badge.pending { --b: var(--fwmon-sig-warn); }
+        .badge.unknown, .badge.debug { --b: var(--fwmon-text-faint); }
+        .badge.info, .badge.notice { --b: var(--fwmon-sig-info); }
+        .badge.emergency { --b: var(--fwmon-sig-emerg); }
+        .badge.critical { --b: var(--fwmon-sig-crit); }
+        .badge.error { --b: var(--fwmon-sig-error); }
         .pulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-        .pulse-dot.online { background: #3fb950; animation: pulse 2s infinite; }
-        .pulse-dot.offline { background: #f85149; }
-        .pulse-dot.pending { background: #d2992a; animation: pulse 2s infinite; }
+        .pulse-dot.online { background: var(--fwmon-sig-ok); animation: pulse 2s infinite; }
+        .pulse-dot.offline { background: var(--fwmon-sig-crit); }
+        .pulse-dot.pending { background: var(--fwmon-sig-warn); animation: pulse 2s infinite; }
         .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; margin-top: 16px; }
-        .probe-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; min-width: 0; overflow: hidden; }
+        .probe-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 16px; min-width: 0; overflow: hidden; }
         .probe-card.clickable { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
-        .probe-card.clickable:hover { border-color: var(--fwmon-accent, #58a6ff); transform: translateY(-2px); }
-        .probe-card .probe-name { font-weight: 600; color: #e6edf3; margin-bottom: 6px; font-size: 1rem; display: flex; align-items: center; gap: 8px; word-break: break-word; overflow-wrap: break-word; }
-        .probe-card .probe-meta { font-size: 0.78rem; color: #8b949e; margin-bottom: 12px; word-break: break-word; overflow-wrap: break-word; }
+        .probe-card.clickable:hover { border-color: var(--fwmon-accent); transform: translateY(-2px); }
+        .probe-card .probe-name { font-weight: 600; color: var(--fwmon-text); margin-bottom: 6px; font-size: 1rem; display: flex; align-items: center; gap: 8px; word-break: break-word; overflow-wrap: break-word; }
+        .probe-card .probe-meta { font-family: var(--fwmon-font-mono); font-size: 0.74rem; color: var(--fwmon-text-faint); margin-bottom: 12px; word-break: break-word; overflow-wrap: break-word; }
         .probe-card .probe-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; min-width: 0; }
-        .probe-card .probe-stat { background: #0d1117; border-radius: 6px; padding: 12px 6px; text-align: center; min-width: 0; overflow: hidden; }
-        .probe-card .probe-stat .val { font-size: 1.1rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; overflow-wrap: break-word; word-break: break-word; }
-        .probe-card .probe-stat .lbl { font-size: 0.65rem; color: #8b949e; text-transform: uppercase; margin-top: 4px; }
-        .probe-card .probe-stat .lbl .last-hour { color: #3fb950; display: block; font-size: 0.7rem; margin-top: 2px; }
+        .probe-card .probe-stat { background: var(--fwmon-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius-sm); padding: 12px 6px; text-align: center; min-width: 0; overflow: hidden; }
+        .probe-card .probe-stat .val { font-family: var(--fwmon-font-mono); font-size: 1.05rem; font-weight: 700; color: var(--fwmon-text); font-variant-numeric: tabular-nums; overflow-wrap: break-word; word-break: break-word; }
+        .probe-card .probe-stat .lbl { font-size: 0.6rem; color: var(--fwmon-text-faint); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+        .probe-card .probe-stat .lbl .last-hour { color: var(--fwmon-sig-ok); display: block; font-size: 0.7rem; margin-top: 2px; }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
         /* v0.10.228: reset the flex-row layout inherited from
          * admin-shared.css:770 (which is designed for the alert-policies
@@ -99,42 +142,43 @@
          * without requiring a markup change. Same bug class as the one
          * fixed for /admin/devices/:id in v0.10.227 — pre-existing on
          * this page but masked by all-numeric content. */
-        .stat-card { display: block; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .stat-card { display: block; background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 16px; }
         .stat-card:has(.stat-icon) { display: flex; align-items: center; gap: 14px; }
-        .stat-card .stat-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-word; overflow-wrap: anywhere; }
-        .stat-card .stat-value.good { color: #3fb950; }
-        .stat-card .stat-value.bad { color: #f85149; }
-        .stat-card .stat-value.accent { color: var(--fwmon-accent, #58a6ff); }
-        .stat-card.accent-green { border-left: 3px solid #3fb950; }
-        .stat-card.accent-red { border-left: 3px solid #f85149; }
-        .stat-card.accent-blue { border-left: 3px solid var(--fwmon-accent, #58a6ff); }
-        .stat-card.accent-gray { border-left: 3px solid #484f58; }
+        .stat-card .stat-label { font-size: var(--fwmon-t-label); color: var(--fwmon-text-faint); text-transform: uppercase; letter-spacing: var(--fwmon-track-label); margin-bottom: 6px; }
+        .stat-card .stat-value { font-family: var(--fwmon-font-mono); font-size: 1.55rem; font-weight: 700; color: var(--fwmon-text); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; word-break: break-word; overflow-wrap: anywhere; }
+        .stat-card .stat-value.good { color: var(--fwmon-sig-ok); }
+        .stat-card .stat-value.bad { color: var(--fwmon-sig-crit); }
+        .stat-card .stat-value.accent { color: var(--fwmon-accent); }
+        .stat-card.accent-green { border-left: 3px solid var(--fwmon-sig-ok); }
+        .stat-card.accent-red { border-left: 3px solid var(--fwmon-sig-crit); }
+        .stat-card.accent-blue { border-left: 3px solid var(--fwmon-accent); }
+        .stat-card.accent-gray { border-left: 3px solid var(--fwmon-border-strong); }
         .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-        .chart-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; height: 340px; }
-        .chart-card h3 { font-size: 0.85rem; color: #8b949e; margin-bottom: 12px; font-weight: 500; }
+        .chart-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; height: 340px; }
+        .chart-card h3 { font-family: var(--fwmon-font-heading); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fwmon-text-faint); margin-bottom: 12px; }
         .chart-card canvas { max-height: 280px; }
         @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
         @media (max-width: 1100px) { .stat-grid-6 { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 600px) { .stat-grid-6 { grid-template-columns: repeat(2, 1fr); } }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-        .card:fullscreen { background: #0d1117; padding: 0; display: flex; flex-direction: column; }
+        .card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; margin-bottom: 16px; }
+        .card:fullscreen { background: var(--fwmon-bg); padding: 0; display: flex; flex-direction: column; }
         .card:fullscreen .card-header { flex-shrink: 0; }
         .card:fullscreen .connection-diagram { flex: 1; min-h-0; }
         .card:fullscreen #conn-detail-panel-container { max-height: 40vh; overflow-y: auto; }
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .card-header h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; }
-        .btn { background: #238636; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500; transition: background 0.15s; }
-        .btn:hover { background: #2ea043; }
-        .btn.danger { background: #da3633; }
-        .btn.danger:hover { background: #e5534b; }
-        .btn.secondary { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; }
-        .btn.secondary:hover { background: #30363d; }
-        .btn.secondary.active[data-action="dg-filter-type"] { background: #238636; border-color: #2ea043; color: #fff; }
-        .btn.secondary[data-action="dg-filter-type"]:not(.active) { background: #161b22; border-color: #21262d; color: #8b949e; opacity: 0.6; }
+        .card-header h2 { font-family: var(--fwmon-font-heading); font-size: var(--fwmon-t-h2); font-weight: 600; letter-spacing: 0.01em; color: var(--fwmon-text); }
+        .btn { background: var(--fwmon-accent); color: var(--fwmon-on-accent); border: none; padding: 7px 14px; border-radius: var(--fwmon-radius-sm); cursor: pointer; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.01em; transition: background 0.15s, box-shadow 0.15s; }
+        .btn:hover { background: var(--fwmon-accent-hover); }
+        .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--fwmon-accent-bg); }
+        .btn.danger { background: var(--fwmon-sig-crit); color: #fff; }
+        .btn.danger:hover { background: color-mix(in srgb, var(--fwmon-sig-crit) 82%, #fff); }
+        .btn.secondary { background: var(--fwmon-panel-bg); border: 1px solid var(--fwmon-border); color: var(--fwmon-text-dim); }
+        .btn.secondary:hover { background: var(--fwmon-border); color: var(--fwmon-text); }
+        .btn.secondary.active[data-action="dg-filter-type"] { background: var(--fwmon-accent-bg); border-color: var(--fwmon-accent); color: var(--fwmon-accent); }
+        .btn.secondary[data-action="dg-filter-type"]:not(.active) { background: var(--fwmon-card-bg); border-color: var(--fwmon-border); color: var(--fwmon-text-faint); opacity: 0.6; }
         .btn.sm { padding: 4px 10px; font-size: 0.78rem; }
         .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
-        .filter-bar select, .filter-bar input { padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 0.82rem; }
+        .filter-bar select, .filter-bar input { padding: 6px 10px; background: var(--fwmon-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius-sm); color: var(--fwmon-text-dim); font-size: 0.82rem; }
 .filter-bar .search-input { min-width: 200px; }
         /* v0.10.231: the click-to-expand affordance was broken since whenever
          * it shipped. JS at admin-main.js:3518-3520 toggles `.expanded` on
@@ -146,20 +190,20 @@
         .expandable-msg { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
         .expandable-msg.expanded { max-width: none; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; overflow-wrap: anywhere; }
         #maint-modal .form-group textarea { resize: vertical; min-height: 60px; }
-        .connection-diagram { min-height: 500px; position: relative; background: #0d1117; border-radius: 8px; overflow: hidden; }
+        .connection-diagram { min-height: 500px; position: relative; background: var(--fwmon-bg); border-radius: var(--fwmon-radius-sm); overflow: hidden; }
         .panel-chart-container canvas { max-height: 200px; }
         .panel-tunnel-row { cursor: pointer; transition: background 0.15s; }
-        .panel-tunnel-row:hover td { background: #1c2128; }
-        .panel-tunnel-row .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: #8b949e; margin-right: 4px; }
+        .panel-tunnel-row:hover td { background: var(--fwmon-hover); }
+        .panel-tunnel-row .chevron { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; color: var(--fwmon-text-faint); margin-right: 4px; }
         .panel-tunnel-row .chevron.open { transform: rotate(90deg); }
         .panel-tunnel-expand { display: none; }
         .panel-tunnel-expand.open { display: table-row; }
-        .panel-tunnel-expand td { padding: 8px 12px; background: #0d1117; }
+        .panel-tunnel-expand td { padding: 8px 12px; background: var(--fwmon-bg); }
         .tunnel-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .tunnel-columns .tunnel-col h5 { font-size: 0.82rem; color: #8b949e; margin: 0 0 8px 0; font-weight: 500; }
+        .tunnel-columns .tunnel-col h5 { font-size: 0.82rem; color: var(--fwmon-text-faint); margin: 0 0 8px 0; font-weight: 600; }
         .panel-flow-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .panel-flow-card { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 12px; }
-        .panel-flow-card h5 { font-size: 0.8rem; color: #8b949e; margin: 0 0 8px 0; font-weight: 500; }
+        .panel-flow-card { background: var(--fwmon-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius-sm); padding: 12px; }
+        .panel-flow-card h5 { font-size: 0.8rem; color: var(--fwmon-text-faint); margin: 0 0 8px 0; font-weight: 600; }
         .panel-bridge-svg { width: 100%; margin-bottom: 8px; }
         @media (max-width: 900px) { .panel-kpi-grid { grid-template-columns: repeat(2, 1fr); } .tunnel-columns, .panel-flow-grid { grid-template-columns: 1fr; } }
         /* AUDIT-055: the shared sidebar/mobile-header chrome (.sidebar slide-in,
@@ -204,13 +248,18 @@
          AdminCommon.renderMobileChrome() (shared across all admin pages). -->
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h2>Firewall Monitor</h2>
-            <div class="subtitle">Administration Panel</div>
+            <h2>Firewall&middot;Mon</h2>
+            <div class="subtitle">Operations Console</div>
         </div>
         <div class="sidebar-nav" id="sidebar-nav-placeholder">
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
+            <button class="theme-switch" id="theme-switch" type="button" aria-label="Toggle day or night theme">
+                <span class="ts-icon" id="ts-icon" aria-hidden="true">&#9790;</span>
+                <span>Display</span>
+                <span class="ts-label" id="ts-label">Night</span>
+            </button>
             <a class="nav-item danger" id="logout-btn" href="#"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>
@@ -220,10 +269,34 @@
          for the sweep; the invariant (every for= resolves to an id) is pinned by
          TestLabelFor_AUDIT056 in internal/shell/. -->
     <main class="main" id="main-content" tabindex="-1" style="position: relative; overflow: hidden;">
-        <div class="glow-bg glow-left"></div>
-        <div class="glow-bg glow-right"></div>
         <div class="page-header" style="position: relative; z-index: 1;">
             <h1 id="page-title">Dashboard</h1>
+        </div>
+
+        <!-- Vitals rail — persistent network instrument across every view.
+             Populated by AdminCommon.refreshVitals() from /admin/api/stats;
+             data-sev drives the ambient warming edge. -->
+        <div class="vitals-rail" id="vitals-rail" data-sev="ok" role="status" aria-label="Network vitals">
+            <div class="vital">
+                <span class="v-label">Devices Online</span>
+                <span class="v-value"><span id="vital-online">--</span><span class="v-sub">&#8202;/&#8202;<span id="vital-total">--</span></span></span>
+            </div>
+            <div class="vital">
+                <span class="v-label">Offline</span>
+                <span class="v-value" id="vital-offline">--</span>
+            </div>
+            <div class="vital">
+                <span class="v-label">Active Probes</span>
+                <span class="v-value" id="vital-probes">--</span>
+            </div>
+            <div class="vital">
+                <span class="v-label">Syslog 24h</span>
+                <span class="v-value" id="vital-syslog">--</span>
+            </div>
+            <div class="vital">
+                <span class="v-label">Status</span>
+                <span class="v-value sev" id="vital-worst">NOMINAL</span>
+            </div>
         </div>
 
         <!-- Dashboard Page -->
@@ -345,7 +418,7 @@
                     <h2>Network Connections</h2>
                     <button class="btn" data-action="show-connection-modal">+ Add Connection</button>
                 </div>
-                <p style="color: #8b949e; margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
                 <div class="table-wrap">
                     <table id="connections-table">
                         <thead><tr><th>Devices</th><th>Source</th><th>Destination</th><th>Type</th><th>Status</th><th>Discovery</th><th>Networks</th><th>Actions</th></tr></thead>
@@ -365,7 +438,7 @@
                         <button class="btn secondary sm active" data-action="dg-filter-type" data-type="vxlan" style="border-color:#f0abfc;border-style:dashed;">VXLAN</button>
                         <button class="btn secondary sm active" data-action="dg-filter-type" data-type="l3ipvlan" style="border-color:#f472b6;border-style:dashed;">L3VLAN</button>
                         <button class="btn secondary sm active" data-action="dg-filter-type" data-type="offnet" style="border-color:#4ade80;border-style:dashed;">Off-net</button>
-                        <span style="color:#30363d;">|</span>
+                        <span style="color:var(--fwmon-border);">|</span>
                         <button class="btn secondary sm active" data-action="dg-toggle-down" id="btn-toggle-down">Hide DOWN</button>
                         <button class="btn secondary sm" data-action="dg-fit">Fit</button>
                         <button class="btn secondary sm" data-action="dg-reset-layout">Reset</button>
@@ -400,7 +473,7 @@
             <div class="stat-grid" id="syslog-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Messages</div><div class="stat-value accent" id="syslog-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Emergency/Critical</div><div class="stat-value bad" id="syslog-critical">--</div></div>
-                <div class="stat-card"><div class="stat-label">Warning/Error</div><div class="stat-value" style="color:#d2992a" id="syslog-warning">--</div></div>
+                <div class="stat-card"><div class="stat-label">Warning/Error</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="syslog-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info/Notice</div><div class="stat-value" id="syslog-info">--</div></div>
             </div>
             <div class="chart-row">
@@ -605,7 +678,7 @@
             <div class="stat-grid" id="alerts-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Alerts</div><div class="stat-value accent" id="alerts-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value bad" id="alerts-critical">--</div></div>
-                <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:#d2992a" id="alerts-warning">--</div></div>
+                <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="alerts-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="alerts-info">--</div></div>
             </div>
             <div class="chart-row">
@@ -635,12 +708,12 @@
                         <option value="true">Acknowledged</option>
                     </select>
                 </div>
-                <div id="alerts-bulk-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
-                    <span id="alerts-bulk-summary" style="color:#8b949e;font-size:0.82rem;">No alerts selected</span>
+                <div id="alerts-bulk-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;">
+                    <span id="alerts-bulk-summary" style="color:var(--fwmon-text-faint);font-size:0.82rem;">No alerts selected</span>
                     <button class="btn sm" id="alerts-bulk-ack-btn" disabled data-action="bulk-ack-alerts" style="margin-left:auto;">Acknowledge selected</button>
                     <button class="btn sm secondary" id="alerts-bulk-clear-btn" disabled data-action="clear-alert-selection">Clear</button>
                 </div>
-                <div id="alerts-select-all-matching" style="display:none;margin-bottom:8px;padding:6px 10px;background:rgba(88,166,255,0.08);border:1px solid #58a6ff;border-radius:6px;color:#c9d1d9;font-size:0.82rem;text-align:center;"></div>
+                <div id="alerts-select-all-matching" style="display:none;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-accent-bg);border:1px solid var(--fwmon-accent);border-radius:6px;color:var(--fwmon-text-dim);font-size:0.82rem;text-align:center;"></div>
                 <div class="table-wrap">
                     <table id="alerts-full-table">
                         <thead><tr><th style="width:32px"><input type="checkbox" id="alerts-select-page" data-action="toggle-page-selection" title="Select all on this page"></th><th>Time</th><th>Device</th><th>Type</th><th>Severity</th><th>Message</th><th>Actions</th></tr></thead>
@@ -747,7 +820,7 @@
             <div class="stat-grid" id="traps-stats-grid">
                 <div class="stat-card"><div class="stat-label">Total Traps</div><div class="stat-value accent" id="traps-total">--</div></div>
                 <div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value bad" id="traps-critical">--</div></div>
-                <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:#d2992a" id="traps-warning">--</div></div>
+                <div class="stat-card"><div class="stat-label">Warning</div><div class="stat-value" style="color:var(--fwmon-sig-warn)" id="traps-warning">--</div></div>
                 <div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" id="traps-info">--</div></div>
             </div>
             <div class="chart-row">
@@ -807,7 +880,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Display Timezone</h2></div>
-                <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
                 <div class="setting-item">
                     <label for="display-timezone">Timezone</label>
                     <select id="display-timezone" name="display_timezone">
@@ -816,7 +889,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Public Dashboard Display</h2></div>
-                <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">Control default widget visibility on the public dashboard. Users can also hide/show widgets locally via the Widgets menu.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Control default widget visibility on the public dashboard. Users can also hide/show widgets locally via the Widgets menu.</p>
                 <div id="display-settings" class="settings-grid">
                     <div class="toggle-row"><label>Show VPN Tunnels</label><input type="checkbox" name="public_show_vpn"></div>
                     <div class="toggle-row"><label>Show Connection Map</label><input type="checkbox" name="public_show_connections"></div>
@@ -836,11 +909,11 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>SMTP Configuration</h2></div>
-                <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
                 <div class="settings-grid" id="settings-smtp"></div>
                 <div style="margin-top: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <button class="btn secondary" data-action="test-email">Send Test Email</button>
-                    <span style="color:#8b949e; font-size:0.82rem;">to (optional override):</span>
+                    <span style="color:var(--fwmon-text-faint); font-size:0.82rem;">to (optional override):</span>
                     <input type="email" id="test-email-to-override" placeholder="leave blank for configured smtp_to"
                            class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1"
                            style="font-size:0.85rem; min-width:240px;">
@@ -852,7 +925,7 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Webhook Test</h2></div>
-                <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                     <button class="btn secondary" data-action="test-webhook" data-type="slack_webhook">Test Slack</button>
                     <button class="btn secondary" data-action="test-webhook" data-type="discord_webhook">Test Discord</button>
@@ -862,12 +935,12 @@
             </div>
             <div class="card">
                 <div class="card-header"><h2>Email Reports</h2></div>
-                <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">Schedule automated email reports with device status summaries.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Schedule automated email reports with device status summaries.</p>
                 <div class="settings-grid" id="settings-reports"></div>
             </div>
             <div class="card">
                 <div class="card-header"><h2>Traffic Spike Detection</h2></div>
-                <p style="color: #8b949e; margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
                 <div class="settings-grid" id="settings-spike"></div>
             </div>
             <div class="card">
@@ -878,7 +951,7 @@
         <div class="page" id="page-reports">
             <div class="card no-print">
                 <div class="card-header"><h2>Executive Report</h2></div>
-                <p style="color:#8b949e;margin-bottom:14px;font-size:0.9rem;">A single self-contained fleet summary &mdash; fleet health, bandwidth top-talkers, traffic spikes, and per-device detail. View it here, export to PDF, download the HTML, or email it now.</p>
+                <p style="color:var(--fwmon-text-faint);margin-bottom:14px;font-size:0.9rem;">A single self-contained fleet summary &mdash; fleet health, bandwidth top-talkers, traffic spikes, and per-device detail. View it here, export to PDF, download the HTML, or email it now.</p>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
                     <select id="report-period">
                         <option value="daily">Daily (last 24h)</option>
@@ -888,11 +961,11 @@
                     <button class="btn secondary" id="report-pdf-btn">Export PDF</button>
                     <button class="btn secondary" id="report-download-btn">Download HTML</button>
                     <button class="btn secondary" id="report-send-btn">Send Now</button>
-                    <span id="report-status" style="color:#8b949e;font-size:0.85rem;"></span>
+                    <span id="report-status" style="color:var(--fwmon-text-faint);font-size:0.85rem;"></span>
                 </div>
             </div>
             <div class="card" style="padding:6px;overflow:hidden;">
-                <iframe id="report-frame" title="Report preview" style="width:100%;height:900px;border:0;background:#0d1117;border-radius:8px;display:block;"></iframe>
+                <iframe id="report-frame" title="Report preview" style="width:100%;height:900px;border:0;background:var(--fwmon-bg);border-radius:8px;display:block;"></iframe>
             </div>
         </div>
 
@@ -941,7 +1014,7 @@
                     </table>
                 </div>
                 <div id="audit-pagination" style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center;">
-                    <span id="audit-page-info" style="font-size: 0.82rem; color: #8b949e;"></span>
+                    <span id="audit-page-info" style="font-size: 0.82rem; color: var(--fwmon-text-faint);"></span>
                     <div>
                         <button class="btn secondary sm" id="audit-prev" data-action="prev-audit">Prev</button>
                         <button class="btn secondary sm" id="audit-next" data-action="next-audit">Next</button>
@@ -1002,7 +1075,7 @@
                     </select>
                 </div>
                 <div class="form-group" id="community-group">
-                    <label for="device-community">SNMP Community <span id="community-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                    <label for="device-community">SNMP Community <span id="community-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
                     <input type="text" id="device-community" value="public" autocomplete="one-time-code" placeholder="Enter a new community only if changing">
                 </div>
                 <div id="snmpv3-fields" style="display:none">
@@ -1025,7 +1098,7 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="device-v3-auth-pass">Auth Password <span id="v3-auth-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                        <label for="device-v3-auth-pass">Auth Password <span id="v3-auth-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
                         <input type="password" id="device-v3-auth-pass" autocomplete="new-password" placeholder="Enter a new password only if changing">
                     </div>
                     <div class="form-row">
@@ -1040,7 +1113,7 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="device-v3-priv-pass">Privacy Password <span id="v3-priv-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                            <label for="device-v3-priv-pass">Privacy Password <span id="v3-priv-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
                             <input type="password" id="device-v3-priv-pass" autocomplete="new-password" placeholder="Enter a new password only if changing">
                         </div>
                     </div>
@@ -1086,15 +1159,15 @@
                     <div class="form-group"><label><input type="checkbox" id="device-enabled" checked> Enabled (poll this device)</label></div>
                     <div class="form-group"><label><input type="checkbox" id="device-public-visible" checked> Public Visible (show on public dashboard)</label></div>
                 </div>
-                <div id="ssh-fields" style="margin-top:12px;padding-top:12px;border-top:1px solid #30363d">
-                    <h4 style="color:#8b949e;font-size:0.82rem;margin:0 0 10px 0;text-transform:uppercase;letter-spacing:0.5px">SSH Configuration (FortiGate)</h4>
+                <div id="ssh-fields" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--fwmon-border)">
+                    <h4 style="color:var(--fwmon-text-faint);font-size:0.82rem;margin:0 0 10px 0;text-transform:uppercase;letter-spacing:0.5px">SSH Configuration (FortiGate)</h4>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="device-ssh-username">SSH Username</label>
                             <input type="text" id="device-ssh-username" autocomplete="one-time-code">
                         </div>
                         <div class="form-group">
-                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:#8b949e;font-weight:normal;display:none">— leave blank to keep current</span></label>
+                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
                             <input type="password" id="device-ssh-password" autocomplete="new-password" placeholder="Enter a new password only if changing">
                         </div>
                     </div>
@@ -1144,9 +1217,9 @@
                         <option value="">— Inherit from site/global —</option>
                     </select>
                 </div>
-                <div style="border-top:1px solid #30363d;margin:16px 0 12px;padding-top:12px;">
-                    <label style="display:block;color:#8b949e;font-size:0.82rem;font-weight:500;margin-bottom:4px;">Threshold Overrides</label>
-                    <p style="color:#8b949e;font-size:0.78rem;margin:0 0 10px;">Leave blank to inherit from policy/site/global defaults.</p>
+                <div style="border-top:1px solid var(--fwmon-border);margin:16px 0 12px;padding-top:12px;">
+                    <label style="display:block;color:var(--fwmon-text-faint);font-size:0.82rem;font-weight:500;margin-bottom:4px;">Threshold Overrides</label>
+                    <p style="color:var(--fwmon-text-faint);font-size:0.78rem;margin:0 0 10px;">Leave blank to inherit from policy/site/global defaults.</p>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="device-alert-cpu">CPU (%)</label>
@@ -1243,7 +1316,7 @@
                 <h2 id="syslog-detail-modal-title">Syslog Message Detail</h2>
                 <button class="modal-close" data-action="close-syslog-detail">&times;</button>
             </div>
-            <div id="syslog-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;"></div>
+            <div id="syslog-detail-body" style="color:var(--fwmon-text-dim);font-size:0.9rem;line-height:1.6;"></div>
             <div class="modal-footer">
                 <button type="button" class="btn secondary" data-action="close-syslog-detail">Close</button>
             </div>
@@ -1257,7 +1330,7 @@
                 <h2 id="alert-detail-modal-title">Alert Detail</h2>
                 <button class="modal-close" data-action="close-alert-detail">&times;</button>
             </div>
-            <div id="alert-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;"></div>
+            <div id="alert-detail-body" style="color:var(--fwmon-text-dim);font-size:0.9rem;line-height:1.6;"></div>
             <div class="modal-footer">
                 <button type="button" class="btn secondary" data-action="close-alert-detail">Close</button>
             </div>
@@ -1271,7 +1344,7 @@
                 <h2 id="audit-detail-modal-title">Audit Log Detail</h2>
                 <button class="modal-close" data-action="close-audit-detail">&times;</button>
             </div>
-            <div id="audit-detail-body" style="color:#c9d1d9;font-size:0.9rem;line-height:1.6;">
+            <div id="audit-detail-body" style="color:var(--fwmon-text-dim);font-size:0.9rem;line-height:1.6;">
                 <!-- Filled dynamically -->
             </div>
             <div class="modal-footer">
@@ -1438,7 +1511,7 @@
                 </div>
                 <div class="form-group">
                     <label for="maint-notes">Notes</label>
-                    <textarea id="maint-notes" rows="3" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px" placeholder="Reason for maintenance, contact info, etc."></textarea>
+                    <textarea id="maint-notes" rows="3" style="width:100%;background:var(--fwmon-bg);color:var(--fwmon-text-dim);border:1px solid var(--fwmon-border);border-radius:6px;padding:8px" placeholder="Reason for maintenance, contact info, etc."></textarea>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" data-action="close-maint-modal">Cancel</button>
@@ -1459,7 +1532,7 @@
                 <input type="hidden" id="ack-alert-id">
                 <div class="form-group">
                     <label for="ack-notes">Notes (optional)</label>
-                    <textarea id="ack-notes" rows="3" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px" placeholder="Resolution notes..."></textarea>
+                    <textarea id="ack-notes" rows="3" style="width:100%;background:var(--fwmon-bg);color:var(--fwmon-text-dim);border:1px solid var(--fwmon-border);border-radius:6px;padding:8px" placeholder="Resolution notes..."></textarea>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" data-action="close-ack-modal">Cancel</button>
@@ -1485,19 +1558,19 @@
 
     <style nonce="{{ .Nonce }}">
         .probe-detail-totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 24px; min-width: 800px; }
-        .detail-stat { background: linear-gradient(135deg, #0d1117 0%, #161b22 100%); border: 1px solid #30363d; border-radius: 10px; padding: 20px 16px; text-align: center; }
-        .detail-stat .detail-val { font-size: 1.8rem; font-weight: 700; color: #e6edf3; font-variant-numeric: tabular-nums; }
-        .detail-stat .detail-lbl { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; margin-top: 8px; letter-spacing: 0.5px; }
-        .detail-stat .detail-lbl .last-hour { color: #3fb950; display: block; text-transform: none; font-size: 0.9rem; margin-top: 4px; font-weight: 500; }
+        .detail-stat { background: linear-gradient(135deg, var(--fwmon-bg) 0%, var(--fwmon-card-bg) 100%); border: 1px solid var(--fwmon-border); border-radius: 10px; padding: 20px 16px; text-align: center; }
+        .detail-stat .detail-val { font-size: 1.8rem; font-weight: 700; color: var(--fwmon-text); font-variant-numeric: tabular-nums; }
+        .detail-stat .detail-lbl { font-size: 0.75rem; color: var(--fwmon-text-faint); text-transform: uppercase; margin-top: 8px; letter-spacing: 0.5px; }
+        .detail-stat .detail-lbl .last-hour { color: var(--fwmon-sig-ok); display: block; text-transform: none; font-size: 0.9rem; margin-top: 4px; font-weight: 500; }
         .probe-detail-breakdown { margin-top: 20px; }
-        .probe-detail-breakdown h4 { color: #8b949e; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #30363d; }
-        .detail-table-wrap { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+        .probe-detail-breakdown h4 { color: var(--fwmon-text-faint); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--fwmon-border); }
+        .detail-table-wrap { background: var(--fwmon-bg); border: 1px solid var(--fwmon-border); border-radius: 8px; overflow: hidden; }
         .detail-table { width: 100%; border-collapse: collapse; }
-        .detail-table th { padding: 12px 16px; text-align: left; background: #161b22; border-bottom: 1px solid #30363d; color: #8b949e; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-        .detail-table td { padding: 12px 16px; border-bottom: 1px solid #21262d; font-size: 0.88rem; color: #c9d1d9; }
+        .detail-table th { padding: 12px 16px; text-align: left; background: var(--fwmon-card-bg); border-bottom: 1px solid var(--fwmon-border); color: var(--fwmon-text-faint); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+        .detail-table td { padding: 12px 16px; border-bottom: 1px solid var(--fwmon-panel-bg); font-size: 0.88rem; color: var(--fwmon-text-dim); }
         .detail-table tr:last-child td { border-bottom: none; }
         .detail-table tr:hover { background: rgba(88,166,255,0.05); }
-        .detail-table td:last-child { font-weight: 700; color: #e6edf3; }
+        .detail-table td:last-child { font-weight: 700; color: var(--fwmon-text); }
         .probe-detail-body { padding: 8px 0; }
     </style>
 </body>

@@ -33,3 +33,18 @@
     src: url("/static/fonts/jetbrains-mono-latin.woff2") format("woff2-variations"),
          url("/static/fonts/jetbrains-mono-latin.woff2") format("woff2");
 }
+
+/* Archivo — variable weight (100–900), latin subset. The "Console" display
+ * face: broadcast / instrument-label character used for page titles and the
+ * vitals-rail readouts. The etched "expanded readout" feel is achieved with
+ * weight + letter-spacing rather than a separate width-axis file (one woff2,
+ * ~35 KB). Replaces the long-dangling "Plus Jakarta Sans" reference that was
+ * never actually loaded. */
+@font-face {
+    font-family: "Archivo";
+    font-style: normal;
+    font-weight: 100 900; /* variable axis */
+    font-display: swap;
+    src: url("/static/fonts/archivo-latin.woff2") format("woff2-variations"),
+         url("/static/fonts/archivo-latin.woff2") format("woff2");
+}

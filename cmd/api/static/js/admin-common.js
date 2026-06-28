@@ -850,6 +850,121 @@
         }
     }
 
+    /* ------------------------------------------------------------------
+     * Day / Night theme (Console design system)
+     *
+     * The token sets live in admin-design-system.css under
+     * :root[data-theme="dark"] (default) / [data-theme="light"]. We only
+     * flip the attribute on <html> and persist the choice; CSS does the
+     * rest. A pre-paint inline script in admin.html applies the saved
+     * theme before first paint to avoid a flash; initTheme() re-applies it
+     * (covering pages without that snippet) and wires the footer switch.
+     * ------------------------------------------------------------------ */
+    function getTheme() {
+        try { return localStorage.getItem('fwmon-theme') === 'light' ? 'light' : 'dark'; }
+        catch (e) { return 'dark'; }
+    }
+    function applyTheme(theme) {
+        var t = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+        var icon = document.getElementById('ts-icon');
+        var label = document.getElementById('ts-label');
+        if (icon) icon.innerHTML = (t === 'light') ? '&#9728;' : '&#9790;'; // ☀ / ☾
+        if (label) label.textContent = (t === 'light') ? 'Day' : 'Night';
+        // Let charts re-read the CSS-var axis colors for the new theme.
+        try { window.dispatchEvent(new CustomEvent('fwmon:themechange', { detail: { theme: t } })); }
+        catch (e) { /* CustomEvent unsupported — charts refresh on next reload */ }
+    }
+    function setTheme(theme) {
+        var t = theme === 'light' ? 'light' : 'dark';
+        try { localStorage.setItem('fwmon-theme', t); } catch (e) { /* storage blocked */ }
+        applyTheme(t);
+    }
+    function initTheme() {
+        applyTheme(getTheme());
+        var sw = document.getElementById('theme-switch');
+        if (sw && !sw.dataset.wired) {
+            sw.dataset.wired = '1';
+            sw.addEventListener('click', function () {
+                setTheme(getTheme() === 'light' ? 'dark' : 'light');
+            });
+        }
+    }
+
+    /* ------------------------------------------------------------------
+     * Vitals rail — persistent network instrument (admin.html shell).
+     *
+     * Reads the same endpoints the dashboard uses (/dashboard, /probes,
+     * /syslog/stats) and drives the rail's ambient warming edge via the
+     * data-sev attribute. No-op on pages without #vitals-rail.
+     * ------------------------------------------------------------------ */
+    function setVital(id, val) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = val;
+    }
+    function refreshVitals() {
+        var rail = document.getElementById('vitals-rail');
+        if (!rail) return;
+        Promise.all([
+            apiFetch(API_BASE + '/dashboard').catch(function () { return null; }),
+            apiFetch(API_BASE + '/probes').catch(function () { return null; }),
+            apiFetch(API_BASE + '/syslog/stats').catch(function () { return null; })
+        ]).then(function (r) {
+            var dash = (r[0] && r[0].data) ? (r[0].data.dashboard || r[0].data) : null;
+            if (!dash) return;
+            var devices = dash.devices || [];
+            var online = devices.filter(function (d) { return d.status === 'online'; }).length;
+            var offline = devices.filter(function (d) { return d.status === 'offline'; }).length;
+            var total = devices.length;
+
+            var allProbes = (r[1] && r[1].data) ? r[1].data : [];
+            var probes = allProbes.filter(function (p) { return !p.decommissioned_at; });
+            var activeProbes = probes.filter(function (p) {
+                return p.approval_status === 'approved' && p.status === 'online';
+            }).length;
+            var staleProbes = probes.filter(function (p) {
+                return p.approval_status === 'approved' && p.status !== 'online';
+            }).length;
+            var pendingProbes = probes.filter(function (p) { return p.approval_status === 'pending'; }).length;
+
+            var syslog = (r[2] && r[2].data) ? (r[2].data.total || 0) : 0;
+
+            setVital('vital-online', online);
+            setVital('vital-total', total);
+            setVital('vital-offline', offline);
+            setVital('vital-probes', activeProbes);
+            setVital('vital-syslog', Number(syslog).toLocaleString());
+
+            // Single worst-severity readout drives the thermal edge.
+            var sev = 'ok', label = 'NOMINAL';
+            if (offline > 0 || staleProbes > 0) {
+                sev = 'crit';
+                label = (offline > 0) ? (offline + ' DOWN') : (staleProbes + ' PROBE' + (staleProbes > 1 ? 'S' : '') + ' DOWN');
+            } else if (pendingProbes > 0) {
+                sev = 'warn';
+                label = pendingProbes + ' PENDING';
+            }
+            rail.setAttribute('data-sev', sev);
+            setVital('vital-worst', label);
+        });
+    }
+
+    // Apply theme on every admin page; start the vitals poller where the
+    // rail exists. Mirrors the tagStaticModals auto-init above.
+    function initConsoleChrome() {
+        initTheme();
+        if (document.getElementById('vitals-rail')) {
+            pollWhenVisible(refreshVitals, 30000);
+        }
+    }
+    if (typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initConsoleChrome);
+        } else {
+            initConsoleChrome();
+        }
+    }
+
     // Export to window for use by other scripts and diagram modules
     window.AdminCommon = {
         API_BASE: API_BASE,
@@ -882,7 +997,12 @@
         formatDate: formatDate,
         formatDateShort: formatDateShort,
         renderSidebar: renderSidebar,
-        renderMobileChrome: renderMobileChrome
+        renderMobileChrome: renderMobileChrome,
+        getTheme: getTheme,
+        setTheme: setTheme,
+        applyTheme: applyTheme,
+        initTheme: initTheme,
+        refreshVitals: refreshVitals
     };
 
     function renderSidebar(currentPage) {

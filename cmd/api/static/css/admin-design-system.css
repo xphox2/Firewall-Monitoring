@@ -29,51 +29,146 @@
  * Design tokens
  * ============================================================ */
 
-:root {
+/* ------------------------------------------------------------------
+ * "Console" design language (v0.10.472+)
+ *
+ * A firewall monitor is instrumentation, not a web dashboard. The palette
+ * is a deep teal-graphite "instrument bezel" (NOT GitHub near-black), state
+ * is carried by a FUNCTIONAL THERMAL SEVERITY RAMP (jade → amber → orange →
+ * red → magenta = heat rising = severity rising), and the one non-status
+ * accent is a cool "volt" cyan reserved strictly for interaction.
+ *
+ * Theming: role tokens below are the single source of truth. The DARK set is
+ * the default (24/7 NOC wall display); [data-theme="light"] (further down)
+ * swaps the same role names to a daylight brushed-aluminium panel. Every
+ * component consumes var(--fwmon-*) so one attribute flip on <html> reskins
+ * the whole admin surface. Hardcoded hex is a bug — repoint it to a role.
+ * ------------------------------------------------------------------ */
+
+:root,
+:root[data-theme="dark"] {
     --fwmon-font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    --fwmon-font-heading: "Plus Jakarta Sans", var(--fwmon-font-ui);
+    --fwmon-font-heading: "Archivo", var(--fwmon-font-ui);
     --fwmon-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas,
         "Liberation Mono", monospace;
 
-    /* Curated series palette — Okabe-Ito-adjacent, tuned for the dark base. */
-    --fwmon-series-1: #58a6ff; /* sky-300       — aligned with website --accent */
-    --fwmon-series-2: #f85149; /* red-300       — aligned with website --danger */
-    --fwmon-series-3: #d29922; /* amber-300     — aligned with website --warning */
-    --fwmon-series-4: #3fb950; /* green-300     — aligned with website --success */
-    --fwmon-series-5: #c4b5fd; /* violet-300    — memory */
-    --fwmon-series-6: #f0abfc; /* fuchsia-300   — sessions */
-    --fwmon-series-7: #fdba74; /* orange-300    — saturation */
-    --fwmon-series-8: #5eead4; /* teal-300      — latency */
+    /* Type scale — replaces ~22 ad-hoc rem sizes with a real ramp. */
+    --fwmon-t-display: 1.75rem; /* page titles, vitals readouts (Archivo) */
+    --fwmon-t-h2:      1.15rem; /* section headings (Archivo) */
+    --fwmon-t-body:    0.875rem;
+    --fwmon-t-label:   0.70rem; /* engraved wide-tracked uppercase labels */
+    --fwmon-t-data:    0.82rem; /* all numerics / IDs (JetBrains Mono) */
+    --fwmon-track-label: 0.08em; /* tracking for engraved labels */
 
-    /* Brand Theme Variables */
-    --fwmon-accent:        #58a6ff;
-    --fwmon-accent-hover:  #388bfd;
-    --fwmon-accent-bg:     rgba(88, 166, 255, 0.15);
-    --fwmon-accent-shadow: rgba(88, 166, 255, 0.2);
+    /* Spacing scale. */
+    --fwmon-sp-1: 4px;
+    --fwmon-sp-2: 8px;
+    --fwmon-sp-3: 12px;
+    --fwmon-sp-4: 16px;
+    --fwmon-sp-5: 24px;
+    --fwmon-sp-6: 32px;
 
-    /* Gradients from Website */
-    --fwmon-grad-start:    #6366f1;
-    --fwmon-grad-end:      #8b5cf6;
+    /* Curated series palette — tuned for the teal-graphite base. */
+    --fwmon-series-1: #38e1ff; /* volt cyan */
+    --fwmon-series-2: #f2555a; /* critical red */
+    --fwmon-series-3: #e7b53c; /* warning amber */
+    --fwmon-series-4: #36c98a; /* nominal jade */
+    --fwmon-series-5: #c4b5fd; /* violet  — memory */
+    --fwmon-series-6: #f0abfc; /* fuchsia — sessions */
+    --fwmon-series-7: #f4783b; /* orange  — error / saturation */
+    --fwmon-series-8: #5eead4; /* teal    — latency */
 
-    /* Chrome Colors */
-    --fwmon-card-bg:       #161b22; /* aligned with website --bg-primary */
-    --fwmon-panel-bg:      #21262d; /* aligned with website --bg-secondary */
-    --fwmon-border:        #30363d; /* aligned with website --bg-tertiary */
+    /* Volt — the ONE non-status accent (focus / active nav / links / selection).
+     * Deliberately NOT #58a6ff (GitHub blue) and NOT the map's #2dd4bf teal. */
+    --fwmon-accent:        #38e1ff;
+    --fwmon-accent-hover:  #19c8e3;
+    --fwmon-accent-bg:     rgba(56, 225, 255, 0.13);
+    --fwmon-accent-shadow: rgba(56, 225, 255, 0.22);
+    /* On-accent text: dark, because volt is a bright fill. */
+    --fwmon-on-accent:     #06222b;
 
-    /* Text */
-    --fwmon-text:       #e6edf3; /* aligned with website --text-primary */
-    --fwmon-text-dim:   #c9d1d9; /* aligned with website --text-secondary */
-    --fwmon-text-faint: #8b949e; /* aligned with website --text-muted */
+    /* Functional signal ramp — ordered thermal severity scale. */
+    --fwmon-sig-ok:    #36c98a; /* online / up / nominal */
+    --fwmon-sig-info:  #6ca8c4; /* info / notice */
+    --fwmon-sig-warn:  #e7b53c; /* warning */
+    --fwmon-sig-error: #f4783b; /* error */
+    --fwmon-sig-crit:  #f2555a; /* critical / alert / offline / down */
+    --fwmon-sig-emerg: #ff3d8b; /* emergency — top of ladder */
 
-    /* Border Radii */
-    --fwmon-radius:        12px;
-    --fwmon-radius-sm:     8px;
-    --fwmon-radius-lg:     16px;
+    /* Chrome — deep teal-graphite instrument surfaces. */
+    --fwmon-bg:            #0a1016; /* app base */
+    --fwmon-card-bg:       #111a22; /* cards / sidebar / panels */
+    --fwmon-panel-bg:      #19262f; /* inputs / table header / raised */
+    --fwmon-hover:         #1b2a33; /* row / item hover */
+    --fwmon-border:        #223039; /* steel hairline */
+    --fwmon-border-strong: #2e4049;
 
-    /* Axes / grids (chart use) */
-    --fwmon-axis-stroke: #6b7280;
-    --fwmon-grid-stroke: #1f2937;
-    --fwmon-tick-stroke: #374151;
+    /* Text — backlit-LCD off-white ramp. */
+    --fwmon-text:       #dce7ec;
+    --fwmon-text-dim:   #b8c7cf;
+    --fwmon-text-faint: #8fa2ab;
+    --fwmon-text-mute:  #5e727c;
+
+    /* Border Radii — instrument-bezel, not zero-radius broadsheet nor pill. */
+    --fwmon-radius:        8px;
+    --fwmon-radius-sm:     4px;
+    --fwmon-radius-lg:     12px;
+
+    /* Elevation — flat, no glow. */
+    --fwmon-elev-1: 0 1px 0 rgba(255, 255, 255, 0.03), 0 2px 8px rgba(0, 0, 0, 0.35);
+    --fwmon-elev-2: 0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 28px rgba(0, 0, 0, 0.45);
+
+    /* Axes / grids (chart use) — theme-aware so Day/Night re-reads them. */
+    --fwmon-axis-stroke: #5e727c;
+    --fwmon-grid-stroke: #182229;
+    --fwmon-tick-stroke: #223039;
+
+    color-scheme: dark;
+}
+
+/* ---- Light / day variant — daylight brushed-aluminium panel.
+ * Signal ramp + volt are DARKENED so every status color and body text clear
+ * AA on a light background (amber especially drops in lightness). ---- */
+:root[data-theme="light"] {
+    --fwmon-series-1: #0e9bb8;
+    --fwmon-series-2: #c8323a;
+    --fwmon-series-3: #9a6b0e;
+    --fwmon-series-4: #138a5e;
+    --fwmon-series-7: #c24a1a;
+
+    --fwmon-accent:        #0e9bb8;
+    --fwmon-accent-hover:  #0b7e96;
+    --fwmon-accent-bg:     rgba(14, 155, 184, 0.12);
+    --fwmon-accent-shadow: rgba(14, 155, 184, 0.22);
+    --fwmon-on-accent:     #ffffff;
+
+    --fwmon-sig-ok:    #138a5e;
+    --fwmon-sig-info:  #2e6e8e;
+    --fwmon-sig-warn:  #9a6b0e;
+    --fwmon-sig-error: #c24a1a;
+    --fwmon-sig-crit:  #c8323a;
+    --fwmon-sig-emerg: #c71e6b;
+
+    --fwmon-bg:            #edf1f3;
+    --fwmon-card-bg:       #ffffff;
+    --fwmon-panel-bg:      #e7edf0;
+    --fwmon-hover:         #e0e8ec;
+    --fwmon-border:        #cdd8de;
+    --fwmon-border-strong: #b3c2ca;
+
+    --fwmon-text:       #16242c;
+    --fwmon-text-dim:   #2d3d45;
+    --fwmon-text-faint: #4a5c66;
+    --fwmon-text-mute:  #7a8c95;
+
+    --fwmon-elev-1: 0 1px 2px rgba(22, 36, 44, 0.08), 0 2px 8px rgba(22, 36, 44, 0.06);
+    --fwmon-elev-2: 0 2px 4px rgba(22, 36, 44, 0.10), 0 8px 28px rgba(22, 36, 44, 0.12);
+
+    --fwmon-axis-stroke: #7a8c95;
+    --fwmon-grid-stroke: #dbe3e7;
+    --fwmon-tick-stroke: #cdd8de;
+
+    color-scheme: light;
 }
 
 /* ============================================================
@@ -874,860 +969,89 @@
     .fwmon-link {
         transition: none !important;
     }
+    /* Vitals rail: no ambient pulse, color change only. */
+    .vitals-rail,
+    .vitals-rail::before { transition: none !important; animation: none !important; }
 }
 
 /* ============================================================
- * Premium NOC-style Enhancements (WOW factor UI upgrades)
- * ============================================================ */
-
-/* Glowing Gradient Background */
+ * Console base layer
+ * ============================================================
+ * Replaces the deleted "Premium NOC" body block. Every admin page that
+ * links this stylesheet gets the instrument base + theme-aware surface.
+ */
+html { background: var(--fwmon-bg); }
 body {
-    background-color: #08090c !important;
-    background-image: 
-        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.06) 0px, transparent 50%),
-        radial-gradient(at 50% 100%, rgba(217, 70, 239, 0.04) 0px, transparent 50%) !important;
-    background-attachment: fixed !important;
-    color: #f1f5f9 !important;
-    font-family: var(--fwmon-font-ui) !important;
+    background: var(--fwmon-bg);
+    color: var(--fwmon-text);
+    font-family: var(--fwmon-font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
 }
 
-/* Glassmorphism Cards & Panels */
-.card, .stat-card, .probe-card, .rich-detail-panel, .panel-flow-card, .tunnel-chart-wrap, .fwmon-stat, .fwmon-toptalk-card, .modal-content {
-    background: rgba(15, 23, 42, 0.45) !important;
-    backdrop-filter: blur(20px) saturate(140%) !important;
-    -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35) !important;
-    border-radius: 12px !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
+/* All network data is monospace, first-class. Apply to any element that
+ * carries IPs / ports / byte counts / rates / timestamps / IDs. */
+.fwmon-data,
+.mono { font-family: var(--fwmon-font-mono); font-variant-numeric: tabular-nums; }
 
-/* Modal backdrop frosted overlay */
-.modal {
-    background: rgba(0, 0, 0, 0.55) !important;
-    backdrop-filter: blur(4px) !important;
-    -webkit-backdrop-filter: blur(4px) !important;
+/* Reusable status chip on the thermal severity ramp. Add a state class:
+ * ok / info / warn / error / crit / emerg (and aliases up/online/down/offline). */
+.signal-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 9px 2px 8px;
+    border-radius: 999px;
+    font-size: var(--fwmon-t-label);
+    font-weight: 600;
+    letter-spacing: var(--fwmon-track-label);
+    text-transform: uppercase;
+    line-height: 1.5;
+    border: 1px solid color-mix(in srgb, var(--chip) 35%, transparent);
+    background: color-mix(in srgb, var(--chip) 14%, transparent);
+    color: var(--chip);
+    --chip: var(--fwmon-text-faint);
 }
-
-/* Select options dark styling */
-select option, .form-group select option, .policy-rules-table select option {
-    background: #0f172a !important;
-    color: #e2e8f0 !important;
-}
-
-/* Hover glow & lift effects */
-.card:hover, .stat-card:hover, .probe-card.clickable:hover, .fwmon-stat:hover, .fwmon-toptalk-card:hover {
-    transform: translateY(-2px) !important;
-    border-color: rgba(125, 211, 252, 0.3) !important;
-    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
-}
-
-/* Enhanced stat borders */
-.stat-card.accent-green, .fwmon-stat.accent-green { border-left: 4px solid #4ade80 !important; }
-.stat-card.accent-red, .fwmon-stat.accent-red { border-left: 4px solid #f87171 !important; }
-.stat-card.accent-blue, .fwmon-stat.accent-blue { border-left: 4px solid #7dd3fc !important; }
-.stat-card.accent-gray, .fwmon-stat.accent-gray { border-left: 4px solid #475569 !important; }
-
-/* Custom glowing sidebar header & navigation */
-.sidebar {
-    background: rgba(10, 12, 16, 0.85) !important;
-    backdrop-filter: blur(24px) saturate(120%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(120%) !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3) !important;
-}
-
-.sidebar-header {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
-    padding: 24px 20px !important;
-}
-
-.sidebar-header h2 {
-    font-family: 'Outfit', sans-serif !important;
-    background: linear-gradient(135deg, #7dd3fc 0%, #c4b5fd 100%) !important;
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
-    font-weight: 700 !important;
-    font-size: 1.25rem !important;
-    letter-spacing: -0.3px !important;
-}
-
-.sidebar-footer {
-    border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
-}
-
-.nav-item {
-    font-family: var(--fwmon-font-ui) !important;
-    font-weight: 500 !important;
-    border-radius: 8px !important;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.nav-item:hover {
-    background: rgba(255, 255, 255, 0.04) !important;
-    color: #f8fafc !important;
-    transform: translateX(2px);
-}
-
-.nav-item.active {
-    background: rgba(56, 139, 253, 0.15) !important;
-    color: #7dd3fc !important;
-    box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.25), 0 0 16px rgba(125, 211, 252, 0.05) !important;
-}
-
-.nav-item.danger:hover {
-    background: rgba(248, 81, 73, 0.15) !important;
-    color: #ff8181 !important;
-}
-
-/* KPI cards in detailed panel */
-.panel-kpi-card {
-    background: rgba(15, 23, 42, 0.4) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    border-radius: 8px !important;
-    padding: 12px !important;
-    text-align: center !important;
-    transition: all 0.2s ease !important;
-}
-
-.panel-kpi-card:hover {
-    background: rgba(15, 23, 42, 0.6) !important;
-    border-color: rgba(125, 211, 252, 0.2) !important;
-    transform: translateY(-2px);
-}
-
-/* Form inputs: upgrade to high-end inputs */
-input, select, textarea, .form-group input, .form-group select, .form-group textarea, .fwmon-flows-input, .fwmon-flows-select, .setting-item input, .setting-item select, .setting-item textarea {
-    background: rgba(13, 17, 23, 0.6) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    border-radius: 8px !important;
-    color: #f8fafc !important;
-    padding: 8px 12px !important;
-    font-family: var(--fwmon-font-ui) !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-input:focus, select:focus, textarea:focus, .form-group input:focus, .form-group select:focus, .form-group textarea:focus, .fwmon-flows-input:focus, .fwmon-flows-select:focus, .setting-item input:focus, .setting-item select:focus, .setting-item textarea:focus {
-    border-color: #7dd3fc !important;
-    box-shadow: 0 0 12px rgba(125, 211, 252, 0.25) !important;
-    outline: none !important;
-}
-
-/* Modern buttons with glow */
-.btn, .btn-gradient {
-    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    color: #ffffff !important;
-    font-family: var(--fwmon-font-ui) !important;
-    font-weight: 600 !important;
-    border-radius: 8px !important;
-    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.25) !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    cursor: pointer !important;
-}
-
-.btn:hover, .btn-gradient:hover {
-    background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%) !important;
-    box-shadow: 0 6px 20px rgba(2, 132, 199, 0.4) !important;
-    transform: translateY(-1px) !important;
-}
-
-.btn:active, .btn-gradient:active {
-    transform: translateY(0) !important;
-}
-
-.btn.secondary {
-    background: rgba(30, 41, 59, 0.5) !important;
-    backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    color: #e2e8f0 !important;
-    box-shadow: none !important;
-}
-
-.btn.secondary:hover {
-    background: rgba(30, 41, 59, 0.8) !important;
-    border-color: rgba(255, 255, 255, 0.2) !important;
-}
-
-.btn.danger {
-    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%) !important;
-    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.25) !important;
-}
-
-.btn.danger:hover {
-    background: linear-gradient(135deg, #991b1b 0%, #dc2626 100%) !important;
-    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4) !important;
-}
-
-/* Tabs layout */
-.section-tab, .panel-tab {
-    font-family: 'Outfit', var(--fwmon-font-ui) !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.3px !important;
-    color: #94a3b8 !important;
-    border-bottom: 2px solid transparent !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.section-tab:hover, .panel-tab:hover {
-    color: #f1f5f9 !important;
-}
-
-.section-tab.active, .panel-tab.active {
-    color: #7dd3fc !important;
-    border-bottom-color: #7dd3fc !important;
-    text-shadow: 0 0 12px rgba(125, 211, 252, 0.2) !important;
-}
-
-/* Table styling premium update */
-th {
-    font-family: "Outfit", var(--fwmon-font-ui) !important;
-    font-weight: 600 !important;
-    font-size: 0.75rem !important;
-    letter-spacing: 0.8px !important;
-    text-transform: uppercase !important;
-    color: #94a3b8 !important;
-    background: #0b0d11f0 !important;
-    backdrop-filter: blur(12px) !important;
-    border-bottom: 1.5px solid rgba(255, 255, 255, 0.1) !important;
-    padding: 12px 16px !important;
-}
-
-td {
-    font-family: var(--fwmon-font-ui) !important;
-    font-size: 0.85rem !important;
-    color: #e2e8f0 !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
-    padding: 12px 16px !important;
-    transition: background-color 0.15s ease !important;
-}
-
-tr:hover td, .vpn-detail-table tr:hover td, .tunnel-table tr:hover td {
-    background: rgba(255, 255, 255, 0.015) !important;
-}
-
-/* Glowing text styling */
-.stat-card .stat-value, .fwmon-stat-value {
-    text-shadow: 0 0 10px rgba(255, 255, 255, 0.03);
-}
-.stat-card .stat-value.accent, .fwmon-stat-value.accent {
-    text-shadow: 0 0 12px rgba(125, 211, 252, 0.15) !important;
-}
-.stat-card .stat-value.good, .fwmon-stat-value.good {
-    text-shadow: 0 0 12px rgba(74, 222, 128, 0.15) !important;
-}
-.stat-card .stat-value.bad, .fwmon-stat-value.bad {
-    text-shadow: 0 0 12px rgba(248, 113, 113, 0.15) !important;
-}
-
-/* Status Badges */
-.badge {
-    border-radius: 9999px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.5px !important;
-    padding: 3px 10px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
-}
-
-.badge.online, .badge.up, .badge.approved {
-    background: rgba(74, 222, 128, 0.12) !important;
-    color: #4ade80 !important;
-    border: 1px solid rgba(74, 222, 128, 0.25) !important;
-}
-
-.badge.offline, .badge.down, .badge.rejected {
-    background: rgba(248, 113, 113, 0.12) !important;
-    color: #f87171 !important;
-    border: 1px solid rgba(248, 113, 113, 0.25) !important;
-}
-
-.badge.warning, .badge.pending {
-    background: rgba(251, 146, 60, 0.12) !important;
-    color: #fb923c !important;
-    border: 1px solid rgba(251, 146, 60, 0.25) !important;
-}
-
-.badge.info {
-    background: rgba(125, 211, 252, 0.12) !important;
-    color: #7dd3fc !important;
-    border: 1px solid rgba(125, 211, 252, 0.25) !important;
-}
-
-/* SVG Gauges styling */
-.gauge {
-    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)) !important;
-}
-
-.gauge-text {
-    text-shadow: 0 0 8px rgba(125, 211, 252, 0.2) !important;
-    fill: #e6edf3 !important;
-}
-
-/* uPlot Legend Chips / Pills override */
-.uplot .u-legend {
-    font-family: var(--fwmon-font-ui) !important;
-    font-size: 0.72rem !important;
-    color: var(--fwmon-text-dim) !important;
-    margin-top: 12px !important;
-    display: flex !important;
-    flex-wrap: wrap !important;
-    gap: 6px 12px !important;
-}
-
-.uplot .u-legend tr {
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    border-radius: 6px !important;
-    padding: 4px 10px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    transition: all 0.2s ease !important;
-}
-
-.uplot .u-legend tr:hover {
-    background: rgba(255, 255, 255, 0.06) !important;
-    border-color: rgba(255, 255, 255, 0.12) !important;
-}
-
-.uplot .u-legend td, .uplot .u-legend th {
-    padding: 0 !important;
-    border: none !important;
-    background: transparent !important;
-}
-
-.uplot .u-legend .u-marker {
-    margin-right: 8px !important;
-    border-radius: 3px !important;
-}
-
-/* Modern scrollbars */
-::-webkit-scrollbar {
+.signal-chip::before {
+    content: "";
     width: 6px;
     height: 6px;
-}
-::-webkit-scrollbar-track {
-    background: #0d1117;
-}
-::-webkit-scrollbar-thumb {
-    background: #30363d;
-    border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: #8b949e;
-}
-
-/* Alert Policy Premium Redesign Overrides */
-.policy-channel-tag {
-    font-size: 0.72rem !important;
-    font-weight: 500 !important;
-    padding: 3px 10px !important;
-    border-radius: 6px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 4px !important;
-}
-
-.policy-channel-tag.active.email {
-    background: rgba(244, 63, 94, 0.12) !important;
-    color: #fb7185 !important;
-    border: 1px solid rgba(244, 63, 94, 0.25) !important;
-}
-
-.policy-channel-tag.active.slack {
-    background: rgba(56, 189, 248, 0.12) !important;
-    color: #38bdf8 !important;
-    border: 1px solid rgba(56, 189, 248, 0.25) !important;
-}
-
-.policy-channel-tag.active.discord {
-    background: rgba(129, 140, 248, 0.12) !important;
-    color: #818cf8 !important;
-    border: 1px solid rgba(129, 140, 248, 0.25) !important;
-}
-
-.policy-channel-tag.active.webhook {
-    background: rgba(168, 85, 247, 0.12) !important;
-    color: #c084fc !important;
-    border: 1px solid rgba(168, 85, 247, 0.25) !important;
-}
-
-.policy-channel-tag.inactive {
-    background: rgba(255, 255, 255, 0.02) !important;
-    color: #475569 !important;
-    border: 1px solid rgba(255, 255, 255, 0.05) !important;
-}
-
-.stat-card:has(.stat-icon) {
-    display: flex !important;
-    align-items: center !important;
-    gap: 16px !important;
-    padding: 16px 20px !important;
-}
-
-.stat-card .stat-icon {
-    font-size: 1.75rem !important;
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    border-radius: 10px !important;
-    width: 48px !important;
-    height: 48px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.02) !important;
-}
-
-.stat-card .stat-content {
-    display: flex !important;
-    flex-direction: column !important;
-}
-
-.policy-section {
-    background: rgba(15, 23, 42, 0.3) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    border-radius: 10px !important;
-    margin-bottom: 16px !important;
-    overflow: hidden !important;
-}
-
-.policy-section-header {
-    background: rgba(255, 255, 255, 0.02) !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
-    padding: 12px 18px !important;
-}
-
-.policy-section-header h3 {
-    font-family: 'Outfit', sans-serif !important;
-    font-size: 0.95rem !important;
-    font-weight: 600 !important;
-    color: #e2e8f0 !important;
-}
-
-.channel-toggle {
-    font-family: var(--fwmon-font-ui) !important;
-    font-size: 0.82rem !important;
-    color: #94a3b8 !important;
-    transition: color 0.15s ease !important;
-}
-
-.channel-toggle:hover {
-    color: #f1f5f9 !important;
-}
-
-.channel-toggle input[type="checkbox"] {
-    accent-color: #0284c7 !important;
-}
-
-.policy-rules-table {
-    border-collapse: collapse !important;
-    width: 100% !important;
-}
-
-.policy-rules-table th {
-    background: rgba(15, 23, 42, 0.6) !important;
-    color: #94a3b8 !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-    font-family: "Outfit", sans-serif !important;
-    font-size: 0.72rem !important;
-    letter-spacing: 0.5px !important;
-    padding: 10px 12px !important;
-}
-
-.policy-rules-table td {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
-    padding: 8px 10px !important;
-    vertical-align: middle !important;
-}
-
-.policy-rules-table select.sm, .policy-rules-table input.sm {
-    background: rgba(13, 17, 23, 0.7) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    border-radius: 6px !important;
-    color: #f8fafc !important;
-    font-size: 0.78rem !important;
-    padding: 4px 8px !important;
-    outline: none !important;
-}
-
-.policy-rules-table select.sm:focus, .policy-rules-table input.sm:focus {
-    border-color: #7dd3fc !important;
-    box-shadow: 0 0 8px rgba(125, 211, 252, 0.2) !important;
-}
-
-.policy-escalation-row {
-    background: rgba(251, 146, 60, 0.03) !important;
-    border: 1px dashed rgba(251, 146, 60, 0.15) !important;
-    border-radius: 8px !important;
-    padding: 12px 16px !important;
-    margin-bottom: 20px !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 12px !important;
-}
-
-.policy-escalation-row input[type="checkbox"] {
-    accent-color: #fb923c !important;
-    width: 16px !important;
-    height: 16px !important;
-}
-
-.escalation-checkbox {
-    font-family: var(--fwmon-font-ui) !important;
-    font-size: 0.85rem !important;
-    font-weight: 600 !important;
-    color: #fb923c !important;
-    cursor: pointer !important;
-}
-
-.escalation-hint {
-    font-size: 0.78rem !important;
-    color: #94a3b8 !important;
-}
-
-/* ============================================================
- * Settings Page Premium Layout Overrides
- * ============================================================ */
-#page-settings .card {
-    background: rgba(15, 23, 42, 0.35) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    border-radius: 12px !important;
-    padding: 24px !important;
-    margin-bottom: 20px !important;
-}
-
-#page-settings .card-header {
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
-    padding-bottom: 12px !important;
-    margin-bottom: 20px !important;
-}
-
-#page-settings .card-header h2 {
-    font-family: 'Outfit', sans-serif !important;
-    font-size: 1.15rem !important;
-    font-weight: 700 !important;
-    color: #f8fafc !important;
-    letter-spacing: -0.2px !important;
-    margin: 0 !important;
-}
-
-#page-settings .settings-grid {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
-    gap: 16px !important;
-}
-
-#page-settings .setting-item {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 6px !important;
-}
-
-#page-settings .setting-item label {
-    font-size: 0.82rem !important;
-    font-weight: 500 !important;
-    color: #94a3b8 !important;
-}
-
-#page-settings .toggle-row {
-    background: rgba(255, 255, 255, 0.015) !important;
-    border: 1px solid rgba(255, 255, 255, 0.04) !important;
-    border-radius: 8px !important;
-    padding: 12px 16px !important;
-    display: flex !important;
-    justify-content: space-between !important;
-    align-items: center !important;
-    transition: all 0.2s ease !important;
-}
-
-#page-settings .toggle-row:hover {
-    background: rgba(255, 255, 255, 0.035) !important;
-    border-color: rgba(125, 211, 252, 0.15) !important;
-}
-
-#page-settings .toggle-row label {
-    margin: 0 !important;
-    font-size: 0.85rem !important;
-    font-weight: 500 !important;
-    color: #e2e8f0 !important;
-    cursor: pointer !important;
-}
-
-#page-settings .toggle-row input[type="checkbox"] {
-    accent-color: #7dd3fc !important;
-    width: 16px !important;
-    height: 16px !important;
-    cursor: pointer !important;
-}
-
-/* ============================================================
- * Audit Logs Premium Layout & Tabular Styling
- * ============================================================ */
-#audit-table {
-    width: 100% !important;
-    border-collapse: separate !important;
-    border-spacing: 0 !important;
-    font-size: 0.85rem !important;
-    color: #e2e8f0 !important;
-}
-
-#audit-table th {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 700 !important;
-    text-transform: uppercase !important;
-    font-size: 0.75rem !important;
-    letter-spacing: 0.5px !important;
-    color: #64748b !important;
-    border-bottom: 2px solid rgba(255, 255, 255, 0.08) !important;
-    padding: 12px 16px !important;
-    text-align: left !important;
-    background: rgba(15, 23, 42, 0.2) !important;
-}
-
-#audit-table tr.audit-row {
-    transition: all 0.15s ease !important;
-}
-
-#audit-table tr.audit-row td {
-    padding: 14px 16px !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
-    vertical-align: middle !important;
-    background: transparent !important;
-}
-
-#audit-table tr.audit-row:hover td {
-    background: rgba(255, 255, 255, 0.02) !important;
-    color: #f8fafc !important;
-}
-
-#audit-table tr.audit-row:hover {
-    box-shadow: inset 4px 0 0 var(--fwmon-series-1) !important;
-}
-
-#audit-table tbody tr:last-child td {
-    border-bottom: none !important;
-}
-
-#audit-table .badge {
-    border-radius: 6px !important;
-    font-family: var(--fwmon-font-mono) !important;
-    font-weight: 600 !important;
-    padding: 3px 8px !important;
-}
-
-/* ============================================================
- * IRC Page Premium Styling Overrides
- * ============================================================ */
-.server-card {
-    background: rgba(15, 23, 42, 0.45) !important;
-    backdrop-filter: blur(20px) saturate(140%) !important;
-    -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35) !important;
-    border-radius: 12px !important;
-    padding: 20px !important;
-    margin-bottom: 16px !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.server-card:hover {
-    transform: translateY(-2px) !important;
-    border-color: rgba(125, 211, 252, 0.3) !important;
-    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
-}
-
-.server-card-header h3 {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1.1rem !important;
-    color: #f8fafc !important;
-    margin: 0 !important;
-}
-
-.server-info {
-    border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
-    background: rgba(255, 255, 255, 0.01) !important;
-    border-radius: 8px !important;
-    padding: 12px 16px !important;
-    margin-top: 10px !important;
-    margin-bottom: 14px !important;
-}
-
-.channel-tag {
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    border-radius: 14px !important;
-    padding: 3px 10px !important;
-    color: #e2e8f0 !important;
-}
-
-/* ============================================================
- * Dashboard Page Premium Styling Overrides
- * ============================================================ */
-.chart-card {
-    background: rgba(15, 23, 42, 0.45) !important;
-    backdrop-filter: blur(20px) saturate(140%) !important;
-    -webkit-backdrop-filter: blur(20px) saturate(140%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.35) !important;
-    border-radius: 12px !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.chart-card:hover {
-    border-color: rgba(125, 211, 252, 0.3) !important;
-    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
-}
-
-.chart-card h3 {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1.05rem !important;
-    color: #f8fafc !important;
-    margin-top: 0 !important;
-    margin-bottom: 16px !important;
-}
-
-/* Probe Cards & Stats on Dashboard */
-.probe-card.clickable {
-    background: rgba(15, 23, 42, 0.45) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
-    border-radius: 12px !important;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
-
-.probe-card.clickable:hover {
-    transform: translateY(-2px) !important;
-    border-color: rgba(125, 211, 252, 0.3) !important;
-    box-shadow: 0 12px 40px 0 rgba(56, 139, 253, 0.08), 0 0 1px rgba(125, 211, 252, 0.2) !important;
-}
-
-.probe-card .probe-name {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1.05rem !important;
-    color: #f8fafc !important;
-    margin-bottom: 4px !important;
-    display: flex !important;
-    align-items: center !important;
-}
-
-.probe-card .probe-meta {
-    font-size: 0.78rem !important;
-    color: #94a3b8 !important;
-    margin-bottom: 12px !important;
-}
-
-.probe-card .probe-stats {
-    display: grid !important;
-    grid-template-columns: repeat(4, 1fr) !important;
-    gap: 8px !important;
-}
-
-.probe-card .probe-stat {
-    background: rgba(255, 255, 255, 0.015) !important;
-    border: 1px solid rgba(255, 255, 255, 0.04) !important;
-    border-radius: 8px !important;
-    padding: 10px 6px !important;
-    text-align: center !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    min-height: 52px !important;
-}
-
-.probe-card .probe-stat .lbl {
-    font-size: 0.62rem !important;
-    text-transform: uppercase !important;
-    color: #64748b !important;
-    letter-spacing: 0.5px !important;
-    line-height: 1.2 !important;
-}
-
-.probe-card .probe-stat .last-hour {
-    font-size: 0.72rem !important;
-    font-weight: 600 !important;
-    color: #e2e8f0 !important;
-    font-family: var(--fwmon-font-mono) !important;
-    margin-top: 4px !important;
-}
-
-/* ============================================================
- * Premium Table Styling (Devices, Interfaces, Connections, Audit, etc.)
- * ============================================================ */
-.card table, .tab-content table {
-    width: 100% !important;
-    border-collapse: separate !important;
-    border-spacing: 0 !important;
-    font-size: 0.85rem !important;
-    color: #e2e8f0 !important;
-}
-
-.card th, .tab-content th {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 700 !important;
-    text-transform: uppercase !important;
-    font-size: 0.75rem !important;
-    letter-spacing: 0.5px !important;
-    color: #64748b !important;
-    border-bottom: 2px solid rgba(255, 255, 255, 0.08) !important;
-    padding: 12px 16px !important;
-    text-align: left !important;
-    background: rgba(15, 23, 42, 0.2) !important;
-}
-
-.card tr td, .tab-content tr td {
-    padding: 14px 16px !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
-    vertical-align: middle !important;
-    background: transparent !important;
-    transition: all 0.15s ease !important;
-}
-
-.card tbody tr:hover td, .tab-content tbody tr:hover td {
-    background: rgba(255, 255, 255, 0.02) !important;
-    color: #f8fafc !important;
-}
-
-.card tbody tr:last-child td, .tab-content tbody tr:last-child td {
-    border-bottom: none !important;
-}
-
-.card tbody tr.audit-row, .card tbody tr.clickable-row {
-    cursor: pointer !important;
-}
-
-.card tbody tr.audit-row:hover, .card tbody tr.clickable-row:hover {
-    box-shadow: inset 4px 0 0 var(--fwmon-series-1) !important;
-}
-
-h1, h2, h3, h4, h5, h6 {
-    font-family: var(--fwmon-font-heading) !important;
-}
-
-/* Decorative Glow Elements from Website Style */
-.glow-bg {
-    position: absolute;
-    width: 600px;
-    height: 600px;
     border-radius: 50%;
-    filter: blur(150px);
-    opacity: 0.08 !important; /* soft background presence */
-    pointer-events: none;
-    z-index: 0;
+    background: var(--chip);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--chip) 70%, transparent);
 }
+.signal-chip.ok,
+.signal-chip.up,
+.signal-chip.online,
+.signal-chip.approved { --chip: var(--fwmon-sig-ok); }
+.signal-chip.info,
+.signal-chip.notice { --chip: var(--fwmon-sig-info); }
+.signal-chip.warn,
+.signal-chip.warning,
+.signal-chip.pending { --chip: var(--fwmon-sig-warn); }
+.signal-chip.error { --chip: var(--fwmon-sig-error); }
+.signal-chip.crit,
+.signal-chip.critical,
+.signal-chip.alert,
+.signal-chip.down,
+.signal-chip.offline,
+.signal-chip.rejected { --chip: var(--fwmon-sig-crit); }
+.signal-chip.emerg,
+.signal-chip.emergency { --chip: var(--fwmon-sig-emerg); }
 
-.glow-left {
-    background: var(--fwmon-accent) !important;
-    top: -100px;
-    left: -200px;
-}
-
-.glow-right {
-    background: var(--fwmon-grad-end) !important;
-    top: 300px;
-    right: -200px;
-}
-
-
+/* ============================================================
+ * Tailwind arbitrary-hex bridge
+ * ============================================================
+ * A few modal / bulk-action elements in admin.html use literal-hex Tailwind
+ * utilities (e.g. class="bg-[#161b22]") that are baked into the precompiled
+ * tailwind.css and can't be retokenized at the class name. Repoint them to
+ * Console tokens here. This stylesheet loads AFTER tailwind.css, so these
+ * equal-specificity rules win by source order and the elements theme cleanly.
+ */
+.bg-\[\#0d1117\]     { background-color: var(--fwmon-bg); }
+.bg-\[\#161b22\]     { background-color: var(--fwmon-card-bg); }
+.border-\[\#30363d\] { border-color: var(--fwmon-border); }
+.border-\[\#58a6ff\] { border-color: var(--fwmon-accent); }
+.text-\[\#8b949e\]   { color: var(--fwmon-text-faint); }
+.text-\[\#c9d1d9\]   { color: var(--fwmon-text-dim); }
+.text-\[\#e6edf3\]   { color: var(--fwmon-text); }
