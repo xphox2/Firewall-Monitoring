@@ -474,12 +474,13 @@
 
     function createGauge(containerId, value, color) {
         var container = document.getElementById(containerId);
+        if (!container) return;
         var radius = 32;
         var circumference = 2 * Math.PI * radius;
         var offset = circumference - (Math.min(value, 100) / 100) * circumference;
 
         container.innerHTML =
-            '<svg width="80" height="80" viewBox="0 0 80 80">' +
+            '<svg width="100%" height="100%" viewBox="0 0 80 80" style="display:block;">' +
                 '<circle class="gauge-bg" cx="40" cy="40" r="' + radius + '" />' +
                 '<circle class="gauge-fill" cx="40" cy="40" r="' + radius + '"' +
                     ' stroke="' + color + '"' +

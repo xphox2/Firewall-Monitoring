@@ -500,3 +500,8 @@
     color: var(--fwmon-accent) !important;
 }
 
+/* Micro-gauge percentage text adjustments */
+.gauge.w-12 .gauge-text {
+    font-size: 0.65rem !important;
+}
+
