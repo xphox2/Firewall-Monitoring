@@ -100,28 +100,33 @@
     --fwmon-sig-crit:  #f2555a; /* critical / alert / offline / down */
     --fwmon-sig-emerg: #ff3d8b; /* emergency — top of ladder */
 
-    /* Chrome — deep teal-graphite instrument surfaces. */
-    --fwmon-bg:            #0a1016; /* app base */
-    --fwmon-card-bg:       #111a22; /* cards / sidebar / panels */
-    --fwmon-panel-bg:      #19262f; /* inputs / table header / raised */
-    --fwmon-hover:         #1b2a33; /* row / item hover */
-    --fwmon-border:        #223039; /* steel hairline */
-    --fwmon-border-strong: #2e4049;
+    /* Chrome — deep teal-graphite instrument surfaces.
+     * Tuned for depth: the base is deepened and the card/panel lifted so
+     * surfaces separate clearly (the day theme gets this free from
+     * white-on-grey; dark has to earn it with luminance delta + borders). */
+    --fwmon-bg:            #080d12; /* app base — deepened */
+    --fwmon-card-bg:       #141f29; /* cards / sidebar / panels — lifted to pop off the base */
+    --fwmon-panel-bg:      #1e2d38; /* inputs / table header / raised */
+    --fwmon-hover:         #233440; /* row / item hover */
+    --fwmon-border:        #2c3c47; /* steel hairline — strengthened so card edges read */
+    --fwmon-border-strong: #3a525e;
 
-    /* Text — backlit-LCD off-white ramp. */
-    --fwmon-text:       #dce7ec;
-    --fwmon-text-dim:   #b8c7cf;
-    --fwmon-text-faint: #8fa2ab;
-    --fwmon-text-mute:  #5e727c;
+    /* Text — backlit-LCD off-white ramp, brightened so labels stay crisp
+     * (not washed) against the dark surfaces. */
+    --fwmon-text:       #e8eff3;
+    --fwmon-text-dim:   #c0cfd7;
+    --fwmon-text-faint: #9eb2bb;
+    --fwmon-text-mute:  #748892;
 
     /* Border Radii — instrument-bezel, not zero-radius broadsheet nor pill. */
     --fwmon-radius:        8px;
     --fwmon-radius-sm:     4px;
     --fwmon-radius-lg:     12px;
 
-    /* Elevation — flat, no glow. */
-    --fwmon-elev-1: 0 1px 0 rgba(255, 255, 255, 0.03), 0 2px 8px rgba(0, 0, 0, 0.35);
-    --fwmon-elev-2: 0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 28px rgba(0, 0, 0, 0.45);
+    /* Elevation — a subtle inset top-highlight gives surfaces a "lift" off
+     * the base (Linear/Grafana-style) plus a deeper drop shadow for pop. */
+    --fwmon-elev-1: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 10px rgba(0, 0, 0, 0.5);
+    --fwmon-elev-2: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 12px 34px rgba(0, 0, 0, 0.6);
 
     /* Axes / grids (chart use) — theme-aware so Day/Night re-reads them. */
     --fwmon-axis-stroke: #5e727c;

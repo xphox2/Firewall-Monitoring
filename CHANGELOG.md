@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.502] - 2026-06-28
+
+### Changed
+- **Night theme polish — depth and crispness to match the day theme.** The dark theme read flat/washed next to light: cards barely separated from the base (both near-identical luminance) and the dim/engraved labels looked faded. Tuned the **dark token set only** (day theme untouched): deepened the base (`--fwmon-bg` → `#080d12`), lifted the card/panel surfaces (`--fwmon-card-bg` → `#141f29`) and strengthened the steel hairline (`--fwmon-border` → `#2c3c47`) so surfaces separate clearly; brightened the text ramp (`--fwmon-text` `#e8eff3`, `-faint` `#9eb2bb`, `-mute` `#748892`) so labels stay crisp; and reworked elevation to a Linear/Grafana-style **inset top-highlight + deeper drop shadow**. Applied `box-shadow: var(--fwmon-elev-1)` to `.card` / `.stat-card` / `.chart-card` / `.probe-card` (theme-aware: a soft light shadow in day, the lift treatment in night). Verified both themes by headless screenshot; AUDIT-066/067 contrast regression tests stay green. `go build ./...` + `go test ./...` green.
+
 ## [0.10.501] - 2026-06-28
 
 ### Changed

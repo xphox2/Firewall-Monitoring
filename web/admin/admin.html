@@ -125,7 +125,7 @@
         .pulse-dot.offline { background: var(--fwmon-sig-crit); }
         .pulse-dot.pending { background: var(--fwmon-sig-warn); animation: pulse 2s infinite; }
         .probe-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; margin-top: 16px; }
-        .probe-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 16px; min-width: 0; overflow: hidden; }
+        .probe-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 16px; min-width: 0; overflow: hidden; box-shadow: var(--fwmon-elev-1); }
         .probe-card.clickable { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
         .probe-card.clickable:hover { border-color: var(--fwmon-accent); transform: translateY(-2px); }
         .probe-card .probe-name { font-weight: 600; color: var(--fwmon-text); margin-bottom: 6px; font-size: 1rem; display: flex; align-items: center; gap: 8px; word-break: break-word; overflow-wrap: break-word; }
@@ -145,7 +145,7 @@
          * without requiring a markup change. Same bug class as the one
          * fixed for /admin/devices/:id in v0.10.227 — pre-existing on
          * this page but masked by all-numeric content. */
-        .stat-card { display: block; background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 16px; }
+        .stat-card { display: block; background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 16px; box-shadow: var(--fwmon-elev-1); }
         .stat-card:has(.stat-icon) { display: flex; align-items: center; gap: 14px; }
         .stat-card .stat-label { font-size: var(--fwmon-t-label); color: var(--fwmon-text-faint); text-transform: uppercase; letter-spacing: var(--fwmon-track-label); margin-bottom: 6px; }
         .stat-card .stat-value { font-family: var(--fwmon-font-mono); font-size: 1.55rem; font-weight: 700; color: var(--fwmon-text); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; word-break: break-word; overflow-wrap: anywhere; }
@@ -157,13 +157,13 @@
         .stat-card.accent-blue { border-left: 3px solid var(--fwmon-accent); }
         .stat-card.accent-gray { border-left: 3px solid var(--fwmon-border-strong); }
         .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-        .chart-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; height: 340px; }
+        .chart-card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; height: 340px; box-shadow: var(--fwmon-elev-1); }
         .chart-card h3 { font-family: var(--fwmon-font-heading); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fwmon-text-faint); margin-bottom: 12px; }
         .chart-card canvas { max-height: 280px; }
         @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
         @media (max-width: 1100px) { .stat-grid-6 { grid-template-columns: repeat(3, 1fr); } }
         @media (max-width: 600px) { .stat-grid-6 { grid-template-columns: repeat(2, 1fr); } }
-        .card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; margin-bottom: 16px; }
+        .card { background: var(--fwmon-card-bg); border: 1px solid var(--fwmon-border); border-radius: var(--fwmon-radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--fwmon-elev-1); }
         .card:fullscreen { background: var(--fwmon-bg); padding: 0; display: flex; flex-direction: column; }
         .card:fullscreen .card-header { flex-shrink: 0; }
         .card:fullscreen .connection-diagram { flex: 1; min-h-0; }
