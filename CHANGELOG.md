@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.501] - 2026-06-28
+
+### Changed
+- **Charts redraw instantly on Day/Night toggle.** Previously a theme switch only recolored CSS-styled elements; already-rendered charts kept their old axis/grid/legend colors until the next data refresh. Now the `fwmon:themechange` event drives an immediate repaint:
+  - **Chart.js** (dashboard, connections, device-detail, diagram panels): `setupChartDefaults()` reads Console tokens via a new `AdminCommon.cssVar()` helper instead of hardcoded hex, and a `recolorChartsForTheme()` listener walks every live instance (`Chart.getChart`) — recoloring scales/grid/ticks/legend/tooltip and calling `update('none')` (no animation, no refetch).
+  - **uPlot** (device-detail time-series, flows bandwidth): axis/grid/tick colors are now read from `--fwmon-axis-stroke` / `--fwmon-grid-stroke` / `--fwmon-tick-stroke` at build time (the old hardcoded white-on-dark values were invisible in light mode). On theme change each page rebuilds its uPlot charts from cached data (`state.lastBuckets` / `lastBwData`) — instant, no network — destroying first so the device-detail overview's in-place `setData` reuse path doesn't retain the stale axis stroke.
+  - Verified end-to-end with a headless browser: toggling the switch flips `Chart.defaults.color` and repaints live instances to the new theme tokens. `go build ./...` + `go test ./...` green.
+
 ## [0.10.500] - 2026-06-28
 
 ### Changed

@@ -46,9 +46,21 @@
     var state = Object.assign({}, DEFAULTS);
     var inited = false;
     var charts = { bandwidth: null };
+    var lastBwData = null; // cached stats payload, so a theme toggle can rebuild the uPlot without refetching
+    var themeWired = false;
     var flowsOffset = 0;
     var reloadTimer = null;
     var statsTimer = null;
+
+    // Console design token reader; uPlot axes are canvas-drawn from JS values
+    // read fresh at each (re)build, including on Day/Night toggle.
+    function cssVar(name, fallback) {
+        try {
+            if (window.AdminCommon && AdminCommon.cssVar) return AdminCommon.cssVar(name, fallback);
+            var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return v || fallback;
+        } catch (e) { return fallback; }
+    }
 
     // ----------------------------------------------------------------------
     // Boot
@@ -67,6 +79,14 @@
         bindControls();
         applyStateToControls();
         reload();
+        // Rebuild the bandwidth uPlot on Day/Night toggle (canvas axes can't
+        // be restyled in place) from the cached payload — no refetch.
+        if (!themeWired) {
+            themeWired = true;
+            window.addEventListener('fwmon:themechange', function() {
+                if (lastBwData) renderBandwidth(lastBwData);
+            });
+        }
     }
 
     function stateFromURL() {
@@ -477,8 +497,12 @@
             bps.push((points[i].count * 8) / intervalSec);
         }
 
+        lastBwData = d; // remember for instant rebuild on theme toggle
         host.innerHTML = '';
         var width = host.clientWidth || 600;
+        var axStroke = cssVar('--fwmon-axis-stroke', '#6b7280');
+        var axGrid = cssVar('--fwmon-grid-stroke', '#1f2937');
+        var axTick = cssVar('--fwmon-tick-stroke', '#374151');
         var opts = {
             width: width,
             height: 240,
@@ -496,12 +520,12 @@
                 } }
             },
             axes: [
-                { stroke: '#6b7280', font: '11px "JetBrains Mono", ui-monospace, monospace',
-                  size: 24, grid: { stroke: '#1f2937', width: 1 },
-                  ticks: { stroke: '#374151', width: 1, size: 4 }, space: 60 },
-                { stroke: '#6b7280', font: '11px "JetBrains Mono", ui-monospace, monospace',
-                  size: 56, grid: { stroke: '#1f2937', width: 1 },
-                  ticks: { stroke: '#374151', width: 1, size: 4 },
+                { stroke: axStroke, font: '11px "JetBrains Mono", ui-monospace, monospace',
+                  size: 24, grid: { stroke: axGrid, width: 1 },
+                  ticks: { stroke: axTick, width: 1, size: 4 }, space: 60 },
+                { stroke: axStroke, font: '11px "JetBrains Mono", ui-monospace, monospace',
+                  size: 56, grid: { stroke: axGrid, width: 1 },
+                  ticks: { stroke: axTick, width: 1, size: 4 },
                   values: function(u, vals) { return vals.map(formatBpsShort); } }
             ],
             series: [

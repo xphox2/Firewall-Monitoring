@@ -1002,7 +1002,8 @@
         setTheme: setTheme,
         applyTheme: applyTheme,
         initTheme: initTheme,
-        refreshVitals: refreshVitals
+        refreshVitals: refreshVitals,
+        cssVar: cssVar
     };
 
     function renderSidebar(currentPage) {
@@ -1273,37 +1274,47 @@
         });
     })();
 
+    // Read a Console design token off :root (resolves the active theme).
+    function cssVar(name, fallback) {
+        try {
+            var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return v || fallback;
+        } catch (e) { return fallback; }
+    }
+
     function setupChartDefaults() {
         if (!window.Chart) return;
-        
+        var faint = cssVar('--fwmon-text-faint', '#8b949e');
+        var dim = cssVar('--fwmon-text-dim', '#c9d1d9');
+
         // General text color and font
-        Chart.defaults.color = '#8b949e';
+        Chart.defaults.color = faint;
         Chart.defaults.font.family = '"Inter", ui-sans-serif, system-ui, -apple-system, sans-serif';
         Chart.defaults.font.size = 10;
         Chart.defaults.responsive = true;
         Chart.defaults.maintainAspectRatio = false;
-        
+
         // Grid lines styling
         if (Chart.defaults.scale && Chart.defaults.scale.grid) {
-            Chart.defaults.scale.grid.color = 'rgba(48, 54, 61, 0.2)';
+            Chart.defaults.scale.grid.color = cssVar('--fwmon-grid-stroke', 'rgba(48, 54, 61, 0.2)');
             Chart.defaults.scale.grid.borderColor = 'transparent';
             Chart.defaults.scale.grid.drawBorder = false;
         }
         if (Chart.defaults.scale && Chart.defaults.scale.ticks) {
-            Chart.defaults.scale.ticks.color = '#8b949e';
+            Chart.defaults.scale.ticks.color = faint;
             Chart.defaults.scale.ticks.font = {
                 family: '"JetBrains Mono", monospace',
                 size: 9
             };
         }
-        
+
         // Custom Tooltip defaults
         if (Chart.defaults.plugins && Chart.defaults.plugins.tooltip) {
-            Chart.defaults.plugins.tooltip.backgroundColor = '#161b22';
-            Chart.defaults.plugins.tooltip.titleColor = '#e6edf3';
+            Chart.defaults.plugins.tooltip.backgroundColor = cssVar('--fwmon-card-bg', '#161b22');
+            Chart.defaults.plugins.tooltip.titleColor = cssVar('--fwmon-text', '#e6edf3');
             Chart.defaults.plugins.tooltip.titleFont = { size: 12, weight: '600' };
-            Chart.defaults.plugins.tooltip.bodyColor = '#c9d1d9';
-            Chart.defaults.plugins.tooltip.borderColor = 'rgba(255, 255, 255, 0.08)';
+            Chart.defaults.plugins.tooltip.bodyColor = dim;
+            Chart.defaults.plugins.tooltip.borderColor = cssVar('--fwmon-border', 'rgba(255, 255, 255, 0.08)');
             Chart.defaults.plugins.tooltip.borderWidth = 1;
             Chart.defaults.plugins.tooltip.padding = 10;
             Chart.defaults.plugins.tooltip.cornerRadius = 6;
@@ -1312,10 +1323,10 @@
             Chart.defaults.plugins.tooltip.boxHeight = 8;
             Chart.defaults.plugins.tooltip.usePointStyle = true;
         }
-        
+
         // Legend defaults
         if (Chart.defaults.plugins && Chart.defaults.plugins.legend) {
-            Chart.defaults.plugins.legend.labels.color = '#c9d1d9';
+            Chart.defaults.plugins.legend.labels.color = dim;
             Chart.defaults.plugins.legend.labels.boxWidth = 8;
             Chart.defaults.plugins.legend.labels.boxHeight = 8;
             Chart.defaults.plugins.legend.labels.usePointStyle = true;
@@ -1326,7 +1337,45 @@
             };
         }
     }
-    
+
+    // Recolor every live Chart.js instance to the active theme. Updating
+    // Chart.defaults only affects charts built afterward, so we also walk
+    // each instance's resolved options (some charts set per-chart colors)
+    // and repaint with update('none') — no animation, no data refetch.
+    // uPlot charts are canvas-drawn from JS opts and can't be restyled in
+    // place; those pages listen for fwmon:themechange and rebuild themselves.
+    function recolorChartsForTheme() {
+        if (!window.Chart || typeof Chart.getChart !== 'function') return;
+        setupChartDefaults();
+        var grid = cssVar('--fwmon-grid-stroke', 'rgba(48, 54, 61, 0.2)');
+        var faint = cssVar('--fwmon-text-faint', '#8b949e');
+        var dim = cssVar('--fwmon-text-dim', '#c9d1d9');
+        var cardBg = cssVar('--fwmon-card-bg', '#161b22');
+        var text = cssVar('--fwmon-text', '#e6edf3');
+        var border = cssVar('--fwmon-border', 'rgba(255,255,255,0.08)');
+        var canvases = document.querySelectorAll('canvas');
+        for (var i = 0; i < canvases.length; i++) {
+            var ch = Chart.getChart(canvases[i]);
+            if (!ch || !ch.options) continue;
+            var sc = ch.options.scales || {};
+            Object.keys(sc).forEach(function(k) {
+                if (!sc[k]) return;
+                if (sc[k].grid) sc[k].grid.color = grid;
+                if (sc[k].ticks) sc[k].ticks.color = faint;
+            });
+            var pl = ch.options.plugins || {};
+            if (pl.legend && pl.legend.labels) pl.legend.labels.color = dim;
+            if (pl.tooltip) {
+                pl.tooltip.backgroundColor = cardBg;
+                pl.tooltip.titleColor = text;
+                pl.tooltip.bodyColor = dim;
+                pl.tooltip.borderColor = border;
+            }
+            try { ch.update('none'); } catch (e) { /* chart mid-teardown */ }
+        }
+    }
+    window.addEventListener('fwmon:themechange', recolorChartsForTheme);
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', setupChartDefaults);
     } else {

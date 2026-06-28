@@ -54,13 +54,25 @@
         idle:    '#6B7280'
     };
 
-    var AXIS = {
-        stroke: 'rgba(255, 255, 255, 0.45)',
-        font:  '11px "JetBrains Mono", ui-monospace, monospace',
-        size:   24,
-        grid:   { stroke: 'rgba(255, 255, 255, 0.06)', width: 1 },
-        ticks:  { stroke: 'rgba(255, 255, 255, 0.15)', width: 1, size: 4 }
-    };
+    // Console design token reader (falls back to the shared helper / a manual
+    // getComputedStyle). uPlot draws axes on canvas from these JS values, so
+    // they're read fresh at every (re)build — including on theme toggle.
+    function cssVar(name, fallback) {
+        try {
+            if (window.AdminCommon && AdminCommon.cssVar) return AdminCommon.cssVar(name, fallback);
+            var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return v || fallback;
+        } catch (e) { return fallback; }
+    }
+    function axisCfg() {
+        return {
+            stroke: cssVar('--fwmon-axis-stroke', '#6b7280'),
+            font:  '11px "JetBrains Mono", ui-monospace, monospace',
+            size:   24,
+            grid:   { stroke: cssVar('--fwmon-grid-stroke', 'rgba(255, 255, 255, 0.06)'), width: 1 },
+            ticks:  { stroke: cssVar('--fwmon-tick-stroke', 'rgba(255, 255, 255, 0.15)'), width: 1, size: 4 }
+        };
+    }
 
     var state = {
         deviceId: null,
@@ -83,6 +95,28 @@
         wireRangePills();
         load(state.range);
         wireResize();
+        wireThemeChange();
+    }
+
+    // Rebuild every uPlot from the cached buckets on Day/Night toggle so the
+    // canvas-drawn axes pick up the new theme colors. We destroy first (the
+    // overview chart has an in-place setData reuse path that would otherwise
+    // keep the old axis stroke), then re-render — no data refetch.
+    function wireThemeChange() {
+        if (state.themeWired) return;
+        state.themeWired = true;
+        window.addEventListener('fwmon:themechange', function() {
+            if (!state.lastBuckets || !state.lastBuckets.length) return;
+            for (var k in state.charts) {
+                if (state.charts[k]) {
+                    try { state.charts[k].destroy(); } catch (e) { /* swallow */ }
+                    state.charts[k] = null;
+                }
+            }
+            renderOverview(state.lastBuckets);
+            renderNetwork(state.lastBuckets);
+            renderCPUBreakdown(state.lastBuckets);
+        });
     }
 
     function destroy() {
@@ -315,23 +349,26 @@
                 x: { time: true },
                 y: yScaleOpts || { auto: true }
             },
-            axes: [
-                {
-                    stroke: AXIS.stroke,
-                    font:   AXIS.font,
-                    size:   AXIS.size,
-                    grid:   AXIS.grid,
-                    ticks:  AXIS.ticks,
-                    space:  60
-                },
-                {
-                    stroke: AXIS.stroke,
-                    font:   AXIS.font,
-                    size:   48,
-                    grid:   AXIS.grid,
-                    ticks:  AXIS.ticks
-                }
-            ],
+            axes: (function() {
+                var AX = axisCfg();
+                return [
+                    {
+                        stroke: AX.stroke,
+                        font:   AX.font,
+                        size:   AX.size,
+                        grid:   AX.grid,
+                        ticks:  AX.ticks,
+                        space:  60
+                    },
+                    {
+                        stroke: AX.stroke,
+                        font:   AX.font,
+                        size:   48,
+                        grid:   AX.grid,
+                        ticks:  AX.ticks
+                    }
+                ];
+            })(),
             series: seriesDefs
         };
     }
