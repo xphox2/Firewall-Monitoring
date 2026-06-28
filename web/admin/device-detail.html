@@ -77,27 +77,35 @@
             <!-- AUDIT-068: stat grids use overflow-x-auto to prevent layout bursting on narrow viewports -->
             <div class="kpi-dashboard mb-6 flex flex-col gap-4">
                 <!-- Tier 1: Core Utilization Gauges & Primary Stats -->
-                <div class="stat-grid grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto" id="systemStats">
-                    <div class="kpi-card p-5 text-center flex flex-col items-center justify-between transition-all">
-                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#7dd3fc]"></span> CPU Usage</div>
-                        <div class="gauge relative w-20 h-20 flex items-center justify-center" id="cpuGauge"></div>
+                <div class="stat-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 overflow-x-auto" id="systemStats">
+                    <!-- Combined System Resources Widget -->
+                    <div class="kpi-card p-5 transition-all lg:col-span-3 flex flex-col justify-between">
+                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1">
+                            <span class="w-2 h-2 rounded-full bg-[#818cf8]"></span> System Resources
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 w-full justify-items-center items-center flex-1">
+                            <div class="flex flex-col items-center">
+                                <span class="text-[0.72rem] text-[#8b949e] uppercase font-bold tracking-wider mb-2">CPU</span>
+                                <div class="gauge relative w-20 h-20 flex items-center justify-center" id="cpuGauge"></div>
+                            </div>
+                            <div class="flex flex-col items-center">
+                                <span class="text-[0.72rem] text-[#8b949e] uppercase font-bold tracking-wider mb-2">Memory</span>
+                                <div class="gauge relative w-20 h-20 flex items-center justify-center" id="memGauge"></div>
+                            </div>
+                            <div class="flex flex-col items-center">
+                                <span class="text-[0.72rem] text-[#8b949e] uppercase font-bold tracking-wider mb-2">Disk</span>
+                                <div class="gauge relative w-20 h-20 flex items-center justify-center" id="diskGauge"></div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="kpi-card p-5 text-center flex flex-col items-center justify-between transition-all">
-                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#c4b5fd]"></span> Memory Usage</div>
-                        <div class="gauge relative w-20 h-20 flex items-center justify-center" id="memGauge"></div>
-                    </div>
-                    <div class="kpi-card p-5 text-center flex flex-col items-center justify-between transition-all">
-                        <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#86efac]"></span> Disk Usage</div>
-                        <div class="gauge relative w-20 h-20 flex items-center justify-center" id="diskGauge"></div>
-                    </div>
-                    <div class="kpi-card p-5 text-center flex flex-col justify-between transition-all">
+                    <div class="kpi-card p-5 text-center flex flex-col justify-between transition-all lg:col-span-1">
                         <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-[#f0abfc]"></span> Active Sessions</div>
                         <div class="flex flex-col items-center justify-center flex-1">
                             <div class="stat-value text-[2rem] font-extrabold text-[#e6edf3] tracking-tight leading-none" id="sessionCount">-</div>
                             <span class="text-[0.7rem] text-[#8b949e] mt-2 font-mono">concurrent connections</span>
                         </div>
                     </div>
-                    <div class="kpi-card p-5 text-center flex flex-col justify-between transition-all">
+                    <div class="kpi-card p-5 text-center flex flex-col justify-between transition-all lg:col-span-1">
                         <div class="stat-label text-[0.75rem] font-semibold text-[#8b949e] uppercase tracking-[0.5px] mb-3 flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-[#5eead4]"></span> System Uptime</div>
                         <div class="flex flex-col items-center justify-center flex-1">
                             <div class="stat-value text-[1.5rem] font-extrabold text-[#e6edf3] tracking-tight leading-none" id="uptimeValue">-</div>
