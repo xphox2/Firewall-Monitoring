@@ -239,12 +239,12 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(88, 166, 255, 0.12);
-    border: 1px solid rgba(88, 166, 255, 0.4);
+    background: var(--fwmon-accent-bg);
+    border: 1px solid color-mix(in srgb, var(--fwmon-accent) 40%, transparent);
     border-radius: 6px;
     padding: 3px 4px 3px 8px;
     font-size: 0.72rem;
-    color: #7dd3fc;
+    color: var(--fwmon-accent);
     white-space: nowrap;
 }
 
@@ -254,7 +254,7 @@
 .bw-zoom-reset {
     background: transparent;
     border: none;
-    color: #7dd3fc;
+    color: var(--fwmon-accent);
     cursor: pointer;
     font-size: 0.95rem;
     line-height: 1;
@@ -263,14 +263,14 @@
 }
 
 .bw-zoom-reset:hover {
-    background: rgba(88, 166, 255, 0.2);
-    color: #fff;
+    background: color-mix(in srgb, var(--fwmon-accent) 20%, transparent);
+    color: var(--fwmon-text);
 }
 
 /* === Redesigned Dashboard Styles (v1.0.0) === */
 
 .device-banner {
-    background: linear-gradient(135deg, rgba(22, 27, 34, 0.8) 0%, rgba(13, 17, 23, 0.9) 100%);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--fwmon-card-bg) 80%, transparent) 0%, color-mix(in srgb, var(--fwmon-bg) 90%, transparent) 100%);
     backdrop-filter: blur(12px);
     border-radius: 12px;
     border: 1px solid var(--fwmon-border);
@@ -284,7 +284,7 @@
 
 .device-banner:hover .device-avatar {
     border-color: var(--fwmon-series-1);
-    box-shadow: 0 0 12px rgba(125, 211, 252, 0.35);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--fwmon-accent) 35%, transparent);
 }
 
 /* Tab Badge Pill Indicator */
@@ -304,26 +304,26 @@
 }
 
 .tab-item.active .tab-badge {
-    background: rgba(125, 211, 252, 0.15);
-    color: #7dd3fc;
-    border-color: rgba(125, 211, 252, 0.3);
+    background: var(--fwmon-accent-bg);
+    color: var(--fwmon-accent);
+    border-color: color-mix(in srgb, var(--fwmon-accent) 30%, transparent);
 }
 
 .tab-badge.danger {
-    background: rgba(248, 81, 73, 0.16);
+    background: color-mix(in srgb, var(--fwmon-sig-crit) 16%, transparent);
     color: var(--fwmon-sig-crit);
-    border-color: rgba(248, 81, 73, 0.35);
+    border-color: color-mix(in srgb, var(--fwmon-sig-crit) 35%, transparent);
 }
 
 .tab-badge.success {
-    background: rgba(63, 185, 80, 0.16);
-    color: #86efac;
-    border-color: rgba(63, 185, 80, 0.3);
+    background: color-mix(in srgb, var(--fwmon-sig-ok) 16%, transparent);
+    color: var(--fwmon-sig-ok);
+    border-color: color-mix(in srgb, var(--fwmon-sig-ok) 30%, transparent);
 }
 
 /* Glassmorphic KPI Cards */
 .kpi-card {
-    background: rgba(22, 27, 34, 0.65);
+    background: color-mix(in srgb, var(--fwmon-card-bg) 65%, transparent);
     backdrop-filter: blur(8px);
     border: 1px solid var(--fwmon-border);
     border-radius: 12px;
@@ -332,21 +332,21 @@
 
 .kpi-card:hover {
     transform: translateY(-2px);
-    background: rgba(22, 27, 34, 0.85);
+    background: color-mix(in srgb, var(--fwmon-card-bg) 85%, transparent);
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
 }
 
 .kpi-subcard {
-    background: rgba(13, 17, 23, 0.5);
+    background: color-mix(in srgb, var(--fwmon-bg) 50%, transparent);
     backdrop-filter: blur(6px);
-    border: 1px solid rgba(48, 54, 61, 0.7);
+    border: 1px solid var(--fwmon-border);
     border-radius: 8px;
     transition: all 0.2s ease;
 }
 
 .kpi-subcard:hover {
     border-color: var(--fwmon-border-strong);
-    background: rgba(22, 27, 34, 0.7);
+    background: color-mix(in srgb, var(--fwmon-card-bg) 70%, transparent);
     transform: translateY(-1px);
 }
 
@@ -375,7 +375,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: #f0f6fc;
+    background: var(--fwmon-text-faint);
     top: 2px;
     left: 2px;
     transition: transform 0.2s;
@@ -383,11 +383,12 @@
 
 .main-content input[type="checkbox"][data-action="toggle-public-iface"]:checked::before {
     transform: translateX(14px);
+    background: var(--fwmon-on-accent);
 }
 
 /* Core CPU Progress Bars */
 .core-bar-wrapper {
-    background: rgba(13, 17, 23, 0.6);
+    background: color-mix(in srgb, var(--fwmon-bg) 60%, transparent);
     border: 1px solid var(--fwmon-border);
     border-radius: 8px;
     padding: 10px 14px;
@@ -398,13 +399,13 @@
 }
 
 .core-bar-wrapper:hover {
-    background: rgba(22, 27, 34, 0.7);
+    background: color-mix(in srgb, var(--fwmon-card-bg) 70%, transparent);
     border-color: var(--fwmon-border-strong);
 }
 
 /* Table layout adjustments */
 .main-content table th {
-    background: rgba(22, 27, 34, 0.6);
+    background: color-mix(in srgb, var(--fwmon-panel-bg) 70%, transparent);
     backdrop-filter: blur(4px);
 }
 
@@ -413,7 +414,7 @@
 }
 
 .main-content table tr.clickable:hover {
-    background-color: rgba(125, 211, 252, 0.04) !important;
+    background-color: color-mix(in srgb, var(--fwmon-accent) 6%, transparent) !important;
 }
 
 /* Tabs visual polish */
@@ -452,7 +453,7 @@
 .tab-item.active {
     color: var(--fwmon-series-1);
     border-bottom-color: var(--fwmon-series-1);
-    background: rgba(125, 211, 252, 0.03);
+    background: color-mix(in srgb, var(--fwmon-accent) 5%, transparent);
 }
 
 .tab-icon {

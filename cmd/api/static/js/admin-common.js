@@ -1003,7 +1003,9 @@
         applyTheme: applyTheme,
         initTheme: initTheme,
         refreshVitals: refreshVitals,
-        cssVar: cssVar
+        cssVar: cssVar,
+        hexToRgb: hexToRgb,
+        fillGradient: fillGradient
     };
 
     function renderSidebar(currentPage) {
@@ -1282,6 +1284,31 @@
         } catch (e) { return fallback; }
     }
 
+    // "#4c8dff" / "#fff" -> "76, 141, 255" for building rgba() gradient stops.
+    function hexToRgb(hex) {
+        var h = String(hex).trim().replace('#', '');
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        var n = parseInt(h, 16);
+        if (h.length !== 6 || isNaN(n)) return '76, 141, 255'; // accent fallback
+        return ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255);
+    }
+
+    // Vertical area-fill gradient for a line chart, derived from the line's own
+    // color. Punchier in the dark theme (flat surfaces swallow a faint fill);
+    // tasteful in light. Shared by createChart() (initial render) and the theme
+    // recolor pass so a Day/Night flip rebuilds the fill, not just the axes.
+    function fillGradient(ctx2d, borderColor, height) {
+        var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+        var topA = isLight ? 0.22 : 0.46;
+        var midA = isLight ? 0.06 : 0.16;
+        var rgb = hexToRgb(borderColor || '#4c8dff');
+        var g = ctx2d.createLinearGradient(0, 0, 0, height || 250);
+        g.addColorStop(0, 'rgba(' + rgb + ',' + topA + ')');
+        g.addColorStop(0.55, 'rgba(' + rgb + ',' + midA + ')');
+        g.addColorStop(1, 'rgba(' + rgb + ',0)');
+        return g;
+    }
+
     function setupChartDefaults() {
         if (!window.Chart) return;
         var faint = cssVar('--fwmon-text-faint', '#8b949e');
@@ -1371,6 +1398,21 @@
                 pl.tooltip.bodyColor = dim;
                 pl.tooltip.borderColor = border;
             }
+            // Rebuild area-fill gradients + point borders for line datasets so a
+            // theme flip changes the fill intensity, not just the axes. The
+            // gradient is a canvas object baked at creation; recoloring needs a
+            // fresh one keyed off the new theme.
+            try {
+                var ctx2d = ch.ctx;
+                var areaH = (ch.chartArea && ch.chartArea.bottom) || 250;
+                (ch.data && ch.data.datasets ? ch.data.datasets : []).forEach(function(ds) {
+                    var isLine = (ds.type || ch.config.type) === 'line';
+                    if (isLine && ds.fill && ds.backgroundColor && ds.borderColor && ctx2d) {
+                        ds.backgroundColor = fillGradient(ctx2d, ds.borderColor, areaH);
+                        if (ds.pointBorderColor) ds.pointBorderColor = cardBg;
+                    }
+                });
+            } catch (e) { /* dataset shape varies; skip fill rebuild */ }
             try { ch.update('none'); } catch (e) { /* chart mid-teardown */ }
         }
     }

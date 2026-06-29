@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.504] - 2026-06-28
+
+### Changed
+- **Palette refresh — professional blue accent, neutral graphite base.** Replaced the "volt" aqua-cyan interaction accent and the teal-tinted base with a clean professional blue (Tailscale/GitHub register) on a neutral graphite base. Night accent `#4c8dff` / base `#0d1117`+`#161b22`; day accent `#2563eb` / base `#f2f4f7`. `--fwmon-series-1` follows the accent so chart line 1 + its fill are on-brand. The thermal severity ramp (jade/amber/orange/red/magenta for status) is unchanged. Surface depth/elevation from v0.10.502 retained.
+- **Theme toggle now on every admin page, in the same place.** The Day/Night switch previously lived only in the SPA sidebar footer; the standalone pages (device-detail, connection-detail, probes, sites, irc) had none. Moved the `.theme-switch` styles into the shared `admin-design-system.css`, added the toggle markup to every standalone footer, and added the pre-paint theme script (`{{ .Nonce }}`-guarded) + `data-theme` to each so the saved choice applies flash-free everywhere.
+
+### Fixed
+- **Day-theme contrast on the device-detail page.** `admin-device-detail.css` had hardcoded dark surfaces (`.device-banner`, `.kpi-card`/`.kpi-subcard`, table headers, core-bar wrappers) that never flipped for the light theme, plus hardcoded light-blue/green/white text (`#7dd3fc`, `#86efac`, `#fff`) that went invisible on light tints. Repointed all of them to theme tokens via `color-mix(...)` so the page themes correctly in both Day and Night (root cause: hardcoded hex instead of role tokens).
+- **Chart area-fill gradients now rebuild on theme toggle.** The Day/Night recolor pass (`recolorChartsForTheme`) previously updated axes/legend/tooltip but left the line-fill gradient baked at creation time. It now rebuilds each line dataset's fill from a shared `AdminCommon.fillGradient()` helper (also used by `createChart()`), so flipping the theme updates the fill intensity and point borders, not just the axes.
+
+`go build ./...` + `go test ./...` green; AUDIT-066/067 contrast tests pass; verified both themes by headless screenshot.
+
 ## [0.10.503] - 2026-06-28
 
 ### Changed

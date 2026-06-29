@@ -30,13 +30,13 @@
  * ============================================================ */
 
 /* ------------------------------------------------------------------
- * "Console" design language (v0.10.472+)
+ * "Console" design language (v0.10.472+; palette refreshed v0.10.504)
  *
  * A firewall monitor is instrumentation, not a web dashboard. The palette
- * is a deep teal-graphite "instrument bezel" (NOT GitHub near-black), state
- * is carried by a FUNCTIONAL THERMAL SEVERITY RAMP (jade → amber → orange →
+ * is a neutral graphite "instrument bezel" (GitHub-dark register), state is
+ * carried by a FUNCTIONAL THERMAL SEVERITY RAMP (jade → amber → orange →
  * red → magenta = heat rising = severity rising), and the one non-status
- * accent is a cool "volt" cyan reserved strictly for interaction.
+ * accent is a clean professional blue reserved strictly for interaction.
  *
  * Theming: role tokens below are the single source of truth. The DARK set is
  * the default (24/7 NOC wall display); [data-theme="light"] (further down)
@@ -68,8 +68,8 @@
     --fwmon-sp-5: 24px;
     --fwmon-sp-6: 32px;
 
-    /* Curated series palette — tuned for the teal-graphite base. */
-    --fwmon-series-1: #38e1ff; /* volt cyan */
+    /* Curated series palette — series-1 matches the blue interaction accent. */
+    --fwmon-series-1: #4c8dff; /* accent blue */
     --fwmon-series-2: #f2555a; /* critical red */
     --fwmon-series-3: #e7b53c; /* warning amber */
     --fwmon-series-4: #36c98a; /* nominal jade */
@@ -78,14 +78,15 @@
     --fwmon-series-7: #f4783b; /* orange  — error / saturation */
     --fwmon-series-8: #5eead4; /* teal    — latency */
 
-    /* Volt — the ONE non-status accent (focus / active nav / links / selection).
-     * Deliberately NOT #58a6ff (GitHub blue) and NOT the map's #2dd4bf teal. */
-    --fwmon-accent:        #38e1ff;
-    --fwmon-accent-hover:  #19c8e3;
-    --fwmon-accent-bg:     rgba(56, 225, 255, 0.13);
-    --fwmon-accent-shadow: rgba(56, 225, 255, 0.22);
-    /* On-accent text: dark, because volt is a bright fill. */
-    --fwmon-on-accent:     #06222b;
+    /* Accent — the ONE non-status accent (focus / active nav / links / selection
+     * / primary buttons). A clean professional blue (Tailscale/GitHub register),
+     * not the map's #2dd4bf teal. */
+    --fwmon-accent:        #4c8dff;
+    --fwmon-accent-hover:  #6aa1ff;
+    --fwmon-accent-bg:     rgba(76, 141, 255, 0.13);
+    --fwmon-accent-shadow: rgba(76, 141, 255, 0.22);
+    /* On-accent text: white, since the accent is a mid-tone blue fill. */
+    --fwmon-on-accent:     #ffffff;
 
     /* Solid action-button greens (legacy create/confirm buttons keep white
      * text, so these stay dark enough for legible white-on-green). */
@@ -100,23 +101,23 @@
     --fwmon-sig-crit:  #f2555a; /* critical / alert / offline / down */
     --fwmon-sig-emerg: #ff3d8b; /* emergency — top of ladder */
 
-    /* Chrome — deep teal-graphite instrument surfaces.
-     * Tuned for depth: the base is deepened and the card/panel lifted so
-     * surfaces separate clearly (the day theme gets this free from
-     * white-on-grey; dark has to earn it with luminance delta + borders). */
-    --fwmon-bg:            #080d12; /* app base — deepened */
-    --fwmon-card-bg:       #141f29; /* cards / sidebar / panels — lifted to pop off the base */
-    --fwmon-panel-bg:      #1e2d38; /* inputs / table header / raised */
-    --fwmon-hover:         #233440; /* row / item hover */
-    --fwmon-border:        #2c3c47; /* steel hairline — strengthened so card edges read */
-    --fwmon-border-strong: #3a525e;
+    /* Chrome — neutral graphite instrument surfaces (GitHub-dark register, no
+     * green/teal tint). The card/panel sit above the base so surfaces separate
+     * clearly (the day theme gets this free from white-on-grey; dark earns it
+     * with luminance delta + borders + the elevation top-highlight below). */
+    --fwmon-bg:            #0d1117; /* app base */
+    --fwmon-card-bg:       #161b22; /* cards / sidebar / panels — lifts off the base */
+    --fwmon-panel-bg:      #1f2630; /* inputs / table header / raised */
+    --fwmon-hover:         #21282f; /* row / item hover */
+    --fwmon-border:        #2a313b; /* steel hairline — card edges read */
+    --fwmon-border-strong: #3b4654;
 
-    /* Text — backlit-LCD off-white ramp, brightened so labels stay crisp
-     * (not washed) against the dark surfaces. */
-    --fwmon-text:       #e8eff3;
-    --fwmon-text-dim:   #c0cfd7;
-    --fwmon-text-faint: #9eb2bb;
-    --fwmon-text-mute:  #748892;
+    /* Text — cool off-white ramp; faint/mute use the AA-verified values from
+     * AUDIT-066/067 so small labels stay legible (not washed). */
+    --fwmon-text:       #e6edf3;
+    --fwmon-text-dim:   #c9d1d9;
+    --fwmon-text-faint: #8b949e;
+    --fwmon-text-mute:  #768390;
 
     /* Border Radii — instrument-bezel, not zero-radius broadsheet nor pill. */
     --fwmon-radius:        8px;
@@ -129,9 +130,9 @@
     --fwmon-elev-2: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 12px 34px rgba(0, 0, 0, 0.6);
 
     /* Axes / grids (chart use) — theme-aware so Day/Night re-reads them. */
-    --fwmon-axis-stroke: #5e727c;
-    --fwmon-grid-stroke: #182229;
-    --fwmon-tick-stroke: #223039;
+    --fwmon-axis-stroke: #768390;
+    --fwmon-grid-stroke: #1c222b;
+    --fwmon-tick-stroke: #2a313b;
 
     color-scheme: dark;
 }
@@ -140,16 +141,16 @@
  * Signal ramp + volt are DARKENED so every status color and body text clear
  * AA on a light background (amber especially drops in lightness). ---- */
 :root[data-theme="light"] {
-    --fwmon-series-1: #0e9bb8;
+    --fwmon-series-1: #2563eb;
     --fwmon-series-2: #c8323a;
     --fwmon-series-3: #9a6b0e;
     --fwmon-series-4: #138a5e;
     --fwmon-series-7: #c24a1a;
 
-    --fwmon-accent:        #0e9bb8;
-    --fwmon-accent-hover:  #0b7e96;
-    --fwmon-accent-bg:     rgba(14, 155, 184, 0.12);
-    --fwmon-accent-shadow: rgba(14, 155, 184, 0.22);
+    --fwmon-accent:        #2563eb;
+    --fwmon-accent-hover:  #1d4fc4;
+    --fwmon-accent-bg:     rgba(37, 99, 235, 0.10);
+    --fwmon-accent-shadow: rgba(37, 99, 235, 0.22);
     --fwmon-on-accent:     #ffffff;
 
     --fwmon-btn-ok:        #0f7a4c;
@@ -162,27 +163,55 @@
     --fwmon-sig-crit:  #c8323a;
     --fwmon-sig-emerg: #c71e6b;
 
-    --fwmon-bg:            #edf1f3;
+    --fwmon-bg:            #f2f4f7;
     --fwmon-card-bg:       #ffffff;
-    --fwmon-panel-bg:      #e7edf0;
-    --fwmon-hover:         #e0e8ec;
-    --fwmon-border:        #cdd8de;
-    --fwmon-border-strong: #b3c2ca;
+    --fwmon-panel-bg:      #eaeef3;
+    --fwmon-hover:         #e4e9f0;
+    --fwmon-border:        #d3dae3;
+    --fwmon-border-strong: #b9c4d0;
 
     --fwmon-text:       #16242c;
     --fwmon-text-dim:   #2d3d45;
     --fwmon-text-faint: #4a5c66;
-    --fwmon-text-mute:  #7a8c95;
+    --fwmon-text-mute:  #6b7a85;
 
     --fwmon-elev-1: 0 1px 2px rgba(22, 36, 44, 0.08), 0 2px 8px rgba(22, 36, 44, 0.06);
     --fwmon-elev-2: 0 2px 4px rgba(22, 36, 44, 0.10), 0 8px 28px rgba(22, 36, 44, 0.12);
 
-    --fwmon-axis-stroke: #7a8c95;
-    --fwmon-grid-stroke: #dbe3e7;
-    --fwmon-tick-stroke: #cdd8de;
+    --fwmon-axis-stroke: #6b7a85;
+    --fwmon-grid-stroke: #dde3ea;
+    --fwmon-tick-stroke: #d3dae3;
 
     color-scheme: light;
 }
+
+/* ============================================================
+ * Day/Night theme switch — sidebar-footer instrument toggle.
+ * Markup: <button class="theme-switch" id="theme-switch"> with #ts-icon and
+ * #ts-label spans; wired by admin-common.js on EVERY page that loads it, so
+ * the toggle lives in the same place across the whole admin surface.
+ * ============================================================ */
+.theme-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    cursor: pointer;
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    user-select: none;
+}
+.theme-switch:hover { border-color: var(--fwmon-border-strong); color: var(--fwmon-text); }
+.theme-switch .ts-icon { font-size: 0.85rem; line-height: 1; }
+.theme-switch .ts-label { margin-left: auto; color: var(--fwmon-accent); }
 
 /* ============================================================
  * Pill bar — used for time-range, protocol filter, etc.

@@ -1,7 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
+    <!-- Apply the saved Day/Night choice before first paint to avoid a flash. -->
+    <script nonce="{{ .Nonce }}">
+        (function () {
+            try {
+                var t = localStorage.getItem('fwmon-theme');
+                document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+            } catch (e) { /* storage blocked — keep default dark */ }
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Probes - Firewall Monitor Admin</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
@@ -31,6 +40,11 @@
             <!-- Sidebar rendered by AdminCommon.renderSidebar() -->
         </div>
         <div class="sidebar-footer">
+            <button class="theme-switch" id="theme-switch" type="button" aria-label="Toggle day or night theme">
+                <span class="ts-icon" id="ts-icon" aria-hidden="true">&#9790;</span>
+                <span>Display</span>
+                <span class="ts-label" id="ts-label">Night</span>
+            </button>
             <a class="nav-item danger" href="#" data-action="logout"><span class="nav-icon" aria-hidden="true">&#10140;</span> Logout</a>
         </div>
     </div>

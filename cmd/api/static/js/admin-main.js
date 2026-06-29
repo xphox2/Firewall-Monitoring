@@ -551,7 +551,7 @@
                 actAlerts.push(alertMap[b] || 0);
             });
             createChart('dashboard-activity-chart', 'line', actLabels, [
-                {label:'Syslog',data:actSyslog,borderColor:'#38e1ff',fill:true,tension:0.3},
+                {label:'Syslog',data:actSyslog,borderColor:'#4c8dff',fill:true,tension:0.3},
                 {label:'Traps',data:actTraps,borderColor:'#e7b53c',fill:true,tension:0.3},
                 {label:'Alerts',data:actAlerts,borderColor:'#f2555a',fill:true,tension:0.3}
             ]);
@@ -587,20 +587,25 @@
         // light stays tasteful. pointBorder uses the card surface token so
         // markers read on either theme.
         if (type === 'line' && ctx2d) {
-            var isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            var topA = isLight ? 0.22 : 0.46;
-            var midA = isLight ? 0.06 : 0.16;
-            var pointBorder = (window.AdminCommon && AdminCommon.cssVar)
-                ? AdminCommon.cssVar('--fwmon-card-bg', '#0d1117') : '#0d1117';
+            var ac = window.AdminCommon || {};
+            var pointBorder = ac.cssVar ? ac.cssVar('--fwmon-card-bg', '#161b22') : '#161b22';
             datasets.forEach(function(ds) {
-                var rgb = hexToRgb(ds.borderColor || '#38e1ff');
-                var gradient = ctx2d.createLinearGradient(0, 0, 0, 250);
-                gradient.addColorStop(0, 'rgba(' + rgb + ',' + topA + ')');
-                gradient.addColorStop(0.55, 'rgba(' + rgb + ',' + midA + ')');
-                gradient.addColorStop(1, 'rgba(' + rgb + ',0)');
-                ds.backgroundColor = gradient;
+                var color = ds.borderColor || '#4c8dff';
+                // Shared theme-aware fill (AdminCommon.fillGradient) so the Day/
+                // Night recolor pass rebuilds the same ramp; fall back to a local
+                // build if admin-common.js hasn't loaded yet.
+                if (ac.fillGradient) {
+                    ds.backgroundColor = ac.fillGradient(ctx2d, color, 250);
+                } else {
+                    var rgb = hexToRgb(color);
+                    var gradient = ctx2d.createLinearGradient(0, 0, 0, 250);
+                    gradient.addColorStop(0, 'rgba(' + rgb + ',0.46)');
+                    gradient.addColorStop(0.55, 'rgba(' + rgb + ',0.16)');
+                    gradient.addColorStop(1, 'rgba(' + rgb + ',0)');
+                    ds.backgroundColor = gradient;
+                }
                 ds.fill = true;
-                ds.pointBackgroundColor = ds.borderColor;
+                ds.pointBackgroundColor = color;
                 ds.pointBorderColor = pointBorder;
                 ds.pointBorderWidth = 2;
                 ds.pointRadius = 4;
