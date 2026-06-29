@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.503] - 2026-06-28
+
+### Changed
+- **Punchier chart area-fill gradients in the night theme.** The dashboard Activity Trend line fills were a faint flat-alpha ramp that the dark surfaces swallowed. `createChart()` now derives the fill from each line's own color via a `hexToRgb()` helper (no per-color hardcoding) and builds a richer **theme-aware multi-stop gradient** — dark gets a stronger `0.46 → 0.16 → 0` ramp for real presence, light stays tasteful at `0.22 → 0.06 → 0`. Point markers now border with the `--fwmon-card-bg` token so they read on either theme, and the Activity Trend line colors were aligned to the Console palette (volt `#38e1ff` / amber `#e7b53c` / red `#f2555a`, replacing the pre-redesign blues). Verified both themes by headless screenshot. `go build ./...` + `go test ./...` green.
+
 ## [0.10.502] - 2026-06-28
 
 ### Changed

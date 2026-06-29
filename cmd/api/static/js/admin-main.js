@@ -551,9 +551,9 @@
                 actAlerts.push(alertMap[b] || 0);
             });
             createChart('dashboard-activity-chart', 'line', actLabels, [
-                {label:'Syslog',data:actSyslog,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3},
-                {label:'Traps',data:actTraps,borderColor:'#d2992a',backgroundColor:'rgba(210,153,42,0.1)',fill:true,tension:0.3},
-                {label:'Alerts',data:actAlerts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}
+                {label:'Syslog',data:actSyslog,borderColor:'#38e1ff',fill:true,tension:0.3},
+                {label:'Traps',data:actTraps,borderColor:'#e7b53c',fill:true,tension:0.3},
+                {label:'Alerts',data:actAlerts,borderColor:'#f2555a',fill:true,tension:0.3}
             ]);
 
             // Device status doughnut
@@ -564,6 +564,15 @@
         }).catch(function(e) { console.error('Failed to load dashboard charts:', e); });
     }
 
+    // "#38e1ff" / "#fff" -> "56, 225, 255" for building rgba() gradient stops.
+    function hexToRgb(hex) {
+        var h = String(hex).trim().replace('#', '');
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        var n = parseInt(h, 16);
+        if (h.length !== 6 || isNaN(n)) return '56, 225, 255'; // volt fallback
+        return ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255);
+    }
+
     function createChart(canvasId, type, labels, datasets, opts) {
         if (chartInstances[canvasId]) { chartInstances[canvasId].destroy(); }
         var canvas = document.getElementById(canvasId);
@@ -571,23 +580,28 @@
         var ctx2d = canvas.getContext('2d');
         var isDoughnut = type === 'doughnut' || type === 'pie';
 
-        // Enhance datasets with area gradients if it's a line chart
+        // Enhance datasets with area gradients if it's a line chart.
+        // The fill is derived from each line's own color (any hex) and is
+        // punchier in the dark theme — flat near-black surfaces swallow a
+        // faint fill, so dark gets a stronger, richer multi-stop ramp while
+        // light stays tasteful. pointBorder uses the card surface token so
+        // markers read on either theme.
         if (type === 'line' && ctx2d) {
+            var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+            var topA = isLight ? 0.22 : 0.46;
+            var midA = isLight ? 0.06 : 0.16;
+            var pointBorder = (window.AdminCommon && AdminCommon.cssVar)
+                ? AdminCommon.cssVar('--fwmon-card-bg', '#0d1117') : '#0d1117';
             datasets.forEach(function(ds) {
-                var color = ds.borderColor || '#58a6ff';
+                var rgb = hexToRgb(ds.borderColor || '#38e1ff');
                 var gradient = ctx2d.createLinearGradient(0, 0, 0, 250);
-                // Convert hexadecimal or standard color formats to translucent gradients
-                var startColor = 'rgba(88, 166, 255, 0.25)';
-                if (color === '#d2992a') startColor = 'rgba(210, 153, 42, 0.25)';
-                else if (color === '#f85149') startColor = 'rgba(248, 81, 73, 0.25)';
-                else if (color === '#3fb950') startColor = 'rgba(63, 185, 80, 0.25)';
-                
-                gradient.addColorStop(0, startColor);
-                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                gradient.addColorStop(0, 'rgba(' + rgb + ',' + topA + ')');
+                gradient.addColorStop(0.55, 'rgba(' + rgb + ',' + midA + ')');
+                gradient.addColorStop(1, 'rgba(' + rgb + ',0)');
                 ds.backgroundColor = gradient;
                 ds.fill = true;
-                ds.pointBackgroundColor = color;
-                ds.pointBorderColor = '#0d1117';
+                ds.pointBackgroundColor = ds.borderColor;
+                ds.pointBorderColor = pointBorder;
                 ds.pointBorderWidth = 2;
                 ds.pointRadius = 4;
                 ds.pointHoverRadius = 6;
