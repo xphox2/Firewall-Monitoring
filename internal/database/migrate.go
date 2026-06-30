@@ -943,3 +943,40 @@ func (d *Database) migrateFlowSamplesAddDropsColumn() error {
 	log.Printf("migrate v10 flow_samples.drops: ensured column exists (bigint not null default 0)")
 	return nil
 }
+
+// migrateFlowClassificationColumns (v11) adds the ingest-time classification
+// columns app_category and direction to flow_samples and flow_rollups. These
+// hold internal/classify's Category (Web/DNS/VPN/…) and Direction
+// (inbound/outbound/internal/external) so the Flows page can GROUP BY them
+// without re-deriving on every read, and so the By-Application / By-Direction
+// views survive after raw samples are rolled up.
+//
+// Both are `smallint NOT NULL DEFAULT 0` (0 = Unknown). Adding a column with a
+// constant default is metadata-only on PostgreSQL 11+ (no table rewrite), so it
+// is fast even on a large/partitioned flow_samples; routed through
+// execMaintenanceDDL so the lifted statement_timeout covers a partitioned table
+// propagating the ADD across many partitions.
+//
+// Idempotency: `ADD COLUMN IF NOT EXISTS` no-ops once the column exists, so
+// fresh installs (which get the columns from the baseline AutoMigrate) and any
+// re-run after a crash are safe. SQLite (test backend) does not support
+// `ADD COLUMN IF NOT EXISTS`, so the non-Postgres path uses AutoMigrate, which
+// adds the columns only if missing.
+func (d *Database) migrateFlowClassificationColumns() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowSample{}, &models.FlowRollup{})
+	}
+	stmts := []string{
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS app_category smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS direction smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS app_category smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS direction smallint NOT NULL DEFAULT 0`,
+	}
+	for _, s := range stmts {
+		if err := d.execMaintenanceDDL(s); err != nil {
+			return fmt.Errorf("migrate v11 flow classification columns: %w", err)
+		}
+	}
+	log.Printf("migrate v11 flow classification: ensured app_category/direction on flow_samples and flow_rollups")
+	return nil
+}

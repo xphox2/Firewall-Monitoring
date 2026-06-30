@@ -10,6 +10,7 @@ import (
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/classify"
 	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -228,6 +229,11 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		if samples[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[samples[i].DeviceID] {
 			continue
 		}
+		// Ingest-time classification: stamp the app/L7 category and direction
+		// (internal/classify) so the Flows page can GROUP BY them. Pure
+		// (proto, ports, flags / addr-scope) functions — cheap per sample.
+		samples[i].AppCategory = uint8(classify.Classify(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort, samples[i].TCPFlags))
+		samples[i].Direction = classify.Direction(samples[i].SrcAddr, samples[i].DstAddr, samples[i].InputIfIndex, samples[i].OutputIfIndex)
 		filtered = append(filtered, samples[i])
 	}
 	if err := h.db.SaveFlowSamples(filtered); err != nil {

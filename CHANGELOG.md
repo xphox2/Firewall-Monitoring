@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.505] - 2026-06-29
+
+### Added
+- **sFlow traffic classification — "what kind of traffic, and which way" (sFlow analytics expansion, increment 1).** Flow records are now classified at ingest into an application/L7 category and a direction, turning the Flows page from "IPs, ports, and protocol numbers" into traffic the operator can reason about.
+  - New `internal/classify` package: `Classify(proto, srcPort, dstPort, tcpFlags)` maps a flow to an application `Category` (Web, DNS, Email, File Share, VPN, Database, Remote Access, Streaming, VoIP, Backup, Management, P2P, ICMP) via a curated `(proto, port)` table plus protocol-only fallbacks for portless protocols; `Direction(src, dst, …)` classifies the flow as Inbound / Outbound / Internal / External from RFC1918/ULA/link-local/CGNAT membership. Pure, allocation-free functions with full truth-table unit tests.
+  - `ReceiveFlowSamples` stamps `app_category` and `direction` on every sample at ingest (cheap per-sample, server-side — no collector change). Both ride the existing pgx `CopyFrom` bulk insert as two new narrow `SMALLINT` columns.
+  - Migration **v11** (`flow_classification_columns`) adds `app_category`/`direction` to `flow_samples` and `flow_rollups` (`smallint NOT NULL DEFAULT 0`, metadata-only on PG11+, routed through `execMaintenanceDDL`). The columns are carried onto rollups (added to the rollup `GROUP BY`, no cardinality increase since they're functionally determined by the 5-tuple) so the breakdowns survive after raw samples age out.
+  - `GET /admin/api/flows/stats` now returns `by_category` and `by_direction` (raw + rollup merge), and the Flows page shows two new breakdown widgets ("By Application", "By Direction"). Read-only for now; click-to-filter on these dimensions is a planned follow-up.
+  - Regression tests: classification truth tables (`internal/classify`), `GetFlowStats` By-Category/By-Direction aggregation, and the updated COPY-column-order guard.
+
 ## [0.10.504] - 2026-06-28
 
 ### Changed

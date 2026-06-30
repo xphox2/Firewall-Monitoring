@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/classify"
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
@@ -48,6 +49,8 @@ type FlowStatsResult struct {
 	AvgSamplingRate  float64            `json:"avg_sampling_rate"`
 	EstimatedBytes   uint64             `json:"estimated_bytes"`
 	ByProtocol       []KeyCount         `json:"by_protocol"`
+	ByCategory       []KeyCount         `json:"by_category"`
+	ByDirection      []KeyCount         `json:"by_direction"`
 	TopSources       []KeyCount         `json:"top_sources"`
 	TopDestinations  []KeyCount         `json:"top_destinations"`
 	TopConversations []FlowConversation `json:"top_conversations"`
@@ -322,6 +325,39 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	}
 	result.ProtocolCount = int64(len(protocols))
 
+	// Application-category and direction distribution (by flow count), raw
+	// samples supplemented with rollups. Both are ingest-time classification
+	// columns (internal/classify) carried onto rollups, so the breakdown holds
+	// up after raw samples age out. Closure mirrors the protocol-distribution
+	// merge above for a single smallint dimension column.
+	dimDist := func(col string, nameFn func(uint8) string) []KeyCount {
+		type drow struct {
+			V     uint8
+			Count int64
+		}
+		var raws []drow
+		newRawBase().Select(col + " as v, COUNT(*) as count").Group(col).Scan(&raws)
+		m := make(map[uint8]int64, len(raws))
+		for _, r := range raws {
+			m[r.V] += r.Count
+		}
+		if useRollups {
+			var rs []drow
+			newRollupBase().Select(col + " as v, SUM(flow_count) as count").Group(col).Scan(&rs)
+			for _, r := range rs {
+				m[r.V] += r.Count
+			}
+		}
+		out := make([]KeyCount, 0, len(m))
+		for v, c := range m {
+			out = append(out, KeyCount{Key: nameFn(v), Count: c})
+		}
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+		return out
+	}
+	result.ByCategory = dimDist("app_category", classify.CategoryName)
+	result.ByDirection = dimDist("direction", classify.DirectionName)
+
 	// Top sources by bytes (filtered: excludes port-0 local traffic)
 	result.TopSources = topAddrsByBytes(newFilteredRawBase, "src_addr", 10)
 	if useRollups {
@@ -473,6 +509,8 @@ type rollupRow struct {
 	DstAddr         string
 	DstPort         uint16
 	Protocol        uint8
+	AppCategory     uint8
+	Direction       uint8
 	BytesSum        uint64
 	PacketsSum      uint64
 	FlowCount       int64
@@ -498,6 +536,8 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 				DstAddr:         r.DstAddr,
 				DstPort:         r.DstPort,
 				Protocol:        r.Protocol,
+				AppCategory:     r.AppCategory,
+				Direction:       r.Direction,
 				BytesSum:        r.BytesSum,
 				PacketsSum:      r.PacketsSum,
 				FlowCount:       r.FlowCount,
@@ -556,10 +596,10 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		var rows []rollupRow
 		if err := d.db.Model(&models.FlowSample{}).
 			Where("timestamp < ?", cutoff).
-			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, " +
+			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, " +
 				"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 				"AVG(sampling_rate) as sampling_rate_avg").
-			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
+			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction").
 			Limit(pageSize).Offset(offset).
 			Scan(&rows).Error; err != nil {
 			log.Printf("Flow rollup: error scanning raw flows: %v", err)
@@ -625,10 +665,10 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		var rows []rollupRow
 		if err := d.db.Model(&models.FlowRollup{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, " +
+			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, " +
 				"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 				"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
-			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol").
+			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction").
 			Limit(pageSize).Offset(offset).
 			Scan(&rows).Error; err != nil {
 			log.Printf("Flow rollup: error scanning %s rollups: %v", srcInterval, err)

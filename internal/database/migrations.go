@@ -59,6 +59,7 @@ var registeredMigrations = []migration{
 	{version: 8, name: "flow_agent_drops_table", run: (*Database).migrateFlowAgentDropsTable},
 	{version: 9, name: "flow_samples_widen_int_columns", run: (*Database).migrateFlowSamplesWidenIntColumns},
 	{version: 10, name: "flow_samples_add_drops_column", run: (*Database).migrateFlowSamplesAddDropsColumn},
+	{version: 11, name: "flow_classification_columns", run: (*Database).migrateFlowClassificationColumns},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

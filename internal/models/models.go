@@ -768,8 +768,16 @@ type FlowSample struct {
 	// alerts and NOC widgets. omitempty keeps the wire contract
 	// forward-compatible: pre-adopting collectors that don't send the
 	// field see no JSON key and continue to function unchanged.
-	Drops     uint64    `json:"drops,omitempty" gorm:"column:drops;default:0;not null"`
-	CreatedAt time.Time `json:"created_at"`
+	Drops uint64 `json:"drops,omitempty" gorm:"column:drops;default:0;not null"`
+	// AppCategory and Direction are ingest-time classification of the flow
+	// (internal/classify), stored as narrow SMALLINT columns so the Flows page
+	// can GROUP BY them directly. AppCategory is classify.Category (Web, DNS,
+	// VPN, …); Direction is classify.Dir* (inbound/outbound/internal/external).
+	// Both default 0 (Unknown) so pre-classification rows and any collector that
+	// doesn't send them remain valid. Migration v11 adds the columns.
+	AppCategory uint8     `json:"app_category" gorm:"column:app_category;default:0;not null"`
+	Direction   uint8     `json:"direction" gorm:"column:direction;default:0;not null"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }
@@ -812,6 +820,13 @@ type FlowRollup struct {
 	PacketsSum      uint64    `json:"packets_sum"`
 	FlowCount       int64     `json:"flow_count"`
 	SamplingRateAvg float64   `json:"sampling_rate_avg"`
+	// AppCategory and Direction carry the ingest-time classification through the
+	// rollup so the Flows page's By-Application / By-Direction views survive
+	// after raw flow_samples are rolled up. They're part of the rollup GROUP BY;
+	// because both are functionally determined by (src,dst,port,proto) they do
+	// not increase rollup cardinality. Migration v11 adds the columns.
+	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
+	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
 }
 
 func (FlowRollup) TableName() string { return "flow_rollups" }

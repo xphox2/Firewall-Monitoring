@@ -334,6 +334,25 @@
         rgba(196, 181, 253, 0.3) 100%);
 }
 
+/* Classification breakdowns (v0.13.0): app/L7 category (teal) and direction
+   (rose). Non-clickable read-only bars; default cursor to signal that. */
+.fwmon-toptalk-list[data-color="category"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(45, 212, 191, 0.6) 0%,
+        rgba(45, 212, 191, 0.3) 100%);
+}
+
+.fwmon-toptalk-list[data-color="direction"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(244, 114, 182, 0.6) 0%,
+        rgba(244, 114, 182, 0.3) 100%);
+}
+
+.fwmon-toptalk-list[data-color="category"] .fwmon-toptalk-row,
+.fwmon-toptalk-list[data-color="direction"] .fwmon-toptalk-row {
+    cursor: default;
+}
+
 .fwmon-toptalk-empty {
     color: var(--fwmon-text-faint);
     font-family: var(--fwmon-font-mono);

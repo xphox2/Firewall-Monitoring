@@ -571,19 +571,40 @@
         renderList('flows-top-destinations', d.top_destinations || [], 'dests',     'dst',      function(v) { return v; });
         renderList('flows-top-ports',        d.top_ports        || [], 'ports',     'dport',    function(v) { return v; });
         renderList('flows-top-protocols',    d.by_protocol      || [], 'protocols', 'protocol', protocolNumber);
+        // Classification breakdowns (v0.13.0) — ingest-time app/L7 category and
+        // direction. Counts are flow counts, not bytes, so they use formatCount.
+        // Non-clickable for now (no stateKey): server-side filtering by
+        // category/direction is a follow-up; these are read-only breakdowns.
+        renderList('flows-by-category',      d.by_category      || [], 'category',  '',         null, formatCount);
+        renderList('flows-by-direction',     d.by_direction     || [], 'direction', '',         null, formatCount);
     }
 
     function clearTopTalkers() {
         ['flows-top-sources', 'flows-top-destinations',
-         'flows-top-ports', 'flows-top-protocols'].forEach(function(id) {
+         'flows-top-ports', 'flows-top-protocols',
+         'flows-by-category', 'flows-by-direction'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
         });
     }
 
-    function renderList(elId, rows, colorTag, stateKey, toFilterValue) {
+    // formatCount renders a flow count compactly (1234 -> "1.2k", 12 -> "12").
+    function formatCount(n) {
+        n = Number(n) || 0;
+        if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+        return String(n);
+    }
+
+    // renderList renders a horizontal-bar list. When stateKey is falsy the rows
+    // are non-clickable (no data-filter-key, so onTopTalkerClick ignores them)
+    // and never marked active. valueFmt formats the per-row value (defaults to
+    // formatBytes for the byte-valued top-talker lists).
+    function renderList(elId, rows, colorTag, stateKey, toFilterValue, valueFmt) {
         var el = document.getElementById(elId);
         if (!el) return;
+        var fmt = valueFmt || formatBytes;
+        var clickable = !!stateKey;
         el.setAttribute('data-color', colorTag);
         if (!rows.length) {
             el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
@@ -596,14 +617,18 @@
         for (var j = 0; j < rows.length; j++) {
             var r = rows[j];
             var pct = (r.count / max) * 100;
-            var filterVal = toFilterValue(r.key);
-            var isActive = String(state[stateKey]) === String(filterVal);
-            html += '<li class="fwmon-toptalk-row' + (isActive ? ' active' : '') +
-                '" data-filter-key="' + esc(stateKey) +
-                '" data-filter-value="' + esc(filterVal) + '"' +
+            var attrs = '';
+            var activeCls = '';
+            if (clickable) {
+                var filterVal = toFilterValue(r.key);
+                if (String(state[stateKey]) === String(filterVal)) activeCls = ' active';
+                attrs = ' data-filter-key="' + esc(stateKey) +
+                        '" data-filter-value="' + esc(filterVal) + '"';
+            }
+            html += '<li class="fwmon-toptalk-row' + activeCls + '"' + attrs +
                 ' style="--bar-pct:' + pct.toFixed(1) + '%">' +
                 '<span class="fwmon-toptalk-row-label" title="' + esc(r.key) + '">' + esc(r.key) + '</span>' +
-                '<span class="fwmon-toptalk-row-value">' + formatBytes(r.count) + '</span>' +
+                '<span class="fwmon-toptalk-row-value">' + fmt(r.count) + '</span>' +
                 '<span class="fwmon-toptalk-row-bar"></span>' +
             '</li>';
         }
