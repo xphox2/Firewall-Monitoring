@@ -16,6 +16,7 @@ import (
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
+	"firewall-mon/internal/detect"
 	"firewall-mon/internal/logging"
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
@@ -177,6 +178,11 @@ func (p *Poller) Start() error {
 	rollupTicker := time.NewTicker(5 * time.Minute)
 	defer rollupTicker.Stop()
 
+	// Run the sFlow detection engine every 5 minutes, over a recent window of
+	// raw flow_samples (before the rollup consumes them at 1h).
+	detectTicker := time.NewTicker(5 * time.Minute)
+	defer detectTicker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
@@ -191,6 +197,8 @@ func (p *Poller) Start() error {
 					p.db.RunSyslogAggregationCycle(p.cfg.Retention)
 				}
 			})
+		case <-detectTicker.C:
+			p.runUnderLeaderLock("flow-detect", p.runFlowDetectionCycle)
 		case <-cleanupTicker.C:
 			p.runUnderLeaderLock("cleanup", func() {
 				if p.db != nil {
@@ -243,6 +251,37 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 	}
 	defer p.db.ReleasePollerWorkLock()
 	fn()
+}
+
+// runFlowDetectionCycle runs the sFlow detection engine (internal/detect) over a
+// recent window of raw flow_samples, persists every finding, and feeds each to
+// the alert engine. Detections are stored regardless of whether they alert, so
+// the NOC sees sub-threshold signal. The 15-minute window comfortably covers the
+// 5-minute cadence with overlap; alert cooldown dedupes the overlap.
+func (p *Poller) runFlowDetectionCycle() {
+	if p.db == nil {
+		return
+	}
+	end := time.Now()
+	start := end.Add(-15 * time.Minute)
+	detections := detect.RunAll(detect.Window{Start: start, End: end, DB: p.db.Gorm()}, end)
+	if len(detections) == 0 {
+		return
+	}
+	fired := 0
+	for i := range detections {
+		if err := p.db.SaveFlowDetection(&detections[i]); err != nil {
+			log.Printf("flow-detect: save %s: %v", detections[i].Detector, err)
+			continue
+		}
+		if p.alertManager != nil {
+			if err := p.alertManager.ProcessFlowDetection(&detections[i], nil); err != nil {
+				log.Printf("flow-detect: alert %s: %v", detections[i].Detector, err)
+			}
+		}
+		fired++
+	}
+	log.Printf("flow-detect: %d detection(s) persisted", fired)
 }
 
 func (p *Poller) pollAllDevices() {

@@ -376,6 +376,58 @@
     text-align: center;
 }
 
+/* Detections panel (v0.10.507) — good-vs-bad traffic findings. */
+.fwmon-flows-detections-card {
+    margin-top: 16px;
+}
+.fwmon-flows-detections-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+.fwmon-flows-detections-table th,
+.fwmon-flows-detections-table td {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--fwmon-border, #1f2937);
+    vertical-align: top;
+}
+.fwmon-flows-detections-table th {
+    color: var(--fwmon-text-faint);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.fwmon-flows-detections-table code {
+    font-family: var(--fwmon-font-mono);
+    font-size: 0.76rem;
+    color: var(--fwmon-text-muted, #9ca3af);
+}
+.fwmon-det-sev {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.fwmon-det-sev-critical { background: rgba(244, 63, 94, 0.18);  color: #fb7185; }
+.fwmon-det-sev-warning  { background: rgba(251, 146, 60, 0.18); color: #fdba74; }
+.fwmon-det-sev-info     { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; }
+.fwmon-det-ack {
+    background: transparent;
+    border: 1px solid var(--fwmon-border, #374151);
+    color: var(--fwmon-text-muted, #9ca3af);
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+.fwmon-det-ack:hover { border-color: var(--fwmon-accent, #4c8dff); color: var(--fwmon-text, #e5e7eb); }
+.fwmon-det-ack:disabled { opacity: 0.5; cursor: default; }
+
 /* === Filter row above Flow Samples === */
 /* === Combined data card: tabbed Conversations / Flow Samples === */
 .fwmon-flows-data-header {

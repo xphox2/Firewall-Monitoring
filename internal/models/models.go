@@ -34,7 +34,14 @@ const (
 	AlertTypeSyslogCritical     AlertType = "SYSLOG_CRITICAL"
 	AlertTypeSyslogAlert        AlertType = "SYSLOG_ALERT"
 	AlertTypeSFlowAgentDrops    AlertType = "SFLOW_AGENT_DROPS"
-	AlertTypeTestAlert          AlertType = "TEST_ALERT"
+	// sFlow detection-engine alert types (internal/detect, migration v13). The
+	// AlertType is always "SFLOW_" + the uppercased detector name; these consts
+	// document the set and back defaultSeverityForType / policy rules.
+	AlertTypeSFlowCleartext        AlertType = "SFLOW_CLEARTEXT"
+	AlertTypeSFlowUnexpectedEgress AlertType = "SFLOW_UNEXPECTED_EGRESS"
+	AlertTypeSFlowSamplingBackoff  AlertType = "SFLOW_SAMPLING_BACKOFF"
+	AlertTypeSFlowCapacity         AlertType = "SFLOW_CAPACITY"
+	AlertTypeTestAlert             AlertType = "TEST_ALERT"
 )
 
 // Severity is the typed enum of alert severities. Underlying values match the
@@ -846,6 +853,37 @@ type FlowRollup struct {
 }
 
 func (FlowRollup) TableName() string { return "flow_rollups" }
+
+// FlowDetection is one finding from the sFlow detection engine (internal/detect),
+// run periodically by the poller over a recent window of flow_samples. Each row
+// is a good-vs-bad traffic verdict (security / operational / policy) that the
+// NOC can review, independent of whether it also fired an alert (sub-threshold
+// signal is still persisted). The table is intentionally NOT partitioned: row
+// volume is bounded by detector count × distinct targets × cycles, far below the
+// raw-flow firehose, like flow_agent_drops. Added in migration v13.
+type FlowDetection struct {
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	DetectedAt   time.Time  `json:"detected_at" gorm:"index:idx_flowdet_time;index:idx_flowdet_unack,priority:2"`
+	WindowStart  time.Time  `json:"window_start"`
+	WindowEnd    time.Time  `json:"window_end"`
+	Detector     string     `json:"detector" gorm:"size:32;index:idx_flowdet_cat,priority:2"` // e.g. "cleartext"
+	Category     string     `json:"category" gorm:"size:16;index:idx_flowdet_cat,priority:1"` // security | operational | policy
+	Severity     string     `json:"severity" gorm:"size:8"`                                   // info | warning | critical
+	DeviceID     uint       `json:"device_id" gorm:"index"`                                   // 0 when agent/cross-device
+	SrcAddr      string     `json:"src_addr"`
+	DstAddr      string     `json:"dst_addr"`
+	DstPort      uint16     `json:"dst_port" gorm:"type:integer"`
+	Protocol     uint8      `json:"protocol"`
+	Score        float64    `json:"score"` // magnitude (bytes/flows/pct) for ranking
+	Message      string     `json:"message"`
+	DedupKey     string     `json:"dedup_key" gorm:"size:128;index"` // stable key for cooldown + dedup
+	Details      string     `json:"details" gorm:"type:text"`        // JSON-encoded structured context
+	Acknowledged bool       `json:"acknowledged" gorm:"default:false;index:idx_flowdet_unack,priority:1"`
+	ResolvedAt   *time.Time `json:"resolved_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (FlowDetection) TableName() string { return "flow_detections" }
 
 type SiteDatabase struct {
 	ID           uint       `json:"id" gorm:"primaryKey"`

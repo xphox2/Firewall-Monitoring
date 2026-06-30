@@ -63,6 +63,7 @@ func (d *Database) migrateBaseline() error {
 		&models.ProcessStats{},
 		&models.InterfaceErrors{},
 		&models.ProcessedBatch{},
+		&models.FlowDetection{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -1014,4 +1015,13 @@ func (d *Database) migrateFlowGeoIPColumns() error {
 	}
 	log.Printf("migrate v12 flow geoip: ensured src/dst_country + src/dst_asn on flow_samples, dst_country/dst_asn on flow_rollups")
 	return nil
+}
+
+// migrateFlowDetectionsTable (v13) creates the flow_detections table that backs
+// the sFlow detection engine (internal/detect). Mirrors migrateFlowAgentDropsTable:
+// AutoMigrate is idempotent and cross-dialect, fresh installs get the table from
+// the baseline allModels loop, so this is a recorded no-op there. The table is
+// not partitioned — its row volume is bounded (detectors × targets × cycles).
+func (d *Database) migrateFlowDetectionsTable() error {
+	return d.db.AutoMigrate(&models.FlowDetection{})
 }

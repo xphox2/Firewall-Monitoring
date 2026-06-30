@@ -42,6 +42,7 @@ func NewDatabaseForTesting(t interface {
 		&models.SyslogMessage{},
 		&models.FlowSample{},
 		&models.AgentDrops{},
+		&models.FlowDetection{},
 		&models.Alert{},
 		&models.AlertPolicy{},
 		&models.AlertRule{},

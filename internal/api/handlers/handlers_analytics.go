@@ -336,6 +336,53 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(stats))
 }
 
+// GetFlowDetections returns recent sFlow detection-engine findings (good-vs-bad
+// traffic verdicts) for the Flows page detections panel and the alerts view.
+// Query params: hours (window, default via ParseHours), limit (<=1000),
+// unacked=true to exclude acknowledged rows.
+func (h *Handler) GetFlowDetections(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	hours := httputil.ParseHours(c)
+	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	limit := 200
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 1000 {
+			limit = v
+		}
+	}
+	unacked := c.Query("unacked") == "true"
+	rows, err := db.GetRecentDetections(since, limit, unacked)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get flow detections", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(rows))
+}
+
+// AckFlowDetection marks one detection acknowledged (dismissed from the active
+// list). Admin-gated by the route group it's registered under.
+func (h *Handler) AckFlowDetection(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		httputil.InternalError(c, "Database unavailable", nil)
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("invalid detection id"))
+		return
+	}
+	if err := db.AckFlowDetection(uint(id)); err != nil {
+		httputil.InternalError(c, "Failed to acknowledge detection", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"acknowledged": true}))
+}
+
 // parseStatsDeviceFilter reads an optional device_id query parameter from
 // /stats endpoints (v0.10.217, bundle D4). Returns 0 if absent or invalid,
 // matching the "no filter" sentinel used by the database layer.

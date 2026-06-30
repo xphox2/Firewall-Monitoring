@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -328,6 +329,61 @@ func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) e
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
 		if err := am.notifier.SendAlert(&alert, nc); err != nil {
 			return fmt.Errorf("failed to send syslog alert: %w", err)
+		}
+	}
+	return nil
+}
+
+// ProcessFlowDetection turns a persisted sFlow detection-engine finding into an
+// alert, reusing the same cooldown / policy-resolution / notify machinery as
+// ProcessSyslog and ProcessTrap. The AlertType is "SFLOW_" + the uppercased
+// detector name (e.g. SFLOW_CLEARTEXT), so operators can tune these in alert
+// policies like any other type. Observe-mode: the detector's own severity is
+// honored (detectors ship at info/warning to avoid fatigue) rather than forcing
+// the policy default. The detection is already persisted by the caller; this
+// only handles alerting, so a suppressed/cooled-down finding still shows in the
+// NOC's detections list.
+func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *uint) error {
+	alertType := models.AlertType("SFLOW_" + strings.ToUpper(det.Detector))
+	key := "flowdet_" + det.DedupKey
+
+	am.mu.Lock()
+	now := time.Now()
+	resolved := am.resolveAlertConfig(det.DeviceID, siteID, alertType)
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	if canSend {
+		am.lastAlert[key] = now
+	}
+	am.mu.Unlock()
+
+	if !canSend || !resolved.AlertEnabled {
+		return nil
+	}
+
+	sev := models.Severity(det.Severity)
+	if sev == "" {
+		sev = resolved.Severity
+	}
+
+	alert := models.Alert{
+		Timestamp:    det.DetectedAt,
+		DeviceID:     det.DeviceID,
+		AlertType:    alertType,
+		Severity:     sev,
+		Message:      det.Message,
+		MetricName:   "sflow_" + det.Detector,
+		CurrentValue: det.Score,
+		PolicyID:     resolved.PolicyID,
+		Suppressed:   resolved.InMaintenance,
+	}
+
+	am.saveAlert(&alert)
+	if !alert.Suppressed {
+		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+		if err := am.notifier.SendAlert(&alert, nc); err != nil {
+			return fmt.Errorf("failed to send flow detection alert: %w", err)
 		}
 	}
 	return nil

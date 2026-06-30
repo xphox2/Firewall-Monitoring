@@ -209,6 +209,10 @@
         var convTable = document.getElementById('flows-conversations-table');
         if (convTable) convTable.addEventListener('click', onConversationClick);
 
+        // Detections panel — Ack buttons (event delegation)
+        var detBody = document.getElementById('flows-detections-body');
+        if (detBody) detBody.addEventListener('click', onDetectionAck);
+
         // View tabs (Conversations / Flow Samples) — switching is pure show/hide;
         // both data sources are already fetched on every reload, so no re-fetch.
         var viewTabs = document.getElementById('flows-view-tabs');
@@ -377,6 +381,7 @@
         flowsOffset = 0;
         scheduleStats();
         scheduleSamples();
+        loadDetections();
     }
 
     function refresh() { reload(); }
@@ -471,6 +476,79 @@
 
         // Top talkers
         renderTopTalkers(d);
+    }
+
+    // ----------------------------------------------------------------------
+    // Detections panel — good-vs-bad traffic findings (sFlow detection engine)
+    // ----------------------------------------------------------------------
+    function loadDetections() {
+        var AC = window.AdminCommon;
+        if (!AC || !AC.apiFetch) return;
+        var url = '/admin/api/flows/detections?unacked=true&limit=100&hours=' + encodeURIComponent(state.hours);
+        AC.apiFetch(url).then(function(result) {
+            renderDetections((result && result.data) || []);
+        }).catch(function(e) {
+            console.error('FwmonFlows: detections fetch failed', e);
+        });
+    }
+
+    var SEV_RANK = { critical: 0, warning: 1, info: 2 };
+
+    function renderDetections(rows) {
+        var card = document.getElementById('flows-detections-card');
+        var body = document.getElementById('flows-detections-body');
+        if (!card || !body) return;
+        if (!rows.length) { card.hidden = true; body.innerHTML = ''; return; }
+        // Most severe, then newest, first.
+        rows.sort(function(a, b) {
+            var ra = SEV_RANK[a.severity] != null ? SEV_RANK[a.severity] : 9;
+            var rb = SEV_RANK[b.severity] != null ? SEV_RANK[b.severity] : 9;
+            if (ra !== rb) return ra - rb;
+            return new Date(b.detected_at) - new Date(a.detected_at);
+        });
+        var html = '';
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            var sev = r.severity || 'info';
+            html += '<tr>' +
+                '<td><span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span></td>' +
+                '<td>' + esc(r.category || '') + '</td>' +
+                '<td><code>' + esc(r.detector || '') + '</code></td>' +
+                '<td>' + esc(r.message || '') + '</td>' +
+                '<td title="' + esc(r.detected_at || '') + '">' + esc(detAgo(r.detected_at)) + '</td>' +
+                '<td><button type="button" class="fwmon-det-ack" data-det-id="' + esc(r.id) + '">Ack</button></td>' +
+            '</tr>';
+        }
+        body.innerHTML = html;
+        card.hidden = false;
+    }
+
+    // detAgo formats an ISO timestamp as a compact relative age.
+    function detAgo(iso) {
+        if (!iso) return '';
+        var t = new Date(iso).getTime();
+        if (!isFinite(t)) return '';
+        var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+        if (s < 60) return s + 's ago';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        return Math.floor(s / 86400) + 'd ago';
+    }
+
+    function onDetectionAck(ev) {
+        var btn = ev.target && ev.target.closest && ev.target.closest('.fwmon-det-ack');
+        if (!btn) return;
+        var id = btn.getAttribute('data-det-id');
+        if (!id) return;
+        var AC = window.AdminCommon;
+        if (!AC || !AC.apiFetch) return;
+        btn.disabled = true;
+        AC.apiFetch('/admin/api/flows/detections/' + encodeURIComponent(id) + '/ack', { method: 'POST' })
+            .then(function() { loadDetections(); })
+            .catch(function(e) {
+                console.error('FwmonFlows: ack failed', e);
+                btn.disabled = false;
+            });
     }
 
     // ----------------------------------------------------------------------

@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.507] - 2026-06-29
+
+### Added
+- **sFlow detection engine — good-vs-bad traffic findings (sFlow analytics expansion, increment 3).** A pluggable engine now scans recent flows on a timer and surfaces operational and policy problems as reviewable detections that also feed the alert system.
+  - New `internal/detect` package: a `Detector` interface + `Window` + ordered `Registry`, each detector a bounded SQL aggregation over recent `flow_samples` (using the R1/R2 classification columns). Ships four detectors:
+    - **cleartext** (policy) — legacy unencrypted protocols (Telnet, FTP, TFTP, POP3, IMAP).
+    - **unexpected_egress** (policy) — admin/DB protocols (SMB, RDP, SQL engines, Redis, Mongo) leaving the network outbound to public addresses.
+    - **sampling_backoff** (operational) — sFlow agents dropping samples (under-reported traffic / overloaded agent), from `flow_agent_drops`.
+    - **capacity** (operational) — per-interface egress estimated from sampled bytes vs SNMP link speed; warning ≥80%, critical ≥95% (handles the ifSpeed 2³²−1 saturation → ifHighSpeed fallback).
+  - The poller runs the engine every 5 minutes under its leader lock over a 15-minute window, persists every finding, then feeds each to the alert engine. Detections are stored even when no alert fires, so the NOC sees sub-threshold signal.
+  - Migration **v13** (`flow_detections_table`) adds the bounded (non-partitioned) `flow_detections` table.
+  - New `AlertManager.ProcessFlowDetection` mirrors `ProcessSyslog`/`ProcessTrap` — same cooldown / policy-resolution / notify path, AlertType `SFLOW_<DETECTOR>`. **Observe-mode:** detectors ship at info/warning so a noisy detector can't page anyone; tune later via alert policies.
+  - API: `GET /admin/api/flows/detections` (window/limit/unacked filters) + `POST /admin/api/flows/detections/:id/ack`. The Flows page gains a Detections panel (severity-ranked, acknowledge-to-dismiss) that appears only when there are findings; detections also surface on the alerts page via the new `SFLOW_*` types.
+  - Regression tests: each detector (fire / don't-fire boundaries), `RunAll` model mapping, and the persistence Save→GetRecent→Ack round-trip with window + unacked filters.
+
 ## [0.10.506] - 2026-06-29
 
 ### Added

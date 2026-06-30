@@ -180,6 +180,8 @@ type EventStatsStore interface {
 	GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, error)
 	GetTrapStats(hours int, deviceID uint) (*EventStatsResult, error)
 	GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error)
+	GetRecentDetections(since time.Time, limit int, unackedOnly bool) ([]models.FlowDetection, error)
+	AckFlowDetection(id uint) error
 }
 
 // IngestStore covers the probe-ingestion write path and batch idempotency.

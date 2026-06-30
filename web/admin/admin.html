@@ -620,6 +620,21 @@
                 </div>
             </div>
 
+            <!-- Detections panel — good-vs-bad traffic findings from the sFlow
+                 detection engine (security / operational / policy). Hidden until
+                 there are findings. Each row can be acknowledged (dismissed). -->
+            <div class="card fwmon-flows-detections-card" id="flows-detections-card" hidden>
+                <div class="card-header fwmon-flows-data-header">
+                    <h3 class="fwmon-toptalk-title">Detections<span class="fwmon-toptalk-hint">good-vs-bad traffic findings</span></h3>
+                </div>
+                <table class="fwmon-flows-detections-table">
+                    <thead>
+                        <tr><th>Severity</th><th>Category</th><th>Detector</th><th>Finding</th><th>When</th><th></th></tr>
+                    </thead>
+                    <tbody id="flows-detections-body"></tbody>
+                </table>
+            </div>
+
             <!-- Combined Conversations + Flow Samples — tabbed views with one shared
                  filter row, so the operator picks what to focus on without two stacked
                  tables eating the viewport. Click a conversation to drill into its raw flows. -->
