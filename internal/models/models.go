@@ -775,9 +775,18 @@ type FlowSample struct {
 	// VPN, …); Direction is classify.Dir* (inbound/outbound/internal/external).
 	// Both default 0 (Unknown) so pre-classification rows and any collector that
 	// doesn't send them remain valid. Migration v11 adds the columns.
-	AppCategory uint8     `json:"app_category" gorm:"column:app_category;default:0;not null"`
-	Direction   uint8     `json:"direction" gorm:"column:direction;default:0;not null"`
-	CreatedAt   time.Time `json:"created_at"`
+	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
+	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
+	// SrcCountry/DstCountry (ISO 3166-1 alpha-2) and SrcASN/DstASN are MaxMind
+	// GeoLite2 enrichment stamped at ingest when GEOIP_ENABLED. Empty/0 when geo
+	// is disabled, the DB lacks the IP, or the address is private (GeoLite2 maps
+	// only public IPs). Migration v12 adds the columns. CHAR(2) keeps country
+	// narrow; ASN is a uint32 -> bigint (AS numbers pass 2^16 and approach 2^32).
+	SrcCountry string    `json:"src_country,omitempty" gorm:"column:src_country;type:varchar(2)"`
+	DstCountry string    `json:"dst_country,omitempty" gorm:"column:dst_country;type:varchar(2)"`
+	SrcASN     uint32    `json:"src_asn,omitempty" gorm:"column:src_asn;type:bigint;default:0;not null"`
+	DstASN     uint32    `json:"dst_asn,omitempty" gorm:"column:dst_asn;type:bigint;default:0;not null"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }
@@ -827,6 +836,13 @@ type FlowRollup struct {
 	// not increase rollup cardinality. Migration v11 adds the columns.
 	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
 	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
+	// DstCountry/DstASN carry the destination geo enrichment through the rollup
+	// so the Top Countries / Top ASNs views survive after raw samples age out.
+	// Destination only: those views are about where traffic is going. Both are
+	// functionally determined by dst_addr (already a GROUP BY key) so they add
+	// no rollup cardinality. Migration v12 adds the columns.
+	DstCountry string `json:"dst_country,omitempty" gorm:"column:dst_country;type:varchar(2)"`
+	DstASN     uint32 `json:"dst_asn,omitempty" gorm:"column:dst_asn;type:bigint;default:0;not null"`
 }
 
 func (FlowRollup) TableName() string { return "flow_rollups" }

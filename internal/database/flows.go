@@ -51,6 +51,8 @@ type FlowStatsResult struct {
 	ByProtocol       []KeyCount         `json:"by_protocol"`
 	ByCategory       []KeyCount         `json:"by_category"`
 	ByDirection      []KeyCount         `json:"by_direction"`
+	TopCountries     []KeyCount         `json:"top_countries"`
+	TopASNs          []KeyCount         `json:"top_asns"`
 	TopSources       []KeyCount         `json:"top_sources"`
 	TopDestinations  []KeyCount         `json:"top_destinations"`
 	TopConversations []FlowConversation `json:"top_conversations"`
@@ -358,6 +360,57 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	result.ByCategory = dimDist("app_category", classify.CategoryName)
 	result.ByDirection = dimDist("direction", classify.DirectionName)
 
+	// Top destination countries / ASNs by bytes (GeoLite2 enrichment; empty when
+	// geo is disabled). Destination-oriented — where traffic is going. The
+	// `<> ''` / `<> 0` filters exclude unmapped rows (NULL too: NULL <> '' is not
+	// TRUE), which covers all internal/private traffic GeoLite2 doesn't map.
+	geoTopCountry := func() []KeyCount {
+		type grow struct {
+			K     string
+			Total int64
+		}
+		collect := func(base func() *gorm.DB, byteCol string) []KeyCount {
+			var rows []grow
+			base().Where("dst_country <> ?", "").
+				Select("dst_country as k, SUM(" + byteCol + ") as total").
+				Group("dst_country").Order("total DESC").Limit(10).Scan(&rows)
+			out := make([]KeyCount, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, KeyCount{Key: r.K, Count: r.Total})
+			}
+			return out
+		}
+		out := collect(newFilteredRawBase, "bytes")
+		if useRollups {
+			out = mergeKeyCounts(out, collect(newFilteredRollupBase, "bytes_sum"), 10)
+		}
+		return out
+	}
+	geoTopASN := func() []KeyCount {
+		type grow struct {
+			K     int64
+			Total int64
+		}
+		collect := func(base func() *gorm.DB, byteCol string) []KeyCount {
+			var rows []grow
+			base().Where("dst_asn <> 0").
+				Select("dst_asn as k, SUM(" + byteCol + ") as total").
+				Group("dst_asn").Order("total DESC").Limit(10).Scan(&rows)
+			out := make([]KeyCount, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
+			}
+			return out
+		}
+		out := collect(newFilteredRawBase, "bytes")
+		if useRollups {
+			out = mergeKeyCounts(out, collect(newFilteredRollupBase, "bytes_sum"), 10)
+		}
+		return out
+	}
+	result.TopCountries = geoTopCountry()
+	result.TopASNs = geoTopASN()
+
 	// Top sources by bytes (filtered: excludes port-0 local traffic)
 	result.TopSources = topAddrsByBytes(newFilteredRawBase, "src_addr", 10)
 	if useRollups {
@@ -511,6 +564,8 @@ type rollupRow struct {
 	Protocol        uint8
 	AppCategory     uint8
 	Direction       uint8
+	DstCountry      string
+	DstASN          uint32
 	BytesSum        uint64
 	PacketsSum      uint64
 	FlowCount       int64
@@ -538,6 +593,8 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 				Protocol:        r.Protocol,
 				AppCategory:     r.AppCategory,
 				Direction:       r.Direction,
+				DstCountry:      r.DstCountry,
+				DstASN:          r.DstASN,
 				BytesSum:        r.BytesSum,
 				PacketsSum:      r.PacketsSum,
 				FlowCount:       r.FlowCount,
@@ -596,10 +653,10 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 		var rows []rollupRow
 		if err := d.db.Model(&models.FlowSample{}).
 			Where("timestamp < ?", cutoff).
-			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, " +
+			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
 				"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 				"AVG(sampling_rate) as sampling_rate_avg").
-			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction").
+			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn").
 			Limit(pageSize).Offset(offset).
 			Scan(&rows).Error; err != nil {
 			log.Printf("Flow rollup: error scanning raw flows: %v", err)
@@ -665,10 +722,10 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		var rows []rollupRow
 		if err := d.db.Model(&models.FlowRollup{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, " +
+			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
 				"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 				"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
-			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction").
+			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn").
 			Limit(pageSize).Offset(offset).
 			Scan(&rows).Error; err != nil {
 			log.Printf("Flow rollup: error scanning %s rollups: %v", srcInterval, err)

@@ -56,6 +56,16 @@ type ServerConfig struct {
 	// advisory lock before giving up, so a graceful predecessor mid-shutdown
 	// doesn't trigger a false refuse (AUDIT-040).
 	APISingletonLockWait time.Duration
+	// GeoIPEnabled turns on MaxMind GeoLite2 enrichment of sFlow flows
+	// (src/dst country + ASN), looked up at ingest. Default false: the .mmdb
+	// files are licensed and not shipped, so geo enrichment is opt-in. When
+	// off, the country/asn columns stay empty and the Flows page hides the
+	// geo widgets.
+	GeoIPEnabled bool
+	// GeoIPDBDir is the directory holding GeoLite2-Country.mmdb and
+	// GeoLite2-ASN.mmdb. In Docker this is a volume mount. Only consulted when
+	// GeoIPEnabled is true.
+	GeoIPDBDir string
 }
 
 type SNMPConfig struct {
@@ -251,6 +261,8 @@ func Load() *Config {
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
 			AllowMultiAPI:        getBoolEnv("ALLOW_MULTI_API", false),
+			GeoIPEnabled:         getBoolEnv("GEOIP_ENABLED", false),
+			GeoIPDBDir:           getEnv("GEOIP_DB_DIR", "/etc/firewall-mon/geoip"),
 			APISingletonLockWait: getDurationEnv("API_SINGLETON_LOCK_WAIT", 10*time.Second),
 		},
 		SNMP: SNMPConfig{

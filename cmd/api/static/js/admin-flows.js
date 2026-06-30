@@ -577,6 +577,20 @@
         // category/direction is a follow-up; these are read-only breakdowns.
         renderList('flows-by-category',      d.by_category      || [], 'category',  '',         null, formatCount);
         renderList('flows-by-direction',     d.by_direction     || [], 'direction', '',         null, formatCount);
+        // Geo/ASN breakdowns (v0.10.506) — byte-valued, destination-oriented.
+        // The cards stay hidden unless GeoIP enrichment produced data, so
+        // deployments without GeoLite2 don't see empty widgets.
+        renderGeoCard('flows-card-countries', 'flows-top-countries', d.top_countries || [], 'countries');
+        renderGeoCard('flows-card-asns',      'flows-top-asns',      d.top_asns      || [], 'asns');
+    }
+
+    // renderGeoCard shows the card only when there's geo data, then renders a
+    // non-clickable byte-valued bar list (default formatBytes).
+    function renderGeoCard(cardId, listId, rows, colorTag) {
+        var card = document.getElementById(cardId);
+        var has = rows && rows.length > 0;
+        if (card) card.hidden = !has;
+        if (has) renderList(listId, rows, colorTag, '', null);
     }
 
     function clearTopTalkers() {
@@ -585,6 +599,11 @@
          'flows-by-category', 'flows-by-direction'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
+        });
+        // Geo cards are hidden unless they have data — keep them hidden on clear.
+        ['flows-card-countries', 'flows-card-asns'].forEach(function(id) {
+            var card = document.getElementById(id);
+            if (card) card.hidden = true;
         });
     }
 

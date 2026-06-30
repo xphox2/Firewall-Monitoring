@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.506] - 2026-06-29
+
+### Added
+- **sFlow Geo-IP + ASN enrichment (sFlow analytics expansion, increment 2).** Flows are now tagged at ingest with the source/destination country and autonomous-system number, so the Flows page can answer "where is this traffic going, and on whose network."
+  - New `classify.GeoResolver` wraps MaxMind GeoLite2 (`github.com/oschwald/geoip2-golang`): memory-mapped, goroutine-safe `Country()`/`ASN()` lookups. Fully nil-safe — a disabled or failed-to-open resolver returns empty results instead of panicking, so geo is a no-op when not configured.
+  - Opt-in via `GEOIP_ENABLED` (default false) + `GEOIP_DB_DIR`. The `.mmdb` files are licensed and not shipped; in Docker they're an optional read-only volume mount (`GEOIP_DIR` → `/etc/firewall-mon/geoip`). When off or the files are absent, the columns stay empty and the Flows page hides the geo widgets — no crash, no hard dependency.
+  - `ReceiveFlowSamples` stamps `src_country`/`dst_country` (ISO alpha-2) and `src_asn`/`dst_asn` per sample (server-side; no collector change). GeoLite2 maps only public IPs, so internal/RFC1918 endpoints simply stay empty.
+  - Migration **v12** (`flow_geoip_columns`) adds the four columns to `flow_samples` (`varchar(2)` country, `bigint` ASN) and the destination pair (`dst_country`/`dst_asn`) to `flow_rollups` — carried through the rollup `GROUP BY` (no cardinality increase; both are determined by `dst_addr`) so the Top Countries / Top ASNs views survive after raw samples age out.
+  - `GET /admin/api/flows/stats` returns `top_countries` and `top_asns` (destination bytes, raw + rollup merge, unmapped excluded); the Flows page shows two new "Top Countries" / "Top ASNs" widgets that appear only when geo data is present.
+  - Regression tests: `GeoResolver` disabled/missing-file graceful paths, `GetFlowStats` Top-Countries/Top-ASNs aggregation, and the updated COPY-column-order guard.
+
 ## [0.10.505] - 2026-06-29
 
 ### Added

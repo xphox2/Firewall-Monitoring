@@ -349,8 +349,23 @@
 }
 
 .fwmon-toptalk-list[data-color="category"] .fwmon-toptalk-row,
-.fwmon-toptalk-list[data-color="direction"] .fwmon-toptalk-row {
+.fwmon-toptalk-list[data-color="direction"] .fwmon-toptalk-row,
+.fwmon-toptalk-list[data-color="countries"] .fwmon-toptalk-row,
+.fwmon-toptalk-list[data-color="asns"] .fwmon-toptalk-row {
     cursor: default;
+}
+
+/* Geo breakdowns (v0.10.506): countries (sky) and ASNs (amber-orange). */
+.fwmon-toptalk-list[data-color="countries"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(56, 189, 248, 0.6) 0%,
+        rgba(56, 189, 248, 0.3) 100%);
+}
+
+.fwmon-toptalk-list[data-color="asns"] .fwmon-toptalk-row-bar::after {
+    background: linear-gradient(90deg,
+        rgba(251, 146, 60, 0.6) 0%,
+        rgba(251, 146, 60, 0.3) 100%);
 }
 
 .fwmon-toptalk-empty {

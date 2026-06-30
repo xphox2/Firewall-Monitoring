@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/classify"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
@@ -29,6 +31,7 @@ type Handler struct {
 	alertManager *alerts.AlertManager
 	ircManager   *irc.Manager
 	notifier     *notifier.Notifier
+	geoResolver  *classify.GeoResolver
 	version      string
 	// db is the repository interface (database.Store), not the concrete
 	// *database.Database god-object — handlers depend on the narrow method set
@@ -39,10 +42,20 @@ type Handler struct {
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
+	// MaxMind GeoLite2 resolver for sFlow geo/ASN enrichment. Opt-in
+	// (GEOIP_ENABLED): a nil resolver is nil-safe, so when geo is off or the
+	// .mmdb files are absent the ingest path simply leaves the columns empty.
+	geo, err := classify.NewGeoResolver(cfg.Server.GeoIPEnabled, cfg.Server.GeoIPDBDir)
+	if err != nil {
+		log.Printf("geoip: %v — geo/ASN enrichment disabled", err)
+	} else if geo.Enabled() {
+		log.Printf("geoip: GeoLite2 enrichment enabled from %s", cfg.Server.GeoIPDBDir)
+	}
 	return &Handler{
 		config:      cfg,
 		authManager: authManager,
 		uptimeTrack: uptime.NewUptimeTracker(cfg),
+		geoResolver: geo,
 		db:          db,
 	}
 }

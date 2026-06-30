@@ -980,3 +980,38 @@ func (d *Database) migrateFlowClassificationColumns() error {
 	log.Printf("migrate v11 flow classification: ensured app_category/direction on flow_samples and flow_rollups")
 	return nil
 }
+
+// migrateFlowGeoIPColumns (v12) adds the MaxMind GeoLite2 enrichment columns:
+// src_country/dst_country (ISO alpha-2) and src_asn/dst_asn on flow_samples, and
+// the destination pair (dst_country/dst_asn) on flow_rollups for the Top
+// Countries / Top ASNs views. Country is CHAR(2); ASN is bigint (AS numbers
+// approach 2^32). All nullable / default-0 so pre-enrichment rows and the
+// geo-disabled default remain valid.
+//
+// Adding a column (with or without a constant default) is metadata-only on
+// PostgreSQL 11+, so this is fast even on a large/partitioned flow_samples;
+// routed through execMaintenanceDDL for the partitioned-propagation case.
+//
+// Idempotency: `ADD COLUMN IF NOT EXISTS` no-ops once present. SQLite (test
+// backend) lacks that clause, so the non-Postgres path uses AutoMigrate, which
+// adds only missing columns.
+func (d *Database) migrateFlowGeoIPColumns() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowSample{}, &models.FlowRollup{})
+	}
+	stmts := []string{
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS src_country varchar(2)`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS dst_country varchar(2)`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS src_asn bigint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS dst_asn bigint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS dst_country varchar(2)`,
+		`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS dst_asn bigint NOT NULL DEFAULT 0`,
+	}
+	for _, s := range stmts {
+		if err := d.execMaintenanceDDL(s); err != nil {
+			return fmt.Errorf("migrate v12 flow geoip columns: %w", err)
+		}
+	}
+	log.Printf("migrate v12 flow geoip: ensured src/dst_country + src/dst_asn on flow_samples, dst_country/dst_asn on flow_rollups")
+	return nil
+}

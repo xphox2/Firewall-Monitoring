@@ -234,6 +234,15 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		// (proto, ports, flags / addr-scope) functions — cheap per sample.
 		samples[i].AppCategory = uint8(classify.Classify(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort, samples[i].TCPFlags))
 		samples[i].Direction = classify.Direction(samples[i].SrcAddr, samples[i].DstAddr, samples[i].InputIfIndex, samples[i].OutputIfIndex)
+		// Geo/ASN enrichment (GEOIP_ENABLED). Nil-safe: when geo is off these are
+		// no-ops returning empty/0. GeoLite2 maps only public IPs, so internal
+		// src/dst simply stay empty.
+		if h.geoResolver.Enabled() {
+			samples[i].SrcCountry = h.geoResolver.Country(samples[i].SrcAddr)
+			samples[i].DstCountry = h.geoResolver.Country(samples[i].DstAddr)
+			samples[i].SrcASN = h.geoResolver.ASN(samples[i].SrcAddr)
+			samples[i].DstASN = h.geoResolver.ASN(samples[i].DstAddr)
+		}
 		filtered = append(filtered, samples[i])
 	}
 	if err := h.db.SaveFlowSamples(filtered); err != nil {
