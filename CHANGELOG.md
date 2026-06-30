@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.511] - 2026-06-29
+
+### Added
+- **Threat Intelligence management UI** on the Flows page. A collapsible "Threat Intelligence" card lets operators curate the known-bad address feed by hand — no more API/curl-only. Add a CIDR or IP with category, severity, optional source, and optional expiry; the table lists current entries with per-row Delete. A status line shows the active entry count and how many prefixes are live in the in-memory matcher, so you can confirm the ingest path is using the feed. Adds/deletes refresh the matcher immediately (server-side) and the list re-loads. Backed by the v0.10.510 `GET/POST/DELETE /admin/api/flows/threat-intel` endpoints.
+
 ## [0.10.510] - 2026-06-29
 
 ### Added

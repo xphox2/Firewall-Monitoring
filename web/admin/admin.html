@@ -635,6 +635,45 @@
                 </table>
             </div>
 
+            <!-- Threat Intelligence — curate the known-bad address feed (CIDR/IP).
+                 Entries flag matching flows at ingest (threat_flag) and drive the
+                 threat_intel security detector. Collapsed by default. -->
+            <details class="card fwmon-ti-card" id="flows-ti-card">
+                <summary class="fwmon-ti-summary">
+                    <span class="fwmon-toptalk-title">Threat Intelligence<span class="fwmon-toptalk-hint">known-bad address feed</span></span>
+                    <span class="fwmon-ti-status" id="flows-ti-status">--</span>
+                </summary>
+                <div class="fwmon-ti-body">
+                    <form class="fwmon-ti-form" id="flows-ti-form">
+                        <input type="text" id="ti-cidr" class="fwmon-flows-input" placeholder="IP or CIDR (203.0.113.0/24)" autocomplete="one-time-code" spellcheck="false" required>
+                        <select id="ti-category" class="fwmon-flows-select" title="category">
+                            <option value="malware">malware</option>
+                            <option value="c2">c2</option>
+                            <option value="scanner">scanner</option>
+                            <option value="botnet">botnet</option>
+                            <option value="phishing">phishing</option>
+                            <option value="tor">tor</option>
+                            <option value="other">other</option>
+                        </select>
+                        <select id="ti-severity" class="fwmon-flows-select" title="severity">
+                            <option value="warning">warning</option>
+                            <option value="critical">critical</option>
+                            <option value="info">info</option>
+                        </select>
+                        <input type="text" id="ti-source" class="fwmon-flows-input" placeholder="source (manual)" autocomplete="one-time-code" spellcheck="false">
+                        <input type="date" id="ti-expires" class="fwmon-flows-input fwmon-ti-date" title="optional expiry (blank = never)">
+                        <button type="submit" class="btn primary sm" id="ti-add-btn">Add</button>
+                    </form>
+                    <div class="fwmon-ti-error" id="flows-ti-error" hidden></div>
+                    <div class="table-wrap" style="max-height: 360px;">
+                        <table class="fwmon-flows-detections-table" id="flows-ti-table">
+                            <thead><tr><th>CIDR / IP</th><th>Category</th><th>Source</th><th>Severity</th><th>Expires</th><th></th></tr></thead>
+                            <tbody id="flows-ti-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
+
             <!-- Combined Conversations + Flow Samples — tabbed views with one shared
                  filter row, so the operator picks what to focus on without two stacked
                  tables eating the viewport. Click a conversation to drill into its raw flows. -->

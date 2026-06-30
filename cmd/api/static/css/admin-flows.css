@@ -421,6 +421,55 @@
 .fwmon-det-ack:hover { border-color: var(--fwmon-accent, #4c8dff); color: var(--fwmon-text, #e5e7eb); }
 .fwmon-det-ack:disabled { opacity: 0.5; cursor: default; }
 
+/* Threat Intelligence management card (v0.10.511) — collapsible feed editor. */
+.fwmon-ti-card {
+    margin-top: 16px;
+}
+.fwmon-ti-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    list-style: none;
+}
+.fwmon-ti-summary::-webkit-details-marker { display: none; }
+.fwmon-ti-summary::before {
+    content: "▸";
+    color: var(--fwmon-text-faint);
+    font-size: 0.8rem;
+    margin-right: 6px;
+}
+.fwmon-ti-card[open] .fwmon-ti-summary::before { content: "▾"; }
+.fwmon-ti-status {
+    margin-left: auto;
+    color: var(--fwmon-text-muted, #9ca3af);
+    font-size: 0.74rem;
+    font-family: var(--fwmon-font-mono);
+}
+.fwmon-ti-body { margin-top: 14px; }
+.fwmon-ti-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.fwmon-ti-form .fwmon-flows-input { min-width: 0; }
+.fwmon-ti-form #ti-cidr { flex: 1 1 220px; }
+.fwmon-ti-date { flex: 0 0 auto; }
+.fwmon-ti-error {
+    color: #fb7185;
+    font-size: 0.78rem;
+    margin-bottom: 10px;
+}
+.fwmon-ti-empty {
+    color: var(--fwmon-text-faint);
+    font-style: italic;
+    text-align: center !important;
+    padding: 14px !important;
+}
+
 /* === Filter row above Flow Samples === */
 /* === Combined data card: tabbed Conversations / Flow Samples === */
 .fwmon-flows-data-header {
