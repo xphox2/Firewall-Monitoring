@@ -348,8 +348,7 @@
         rgba(244, 114, 182, 0.3) 100%);
 }
 
-.fwmon-toptalk-list[data-color="category"] .fwmon-toptalk-row,
-.fwmon-toptalk-list[data-color="direction"] .fwmon-toptalk-row,
+/* Geo breakdowns are read-only (no server-side filter yet) — default cursor. */
 .fwmon-toptalk-list[data-color="countries"] .fwmon-toptalk-row,
 .fwmon-toptalk-list[data-color="asns"] .fwmon-toptalk-row {
     cursor: default;

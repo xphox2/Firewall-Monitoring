@@ -281,6 +281,17 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 	if proto := c.Query("protocol"); proto != "" {
 		query = query.Where("protocol = ?", proto)
 	}
+	// Classification drill-down (By Application / By Direction click-to-filter).
+	if cat := c.Query("app_category"); cat != "" {
+		if v, err := strconv.ParseUint(cat, 10, 8); err == nil {
+			query = query.Where("app_category = ?", v)
+		}
+	}
+	if dir := c.Query("direction"); dir != "" {
+		if v, err := strconv.ParseUint(dir, 10, 8); err == nil {
+			query = query.Where("direction = ?", v)
+		}
+	}
 
 	var samples []models.FlowSample
 	if err := query.Find(&samples).Error; err != nil {
@@ -322,6 +333,18 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		if v, err := strconv.ParseUint(dport, 10, 16); err == nil {
 			p := uint16(v)
 			filter.DstPort = &p
+		}
+	}
+	if cat := c.Query("app_category"); cat != "" {
+		if v, err := strconv.ParseUint(cat, 10, 8); err == nil {
+			p := uint8(v)
+			filter.AppCategory = &p
+		}
+	}
+	if dir := c.Query("direction"); dir != "" {
+		if v, err := strconv.ParseUint(dir, 10, 8); err == nil {
+			p := uint8(v)
+			filter.Direction = &p
 		}
 	}
 	filter.SrcAddr = c.Query("src_addr")

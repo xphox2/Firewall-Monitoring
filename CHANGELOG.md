@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.508] - 2026-06-29
+
+### Fixed
+- **Flows page "By Application" and "By Direction" widgets are now click-to-filter** (they were read-only in v0.10.505). Clicking a category or direction row now narrows the entire Flows page — top talkers, conversations, chart, and the raw samples list — and adds a removable filter chip; clicking the active row clears it. State is mirrored in the URL like the other filters, so the view is shareable/reload-safe.
+  - Backend: `FlowStatsFilter` gains `AppCategory`/`Direction`; `GetFlowStats` and `GetFlowSamples` honor the new `app_category` / `direction` query params.
+  - Frontend: the two widgets map their display labels to the numeric ids the backend stores (mirroring `internal/classify`), wired through the existing click-to-filter / URL-hash / chip machinery.
+  - Test: `GetFlowStats` category + direction filter narrowing.
+
 ## [0.10.507] - 2026-06-29
 
 ### Added

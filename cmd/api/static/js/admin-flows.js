@@ -35,13 +35,34 @@
         src: '',
         dst: '',
         dport: '',
+        category: '',   // app_category id (classify.Category), drives By Application filter
+        direction: '',  // direction id (classify.Dir*), drives By Direction filter
         // Which view of the combined data card is active: 'conversations' | 'samples'.
         tab: 'conversations'
     };
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'tab'];
+    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'tab'];
+
+    // Label <-> id maps for the classification breakdowns. These MIRROR
+    // internal/classify (Category / Dir* — documented as stable). The widgets
+    // display labels but filter by the numeric id the backend stores, so we map
+    // the clicked label back to its id and render active-chip labels from ids.
+    var CATEGORY_LABELS = {
+        0: 'Unknown', 1: 'Web', 2: 'DNS', 3: 'Email', 4: 'File Share', 5: 'VPN',
+        6: 'Database', 7: 'Remote Access', 8: 'Streaming', 9: 'VoIP', 10: 'Backup',
+        11: 'Management', 12: 'P2P', 13: 'ICMP'
+    };
+    var DIRECTION_LABELS = { 0: 'Unknown', 1: 'Inbound', 2: 'Outbound', 3: 'Internal', 4: 'External' };
+    var CATEGORY_IDS = invertLabels(CATEGORY_LABELS);
+    var DIRECTION_IDS = invertLabels(DIRECTION_LABELS);
+
+    function invertLabels(m) {
+        var out = {};
+        Object.keys(m).forEach(function(id) { out[m[id]] = id; });
+        return out;
+    }
 
     var state = Object.assign({}, DEFAULTS);
     var inited = false;
@@ -183,6 +204,8 @@
                 state.src = '';
                 state.dst = '';
                 state.dport = '';
+                state.category = '';
+                state.direction = '';
                 applyStateToControls();
                 syncURL();
                 reload();
@@ -200,7 +223,8 @@
         // Top-talker rows — event delegation. Each list rendered with
         // data-filter-key / data-filter-value attributes.
         ['flows-top-sources', 'flows-top-destinations',
-         'flows-top-ports', 'flows-top-protocols'].forEach(function(id) {
+         'flows-top-ports', 'flows-top-protocols',
+         'flows-by-category', 'flows-by-direction'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.addEventListener('click', onTopTalkerClick);
         });
@@ -347,6 +371,8 @@
         if (state.dst)       chips.push({ key: 'dst',   val: state.dst,   stateKey: 'dst' });
         if (state.dport)     chips.push({ key: 'dport', val: state.dport, stateKey: 'dport' });
         if (state.protocol)  chips.push({ key: 'proto', val: protocolName(state.protocol), stateKey: 'protocol' });
+        if (state.category !== '')  chips.push({ key: 'app',       val: CATEGORY_LABELS[state.category]  || state.category,  stateKey: 'category' });
+        if (state.direction !== '') chips.push({ key: 'direction', val: DIRECTION_LABELS[state.direction] || state.direction, stateKey: 'direction' });
         if (state.device_id) chips.push({ key: 'device', val: deviceLabel(state.device_id), stateKey: 'device_id' });
         if (state.probe_id)  chips.push({ key: 'probe',  val: probeLabel(state.probe_id),   stateKey: 'probe_id' });
 
@@ -406,6 +432,8 @@
         if (state.src)       params.push('src_addr='  + encodeURIComponent(state.src));
         if (state.dst)       params.push('dst_addr='  + encodeURIComponent(state.dst));
         if (state.dport)     params.push('dst_port='  + encodeURIComponent(state.dport));
+        if (state.category !== '')  params.push('app_category=' + encodeURIComponent(state.category));
+        if (state.direction !== '') params.push('direction='   + encodeURIComponent(state.direction));
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
@@ -418,6 +446,8 @@
         if (state.src)       p.push('src_addr='  + encodeURIComponent(state.src));
         if (state.dst)       p.push('dst_addr='  + encodeURIComponent(state.dst));
         if (state.dport)     p.push('dst_port='  + encodeURIComponent(state.dport));
+        if (state.category !== '')  p.push('app_category=' + encodeURIComponent(state.category));
+        if (state.direction !== '') p.push('direction='   + encodeURIComponent(state.direction));
         return '/admin/api/flows?' + p.join('&');
     }
 
@@ -649,12 +679,12 @@
         renderList('flows-top-destinations', d.top_destinations || [], 'dests',     'dst',      function(v) { return v; });
         renderList('flows-top-ports',        d.top_ports        || [], 'ports',     'dport',    function(v) { return v; });
         renderList('flows-top-protocols',    d.by_protocol      || [], 'protocols', 'protocol', protocolNumber);
-        // Classification breakdowns (v0.13.0) — ingest-time app/L7 category and
-        // direction. Counts are flow counts, not bytes, so they use formatCount.
-        // Non-clickable for now (no stateKey): server-side filtering by
-        // category/direction is a follow-up; these are read-only breakdowns.
-        renderList('flows-by-category',      d.by_category      || [], 'category',  '',         null, formatCount);
-        renderList('flows-by-direction',     d.by_direction     || [], 'direction', '',         null, formatCount);
+        // Classification breakdowns — ingest-time app/L7 category and direction.
+        // Counts are flow counts (formatCount). Click-to-filter: the widgets show
+        // labels but filter by the numeric id the backend stores, so toFilterValue
+        // maps the clicked label -> id.
+        renderList('flows-by-category',  d.by_category  || [], 'category',  'category',  function(label) { return CATEGORY_IDS[label] || ''; }, formatCount);
+        renderList('flows-by-direction', d.by_direction || [], 'direction', 'direction', function(label) { return DIRECTION_IDS[label] || ''; }, formatCount);
         // Geo/ASN breakdowns (v0.10.506) — byte-valued, destination-oriented.
         // The cards stay hidden unless GeoIP enrichment produced data, so
         // deployments without GeoLite2 don't see empty widgets.

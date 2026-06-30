@@ -79,6 +79,45 @@ func TestGetFlowStatsByCategoryAndDirection(t *testing.T) {
 	}
 }
 
+// TestGetFlowStatsCategoryDirectionFilter verifies the By-Application /
+// By-Direction click-to-filter narrows the aggregates server-side.
+func TestGetFlowStatsCategoryDirectionFilter(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	now := time.Now().Add(-10 * time.Minute)
+	mk := func(cat, dir uint8, bytes uint64) models.FlowSample {
+		return models.FlowSample{
+			Timestamp: now, DeviceID: 1, Protocol: 6,
+			SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", SrcPort: 50000, DstPort: 443,
+			Bytes: bytes, Packets: 1, AppCategory: cat, Direction: dir,
+		}
+	}
+	// 2 Web/Outbound, 1 DNS/Internal.
+	samples := []models.FlowSample{
+		mk(1, 2, 1000), mk(1, 2, 2000), mk(2, 3, 500),
+	}
+	if err := db.Gorm().Create(&samples).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	web := uint8(1)
+	res, err := db.GetFlowStats(1, FlowStatsFilter{AppCategory: &web})
+	if err != nil {
+		t.Fatalf("GetFlowStats(cat=Web): %v", err)
+	}
+	if res.TotalFlows != 2 {
+		t.Errorf("AppCategory=Web TotalFlows = %d, want 2", res.TotalFlows)
+	}
+
+	internal := uint8(3)
+	res, err = db.GetFlowStats(1, FlowStatsFilter{Direction: &internal})
+	if err != nil {
+		t.Fatalf("GetFlowStats(dir=Internal): %v", err)
+	}
+	if res.TotalFlows != 1 {
+		t.Errorf("Direction=Internal TotalFlows = %d, want 1", res.TotalFlows)
+	}
+}
+
 // TestGetFlowStatsTopCountriesAndASNs verifies the geo/ASN breakdowns aggregate
 // by destination bytes and exclude unmapped (empty country / asn 0) rows.
 func TestGetFlowStatsTopCountriesAndASNs(t *testing.T) {

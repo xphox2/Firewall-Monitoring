@@ -102,12 +102,14 @@ func topAddrsByBytesRollup(base func() *gorm.DB, addrCol string, limit int) []Ke
 // the filters the Flow Samples list honors, so the Flows page's shared filter
 // row drives the aggregate views (top talkers, conversations, chart) too.
 type FlowStatsFilter struct {
-	DeviceID uint    // device_id (flow_samples + flow_rollups)
-	ProbeID  uint    // probe_id  (flow_samples only — forces raw-only when set)
-	Protocol *uint8  // IP protocol number; nil = all
-	DstPort  *uint16 // destination port; nil = all
-	SrcAddr  string  // source IP or CIDR (cidrToLikePattern semantics)
-	DstAddr  string  // destination IP or CIDR
+	DeviceID    uint    // device_id (flow_samples + flow_rollups)
+	ProbeID     uint    // probe_id  (flow_samples only — forces raw-only when set)
+	Protocol    *uint8  // IP protocol number; nil = all
+	DstPort     *uint16 // destination port; nil = all
+	SrcAddr     string  // source IP or CIDR (cidrToLikePattern semantics)
+	DstAddr     string  // destination IP or CIDR
+	AppCategory *uint8  // classify.Category id; nil = all
+	Direction   *uint8  // classify.Dir* id; nil = all
 }
 
 // flowAddrFilter applies an IP/CIDR filter on an address column. It reuses
@@ -155,6 +157,12 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		}
 		if filter.DstPort != nil {
 			q = q.Where("dst_port = ?", *filter.DstPort)
+		}
+		if filter.AppCategory != nil {
+			q = q.Where("app_category = ?", *filter.AppCategory)
+		}
+		if filter.Direction != nil {
+			q = q.Where("direction = ?", *filter.Direction)
 		}
 		q = flowAddrFilter(q, "src_addr", filter.SrcAddr)
 		q = flowAddrFilter(q, "dst_addr", filter.DstAddr)
