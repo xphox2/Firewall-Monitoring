@@ -1,0 +1,67 @@
+package threatfeed
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestParse(t *testing.T) {
+	feed := Feed{Name: "test", Category: "attacker", Severity: "warning"}
+	body := strings.Join([]string{
+		"# a comment line",
+		"; another comment",
+		"",
+		"203.0.113.9",                 // bare IP
+		"198.51.100.0/24 ; SBL123",    // CIDR + trailing comment (Spamhaus style)
+		"192.0.2.5\t# inline tab",     // IP + tab + comment
+		"2001:db8::/32",               // IPv6 CIDR
+		"not-an-ip",                   // skipped
+		"10.0.0.0/8 extra columns ok", // CIDR + extra columns
+	}, "\n")
+
+	got := Parse(strings.NewReader(body), feed)
+	want := []string{"203.0.113.9", "198.51.100.0/24", "192.0.2.5", "2001:db8::/32", "10.0.0.0/8"}
+	if len(got) != len(want) {
+		t.Fatalf("parsed %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].CIDR != w {
+			t.Errorf("entry[%d].CIDR = %q, want %q", i, got[i].CIDR, w)
+		}
+		if got[i].Category != "attacker" || got[i].Severity != "warning" || got[i].Source != "test" {
+			t.Errorf("entry[%d] metadata = %+v, want attacker/warning/test", i, got[i])
+		}
+	}
+}
+
+func TestParseExtraFeeds(t *testing.T) {
+	feeds := ParseExtraFeeds(" my-list|https://example.com/bad.txt|malware|critical , minimal|https://e.com/m.txt , |skip-no-name , skip-no-url| ")
+	if len(feeds) != 2 {
+		t.Fatalf("got %d feeds, want 2: %+v", len(feeds), feeds)
+	}
+	if feeds[0] != (Feed{Name: "my-list", URL: "https://example.com/bad.txt", Category: "malware", Severity: "critical"}) {
+		t.Errorf("feed[0] = %+v", feeds[0])
+	}
+	// Minimal record defaults category=custom, severity=warning.
+	if feeds[1] != (Feed{Name: "minimal", URL: "https://e.com/m.txt", Category: "custom", Severity: "warning"}) {
+		t.Errorf("feed[1] = %+v", feeds[1])
+	}
+	if ParseExtraFeeds("") != nil {
+		t.Error("empty spec should return nil")
+	}
+}
+
+func TestDefaultFeedsAreHTTPS(t *testing.T) {
+	feeds := DefaultFeeds()
+	if len(feeds) == 0 {
+		t.Fatal("no default feeds")
+	}
+	for _, f := range feeds {
+		if !strings.HasPrefix(f.URL, "https://") {
+			t.Errorf("feed %s URL not HTTPS: %s", f.Name, f.URL)
+		}
+		if f.Name == "" || f.Category == "" || f.Severity == "" {
+			t.Errorf("feed %+v missing metadata", f)
+		}
+	}
+}

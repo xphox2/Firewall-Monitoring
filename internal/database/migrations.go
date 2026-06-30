@@ -65,6 +65,7 @@ var registeredMigrations = []migration{
 	{version: 14, name: "threat_intel_and_flow_threat_flag", run: (*Database).migrateThreatIntelAndFlowThreatFlag},
 	{version: 15, name: "flow_bgp_columns", run: (*Database).migrateFlowBGPColumns},
 	{version: 16, name: "flow_if_counters_table", run: (*Database).migrateFlowIfCountersTable},
+	{version: 17, name: "threat_intel_cidr_column_rename", run: (*Database).migrateThreatIntelCIDRColumnRename},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

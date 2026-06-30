@@ -155,8 +155,9 @@ func (d samplingBackoffDetector) Detect(w Window) ([]Detection, error) {
 // saturated and the true speed is in ifHighSpeed (Mbps). See InterfaceStats.
 const snmpSpeedSaturated = uint64(4294967295)
 
-// capacityThreshold is the egress-utilisation fraction at which a finding fires.
-const capacityThreshold = 0.80
+// defaultCapacityThreshold is the egress-utilisation fraction at which a finding
+// fires when not overridden via detect.Config.
+const defaultCapacityThreshold = 0.80
 
 // capacityDetector estimates per-interface egress throughput from sampled bytes
 // and compares it to the interface's SNMP-reported speed. >80% of link speed is
@@ -168,6 +169,7 @@ func (capacityDetector) Name() string       { return "capacity" }
 func (capacityDetector) Category() Category { return CategoryOperational }
 
 func (d capacityDetector) Detect(w Window) ([]Detection, error) {
+	cfg := w.Config.withDefaults()
 	type ifRow struct {
 		DeviceID      uint
 		OutputIfIndex uint32
@@ -217,7 +219,7 @@ func (d capacityDetector) Detect(w Window) ([]Detection, error) {
 		}
 		bps := float64(r.Bytes) * 8 / secs
 		pct := bps / float64(speedBps)
-		if pct < capacityThreshold {
+		if pct < cfg.CapacityThreshold {
 			continue
 		}
 		sev := "warning"

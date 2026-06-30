@@ -48,11 +48,54 @@ type Detection struct {
 	Details  map[string]any
 }
 
-// Window is the time range and DB handle a detector runs against.
+// Window is the time range and DB handle a detector runs against, plus the
+// tunable detector thresholds (Config).
 type Window struct {
-	Start time.Time
-	End   time.Time
-	DB    *gorm.DB
+	Start  time.Time
+	End    time.Time
+	DB     *gorm.DB
+	Config Config
+}
+
+// Config holds operator-tunable detector thresholds. A zero value for any field
+// means "use the built-in default" (see withDefaults), so a caller can override
+// just the knobs it cares about — and an unset Window.Config behaves exactly
+// like the historical hard-coded constants (except the raised port-scan floor).
+type Config struct {
+	PortScanPorts      int     // distinct dst ports from one src to flag a scan
+	SuperSpreaderHosts int     // distinct dst hosts from one src
+	DataExfilBytes     int64   // outbound (src,dst) bytes in the window
+	BeaconMinSamples   int     // min flows to judge periodicity
+	BeaconMaxAvgBytes  int     // "small" callout ceiling for beacons
+	BeaconMaxCV        float64 // inter-arrival coefficient-of-variation ceiling
+	CapacityThreshold  float64 // egress-utilisation fraction that fires a finding
+}
+
+// withDefaults returns a copy with every unset (<=0) field filled from the
+// package defaults, so detectors can read c.Field directly.
+func (c Config) withDefaults() Config {
+	if c.PortScanPorts <= 0 {
+		c.PortScanPorts = defaultPortScanPorts
+	}
+	if c.SuperSpreaderHosts <= 0 {
+		c.SuperSpreaderHosts = defaultSuperSpreaderHosts
+	}
+	if c.DataExfilBytes <= 0 {
+		c.DataExfilBytes = defaultDataExfilBytes
+	}
+	if c.BeaconMinSamples <= 0 {
+		c.BeaconMinSamples = defaultBeaconMinSamples
+	}
+	if c.BeaconMaxAvgBytes <= 0 {
+		c.BeaconMaxAvgBytes = defaultBeaconMaxAvgBytes
+	}
+	if c.BeaconMaxCV <= 0 {
+		c.BeaconMaxCV = defaultBeaconMaxCV
+	}
+	if c.CapacityThreshold <= 0 {
+		c.CapacityThreshold = defaultCapacityThreshold
+	}
+	return c
 }
 
 // Seconds is the window length in seconds (>=1), used for rate math.

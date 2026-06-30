@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.514] - 2026-06-30
+
+### Added
+- **Configurable sFlow detector thresholds (`DETECT_*` env).** The detection-engine thresholds are now operator-tunable instead of hard-coded: `DETECT_PORT_SCAN_PORTS`, `DETECT_SUPER_SPREADER_HOSTS`, `DETECT_DATA_EXFIL_BYTES`, `DETECT_BEACON_MIN_SAMPLES`, `DETECT_BEACON_MAX_AVG_BYTES`, `DETECT_BEACON_MAX_CV`, `DETECT_CAPACITY_THRESHOLD`. Any unset knob keeps the built-in default.
+- **Threat-intel auto-population from free open-source feeds (opt-in `THREAT_FEEDS_ENABLED`).** A poller job (leader-locked, default every 12h, initial sync ~1 min after start) fetches reputable free bad-IP lists — blocklist.de, CINS Army, Spamhaus DROP, Emerging Threats compromised, and Tor exit nodes — and upserts them into the threat-intel feed with a TTL (`THREAT_FEEDS_TTL_DAYS`, default 14). Indicators that drop off a feed expire and are pruned; permanent manual entries are never touched. Tunable with `THREAT_FEEDS_INTERVAL`, `THREAT_FEEDS_EXTRA_URLS` (custom `name|url|category|severity` records), and `THREAT_FEEDS_DISABLE_BUNDLE`. The ingest matcher picks up new indicators on its normal ~15-min refresh. New `internal/threatfeed` package (bounded download + tolerant parser).
+
+### Changed
+- **`port_scan` default threshold raised 20 → 100 distinct destination ports** to stop false positives (20 ports in a 15-minute window is easily reached by a busy legitimate host). Override with `DETECT_PORT_SCAN_PORTS`.
+- **`port_scan` now escalates to `critical` and is labelled "KNOWN-BAD source" when the scanning IP is on the threat-intel feed** (the flow's `threat_flag`), so a real attacker scan stands out from a tuning false-positive.
+
+### Fixed
+- **Latent v14 bug: the `threat_intel` CIDR column was named `c_id_r` by GORM** while every `ON CONFLICT` clause referenced `cidr` — so a duplicate `(cidr, source)` upsert errored (manual re-adds and any feed re-population). The column is now pinned to `cidr` (migration v17 renames it on Postgres; the unique index follows).
+
 ## [0.10.513] - 2026-06-29
 
 ### Added

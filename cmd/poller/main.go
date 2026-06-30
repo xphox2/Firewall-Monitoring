@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -24,6 +25,7 @@ import (
 	"firewall-mon/internal/report"
 	"firewall-mon/internal/secrets"
 	"firewall-mon/internal/snmp"
+	"firewall-mon/internal/threatfeed"
 )
 
 // deviceSNMP is the subset of *snmp.SNMPClient that pollDevice uses. Declaring
@@ -183,6 +185,20 @@ func (p *Poller) Start() error {
 	detectTicker := time.NewTicker(5 * time.Minute)
 	defer detectTicker.Stop()
 
+	// Threat-intel feed sync (opt-in). When disabled the channels stay nil and
+	// never fire in the select. When enabled, do an initial sync ~1 min after
+	// startup, then on the configured interval.
+	var feedTickC, feedInitC <-chan time.Time
+	if p.cfg.ThreatFeed.Enabled {
+		ft := time.NewTicker(p.cfg.ThreatFeed.Interval)
+		defer ft.Stop()
+		feedTickC = ft.C
+		init := time.NewTimer(1 * time.Minute)
+		defer init.Stop()
+		feedInitC = init.C
+		log.Printf("threat-feeds: enabled (interval %s, ttl %dd)", p.cfg.ThreatFeed.Interval, p.cfg.ThreatFeed.TTLDays)
+	}
+
 	for {
 		select {
 		case <-ticker.C:
@@ -199,6 +215,10 @@ func (p *Poller) Start() error {
 			})
 		case <-detectTicker.C:
 			p.runUnderLeaderLock("flow-detect", p.runFlowDetectionCycle)
+		case <-feedInitC:
+			p.runUnderLeaderLock("threat-feeds", p.runThreatFeedSync)
+		case <-feedTickC:
+			p.runUnderLeaderLock("threat-feeds", p.runThreatFeedSync)
 		case <-cleanupTicker.C:
 			p.runUnderLeaderLock("cleanup", func() {
 				if p.db != nil {
@@ -253,6 +273,24 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 	fn()
 }
 
+// detectConfigFromCfg maps the operator's DETECT_* config onto the detection
+// engine's threshold struct. Zero values pass through and the engine substitutes
+// its built-in defaults, so an operator only overrides the knobs they set.
+func detectConfigFromCfg(cfg *config.Config) detect.Config {
+	if cfg == nil {
+		return detect.Config{}
+	}
+	return detect.Config{
+		PortScanPorts:      cfg.Detect.PortScanPorts,
+		SuperSpreaderHosts: cfg.Detect.SuperSpreaderHosts,
+		DataExfilBytes:     cfg.Detect.DataExfilBytes,
+		BeaconMinSamples:   cfg.Detect.BeaconMinSamples,
+		BeaconMaxAvgBytes:  cfg.Detect.BeaconMaxAvgBytes,
+		BeaconMaxCV:        cfg.Detect.BeaconMaxCV,
+		CapacityThreshold:  cfg.Detect.CapacityThreshold,
+	}
+}
+
 // runFlowDetectionCycle runs the sFlow detection engine (internal/detect) over a
 // recent window of raw flow_samples, persists every finding, and feeds each to
 // the alert engine. Detections are stored regardless of whether they alert, so
@@ -264,7 +302,12 @@ func (p *Poller) runFlowDetectionCycle() {
 	}
 	end := time.Now()
 	start := end.Add(-15 * time.Minute)
-	detections := detect.RunAll(detect.Window{Start: start, End: end, DB: p.db.Gorm()}, end)
+	detections := detect.RunAll(detect.Window{
+		Start:  start,
+		End:    end,
+		DB:     p.db.Gorm(),
+		Config: detectConfigFromCfg(p.cfg),
+	}, end)
 	if len(detections) == 0 {
 		return
 	}
@@ -282,6 +325,61 @@ func (p *Poller) runFlowDetectionCycle() {
 		fired++
 	}
 	log.Printf("flow-detect: %d detection(s) persisted", fired)
+}
+
+// runThreatFeedSync fetches the configured free open-source bad-IP lists and
+// upserts them into threat_intel with a TTL, then prunes expired indicators.
+// Opt-in (THREAT_FEEDS_ENABLED) and leader-locked. The API process picks up the
+// new indicators on its next matcher refresh (~15 min). Each feed failure is
+// logged and skipped so one dead source doesn't abort the sync.
+func (p *Poller) runThreatFeedSync() {
+	if p.db == nil || !p.cfg.ThreatFeed.Enabled {
+		return
+	}
+	var feeds []threatfeed.Feed
+	if !p.cfg.ThreatFeed.DisableBundle {
+		feeds = append(feeds, threatfeed.DefaultFeeds()...)
+	}
+	feeds = append(feeds, threatfeed.ParseExtraFeeds(p.cfg.ThreatFeed.ExtraURLs)...)
+	if len(feeds) == 0 {
+		return
+	}
+	ttl := p.cfg.ThreatFeed.TTLDays
+	if ttl <= 0 {
+		ttl = 14
+	}
+	expires := time.Now().Add(time.Duration(ttl) * 24 * time.Hour)
+	client := &http.Client{Timeout: 60 * time.Second}
+	total := 0
+	for _, feed := range feeds {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		entries, err := threatfeed.Fetch(ctx, client, feed)
+		cancel()
+		if err != nil {
+			log.Printf("threat-feeds: fetch %s: %v", feed.Name, err)
+			continue
+		}
+		batch := make([]models.ThreatIntel, 0, len(entries))
+		for _, e := range entries {
+			ex := expires
+			batch = append(batch, models.ThreatIntel{
+				CIDR: e.CIDR, Category: e.Category, Source: e.Source,
+				Severity: e.Severity, ExpiresAt: &ex,
+			})
+		}
+		if err := p.db.UpsertThreatIntelBatch(batch); err != nil {
+			log.Printf("threat-feeds: upsert %s: %v", feed.Name, err)
+			continue
+		}
+		total += len(batch)
+		log.Printf("threat-feeds: %s → %d indicators", feed.Name, len(batch))
+	}
+	if pruned, err := p.db.PruneExpiredThreatIntel(); err != nil {
+		log.Printf("threat-feeds: prune expired: %v", err)
+	} else if pruned > 0 {
+		log.Printf("threat-feeds: pruned %d expired indicators", pruned)
+	}
+	log.Printf("threat-feeds: sync complete, %d indicators upserted (expire in %dd)", total, ttl)
 }
 
 func (p *Poller) pollAllDevices() {

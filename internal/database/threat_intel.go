@@ -29,6 +29,43 @@ func (d *Database) UpsertThreatIntel(e *models.ThreatIntel) error {
 	}).Create(e).Error
 }
 
+// UpsertThreatIntelBatch upserts many feed entries in batches (keyed on
+// (cidr, source)), refreshing category/severity/last_seen/expires_at on conflict
+// so re-fed indicators extend their lifetime. Used by the threat-feed poller,
+// which can ingest tens of thousands of rows per cycle — far too many for the
+// single-row UpsertThreatIntel.
+func (d *Database) UpsertThreatIntelBatch(entries []models.ThreatIntel) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	for i := range entries {
+		if entries[i].FirstSeen.IsZero() {
+			entries[i].FirstSeen = now
+		}
+		if entries[i].LastSeen.IsZero() {
+			entries[i].LastSeen = now
+		}
+		if entries[i].Severity == "" {
+			entries[i].Severity = "warning"
+		}
+	}
+	return d.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cidr"}, {Name: "source"}},
+		DoUpdates: clause.AssignmentColumns([]string{"category", "severity", "last_seen", "expires_at"}),
+	}).CreateInBatches(entries, 1000).Error
+}
+
+// PruneExpiredThreatIntel deletes threat-intel rows whose expiry has passed, so
+// indicators that drop off their feed don't accumulate forever. Returns the
+// number deleted. Rows with a NULL expires_at (e.g. permanent manual entries)
+// are never touched.
+func (d *Database) PruneExpiredThreatIntel() (int64, error) {
+	res := d.db.Where("expires_at IS NOT NULL AND expires_at < ?", time.Now().UTC()).
+		Delete(&models.ThreatIntel{})
+	return res.RowsAffected, res.Error
+}
+
 // GetActiveThreatIntel returns all non-expired threat-intel rows, for building
 // the in-memory matcher. "Active" means expires_at is NULL or in the future.
 func (d *Database) GetActiveThreatIntel() ([]models.ThreatIntel, error) {

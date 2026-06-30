@@ -35,12 +35,51 @@ func TestPortScanDetector(t *testing.T) {
 
 	w := fullWindow(now)
 	w.DB = db.Gorm()
+	w.Config.PortScanPorts = 20 // override the raised default (100) so 25 ports fires
 	got, err := portScanDetector{}.Detect(w)
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
 	if len(got) != 1 || got[0].SrcAddr != "10.0.0.5" || got[0].Category != CategorySecurity {
 		t.Fatalf("port_scan = %+v, want exactly 10.0.0.5", got)
+	}
+	if got[0].Severity != "warning" {
+		t.Errorf("severity = %q, want warning (source not on threat feed)", got[0].Severity)
+	}
+
+	// With the default (100) threshold, 25 ports must NOT fire — the false-positive fix.
+	wDefault := fullWindow(now)
+	wDefault.DB = db.Gorm()
+	gotDefault, err := portScanDetector{}.Detect(wDefault)
+	if err != nil {
+		t.Fatalf("Detect(default): %v", err)
+	}
+	if len(gotDefault) != 0 {
+		t.Errorf("with default threshold 100, 25 ports must not fire; got %+v", gotDefault)
+	}
+}
+
+// TestPortScanDetector_KnownBadEscalates verifies a scan from a threat-flagged
+// source escalates to critical and is labelled known-bad.
+func TestPortScanDetector_KnownBadEscalates(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	for p := 1; p <= 25; p++ {
+		// ThreatFlag bit 0 = source is on the threat-intel feed.
+		seedFlow(t, db, models.FlowSample{DeviceID: 1, Protocol: 6, SrcAddr: "203.0.113.9", DstAddr: "10.0.0.9", DstPort: uint16(p), Bytes: 100, Packets: 1, ThreatFlag: 1})
+	}
+	w := fullWindow(now)
+	w.DB = db.Gorm()
+	w.Config.PortScanPorts = 20
+	got, err := portScanDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 1 || got[0].Severity != "critical" {
+		t.Fatalf("known-bad scan = %+v, want exactly one critical finding", got)
+	}
+	if kb, _ := got[0].Details["known_bad"].(bool); !kb {
+		t.Errorf("known_bad detail = %v, want true", got[0].Details["known_bad"])
 	}
 }
 

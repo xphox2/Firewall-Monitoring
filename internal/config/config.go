@@ -14,14 +14,41 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig
-	SNMP      SNMPConfig
-	Database  DatabaseConfig
-	Auth      AuthConfig
-	Alerts    AlertsConfig
-	Uptime    UptimeConfig
-	Probe     ProbeConfig
-	Retention RetentionConfig
+	Server     ServerConfig
+	SNMP       SNMPConfig
+	Database   DatabaseConfig
+	Auth       AuthConfig
+	Alerts     AlertsConfig
+	Uptime     UptimeConfig
+	Probe      ProbeConfig
+	Retention  RetentionConfig
+	Detect     DetectConfig
+	ThreatFeed ThreatFeedConfig
+}
+
+// DetectConfig holds the operator-tunable sFlow detection-engine thresholds
+// (DETECT_* env). A zero value means "use the detector's built-in default", so
+// only the knobs the operator sets are overridden. These feed detect.Config in
+// the poller's detection cycle.
+type DetectConfig struct {
+	PortScanPorts      int     // DETECT_PORT_SCAN_PORTS — distinct dst ports from one src (default 100)
+	SuperSpreaderHosts int     // DETECT_SUPER_SPREADER_HOSTS — distinct dst hosts (default 100)
+	DataExfilBytes     int64   // DETECT_DATA_EXFIL_BYTES — outbound (src,dst) bytes (default 1 GiB)
+	BeaconMinSamples   int     // DETECT_BEACON_MIN_SAMPLES (default 8)
+	BeaconMaxAvgBytes  int     // DETECT_BEACON_MAX_AVG_BYTES (default 1500)
+	BeaconMaxCV        float64 // DETECT_BEACON_MAX_CV (default 0.35)
+	CapacityThreshold  float64 // DETECT_CAPACITY_THRESHOLD — utilisation fraction (default 0.80)
+}
+
+// ThreatFeedConfig controls the optional auto-population of the threat-intel feed
+// from free open-source bad-IP lists (THREAT_FEEDS_* env). Opt-in: the server
+// makes no outbound feed requests unless Enabled is set.
+type ThreatFeedConfig struct {
+	Enabled       bool          // THREAT_FEEDS_ENABLED (default false — opt-in external egress)
+	Interval      time.Duration // THREAT_FEEDS_INTERVAL (default 12h)
+	TTLDays       int           // THREAT_FEEDS_TTL_DAYS — entries expire if not re-fed (default 14)
+	ExtraURLs     string        // THREAT_FEEDS_EXTRA_URLS — CSV of name|url|category|severity to add to the defaults
+	DisableBundle bool          // THREAT_FEEDS_DISABLE_BUNDLE — if true, use ONLY ExtraURLs (skip the built-in list)
 }
 
 type ServerConfig struct {
@@ -322,6 +349,22 @@ func Load() *Config {
 			// operator doesn't accidentally shorten unack
 			// alert retention to 30 days.
 			UnackAlertDays: getIntEnv("RETENTION_UNACK_ALERT_DAYS", 90),
+		},
+		Detect: DetectConfig{
+			PortScanPorts:      getIntEnv("DETECT_PORT_SCAN_PORTS", 0),
+			SuperSpreaderHosts: getIntEnv("DETECT_SUPER_SPREADER_HOSTS", 0),
+			DataExfilBytes:     int64(getIntEnv("DETECT_DATA_EXFIL_BYTES", 0)),
+			BeaconMinSamples:   getIntEnv("DETECT_BEACON_MIN_SAMPLES", 0),
+			BeaconMaxAvgBytes:  getIntEnv("DETECT_BEACON_MAX_AVG_BYTES", 0),
+			BeaconMaxCV:        getFloatEnv("DETECT_BEACON_MAX_CV", 0),
+			CapacityThreshold:  getFloatEnv("DETECT_CAPACITY_THRESHOLD", 0),
+		},
+		ThreatFeed: ThreatFeedConfig{
+			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", false),
+			Interval:      getDurationEnv("THREAT_FEEDS_INTERVAL", 12*time.Hour),
+			TTLDays:       getIntEnv("THREAT_FEEDS_TTL_DAYS", 14),
+			ExtraURLs:     getEnv("THREAT_FEEDS_EXTRA_URLS", ""),
+			DisableBundle: getBoolEnv("THREAT_FEEDS_DISABLE_BUNDLE", false),
 		},
 		Auth: AuthConfig{
 			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),

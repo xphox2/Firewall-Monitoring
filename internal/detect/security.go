@@ -9,15 +9,19 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// Security-detector thresholds. Tuned conservative for observe-mode; operators
-// adjust by acking noise. All operate on the bytes-are-sampling-scaled values.
+// Default security-detector thresholds. These are the fallbacks when the
+// operator doesn't override them via detect.Config (DETECT_* env). The port-scan
+// floor was raised from 20→100 (v0.10.514): 20 distinct dst ports in a 15-minute
+// window is easily reached by a busy legitimate host, so it produced false
+// positives. A real scan sweeps far more ports — and the detector now also
+// escalates to critical when the source is on the threat-intel feed.
 const (
-	portScanDistinctPorts      = 20             // distinct dst ports from one src
-	superSpreaderDistinctHosts = 100            // distinct dst hosts from one src
-	dataExfilBytes             = int64(1) << 30 // 1 GiB outbound (src,dst) in the window
-	beaconMinSamples           = 8              // min flows to judge periodicity
-	beaconMaxAvgBytes          = 1500           // "small" callouts only
-	beaconMaxCV                = 0.35           // inter-arrival coefficient-of-variation ceiling
+	defaultPortScanPorts      = 100            // distinct dst ports from one src
+	defaultSuperSpreaderHosts = 100            // distinct dst hosts from one src
+	defaultDataExfilBytes     = int64(1) << 30 // 1 GiB outbound (src,dst) in the window
+	defaultBeaconMinSamples   = 8              // min flows to judge periodicity
+	defaultBeaconMaxAvgBytes  = 1500           // "small" callouts only
+	defaultBeaconMaxCV        = 0.35           // inter-arrival coefficient-of-variation ceiling
 )
 
 // --- port scan (security) ---------------------------------------------------
@@ -30,28 +34,39 @@ func (portScanDetector) Name() string       { return "port_scan" }
 func (portScanDetector) Category() Category { return CategorySecurity }
 
 func (d portScanDetector) Detect(w Window) ([]Detection, error) {
+	cfg := w.Config.withDefaults()
 	type row struct {
 		SrcAddr string
 		Ports   int64
 		Hosts   int64
+		Threat  int // MAX(threat_flag): bit 0 set => source matched the threat feed
 	}
 	var rows []row
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Select("src_addr, COUNT(DISTINCT dst_port) as ports, COUNT(DISTINCT dst_addr) as hosts").
+		Select("src_addr, COUNT(DISTINCT dst_port) as ports, COUNT(DISTINCT dst_addr) as hosts, MAX(threat_flag) as threat").
 		Group("src_addr").
-		Having("COUNT(DISTINCT dst_port) >= ?", portScanDistinctPorts).
+		Having("COUNT(DISTINCT dst_port) >= ?", cfg.PortScanPorts).
 		Order("ports DESC").Limit(100).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]Detection, 0, len(rows))
 	for _, r := range rows {
+		// A scan from a known-bad source (on the threat-intel feed) is a
+		// high-confidence finding — escalate to critical and say so.
+		knownBad := r.Threat&1 != 0
+		sev := "warning"
+		msg := fmt.Sprintf("Possible port scan from %s: %d distinct ports across %d hosts", r.SrcAddr, r.Ports, r.Hosts)
+		if knownBad {
+			sev = "critical"
+			msg = fmt.Sprintf("Port scan from KNOWN-BAD source %s: %d distinct ports across %d hosts", r.SrcAddr, r.Ports, r.Hosts)
+		}
 		out = append(out, Detection{
-			Detector: d.Name(), Category: d.Category(), Severity: "warning",
+			Detector: d.Name(), Category: d.Category(), Severity: sev,
 			SrcAddr: r.SrcAddr, Score: float64(r.Ports),
-			Message:  fmt.Sprintf("Possible port scan from %s: %d distinct ports across %d hosts", r.SrcAddr, r.Ports, r.Hosts),
+			Message:  msg,
 			DedupKey: "portscan_" + r.SrcAddr,
-			Details:  map[string]any{"distinct_ports": r.Ports, "distinct_hosts": r.Hosts},
+			Details:  map[string]any{"distinct_ports": r.Ports, "distinct_hosts": r.Hosts, "known_bad": knownBad},
 		})
 	}
 	return out, nil
@@ -67,6 +82,7 @@ func (superSpreaderDetector) Name() string       { return "super_spreader" }
 func (superSpreaderDetector) Category() Category { return CategorySecurity }
 
 func (d superSpreaderDetector) Detect(w Window) ([]Detection, error) {
+	cfg := w.Config.withDefaults()
 	type row struct {
 		SrcAddr string
 		Hosts   int64
@@ -76,7 +92,7 @@ func (d superSpreaderDetector) Detect(w Window) ([]Detection, error) {
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
 		Select("src_addr, COUNT(DISTINCT dst_addr) as hosts").
 		Group("src_addr").
-		Having("COUNT(DISTINCT dst_addr) >= ?", superSpreaderDistinctHosts).
+		Having("COUNT(DISTINCT dst_addr) >= ?", cfg.SuperSpreaderHosts).
 		Order("hosts DESC").Limit(100).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -103,6 +119,7 @@ func (dataExfilDetector) Name() string       { return "data_exfil" }
 func (dataExfilDetector) Category() Category { return CategorySecurity }
 
 func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
+	cfg := w.Config.withDefaults()
 	type row struct {
 		SrcAddr    string
 		DstAddr    string
@@ -115,7 +132,7 @@ func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
 		Where("direction = ?", classify.DirOutbound).
 		Select("src_addr, dst_addr, dst_country, SUM(bytes) as bytes").
 		Group("src_addr, dst_addr, dst_country").
-		Having("SUM(bytes) >= ?", dataExfilBytes).
+		Having("SUM(bytes) >= ?", cfg.DataExfilBytes).
 		Order("bytes DESC").Limit(100).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -199,6 +216,7 @@ func (c2BeaconDetector) Name() string       { return "c2_beacon" }
 func (c2BeaconDetector) Category() Category { return CategorySecurity }
 
 func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
+	cfg := w.Config.withDefaults()
 	// Candidate (src,dst,port) groups: enough small-payload outbound/external
 	// flows to judge periodicity.
 	type cand struct {
@@ -213,7 +231,7 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 		Where("direction IN ?", []int{int(classify.DirOutbound), int(classify.DirExternal)}).
 		Select("src_addr, dst_addr, dst_port, COUNT(*) as cnt").
 		Group("src_addr, dst_addr, dst_port").
-		Having("COUNT(*) >= ? AND AVG(bytes) <= ?", beaconMinSamples, beaconMaxAvgBytes).
+		Having("COUNT(*) >= ? AND AVG(bytes) <= ?", cfg.BeaconMinSamples, cfg.BeaconMaxAvgBytes).
 		Order("cnt DESC").Limit(50).Scan(&cands).Error; err != nil {
 		return nil, err
 	}
@@ -227,8 +245,8 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 			Order("timestamp ASC").Limit(1000).Pluck("timestamp", &ts).Error; err != nil {
 			continue
 		}
-		cv, ok := interArrivalCV(ts)
-		if !ok || cv > beaconMaxCV {
+		cv, ok := interArrivalCV(ts, cfg.BeaconMinSamples)
+		if !ok || cv > cfg.BeaconMaxCV {
 			continue
 		}
 		out = append(out, Detection{
@@ -245,8 +263,8 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 // interArrivalCV returns the coefficient of variation (stddev/mean) of the gaps
 // between consecutive sorted timestamps. ok is false when there aren't enough
 // gaps or the mean is zero. A low CV indicates regular (periodic) arrivals.
-func interArrivalCV(ts []time.Time) (float64, bool) {
-	if len(ts) < beaconMinSamples {
+func interArrivalCV(ts []time.Time, minSamples int) (float64, bool) {
+	if len(ts) < minSamples {
 		return 0, false
 	}
 	gaps := make([]float64, 0, len(ts)-1)

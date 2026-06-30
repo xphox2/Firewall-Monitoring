@@ -1082,3 +1082,25 @@ func (d *Database) migrateFlowIfCountersTable() error {
 	log.Printf("migrate v16: ensured flow_if_counters table")
 	return nil
 }
+
+// migrateThreatIntelCIDRColumnRename (v17) fixes a latent v14 naming bug: GORM
+// derived the column name "c_id_r" from the CIDR field, but every OnConflict
+// clause referenced "cidr" — so a duplicate (cidr, source) upsert errored. The
+// model now pins `column:cidr`; this migration renames the existing column on
+// Postgres (the unique index follows the rename). On SQLite the table is
+// recreated from the model with the right name, so AutoMigrate suffices.
+func (d *Database) migrateThreatIntelCIDRColumnRename() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.ThreatIntel{})
+	}
+	var hasOld, hasNew bool
+	d.db.Raw(`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='threat_intel' AND column_name='c_id_r')`).Scan(&hasOld)
+	d.db.Raw(`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='threat_intel' AND column_name='cidr')`).Scan(&hasNew)
+	if hasOld && !hasNew {
+		if err := d.execMaintenanceDDL(`ALTER TABLE threat_intel RENAME COLUMN c_id_r TO cidr`); err != nil {
+			return fmt.Errorf("migrate v17 rename threat_intel.c_id_r -> cidr: %w", err)
+		}
+		log.Printf("migrate v17: renamed threat_intel.c_id_r -> cidr")
+	}
+	return nil
+}

@@ -824,8 +824,8 @@ func (FlowSample) TableName() string { return "flow_samples" }
 // count is the size of the feed, not the flow firehose.
 type ThreatIntel struct {
 	ID        uint       `json:"id" gorm:"primaryKey"`
-	CIDR      string     `json:"cidr" gorm:"size:64;uniqueIndex:idx_threat_cidr_src,priority:1"` // "203.0.113.0/24" or "203.0.113.9/32"
-	Category  string     `json:"category" gorm:"size:32"`                                        // e.g. "malware","c2","scanner","tor"
+	CIDR      string     `json:"cidr" gorm:"column:cidr;size:64;uniqueIndex:idx_threat_cidr_src,priority:1"` // "203.0.113.0/24" or "203.0.113.9/32"
+	Category  string     `json:"category" gorm:"size:32"`                                                    // e.g. "malware","c2","scanner","tor"
 	Source    string     `json:"source" gorm:"size:64;uniqueIndex:idx_threat_cidr_src,priority:2"`
 	Severity  string     `json:"severity" gorm:"size:8"` // info | warning | critical
 	FirstSeen time.Time  `json:"first_seen"`
