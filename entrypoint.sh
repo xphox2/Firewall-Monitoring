@@ -165,6 +165,12 @@ fi
 
 # Create data directories and fix ownership (runs as root)
 mkdir -p /data /config
+# The /data directory inode itself must be owned/writable by fwmon so the API
+# can create .admin-password and .jwt-secret on first run. On a bind mount the
+# host directory's ownership shadows the image-layer chown, so re-apply it here
+# at runtime. Non-recursive on /data: /data/pgdata must stay postgres-owned
+# (chowned above), so we only fix the top-level dir plus the app's own files.
+chown fwmon:fwmon /data
 chown -R fwmon:fwmon /data/firewall-mon.db* /config 2>/dev/null || true
 
 # Export config file path
