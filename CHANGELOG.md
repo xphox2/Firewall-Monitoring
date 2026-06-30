@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.513] - 2026-06-29
+
+### Added
+- **sFlow analytics R5b — interface counter samples (schema_version 2).** The server now ingests sFlow `counters_sample` interface counters (the agent-pushed equivalent of SNMP ifSpeed/ifInOctets/ifOutOctets), gated behind a relay schema-version bump.
+  - **Schema v2**: `SchemaVersionMax` 1→2 (Min stays 1). The new `POST /api/probes/:id/flow-counters` endpoint is only used by collectors that negotiated v2, so a v1 collector ↔ v2 server and v2 collector ↔ v1 server both keep working unchanged. Requires Collector v1.2.145+ to send the data.
+  - **`flow_if_counters` table** (migration v16, not partitioned): per-interface ifSpeed + cumulative in/out octets, errors, and discards. Retention-pruned alongside `flow_samples` (`RETENTION_FLOW_DAYS`).
+  - **Capacity detector** now falls back to the sFlow-reported ifSpeed when SNMP `interface_stats` has no speed for the interface (e.g. when SNMP is host-restricted) — so utilisation alerts work even where SNMP can't reach the device.
+  - Tests: counter round-trip + latest-lookup; capacity detector firing via sFlow ifSpeed fallback; schema-handshake assertions updated to v2.
+
 ## [0.10.512] - 2026-06-29
 
 ### Added

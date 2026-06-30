@@ -276,6 +276,70 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
+// ReceiveFlowCounterSamples ingests sFlow interface counter samples (schema v2).
+// Mirrors ReceiveFlowSamples: validate probe, dedup batch, resolve device by
+// sampler IP, drop samples for devices the probe doesn't own, persist. Only
+// collectors that negotiated schema_version 2 POST here.
+func (h *Handler) ReceiveFlowCounterSamples(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
+	var counters []models.FlowInterfaceCounter
+	if err := c.ShouldBindJSON(&counters); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+		return
+	}
+	if len(counters) > 1000 {
+		counters = counters[:1000]
+	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	var ipToDevice map[string]uint
+	if h.db != nil {
+		ipSet := make(map[string]struct{})
+		for i := range counters {
+			if counters[i].DeviceID == 0 && counters[i].SamplerAddress != "" {
+				ipSet[counters[i].SamplerAddress] = struct{}{}
+			}
+		}
+		if len(ipSet) > 0 {
+			ips := make([]string, 0, len(ipSet))
+			for ip := range ipSet {
+				ips = append(ips, ip)
+			}
+			ipToDevice = h.db.ResolveDevicesByIPs(ips)
+		}
+	}
+	now := time.Now()
+	filtered := counters[:0]
+	for i := range counters {
+		counters[i].ProbeID = probe.ID
+		if counters[i].Timestamp.IsZero() {
+			counters[i].Timestamp = now
+		}
+		if counters[i].DeviceID == 0 && counters[i].SamplerAddress != "" {
+			if devID := ipToDevice[counters[i].SamplerAddress]; devID > 0 {
+				counters[i].DeviceID = devID
+			}
+		}
+		if counters[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[counters[i].DeviceID] {
+			continue
+		}
+		filtered = append(filtered, counters[i])
+	}
+	if err := h.db.SaveFlowInterfaceCounters(filtered); err != nil {
+		log.Printf("ReceiveFlowCounterSamples: DB save error: %v", err)
+		httputil.InternalError(c, "Failed to save interface counters", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
+}
+
 func (h *Handler) ReceivePingResults(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {

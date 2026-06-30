@@ -18,9 +18,13 @@ import "time"
 // SchemaVersionMax] with HTTP 426 (Upgrade Required) and advertises the
 // supported range in the X-Probe-Schema-Version-Supported header. These MUST
 // stay in lockstep with the same constants in the Firewall-Collector repo.
+// v2 (R5) adds the sFlow interface counter-samples telemetry type (the
+// /probes/:id/flow-counters endpoint). The collector gates counter sends on a
+// negotiated v2, so a v1-only server never receives them. v1 stays supported
+// (Min=1) for mixed-version deploys.
 const (
 	SchemaVersionMin = 1
-	SchemaVersionMax = 1
+	SchemaVersionMax = 2
 )
 
 type TrapEvent struct {

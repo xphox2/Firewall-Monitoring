@@ -202,6 +202,17 @@ func (d capacityDetector) Detect(w Window) ([]Detection, error) {
 			speedBps = iface.HighSpeed * 1_000_000 // ifHighSpeed is Mbps
 		}
 		if speedBps == 0 {
+			// SNMP speed unknown (e.g. SNMP host-restricted) — fall back to the
+			// sFlow-reported ifSpeed from the latest counter sample (schema v2).
+			var sf struct{ IfSpeed uint64 }
+			if err := w.DB.Model(&models.FlowInterfaceCounter{}).
+				Where("device_id = ? AND if_index = ?", r.DeviceID, r.OutputIfIndex).
+				Select("if_speed").
+				Order("timestamp DESC").Limit(1).Scan(&sf).Error; err == nil {
+				speedBps = sf.IfSpeed
+			}
+		}
+		if speedBps == 0 {
 			continue // unknown link speed — can't judge utilisation
 		}
 		bps := float64(r.Bytes) * 8 / secs

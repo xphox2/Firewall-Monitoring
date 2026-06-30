@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ func TestRegistrationSchemaVersionOmitempty(t *testing.T) {
 	})
 	t.Run("request includes explicit version", func(t *testing.T) {
 		b, _ := json.Marshal(RegistrationRequest{RegistrationKey: "k", SchemaVersion: SchemaVersionMax})
-		if !strings.Contains(string(b), `"schema_version":1`) {
+		if !strings.Contains(string(b), fmt.Sprintf(`"schema_version":%d`, SchemaVersionMax)) {
 			t.Errorf("explicit SchemaVersion must be present; got %s", b)
 		}
 	})

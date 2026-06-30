@@ -65,6 +65,7 @@ func (d *Database) migrateBaseline() error {
 		&models.ProcessedBatch{},
 		&models.FlowDetection{},
 		&models.ThreatIntel{},
+		&models.FlowInterfaceCounter{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -1067,5 +1068,17 @@ func (d *Database) migrateFlowBGPColumns() error {
 		}
 	}
 	log.Printf("migrate v15: ensured flow_samples.as_path + next_hop")
+	return nil
+}
+
+// migrateFlowIfCountersTable (v16) creates the flow_if_counters table for sFlow
+// interface counter samples (schema_version 2). Created via AutoMigrate
+// (idempotent, cross-dialect, also in the baseline allModels loop). Not
+// partitioned — retention-pruned in CleanupOldData alongside flow_samples.
+func (d *Database) migrateFlowIfCountersTable() error {
+	if err := d.db.AutoMigrate(&models.FlowInterfaceCounter{}); err != nil {
+		return fmt.Errorf("migrate v16 flow_if_counters table: %w", err)
+	}
+	log.Printf("migrate v16: ensured flow_if_counters table")
 	return nil
 }

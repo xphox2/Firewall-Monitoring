@@ -192,6 +192,7 @@ type EventStatsStore interface {
 // IngestStore covers the probe-ingestion write path and batch idempotency.
 type IngestStore interface {
 	SaveFlowSamples(samples []models.FlowSample) error
+	SaveFlowInterfaceCounters(counters []models.FlowInterfaceCounter) error
 	SaveHAStatuses(statuses []models.HAStatus) error
 	SaveInterfaceAddresses(addrs []models.InterfaceAddress) error
 	SaveInterfaceStats(stats []models.InterfaceStats) error

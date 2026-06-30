@@ -836,6 +836,35 @@ type ThreatIntel struct {
 
 func (ThreatIntel) TableName() string { return "threat_intel" }
 
+// FlowInterfaceCounter is one sFlow interface counter sample (counters_sample /
+// if_counters) pushed by the collector — the agent-reported equivalent of the
+// SNMP interface_stats poll: ifSpeed plus cumulative in/out octets, errors, and
+// discards for one interface at one instant. The server uses it as a bandwidth
+// source (and ifSpeed for the capacity detector) when SNMP is unavailable or
+// host-restricted. Added in migration v16, schema_version 2. Not partitioned —
+// retention-pruned alongside flow_samples (CleanupOldData); the row rate is
+// per-interface-per-sample-cycle, far below the flow firehose.
+type FlowInterfaceCounter struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Timestamp      time.Time `json:"timestamp" gorm:"index:idx_ficnt_dev_ts,priority:2"`
+	DeviceID       uint      `json:"device_id" gorm:"index:idx_ficnt_dev_ts,priority:1"`
+	ProbeID        uint      `json:"probe_id"`
+	SamplerAddress string    `json:"sampler_address"`
+	IfIndex        uint32    `json:"if_index" gorm:"type:bigint;index:idx_ficnt_dev_ts,priority:3"`
+	IfType         uint32    `json:"if_type" gorm:"type:bigint"`
+	IfSpeed        uint64    `json:"if_speed"` // bits/sec
+	IfStatus       uint32    `json:"if_status" gorm:"type:bigint"`
+	InOctets       uint64    `json:"in_octets"`
+	InErrors       uint64    `json:"in_errors"`
+	InDiscards     uint64    `json:"in_discards"`
+	OutOctets      uint64    `json:"out_octets"`
+	OutErrors      uint64    `json:"out_errors"`
+	OutDiscards    uint64    `json:"out_discards"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+func (FlowInterfaceCounter) TableName() string { return "flow_if_counters" }
+
 // AgentDrops is a rolling-window aggregate of sFlow agent drops, the
 // running counter of packets the agent had to discard because it
 // couldn't keep up with the sampled rate (sFlow v5 §3.1.1).

@@ -121,6 +121,40 @@ func TestCapacityDetector(t *testing.T) {
 	}
 }
 
+// TestCapacityDetector_SFlowSpeedFallback verifies that when SNMP interface_stats
+// has no speed for the interface (e.g. SNMP host-restricted), the capacity
+// detector falls back to the sFlow-reported ifSpeed from flow_if_counters.
+func TestCapacityDetector_SFlowSpeedFallback(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	now := time.Now()
+	// No InterfaceStats row → SNMP speed unknown. sFlow counter supplies 1 Gbps.
+	if err := db.Gorm().Create(&models.FlowInterfaceCounter{
+		Timestamp: now.Add(-10 * time.Second), DeviceID: 1, IfIndex: 7, IfSpeed: 1_000_000_000,
+	}).Error; err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	const secs = 60
+	bytes := uint64(900_000_000) * secs / 8 // ~90% of 1 Gbps
+	if err := db.Gorm().Create(&models.FlowSample{
+		Timestamp: now.Add(-30 * time.Second), DeviceID: 1, Protocol: 6,
+		SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", DstPort: 443,
+		OutputIfIndex: 7, Bytes: bytes, Packets: 1,
+	}).Error; err != nil {
+		t.Fatalf("seed flow: %v", err)
+	}
+	w := Window{Start: now.Add(-secs * time.Second), End: now, DB: db.Gorm()}
+	got, err := capacityDetector{}.Detect(w)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("capacity fired %d times, want 1 (via sFlow ifSpeed). got=%+v", len(got), got)
+	}
+	if got[0].Score < 85 || got[0].Score > 95 {
+		t.Errorf("capacity pct = %.1f, want ~90", got[0].Score)
+	}
+}
+
 func TestRunAll_MapsToModel(t *testing.T) {
 	db := database.NewDatabaseForTesting(t)
 	now := time.Now()

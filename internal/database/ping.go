@@ -218,3 +218,29 @@ func (d *Database) GetFlowSamples(limit int) ([]models.FlowSample, error) {
 	err := d.db.Order("timestamp DESC").Limit(limit).Find(&samples).Error
 	return samples, err
 }
+
+// SaveFlowInterfaceCounters persists a batch of sFlow interface counter samples
+// (schema v2). Plain GORM batch insert — the row rate is per-interface, far
+// below the flow firehose, so the pgx COPY fast path isn't needed.
+func (d *Database) SaveFlowInterfaceCounters(counters []models.FlowInterfaceCounter) error {
+	if len(counters) == 0 {
+		return nil
+	}
+	return d.db.Create(&counters).Error
+}
+
+// GetLatestInterfaceCounter returns the most recent sFlow counter sample for a
+// (device, ifIndex), or nil if none. Used as a bandwidth/ifSpeed source when
+// SNMP interface_stats is unavailable.
+func (d *Database) GetLatestInterfaceCounter(deviceID uint, ifIndex uint32) (*models.FlowInterfaceCounter, error) {
+	var c models.FlowInterfaceCounter
+	err := d.db.Where("device_id = ? AND if_index = ?", deviceID, ifIndex).
+		Order("timestamp DESC").Limit(1).First(&c).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
+}

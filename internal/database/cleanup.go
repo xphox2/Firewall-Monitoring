@@ -224,6 +224,7 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.TrapEvent{}, "trap_events", trapDays},
 		{&models.LoginAttempt{}, "login_attempts", defaultDays},
 		{&models.FlowSample{}, "flow_samples", flowDays},
+		{&models.FlowInterfaceCounter{}, "flow_if_counters", flowDays},
 		{&models.InterfaceAddress{}, "interface_addresses", statusDays},
 		{&models.PingResult{}, "ping_results", pingDays},
 		// AUDIT-029: the four tables that previously had no
