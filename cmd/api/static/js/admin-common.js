@@ -1014,7 +1014,7 @@
             var segments = path.split('/');
             var lastSegment = segments[segments.length - 1];
             var pageMap = { 'dashboard':'', 'devices':'devices', 'connections':'connections',
-                'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
+                'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
                 'irc':'irc', 'audit':'audit' };
             currentPage = pageMap[lastSegment] || 'dashboard';
@@ -1022,7 +1022,7 @@
 
         var pageIcons = {
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;',
-            'syslog': '&#9993;', 'flows': '&#8674;', 'alerts': '&#9888;', 'traps': '&#9889;',
+            'syslog': '&#9993;', 'flows': '&#8674;', 'noc': '&#9788;', 'alerts': '&#9888;', 'traps': '&#9889;',
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
             'probes': '&#9678;', 'sites': '&#9962;', 'irc': '&#128172;', 'audit': '&#128203;'
         };
@@ -1036,6 +1036,7 @@
             '</div><div class="nav-section"><div class="nav-section-title">Data</div>' +
             '<a class="nav-item' + (currentPage === 'syslog' ? ' active" aria-current="page' : '') + '" href="/admin/syslog"><span class="nav-icon" aria-hidden="true">' + pageIcons['syslog'] + '</span> Syslog</a>' +
             '<a class="nav-item' + (currentPage === 'flows' ? ' active" aria-current="page' : '') + '" href="/admin/flows"><span class="nav-icon" aria-hidden="true">' + pageIcons['flows'] + '</span> Flows</a>' +
+            '<a class="nav-item' + (currentPage === 'noc' ? ' active" aria-current="page' : '') + '" href="/admin/noc"><span class="nav-icon" aria-hidden="true">' + pageIcons['noc'] + '</span> NOC</a>' +
             '<a class="nav-item' + (currentPage === 'alerts' ? ' active" aria-current="page' : '') + '" href="/admin/alerts"><span class="nav-icon" aria-hidden="true">' + pageIcons['alerts'] + '</span> Alerts</a>' +
             '<a class="nav-item' + (currentPage === 'traps' ? ' active" aria-current="page' : '') + '" href="/admin/traps"><span class="nav-icon" aria-hidden="true">' + pageIcons['traps'] + '</span> Traps</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +

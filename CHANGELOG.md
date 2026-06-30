@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.516] - 2026-06-30
+
+### Added
+- **sFlow analytics R6 — real-time NOC dashboard.** A new **NOC** page (`/admin/noc`, in the Data nav section) streams live operations via Server-Sent Events: one in-process broadcaster recomputes a snapshot every 5s over a trailing 5-minute window and fans it out to all connected dashboards (one DB computation serves every viewer). Six zones: throughput vitals (live bps, flows, unique src→dst, threat-flow count, probe up/down, active threat-intel IPs), Top Sources, Top Destinations, By Application, By Direction, Top Countries (hidden without GeoIP), and a live Detections feed (last 15 min, most-severe first).
+  - Backend: `GetNOCSnapshot(window)` lightweight aggregate (bounded top-N over raw flow_samples) + `nocHub` broadcaster + `GET /admin/api/noc/stream` (SSE, cookie-auth so EventSource just works) and `GET /admin/api/noc/snapshot` (one-shot fallback). The SSE handler clears the per-connection write deadline so the stream isn't severed by `SERVER_WRITE_TIMEOUT`, sends keepalive comments, and tears down cleanly on client disconnect.
+  - Frontend: `admin-noc.js` EventSource consumer with auto-reconnect + a live/reconnecting status pill; the stream is closed when navigating away from the page.
+  - Tests: `GetNOCSnapshot` window aggregation (throughput, threat-flow count, top talkers, old-flow exclusion).
+
+  Note: data refreshes each collector batch (~30s), so flow aggregates step per batch while detections/threat counts feel live. Deferred from the R6 plan (separate follow-ups): collector-side SO_REUSEPORT worker pool + per-agent rate limit, and removal of the stale `cmd/probe`.
+
 ## [0.10.515] - 2026-06-30
 
 ### Added

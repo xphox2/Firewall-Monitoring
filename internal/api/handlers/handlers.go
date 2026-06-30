@@ -34,6 +34,7 @@ type Handler struct {
 	notifier     *notifier.Notifier
 	geoResolver  *classify.GeoResolver
 	threatMatch  threatintel.Holder
+	nocHub       *nocHub
 	version      string
 	// db is the repository interface (database.Store), not the concrete
 	// *database.Database god-object — handlers depend on the narrow method set
@@ -67,8 +68,17 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	// RefreshThreatMatcher wouldn't catch it.
 	if db != nil {
 		h.RefreshThreatMatcher()
+		h.nocHub = newNOCHub(db, nocSnapshotInterval)
 	}
 	return h
+}
+
+// RunNOCHub runs the NOC snapshot broadcaster until ctx is cancelled. Called once
+// from a background goroutine in cmd/api so the live dashboard has data to stream.
+func (h *Handler) RunNOCHub(ctx context.Context) {
+	if h.nocHub != nil {
+		h.nocHub.Run(ctx)
+	}
 }
 
 // RefreshThreatMatcher rebuilds the in-memory threat-intel matcher from the

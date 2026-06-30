@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.515"
+const ServerVersion = "0.10.516"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -326,6 +326,12 @@ func main() {
 				return
 			}
 		}
+	})
+
+	// Real-time NOC dashboard broadcaster: one goroutine recomputes the snapshot
+	// on a ticker and fans it out to all connected SSE clients (handler.nocHub).
+	logging.SafeGo("noc-broadcaster", func() {
+		handler.RunNOCHub(bgCtx)
 	})
 
 	// Create alert manager for data ingestion handlers (syslog alerts, etc.)
@@ -652,6 +658,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/noc", func(c *gin.Context) {
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/alerts", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
@@ -739,6 +749,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
+		admin.GET("/api/noc/stream", handler.GetNOCStream)
+		admin.GET("/api/noc/snapshot", handler.GetNOCSnapshot)
 		admin.GET("/api/flows/threat-intel", handler.GetThreatIntel)
 		admin.POST("/api/flows/threat-intel", handler.AddThreatIntel)
 		admin.DELETE("/api/flows/threat-intel/:id", handler.DeleteThreatIntel)

@@ -182,6 +182,7 @@ type EventStatsStore interface {
 	GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error)
 	GetRecentDetections(since time.Time, limit int, unackedOnly bool) ([]models.FlowDetection, error)
 	AckFlowDetection(id uint) error
+	GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error)
 	GetActiveThreatIntel() ([]models.ThreatIntel, error)
 	ListThreatIntel(limit int) ([]models.ThreatIntel, error)
 	CountActiveThreatIntel() (int64, error)

@@ -421,6 +421,19 @@
 .fwmon-det-ack:hover { border-color: var(--fwmon-accent, #4c8dff); color: var(--fwmon-text, #e5e7eb); }
 .fwmon-det-ack:disabled { opacity: 0.5; cursor: default; }
 
+/* NOC live-status pill (v0.10.516) — connection indicator on the NOC page. */
+.fwmon-noc-status {
+    font-size: 0.78rem;
+    font-family: var(--fwmon-font-mono);
+    color: var(--fwmon-text-muted, #9ca3af);
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--fwmon-border, #374151);
+}
+.fwmon-noc-status.ok   { color: #34d399; border-color: rgba(52, 211, 153, 0.4); }
+.fwmon-noc-status.warn { color: #fdba74; border-color: rgba(251, 146, 60, 0.4); }
+.fwmon-noc-status.bad  { color: #fb7185; border-color: rgba(244, 63, 94, 0.4); }
+
 /* Threat Intelligence management card (v0.10.511) — collapsible feed editor. */
 .fwmon-ti-card {
     margin-top: 16px;

@@ -99,6 +99,11 @@
     });
 
     function loadPageData(page) {
+        // Close the NOC live stream when navigating away so the SSE connection
+        // isn't left open in the background.
+        if (page !== 'noc' && window.FwmonNOC && window.FwmonNOC.stop) {
+            window.FwmonNOC.stop();
+        }
         switch(page) {
             case 'dashboard': loadDashboard(); break;
             case 'devices': loadDevices(); break;
@@ -120,6 +125,7 @@
                     }
                 });
                 break;
+            case 'noc': if (window.FwmonNOC && window.FwmonNOC.init) window.FwmonNOC.init(); break;
             case 'settings': loadSettings(); break;
             case 'reports': if (window.AdminReports && window.AdminReports.init) window.AdminReports.init(); break;
             case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
@@ -3924,7 +3930,7 @@
     // full-page navigation. Keep this set in sync with the page divs + the
     // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, connections:1,
-        settings:1, reports:1, syslog:1, flows:1, alerts:1, traps:1,
+        settings:1, reports:1, syslog:1, flows:1, noc:1, alerts:1, traps:1,
         'alert-policies':1, maintenance:1, audit:1 };
 
     document.addEventListener('click', function(ev) {

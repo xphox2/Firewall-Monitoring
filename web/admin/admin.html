@@ -224,6 +224,7 @@
     <!-- v0.10.212: shared control primitives used by flows + syslog + alerts + traps. -->
     <script defer src="/static/js/admin-controls.js"></script>
     <script defer src="/static/js/admin-flows.js"></script>
+    <script defer src="/static/js/admin-noc.js"></script>
     <!-- v0.10.214 (bundle C3): Cytoscape (~421 KB across 4 files) is now
          lazy-loaded by AdminCommon.loadCytoscape() the first time the
          connections page is opened. Every other page skips the payload.
@@ -723,6 +724,63 @@
                     <button class="btn secondary" data-action="load-more-flows" id="flows-load-more">Load more</button>
                     <span class="fwmon-flows-loadmore-hint" id="flows-loaded-count">--</span>
                 </div>
+            </div>
+        </div>
+
+        <!-- NOC Page — real-time operations dashboard fed by a Server-Sent Events
+             stream (admin-noc.js). Six zones: throughput vitals, top sources,
+             top destinations, traffic mix, geo/threat, and a live detections feed. -->
+        <div class="page" id="page-noc">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">NOC — Live Operations</h2>
+                    <span class="fwmon-toptalk-hint" id="noc-window-hint">last 5 min · live</span>
+                </div>
+                <div class="fwmon-flows-header-right">
+                    <span class="fwmon-noc-status" id="noc-conn-status">connecting…</span>
+                </div>
+            </div>
+
+            <div class="stat-grid" id="noc-vitals">
+                <div class="stat-card accent-blue"><div class="stat-label">Throughput</div><div class="stat-value accent" id="noc-bps">--</div></div>
+                <div class="stat-card"><div class="stat-label">Flows (window)</div><div class="stat-value" id="noc-flows">--</div></div>
+                <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="noc-srcs">--</div></div>
+                <div class="stat-card"><div class="stat-label">Threat Flows</div><div class="stat-value bad" id="noc-threat-flows">--</div></div>
+                <div class="stat-card"><div class="stat-label">Probes</div><div class="stat-value" id="noc-probes">--</div></div>
+                <div class="stat-card"><div class="stat-label">Threat-Intel IPs</div><div class="stat-value" id="noc-ti">--</div></div>
+            </div>
+
+            <div class="fwmon-toptalk-grid">
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">Top Sources<span class="fwmon-toptalk-hint">by bytes</span></h3>
+                    <ul class="fwmon-toptalk-list" id="noc-top-sources"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">Top Destinations<span class="fwmon-toptalk-hint">by bytes</span></h3>
+                    <ul class="fwmon-toptalk-list" id="noc-top-dests"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">By Application<span class="fwmon-toptalk-hint">flows</span></h3>
+                    <ul class="fwmon-toptalk-list" id="noc-by-category"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card">
+                    <h3 class="fwmon-toptalk-title">By Direction<span class="fwmon-toptalk-hint">flows</span></h3>
+                    <ul class="fwmon-toptalk-list" id="noc-by-direction"></ul>
+                </div>
+                <div class="card fwmon-toptalk-card" id="noc-card-countries" hidden>
+                    <h3 class="fwmon-toptalk-title">Top Countries<span class="fwmon-toptalk-hint">dst by bytes</span></h3>
+                    <ul class="fwmon-toptalk-list" id="noc-top-countries"></ul>
+                </div>
+            </div>
+
+            <div class="card fwmon-flows-detections-card">
+                <div class="card-header fwmon-flows-data-header">
+                    <h3 class="fwmon-toptalk-title">Live Detections<span class="fwmon-toptalk-hint">last 15 min</span></h3>
+                </div>
+                <table class="fwmon-flows-detections-table">
+                    <thead><tr><th>Severity</th><th>Category</th><th>Detector</th><th>Finding</th><th>When</th></tr></thead>
+                    <tbody id="noc-detections-body"></tbody>
+                </table>
             </div>
         </div>
 
