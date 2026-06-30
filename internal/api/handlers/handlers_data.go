@@ -237,11 +237,24 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		// Geo/ASN enrichment (GEOIP_ENABLED). Nil-safe: when geo is off these are
 		// no-ops returning empty/0. GeoLite2 maps only public IPs, so internal
 		// src/dst simply stay empty.
+		// BGP (sFlow extended_gateway) AS numbers take precedence over GeoLite2
+		// — they reflect the actual routing path, not a static IP→ASN database.
+		// GeoLite2 then fills any AS still unknown.
+		if samples[i].BGPSrcAS > 0 {
+			samples[i].SrcASN = samples[i].BGPSrcAS
+		}
+		if samples[i].BGPDstAS > 0 {
+			samples[i].DstASN = samples[i].BGPDstAS
+		}
 		if h.geoResolver.Enabled() {
 			samples[i].SrcCountry = h.geoResolver.Country(samples[i].SrcAddr)
 			samples[i].DstCountry = h.geoResolver.Country(samples[i].DstAddr)
-			samples[i].SrcASN = h.geoResolver.ASN(samples[i].SrcAddr)
-			samples[i].DstASN = h.geoResolver.ASN(samples[i].DstAddr)
+			if samples[i].SrcASN == 0 {
+				samples[i].SrcASN = h.geoResolver.ASN(samples[i].SrcAddr)
+			}
+			if samples[i].DstASN == 0 {
+				samples[i].DstASN = h.geoResolver.ASN(samples[i].DstAddr)
+			}
 		}
 		// Threat-intel bitfield: bit 0 = src known-bad, bit 1 = dst known-bad.
 		// Nil-safe + in-memory CIDR match — no-op when no feed is loaded.

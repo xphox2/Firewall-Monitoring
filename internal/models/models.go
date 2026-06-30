@@ -798,8 +798,20 @@ type FlowSample struct {
 	// bit 1 (2) = destination is known-bad. 0 = clean / no feed loaded. Migration
 	// v14 adds the column; the threat_intel detector aggregates rows where it is
 	// non-zero.
-	ThreatFlag uint8     `json:"threat_flag,omitempty" gorm:"column:threat_flag;default:0;not null"`
-	CreatedAt  time.Time `json:"created_at"`
+	ThreatFlag uint8 `json:"threat_flag,omitempty" gorm:"column:threat_flag;default:0;not null"`
+	// ASPath / NextHop are BGP routing context from the collector's sFlow
+	// extended_gateway parse (R5/migration v15), present only for BGP-speaking
+	// samplers. ASPath is the space-separated dst AS path; NextHop is the BGP
+	// next-hop address (varchar(45) holds IPv6). Both omitempty on the wire.
+	ASPath  string `json:"as_path,omitempty" gorm:"column:as_path"`
+	NextHop string `json:"next_hop,omitempty" gorm:"column:next_hop;type:varchar(45)"`
+	// BGPSrcAS / BGPDstAS are inbound-only (gorm:"-", not persisted): the
+	// collector sends src_as/dst_as from extended_gateway, and at ingest they
+	// take precedence over the GeoLite2 ASN lookup, populating SrcASN/DstASN.
+	BGPSrcAS uint32 `json:"src_as,omitempty" gorm:"-"`
+	BGPDstAS uint32 `json:"dst_as,omitempty" gorm:"-"`
+
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }

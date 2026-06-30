@@ -43,6 +43,8 @@ var flowSamplesCopyColumns = []string{
 	"src_asn",
 	"dst_asn",
 	"threat_flag",
+	"as_path",
+	"next_hop",
 	"created_at",
 }
 
@@ -86,6 +88,8 @@ func saveFlowSamplesPGX(ctx context.Context, pool *pgxpool.Pool, samples []model
 			s.SrcASN,
 			s.DstASN,
 			s.ThreatFlag,
+			s.ASPath,
+			s.NextHop,
 			now,
 		}
 	}

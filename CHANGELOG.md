@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.512] - 2026-06-29
+
+### Added
+- **sFlow analytics R5a — BGP/AS-path enrichment from sFlow `extended_gateway`.** When the collector forwards BGP routing context (from the sFlow extended_gateway record), the server now stores it and prefers BGP-sourced AS numbers over the GeoLite2 lookup.
+  - `FlowSample` gains `as_path` (space-separated dst AS path) and `next_hop` (BGP next-hop, varchar(45)) columns — migration v15. Both stay empty for non-BGP samplers, so the cost on the flow firehose is negligible.
+  - Ingest precedence: BGP `src_as`/`dst_as` (sent by the collector as `omitempty` wire fields, like `drops`) populate `src_asn`/`dst_asn`; GeoLite2 then fills only the AS numbers BGP didn't provide. The Top ASNs widget automatically reflects the more accurate routing-sourced ASNs.
+  - Backward-compatible both directions: the BGP fields are additive `omitempty` JSON on the existing `/flows` endpoint, so old collector ↔ new server and new collector ↔ old server both work unchanged (no schema-version bump). Requires Collector v1.2.144+ to populate the new data.
+  - Tests: as_path/next_hop column round-trip + BGP-derived ASN persistence; COPY-column guard updated.
+
 ## [0.10.511] - 2026-06-29
 
 ### Added

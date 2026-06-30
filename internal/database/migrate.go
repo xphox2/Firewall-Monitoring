@@ -1046,3 +1046,26 @@ func (d *Database) migrateThreatIntelAndFlowThreatFlag() error {
 	log.Printf("migrate v14: ensured threat_intel table + flow_samples.threat_flag")
 	return nil
 }
+
+// migrateFlowBGPColumns (v15) adds the as_path and next_hop columns to
+// flow_samples for the sFlow extended_gateway (BGP) enrichment. Both are
+// nullable text/varchar that stay empty for the common case (non-BGP samplers),
+// so the storage cost on the flow firehose is negligible. Metadata-only column
+// add on PG11+, routed through execMaintenanceDDL for the partitioned table;
+// SQLite uses AutoMigrate.
+func (d *Database) migrateFlowBGPColumns() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowSample{})
+	}
+	stmts := []string{
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS as_path text`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS next_hop varchar(45)`,
+	}
+	for _, s := range stmts {
+		if err := d.execMaintenanceDDL(s); err != nil {
+			return fmt.Errorf("migrate v15 (%s): %w", s, err)
+		}
+	}
+	log.Printf("migrate v15: ensured flow_samples.as_path + next_hop")
+	return nil
+}
