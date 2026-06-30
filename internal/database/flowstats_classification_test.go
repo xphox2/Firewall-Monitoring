@@ -176,3 +176,42 @@ func TestGetFlowStatsTopCountriesAndASNs(t *testing.T) {
 		t.Errorf("TopASNs must exclude asn 0. got=%v", res.TopASNs)
 	}
 }
+
+// TestGetFlowStatsGeoFilter verifies the Top Countries / Top ASNs click-to-filter
+// narrows the aggregates by destination country and ASN.
+func TestGetFlowStatsGeoFilter(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	now := time.Now().Add(-10 * time.Minute)
+	mk := func(dst, country string, asn uint32, bytes uint64) models.FlowSample {
+		return models.FlowSample{
+			Timestamp: now, DeviceID: 1, Protocol: 6,
+			SrcAddr: "10.0.0.5", DstAddr: dst, SrcPort: 50000, DstPort: 443,
+			Bytes: bytes, Packets: 1, DstCountry: country, DstASN: asn,
+		}
+	}
+	samples := []models.FlowSample{
+		mk("8.8.8.8", "US", 15169, 5000),
+		mk("8.8.4.4", "US", 15169, 3000),
+		mk("1.1.1.1", "AU", 13335, 1000),
+	}
+	if err := db.Gorm().Create(&samples).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res, err := db.GetFlowStats(1, FlowStatsFilter{DstCountry: "US"})
+	if err != nil {
+		t.Fatalf("GetFlowStats(country=US): %v", err)
+	}
+	if res.TotalFlows != 2 {
+		t.Errorf("DstCountry=US TotalFlows = %d, want 2", res.TotalFlows)
+	}
+
+	asn := uint32(13335)
+	res, err = db.GetFlowStats(1, FlowStatsFilter{DstASN: &asn})
+	if err != nil {
+		t.Fatalf("GetFlowStats(asn=13335): %v", err)
+	}
+	if res.TotalFlows != 1 {
+		t.Errorf("DstASN=13335 TotalFlows = %d, want 1", res.TotalFlows)
+	}
+}

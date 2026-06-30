@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.509] - 2026-06-29
+
+### Changed
+- **Flows page "Top Countries" and "Top ASNs" widgets are now click-to-filter too.** Clicking a country or ASN narrows the whole Flows page (top talkers, conversations, chart, raw samples) to traffic destined for that country/AS, with a removable chip and URL-mirrored state; clicking the active row clears it. Completes the click-to-filter coverage for all classification/geo breakdowns.
+  - Backend: `FlowStatsFilter` gains `DstCountry`/`DstASN`; `GetFlowStats` and `GetFlowSamples` honor `dst_country` / `dst_asn` query params.
+  - Frontend: country rows filter by their ISO code; ASN rows display `AS<n>` but filter by the bare number. Reuses the existing click-to-filter / URL-hash / chip machinery.
+  - Test: `GetFlowStats` destination-country and destination-ASN filter narrowing.
+
 ## [0.10.508] - 2026-06-29
 
 ### Fixed

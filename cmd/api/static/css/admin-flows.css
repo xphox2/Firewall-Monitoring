@@ -348,12 +348,6 @@
         rgba(244, 114, 182, 0.3) 100%);
 }
 
-/* Geo breakdowns are read-only (no server-side filter yet) — default cursor. */
-.fwmon-toptalk-list[data-color="countries"] .fwmon-toptalk-row,
-.fwmon-toptalk-list[data-color="asns"] .fwmon-toptalk-row {
-    cursor: default;
-}
-
 /* Geo breakdowns (v0.10.506): countries (sky) and ASNs (amber-orange). */
 .fwmon-toptalk-list[data-color="countries"] .fwmon-toptalk-row-bar::after {
     background: linear-gradient(90deg,

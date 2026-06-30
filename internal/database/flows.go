@@ -110,6 +110,8 @@ type FlowStatsFilter struct {
 	DstAddr     string  // destination IP or CIDR
 	AppCategory *uint8  // classify.Category id; nil = all
 	Direction   *uint8  // classify.Dir* id; nil = all
+	DstCountry  string  // ISO alpha-2 destination country; "" = all
+	DstASN      *uint32 // destination ASN; nil = all
 }
 
 // flowAddrFilter applies an IP/CIDR filter on an address column. It reuses
@@ -163,6 +165,12 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		}
 		if filter.Direction != nil {
 			q = q.Where("direction = ?", *filter.Direction)
+		}
+		if filter.DstCountry != "" {
+			q = q.Where("dst_country = ?", filter.DstCountry)
+		}
+		if filter.DstASN != nil {
+			q = q.Where("dst_asn = ?", *filter.DstASN)
 		}
 		q = flowAddrFilter(q, "src_addr", filter.SrcAddr)
 		q = flowAddrFilter(q, "dst_addr", filter.DstAddr)

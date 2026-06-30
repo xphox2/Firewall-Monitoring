@@ -292,6 +292,14 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 			query = query.Where("direction = ?", v)
 		}
 	}
+	if cc := c.Query("dst_country"); cc != "" {
+		query = query.Where("dst_country = ?", cc)
+	}
+	if asn := c.Query("dst_asn"); asn != "" {
+		if v, err := strconv.ParseUint(asn, 10, 32); err == nil {
+			query = query.Where("dst_asn = ?", v)
+		}
+	}
 
 	var samples []models.FlowSample
 	if err := query.Find(&samples).Error; err != nil {
@@ -345,6 +353,15 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		if v, err := strconv.ParseUint(dir, 10, 8); err == nil {
 			p := uint8(v)
 			filter.Direction = &p
+		}
+	}
+	if cc := c.Query("dst_country"); cc != "" {
+		filter.DstCountry = cc
+	}
+	if asn := c.Query("dst_asn"); asn != "" {
+		if v, err := strconv.ParseUint(asn, 10, 32); err == nil {
+			a := uint32(v)
+			filter.DstASN = &a
 		}
 	}
 	filter.SrcAddr = c.Query("src_addr")

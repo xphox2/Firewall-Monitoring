@@ -37,13 +37,15 @@
         dport: '',
         category: '',   // app_category id (classify.Category), drives By Application filter
         direction: '',  // direction id (classify.Dir*), drives By Direction filter
+        country: '',    // dst ISO country code, drives Top Countries filter
+        asn: '',        // dst ASN number, drives Top ASNs filter
         // Which view of the combined data card is active: 'conversations' | 'samples'.
         tab: 'conversations'
     };
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'tab'];
+    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'tab'];
 
     // Label <-> id maps for the classification breakdowns. These MIRROR
     // internal/classify (Category / Dir* — documented as stable). The widgets
@@ -206,6 +208,8 @@
                 state.dport = '';
                 state.category = '';
                 state.direction = '';
+                state.country = '';
+                state.asn = '';
                 applyStateToControls();
                 syncURL();
                 reload();
@@ -224,7 +228,8 @@
         // data-filter-key / data-filter-value attributes.
         ['flows-top-sources', 'flows-top-destinations',
          'flows-top-ports', 'flows-top-protocols',
-         'flows-by-category', 'flows-by-direction'].forEach(function(id) {
+         'flows-by-category', 'flows-by-direction',
+         'flows-top-countries', 'flows-top-asns'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.addEventListener('click', onTopTalkerClick);
         });
@@ -373,6 +378,8 @@
         if (state.protocol)  chips.push({ key: 'proto', val: protocolName(state.protocol), stateKey: 'protocol' });
         if (state.category !== '')  chips.push({ key: 'app',       val: CATEGORY_LABELS[state.category]  || state.category,  stateKey: 'category' });
         if (state.direction !== '') chips.push({ key: 'direction', val: DIRECTION_LABELS[state.direction] || state.direction, stateKey: 'direction' });
+        if (state.country)   chips.push({ key: 'country', val: state.country,         stateKey: 'country' });
+        if (state.asn)       chips.push({ key: 'asn',     val: 'AS' + state.asn,       stateKey: 'asn' });
         if (state.device_id) chips.push({ key: 'device', val: deviceLabel(state.device_id), stateKey: 'device_id' });
         if (state.probe_id)  chips.push({ key: 'probe',  val: probeLabel(state.probe_id),   stateKey: 'probe_id' });
 
@@ -434,6 +441,8 @@
         if (state.dport)     params.push('dst_port='  + encodeURIComponent(state.dport));
         if (state.category !== '')  params.push('app_category=' + encodeURIComponent(state.category));
         if (state.direction !== '') params.push('direction='   + encodeURIComponent(state.direction));
+        if (state.country)   params.push('dst_country=' + encodeURIComponent(state.country));
+        if (state.asn)       params.push('dst_asn='     + encodeURIComponent(state.asn));
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
@@ -448,6 +457,8 @@
         if (state.dport)     p.push('dst_port='  + encodeURIComponent(state.dport));
         if (state.category !== '')  p.push('app_category=' + encodeURIComponent(state.category));
         if (state.direction !== '') p.push('direction='   + encodeURIComponent(state.direction));
+        if (state.country)   p.push('dst_country=' + encodeURIComponent(state.country));
+        if (state.asn)       p.push('dst_asn='     + encodeURIComponent(state.asn));
         return '/admin/api/flows?' + p.join('&');
     }
 
@@ -685,20 +696,23 @@
         // maps the clicked label -> id.
         renderList('flows-by-category',  d.by_category  || [], 'category',  'category',  function(label) { return CATEGORY_IDS[label] || ''; }, formatCount);
         renderList('flows-by-direction', d.by_direction || [], 'direction', 'direction', function(label) { return DIRECTION_IDS[label] || ''; }, formatCount);
-        // Geo/ASN breakdowns (v0.10.506) — byte-valued, destination-oriented.
-        // The cards stay hidden unless GeoIP enrichment produced data, so
-        // deployments without GeoLite2 don't see empty widgets.
-        renderGeoCard('flows-card-countries', 'flows-top-countries', d.top_countries || [], 'countries');
-        renderGeoCard('flows-card-asns',      'flows-top-asns',      d.top_asns      || [], 'asns');
+        // Geo/ASN breakdowns (v0.10.506) — byte-valued, destination-oriented,
+        // click-to-filter (country code / ASN number). The cards stay hidden
+        // unless GeoIP enrichment produced data, so deployments without GeoLite2
+        // don't see empty widgets.
+        // Country rows display the ISO code, which is also the filter value.
+        renderGeoCard('flows-card-countries', 'flows-top-countries', d.top_countries || [], 'countries', 'country', function(label) { return label; });
+        // ASN rows display "AS15169"; the filter value is the bare number.
+        renderGeoCard('flows-card-asns', 'flows-top-asns', d.top_asns || [], 'asns', 'asn', function(label) { return String(label).replace(/^AS/i, ''); });
     }
 
     // renderGeoCard shows the card only when there's geo data, then renders a
-    // non-clickable byte-valued bar list (default formatBytes).
-    function renderGeoCard(cardId, listId, rows, colorTag) {
+    // clickable byte-valued bar list (default formatBytes for the value).
+    function renderGeoCard(cardId, listId, rows, colorTag, stateKey, toFilterValue) {
         var card = document.getElementById(cardId);
         var has = rows && rows.length > 0;
         if (card) card.hidden = !has;
-        if (has) renderList(listId, rows, colorTag, '', null);
+        if (has) renderList(listId, rows, colorTag, stateKey, toFilterValue);
     }
 
     function clearTopTalkers() {
