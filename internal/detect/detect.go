@@ -73,14 +73,19 @@ type Detector interface {
 }
 
 // Registry is the ordered set of detectors the engine runs each cycle. R3 ships
-// the operational + policy detectors; security detectors (port scan, super
-// spreader, exfil, C2, threat-intel) land in a later increment.
+// the operational + policy detectors; R4 adds the security detectors (port scan,
+// super spreader, data exfil, threat-intel, C2 beacon). See security.go.
 func Registry() []Detector {
 	return []Detector{
 		cleartextDetector{},
 		unexpectedEgressDetector{},
 		samplingBackoffDetector{},
 		capacityDetector{},
+		portScanDetector{},
+		superSpreaderDetector{},
+		dataExfilDetector{},
+		threatIntelDetector{},
+		c2BeaconDetector{},
 	}
 }
 

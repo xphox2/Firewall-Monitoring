@@ -243,6 +243,16 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 			samples[i].SrcASN = h.geoResolver.ASN(samples[i].SrcAddr)
 			samples[i].DstASN = h.geoResolver.ASN(samples[i].DstAddr)
 		}
+		// Threat-intel bitfield: bit 0 = src known-bad, bit 1 = dst known-bad.
+		// Nil-safe + in-memory CIDR match — no-op when no feed is loaded.
+		var tf uint8
+		if _, ok := h.threatMatch.Match(samples[i].SrcAddr); ok {
+			tf |= 1
+		}
+		if _, ok := h.threatMatch.Match(samples[i].DstAddr); ok {
+			tf |= 2
+		}
+		samples[i].ThreatFlag = tf
 		filtered = append(filtered, samples[i])
 	}
 	if err := h.db.SaveFlowSamples(filtered); err != nil {

@@ -182,6 +182,11 @@ type EventStatsStore interface {
 	GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error)
 	GetRecentDetections(since time.Time, limit int, unackedOnly bool) ([]models.FlowDetection, error)
 	AckFlowDetection(id uint) error
+	GetActiveThreatIntel() ([]models.ThreatIntel, error)
+	ListThreatIntel(limit int) ([]models.ThreatIntel, error)
+	CountActiveThreatIntel() (int64, error)
+	UpsertThreatIntel(e *models.ThreatIntel) error
+	DeleteThreatIntel(id uint) error
 }
 
 // IngestStore covers the probe-ingestion write path and batch idempotency.

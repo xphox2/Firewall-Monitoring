@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.509"
+const ServerVersion = "0.10.510"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -311,6 +311,22 @@ func main() {
 	cfg.Auth.AdminPassword = ""
 
 	handler := handlers.NewHandler(cfg, authManager, db)
+
+	// Periodically reload the threat-intel matcher so feed edits and expiries
+	// take effect in the ingest path without a restart (the matcher lives on the
+	// handler because ingest — ReceiveFlowSamples — runs in this process).
+	logging.SafeGo("threat-intel-refresh", func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				handler.RefreshThreatMatcher()
+			case <-bgCtx.Done():
+				return
+			}
+		}
+	})
 
 	// Create alert manager for data ingestion handlers (syslog alerts, etc.)
 	notif := notifier.NewNotifier(cfg)
@@ -722,6 +738,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
+		admin.GET("/api/flows/threat-intel", handler.GetThreatIntel)
+		admin.POST("/api/flows/threat-intel", handler.AddThreatIntel)
+		admin.DELETE("/api/flows/threat-intel/:id", handler.DeleteThreatIntel)
 		admin.GET("/api/alerts/stats", handler.GetAlertStats)
 		admin.GET("/api/traps/stats", handler.GetTrapStats)
 		admin.GET("/api/syslog/stats", handler.GetSyslogStats)

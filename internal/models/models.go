@@ -789,14 +789,40 @@ type FlowSample struct {
 	// is disabled, the DB lacks the IP, or the address is private (GeoLite2 maps
 	// only public IPs). Migration v12 adds the columns. CHAR(2) keeps country
 	// narrow; ASN is a uint32 -> bigint (AS numbers pass 2^16 and approach 2^32).
-	SrcCountry string    `json:"src_country,omitempty" gorm:"column:src_country;type:varchar(2)"`
-	DstCountry string    `json:"dst_country,omitempty" gorm:"column:dst_country;type:varchar(2)"`
-	SrcASN     uint32    `json:"src_asn,omitempty" gorm:"column:src_asn;type:bigint;default:0;not null"`
-	DstASN     uint32    `json:"dst_asn,omitempty" gorm:"column:dst_asn;type:bigint;default:0;not null"`
+	SrcCountry string `json:"src_country,omitempty" gorm:"column:src_country;type:varchar(2)"`
+	DstCountry string `json:"dst_country,omitempty" gorm:"column:dst_country;type:varchar(2)"`
+	SrcASN     uint32 `json:"src_asn,omitempty" gorm:"column:src_asn;type:bigint;default:0;not null"`
+	DstASN     uint32 `json:"dst_asn,omitempty" gorm:"column:dst_asn;type:bigint;default:0;not null"`
+	// ThreatFlag is a bitfield set at ingest when an endpoint matches the
+	// threat-intel feed (internal/threatintel): bit 0 (1) = source is known-bad,
+	// bit 1 (2) = destination is known-bad. 0 = clean / no feed loaded. Migration
+	// v14 adds the column; the threat_intel detector aggregates rows where it is
+	// non-zero.
+	ThreatFlag uint8     `json:"threat_flag,omitempty" gorm:"column:threat_flag;default:0;not null"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
 func (FlowSample) TableName() string { return "flow_samples" }
+
+// ThreatIntel is one entry in the known-bad address feed: a CIDR (or single
+// IP as /32 or /128) tagged with a category and severity, optionally expiring.
+// Loaded into the in-memory threatintel.Matcher and consulted at ingest to set
+// FlowSample.ThreatFlag. Curated via the admin threat-intel API (manual or
+// automation/feed-loader). Added in migration v14. Not partitioned — the row
+// count is the size of the feed, not the flow firehose.
+type ThreatIntel struct {
+	ID        uint       `json:"id" gorm:"primaryKey"`
+	CIDR      string     `json:"cidr" gorm:"size:64;uniqueIndex:idx_threat_cidr_src,priority:1"` // "203.0.113.0/24" or "203.0.113.9/32"
+	Category  string     `json:"category" gorm:"size:32"`                                        // e.g. "malware","c2","scanner","tor"
+	Source    string     `json:"source" gorm:"size:64;uniqueIndex:idx_threat_cidr_src,priority:2"`
+	Severity  string     `json:"severity" gorm:"size:8"` // info | warning | critical
+	FirstSeen time.Time  `json:"first_seen"`
+	LastSeen  time.Time  `json:"last_seen"`
+	ExpiresAt *time.Time `json:"expires_at" gorm:"index"` // nil = never expires
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func (ThreatIntel) TableName() string { return "threat_intel" }
 
 // AgentDrops is a rolling-window aggregate of sFlow agent drops, the
 // running counter of packets the agent had to discard because it

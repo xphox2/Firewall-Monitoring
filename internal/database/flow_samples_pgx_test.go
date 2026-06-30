@@ -77,6 +77,7 @@ func TestFlowSamplesCopyColumns_OrderAndFieldTypes(t *testing.T) {
 		"dst_country",
 		"src_asn",
 		"dst_asn",
+		"threat_flag",
 	}
 
 	if got, want := len(flowSamplesCopyColumns), len(want)+1; got != want {

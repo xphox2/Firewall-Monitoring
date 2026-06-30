@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -421,6 +422,114 @@ func (h *Handler) AckFlowDetection(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{"acknowledged": true}))
+}
+
+// GetThreatIntel returns the threat-intel feed (known-bad CIDRs) for the admin
+// view, plus the active (non-expired) count and the in-memory matcher's live
+// prefix count — a quick way to confirm the ingest path is actually using the
+// feed. Newest-first, capped at ?limit (default 500).
+func (h *Handler) GetThreatIntel(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	limit := 500
+	if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 5000 {
+			limit = v
+		}
+	}
+	rows, err := db.ListThreatIntel(limit)
+	if err != nil {
+		httputil.InternalError(c, "Failed to list threat intel", err)
+		return
+	}
+	active, _ := db.CountActiveThreatIntel()
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"entries":      rows,
+		"active_count": active,
+		"loaded_count": h.threatMatch.Len(),
+	}))
+}
+
+// AddThreatIntel upserts one threat-intel feed entry (keyed by cidr+source) and
+// refreshes the in-memory matcher so the change takes effect immediately rather
+// than on the next periodic reload. Admin-gated by its route group.
+func (h *Handler) AddThreatIntel(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		httputil.InternalError(c, "Database unavailable", nil)
+		return
+	}
+	var req struct {
+		CIDR      string     `json:"cidr"`
+		Category  string     `json:"category"`
+		Source    string     `json:"source"`
+		Severity  string     `json:"severity"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("invalid request body"))
+		return
+	}
+	req.CIDR = strings.TrimSpace(req.CIDR)
+	if req.CIDR == "" {
+		c.JSON(http.StatusBadRequest, response.Error("cidr is required"))
+		return
+	}
+	// Validate the CIDR/IP up front so a bad feed entry is rejected at the API
+	// rather than silently skipped by the matcher at build time.
+	if !validThreatCIDR(req.CIDR) {
+		c.JSON(http.StatusBadRequest, response.Error("cidr must be a valid IP or CIDR (e.g. 203.0.113.0/24 or 203.0.113.9)"))
+		return
+	}
+	if req.Source == "" {
+		req.Source = "manual"
+	}
+	entry := &models.ThreatIntel{
+		CIDR:      req.CIDR,
+		Category:  req.Category,
+		Source:    req.Source,
+		Severity:  req.Severity,
+		ExpiresAt: req.ExpiresAt,
+	}
+	if err := db.UpsertThreatIntel(entry); err != nil {
+		httputil.InternalError(c, "Failed to save threat intel", err)
+		return
+	}
+	h.RefreshThreatMatcher()
+	c.JSON(http.StatusOK, response.Success(entry))
+}
+
+// DeleteThreatIntel removes one feed entry by id and refreshes the matcher.
+func (h *Handler) DeleteThreatIntel(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		httputil.InternalError(c, "Database unavailable", nil)
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("invalid id"))
+		return
+	}
+	if err := db.DeleteThreatIntel(uint(id)); err != nil {
+		httputil.InternalError(c, "Failed to delete threat intel", err)
+		return
+	}
+	h.RefreshThreatMatcher()
+	c.JSON(http.StatusOK, response.Success(gin.H{"deleted": true}))
+}
+
+// validThreatCIDR accepts a CIDR ("10.0.0.0/8") or a bare IP ("10.0.0.1"),
+// matching what threatintel.New parses.
+func validThreatCIDR(s string) bool {
+	if _, err := netip.ParsePrefix(s); err == nil {
+		return true
+	}
+	_, err := netip.ParseAddr(s)
+	return err == nil
 }
 
 // parseStatsDeviceFilter reads an optional device_id query parameter from

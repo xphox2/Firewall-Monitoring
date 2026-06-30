@@ -18,6 +18,7 @@ import (
 	"firewall-mon/internal/irc"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/snmp"
+	"firewall-mon/internal/threatintel"
 	"firewall-mon/internal/uptime"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,7 @@ type Handler struct {
 	ircManager   *irc.Manager
 	notifier     *notifier.Notifier
 	geoResolver  *classify.GeoResolver
+	threatMatch  threatintel.Holder
 	version      string
 	// db is the repository interface (database.Store), not the concrete
 	// *database.Database god-object — handlers depend on the narrow method set
@@ -51,13 +53,37 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	} else if geo.Enabled() {
 		log.Printf("geoip: GeoLite2 enrichment enabled from %s", cfg.Server.GeoIPDBDir)
 	}
-	return &Handler{
+	h := &Handler{
 		config:      cfg,
 		authManager: authManager,
 		uptimeTrack: uptime.NewUptimeTracker(cfg),
 		geoResolver: geo,
 		db:          db,
 	}
+	// Load the initial threat-intel matcher from the DB. A background refresh
+	// goroutine (cmd/api) reloads it periodically so feed edits + expiries apply.
+	// Guard on the concrete *Database: tests construct handlers with a typed-nil
+	// db, which is a non-nil Store interface, so the interface-level nil check in
+	// RefreshThreatMatcher wouldn't catch it.
+	if db != nil {
+		h.RefreshThreatMatcher()
+	}
+	return h
+}
+
+// RefreshThreatMatcher rebuilds the in-memory threat-intel matcher from the
+// active feed rows and swaps it in atomically. Safe to call concurrently with
+// ingest lookups. Logged-and-ignored on DB error (the old matcher stays in use).
+func (h *Handler) RefreshThreatMatcher() {
+	if h.db == nil {
+		return
+	}
+	rows, err := h.db.GetActiveThreatIntel()
+	if err != nil {
+		log.Printf("threat-intel: refresh failed: %v", err)
+		return
+	}
+	h.threatMatch.Store(threatintel.New(rows, time.Now()))
 }
 
 // reqDB returns the request-scoped database handle: h.db bound to the request

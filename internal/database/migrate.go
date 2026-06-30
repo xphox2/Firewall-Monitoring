@@ -64,6 +64,7 @@ func (d *Database) migrateBaseline() error {
 		&models.InterfaceErrors{},
 		&models.ProcessedBatch{},
 		&models.FlowDetection{},
+		&models.ThreatIntel{},
 	}
 
 	// Migrate each model individually so one failure doesn't block others.
@@ -1024,4 +1025,24 @@ func (d *Database) migrateFlowGeoIPColumns() error {
 // not partitioned — its row volume is bounded (detectors × targets × cycles).
 func (d *Database) migrateFlowDetectionsTable() error {
 	return d.db.AutoMigrate(&models.FlowDetection{})
+}
+
+// migrateThreatIntelAndFlowThreatFlag (v14) creates the threat_intel feed table
+// and adds the threat_flag bitfield column to flow_samples. The table is created
+// via AutoMigrate (idempotent, cross-dialect, also in the baseline allModels
+// loop). The column add is metadata-only on PG11+ and routed through
+// execMaintenanceDDL for the partitioned-flow_samples case; on SQLite the
+// non-Postgres path uses AutoMigrate.
+func (d *Database) migrateThreatIntelAndFlowThreatFlag() error {
+	if err := d.db.AutoMigrate(&models.ThreatIntel{}); err != nil {
+		return fmt.Errorf("migrate v14 threat_intel table: %w", err)
+	}
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowSample{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS threat_flag smallint NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("migrate v14 add flow_samples.threat_flag: %w", err)
+	}
+	log.Printf("migrate v14: ensured threat_intel table + flow_samples.threat_flag")
+	return nil
 }

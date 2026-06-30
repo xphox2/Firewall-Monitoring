@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.510] - 2026-06-29
+
+### Added
+- **sFlow analytics R4 — threat intelligence + security detectors.** Adds a curated known-bad address feed and five security detectors to the existing detection engine.
+  - **Threat-intel feed** (`threat_intel` table, migration v14): CIDR/IP entries tagged with category, source, severity, and optional expiry, keyed unique on (cidr, source). Loaded into an in-memory CIDR matcher (`internal/threatintel`) and consulted at ingest — no per-row DB lookup. The API process reloads the matcher every 15 minutes so feed edits and expiries take effect without a restart.
+  - **`threat_flag` bitfield** on `flow_samples` (migration v14): set at ingest (bit 0 = source known-bad, bit 1 = destination known-bad).
+  - **Security detectors** (`internal/detect`): `port_scan` (many distinct dst ports from one source), `super_spreader` (many distinct destinations), `data_exfil` (large outbound transfer to a single external host), `threat_intel` (aggregates threat-flagged flows), and `c2_beacon` (periodic small callouts via inter-arrival coefficient-of-variation — info-severity heuristic, documented sampling caveat). All run in the poller detection cycle under the leader lock and surface in the Detections panel + as `SFLOW_*` alerts.
+  - **Threat-intel API**: `GET /admin/api/flows/threat-intel` (list + active/loaded counts), `POST` (upsert one entry, validates CIDR, refreshes matcher), `DELETE /:id`. Intended as the feed-curation surface for manual entries or automation.
+  - Tests: matcher (CIDR/IPv6/expiry/nil-safety), all five detectors against synthetic flows, threat-intel filter narrowing, COPY-column guard.
+
 ## [0.10.509] - 2026-06-29
 
 ### Changed
