@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.515] - 2026-06-30
+
+### Added
+- **Admin-UI control for the sFlow detection thresholds.** A new "sFlow Detection Thresholds" card on the Settings page exposes all seven detector knobs (port-scan ports, super-spreader hosts, data-exfil bytes, the three C2-beacon params, and capacity utilisation) as editable fields. Edits are stored in `system_settings` (category `detection`) and the poller reads them **live at the start of each detection cycle**, so a change takes effect within ~5 minutes with no restart. A blank field falls back to the `DETECT_*` env value and then the built-in default (shown as the input placeholder), so DB > env > default. This makes the v0.10.514 env knobs editable from the UI without redeploying.
+  - Backend: the seven `detect_*` keys are added to the settings allowlist with range validation; the poller overlays them onto the env baseline via a pure, unit-tested `applyDetectSettings`.
+
 ## [0.10.514] - 2026-06-30
 
 ### Added

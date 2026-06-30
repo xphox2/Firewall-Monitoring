@@ -103,6 +103,15 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"spike_stddev_threshold":     true,
 		"spike_alert_enabled":        true,
 		"spike_min_duration_minutes": true,
+		// sFlow detection-engine thresholds (DB overrides the DETECT_* env;
+		// blank = fall back to env/built-in default). Read live by the poller.
+		"detect_port_scan_ports":      true,
+		"detect_super_spreader_hosts": true,
+		"detect_data_exfil_bytes":     true,
+		"detect_beacon_min_samples":   true,
+		"detect_beacon_max_avg_bytes": true,
+		"detect_beacon_max_cv":        true,
+		"detect_capacity_threshold":   true,
 	}
 
 	secretKeys := settingsSecretKeys // v0.10.226: shared with GetSettings
@@ -149,6 +158,34 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 			if err != nil || v < 1 || v > 1440 {
 				c.JSON(http.StatusBadRequest, response.Error("Invalid value for spike_min_duration_minutes: must be 1-1440"))
 				return
+			}
+		case "detect_port_scan_ports", "detect_super_spreader_hosts",
+			"detect_beacon_min_samples", "detect_beacon_max_avg_bytes",
+			"detect_data_exfil_bytes":
+			// Blank = unset (poller falls back to env/default). Otherwise a
+			// positive integer.
+			if s.Value != "" {
+				v, err := strconv.ParseInt(s.Value, 10, 64)
+				if err != nil || v < 1 {
+					c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid value for %s: must be a positive integer (or blank for default)", s.Key)))
+					return
+				}
+			}
+		case "detect_beacon_max_cv":
+			if s.Value != "" {
+				v, err := strconv.ParseFloat(s.Value, 64)
+				if err != nil || v <= 0 || v > 5 {
+					c.JSON(http.StatusBadRequest, response.Error("Invalid value for detect_beacon_max_cv: must be >0 and <=5 (or blank for default)"))
+					return
+				}
+			}
+		case "detect_capacity_threshold":
+			if s.Value != "" {
+				v, err := strconv.ParseFloat(s.Value, 64)
+				if err != nil || v <= 0 || v > 1 {
+					c.JSON(http.StatusBadRequest, response.Error("Invalid value for detect_capacity_threshold: must be >0 and <=1 (e.g. 0.80) (or blank for default)"))
+					return
+				}
 			}
 		case "report_daily_time":
 			if len(s.Value) > 0 && (len(s.Value) != 5 || s.Value[2] != ':') {

@@ -2411,6 +2411,24 @@
                 return '<div class="setting-item"><label>' + s.label + '</label><input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" step="' + s.step + '" min="' + s.min + '" max="' + s.max + '"></div>';
             }).join('');
 
+            // sFlow detection thresholds. Blank input = use the built-in/env
+            // default (shown as the placeholder); a value overrides it live.
+            document.getElementById('settings-detection').innerHTML = [
+                { key: 'detect_port_scan_ports', label: 'Port scan — distinct dst ports', def: '100', step: '1' },
+                { key: 'detect_super_spreader_hosts', label: 'Super-spreader — distinct dst hosts', def: '100', step: '1' },
+                { key: 'detect_data_exfil_bytes', label: 'Data exfil — outbound bytes (1073741824 = 1 GiB)', def: '1073741824', step: '1' },
+                { key: 'detect_beacon_min_samples', label: 'C2 beacon — min flows', def: '8', step: '1' },
+                { key: 'detect_beacon_max_avg_bytes', label: 'C2 beacon — max avg bytes', def: '1500', step: '1' },
+                { key: 'detect_beacon_max_cv', label: 'C2 beacon — max interval CV (0-5)', def: '0.35', step: '0.01' },
+                { key: 'detect_capacity_threshold', label: 'Capacity — utilisation fraction (0-1)', def: '0.80', step: '0.01' }
+            ].map(function(s) {
+                var found = settings.find(function(x) { return x.key === s.key; });
+                var savedVal = found ? found.value : '';
+                return '<div class="setting-item"><label>' + s.label + '</label>' +
+                    '<input type="number" name="' + s.key + '" value="' + escapeHtml(savedVal) +
+                    '" placeholder="default ' + s.def + '" step="' + s.step + '" min="0"></div>';
+            }).join('');
+
             return apiFetch(API_BASE + '/display-settings');
         }).then(function(displayResult) {
             if (displayResult && displayResult.data) {
@@ -2831,7 +2849,11 @@
         document.querySelectorAll('#settings-spike input').forEach(function(input) {
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'spike', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
-        
+        document.querySelectorAll('#settings-detection input').forEach(function(input) {
+            // value may be "" (blank = use default) — sent through so the server clears any prior override.
+            settings.push({ key: input.name, value: input.value.trim(), category: 'detection', type: 'string' });
+        });
+
         var tzSel = document.getElementById('display-timezone');
         if (tzSel && tzSel.value) {
             settings.push({ key: 'display_timezone', value: tzSel.value, category: 'display', type: 'string' });

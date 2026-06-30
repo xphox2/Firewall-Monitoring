@@ -1013,6 +1013,11 @@
                 <div class="settings-grid" id="settings-spike"></div>
             </div>
             <div class="card">
+                <div class="card-header"><h2>sFlow Detection Thresholds</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Tune the sFlow detection engine. Leave a field blank to use the built-in default (or the <code>DETECT_*</code> env value). Changes apply within ~5 minutes — no restart. A port scan from a known-bad source (threat feed) always escalates to critical.</p>
+                <div class="settings-grid" id="settings-detection"></div>
+            </div>
+            <div class="card">
                 <button class="btn" data-action="save-settings">Save Settings</button>
             </div>
         </div>

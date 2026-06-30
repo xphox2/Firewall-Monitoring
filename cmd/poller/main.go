@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -291,6 +292,56 @@ func detectConfigFromCfg(cfg *config.Config) detect.Config {
 	}
 }
 
+// detectConfig returns the effective detector thresholds for this cycle: the
+// DETECT_* env baseline (detectConfigFromCfg) with any admin-UI overrides from
+// system_settings layered on top. Read fresh each cycle so a Settings-page edit
+// takes effect within one detection interval (~5 min) — no poller restart.
+func (p *Poller) detectConfig() detect.Config {
+	base := detectConfigFromCfg(p.cfg)
+	if p.db == nil {
+		return base
+	}
+	settings, err := p.db.GetAllSettings()
+	if err != nil {
+		log.Printf("flow-detect: load threshold settings: %v", err)
+		return base
+	}
+	m := make(map[string]string, len(settings))
+	for _, s := range settings {
+		m[s.Key] = s.Value
+	}
+	return applyDetectSettings(base, m)
+}
+
+// applyDetectSettings overlays the detector-threshold system_settings (string
+// key/value) onto a base config. A missing/blank/invalid/non-positive value
+// leaves the base field untouched, so an unset setting falls back to env →
+// built-in default. Pure (no DB) so it's unit-testable.
+func applyDetectSettings(base detect.Config, m map[string]string) detect.Config {
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_port_scan_ports"])); err == nil && v > 0 {
+		base.PortScanPorts = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_super_spreader_hosts"])); err == nil && v > 0 {
+		base.SuperSpreaderHosts = v
+	}
+	if v, err := strconv.ParseInt(strings.TrimSpace(m["detect_data_exfil_bytes"]), 10, 64); err == nil && v > 0 {
+		base.DataExfilBytes = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_beacon_min_samples"])); err == nil && v > 0 {
+		base.BeaconMinSamples = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(m["detect_beacon_max_avg_bytes"])); err == nil && v > 0 {
+		base.BeaconMaxAvgBytes = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(m["detect_beacon_max_cv"]), 64); err == nil && v > 0 {
+		base.BeaconMaxCV = v
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(m["detect_capacity_threshold"]), 64); err == nil && v > 0 {
+		base.CapacityThreshold = v
+	}
+	return base
+}
+
 // runFlowDetectionCycle runs the sFlow detection engine (internal/detect) over a
 // recent window of raw flow_samples, persists every finding, and feeds each to
 // the alert engine. Detections are stored regardless of whether they alert, so
@@ -306,7 +357,7 @@ func (p *Poller) runFlowDetectionCycle() {
 		Start:  start,
 		End:    end,
 		DB:     p.db.Gorm(),
-		Config: detectConfigFromCfg(p.cfg),
+		Config: p.detectConfig(),
 	}, end)
 	if len(detections) == 0 {
 		return
