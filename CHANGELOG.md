@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.526] - 2026-07-01
+
+### Fixed
+- **Made the Tailwind build reproducible so it no longer reverts the v0.10.500 theming fix.** The precompiled `cmd/api/static/css/tailwind.css` had been *hand-tokenized* at v0.10.500 (component classes `.card`/`.btn`/`.sidebar`/`.badge`/`.modal-content`/`.form-group`/… rewritten from hardcoded GitHub-dark hex to `var(--fwmon-*)` so standalone admin pages resolve in light mode), but its Tailwind **input** `styles.css` was never updated — it still emitted hardcoded `#0d1117`/`#30363d`/etc. Any `npm run tailwind` (now wired into `make build`/`make docker`/`deploy.sh`) regenerated `tailwind.css` from that stale input and silently reverted the tokenization, breaking light mode.
+  - Tokenized `styles.css`'s `@layer base` + `@layer components` values to `var(--fwmon-*)` (the same mapping applied by hand at v0.10.500; `#fff` and the `rgba()` tints left intact), and regenerated `tailwind.css`.
+  - Verified: the regenerated output's base+component layer is **byte-identical** to the committed tokenized file (theming preserved exactly, zero hardcoded component-class hex), the build is **deterministic** (two runs produce identical bytes), and it is now reproducible from committed sources. The only additive changes are utility-layer classes the content-scan picks up from markup that evolved since v0.10.500.
+
 ## [0.10.525] - 2026-07-01
 
 ### Fixed
