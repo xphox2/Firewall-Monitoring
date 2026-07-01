@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.530] - 2026-07-01
+
+### Fixed
+- **Fresh `docker compose up` no longer crash-loops on first boot when no `ADMIN_PASSWORD` is set (audit 2026-07-01 finding H8).** The `/data` bind mount is auto-created `root:root` by Docker, shadowing the image-layer chown, and the entrypoint only chowned `/data/firewall-mon.db*` + `/config` — so `fwmon-api` hit EACCES persisting the auto-generated admin password to `/data/.admin-password`, `log.Fatalf`'d, and `restart: unless-stopped` looped forever. The entrypoint now applies a runtime **non-recursive** `chown fwmon:fwmon /data` (leaving `/data/pgdata` postgres-owned). *Contributed by @rovicomm in [#50](https://github.com/xphox2/Firewall-Monitoring/pull/50), who independently found and fixed the issue the audit flagged as H8 — the audit report is updated to mark H8 resolved with credit.*
+
 ## [0.10.529] - 2026-07-01
 
 ### Docs
