@@ -1,5 +1,11 @@
 # Lessons
 
+## Inspect external PR commits for AI-attribution trailers BEFORE merging (2026-07-01)
+
+**Mistake:** merged community PR #50 as a merge commit without reading the commit message body. The contributor's commit carried `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` (their Claude Code default), which put "Claude" back on the repo's contributors graph — something the maintainer had deliberately removed before. The only way to undo a contributor entry is a history rewrite + force push (done as a one-time maintainer-authorized exception, preserving the contributor's authorship).
+
+**Rules:** (a) before merging any external PR, run `git log --format=%B <base>..<head> | grep -i 'co-authored\|claude\|generated with'` on the PR commits; (b) if a trailer is present, use **squash merge and hand-edit the squash message** to strip it (GitHub pre-fills co-author trailers into the squash body — they must be deleted manually) — never a merge/rebase merge, which preserves the original message verbatim; (c) this repo's no-AI-attribution policy applies to the full history, not just commits we author.
+
 ## Never round-trip a UTF-8 source file through PowerShell 5.1 Get-Content/Set-Content (2026-07-01)
 
 **Mistake:** bumped the collector version with `(Get-Content -Raw) -replace ... | Set-Content -Encoding utf8`. PS 5.1 reads a BOM-less UTF-8 file as ANSI, so every non-ASCII character (comment arrows `→`, em-dashes) was double-encoded into mojibake — 38 corrupted lines were committed and pushed before `git show --stat` caught the oversized diff (build stayed green because only comments were hit).

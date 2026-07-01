@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.531] - 2026-07-01
+
+### Docs
+- **Recorded a maintainer-workflow lesson in `tasks/lessons.md`:** inspect external PR commit messages for attribution trailers before merging; when present, squash-merge and hand-edit the squash message rather than merge-committing the original commit verbatim. (Context: PR #50's commit body carried an attribution trailer that a plain merge preserved into master history; resolved via a one-time authorized history rewrite that kept the contributor's authorship intact.)
+
 ## [0.10.530] - 2026-07-01
 
 ### Fixed
