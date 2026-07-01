@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.523] - 2026-07-01
+
+### Fixed
+- **Connection-page interface chart no longer just climbs.** The interface chart in the network-map side panel (and its twin on the connection-detail page) was plotting the **raw cumulative** SNMP octet counter as a line, so it only ever went up. It now delta+rates the counter (clamped across resets) through the shared component, like every other interface chart.
+
+### Changed
+- **Completed the 3-mode sweep across the remaining connection-page bandwidth charts.** The 0.10.522 sweep left the connection-page interface / VPN-tunnel / traffic charts as plain two-line Chart.js graphs; they are now the same 3-mode `FwmonBwChart` (Throughput Mbps / Transfer bytes-per-interval / Combined) used on the public dashboard and device-detail pages, each with its own mode toggle:
+  - Network-map side panel: interface, VPN-tunnel, and connection-traffic charts (`diagram-panels.js`).
+  - Connection-detail page: VPN-tunnel and connection-traffic charts (`admin-connection-detail.js`).
+  - `FwmonBwChart.mount()` (new) renders a normalized series and injects the mode toggle above the chart box, preserving the selected mode across the 30s poll / range changes. Shared `normalizeCumulative` / `normalizeDeltas` helpers moved into the component so cumulative-counter vs. per-bucket-delta series are handled consistently everywhere. `admin-bw-chart.js` is now also loaded by the standalone connection-detail page.
+- **Line graphs are now pointy, not curvy.** Every hand-written admin line chart had bezier smoothing (`tension` 0.3–0.4), which rounds corners and can visually overshoot real sample values. Set `tension: 0` across the admin UI (straight segments between points), matching monitoring-dashboard best practice. The device-detail uPlot charts already rendered straight lines (no spline).
+
 ## [0.10.522] - 2026-07-01
 
 ### Changed

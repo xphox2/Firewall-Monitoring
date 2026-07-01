@@ -557,9 +557,9 @@
                 actAlerts.push(alertMap[b] || 0);
             });
             createChart('dashboard-activity-chart', 'line', actLabels, [
-                {label:'Syslog',data:actSyslog,borderColor:'#4c8dff',fill:true,tension:0.3},
-                {label:'Traps',data:actTraps,borderColor:'#e7b53c',fill:true,tension:0.3},
-                {label:'Alerts',data:actAlerts,borderColor:'#f2555a',fill:true,tension:0.3}
+                {label:'Syslog',data:actSyslog,borderColor:'#4c8dff',fill:true,tension: 0},
+                {label:'Traps',data:actTraps,borderColor:'#e7b53c',fill:true,tension: 0},
+                {label:'Alerts',data:actAlerts,borderColor:'#f2555a',fill:true,tension: 0}
             ]);
 
             // Device status doughnut
@@ -1473,7 +1473,7 @@
             var timeBps = (d.bytes_over_time || []).map(function(b) {
                 return (b.count * 8) / intervalSec;
             });
-            createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Throughput',data:timeBps,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension:0.3}],{
+            createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Throughput',data:timeBps,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension: 0}],{
                 scales: {
                     x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
                     y: { ticks: { color: '#484f58', font:{size:10}, callback: bpsTickCallback }, grid: { color: '#21262d' }, beginAtZero: true }
@@ -2185,7 +2185,7 @@
 
             var labels = (d.over_time || []).map(function(b) { return formatBucketTime(b.bucket); });
             var counts = (d.over_time || []).map(function(b) { return b.count; });
-            createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension:0.3}]);
+            createChart('alerts-trend-chart','line',labels,[{label:'Alerts',data:counts,borderColor:'#f85149',backgroundColor:'rgba(248,81,73,0.1)',fill:true,tension: 0}]);
 
             var typeLabels = (d.by_type || []).map(function(t) { return t.key || 'unknown'; });
             var typeCounts = (d.by_type || []).map(function(t) { return t.count; });

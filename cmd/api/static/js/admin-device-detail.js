@@ -264,9 +264,9 @@
             }
 
             var datasets = [
-                { label: 'CPU %', data: cpuData, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
-                { label: 'Memory %', data: memData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' },
-                { label: 'Disk %', data: diskData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'y' }
+                { label: 'CPU %', data: cpuData, borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.05)', fill: true, tension: 0, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Memory %', data: memData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Disk %', data: diskData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0, pointRadius: 0, yAxisID: 'y' }
             ];
 
             var scales = {
@@ -281,7 +281,7 @@
                         borderColor: '#d29922',
                         backgroundColor: 'rgba(210,153,34,0.05)',
                         fill: false,
-                        tension: 0.3,
+                        tension: 0,
                         pointRadius: 0,
                         borderDash: [4, 2],
                         yAxisID: 'y1'
@@ -399,8 +399,8 @@
             data: {
                 labels: labels,
                 datasets: [
-                    { label: 'In (kbps)', data: netInData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                    { label: 'Out (kbps)', data: netOutData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
+                    { label: 'In (kbps)', data: netInData, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 },
+                    { label: 'Out (kbps)', data: netOutData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }
                 ]
             },
             options: {
@@ -451,13 +451,13 @@
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'User', data: sysData.map(function(s) { return s.cpu_user || 0; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
-                        { label: 'System', data: sysData.map(function(s) { return s.cpu_system || 0; }), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
-                        { label: 'Nice', data: sysData.map(function(s) { return s.cpu_nice || 0; }), borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
-                        { label: 'IOWait', data: sysData.map(function(s) { return s.cpu_iowait || 0; }), borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
-                        { label: 'IRQ', data: sysData.map(function(s) { return s.cpu_irq || 0; }), borderColor: '#ff7b72', backgroundColor: 'rgba(255,123,114,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
-                        { label: 'SoftIRQ', data: sysData.map(function(s) { return s.cpu_softirq || 0; }), borderColor: '#39d4e0', backgroundColor: 'rgba(57,212,224,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 },
-                        { label: 'Idle', data: sysData.map(function(s) { return s.cpu_idle || 0; }), borderColor: '#484f58', backgroundColor: 'rgba(72,79,88,0.3)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1 }
+                        { label: 'User', data: sysData.map(function(s) { return s.cpu_user || 0; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
+                        { label: 'System', data: sysData.map(function(s) { return s.cpu_system || 0; }), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
+                        { label: 'Nice', data: sysData.map(function(s) { return s.cpu_nice || 0; }), borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
+                        { label: 'IOWait', data: sysData.map(function(s) { return s.cpu_iowait || 0; }), borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
+                        { label: 'IRQ', data: sysData.map(function(s) { return s.cpu_irq || 0; }), borderColor: '#ff7b72', backgroundColor: 'rgba(255,123,114,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
+                        { label: 'SoftIRQ', data: sysData.map(function(s) { return s.cpu_softirq || 0; }), borderColor: '#39d4e0', backgroundColor: 'rgba(57,212,224,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
+                        { label: 'Idle', data: sysData.map(function(s) { return s.cpu_idle || 0; }), borderColor: '#484f58', backgroundColor: 'rgba(72,79,88,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 }
                     ]
                 },
                 options: {

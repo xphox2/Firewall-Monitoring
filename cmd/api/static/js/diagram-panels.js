@@ -334,18 +334,10 @@
                 canvas.parentElement.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No traffic data available for this connection.</div>';
                 return;
             }
-            const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
-            panelChartInstances['traffic'] = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'Inbound', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Outbound', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: panelChartOptions()
-            });
+            // Connection traffic arrives as per-bucket deltas — render
+            // throughput/transfer/combined via the shared 3-mode component.
+            const series = window.FwmonBwChart.normalizeDeltas(data);
+            panelChartInstances['traffic'] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'Inbound', txLabel: 'Outbound' });
         } catch (e) { console.error('Panel traffic chart failed:', e); }
     }
 
@@ -386,7 +378,7 @@
             const flowIntervalSec = data.bucket_seconds || 3600;
             panelChartInstances['flowTime'] = new Chart(document.getElementById('panel-flow-time-chart'), {
                 type: 'line',
-                data: { labels: timeData.map(t => t.bucket.split(' ').pop() || t.bucket), datasets: [{ label: 'Throughput', data: timeData.map(t => (t.count * 8) / flowIntervalSec / 1e6), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }] },
+                data: { labels: timeData.map(t => t.bucket.split(' ').pop() || t.bucket), datasets: [{ label: 'Throughput', data: timeData.map(t => (t.count * 8) / flowIntervalSec / 1e6), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }] },
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     plugins: {
@@ -752,18 +744,12 @@
             const canvas = document.getElementById('pchart-' + rowId);
             if (!canvas) return;
             if (panelChartInstances['iface-' + rowId]) panelChartInstances['iface-' + rowId].destroy();
-            const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
-            panelChartInstances['iface-' + rowId] = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'In', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Out', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: panelChartOptions()
-            });
+            if (!data.length) return;
+            // Interface rows carry CUMULATIVE SNMP octet counters — delta + rate
+            // them through the shared 3-mode component. (Was plotting the raw
+            // cumulative counter, so the line only ever climbed.)
+            const series = window.FwmonBwChart.normalizeCumulative(data);
+            panelChartInstances['iface-' + rowId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
         } catch (e) { console.error('Interface chart failed:', e); }
     }
 
@@ -790,18 +776,11 @@
             const canvas = document.getElementById('pchart-' + rowId);
             if (!canvas) return;
             if (panelChartInstances['tunnel-' + rowId]) panelChartInstances['tunnel-' + rowId].destroy();
-            const labels = data.map(d => d.bucket.split(' ').pop() || d.bucket);
-            panelChartInstances['tunnel-' + rowId] = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: [
-                        { label: 'In', data: data.map(d => d.in_bytes), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Out', data: data.map(d => d.out_bytes), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: panelChartOptions()
-            });
+            if (!Array.isArray(data) || !data.length) return;
+            // VPN tunnel rows already arrive as per-bucket deltas (LAG()+SUM) —
+            // render throughput/transfer/combined via the shared component.
+            const series = window.FwmonBwChart.normalizeDeltas(data);
+            panelChartInstances['tunnel-' + rowId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
         } catch (e) { console.error('Tunnel chart failed:', e); }
     }
 

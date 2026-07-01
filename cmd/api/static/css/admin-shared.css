@@ -358,6 +358,34 @@
     border-color: var(--fwmon-accent);
 }
 
+/* 3-mode bandwidth toggle (FwmonBwChart.mount) — Throughput / Transfer /
+   Combined. A compact segmented control injected just above the chart canvas. */
+.fwmon-bw-toggle {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+.fwmon-bw-toggle-btn {
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    cursor: pointer;
+    border-radius: 6px;
+    background: var(--fwmon-panel-bg);
+    color: var(--fwmon-text-faint);
+    border: 1px solid var(--fwmon-border);
+    transition: all 0.15s;
+}
+.fwmon-bw-toggle-btn:hover {
+    color: var(--fwmon-text);
+    border-color: var(--fwmon-text-faint);
+}
+.fwmon-bw-toggle-btn.active {
+    background: var(--fwmon-accent);
+    color: #fff;
+    border-color: var(--fwmon-accent);
+}
+
 /* Cards */
 .card {
     background: var(--fwmon-card-bg);

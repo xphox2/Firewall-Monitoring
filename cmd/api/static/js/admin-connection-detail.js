@@ -291,19 +291,12 @@
             var canvas = document.getElementById('chart-' + rowId);
             if (!canvas) return;
             if (tunnelCharts[rowId]) tunnelCharts[rowId].destroy();
+            if (!Array.isArray(data) || !data.length) return;
 
-            var labels = data.map(function(d) { return d.bucket.split(' ').pop() || d.bucket; });
-            tunnelCharts[rowId] = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'In Bytes', data: data.map(function(d) { return d.in_bytes; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                        { label: 'Out Bytes', data: data.map(function(d) { return d.out_bytes; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                    ]
-                },
-                options: chartOptions()
-            });
+            // VPN tunnel rows arrive as per-bucket deltas — render
+            // throughput/transfer/combined via the shared 3-mode component.
+            var series = window.FwmonBwChart.normalizeDeltas(data);
+            tunnelCharts[rowId] = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'In', txLabel: 'Out' });
         }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading tunnel chart:', err);
             AC.showError('Failed to load tunnel chart');
@@ -337,10 +330,6 @@
                 return;
             }
 
-            var labels = data.map(function(d) { return d.bucket.split(' ').pop() || d.bucket; });
-            var inSeries  = data.map(function(d) { return d.in_bytes; });
-            var outSeries = data.map(function(d) { return d.out_bytes; });
-
             // Throughput gauges — use server-computed bytes/sec, gauge max = 1 Gbps (125 MB/s)
             var oneGbps = 125000000; // 1 Gbps in bytes/sec
             var tIn = connDetail ? (connDetail.throughput_in || 0) : 0;
@@ -350,30 +339,13 @@
             document.getElementById('gauge-in-val').textContent = formatSpeed(tIn);
             document.getElementById('gauge-out-val').textContent = formatSpeed(tOut);
 
-            // In-place update (v0.10.214, bundle C4). Previously this chart
-            // was destroyed and recreated every 30 seconds by the page's
-            // poll loop — roughly 30-50 ms of Chart.js construction +
-            // garbage collection per tick on a midrange browser. Re-using
-            // the existing instance and updating data is a few hundred
-            // microseconds.
-            if (trafficChart) {
-                trafficChart.data.labels = labels;
-                trafficChart.data.datasets[0].data = inSeries;
-                trafficChart.data.datasets[1].data = outSeries;
-                trafficChart.update('none'); // 'none' skips the animation on refresh
-            } else {
-                trafficChart = new Chart(canvas, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            { label: 'Inbound',  data: inSeries,  borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 },
-                            { label: 'Outbound', data: outSeries, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }
-                        ]
-                    },
-                    options: chartOptions()
-                });
-            }
+            // Connection traffic arrives as per-bucket deltas — render
+            // throughput/transfer/combined via the shared 3-mode component. The
+            // 30s poll re-mounts (the toggle DOM persists; only the Chart.js
+            // instance is rebuilt), matching every other bandwidth chart.
+            var series = window.FwmonBwChart.normalizeDeltas(data);
+            if (trafficChart) trafficChart.destroy();
+            trafficChart = window.FwmonBwChart.mount(canvas, series, { rxLabel: 'Inbound', txLabel: 'Outbound' });
         }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading traffic chart:', err);
             AC.showError('Failed to load traffic chart');
@@ -442,7 +414,7 @@
                 type: 'line',
                 data: {
                     labels: timeData.map(function(t) { return t.bucket.split(' ').pop() || t.bucket; }),
-                    datasets: [{ label: 'Throughput', data: timeData.map(function(t) { return (t.count * 8) / flowIntervalSec / 1e6; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }]
+                    datasets: [{ label: 'Throughput', data: timeData.map(function(t) { return (t.count * 8) / flowIntervalSec / 1e6; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,

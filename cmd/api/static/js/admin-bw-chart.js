@@ -108,10 +108,10 @@
         } else if (view === 'mix') {
             // Combined: Mbps lines on the left axis, byte bars on the right.
             datasets = [
-                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' }
+                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' }
             ];
             if (!single) {
-                datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' });
+                datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' });
             }
             datasets.push({ type: 'bar', label: rxLabel + ' Transfer', data: rxTransfer, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' });
             if (!single) {
@@ -124,10 +124,10 @@
         } else {
             // Throughput (default): Mbps as filled lines.
             datasets = [
-                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
+                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 }
             ];
             if (!single) {
-                datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 });
+                datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 });
             }
             scales = {
                 y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: '#21262d' } }
@@ -181,9 +181,135 @@
         }
     }
 
+    // ---- Series normalizers (shared by every admin bandwidth chart) ----------
+    // These mirror the device-detail page so ALL bandwidth charts derive the same
+    // per-bucket rate (Mbps) + transfer (bytes) from the two backend shapes:
+    // cumulative counters (interface_stats / sFlow if_counters — must be delta'd)
+    // and pre-computed per-bucket deltas (VPN/connection LAG() queries).
+
+    function bucketMsArray(data) {
+        return data.map(function (d) { return Number(d.bucket_ms) || 0; });
+    }
+    function medianIntervalSec(ms) {
+        var diffs = [];
+        for (var i = 1; i < ms.length; i++) { var d = ms[i] - ms[i - 1]; if (d > 0) diffs.push(d); }
+        if (diffs.length === 0) return 60;
+        diffs.sort(function (a, b) { return a - b; });
+        return diffs[Math.floor(diffs.length / 2)] / 1000;
+    }
+    function makeLabels(data, spanMs) {
+        var multiDay = spanMs > 36 * 3600 * 1000;
+        return data.map(function (d) {
+            var b = d.bucket || '';
+            if (b.length <= 10) return b.substring(5);   // MM-DD (day bucket)
+            if (multiDay) return b.substring(5, 13);     // MM-DD HH
+            return b.substring(11, 16);                  // HH:MM
+        });
+    }
+
+    // normalizeCumulative: in_bytes/out_bytes are CUMULATIVE counters — transfer
+    // is the consecutive-bucket delta (clamped >=0 across resets), rate is that
+    // delta over the actual bucket interval.
+    function normalizeCumulative(data) {
+        var ms = bucketMsArray(data);
+        var span = ms.length > 1 ? (ms[ms.length - 1] - ms[0]) : 0;
+        var medSec = medianIntervalSec(ms);
+        var s = { labels: makeLabels(data, span), bucketMs: ms, rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
+        for (var i = 0; i < data.length; i++) {
+            if (i === 0) { s.rxTransfer.push(0); s.txTransfer.push(0); s.rxRate.push(0); s.txRate.push(0); continue; }
+            var dRx = data[i].in_bytes - data[i - 1].in_bytes; if (dRx < 0) dRx = 0;
+            var dTx = data[i].out_bytes - data[i - 1].out_bytes; if (dTx < 0) dTx = 0;
+            var sec = (ms[i] > ms[i - 1]) ? (ms[i] - ms[i - 1]) / 1000 : medSec;
+            if (!(sec > 0)) sec = medSec;
+            s.rxTransfer.push(dRx); s.txTransfer.push(dTx);
+            s.rxRate.push(dRx * 8 / sec / 1e6); s.txRate.push(dTx * 8 / sec / 1e6);
+        }
+        return s;
+    }
+
+    // normalizeDeltas: in_bytes/out_bytes are ALREADY per-bucket deltas — transfer
+    // is the value as-is, rate divides by the bucket interval.
+    function normalizeDeltas(data) {
+        var ms = bucketMsArray(data);
+        var span = ms.length > 1 ? (ms[ms.length - 1] - ms[0]) : 0;
+        var medSec = medianIntervalSec(ms);
+        var s = { labels: makeLabels(data, span), bucketMs: ms, rxRate: [], txRate: [], rxTransfer: [], txTransfer: [] };
+        for (var i = 0; i < data.length; i++) {
+            var dRx = data[i].in_bytes < 0 ? 0 : data[i].in_bytes;
+            var dTx = data[i].out_bytes < 0 ? 0 : data[i].out_bytes;
+            var sec = (i > 0 && ms[i] > ms[i - 1]) ? (ms[i] - ms[i - 1]) / 1000 : medSec;
+            if (!(sec > 0)) sec = medSec;
+            s.rxTransfer.push(dRx); s.txTransfer.push(dTx);
+            s.rxRate.push(dRx * 8 / sec / 1e6); s.txRate.push(dTx * 8 / sec / 1e6);
+        }
+        return s;
+    }
+
+    // mount: render a normalized series into canvas AND inject a compact 3-mode
+    // toggle just above it (once), re-rendering on mode change. Returns an object
+    // with a .destroy() so callers can treat it like a Chart instance. The active
+    // mode is preserved across re-mounts (range changes) via the toggle's state.
+    function mount(canvas, series, opts) {
+        opts = opts || {};
+        // The canvas lives inside a fixed-height sizing box (Chart.js responsive
+        // needs that). The toggle must sit ABOVE that box — as a preceding
+        // sibling in the box's parent — so it never eats into the chart height.
+        var box = canvas.parentElement;
+        var slot = box.parentElement || box;
+        var prev = box.previousElementSibling;
+        var toggle = (prev && prev.classList && prev.classList.contains('fwmon-bw-toggle')) ? prev : null;
+        var view = opts.initialView || 'rate';
+        if (toggle) {
+            var cur = toggle.querySelector('.fwmon-bw-toggle-btn.active');
+            if (cur) view = cur.getAttribute('data-bwm');
+        }
+        var chart = null;
+        function draw() {
+            if (chart) { chart.destroy(); chart = null; }
+            chart = render(canvas, {
+                labels: series.labels,
+                rxRate: series.rxRate, txRate: series.txRate,
+                rxTransfer: series.rxTransfer, txTransfer: series.txTransfer,
+                view: view, rxLabel: opts.rxLabel, txLabel: opts.txLabel
+            });
+        }
+        if (!toggle) {
+            toggle = document.createElement('div');
+            toggle.className = 'fwmon-bw-toggle';
+            MODES.forEach(function (m) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = m.label;
+                b.setAttribute('data-bwm', m.value);
+                b.className = 'fwmon-bw-toggle-btn' + (m.value === view ? ' active' : '');
+                toggle.appendChild(b);
+            });
+            slot.insertBefore(toggle, box);
+            // The listener is attached ONCE, but a chart re-mounts on every range
+            // change / 30s poll. So it dispatches to the LATEST mount's handler
+            // (stored on the element) rather than closing over the first mount's
+            // draw() — otherwise a click after a re-poll would bind a second
+            // Chart.js instance to the same canvas ("Canvas is already in use").
+            toggle.addEventListener('click', function (ev) {
+                var b = ev.target && ev.target.closest && ev.target.closest('[data-bwm]');
+                if (!b) return;
+                var all = toggle.querySelectorAll('[data-bwm]');
+                for (var i = 0; i < all.length; i++) { all[i].classList.toggle('active', all[i] === b); }
+                if (toggle._fwmonApply) toggle._fwmonApply(b.getAttribute('data-bwm'));
+            });
+        }
+        // Always (re)bind the apply handler to THIS mount's view + draw.
+        toggle._fwmonApply = function (v) { view = v; draw(); };
+        draw();
+        return { destroy: function () { if (chart) chart.destroy(); } };
+    }
+
     window.FwmonBwChart = {
         MODES: MODES,
         render: render,
+        mount: mount,
+        normalizeCumulative: normalizeCumulative,
+        normalizeDeltas: normalizeDeltas,
         formatBytes: formatBytes
     };
 })();
