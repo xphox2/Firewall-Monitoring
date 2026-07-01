@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.517] - 2026-06-30
+
+### Removed
+- **Removed the last vestigial `cmd/probe` remnants.** The `cmd/probe/` binary itself was deleted long ago (v0.10.412), but two `internal/shell` static-guard tests (`probectx_audit087_test.go`, `probe_audit159_test.go`) still `os.ReadFile("../../cmd/probe/main.go")` and silently `t.Skip`ped since the file no longer exists — dead weight testing a deleted binary. Both are removed. (The `schema_version` handshake guard and the backoff/jitter test that merely *mention* cmd/probe in comments are kept — they test current code.)
+
 ## [0.10.516] - 2026-06-30
 
 ### Added
