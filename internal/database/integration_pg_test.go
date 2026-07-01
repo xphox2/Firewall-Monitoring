@@ -154,16 +154,26 @@ func TestPostgresIntegration(t *testing.T) {
 	// Headline v0.10.238 guard: the Postgres to_char() bucket strings must match
 	// the layouts charts.parseBucketToMillis parses, on a real Postgres.
 	t.Run("TimeBucketRoundTrip", func(t *testing.T) {
-		known := time.Date(2026, 6, 2, 12, 34, 56, 0, time.UTC)
+		// Use a timestamp in the CURRENT month at a fixed intra-day time. A
+		// hard-coded past month is a time-bomb: system_status is monthly
+		// RANGE-partitioned and EnsurePartitions only creates the current +
+		// future months, so once the calendar advances past that month the
+		// insert fails with "no partition of relation ... found" (SQLSTATE
+		// 23514). Deriving the day from time.Now keeps the row inside a live
+		// partition forever; the fixed 12:34 keeps the bucket assertions
+		// deterministic and clear of any minute/hour/day boundary.
+		n := time.Now().UTC()
+		known := time.Date(n.Year(), n.Month(), n.Day(), 12, 34, 56, 0, time.UTC)
 		if err := d.Gorm().Create(&models.SystemStatus{
 			DeviceID: 1, Timestamp: known, CPUUsage: 1,
 		}).Error; err != nil {
 			t.Fatalf("insert SystemStatus: %v", err)
 		}
+		day := known.Format("2006-01-02")
 		cases := []struct{ unit, want, layout string }{
-			{"minute", "2026-06-02 12:34", "2006-01-02 15:04"},
-			{"hour", "2026-06-02 12:00", "2006-01-02 15:04"},
-			{"day", "2026-06-02", "2006-01-02"},
+			{"minute", day + " 12:34", "2006-01-02 15:04"},
+			{"hour", day + " 12:00", "2006-01-02 15:04"},
+			{"day", day, "2006-01-02"},
 		}
 		pg := postgresDialect{}
 		for _, c := range cases {

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.518] - 2026-07-01
+
+### Fixed
+- **PostgreSQL integration test time-bomb (`TestPostgresIntegration/TimeBucketRoundTrip`).** The test inserted a `system_status` row with a hard-coded `2026-06-02` timestamp, but that table is monthly RANGE-partitioned and `EnsurePartitions` only creates the current + future months — so once the calendar rolled into July the June partition no longer existed and the insert failed with SQLSTATE 23514 ("no partition of relation found for row"), turning the Integration (PostgreSQL) CI lane red on the first run of the new month. The test now derives the row's day from `time.Now()` (always inside a live partition) at a fixed intra-day time, keeping the to_char↔Go bucket-layout assertions deterministic. Server-behavior unchanged; test-only fix.
+
 ## [0.10.517] - 2026-06-30
 
 ### Removed
