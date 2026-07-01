@@ -109,7 +109,7 @@ function renderServers() {
                         ${serverChannels.map(ch => `<span class="channel-tag">${escapeHtml(ch.channel_name)} <span class="status-badge ${getStatusClass(ch.status)}">${escapeHtml(ch.status)}</span></span>`).join('')}
                     </div>
                 ` : ''}
-                ${server.last_error ? `<div style="color: #f85149; margin-top: 10px; font-size: 0.85rem;">Error: ${escapeHtml(server.last_error)}</div>` : ''}
+                ${server.last_error ? `<div style="color: var(--fwmon-sig-crit); margin-top: 10px; font-size: 0.85rem;">Error: ${escapeHtml(server.last_error)}</div>` : ''}
             </div>
         `;
     }).join('');

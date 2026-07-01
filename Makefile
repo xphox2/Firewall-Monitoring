@@ -55,8 +55,16 @@ test-integration: ## Run the Postgres integration suite (AUDIT-118; needs TEST_P
 # keeps VCS state out of the binary, so builds are reproducible across hosts.
 GOFLAGS_REPRO ?= -trimpath -buildvcs=false
 
+node_modules: package.json package-lock.json
+	npm install
+	@touch node_modules
+
+.PHONY: tailwind
+tailwind: node_modules ## Compile Tailwind CSS assets
+	npm run build
+
 .PHONY: build
-build: ## Build all binaries into ./bin (reproducible, canonical fwmon-* names)
+build: tailwind ## Build all binaries into ./bin (reproducible, canonical fwmon-* names)
 	@mkdir -p $(BIN_DIR)
 	# AUDIT-104: emit the canonical `fwmon-*` names the rest of the project
 	# uses (Dockerfile, deploy.sh, the systemd units). `go build -o bin/
@@ -134,7 +142,7 @@ clean: ## Remove build artifacts
 	rm -rf $(BIN_DIR) $(DIST_DIR)
 
 .PHONY: docker
-docker: ## Build the Docker image with the current version tag
+docker: tailwind ## Build the Docker image with the current version tag
 	docker build --build-arg VERSION=$(VERSION) -t firewall-mon:$(VERSION) -t firewall-mon:latest .
 
 .PHONY: version

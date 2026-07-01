@@ -119,29 +119,29 @@
             var stats = probeStatsMap[p.id];
             var statsHtml = '';
             if (stats && approvalStatus === 'approved') {
-                statsHtml = '<div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin:12px 0;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:8px;">' +
+                statsHtml = '<div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin:12px 0;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:8px;">' +
                     '<div style="text-align:center;">' +
-                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Logs</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.syslog || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Logs</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.syslog || 0).toLocaleString() + '</div>' +
                     '</div>' +
                     '<div style="text-align:center;">' +
-                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Traps</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.traps || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Traps</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.traps || 0).toLocaleString() + '</div>' +
                     '</div>' +
                     '<div style="text-align:center;">' +
-                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Flows</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.flows || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Flows</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.flows || 0).toLocaleString() + '</div>' +
                     '</div>' +
                     '<div style="text-align:center;">' +
-                        '<div style="font-size:0.58rem;text-transform:uppercase;color:#64748b;letter-spacing:0.3px;">Pings</div>' +
-                        '<div style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + (stats.pings || 0).toLocaleString() + '</div>' +
+                        '<div style="font-size:0.58rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.3px;">Pings</div>' +
+                        '<div style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + (stats.pings || 0).toLocaleString() + '</div>' +
                     '</div>' +
                 '</div>';
             } else {
                 statsHtml = '<div style="height:12px;"></div>';
             }
 
-            var desc = p.description ? AC.escapeHtml(p.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
+            var desc = p.description ? AC.escapeHtml(p.description) : '<span style="color:var(--fwmon-text-mute);font-style:italic">No description provided</span>';
 
             // Decommissioned probes only offer Restore (no Deploy/Edit). Active
             // probes that ever collected (approved) are retired via Decommission,
@@ -167,23 +167,23 @@
             return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:250px;padding:20px;">' +
                 '<div>' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">' +
-                        '<h3 style="font-size:1.05rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + AC.escapeHtml(p.name) + '</h3>' +
+                        '<h3 style="font-size:1.05rem;font-weight:600;color:var(--fwmon-text);margin:0;font-family:\'Outfit\',sans-serif;">' + AC.escapeHtml(p.name) + '</h3>' +
                         '<div style="display:flex;gap:4px;">' + statusBadge + approvalBadge + '</div>' +
                     '</div>' +
-                    '<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:14px;min-height:36px;line-height:1.4;">' + desc + '</div>' +
-                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;background:rgba(255,255,255,0.01);border:1px solid rgba(255,255,255,0.03);border-radius:8px;padding:10px;">' +
+                    '<div style="font-size:0.8rem;color:var(--fwmon-text-faint);margin-bottom:14px;min-height:36px;line-height:1.4;">' + desc + '</div>' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:10px;">' +
                         '<div style="display:flex;flex-direction:column;">' +
-                            '<span style="font-size:0.6rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Site</span>' +
-                            '<span style="font-size:0.8rem;font-weight:600;color:#e2e8f0;">' + AC.escapeHtml(p.site ? p.site.name : '-') + '</span>' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Site</span>' +
+                            '<span style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);">' + AC.escapeHtml(p.site ? p.site.name : '-') + '</span>' +
                         '</div>' +
                         '<div style="display:flex;flex-direction:column;">' +
-                            '<span style="font-size:0.6rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Last Seen</span>' +
-                            '<span style="font-size:0.8rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + lastSeen + '</span>' +
+                            '<span style="font-size:0.6rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Last Seen</span>' +
+                            '<span style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);font-family:var(--fwmon-font-mono);">' + lastSeen + '</span>' +
                         '</div>' +
                     '</div>' +
                     statsHtml +
                 '</div>' +
-                '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;flex-wrap:wrap;">' +
+                '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid var(--fwmon-border);padding-top:12px;flex-wrap:wrap;">' +
                     buttons +
                 '</div>' +
             '</div>';

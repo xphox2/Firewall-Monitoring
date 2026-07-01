@@ -44,6 +44,17 @@ usage() {
 build() {
     log_info "Building Firewall Monitor..."
 
+    log_info "Compiling Tailwind CSS..."
+    if command -v npm &> /dev/null; then
+        if [ ! -d "node_modules" ]; then
+            log_info "Installing npm dependencies..."
+            npm install
+        fi
+        npm run build
+    else
+        log_warn "npm not found; skipping Tailwind CSS compilation. Existing tailwind.css will be used."
+    fi
+
     if [ ! -f "go.mod" ]; then
         log_info "Initializing Go module..."
         go mod init firewall-mon

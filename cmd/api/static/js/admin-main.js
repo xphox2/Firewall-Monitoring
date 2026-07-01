@@ -619,9 +619,11 @@
                 ds.tension = 0.4; // smooth curve
             });
         } else if (isDoughnut) {
+            var ac = window.AdminCommon || {};
+            var borderCol = ac.cssVar ? ac.cssVar('--fwmon-card-bg', '#161b22') : '#161b22';
             datasets.forEach(function(ds) {
                 ds.borderWidth = 3;
-                ds.borderColor = '#161b22';
+                ds.borderColor = borderCol;
                 ds.hoverBorderWidth = 0;
             });
         }

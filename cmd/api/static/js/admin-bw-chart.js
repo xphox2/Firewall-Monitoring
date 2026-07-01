@@ -60,8 +60,13 @@
     // Common Chart.js options — dark NOC theme aligned with the rest of the
     // admin UI. scaleOverrides is merged on top of the shared x-axis.
     function chartOpts(scaleOverrides) {
+        var AC = window.AdminCommon;
+        var tickColor = AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e';
+        var gridColor = AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b';
+        var legendColor = AC ? AC.cssVar('--fwmon-text-dim', '#c9d1d9') : '#c9d1d9';
+
         var scales = {
-            x: { ticks: { color: '#484f58', maxTicksLimit: 12, maxRotation: 0, font: { size: 11 } }, grid: { color: '#21262d' } }
+            x: { ticks: { color: tickColor, maxTicksLimit: 12, maxRotation: 0, font: { size: 11 } }, grid: { color: gridColor } }
         };
         for (var key in scaleOverrides) {
             if (Object.prototype.hasOwnProperty.call(scaleOverrides, key)) {
@@ -73,7 +78,7 @@
             maintainAspectRatio: false,
             animation: { duration: 0 },
             interaction: { intersect: false, mode: 'index' },
-            plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
+            plugins: { legend: { labels: { color: legendColor, boxWidth: 10, padding: 8, font: { size: 10 } } } },
             scales: scales
         };
     }
@@ -86,6 +91,10 @@
         var txRate = o.txRate || [];
         var rxTransfer = o.rxTransfer || [];
         var txTransfer = o.txTransfer || [];
+
+        var AC = window.AdminCommon;
+        var tickColor = AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e';
+        var gridColor = AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b';
 
         // Single-series mode: when no TX data is supplied the chart renders just
         // the RX series (used for aggregate, non-directional traffic like the
@@ -103,7 +112,7 @@
                 datasets.push({ type: 'bar', label: txLabel + ' Transfer', data: txTransfer, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: TX_COLOR, borderWidth: 1 });
             }
             scales = {
-                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return formatBytes(v); } }, grid: { color: '#21262d' }, title: { display: true, text: 'Bytes / interval', color: '#484f58' } }
+                y: { beginAtZero: true, ticks: { color: tickColor, font: { size: 11 }, callback: function (v) { return formatBytes(v); } }, grid: { color: gridColor }, title: { display: true, text: 'Bytes / interval', color: tickColor } }
             };
         } else if (view === 'mix') {
             // Combined: Mbps lines on the left axis, byte bars on the right.
@@ -118,8 +127,8 @@
                 datasets.push({ type: 'bar', label: txLabel + ' Transfer', data: txTransfer, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' });
             }
             scales = {
-                y:  { position: 'left',  beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return v.toFixed(1); } }, grid: { color: '#21262d' }, title: { display: true, text: 'Mbps', color: '#484f58' } },
-                y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return formatBytes(v); } }, title: { display: true, text: 'Bytes', color: '#484f58' } }
+                y:  { position: 'left',  beginAtZero: true, ticks: { color: tickColor, font: { size: 11 }, callback: function (v) { return v.toFixed(1); } }, grid: { color: gridColor }, title: { display: true, text: 'Mbps', color: tickColor } },
+                y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: tickColor, font: { size: 11 }, callback: function (v) { return formatBytes(v); } }, title: { display: true, text: 'Bytes', color: tickColor } }
             };
         } else {
             // Throughput (default): Mbps as filled lines.
@@ -130,7 +139,7 @@
                 datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1.5 });
             }
             scales = {
-                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: '#21262d' } }
+                y: { beginAtZero: true, ticks: { color: tickColor, font: { size: 11 }, callback: function (v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: gridColor } }
             };
         }
 

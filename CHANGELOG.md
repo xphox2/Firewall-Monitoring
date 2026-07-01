@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.527] - 2026-07-01
+
+### Added
+- **Wired the Tailwind CSS compile into the build (`make build`/`make docker`/`deploy.sh`).** These now run `npm install` + `npm run build` before `go build`, so `cmd/api/static/css/tailwind.css` is regenerated from source. This is safe now that `styles.css` is tokenized (v0.10.526): rebuilding no longer reverts the theming. `deploy.sh` skips the step with a warning if `npm` is unavailable, falling back to the committed `tailwind.css`.
+
+### Changed
+- **Expanded the design-token system into the chart/JS layer (continues the ~5%→ tokenization effort).** Replaced hardcoded hex in the admin JS with `AdminCommon.cssVar('--fwmon-*', fallback)` and `var(--fwmon-*)` so Chart.js axes/legends/tooltips and inline-styled widgets follow the Day/Night theme instead of a fixed dark palette (`admin-bw-chart.js`, `admin-device-detail.js`, `admin-probes.js`, `admin-sites.js`, `admin-irc.js`, `admin-main.js`). Each call keeps its previous hex as a fallback, so a missing `AdminCommon` degrades gracefully. Minor form-focus/toast polish in `admin-shared.css`.
+- **Hid the redundant page-title `<h1>` header on the admin SPA and the standalone Probes/IRC pages.** The left-nav already names the current page, so the duplicate title row was removed (`display:none`) on `admin.html`, `probes.html`, and `irc.html`. *(Purely visual; revert the `display:none`/`justify-end` edits on those three files if the title row is wanted back.)*
+
+_Note: regenerating `tailwind.css` against this settled markup produced no change — the edits only swapped already-present utilities and added inline styles/token vars, so the committed `tailwind.css` stays byte-for-byte reproducible._
+
 ## [0.10.526] - 2026-07-01
 
 ### Fixed

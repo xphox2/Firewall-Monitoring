@@ -269,9 +269,13 @@
                 { label: 'Disk %', data: diskData, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.05)', fill: true, tension: 0, pointRadius: 0, yAxisID: 'y' }
             ];
 
+            var AC = window.AdminCommon;
+            var tickColor = AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e';
+            var gridColor = AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b';
+            var legendColor = AC ? AC.cssVar('--fwmon-text-dim', '#c9d1d9') : '#c9d1d9';
             var scales = {
-                x: { ticks: { color: '#484f58', font: { size: 10 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                y: { position: 'left', min: 0, max: 100, ticks: { color: '#484f58', font: { size: 10 } }, grid: { color: '#21262d' } }
+                x: { ticks: { color: tickColor, font: { size: 10 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: gridColor } },
+                y: { position: 'left', min: 0, max: 100, ticks: { color: tickColor, font: { size: 10 } }, grid: { color: gridColor } }
             };
 
                 if (latencyData.some(function(v) { return v !== null; })) {
@@ -303,7 +307,7 @@
                     data: { labels: labels, datasets: datasets },
                     options: {
                         responsive: true, maintainAspectRatio: false,
-                        plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: { size: 11 } } } },
+                        plugins: { legend: { labels: { color: legendColor, boxWidth: 12, padding: 8, font: { size: 11 } } } },
                         scales: scales
                     }
                 });
@@ -406,10 +410,10 @@
             options: {
                 responsive: true, maintainAspectRatio: false,
                 animation: { duration: 0 },
-                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } } },
+                plugins: { legend: { labels: { color: AC ? AC.cssVar('--fwmon-text-dim', '#c9d1d9') : '#c9d1d9', boxWidth: 10, padding: 8, font: { size: 10 } } } },
                 scales: {
-                    x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                    y: { min: 0, ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: '#21262d' } }
+                    x: { ticks: { color: AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b' } },
+                    y: { min: 0, ticks: { color: AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e', font: { size: 11 }, callback: function(v) { return v + ' kbps'; } }, grid: { color: AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b' } }
                 }
             }
         });
@@ -457,15 +461,15 @@
                         { label: 'IOWait', data: sysData.map(function(s) { return s.cpu_iowait || 0; }), borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
                         { label: 'IRQ', data: sysData.map(function(s) { return s.cpu_irq || 0; }), borderColor: '#ff7b72', backgroundColor: 'rgba(255,123,114,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
                         { label: 'SoftIRQ', data: sysData.map(function(s) { return s.cpu_softirq || 0; }), borderColor: '#39d4e0', backgroundColor: 'rgba(57,212,224,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 },
-                        { label: 'Idle', data: sysData.map(function(s) { return s.cpu_idle || 0; }), borderColor: '#484f58', backgroundColor: 'rgba(72,79,88,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 }
+                        { label: 'Idle', data: sysData.map(function(s) { return s.cpu_idle || 0; }), borderColor: AC ? AC.cssVar('--fwmon-text-mute', '#484f58') : '#484f58', backgroundColor: 'rgba(72,79,88,0.3)', fill: true, tension: 0, pointRadius: 0, borderWidth: 1 }
                     ]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 6, font: { size: 10 } } } },
+                    plugins: { legend: { labels: { color: AC ? AC.cssVar('--fwmon-text-dim', '#c9d1d9') : '#c9d1d9', boxWidth: 10, padding: 6, font: { size: 10 } } } },
                     scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                        y: { min: 0, max: 100, stacked: false, ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: '#21262d' } }
+                        x: { ticks: { color: AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b' } },
+                        y: { min: 0, max: 100, stacked: false, ticks: { color: AC ? AC.cssVar('--fwmon-text-faint', '#8b949e') : '#8b949e', font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: AC ? AC.cssVar('--fwmon-grid-stroke', '#1c222b') : '#1c222b' } }
                     }
                 }
             });

@@ -487,19 +487,23 @@ tr:hover {
 .form-group select,
 .form-group textarea {
     width: 100%;
-    padding: 8px 10px;
+    padding: 8px 12px;
     background: var(--fwmon-bg);
     border: 1px solid var(--fwmon-border);
     border-radius: 6px;
     color: var(--fwmon-text-dim);
     font-size: 0.88rem;
     box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
     border-color: var(--fwmon-accent);
+    background-color: var(--fwmon-card-bg);
     outline: none;
+    box-shadow: 0 0 0 3px var(--fwmon-accent-bg);
 }
 
 .form-row {
@@ -847,31 +851,39 @@ tr:hover {
 /* User-facing Error/Success Messages (toast-style) */
 .toast-message {
     position: fixed;
-    top: 20px;
+    top: 24px;
     left: 50%;
     transform: translateX(-50%);
     padding: 12px 24px;
-    border-radius: 8px;
-    font-size: 0.9rem;
-    font-weight: 500;
+    border-radius: 10px;
+    font-size: 0.88rem;
+    font-weight: 600;
     z-index: 1000;
-    animation: toastSlideIn 0.3s ease;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--fwmon-elev-2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    animation: toastSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .toast-message.error {
-    background: var(--fwmon-sig-crit);
+    background: color-mix(in srgb, var(--fwmon-sig-crit) 85%, transparent);
     color: #fff;
+    border: 1px solid color-mix(in srgb, var(--fwmon-sig-crit) 30%, transparent);
 }
 
 .toast-message.success {
-    background: var(--fwmon-sig-ok);
+    background: color-mix(in srgb, var(--fwmon-sig-ok) 85%, transparent);
     color: #fff;
+    border: 1px solid color-mix(in srgb, var(--fwmon-sig-ok) 30%, transparent);
 }
 
 .toast-message.warning {
-    background: var(--fwmon-sig-warn);
+    background: color-mix(in srgb, var(--fwmon-sig-warn) 85%, transparent);
     color: #fff;
+    border: 1px solid color-mix(in srgb, var(--fwmon-sig-warn) 30%, transparent);
 }
 
 @keyframes toastSlideIn {
@@ -1085,7 +1097,7 @@ tr:hover {
 .setting-item select,
 .setting-item textarea {
     width: 100%;
-    padding: 8px 10px;
+    padding: 8px 12px;
     background: var(--fwmon-bg);
     border: 1px solid var(--fwmon-border);
     border-radius: 6px;
@@ -1094,6 +1106,7 @@ tr:hover {
     box-sizing: border-box;
     appearance: none;
     -webkit-appearance: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
 .setting-item select {
@@ -1105,9 +1118,12 @@ tr:hover {
 }
 
 .setting-item input:focus,
-.setting-item select:focus {
+.setting-item select:focus,
+.setting-item textarea:focus {
     border-color: var(--fwmon-accent);
+    background-color: var(--fwmon-card-bg);
     outline: none;
+    box-shadow: 0 0 0 3px var(--fwmon-accent-bg);
 }
 
 .toggle-row {
