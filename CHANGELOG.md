@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.525] - 2026-07-01
+
+### Fixed
+- **NOC By Site | By Device toggle now hides the inactive grid.** Browser verification of the 0.10.524 NOC rework caught that switching to *By Device* left the site cards visible above the device cards: the `hidden` attribute on the grid was overridden by `.fwmon-noc-grid { display: grid }` (equal CSS specificity, author rule wins over the UA `[hidden]` rule). Added `.fwmon-noc-grid[hidden] { display: none }`.
+
 ## [0.10.524] - 2026-07-01
 
 ### Added

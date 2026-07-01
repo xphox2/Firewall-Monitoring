@@ -474,6 +474,10 @@
     gap: 12px;
     margin: 16px 0;
 }
+/* `display: grid` overrides the UA [hidden] rule (equal specificity, author
+   wins), so the mode toggle's hidden attribute wouldn't hide the inactive grid
+   without this. */
+.fwmon-noc-grid[hidden] { display: none; }
 .fwmon-noc-empty {
     grid-column: 1 / -1;
     padding: 28px;
