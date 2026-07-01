@@ -543,6 +543,37 @@ func (h *Handler) GetInterfaceChart(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(buckets))
 }
 
+// GetInterfaceSFlowChart is the sFlow-native counterpart of GetInterfaceChart:
+// it serves interface bandwidth from flow_if_counters (agent-pushed) instead of
+// SNMP interface_stats. Same response shape, so the frontend renders it with the
+// same code and falls back to the SNMP endpoint when this returns no data.
+func (h *Handler) GetInterfaceSFlowChart(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+
+	deviceIDUint, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid device ID"))
+		return
+	}
+	ifIndexInt, err := strconv.Atoi(c.Param("ifIndex"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid interface index"))
+		return
+	}
+
+	from, to := httputil.ParseChartWindow(c, "24h")
+	buckets, err := db.GetFlowInterfaceChartWindow(uint(deviceIDUint), ifIndexInt, from, to)
+	if err != nil {
+		httputil.InternalError(c, "Failed to get sFlow chart data", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Success(buckets))
+}
+
 type TestDeviceRequest struct {
 	IPAddress      string `json:"ip_address" binding:"required"`
 	SNMPPort       int    `json:"snmp_port"`

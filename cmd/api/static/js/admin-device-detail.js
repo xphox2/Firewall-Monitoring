@@ -631,6 +631,7 @@
                         '</div>' +
                         ifaceControls +
                         '<div class="iface-chart-container" id="chart-container-' + iface.index + '">' +
+                            '<div class="iface-chart-source text-[0.72rem] text-[#8b949e] mb-1" id="chart-source-' + iface.index + '"></div>' +
                             '<canvas id="canvas-' + iface.index + '"></canvas>' +
                         '</div>' +
                     '</div>' +
@@ -817,6 +818,40 @@
         return 'range=' + range;
     }
 
+    // fetchIfaceChart fetches one chart endpoint and resolves to its bucket
+    // array, or null on any error/empty (so the caller can fall back).
+    function fetchIfaceChart(url) {
+        return fetch(url, { credentials: 'same-origin' })
+            .then(function(resp) { return resp.ok ? resp.json() : null; })
+            .then(function(result) {
+                return (result && result.success && Array.isArray(result.data)) ? result.data : null;
+            })
+            .catch(function() { return null; });
+    }
+
+    function renderIfaceChart(ifIndex, canvas, data, source) {
+        var s = normalizeIfaceSeries(data);
+        ifaceBucketMs[ifIndex] = s.bucketMs;
+        ifaceCharts[ifIndex] = FwmonBwChart.render(canvas, {
+            labels: s.labels,
+            rxRate: s.rxRate, txRate: s.txRate,
+            rxTransfer: s.rxTransfer, txTransfer: s.txTransfer,
+            view: currentChartView, rxLabel: 'In', txLabel: 'Out',
+            onZoomSelect: function(lo, hi) { zoomIfaceTo(ifIndex, lo, hi); }
+        });
+        setIfaceChartSource(ifIndex, source);
+    }
+
+    function setIfaceChartSource(ifIndex, source) {
+        var el = document.getElementById('chart-source-' + ifIndex);
+        if (el) el.textContent = source ? ('bandwidth source: ' + source) : '';
+    }
+
+    // loadInterfaceChart prefers sFlow-native counters (flow_if_counters) and
+    // falls back to SNMP interface_stats when sFlow has no data — so sFlow
+    // deployments get agent-pushed bandwidth (working even where SNMP is
+    // host-restricted) while SNMP-only deployments are unchanged. Both endpoints
+    // return the same bucket shape, so rendering is identical.
     function loadInterfaceChart(ifIndex, range) {
         currentChartRange = range;
 
@@ -829,28 +864,23 @@
             delete ifaceCharts[ifIndex];
         }
 
-        fetch('/admin/api/devices/' + deviceId + '/interfaces/' + ifIndex + '/chart?' + chartQuery(ifaceWin, range), { credentials: 'same-origin' })
-            .then(function(resp) {
-                if (!resp.ok) return Promise.reject(new Error('Failed'));
-                return resp.json();
-            })
-            .then(function(result) {
-                if (!result.success || !result.data || result.data.length < 2) {
-                    ifaceBucketMs[ifIndex] = [];
-                    drawChartMessage(canvas, 'Not enough history data');
+        var q = chartQuery(ifaceWin, range);
+        var base = '/admin/api/devices/' + deviceId + '/interfaces/' + ifIndex;
+        fetchIfaceChart(base + '/sflow-chart?' + q).then(function(sflow) {
+            if (sflow && sflow.length >= 2) {
+                renderIfaceChart(ifIndex, canvas, sflow, 'sFlow');
+                return;
+            }
+            fetchIfaceChart(base + '/chart?' + q).then(function(snmp) {
+                if (snmp && snmp.length >= 2) {
+                    renderIfaceChart(ifIndex, canvas, snmp, 'SNMP');
                     return;
                 }
-                var s = normalizeIfaceSeries(result.data);
-                ifaceBucketMs[ifIndex] = s.bucketMs;
-                ifaceCharts[ifIndex] = FwmonBwChart.render(canvas, {
-                    labels: s.labels,
-                    rxRate: s.rxRate, txRate: s.txRate,
-                    rxTransfer: s.rxTransfer, txTransfer: s.txTransfer,
-                    view: currentChartView, rxLabel: 'In', txLabel: 'Out',
-                    onZoomSelect: function(lo, hi) { zoomIfaceTo(ifIndex, lo, hi); }
-                });
-            })
-            .catch(function(e) { console.error('Failed to load interface chart:', e); });
+                ifaceBucketMs[ifIndex] = [];
+                setIfaceChartSource(ifIndex, '');
+                drawChartMessage(canvas, 'Not enough history data');
+            });
+        });
     }
 
     // zoomIfaceTo maps the dragged category-index range to the bucket

@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.519] - 2026-07-01
+
+### Added
+- **sFlow-native interface bandwidth on the device-detail page (R5b finish).** Each interface's throughput chart now prefers agent-pushed sFlow counters (`flow_if_counters`, R5b/schema v2) and transparently falls back to the SNMP-polled `interface_stats` when no sFlow data exists — so sFlow deployments get interface bandwidth even where SNMP is unreachable or host-restricted, while SNMP-only deployments are unchanged. A small "bandwidth source: sFlow/SNMP" label shows which feed is active.
+  - Backend: `GetFlowInterfaceChartWindow` mirrors `GetInterfaceChartWindow` over `flow_if_counters`, exposing cumulative octets as `in_bytes`/`out_bytes` in the identical `InterfaceChartBucket` shape — so the frontend's existing delta+rate normalisation renders both sources the same way and they stay visually consistent. New `GET /admin/api/devices/:id/interfaces/:ifIndex/sflow-chart` (same response shape + adaptive bucketing + drag-to-zoom window as the SNMP endpoint).
+  - Frontend: `loadInterfaceChart` fetches the sFlow endpoint first and falls back to the SNMP one; both go through the same `FwmonBwChart` render path.
+  - Test: `GetFlowInterfaceChartWindow` window/interface scoping + cumulative-octet round-trip + empty-window fallback signal.
+
 ## [0.10.518] - 2026-07-01
 
 ### Fixed

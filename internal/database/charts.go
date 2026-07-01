@@ -109,6 +109,38 @@ func (d *Database) GetInterfaceChartWindow(deviceID uint, ifIndex int, from, to 
 	return rows, nil
 }
 
+// GetFlowInterfaceChartWindow is the sFlow-native counterpart of
+// GetInterfaceChartWindow: it buckets flow_if_counters (agent-pushed sFlow
+// interface counters) instead of the SNMP-polled interface_stats. It returns the
+// SAME InterfaceChartBucket shape with averaged CUMULATIVE octets mapped onto
+// in_bytes/out_bytes, so the device-detail frontend's existing delta+rate
+// normalisation (normalizeIfaceSeries) renders it identically — the two sources
+// stay visually consistent, and sFlow bandwidth is available even where SNMP is
+// unreachable/host-restricted. flow_if_counters has no packet counters, so
+// in_packets/out_packets stay zero (the frontend's rate/transfer uses bytes).
+func (d *Database) GetFlowInterfaceChartWindow(deviceID uint, ifIndex int, from, to time.Time) ([]InterfaceChartBucket, error) {
+	if !to.After(from) {
+		return []InterfaceChartBucket{}, nil
+	}
+	if to.Sub(from) > maxChartWindow {
+		from = to.Add(-maxChartWindow)
+	}
+	bucketExpr := d.dialect.TimeBucket(bucketUnitForWindow(to.Sub(from)), "timestamp")
+
+	var rows []InterfaceChartBucket
+	err := d.db.Model(&models.FlowInterfaceCounter{}).
+		Where("device_id = ? AND if_index = ? AND timestamp > ? AND timestamp <= ?", deviceID, ifIndex, from, to).
+		Select(fmt.Sprintf("%s as bucket, AVG(in_octets) as in_bytes, AVG(out_octets) as out_bytes, AVG(in_errors) as in_errors, AVG(out_errors) as out_errors", bucketExpr)).
+		Group("bucket").Order("bucket ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].BucketMs = parseBucketToMillis(rows[i].Bucket)
+	}
+	return rows, nil
+}
+
 // GetSystemStatusHistory returns time-series system status data for a device
 func (d *Database) GetSystemStatusHistory(deviceID uint, hours int) ([]models.SystemStatus, error) {
 	var statuses []models.SystemStatus
