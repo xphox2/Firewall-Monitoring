@@ -380,10 +380,24 @@
 
             if (panelChartInstances['flowTime']) panelChartInstances['flowTime'].destroy();
             const timeData = data.bytes_over_time || [];
+            // bytes_over_time.count is a per-bucket SUM (not cumulative); render it
+            // as throughput (Mbps) rather than a raw byte total so it reads like the
+            // public dashboard and doesn't look like an ever-climbing line.
+            const flowIntervalSec = data.bucket_seconds || 3600;
             panelChartInstances['flowTime'] = new Chart(document.getElementById('panel-flow-time-chart'), {
                 type: 'line',
-                data: { labels: timeData.map(t => t.bucket.split(' ').pop() || t.bucket), datasets: [{ label: 'Total Bytes', data: timeData.map(t => t.count), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }] },
-                options: panelChartOptions()
+                data: { labels: timeData.map(t => t.bucket.split(' ').pop() || t.bucket), datasets: [{ label: 'Throughput', data: timeData.map(t => (t.count * 8) / flowIntervalSec / 1e6), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } },
+                        tooltip: { callbacks: { label: function(ctx) { return 'Throughput: ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '0') + ' Mbps'; } } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
+                        y: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => v.toFixed(1) + ' Mbps' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
+                    }
+                }
             });
 
             if (panelChartInstances['topSrc']) panelChartInstances['topSrc'].destroy();

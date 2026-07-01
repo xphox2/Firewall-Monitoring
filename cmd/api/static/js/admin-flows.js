@@ -69,7 +69,8 @@
     var state = Object.assign({}, DEFAULTS);
     var inited = false;
     var charts = { bandwidth: null };
-    var lastBwData = null; // cached stats payload, so a theme toggle can rebuild the uPlot without refetching
+    var lastBwData = null; // cached stats payload, so a theme/mode toggle can rebuild the chart without refetching
+    var flowsBwView = 'rate'; // 3-mode bandwidth view: 'rate' | 'total' | 'mix' (matches public dashboard)
     var themeWired = false;
     var flowsOffset = 0;
     var reloadTimer = null;
@@ -216,9 +217,20 @@
             });
         }
 
-        // Reset-zoom button on the bandwidth chart
-        var resetBtn = document.getElementById('flows-reset-zoom');
-        if (resetBtn) resetBtn.addEventListener('click', resetZoom);
+        // Bandwidth chart 3-mode toggle (Throughput / Transfer / Combined).
+        var bwView = document.getElementById('flows-bw-view');
+        if (bwView) {
+            bwView.addEventListener('click', function(ev) {
+                var btn = ev.target && ev.target.closest && ev.target.closest('[data-bw-view]');
+                if (!btn) return;
+                flowsBwView = btn.getAttribute('data-bw-view');
+                var pills = bwView.querySelectorAll('[data-bw-view]');
+                for (var i = 0; i < pills.length; i++) {
+                    pills[i].classList.toggle('active', pills[i] === btn);
+                }
+                if (lastBwData) renderBandwidth(lastBwData);
+            });
+        }
 
         // "Load more" pagination
         var loadMore = document.getElementById('flows-load-more');
@@ -715,80 +727,57 @@
     // ----------------------------------------------------------------------
     // Bandwidth chart (uPlot)
     // ----------------------------------------------------------------------
+    // renderBandwidth draws the flows throughput chart with the shared 3-mode
+    // component (FwmonBwChart), matching the public dashboard: Throughput (Mbps
+    // line), Transfer (bytes/bucket bars), Combined. Flow traffic is a single
+    // bidirectional aggregate, so it's rendered as one "Traffic" series (no
+    // RX/TX split). bytes_over_time.count is a per-bucket SUM (already a rate
+    // when divided by the bucket interval) — it does not accumulate.
     function renderBandwidth(d) {
-        if (typeof uPlot === 'undefined') {
-            showChartEmpty('uPlot unavailable');
-            return;
-        }
         var host = document.getElementById('flows-bandwidth-chart');
         if (!host) return;
-        var points = d.bytes_over_time || [];
-        if (!points.length) {
-            host.innerHTML = '<div class="chart-empty">No traffic in this range</div>';
-            if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+        if (typeof FwmonBwChart === 'undefined' || typeof Chart === 'undefined') {
+            showChartEmpty('chart library unavailable');
             return;
         }
-        var intervalSec = d.bucket_seconds || 3600;
-        var xs = [];
-        var bps = [];
-        for (var i = 0; i < points.length; i++) {
-            xs.push(Math.floor(parseBucketToMs(points[i].bucket) / 1000));
-            bps.push((points[i].count * 8) / intervalSec);
+        var points = d.bytes_over_time || [];
+        if (!points.length) {
+            if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+            host.innerHTML = '<div class="chart-empty">No traffic in this range</div>';
+            return;
+        }
+        // A prior empty-state replaced the canvas with a message div — restore it.
+        var canvas = document.getElementById('flows-bandwidth-canvas');
+        if (!canvas) {
+            host.innerHTML = '<canvas id="flows-bandwidth-canvas"></canvas>';
+            canvas = document.getElementById('flows-bandwidth-canvas');
         }
 
-        lastBwData = d; // remember for instant rebuild on theme toggle
-        host.innerHTML = '';
-        var width = host.clientWidth || 600;
-        var axStroke = cssVar('--fwmon-axis-stroke', '#6b7280');
-        var axGrid = cssVar('--fwmon-grid-stroke', '#1f2937');
-        var axTick = cssVar('--fwmon-tick-stroke', '#374151');
-        var opts = {
-            width: width,
-            height: 240,
-            cursor: {
-                sync: { key: SYNC_KEY, setSeries: true },
-                drag: { x: true, y: false, setScale: true },
-                points: { size: 6, fill: function(u, sIdx) { return u.series[sIdx].stroke; } }
-            },
-            legend: { live: true, isolate: true },
-            scales: {
-                x: { time: true },
-                y: { auto: true, range: function(u, dataMin, dataMax) {
-                    if (dataMax == null || !isFinite(dataMax)) return [0, 100];
-                    return [0, dataMax * 1.1];
-                } }
-            },
-            axes: [
-                { stroke: axStroke, font: '11px "JetBrains Mono", ui-monospace, monospace',
-                  size: 24, grid: { stroke: axGrid, width: 1 },
-                  ticks: { stroke: axTick, width: 1, size: 4 }, space: 60 },
-                { stroke: axStroke, font: '11px "JetBrains Mono", ui-monospace, monospace',
-                  size: 56, grid: { stroke: axGrid, width: 1 },
-                  ticks: { stroke: axTick, width: 1, size: 4 },
-                  values: function(u, vals) { return vals.map(formatBpsShort); } }
-            ],
-            series: [
-                {},
-                {
-                    label: 'Throughput',
-                    stroke: '#7DD3FC',
-                    width: 1.6,
-                    fill: 'rgba(125,211,252,0.10)',
-                    value: function(u, v) { return v == null ? '--' : formatBps(v); },
-                    points: { show: false }
-                }
-            ]
-        };
-        if (charts.bandwidth) charts.bandwidth.destroy();
-        charts.bandwidth = new uPlot(opts, [xs, bps], host);
+        var intervalSec = d.bucket_seconds || 3600;
+        var labels = [], rate = [], transfer = [];
+        for (var i = 0; i < points.length; i++) {
+            labels.push(bwLabel(points[i].bucket));
+            transfer.push(points[i].count);                        // bytes / bucket
+            rate.push((points[i].count * 8) / intervalSec / 1e6);  // Mbps
+        }
+
+        lastBwData = d; // remember for instant rebuild on mode/theme toggle
+        if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+        charts.bandwidth = FwmonBwChart.render(canvas, {
+            labels: labels,
+            rxRate: rate,
+            rxTransfer: transfer,
+            rxLabel: 'Traffic',
+            view: flowsBwView
+        });
     }
 
-    function resetZoom() {
-        var c = charts.bandwidth;
-        if (!c || !c.data || !c.data[0]) return;
-        var xs = c.data[0];
-        if (xs.length === 0) return;
-        c.setScale('x', { min: xs[0], max: xs[xs.length - 1] });
+    // bwLabel formats a bytes_over_time bucket string into a compact x-axis label.
+    function bwLabel(bucket) {
+        var ms = parseBucketToMs(bucket);
+        if (!ms) return String(bucket);
+        var dt = new Date(ms);
+        return dt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
     function showChartLoading() {

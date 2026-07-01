@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.522] - 2026-07-01
+
+### Changed
+- **Admin bandwidth graphs now match the public dashboard's 3-mode style.** Full sweep of every bandwidth/throughput-over-time chart in the admin panel:
+  - **Flows page "Bandwidth Over Time"** — was a single-line uPlot chart; now uses the shared 3-mode `FwmonBwChart` (Throughput Mbps line / Transfer bytes-per-interval bars / Combined) with a mode toggle, exactly like the public dashboard. Flow traffic is a bidirectional aggregate, so it renders as one "Traffic" series — `FwmonBwChart` gained single-series support for this. (`admin-bw-chart.js` is now loaded by the admin SPA.)
+  - **Connection side-panel + connection-detail "flows over time"** — was plotting the raw per-bucket byte total labeled "Total Bytes" (which reads like an ever-climbing line); now renders **throughput in Mbps** (per-bucket SUM ÷ bucket interval) with a Mbps axis/tooltip. `GetConnectionFlowStats` now returns `bucket_seconds` so the UI can compute the rate.
+  - Already conforming, left unchanged: device-detail interface + VPN-tunnel charts (already 3-mode `FwmonBwChart`), device-detail system network throughput and connection tunnel-traffic (already per-interval rates, not cumulative).
+  - No cumulative counters are plotted raw anywhere anymore. Backend behavior otherwise unchanged (one additive JSON field).
+
 ## [0.10.521] - 2026-07-01
 
 ### Fixed

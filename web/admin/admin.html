@@ -220,6 +220,7 @@
     <!-- AUDIT-055: the inline mobile-toggle script moved to
          AdminCommon.renderMobileChrome() (admin-common.js), shared by every page. -->
     <script defer src="/static/js/chart.umd.min.js"></script>
+    <script defer src="/static/js/admin-bw-chart.js"></script>
     <script defer src="/static/js/uPlot.iife.min.js"></script>
     <!-- v0.10.212: shared control primitives used by flows + syslog + alerts + traps. -->
     <script defer src="/static/js/admin-controls.js"></script>
@@ -570,19 +571,20 @@
                 <span class="fwmon-flows-local-aside">(filtered from charts below)</span>
             </div>
 
-            <!-- Bandwidth-over-time chart (uPlot with brush-to-zoom) -->
+            <!-- Bandwidth-over-time chart (3-mode, matches public dashboard) -->
             <div class="chart-card fwmon-bandwidth-card">
                 <div class="chart-card-header">
                     <div>
                         <h3 class="chart-card-title">Bandwidth Over Time</h3>
-                        <div class="chart-card-subtitle">throughput · effective rate after sampling adjustment</div>
+                        <div class="chart-card-subtitle">effective rate after sampling adjustment</div>
                     </div>
-                    <span class="chart-zoom-hint">
-                        <span>drag to zoom · dbl-click to reset</span>
-                        <button type="button" class="chart-reset-btn" id="flows-reset-zoom">reset</button>
-                    </span>
+                    <div class="chart-range-btns" role="group" aria-label="Display mode" id="flows-bw-view">
+                        <button type="button" class="chart-range-pill active" data-bw-view="rate">Throughput</button>
+                        <button type="button" class="chart-range-pill" data-bw-view="total">Transfer</button>
+                        <button type="button" class="chart-range-pill" data-bw-view="mix">Combined</button>
+                    </div>
                 </div>
-                <div class="chart-host" id="flows-bandwidth-chart"></div>
+                <div class="chart-host" id="flows-bandwidth-chart"><canvas id="flows-bandwidth-canvas"></canvas></div>
             </div>
 
             <!-- Top-talker lists — HTML rendered, clickable rows that filter the page -->

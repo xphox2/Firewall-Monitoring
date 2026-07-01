@@ -434,13 +434,27 @@
             // Bytes over time
             if (flowTimeChart) flowTimeChart.destroy();
             var timeData = data.bytes_over_time || [];
+            // Render throughput (Mbps) from the per-bucket byte SUM rather than a
+            // raw byte total, so it reads like the public dashboard and doesn't
+            // look like an ever-climbing line.
+            var flowIntervalSec = data.bucket_seconds || 3600;
             flowTimeChart = new Chart(document.getElementById('flow-time-chart'), {
                 type: 'line',
                 data: {
                     labels: timeData.map(function(t) { return t.bucket.split(' ').pop() || t.bucket; }),
-                    datasets: [{ label: 'Total Bytes', data: timeData.map(function(t) { return t.count; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }]
+                    datasets: [{ label: 'Throughput', data: timeData.map(function(t) { return (t.count * 8) / flowIntervalSec / 1e6; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5 }]
                 },
-                options: chartOptions()
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } },
+                        tooltip: { callbacks: { label: function(ctx) { return 'Throughput: ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '0') + ' Mbps'; } } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
+                        y: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: function(v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
+                    }
+                }
             });
 
             // Top sources bar

@@ -814,6 +814,7 @@ type ConnectionFlowResult struct {
 	TopDests         []KeyCount         `json:"top_destinations"`
 	TopConversations []FlowConversation `json:"top_conversations"`
 	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
+	BucketSeconds    int                `json:"bucket_seconds"` // width of each bytes_over_time bucket, so the UI can render a rate
 }
 
 // cidrToLikePattern converts a CIDR subnet to a SQL LIKE pattern.
@@ -1053,6 +1054,7 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	}
 	newBase().Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, SUM(bytes) as total").
 		Group("bucket").Order("bucket ASC").Scan(&timeSeries)
+	result.BucketSeconds = 3600 // bytes_over_time is bucketed hourly above
 	for _, t := range timeSeries {
 		result.BytesOverTime = append(result.BytesOverTime, TimeBucket{Bucket: t.Bucket, Count: t.Total})
 	}

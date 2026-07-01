@@ -421,6 +421,17 @@
 .fwmon-det-ack:hover { border-color: var(--fwmon-accent, #4c8dff); color: var(--fwmon-text, #e5e7eb); }
 .fwmon-det-ack:disabled { opacity: 0.5; cursor: default; }
 
+/* Flows bandwidth chart (v0.10.522) — now Chart.js (FwmonBwChart 3-mode), which
+   sizes its canvas to the parent, so the host needs an explicit height. */
+.fwmon-bandwidth-card .chart-host {
+    position: relative;
+    height: 260px;
+}
+.fwmon-bandwidth-card .chart-host canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
 /* NOC live-status pill (v0.10.516) — connection indicator on the NOC page. */
 .fwmon-noc-status {
     font-size: 0.78rem;

@@ -87,25 +87,36 @@
         var rxTransfer = o.rxTransfer || [];
         var txTransfer = o.txTransfer || [];
 
+        // Single-series mode: when no TX data is supplied the chart renders just
+        // the RX series (used for aggregate, non-directional traffic like the
+        // Flows page's total throughput). The 3 view modes still apply.
+        var single = txRate.length === 0 && txTransfer.length === 0;
+
         var datasets, scales;
 
         if (view === 'total') {
-            // Transfer: per-bucket bytes as paired bars.
+            // Transfer: per-bucket bytes as bars.
             datasets = [
-                { type: 'bar', label: rxLabel + ' Transfer', data: rxTransfer, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: RX_COLOR, borderWidth: 1 },
-                { type: 'bar', label: txLabel + ' Transfer', data: txTransfer, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: TX_COLOR, borderWidth: 1 }
+                { type: 'bar', label: rxLabel + ' Transfer', data: rxTransfer, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: RX_COLOR, borderWidth: 1 }
             ];
+            if (!single) {
+                datasets.push({ type: 'bar', label: txLabel + ' Transfer', data: txTransfer, backgroundColor: 'rgba(255,149,0,0.6)', borderColor: TX_COLOR, borderWidth: 1 });
+            }
             scales = {
                 y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return formatBytes(v); } }, grid: { color: '#21262d' }, title: { display: true, text: 'Bytes / interval', color: '#484f58' } }
             };
         } else if (view === 'mix') {
             // Combined: Mbps lines on the left axis, byte bars on the right.
             datasets = [
-                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
-                { label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' },
-                { type: 'bar', label: rxLabel + ' Transfer', data: rxTransfer, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' },
-                { type: 'bar', label: txLabel + ' Transfer', data: txTransfer, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' }
+                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' }
             ];
+            if (!single) {
+                datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.08)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5, yAxisID: 'y' });
+            }
+            datasets.push({ type: 'bar', label: rxLabel + ' Transfer', data: rxTransfer, backgroundColor: 'rgba(63,185,80,0.3)', borderWidth: 0, yAxisID: 'y1' });
+            if (!single) {
+                datasets.push({ type: 'bar', label: txLabel + ' Transfer', data: txTransfer, backgroundColor: 'rgba(255,149,0,0.3)', borderWidth: 0, yAxisID: 'y1' });
+            }
             scales = {
                 y:  { position: 'left',  beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return v.toFixed(1); } }, grid: { color: '#21262d' }, title: { display: true, text: 'Mbps', color: '#484f58' } },
                 y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return formatBytes(v); } }, title: { display: true, text: 'Bytes', color: '#484f58' } }
@@ -113,9 +124,11 @@
         } else {
             // Throughput (default): Mbps as filled lines.
             datasets = [
-                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 },
-                { label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
+                { label: rxLabel + ' (Mbps)', data: rxRate, borderColor: RX_COLOR, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 }
             ];
+            if (!single) {
+                datasets.push({ label: txLabel + ' (Mbps)', data: txRate, borderColor: TX_COLOR, backgroundColor: 'rgba(255,149,0,0.1)', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5 });
+            }
             scales = {
                 y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: function (v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: '#21262d' } }
             };
