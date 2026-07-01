@@ -34,10 +34,40 @@ func (h *Handler) GetConnectionStatusSummary(c *gin.Context) {
 		return
 	}
 
+	// Attach each device's worst open-alert severity so the connection map can
+	// pulse alerting nodes. Best-effort: a failure here just omits the overlay
+	// (the map still shows online/offline borders and down-connection edges).
+	if sev, err := db.GetDeviceAlertSeverities(); err == nil {
+		for _, dev := range devs {
+			if id := mapUint(dev["id"]); id != 0 {
+				dev["alert_severity"] = sev[id]
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
 		"connections": conns,
 		"devices":     devs,
 	}))
+}
+
+// mapUint coerces a value scanned from a map[string]interface{} row (GORM uses
+// int64/uint/int depending on the driver) into a uint. Returns 0 if not numeric.
+func mapUint(v interface{}) uint {
+	switch n := v.(type) {
+	case uint:
+		return n
+	case int64:
+		return uint(n)
+	case int:
+		return uint(n)
+	case uint64:
+		return uint(n)
+	case int32:
+		return uint(n)
+	default:
+		return 0
+	}
 }
 
 func (h *Handler) GetConnectionEvents(c *gin.Context) {

@@ -184,6 +184,8 @@ type EventStatsStore interface {
 	GetRecentDetections(since time.Time, limit int, unackedOnly bool) ([]models.FlowDetection, error)
 	AckFlowDetection(id uint) error
 	GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error)
+	GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter) (*NOCSnapshot, error)
+	GetDeviceAlertSeverities() (map[uint]string, error)
 	GetActiveThreatIntel() ([]models.ThreatIntel, error)
 	ListThreatIntel(limit int) ([]models.ThreatIntel, error)
 	CountActiveThreatIntel() (int64, error)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -112,7 +113,21 @@ func (h *Handler) GetNOCSnapshot(c *gin.Context) {
 		c.JSON(http.StatusOK, response.Success(nil))
 		return
 	}
-	snap, err := db.GetNOCSnapshot(nocWindow)
+	// site_id / device_id narrow the snapshot for the NOC drill-down panel.
+	var filter database.NOCFilter
+	if sid := c.Query("site_id"); sid != "" {
+		if v, err := strconv.ParseUint(sid, 10, 32); err == nil {
+			id := uint(v)
+			filter.SiteID = &id
+		}
+	}
+	if did := c.Query("device_id"); did != "" {
+		if v, err := strconv.ParseUint(did, 10, 32); err == nil {
+			id := uint(v)
+			filter.DeviceID = &id
+		}
+	}
+	snap, err := db.GetNOCSnapshotFiltered(nocWindow, filter)
 	if err != nil {
 		httputil.InternalError(c, "Failed to build NOC snapshot", err)
 		return

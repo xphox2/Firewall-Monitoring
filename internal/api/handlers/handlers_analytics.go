@@ -263,6 +263,10 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 	if deviceID := c.Query("device_id"); deviceID != "" {
 		query = query.Where("device_id = ?", deviceID)
 	}
+	// Site filter (NOC drill-down): matches every device in the site.
+	if siteID := c.Query("site_id"); siteID != "" {
+		query = query.Where("device_id IN (SELECT id FROM devices WHERE site_id = ?)", siteID)
+	}
 	if src := c.Query("src_addr"); src != "" {
 		if frag, arg, ok := ipFilterClause("src_addr", src); ok {
 			query = query.Where(frag, arg)
@@ -325,6 +329,11 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	if did := c.Query("device_id"); did != "" {
 		if v, err := strconv.ParseUint(did, 10, 32); err == nil {
 			filter.DeviceID = uint(v)
+		}
+	}
+	if sid := c.Query("site_id"); sid != "" {
+		if v, err := strconv.ParseUint(sid, 10, 32); err == nil {
+			filter.SiteID = uint(v)
 		}
 	}
 	if pid := c.Query("probe_id"); pid != "" {

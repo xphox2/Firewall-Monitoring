@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.524] - 2026-07-01
+
+### Added
+- **NOC reworked into a per-site → per-device operations breakdown, synced with the Connections map.** The NOC tab moves under **Monitoring** (right below Connections) and becomes a live health breakdown instead of a flow-analytics dashboard. The two Monitoring tabs now stay in sync:
+  - **By Site | By Device** toggle. *By Site* shows one card per site (+ an **Unassigned** bucket for devices with no site): status dot, open-alert badges, devices up/total, and live throughput, colour-keyed to a **composite worst severity** — `max(open-alert severity, offline device → warning, offline probe → critical, down connection → warning)`, so a site with a dark device but no alert row no longer shows green. Clicking a site opens an in-page drill-down (device rows + site mini-vitals) that stays live. *By Device* is a flat, severity-sorted device grid.
+  - **Alerts/issues reflect in the animation graph.** Device nodes on the connection map now pulse amber/critical-red from the same open-alert state shown on the NOC page (already-alerting nodes pulse on first open; a cleared/acked/snoozed alert stops pulsing within one status poll). The open-alert predicate matches the Alerts list exactly (excludes resolved / acknowledged / suppressed / snoozed).
+  - **Cross-tab focus.** Selecting a site/device in the NOC focuses & zooms that node on the map (dimming the rest, with a **Clear focus** toolbar button); tapping a node on the map opens that device's NOC detail — both via seamless SPA navigation, no full reload.
+  - **sFlow is now filterable by site.** Added a `site_id` filter to the flow samples/stats endpoints (an uncorrelated `device_id IN (SELECT id FROM devices WHERE site_id = ?)` subquery — no schema change) and a **Site** selector + active chip on the Flows page. NOC drill-downs link straight to the pre-filtered Flows and map views.
+  - The per-site/device breakdown rides the existing NOC Server-Sent-Events hub (one computation serves every viewer — no new per-client poll), and the NOC snapshot endpoint accepts `?site_id=`/`?device_id=` for drill-down detail. The Live Detections feed is retained (collapsible); flow src/dst top-talkers now live on the Flows page.
+  - Fixed a latent routing bug exposed by the new deep-links: `activateTabFromUrl()` omitted `noc`, so a hard-refresh/back onto `/admin/noc` resolved to the Dashboard.
+- Regression tests: per-site rollup + Unassigned/orphan bucketing + composite severity (`GetNOCBreakdown`), the open-alert predicate feeding the map pulse (`GetDeviceAlertSeverities`), the site-scoped snapshot, and the `?site_id=` handler parse.
+
 ## [0.10.523] - 2026-07-01
 
 ### Fixed

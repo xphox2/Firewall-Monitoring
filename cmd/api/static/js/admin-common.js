@@ -1033,10 +1033,10 @@
             '<a class="nav-item' + (currentPage === 'dashboard' ? ' active" aria-current="page' : '') + '" href="/admin"><span class="nav-icon" aria-hidden="true">' + pageIcons['dashboard'] + '</span> Dashboard</a>' +
             '<a class="nav-item' + (currentPage === 'devices' ? ' active" aria-current="page' : '') + '" href="/admin/devices"><span class="nav-icon" aria-hidden="true">' + pageIcons['devices'] + '</span> Devices</a>' +
             '<a class="nav-item' + (currentPage === 'connections' ? ' active" aria-current="page' : '') + '" href="/admin/connections"><span class="nav-icon" aria-hidden="true">' + pageIcons['connections'] + '</span> Connections</a>' +
+            '<a class="nav-item' + (currentPage === 'noc' ? ' active" aria-current="page' : '') + '" href="/admin/noc"><span class="nav-icon" aria-hidden="true">' + pageIcons['noc'] + '</span> NOC</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Data</div>' +
             '<a class="nav-item' + (currentPage === 'syslog' ? ' active" aria-current="page' : '') + '" href="/admin/syslog"><span class="nav-icon" aria-hidden="true">' + pageIcons['syslog'] + '</span> Syslog</a>' +
             '<a class="nav-item' + (currentPage === 'flows' ? ' active" aria-current="page' : '') + '" href="/admin/flows"><span class="nav-icon" aria-hidden="true">' + pageIcons['flows'] + '</span> Flows</a>' +
-            '<a class="nav-item' + (currentPage === 'noc' ? ' active" aria-current="page' : '') + '" href="/admin/noc"><span class="nav-icon" aria-hidden="true">' + pageIcons['noc'] + '</span> NOC</a>' +
             '<a class="nav-item' + (currentPage === 'alerts' ? ' active" aria-current="page' : '') + '" href="/admin/alerts"><span class="nav-icon" aria-hidden="true">' + pageIcons['alerts'] + '</span> Alerts</a>' +
             '<a class="nav-item' + (currentPage === 'traps' ? ' active" aria-current="page' : '') + '" href="/admin/traps"><span class="nav-icon" aria-hidden="true">' + pageIcons['traps'] + '</span> Traps</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +

@@ -445,6 +445,162 @@
 .fwmon-noc-status.warn { color: #fdba74; border-color: rgba(251, 146, 60, 0.4); }
 .fwmon-noc-status.bad  { color: #fb7185; border-color: rgba(244, 63, 94, 0.4); }
 
+/* ── NOC per-site/device breakdown (v0.10.523) ───────────────────────────── */
+
+/* By Site | By Device segmented toggle. */
+.fwmon-noc-modes {
+    display: inline-flex;
+    border: 1px solid var(--fwmon-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.fwmon-noc-mode {
+    font-size: 0.78rem;
+    font-family: var(--fwmon-font-mono);
+    padding: 4px 12px;
+    background: transparent;
+    color: var(--fwmon-text-faint);
+    border: 0;
+    cursor: pointer;
+}
+.fwmon-noc-mode + .fwmon-noc-mode { border-left: 1px solid var(--fwmon-border); }
+.fwmon-noc-mode:hover { color: var(--fwmon-text); }
+.fwmon-noc-mode.active { background: var(--fwmon-accent-bg); color: var(--fwmon-accent); }
+
+/* Card grid (site cards or device cards). */
+.fwmon-noc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+}
+.fwmon-noc-empty {
+    grid-column: 1 / -1;
+    padding: 28px;
+    text-align: center;
+    color: var(--fwmon-text-faint);
+    font-size: 0.85rem;
+    border: 1px dashed var(--fwmon-border);
+    border-radius: 10px;
+}
+
+/* A site or device card. The left rail colour encodes worst severity. */
+.fwmon-noc-card {
+    position: relative;
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-left: 4px solid var(--fwmon-sig-ok);
+    border-radius: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+    color: var(--fwmon-text);
+    transition: border-color .15s, box-shadow .15s, transform .05s;
+}
+.fwmon-noc-card:hover { border-color: var(--fwmon-border-strong); box-shadow: 0 2px 10px rgba(0,0,0,0.18); }
+.fwmon-noc-card:active { transform: translateY(1px); }
+.fwmon-noc-card:focus-visible { outline: 2px solid var(--fwmon-accent); outline-offset: 2px; }
+.fwmon-noc-card.sev-info     { border-left-color: var(--fwmon-sig-info); }
+.fwmon-noc-card.sev-warning  { border-left-color: var(--fwmon-sig-warn); }
+.fwmon-noc-card.sev-critical { border-left-color: var(--fwmon-sig-crit); }
+.fwmon-noc-card.selected { border-color: var(--fwmon-accent); box-shadow: 0 0 0 1px var(--fwmon-accent); }
+
+.fwmon-noc-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.fwmon-noc-card-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fwmon-noc-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--fwmon-sig-ok); flex: none;
+}
+.fwmon-noc-dot.sev-info     { background: var(--fwmon-sig-info); }
+.fwmon-noc-dot.sev-warning  { background: var(--fwmon-sig-warn); }
+.fwmon-noc-dot.sev-critical { background: var(--fwmon-sig-crit); }
+
+/* Severity/count chips inside a card. */
+.fwmon-noc-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.fwmon-noc-badge {
+    font-size: 0.68rem;
+    font-family: var(--fwmon-font-mono);
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--fwmon-border);
+    color: var(--fwmon-text-dim);
+}
+.fwmon-noc-badge.crit { color: var(--fwmon-sig-crit); border-color: var(--fwmon-sig-crit); }
+.fwmon-noc-badge.warn { color: var(--fwmon-sig-warn); border-color: var(--fwmon-sig-warn); }
+.fwmon-noc-badge.ok   { color: var(--fwmon-sig-ok);   border-color: var(--fwmon-sig-ok); }
+
+.fwmon-noc-card-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.78rem;
+    color: var(--fwmon-text-faint);
+    font-family: var(--fwmon-font-mono);
+}
+.fwmon-noc-card-meta .bps { color: var(--fwmon-accent); }
+
+/* Drill-down panel. */
+.fwmon-noc-drill {
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 16px 0;
+}
+.fwmon-noc-drill-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.fwmon-noc-drill-title { font-weight: 600; font-size: 1.05rem; flex: 1; }
+.fwmon-noc-drill-mini { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
+.fwmon-noc-drill-mini .m { font-size: 0.8rem; color: var(--fwmon-text-faint); }
+.fwmon-noc-drill-mini .m b { display: block; color: var(--fwmon-text); font-size: 1.05rem; font-family: var(--fwmon-font-mono); }
+
+/* Device rows inside a drill-down. */
+.fwmon-noc-devrow {
+    display: grid;
+    grid-template-columns: 14px 1.4fr 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 8px 6px;
+    background: transparent;
+    border: 0;
+    border-top: 1px solid var(--fwmon-border);
+    cursor: pointer;
+    color: var(--fwmon-text);
+    font-size: 0.85rem;
+}
+.fwmon-noc-devrow:hover { background: var(--fwmon-accent-bg); }
+.fwmon-noc-devrow:focus-visible { outline: 2px solid var(--fwmon-accent); outline-offset: -2px; }
+.fwmon-noc-devrow .ip { color: var(--fwmon-text-faint); font-family: var(--fwmon-font-mono); font-size: 0.78rem; }
+.fwmon-noc-devrow .bps { color: var(--fwmon-accent); font-family: var(--fwmon-font-mono); text-align: right; }
+.fwmon-noc-devrow .site { color: var(--fwmon-text-faint); font-size: 0.78rem; }
+
+.fwmon-noc-drill-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Live Detections collapsible summary. */
+.fwmon-noc-det-summary { cursor: pointer; list-style: none; padding: 4px 0; }
+.fwmon-noc-det-summary::-webkit-details-marker { display: none; }
+
 /* Threat Intelligence management card (v0.10.511) — collapsible feed editor. */
 .fwmon-ti-card {
     margin-top: 16px;

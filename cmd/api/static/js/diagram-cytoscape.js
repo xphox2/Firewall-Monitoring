@@ -16,6 +16,9 @@
     var particleEls = [];
     var expandedTunnels = {}; // tunnelEdgeId -> true
     var keydownHandler = null;
+    var nodeAlerts = {};      // deviceId -> "warning"|"critical" (open-alert overlay)
+    var pulsingNodes = {};    // nodeId -> true while a pulse loop is active (teardown registry)
+    var pendingFocus = null;  // { kind, id } queued until the graph has laid out
 
     // Connection type classification
     // OVERLAY_TYPES (vxlan, l3ipvlan) ride inside IPSec tunnels - shown when expanding tunnel
@@ -79,7 +82,11 @@
                 id: 'dev-' + d.id,
                 label: (d.name.length > 18 ? d.name.slice(0, 17) + '\u2026' : d.name) + '\n' + d.ip_address + vpnLabel,
                 nodeType: 'device', deviceId: d.id,
-                status: d.status || 'unknown', deviceObj: d, vpnInfo: vpnInfo || null
+                status: d.status || 'unknown', deviceObj: d, vpnInfo: vpnInfo || null,
+                // Open-alert overlay severity seeded from the last status poll so an
+                // already-alerting device pulses on first paint (not only after a
+                // later change). Kept in sync by applyAlertSeverities().
+                alert: nodeAlerts[d.id] || (d.alert_severity || '')
             };
             if (sid) nodeData.parent = 'site-' + sid;
             elements.push({ group: 'nodes', data: nodeData });
@@ -285,6 +292,12 @@
             }},
             { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#4ade80' } },
             { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f87171' } },
+            // Open-alert overlay (v0.10.523) — declared AFTER status so an alerting
+            // device's border colour wins over online/offline. The pulse (border
+            // width) is driven by cy.animate (canvas nodes ignore CSS keyframes),
+            // see pulseNode(). Colours match the NOC severity ramp.
+            { selector: 'node[nodeType="device"][alert="warning"]', style: { 'border-color': '#e7b53c' } },
+            { selector: 'node[nodeType="device"][alert="critical"]', style: { 'border-color': '#f2555a' } },
             // Cloud node — large cloud icon centered
             { selector: 'node[nodeType="cloud"]', style: {
                 'width': 10, 'height': 10, 'shape': 'ellipse',
@@ -345,7 +358,14 @@
             }},
             // Selected states
             { selector: 'node:selected', style: { 'border-color': '#7dd3fc', 'border-width': 3 } },
-            { selector: 'edge:selected', style: { 'width': 5, 'opacity': 1 } }
+            { selector: 'edge:selected', style: { 'width': 5, 'opacity': 1 } },
+            // Focus/dim (v0.10.523) — driven by the NOC "focus this node on the map"
+            // sync. .focused uses an overlay ring (not the border) so it never
+            // fights the status/alert/selected border colours.
+            { selector: '.dimmed', style: { 'opacity': 0.18 } },
+            { selector: 'node.focused', style: {
+                'overlay-color': '#22d3ee', 'overlay-opacity': 0.28, 'overlay-padding': 8, 'z-index': 20
+            }}
         ];
     }
 
@@ -448,13 +468,18 @@
 
         applyFilters();
         wireEvents(devices, vpnMap);
-        cy.one('layoutstop', function() { startParticles(); });
+        cy.one('layoutstop', function() {
+            startParticles();
+            applyAlertPulses();           // begin pulsing any already-alerting nodes
+            if (pendingFocus) { var pf = pendingFocus; pendingFocus = null; focusNode(pf.kind, pf.id); }
+        });
         setTimeout(function() { startParticles(); }, 600);
     }
 
 
     function cleanup() {
         stopParticles();
+        pulsingNodes = {}; // pulse loops self-terminate once cy is destroyed
         expandedTunnels = {};
         if (keydownHandler) { document.removeEventListener('keydown', keydownHandler); keydownHandler = null; }
         if (cy) { cy.destroy(); cy = null; }
@@ -524,7 +549,11 @@
                 var relY = pos.y - (nodePos.y - h / 2);
                 if (relY > h * 0.6 && onVPNClick) { onVPNClick(data.deviceId, false); return; }
             }
-            window.location.href = '/admin/devices/' + data.deviceId;
+            // Tapping a device opens its NOC detail (the synced Monitoring tab).
+            // Uses SPA navigation (not a full reload) so the transition is seamless;
+            // a canvas tap isn't an <a>, so we route through a hidden anchor click
+            // that the admin router's click-interceptor picks up.
+            spaNavigate('/admin/noc?focus=device:' + data.deviceId);
         });
 
         cy.on('tap', 'node[nodeType="cloud"]', function() {
@@ -1062,6 +1091,120 @@
         flash();
     }
 
+    // ---- 1l. NOC sync: alert overlay, node focus, SPA nav ----
+
+    // spaNavigate routes through the admin SPA click-interceptor by synthesizing a
+    // hidden anchor click — a Cytoscape canvas tap is not an <a>, so it can't be
+    // caught directly. Keeps navigation client-side (no full reload).
+    function spaNavigate(href) {
+        var a = document.createElement('a');
+        a.href = href;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function() { if (a.parentNode) a.parentNode.removeChild(a); }, 0);
+    }
+
+    // pulseNode animates a device node's border width in a loop while it carries an
+    // open alert. Canvas nodes ignore CSS keyframes, so the pulse is a self-
+    // terminating cy.animate recursion registered in pulsingNodes for teardown. It
+    // stops (and drops the inline width so the stylesheet border takes over) as
+    // soon as the alert clears, the node is removed, or the graph is destroyed.
+    function pulseNode(node) {
+        var id = node.id();
+        if (pulsingNodes[id]) return;
+        pulsingNodes[id] = true;
+        (function loop(wide) {
+            if (!cy || node.removed() || !node.data('alert')) {
+                delete pulsingNodes[id];
+                if (node && !node.removed()) { node.stop(); node.removeStyle('border-width'); }
+                return;
+            }
+            node.animate({ style: { 'border-width': wide ? 6 : 2 } },
+                { duration: 700, complete: function() { loop(!wide); } });
+        })(true);
+    }
+
+    // applyAlertPulses starts a pulse for every device node currently flagged with
+    // an alert (called after layout and after each severity update).
+    function applyAlertPulses() {
+        if (!cy) return;
+        cy.nodes('node[nodeType="device"]').forEach(function(n) {
+            if (n.data('alert')) pulseNode(n);
+        });
+    }
+
+    // applyAlertSeverities updates the per-device open-alert overlay from the
+    // status-summary poll (deviceId -> "info"|"warning"|"critical"|""). "info" is
+    // treated as no visual overlay (matches the NOC ramp). Starts/stops pulses so
+    // an alert clearing removes the colour within one poll — even when the device's
+    // online/offline status did NOT change.
+    function applyAlertSeverities(sevByDevice) {
+        nodeAlerts = {};
+        Object.keys(sevByDevice || {}).forEach(function(k) {
+            var sev = sevByDevice[k];
+            if (sev === 'warning' || sev === 'critical') nodeAlerts[k] = sev;
+        });
+        if (!cy) return;
+        cy.nodes('node[nodeType="device"]').forEach(function(n) {
+            var sev = nodeAlerts[n.data('deviceId')] || '';
+            if (n.data('alert') !== sev) n.data('alert', sev);
+        });
+        applyAlertPulses();
+    }
+
+    // resolveFocusTarget maps a NOC focus token to a Cytoscape collection.
+    //   device:<id>       -> the device node
+    //   site:<id>         -> the site compound (all its devices)
+    //   site:unassigned   -> every device node with no site parent
+    function resolveFocusTarget(kind, id) {
+        if (!cy) return null;
+        if (kind === 'device') {
+            var n = cy.getElementById('dev-' + id);
+            return (n && !n.empty()) ? n : null;
+        }
+        if (kind === 'site') {
+            if (String(id) === 'unassigned') {
+                var orphans = cy.nodes('node[nodeType="device"]').filter(function(el) {
+                    return el.isOrphan();
+                });
+                return orphans.length ? orphans : null;
+            }
+            var s = cy.getElementById('site-' + id);
+            return (s && !s.empty()) ? s : null;
+        }
+        return null;
+    }
+
+    // focusNode highlights a site/device on the map: dim everything else, ring the
+    // target(s), and pan/zoom to them. Queues until layout completes if called
+    // before the graph is ready (deep-link race). Reused by the NOC "focus on map".
+    function focusNode(kind, id) {
+        if (!cy) { pendingFocus = { kind: kind, id: id }; return; }
+        var target = resolveFocusTarget(kind, id);
+        if (!target || target.length === 0) { pendingFocus = { kind: kind, id: id }; return; }
+        cy.elements().removeClass('focused');
+        cy.elements().addClass('dimmed');
+        var focusSet = target;
+        // Include a device's parent site + directly connected edges for context.
+        target.forEach(function(el) {
+            focusSet = focusSet.union(el.connectedEdges ? el.connectedEdges() : cy.collection());
+            if (el.parent && el.parent().nonempty && el.parent().nonempty()) focusSet = focusSet.union(el.parent());
+        });
+        focusSet.removeClass('dimmed');
+        target.addClass('focused');
+        try {
+            cy.animate({ fit: { eles: target.union(target.parent ? target.parent() : cy.collection()), padding: 90 } },
+                { duration: 400 });
+        } catch (e) { /* fit best-effort */ }
+    }
+
+    // clearFocus removes the dim/highlight applied by focusNode.
+    function clearFocus() {
+        if (!cy) return;
+        cy.elements().removeClass('dimmed').removeClass('focused');
+    }
+
     // ---- Toolbar event delegation ----
     document.addEventListener('click', function(e) {
         var el = e.target.closest('[data-action]');
@@ -1072,12 +1215,14 @@
         else if (action === 'dg-fit') fitGraph();
         else if (action === 'dg-reset-layout') resetLayout();
         else if (action === 'dg-fullscreen') toggleFullscreen();
+        else if (action === 'dg-clear-focus') clearFocus();
     });
 
     // ---- Public API ----
     window.FWDiagram = {
         init: init, render: render, cleanup: cleanup,
         setCallbacks: setCallbacks, updateStatuses: updateStatuses, updateVPNBadges: updateVPNBadges,
+        applyAlertSeverities: applyAlertSeverities, focusNode: focusNode, clearFocus: clearFocus,
         Layout: { resetLayout: resetLayout },
         Particles: { start: startParticles, stop: stopParticles }
     };

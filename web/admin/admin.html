@@ -442,6 +442,7 @@
                         <span style="color:var(--fwmon-border);">|</span>
                         <button class="btn secondary sm active" data-action="dg-toggle-down" id="btn-toggle-down">Hide DOWN</button>
                         <button class="btn secondary sm" data-action="dg-fit">Fit</button>
+                        <button class="btn secondary sm" data-action="dg-clear-focus" title="Clear a focus set from the NOC tab">Clear focus</button>
                         <button class="btn secondary sm" data-action="dg-reset-layout">Reset</button>
                         <button class="btn secondary sm" data-action="dg-fullscreen" id="btn-fullscreen">Fullscreen</button>
                     </div>
@@ -691,6 +692,7 @@
 
                 <!-- Shared filter row — applies to both views (Conversations honors device + range; Samples honors all). -->
                 <div class="fwmon-flows-filter-row">
+                    <select id="flows-filter-site" class="fwmon-flows-select"><option value="">All sites</option></select>
                     <select id="flows-filter-device" class="fwmon-flows-select"><option value="">All devices</option></select>
                     <select id="flows-filter-probe" class="fwmon-flows-select"><option value="">All probes</option></select>
                     <div class="chart-range-pills" id="flows-protocol-pills">
@@ -729,16 +731,22 @@
             </div>
         </div>
 
-        <!-- NOC Page — real-time operations dashboard fed by a Server-Sent Events
-             stream (admin-noc.js). Six zones: throughput vitals, top sources,
-             top destinations, traffic mix, geo/threat, and a live detections feed. -->
+        <!-- NOC Page — per-site → per-device operations breakdown, synced with the
+             Connections map. Fleet vitals + the site/device grid arrive on one
+             Server-Sent Events stream (admin-noc.js). The same alert/issue state
+             shown here colours the connection-map nodes; every card and row is
+             clickable and drills into the map (focus) or the Flows page (filter). -->
         <div class="page" id="page-noc">
             <div class="fwmon-flows-header">
                 <div class="fwmon-flows-header-left">
-                    <h2 class="fwmon-flows-title">NOC — Live Operations</h2>
+                    <h2 class="fwmon-flows-title">NOC — Operations</h2>
                     <span class="fwmon-toptalk-hint" id="noc-window-hint">last 5 min · live</span>
                 </div>
                 <div class="fwmon-flows-header-right">
+                    <div class="fwmon-noc-modes" role="tablist" aria-label="NOC breakdown mode">
+                        <button type="button" class="fwmon-noc-mode active" data-noc-mode="site" role="tab" aria-selected="true">By Site</button>
+                        <button type="button" class="fwmon-noc-mode" data-noc-mode="device" role="tab" aria-selected="false">By Device</button>
+                    </div>
                     <span class="fwmon-noc-status" id="noc-conn-status">connecting…</span>
                 </div>
             </div>
@@ -752,38 +760,27 @@
                 <div class="stat-card"><div class="stat-label">Threat-Intel IPs</div><div class="stat-value" id="noc-ti">--</div></div>
             </div>
 
-            <div class="fwmon-toptalk-grid">
-                <div class="card fwmon-toptalk-card">
-                    <h3 class="fwmon-toptalk-title">Top Sources<span class="fwmon-toptalk-hint">by bytes</span></h3>
-                    <ul class="fwmon-toptalk-list" id="noc-top-sources"></ul>
-                </div>
-                <div class="card fwmon-toptalk-card">
-                    <h3 class="fwmon-toptalk-title">Top Destinations<span class="fwmon-toptalk-hint">by bytes</span></h3>
-                    <ul class="fwmon-toptalk-list" id="noc-top-dests"></ul>
-                </div>
-                <div class="card fwmon-toptalk-card">
-                    <h3 class="fwmon-toptalk-title">By Application<span class="fwmon-toptalk-hint">flows</span></h3>
-                    <ul class="fwmon-toptalk-list" id="noc-by-category"></ul>
-                </div>
-                <div class="card fwmon-toptalk-card">
-                    <h3 class="fwmon-toptalk-title">By Direction<span class="fwmon-toptalk-hint">flows</span></h3>
-                    <ul class="fwmon-toptalk-list" id="noc-by-direction"></ul>
-                </div>
-                <div class="card fwmon-toptalk-card" id="noc-card-countries" hidden>
-                    <h3 class="fwmon-toptalk-title">Top Countries<span class="fwmon-toptalk-hint">dst by bytes</span></h3>
-                    <ul class="fwmon-toptalk-list" id="noc-top-countries"></ul>
-                </div>
+            <!-- Drill-down detail panel (a site or device is selected). Rendered by
+                 admin-noc.js; hidden until a card/row is opened. -->
+            <div id="noc-drill" hidden></div>
+
+            <!-- By Site: one card per site (+ Unassigned bucket). -->
+            <div class="fwmon-noc-grid" id="noc-sites-grid" aria-live="polite">
+                <div class="fwmon-noc-empty">Connecting to the live stream…</div>
             </div>
 
-            <div class="card fwmon-flows-detections-card">
-                <div class="card-header fwmon-flows-data-header">
-                    <h3 class="fwmon-toptalk-title">Live Detections<span class="fwmon-toptalk-hint">last 15 min</span></h3>
-                </div>
+            <!-- By Device: flat, sortable device grid (Site column). -->
+            <div class="fwmon-noc-grid" id="noc-devices-grid" hidden aria-live="polite"></div>
+
+            <!-- Live Detections — collapsible; a genuine NOC signal kept from the
+                 previous NOC (flow src/dst analytics now live on the Flows page). -->
+            <details class="card fwmon-flows-detections-card fwmon-noc-detections" id="noc-detections" open>
+                <summary class="fwmon-noc-det-summary"><span class="fwmon-toptalk-title">Live Detections<span class="fwmon-toptalk-hint">last 15 min</span></span></summary>
                 <table class="fwmon-flows-detections-table">
                     <thead><tr><th>Severity</th><th>Category</th><th>Detector</th><th>Finding</th><th>When</th></tr></thead>
                     <tbody id="noc-detections-body"></tbody>
                 </table>
-            </div>
+            </details>
         </div>
 
         <!-- Alerts Page (v0.10.212: pill-bar range + auto-apply filters + URL state) -->

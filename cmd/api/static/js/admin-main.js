@@ -884,23 +884,37 @@
                 }
             });
 
-            // Diff device statuses
+            // Diff device statuses + collect per-device open-alert severity.
             var deviceChanges = [];
             var devMap = {};
-            (data.devices || []).forEach(function(d) { devMap[d.id] = d.status; });
+            var alertSev = {};
+            (data.devices || []).forEach(function(d) {
+                devMap[d.id] = d.status;
+                if (d.alert_severity) alertSev[d.id] = d.alert_severity;
+            });
             currentDevices.forEach(function(d) {
                 var newStatus = devMap[d.id];
                 if (newStatus && newStatus !== d.status) {
                     deviceChanges.push({ id: d.id, status: newStatus, oldStatus: d.status });
                     d.status = newStatus;
                 }
+                // Keep the in-memory device's alert severity current so a later
+                // diagram re-render (buildElements) paints the right colour.
+                d.alert_severity = alertSev[d.id] || '';
             });
 
             // FWDiagram may not be loaded yet — diagram is lazy-loaded
             // (v0.10.214, bundle C3). Status updates only run if the
             // operator has actually opened the Connections tab.
-            if ((connChanges.length > 0 || deviceChanges.length > 0) && window.FWDiagram) {
-                FWDiagram.updateStatuses(connChanges, deviceChanges);
+            if (window.FWDiagram) {
+                if (connChanges.length > 0 || deviceChanges.length > 0) {
+                    FWDiagram.updateStatuses(connChanges, deviceChanges);
+                }
+                // Alert-severity overlay must refresh even when NO status changed
+                // (e.g. an alert is acked/resolved while the device stays online),
+                // else a cleared alert would keep pulsing. Cheap: it just diffs
+                // node data attrs and (re)starts/stops pulse loops.
+                if (FWDiagram.applyAlertSeverities) FWDiagram.applyAlertSeverities(alertSev);
             }
 
             // Refresh VPN badges on device nodes
@@ -1346,12 +1360,21 @@
                 });
             }
         }).then(function() {
+            // Sites list backs the NOC "View flows" site filter + its chip label.
+            if (currentSites.length === 0) {
+                return apiFetch(API_BASE + '/sites').then(function(sr) {
+                    currentSites = sr && sr.data ? sr.data : [];
+                }).catch(function() {});
+            }
+        }).then(function() {
             populateFilterProbes('flows-filter-probe');
             populateFilterDevices('flows-filter-device');
+            populateFilterSites('flows-filter-site');
             // Surface to admin-flows.js for chip labels.
             window.adminMainState = window.adminMainState || {};
             window.adminMainState.devices = currentDevices;
             window.adminMainState.probes = currentProbes;
+            window.adminMainState.sites = currentSites;
         });
     }
 
@@ -1563,6 +1586,15 @@
         var currentVal = sel.value;
         sel.innerHTML = '<option value="">All Devices</option>' + currentDevices.map(function(d) {
             return '<option value="' + d.id + '"' + (d.id == currentVal ? ' selected' : '') + '>' + escapeHtml(d.name) + '</option>';
+        }).join('');
+    }
+
+    function populateFilterSites(selectId) {
+        var sel = document.getElementById(selectId);
+        if (!sel) return;
+        var currentVal = sel.value;
+        sel.innerHTML = '<option value="">All Sites</option>' + currentSites.map(function(s) {
+            return '<option value="' + s.id + '"' + (s.id == currentVal ? ' selected' : '') + '>' + escapeHtml(s.name) + '</option>';
         }).join('');
     }
 
@@ -2669,6 +2701,14 @@
     // Cytoscape is lazy-loaded (v0.10.214, bundle C3). The diagram bundle
     // (~421 KB) only fetches the first time an operator opens the
     // Connections tab. Subsequent draws are cached.
+    // getConnFocusParam parses ?focus=site:ID | device:ID off the Connections URL
+    // (set when the operator clicks "View on map" / a device in the NOC tab).
+    function getConnFocusParam() {
+        var m = /[?&]focus=(site|device):([^&]+)/.exec(window.location.search || '');
+        if (!m) return null;
+        return { kind: m[1], id: decodeURIComponent(m[2]) };
+    }
+
     function drawConnectionDiagram() {
         if (currentDevices.length === 0) {
             var host = document.getElementById('connection-diagram');
@@ -2699,6 +2739,13 @@
                 function(deviceId, offnetOnly) { FWDiagram.Panels.showRichVPNDetailPanel(deviceId, offnetOnly, currentDevices, currentVpnMap); }
             );
             FWDiagram.render(currentDevices, currentConnections, deviceSiteMap, currentVpnMap, siteNames);
+            // Seed the alert-severity overlay immediately (don't wait for the first
+            // 15s poll) so devices already alerting pulse on first open.
+            pollConnectionStatuses();
+            // Apply a deep-link focus (?focus=site:ID | device:ID) from the NOC tab.
+            // focusNode queues internally until layout completes if needed.
+            var focus = getConnFocusParam();
+            if (focus) FWDiagram.focusNode(focus.kind, focus.id);
         }).catch(function(err) {
             console.error('Failed to load network diagram bundle:', err);
             if (diagramHost) {
@@ -3029,7 +3076,7 @@
         // sites, irc) are served as their own HTML documents and never reach
         // this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
-            'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'alerts':'alerts', 'traps':'traps',
+            'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
             'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit' };
         var page = pageMap[lastSegment];
         if (page) {

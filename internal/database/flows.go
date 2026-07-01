@@ -103,6 +103,7 @@ func topAddrsByBytesRollup(base func() *gorm.DB, addrCol string, limit int) []Ke
 // row drives the aggregate views (top talkers, conversations, chart) too.
 type FlowStatsFilter struct {
 	DeviceID    uint    // device_id (flow_samples + flow_rollups)
+	SiteID      uint    // site_id — matches every device in the site via subquery
 	ProbeID     uint    // probe_id  (flow_samples only — forces raw-only when set)
 	Protocol    *uint8  // IP protocol number; nil = all
 	DstPort     *uint16 // destination port; nil = all
@@ -153,6 +154,12 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	applyCommonFilters := func(q *gorm.DB) *gorm.DB {
 		if filter.DeviceID > 0 {
 			q = q.Where("device_id = ?", filter.DeviceID)
+		}
+		// Site filter: an uncorrelated subquery against the small devices table.
+		// flow_samples/flow_rollups carry device_id but no site_id, so a site maps
+		// to "every device currently assigned to it". Portable on SQLite and PG.
+		if filter.SiteID > 0 {
+			q = q.Where("device_id IN (SELECT id FROM devices WHERE site_id = ?)", filter.SiteID)
 		}
 		if filter.Protocol != nil {
 			q = q.Where("protocol = ?", *filter.Protocol)

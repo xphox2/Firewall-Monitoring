@@ -29,6 +29,7 @@
     var SYNC_KEY = 'fwmon-flows';
     var DEFAULTS = {
         hours: 24,
+        site_id: '',
         device_id: '',
         probe_id: '',
         protocol: '',
@@ -45,7 +46,7 @@
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'tab'];
+    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'tab'];
 
     // Label <-> id maps for the classification breakdowns. These MIRROR
     // internal/classify (Category / Dir* — documented as stable). The widgets
@@ -188,7 +189,8 @@
             });
         }
 
-        // Device / probe selects — auto-apply on change
+        // Site / device / probe selects — auto-apply on change
+        bindSelectAuto('flows-filter-site',   'site_id');
         bindSelectAuto('flows-filter-device', 'device_id');
         bindSelectAuto('flows-filter-probe',  'probe_id');
 
@@ -201,6 +203,7 @@
         var clearBtn = document.getElementById('flows-clear-filters');
         if (clearBtn) {
             clearBtn.addEventListener('click', function() {
+                state.site_id   = '';
                 state.device_id = '';
                 state.probe_id  = '';
                 state.protocol  = '';
@@ -341,6 +344,7 @@
             pp.classList.toggle('active', pp.getAttribute('data-protocol') === state.protocol);
         }
         // Selects + inputs
+        setVal('flows-filter-site',   state.site_id);
         setVal('flows-filter-device', state.device_id);
         setVal('flows-filter-probe',  state.probe_id);
         setVal('flows-filter-src',    state.src);
@@ -398,6 +402,7 @@
         if (state.direction !== '') chips.push({ key: 'direction', val: DIRECTION_LABELS[state.direction] || state.direction, stateKey: 'direction' });
         if (state.country)   chips.push({ key: 'country', val: state.country,         stateKey: 'country' });
         if (state.asn)       chips.push({ key: 'asn',     val: 'AS' + state.asn,       stateKey: 'asn' });
+        if (state.site_id)   chips.push({ key: 'site',   val: siteLabel(state.site_id),     stateKey: 'site_id' });
         if (state.device_id) chips.push({ key: 'device', val: deviceLabel(state.device_id), stateKey: 'device_id' });
         if (state.probe_id)  chips.push({ key: 'probe',  val: probeLabel(state.probe_id),   stateKey: 'probe_id' });
 
@@ -452,6 +457,7 @@
         // It honors the same filter set as the samples list so the shared filter
         // row narrows both tabs — except src_port, which rollups don't store.
         var params = ['hours=' + encodeURIComponent(state.hours)];
+        if (state.site_id)   params.push('site_id='   + encodeURIComponent(state.site_id));
         if (state.device_id) params.push('device_id=' + encodeURIComponent(state.device_id));
         if (state.probe_id)  params.push('probe_id='  + encodeURIComponent(state.probe_id));
         if (state.protocol)  params.push('protocol='  + encodeURIComponent(state.protocol));
@@ -468,6 +474,7 @@
     function samplesURL(limit, offset) {
         var p = ['limit=' + limit];
         if (offset > 0) p.push('offset=' + offset);
+        if (state.site_id)   p.push('site_id='   + encodeURIComponent(state.site_id));
         if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
         if (state.probe_id)  p.push('probe_id='  + encodeURIComponent(state.probe_id));
         if (state.protocol)  p.push('protocol='  + encodeURIComponent(state.protocol));
@@ -1233,6 +1240,15 @@
             }
         } catch (e) {}
         return 'probe:' + id;
+    }
+    function siteLabel(id) {
+        try {
+            var sites = (window.adminMainState && window.adminMainState.sites) || [];
+            for (var i = 0; i < sites.length; i++) {
+                if (String(sites[i].id) === String(id)) return sites[i].name || ('site:' + id);
+            }
+        } catch (e) {}
+        return 'site:' + id;
     }
 
     function setFilter(key, value) {

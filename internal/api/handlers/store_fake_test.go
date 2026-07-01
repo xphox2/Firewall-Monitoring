@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
@@ -21,8 +22,9 @@ import (
 // embedded interface, which is exactly what we want for a focused test).
 type fakeStore struct {
 	database.Store
-	sites    []models.Site
-	sitesErr error
+	sites     []models.Site
+	sitesErr  error
+	gotFilter *database.NOCFilter // captured by GetNOCSnapshotFiltered
 }
 
 // WithContextStore lets reqDB(c) work — it returns the same fake, ignoring the
@@ -30,6 +32,13 @@ type fakeStore struct {
 func (f *fakeStore) WithContextStore(context.Context) database.Store { return f }
 
 func (f *fakeStore) GetAllSites() ([]models.Site, error) { return f.sites, f.sitesErr }
+
+// GetNOCSnapshotFiltered records the filter the handler built from query params
+// so a test can assert site_id / device_id were parsed and threaded through.
+func (f *fakeStore) GetNOCSnapshotFiltered(_ time.Duration, filter database.NOCFilter) (*database.NOCSnapshot, error) {
+	f.gotFilter = &filter
+	return &database.NOCSnapshot{}, nil
+}
 
 func newTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 	rec := httptest.NewRecorder()
@@ -72,5 +81,31 @@ func TestGetSites_FakeStoreError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+// TestGetNOCSnapshot_SiteFilter confirms the handler parses ?site_id and threads
+// it into the NOCFilter (the NOC drill-down path).
+func TestGetNOCSnapshot_SiteFilter(t *testing.T) {
+	fs := &fakeStore{}
+	h := &Handler{db: fs}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/noc/snapshot?site_id=7", nil)
+
+	h.GetNOCSnapshot(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if fs.gotFilter == nil || fs.gotFilter.SiteID == nil {
+		t.Fatalf("SiteID not parsed into filter: %+v", fs.gotFilter)
+	}
+	if *fs.gotFilter.SiteID != 7 {
+		t.Errorf("SiteID = %d, want 7", *fs.gotFilter.SiteID)
+	}
+	if fs.gotFilter.DeviceID != nil {
+		t.Errorf("DeviceID = %v, want nil (not supplied)", *fs.gotFilter.DeviceID)
 	}
 }
