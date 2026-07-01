@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.528] - 2026-07-01
+
+### Added
+- **Engineering audit 2026-07-01 (dual-repo, multi-agent consensus): `docs/audit-2026-07-01-consolidated.md`.** Deep adversarial audit of everything shipped since the fully-resolved 2026-06-23 audit (sFlow analytics R1–R6, SSE NOC, Console UI, probe lifecycle, collector rate-limiting/queue work). **64 confirmed findings** (server 52 / collector 12; 10 HIGH, 30 MEDIUM, 24 LOW), every one surviving adversarial refutation-based verification. Highest-risk clusters: paginated GROUP BY aggregations that can silently double-count or destroy rollup/syslog history (H1–H3), missing retention for the new flow tables (H4), the poller advisory work-lock leaking across pooled connections so a single poller skips its own ticks (H9), direct-link connection charts rendering cumulative counters as per-bucket deltas (H10), and collector rate-limiter/queue hardening gaps (H6/H7). Findings are documentation-only in this version — fixes land in follow-up commits per the report's suggested order. A collector-scoped copy ships in the collector repo.
+
 ## [0.10.527] - 2026-07-01
 
 ### Added
