@@ -523,6 +523,23 @@ func (p *Poller) pollAllDevices() {
 		}
 	}
 
+	// Same staleness sweep for the PROBES themselves. A probe's status was
+	// stored and never re-derived, so a probe whose collector stopped
+	// heartbeating (crash, restart into a bad state, network cut) stayed
+	// "online" in the UI indefinitely — even while its devices correctly flipped
+	// offline above. Flip it to offline on the same threshold so the fleet view
+	// is truthful. (Its devices already drive the DEVICE_OFFLINE alerts.)
+	staleProbes, perr := p.db.MarkStaleProbesOffline(threshold)
+	if perr != nil {
+		log.Printf("Stale probe check error: %v", perr)
+	} else if len(staleProbes) > 0 {
+		names := make([]string, len(staleProbes))
+		for i := range staleProbes {
+			names[i] = staleProbes[i].Name
+		}
+		log.Printf("Marked %d probe(s) offline (no heartbeat for >%v): %s", len(staleProbes), staleAfter, strings.Join(names, ", "))
+	}
+
 	// Recovery: any probe device that is reporting fresh data clears its
 	// (possibly) active offline alert. CheckDeviceOnline -> sendRecovery
 	// returns immediately when no offline alert is active, so iterating every

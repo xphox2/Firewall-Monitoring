@@ -504,19 +504,31 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		selectedVersion = *req.SchemaVersion
 	}
 
-	var setting models.SystemSetting
 	// AUDIT-017: keys are stored hashed; hash the presented key to look it up.
-	err := h.db.Gorm().Where("key = ?", "probe_registration_"+database.HashProbeKey(req.RegistrationKey)).First(&setting).Error
-	if err != nil || setting.Value == "" {
-		probeErr(c, http.StatusUnauthorized, "Invalid registration key")
-		return
-	}
+	keyHash := database.HashProbeKey(req.RegistrationKey)
 
+	// Primary lookup: find the probe directly by its stored (hashed)
+	// registration_key — the same column heartbeat auth uses
+	// (authenticateProbeByBearer). This is robust to a renamed probe: the legacy
+	// path below keyed off a `probe_registration_<hash>` setting whose Value is
+	// the probe NAME captured at create time, so renaming a probe (UpdateProbe
+	// allows it) left the setting stale and made registration 404 with "Probe
+	// not found" even though the probe still existed.
 	existingProbe := &models.Probe{}
-	err = h.db.Gorm().Where("name = ?", setting.Value).First(existingProbe).Error
+	err := h.db.Gorm().Where("registration_key = ?", keyHash).First(existingProbe).Error
 	if err != nil || existingProbe.ID == 0 {
-		probeErr(c, http.StatusNotFound, "Probe not found — it may have been deleted")
-		return
+		// Legacy fallback: the settings indirection, for any probe whose
+		// registration_key column predates being stored on the row.
+		var setting models.SystemSetting
+		if e := h.db.Gorm().Where("key = ?", "probe_registration_"+keyHash).First(&setting).Error; e != nil || setting.Value == "" {
+			probeErr(c, http.StatusUnauthorized, "Invalid registration key")
+			return
+		}
+		existingProbe = &models.Probe{}
+		if e := h.db.Gorm().Where("name = ?", setting.Value).First(existingProbe).Error; e != nil || existingProbe.ID == 0 {
+			probeErr(c, http.StatusNotFound, "Probe not found — it may have been deleted")
+			return
+		}
 	}
 
 	// If already approved and online, just return success

@@ -154,6 +154,33 @@ func (d *Database) GetAllProbes() ([]models.Probe, error) {
 	return probes, err
 }
 
+// MarkStaleProbesOffline flips probes still marked "online" to "offline" when
+// their last heartbeat (last_seen) predates staleThreshold. Mirrors
+// MarkStaleProbeDevicesOffline for devices: without this, a probe whose
+// collector stopped checking in (crashed, restarted into a bad state, network
+// cut) stayed "online" forever because probe status was stored and never
+// re-derived. Returns the transitioned probes so the caller can log/alert.
+func (d *Database) MarkStaleProbesOffline(staleThreshold time.Time) ([]models.Probe, error) {
+	var stale []models.Probe
+	if err := d.db.
+		Where("status = ? AND last_seen < ?", "online", staleThreshold).
+		Find(&stale).Error; err != nil {
+		return nil, err
+	}
+	if len(stale) == 0 {
+		return nil, nil
+	}
+	ids := make([]uint, len(stale))
+	for i := range stale {
+		ids[i] = stale[i].ID
+		stale[i].Status = "offline"
+	}
+	if err := d.db.Model(&models.Probe{}).Where("id IN ?", ids).Update("status", "offline").Error; err != nil {
+		return nil, err
+	}
+	return stale, nil
+}
+
 func (d *Database) GetProbe(id uint) (*models.Probe, error) {
 	var probe models.Probe
 	err := d.db.Preload("Site").First(&probe, id).Error

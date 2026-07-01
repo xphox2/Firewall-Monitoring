@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.521] - 2026-07-01
+
+### Fixed
+- **Probe registration no longer 404s after a probe is renamed.** `RegisterProbe` looked the probe up by the *name* stored in its `probe_registration_<hash>` setting at create time; renaming the probe (allowed by `UpdateProbe`) left that name stale, so a collector re-registering got `404 "Probe not found — it may have been deleted"` even though the probe still existed. It now looks the probe up **directly by its stored (hashed) `registration_key`** — the same column heartbeat auth uses — and only falls back to the legacy name lookup. This self-heals existing diverged installs (no DB surgery needed) and eliminates the rename-divergence class of failure. An unknown key still returns 401.
+- **Probes are now marked offline when their collector stops checking in.** A probe's `status` was stored and never re-derived, so a probe whose collector crashed/restarted-into-a-bad-state/lost-network stayed `"online"` in the UI indefinitely (its devices correctly went offline, but the probe itself didn't). The poller now runs `MarkStaleProbesOffline` each cycle on the same staleness threshold as its devices (3× poll interval, min 5 min), flipping stale `online` probes to `offline` and logging the transition. Mirrors the existing `MarkStaleProbeDevicesOffline` device sweep.
+  - Tests: `MarkStaleProbesOffline` (only stale-online probes flip, idempotent) and register-by-key surviving a stale registration setting.
+
 ## [0.10.520] - 2026-07-01
 
 ### Docs
