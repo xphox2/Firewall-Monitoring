@@ -1,5 +1,11 @@
 # Lessons
 
+## Never round-trip a UTF-8 source file through PowerShell 5.1 Get-Content/Set-Content (2026-07-01)
+
+**Mistake:** bumped the collector version with `(Get-Content -Raw) -replace ... | Set-Content -Encoding utf8`. PS 5.1 reads a BOM-less UTF-8 file as ANSI, so every non-ASCII character (comment arrows `→`, em-dashes) was double-encoded into mojibake — 38 corrupted lines were committed and pushed before `git show --stat` caught the oversized diff (build stayed green because only comments were hit).
+
+**Rules:** (a) single-line edits in Go/source files use the Edit tool, never a PowerShell re-write of the whole file; (b) after any scripted file rewrite, run `git diff --stat` and treat a larger-than-expected line count as corruption until proven otherwise; (c) if PowerShell must write a file other tools read, remember `-Encoding utf8` writes a BOM in 5.1 (Go tolerates it, gofmt/gitignore diffs don't love it) — prefer `[System.IO.File]::WriteAllText` with explicit `UTF8Encoding($false)`.
+
 ## A "flaky" test that never goes green on rerun is a real bug — re-diagnose, don't keep rerunning (2026-06-23)
 
 **Context:** `TestPostgresIntegration/PopulatedTableSkipped` was documented as an intermittent flake with the remedy "do a full `gh run rerun`, it usually goes green." By 2026-06-23 that remedy was stale: master had been red on the PG lane for 8+ consecutive runs and reruns never cleared it. The "flake" was a real, persistent **shared-database race** — `go test ./pkgA/... ./pkgB/...` runs the two package binaries concurrently, and both `NewIntegrationDB`s did an unsynchronized `DROP SCHEMA public CASCADE` on the same `TEST_PG_DSN`, so one process reset the other's in-flight migration. Nondeterministic *which* relation was reported missing (`schema_migrations` vs `system_status`) — the tell of a concurrency bug, not container timing.

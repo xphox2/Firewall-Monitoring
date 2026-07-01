@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.529] - 2026-07-01
+
+### Docs
+- **Recorded a tooling lesson in `tasks/lessons.md`:** never round-trip a UTF-8 source file through Windows PowerShell 5.1 `Get-Content`/`Set-Content` — a BOM-less UTF-8 file is read as ANSI and every non-ASCII character is double-encoded into mojibake (this corrupted 38 comment lines in the collector's `main.go` during the v1.2.153 version bump before being caught by `git show --stat` and reverted). Single-line source edits go through a proper editor tool; scripted rewrites must be followed by a `git diff --stat` sanity check.
+
 ## [0.10.528] - 2026-07-01
 
 ### Added
