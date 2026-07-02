@@ -98,11 +98,13 @@ func (h *Handler) Login(c *gin.Context) {
 	// Get admin record to use real ID and token version in JWT
 	var adminID uint = 1
 	var tokenVersion uint
+	var mustChangePassword bool
 	if db != nil {
 		adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
 		if adminErr == nil && adminRecord != nil {
 			adminID = adminRecord.ID
 			tokenVersion = adminRecord.TokenVersion
+			mustChangePassword = adminRecord.MustChangePassword
 		}
 	}
 
@@ -145,8 +147,9 @@ func (h *Handler) Login(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"message":    "Login successful",
-		"csrf_token": csrfToken,
+		"message":              "Login successful",
+		"csrf_token":           csrfToken,
+		"must_change_password": mustChangePassword,
 	}))
 }
 
@@ -301,10 +304,76 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// Clear the forced-change flag now that the operator has set their own
+	// password. Best-effort: a failure here only means the user is re-prompted.
+	if err := db.SetAdminMustChangePassword(userIDUint, false); err != nil {
+		log.Printf("Failed to clear must_change_password after password change: %v", err)
+	}
+
 	// Invalidate all existing tokens by incrementing token version
 	if err := db.IncrementAdminTokenVersion(userIDUint); err != nil {
 		log.Printf("Failed to increment token version after password change: %v", err)
 	}
 
 	c.JSON(http.StatusOK, response.Message("Password changed successfully. Please log in again."))
+}
+
+// RequirePasswordChanged blocks admin API routes for an account still flagged
+// must_change_password, so the forced first-login rotation cannot be skipped by
+// calling the API directly (the SPA modal is only the UX half). The change-
+// password, logout, CSRF, and session endpoints stay reachable so the operator
+// can actually complete the change. Returns 403 with a machine-readable code the
+// SPA uses to pop the change-password modal.
+// passwordChangeAllowlist is the set of admin routes reachable while an account
+// is still flagged must_change_password: exactly what the operator needs to load
+// the SPA and complete the change. Everything else under /admin/api is blocked.
+var passwordChangeAllowlist = map[string]bool{
+	"/admin/api/csrf-token":        true,
+	"/admin/api/logout":            true,
+	"/admin/api/settings/password": true,
+}
+
+func (h *Handler) RequirePasswordChanged() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		route := c.FullPath()
+		// HTML SPA pages (no /api/ segment) must load so the change-password
+		// modal can render; the completion endpoints are explicitly allowed.
+		if !strings.Contains(route, "/api/") || passwordChangeAllowlist[route] {
+			c.Next()
+			return
+		}
+		db := h.reqDB(c)
+		if db == nil {
+			c.Next()
+			return
+		}
+		userID, ok := c.Get("user_id")
+		if !ok {
+			c.Next()
+			return
+		}
+		uid, ok := userID.(uint)
+		if !ok {
+			c.Next()
+			return
+		}
+		must, err := db.GetAdminMustChangePassword(uid)
+		if err != nil {
+			// Fail closed: if we can't confirm the account is clear, block the
+			// action rather than let a forced-change account through on a DB blip.
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Password change required",
+				"code":  "password_change_required",
+			})
+			return
+		}
+		if must {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "You must change your password before continuing",
+				"code":  "password_change_required",
+			})
+			return
+		}
+		c.Next()
+	}
 }

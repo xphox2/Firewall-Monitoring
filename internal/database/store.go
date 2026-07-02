@@ -225,6 +225,8 @@ type AuthStore interface {
 	GetAdminByUsername(username string) (*auth.AdminAuth, error)
 	UpdateAdminPassword(id uint, password string) error
 	IncrementAdminTokenVersion(id uint) error
+	SetAdminMustChangePassword(id uint, must bool) error
+	GetAdminMustChangePassword(id uint) (bool, error)
 	SaveLoginAttempt(attempt *models.LoginAttempt) error
 }
 

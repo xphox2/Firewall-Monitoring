@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.554"
+const ServerVersion = "0.10.555"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -284,7 +284,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to hash admin password: %v", err)
 		}
-		db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword)
+		// Force a first-login password change only when the bootstrap password was
+		// auto-generated (it gets written to the container log and .admin-password
+		// file). An operator who set ADMIN_PASSWORD deliberately is trusted as-is.
+		if err := db.InitAdmin(cfg.Auth.AdminUsername, hashedPassword, cfg.IsGeneratedPassword()); err != nil {
+			log.Printf("WARNING: admin initialization failed: %v", err)
+		}
 	}
 
 	// AUDIT-084: background workers get a cancellable context so they exit on
@@ -630,6 +635,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	// AUDIT-078: record authenticated admin mutations. After auth+CSRF so it
 	// only fires for genuine admin actions and the actor is on the context.
 	admin.Use(audit.Middleware(db))
+	// Forced first-login password change: block all admin API routes (except the
+	// change-password/logout/csrf endpoints and the SPA pages) for an account
+	// still flagged must_change_password, so the rotation can't be skipped by
+	// calling the API directly. After AdminAuth so user_id is on the context.
+	admin.Use(handler.RequirePasswordChanged())
 	{
 		admin.GET("", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)

@@ -30,10 +30,11 @@ type Claims struct {
 }
 
 type AdminAuth struct {
-	ID           uint
-	Username     string
-	Password     string
-	TokenVersion uint
+	ID                 uint
+	Username           string
+	Password           string
+	TokenVersion       uint
+	MustChangePassword bool
 }
 
 type Database interface {

@@ -57,16 +57,35 @@ func (d *Database) UpdateAdmin(admin *models.Admin) error {
 	return d.db.Save(admin).Error
 }
 
-func (d *Database) InitAdmin(username, password string) error {
+func (d *Database) InitAdmin(username, password string, mustChangePassword bool) error {
 	admin, err := d.GetAdmin()
 	if err != nil {
 		return fmt.Errorf("init admin: load existing admin: %w", err)
 	}
 	if admin == nil {
-		return d.CreateAdmin(&models.Admin{Username: username, Password: password})
+		return d.CreateAdmin(&models.Admin{
+			Username:           username,
+			Password:           password,
+			MustChangePassword: mustChangePassword,
+		})
 	}
 	log.Printf("Admin user already exists, skipping initialization")
 	return nil
+}
+
+// SetAdminMustChangePassword sets or clears the forced-password-change flag.
+func (d *Database) SetAdminMustChangePassword(id uint, must bool) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).Update("must_change_password", must).Error
+}
+
+// GetAdminMustChangePassword reports whether the given admin must change its
+// password before using the admin API.
+func (d *Database) GetAdminMustChangePassword(id uint) (bool, error) {
+	var admin models.Admin
+	if err := d.db.Select("must_change_password").Where("id = ?", id).First(&admin).Error; err != nil {
+		return false, err
+	}
+	return admin.MustChangePassword, nil
 }
 
 func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) {
@@ -79,10 +98,11 @@ func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) 
 		return nil, err
 	}
 	return &auth.AdminAuth{
-		ID:           admin.ID,
-		Username:     admin.Username,
-		Password:     admin.Password,
-		TokenVersion: admin.TokenVersion,
+		ID:                 admin.ID,
+		Username:           admin.Username,
+		Password:           admin.Password,
+		TokenVersion:       admin.TokenVersion,
+		MustChangePassword: admin.MustChangePassword,
 	}, nil
 }
 

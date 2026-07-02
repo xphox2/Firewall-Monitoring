@@ -229,6 +229,102 @@
         if (existing) existing.remove();
     }
 
+    // forcePasswordChange renders a one-time, non-dismissable overlay that makes
+    // the operator rotate the auto-generated bootstrap admin password before the
+    // console is usable. It POSTs to the change-password endpoint (which the
+    // server leaves reachable while must_change_password is set); on success the
+    // server bumps the token version, so we send the user back to /admin/login.
+    var forcePwOpen = false;
+    function forcePasswordChange() {
+        if (forcePwOpen) return;
+        forcePwOpen = true;
+
+        var overlay = document.createElement('div');
+        overlay.id = 'force-pw-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;';
+
+        var card = document.createElement('div');
+        card.style.cssText = 'background:var(--fwmon-bg-primary,#161b22);color:var(--fwmon-text-primary,#e6edf3);border:1px solid var(--fwmon-border,#30363d);border-radius:10px;max-width:420px;width:92%;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,0.5);font-family:inherit;';
+
+        var title = document.createElement('h2');
+        title.textContent = 'Change your password';
+        title.style.cssText = 'margin:0 0 8px;font-size:18px;';
+
+        var intro = document.createElement('p');
+        intro.textContent = 'This account was created with an auto-generated password (written to the server log). Set your own password to continue.';
+        intro.style.cssText = 'margin:0 0 16px;font-size:13px;color:var(--fwmon-text-muted,#8b949e);line-height:1.5;';
+
+        function field(labelText, id, placeholder) {
+            var wrap = document.createElement('div');
+            wrap.style.cssText = 'margin-bottom:12px;';
+            var lbl = document.createElement('label');
+            lbl.textContent = labelText;
+            lbl.setAttribute('for', id);
+            lbl.style.cssText = 'display:block;font-size:12px;margin-bottom:4px;';
+            var inp = document.createElement('input');
+            inp.type = 'password';
+            inp.id = id;
+            inp.placeholder = placeholder || '';
+            inp.autocomplete = 'new-password';
+            inp.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border-radius:6px;border:1px solid var(--fwmon-border,#30363d);background:var(--fwmon-bg-secondary,#21262d);color:inherit;';
+            wrap.appendChild(lbl);
+            wrap.appendChild(inp);
+            return { wrap: wrap, input: inp };
+        }
+
+        var cur = field('Current (generated) password', 'force-pw-current');
+        var next = field('New password (min 8 characters)', 'force-pw-new');
+        var conf = field('Confirm new password', 'force-pw-confirm');
+
+        var errBox = document.createElement('div');
+        errBox.style.cssText = 'color:var(--fwmon-danger,#f85149);font-size:12px;min-height:16px;margin-bottom:8px;';
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Change password';
+        btn.style.cssText = 'width:100%;padding:10px;border:none;border-radius:6px;background:var(--fwmon-accent,#238636);color:#fff;font-weight:600;cursor:pointer;';
+
+        function submit() {
+            errBox.textContent = '';
+            var c = cur.input.value, n = next.input.value, cf = conf.input.value;
+            if (!c || !n || !cf) { errBox.textContent = 'Please fill in all fields.'; return; }
+            if (n !== cf) { errBox.textContent = 'New passwords do not match.'; return; }
+            if (n.length < 8) { errBox.textContent = 'New password must be at least 8 characters.'; return; }
+            btn.disabled = true; btn.textContent = 'Changing...';
+            fetch(API_BASE + '/settings/password', {
+                method: 'POST',
+                headers: { 'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ current_password: c, new_password: n })
+            }).then(function(res) {
+                return res.json().then(function(body) { return { ok: res.ok, body: body }; });
+            }).then(function(r) {
+                if (r.ok && r.body && r.body.success !== false) {
+                    (window.top || window).location.href = '/admin/login';
+                } else {
+                    errBox.textContent = (r.body && r.body.error) || 'Password change failed.';
+                    btn.disabled = false; btn.textContent = 'Change password';
+                }
+            }).catch(function() {
+                errBox.textContent = 'Connection error. Please try again.';
+                btn.disabled = false; btn.textContent = 'Change password';
+            });
+        }
+        btn.addEventListener('click', submit);
+        conf.input.addEventListener('keydown', function(e) { if (e.key === 'Enter') submit(); });
+
+        card.appendChild(title);
+        card.appendChild(intro);
+        card.appendChild(cur.wrap);
+        card.appendChild(next.wrap);
+        card.appendChild(conf.wrap);
+        card.appendChild(errBox);
+        card.appendChild(btn);
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+        cur.input.focus();
+    }
+
     function apiFetch(url, options) {
         options = options || {};
         var headers = Object.assign({
@@ -262,6 +358,13 @@
             }
             if (res.status === 403) {
                 return res.json().then(function(err) {
+                    // Forced first-login password change: the server blocks all
+                    // admin API until the auto-generated password is rotated.
+                    // Pop a blocking modal instead of a generic error toast.
+                    if (err && err.code === 'password_change_required') {
+                        forcePasswordChange();
+                        throw new Error('Password change required');
+                    }
                     var msg = err.error || 'Forbidden';
                     if (msg.indexOf('CSRF') !== -1) {
                         msg += ' - please refresh the page and try again';

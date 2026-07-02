@@ -554,12 +554,17 @@ type SystemSetting struct {
 }
 
 type Admin struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	Username     string    `json:"username" gorm:"uniqueIndex;not null"`
-	Password     string    `json:"-" gorm:"not null"`
-	TokenVersion uint      `json:"-" gorm:"default:0"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID       uint   `json:"id" gorm:"primaryKey"`
+	Username string `json:"username" gorm:"uniqueIndex;not null"`
+	Password string `json:"-" gorm:"not null"`
+	// MustChangePassword forces a password change before the account can use the
+	// admin API. Set when the admin is bootstrapped with an auto-generated
+	// password (which is written to logs/disk), so a first-time operator can't
+	// silently keep that credential. Cleared on the first successful change.
+	MustChangePassword bool      `json:"-" gorm:"default:false"`
+	TokenVersion       uint      `json:"-" gorm:"default:0"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type Site struct {

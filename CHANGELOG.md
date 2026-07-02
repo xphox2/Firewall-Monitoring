@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.555] - 2026-07-02
+
+### Added
+- **Forced password change on first login when the admin password was auto-generated.** A fresh install auto-generates the admin password and writes it to the container log and `.admin-password` file; previously it stayed valid forever unless the operator manually rotated it. The admin is now flagged `must_change_password` at bootstrap (only when the password was generated — an operator who set `ADMIN_PASSWORD` deliberately is trusted as-is), and the server **enforces the rotation**: a new `RequirePasswordChanged` gate on the admin group returns `403 {code:"password_change_required"}` for every admin API route except the change-password, logout, and CSRF endpoints (and the SPA pages), so the change cannot be skipped by calling the API directly. The admin console detects that code in `apiFetch` and pops a blocking change-password modal; on success the token version is bumped and the operator re-authenticates. New migration v19 (`admin_must_change_password`, idempotent `ADD COLUMN IF NOT EXISTS`). The gate fails closed — if the flag can't be read, the action is blocked. Regression tests `TestAdminMustChangePassword_Lifecycle` / `TestInitAdmin_OperatorPasswordNotForced`.
+
 ## [0.10.554] - 2026-07-02
 
 ### Added

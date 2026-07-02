@@ -1127,3 +1127,18 @@ func (d *Database) migrateFlowIfCountersAddDirection() error {
 	log.Printf("migrate v18 flow_if_counters.if_direction: ensured column exists (bigint not null default 0)")
 	return nil
 }
+
+// migrateAdminMustChangePassword adds the boolean that forces a first-login
+// password change. Existing admins default to false (they set their password
+// deliberately, or already rotated it) — only freshly-bootstrapped admins with
+// an auto-generated password get the flag set, at InitAdmin time.
+func (d *Database) migrateAdminMustChangePassword() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.Admin{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("migrate v19 add admins.must_change_password: %w", err)
+	}
+	log.Printf("migrate v19 admins.must_change_password: ensured column exists (boolean not null default false)")
+	return nil
+}
