@@ -31,7 +31,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o 
 # resolves: postgresql16 / postgresql16-contrib are 16.14-r0 in 3.21 main, so
 # PostgreSQL stays at MAJOR 16 — existing PGDATA directories remain compatible
 # and no pg_upgrade is required on deploy. su-exec (0.2-r3) is also in 3.21 main.
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates bash wget su-exec postgresql16 postgresql16-contrib
 
