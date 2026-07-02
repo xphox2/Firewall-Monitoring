@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.558] - 2026-07-02
+
+### Added
+- **"Report an issue" link in the admin sidebar** — opens the GitHub issue chooser in a new tab, giving alpha operators a one-click path to file bugs/feedback.
+- **Resource-footprint & DB-sizing guidance in `docs/OPERATIONS.md`** — explains that PostgreSQL disk (not the daemons) is what grows, gives the `rows ≈ ingest_rate × retention` model and the dominant tables, and shows the exact `pg_total_relation_size` / per-day-count queries to size from real data instead of guessing.
+
 ## [0.10.557] - 2026-07-02
 
 ### Added

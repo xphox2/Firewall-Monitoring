@@ -196,6 +196,35 @@ effect on an already-initialized install. To reset:
 - **Remote sites** scale horizontally via probes (each relays SNMP/syslog/
   sFlow/ICMP back to the central server); this is the supported scale-out path.
 
+## Resource footprint & DB sizing
+
+The three Go daemons themselves are light (tens of MB RSS each); **PostgreSQL
+disk is what grows**, and it is driven almost entirely by the high-volume
+time-series tables, not the binaries. Rather than a single "it needs N GB"
+figure (which depends entirely on your fleet size, traffic, and retention),
+estimate from the drivers:
+
+- **Dominant tables** (all monthly range-partitioned): `syslog_messages`,
+  `flow_samples` (sFlow), `interface_stats`, `system_status`, `trap_events`,
+  `syslog_summaries`. `syslog_messages` is the usual #1 — an unset
+  `RETENTION_SYSLOG_CRITICAL_DAYS` lets it grow unbounded (see Failure modes).
+- **Rough model:** `rows_retained ≈ ingest_rate × retention_window`, and disk ≈
+  `rows_retained × bytes_per_row` (order 100–300 B/row for syslog/stats after
+  index overhead). So the levers are entirely the `RETENTION_*` env vars and how
+  much syslog/sFlow your devices emit — halve the retention window, roughly
+  halve the steady-state size for that table.
+- **Bounding it:** set every `RETENTION_*` var (see `docs/DATA-RETENTION.md`),
+  and prefer `RETENTION_SYSLOG_INFORMATIONAL_DAYS` low (informational syslog is
+  the bulk) while keeping critical longer. The 24 h retention cleanup runs in
+  the poller.
+- **Measure, don't guess:** once running, size it from your own data —
+  `SELECT pg_size_pretty(pg_total_relation_size('syslog_messages'));` and
+  `SELECT date_trunc('day',timestamp), count(*) FROM syslog_messages GROUP BY 1
+  ORDER BY 1;` give you the real per-day growth to project from.
+
+CPU is dominated by SNMP poll fan-out (poller) and sFlow parsing (ingest); both
+scale with fleet size and sampling rate rather than a fixed baseline.
+
 ## Running a single API instance (AUDIT-040)
 
 The API process keeps four pieces of state **in memory**, not in the database:
