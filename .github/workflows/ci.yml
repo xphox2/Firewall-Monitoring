@@ -93,6 +93,41 @@ jobs:
       - name: Run staticcheck
         run: staticcheck ./...
 
+  gosec:
+    name: gosec
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+
+      - name: Run gosec
+        # Security-focused static analysis. High-signal rules (SQLi, command
+        # execution, SSRF via variable URL, weak-rand-for-tokens, unhandled
+        # crypto) are ENFORCED. Excluded rules are ones that are systematically
+        # false-positive for this app category and were reviewed in the
+        # 2026-07-02 audit:
+        #   G115 integer conversions   — Go idiom on DB-scanned counters
+        #   G124 cookie Secure flag     — Secure is COOKIE_SECURE/TLS-driven by design
+        #   G203 template.HTML in SVG   — report charts interpolate server-computed
+        #                                 numbers/timestamps only (verified), not user input
+        #   G304/G703 file-by-path      — the server reads its own config/secret files by path
+        #   G401/G501 crypto/md5        — non-crypto config-change fingerprint (see configdiff),
+        #                                 kept as MD5 so an algorithm change doesn't false-fire
+        #                                 a CONFIG_CHANGE alert on every device at upgrade
+        run: gosec -quiet -severity medium -exclude=G115,G124,G203,G304,G401,G501,G703 ./...
+
   integration-postgres:
     name: Integration (PostgreSQL)
     runs-on: ubuntu-latest

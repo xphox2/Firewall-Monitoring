@@ -9,7 +9,13 @@
 package configdiff
 
 import (
-	"crypto/md5"
+	// MD5 here is a NON-CRYPTOGRAPHIC content fingerprint for config-change
+	// detection, not a security primitive. It is never used for authentication,
+	// integrity, or signatures. Kept as MD5 (not SHA-256) deliberately: the
+	// stored NormalizedChecksum is compared against the prior revision's, so
+	// changing the algorithm would flag every device's config as "changed" once
+	// on upgrade (a false CONFIG_CHANGE alert per device).
+	"crypto/md5" // (gosec G501 excluded in CI: non-crypto fingerprint, see note above)
 	"encoding/hex"
 	"strings"
 )
@@ -71,7 +77,7 @@ func Normalize(vendor string, raw []byte) (normalized []byte, quality string) {
 // as DeviceConfigRevision.NormalizedChecksum.
 func HashNormalized(vendor string, raw []byte) string {
 	normalized, _ := Normalize(vendor, raw)
-	sum := md5.Sum(normalized)
+	sum := md5.Sum(normalized) // (gosec G401 excluded in CI: non-crypto fingerprint, see import note)
 	return hex.EncodeToString(sum[:])
 }
 

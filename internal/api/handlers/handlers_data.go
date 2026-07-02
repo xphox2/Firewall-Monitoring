@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"crypto/md5"
+	"crypto/md5" // (gosec G501 excluded in CI: non-crypto config-change checksum)
 	"encoding/hex"
 	"log"
 	"math"
@@ -924,7 +924,7 @@ func (h *Handler) ReceiveConfigRevision(c *gin.Context) {
 		vendor = dev.Vendor
 	}
 	normalized, quality := configdiff.Normalize(vendor, []byte(rev.ConfigText))
-	normalizedSum := md5.Sum(normalized)
+	normalizedSum := md5.Sum(normalized) // (gosec G401 excluded in CI: non-crypto config-change checksum)
 	rev.NormalizedChecksum = hex.EncodeToString(normalizedSum[:])
 
 	// Honor a TriggerSource the collector explicitly set (e.g. "syslog"). If it

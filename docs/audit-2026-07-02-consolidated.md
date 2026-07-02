@@ -10,13 +10,13 @@ finding verified by 3 independent refuters — only findings surviving a 2-of-3
 **Result: 29 raw findings → 12 confirmed (6 HIGH / 4 MEDIUM / 2 LOW), 17 refuted.**
 
 Server findings are **RESOLVED** in server v0.10.556. Collector findings are
-**OPEN** pending the collector remediation pass (tracked below).
+**RESOLVED** in collector v1.2.162.
 
 ---
 
 ## HIGH
 
-### H1 — Spoofed syslog config-change packets → SSH/TFTP config-fetch storm  · collector · OPEN
+### H1 — Spoofed syslog config-change packets → SSH/TFTP config-fetch storm  · collector · RESOLVED (v1.2.162)
 `cmd/collector/main.go`. The syslog receiver has no source-IP allow-list (only a
 per-source PPS limiter). A spoofed UDP packet whose body carries a config-change
 logid and a monitored firewall's IP is treated as a real commit; the debounce key
@@ -57,13 +57,13 @@ The test client bypassed `SafeDialContext`. Now uses the guarded transport.
 `probeDeviceIDs` returned nil on error, which the ingestion guards read as
 "skip enforcement". Now returns a deny-all empty set on error.
 
-### M2 — sFlow/counter attribution trusts the datagram's agent IP · collector · OPEN
+### M2 — sFlow/counter attribution trusts the datagram agent IP · collector · RESOLVED (v1.2.162)
 `cmd/collector/main.go` attributes samples by the `SamplerAddress` field parsed
 from the datagram body, never compared to the UDP source. A spoofed datagram can
 poison a firewall's analytics/threat pipeline. **Fix:** bind attribution to the
 true UDP source + a source-IP allow-list.
 
-### M3 — Event/revision queues re-queue permanently-rejected batches forever · collector · OPEN
+### M3 — Event/revision queues re-queue permanently-rejected batches forever · collector · RESOLVED (v1.2.162)
 `internal/relay/relay.go`: `sendBatchesSequential` requeues on any failure, so a
 permanently-rejected (4xx) batch is retried every cycle forever and evicts good
 data at the byte cap. **Fix:** drop non-retryable 4xx (as the metric-queue path
@@ -105,9 +105,9 @@ Full per-finding refutation reasoning is retained in the audit run journal.
 
 ---
 
-## Cross-repo follow-ups (open)
+## Cross-repo follow-ups
 
-The three collector findings (H1, M2, M3) require changes in
-`E:\Golang\OpenCode\Firewall-Collector` and are tracked for the collector
-remediation pass; the syslog/sFlow source-IP allow-list (H1/M2) should reuse the
-existing `applyTFTPAllowlist` machinery.
+The three collector findings (H1, M2, M3) were fixed in collector v1.2.162; the
+syslog/sFlow source-IP allowlist (H1/M2) reuses the existing `applyTFTPAllowlist`
+machinery. All 12 confirmed findings are resolved as of server v0.10.556 /
+collector v1.2.162.

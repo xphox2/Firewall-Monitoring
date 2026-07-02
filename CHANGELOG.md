@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.557] - 2026-07-02
+
+### Added
+- **`gosec` security static-analysis is now a CI gate** (`.github/workflows/ci.yml`, pinned v2.27.1). High-signal rules (SQL injection, command execution, SSRF via variable URL, weak-randomness-for-tokens, unhandled crypto) are enforced. A curated exclude list (`G115,G124,G203,G304,G401,G501,G703`) drops the rules that are systematically false-positive for this app category — each documented in the workflow and reviewed in the 2026-07-02 audit (integer conversions on DB counters, the TLS-driven `Secure` cookie flag, report-SVG `template.HTML` over server-computed numbers, config/secret file reads by path, and the non-cryptographic MD5 config-change fingerprint).
+
+### Docs
+- Documented in-code why `configdiff` config-change checksums stay on MD5 (a non-cryptographic content fingerprint; switching algorithms would false-fire a CONFIG_CHANGE alert on every device once at upgrade). Marked all three collector findings of the 2026-07-02 audit resolved (collector v1.2.162) in `docs/audit-2026-07-02-consolidated.md`.
+
 ## [0.10.556] - 2026-07-02
 
 ### Security
