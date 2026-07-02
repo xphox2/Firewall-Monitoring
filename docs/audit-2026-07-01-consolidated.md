@@ -85,6 +85,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** pin one `*sql.Conn` for acquire, stash it, release on the SAME conn, then Close; also check `pg_advisory_unlock`'s boolean.
 
 ### H10. Direct-link connection traffic ships CUMULATIVE interface counters in the per-bucket-delta chart contract — orders-of-magnitude inflated transfer/Mbps
+> **✅ RESOLVED (v0.10.537)** — `interfaceTrafficWindow` now converts to per-bucket deltas PER INTERFACE before summing (consecutive-bucket difference, clamped at 0 on counter resets, first/baseline bucket dropped) — matching the tunnel path's LAG() semantics, so both UI consumers render correct transfer/Mbps for every family. The regression test that pinned the cumulative pass-through was rewritten to assert exact delta totals including a mid-series counter reset.
 - **server** · `internal/database/connection_detail.go:662`
 - `GetConnectionTraffic`'s direct-family path (ethernet/lag/l2vlan/bridge/wan) sums `GetInterfaceChartWindow` buckets, which are AVG of `interface_stats.in_bytes/out_bytes` — documented **raw cumulative counters** (invariant: bandwidth math must use consecutive deltas). The tunnel path of the same endpoint returns LAG() per-bucket deltas. Both UI consumers (connection-detail page, diagram side panel) run the payload through `FwmonBwChart.normalizeDeltas`, treating cumulative octets as per-bucket transfer: a member interface with 2 TB cumulative InBytes renders every hour bucket as ~2 TB transferred / ~4.4 Gbps flat — monotonically growing garbage. The regression test (`connection_traffic_direct_test.go:48`) pins the wrong (pass-through) behavior; the JS comment "arrives as per-bucket deltas" is false for the direct family.
 - **Fix:** delta consecutive buckets per interface server-side (clamp <0 to 0 for resets) BEFORE summing across interfaces; update the regression test.
@@ -150,6 +151,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** skip compute when no subscribers (compute on first subscribe); gate the hub to the singleton primary.
 
 ### M12. Tunnel/overlay connection traffic never populates bucket_ms — 3-mode charts fall back to a 60s interval, 60× inflated Mbps on 7d/30d
+> **✅ RESOLVED (v0.10.537, with H10 — same endpoint)** — the tunnel path now backfills `BucketMs` from the bucket string via `parseBucketToMillis`, exactly like `GetInterfaceChartWindow`, so `normalizeDeltas` computes rates from the real bucket width on every range.
 - **server** · `internal/database/connection_detail.go:800`
 - The tunnel LAG() SELECT has no bucket_ms column, so every row serializes 0; `normalizeDeltas`' `medianIntervalSec()` falls back to 60 while 7d/30d buckets are HOURLY → exactly 60× inflated throughput (5-min cadence on minute buckets gives 5×). The direct path populates BucketMs, so direct vs tunnel show inconsistent rates side by side.
 - **Fix:** backfill `rows[i].BucketMs = parseBucketToMillis(...)` like `GetInterfaceChartWindow`; JS fallback to parsing `d.bucket` when bucket_ms is 0.

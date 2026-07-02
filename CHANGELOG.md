@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.537] - 2026-07-01
+
+### Fixed
+- **Direct-link connection traffic charts no longer render cumulative counters as per-bucket transfer (audit 2026-07-01 finding H10 — the last open HIGH).** `GetConnectionTraffic`'s direct-family path (ethernet/lag/l2vlan/bridge/wan) summed `interface_stats` bucket averages straight through — but those are **raw cumulative SNMP counters**, while the endpoint's `VPNChartBucket` contract is per-bucket deltas (the tunnel path LAG()s; both the connection-detail page and the diagram side panel divide `in_bytes` by the bucket interval for Mbps). A member interface with 2 TB lifetime InBytes rendered every hour bucket as ~2 TB transferred / a monotonically growing multi-Gbps flat line. `interfaceTrafficWindow` now deltas consecutive buckets **per interface** before summing across interfaces, clamping negative differences (counter resets/wraps) to 0 and dropping each interface's baseline bucket — identical semantics to the tunnel path. The regression test that previously pinned the cumulative pass-through now asserts exact delta totals, including a mid-series counter-reset clamp and that the dest endpoint's large cumulative counters no longer leak into the aggregate.
+- **Tunnel/overlay connection traffic now populates `bucket_ms` (audit 2026-07-01 finding M12, same endpoint).** The LAG() SELECT had no bucket_ms column, so every row serialized 0 and the 3-mode charts' `normalizeDeltas` fell back to a hardcoded 60-second interval — exactly 60× inflated Mbps on the hourly-bucketed 7d/30d ranges (5× on a 5-minute poll cadence), and inconsistent with the direct path side by side. Backfilled from the bucket string via `parseBucketToMillis`, the same way `GetInterfaceChartWindow` does.
+
 ## [0.10.536] - 2026-07-01
 
 ### Docs

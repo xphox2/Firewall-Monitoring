@@ -11,8 +11,17 @@ import (
 // split: a direct link (ethernet/lag/l2vlan/bridge/wan) graphs interface_stats
 // — keyed by the interface names in TunnelNames — instead of vpn_status, which
 // has no rows for such links. It also checks the family classifier and that
-// the per-interface buckets merge into the VPN chart shape (bucket_ms set,
-// aggregate == sum of the member interfaces on the source endpoint).
+// the per-interface buckets merge into the VPN chart shape (bucket_ms set).
+//
+// H10 of the 2026-07-01 audit: interface_stats counters are RAW CUMULATIVE,
+// and the VPNChartBucket contract is per-bucket DELTAS (the tunnel path LAGs;
+// both JS consumers divide in_bytes by the bucket interval for Mbps). The
+// pre-fix version of this test asserted cumulative pass-through — pinning the
+// bug. It now asserts per-interface consecutive-bucket deltas, clamped at 0
+// on counter resets, with each interface's first (baseline) bucket dropped.
+// Samples are seeded 5 minutes apart because the 24h window buckets at 5min
+// (bucketUnitForWindow), putting each sample deterministically in its own
+// bucket so the expected deltas are exact.
 func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 
@@ -32,23 +41,28 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 		t.Fatalf("seed connection: %v", err)
 	}
 
-	base := time.Now().Add(-20 * time.Minute)
+	// One sample per 5-min bucket (24h window ⇒ 5min buckets).
+	base := time.Now().Add(-40 * time.Minute)
 	seedIface := func(dev uint, name string, idx int, samples []uint64) {
 		for i, b := range samples {
 			if err := d.db.Create(&models.InterfaceStats{
 				DeviceID: dev, Name: name, Index: idx, Status: "up", Speed: 1_000_000_000,
 				InBytes: b, OutBytes: b / 2, InPackets: b / 100, OutPackets: b / 100,
-				Timestamp: base.Add(time.Duration(i) * time.Minute),
+				Timestamp: base.Add(time.Duration(i) * 5 * time.Minute),
 			}).Error; err != nil {
 				t.Fatalf("seed iface %s: %v", name, err)
 			}
 		}
 	}
 	// Source endpoint (device 1) has both member interfaces with stats.
+	// port1: steadily growing counter → deltas 100+100+100 = 300.
 	seedIface(1, "port1", 5, []uint64{100, 200, 300, 400})
-	seedIface(1, "port2", 6, []uint64{10, 20, 30, 40})
+	// port2: counter RESET mid-series (20 → 5) → deltas 10 + clamp(0) + 10 = 20.
+	seedIface(1, "port2", 6, []uint64{10, 20, 5, 15})
 	// Dest endpoint (device 2) also has port1 — must NOT be summed into the
 	// source-perspective aggregate (would mix directions / double-count).
+	// A large constant counter also proves cumulative values no longer leak
+	// through: pre-fix this alone would have added 4×9000 to the aggregate.
 	seedIface(2, "port1", 5, []uint64{9000, 9000, 9000, 9000})
 
 	// Interface addresses let the UI pair the two ends by shared subnet.
@@ -70,29 +84,29 @@ func TestGetConnectionTraffic_DirectUsesInterfaceStats(t *testing.T) {
 		t.Fatal("expected interface-sourced buckets for a direct link, got none (still querying vpn_status?)")
 	}
 
-	var aggIn float64
+	var aggIn, aggOut float64
 	for _, r := range rows {
 		if r.BucketMs == 0 {
 			t.Error("bucket_ms not populated on direct-link traffic bucket")
 		}
 		aggIn += r.InBytes
+		aggOut += r.OutBytes
 	}
 
-	// Aggregate must equal the sum of the two source-side interfaces only.
-	to := time.Now()
-	from := to.Add(-24 * time.Hour)
-	wantIn := 0.0
-	for _, idx := range []int{5, 6} {
-		b, err := d.GetInterfaceChartWindow(1, idx, from, to)
-		if err != nil {
-			t.Fatalf("GetInterfaceChartWindow(%d): %v", idx, err)
-		}
-		for _, x := range b {
-			wantIn += x.InBytes
-		}
-	}
+	// Per-interface deltas, source endpoint only:
+	//   port1 in: (200-100)+(300-200)+(400-300)            = 300
+	//   port2 in: (20-10) + clamp(5-20 → 0) + (15-5)       = 20
+	// Dest endpoint's port1 (constant 9000s) contributes nothing — and its
+	// CUMULATIVE values must not appear either (pre-fix: +36000).
+	const wantIn = 320.0
 	if !floatsClose(aggIn, wantIn) {
-		t.Errorf("aggregate in_bytes = %v, want %v (sum of source ifaces port1+port2, excluding dest endpoint)", aggIn, wantIn)
+		t.Errorf("aggregate in_bytes = %v, want %v (per-interface deltas, reset clamped, source endpoint only)", aggIn, wantIn)
+	}
+	//   port1 out (b/2: 50,100,150,200): deltas             = 150
+	//   port2 out (b/2: 5,10,2,7): 5 + clamp(2-10 → 0) + 5  = 10
+	const wantOut = 160.0
+	if !floatsClose(aggOut, wantOut) {
+		t.Errorf("aggregate out_bytes = %v, want %v", aggOut, wantOut)
 	}
 
 	// Detail must classify the family and expose the resolved interfaces.

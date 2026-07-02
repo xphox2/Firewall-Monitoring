@@ -659,6 +659,18 @@ func rangeToHours(rangeStr string) int {
 // traffic chart returns, so the frontend renders direct links identically.
 // Buckets align across interfaces because they share one [from,to] window and
 // adaptive bucket size; rows are merged by bucket string and returned sorted.
+//
+// H10 of the 2026-07-01 audit: interface_stats carries RAW CUMULATIVE SNMP
+// counters, but the VPNChartBucket contract this endpoint shares with the
+// tunnel path is PER-BUCKET DELTAS (the tunnel path computes them with LAG();
+// both frontend consumers treat in_bytes as transfer-per-bucket and divide by
+// the bucket interval for Mbps). The pre-fix code summed the cumulative
+// averages straight through, so a direct link with, say, 2 TB lifetime
+// InBytes rendered every hour bucket as ~2 TB transferred / a multi-Gbps flat
+// line that grew monotonically. Convert to deltas PER INTERFACE before
+// summing across interfaces: consecutive-bucket difference, clamped at 0 for
+// counter resets/wraps, dropping each interface's first bucket (no baseline)
+// — the same semantics as the tunnel path's LAG() query.
 func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr string) ([]VPNChartBucket, error) {
 	if len(refs) == 0 {
 		return []VPNChartBucket{}, nil
@@ -666,22 +678,31 @@ func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr stri
 	to := time.Now()
 	from := to.Add(-time.Duration(rangeToHours(rangeStr)) * time.Hour)
 
+	clamp := func(v float64) float64 {
+		if v < 0 {
+			return 0 // counter reset/wrap between buckets
+		}
+		return v
+	}
+
 	agg := make(map[string]*VPNChartBucket)
 	for _, r := range refs {
 		buckets, err := d.GetInterfaceChartWindow(r.DeviceID, r.IfIndex, from, to)
 		if err != nil {
 			return nil, err
 		}
-		for _, b := range buckets {
-			e := agg[b.Bucket]
+		// buckets are sorted ASC by bucket; delta each against its predecessor.
+		for i := 1; i < len(buckets); i++ {
+			cur, prev := buckets[i], buckets[i-1]
+			e := agg[cur.Bucket]
 			if e == nil {
-				e = &VPNChartBucket{Bucket: b.Bucket, BucketMs: b.BucketMs}
-				agg[b.Bucket] = e
+				e = &VPNChartBucket{Bucket: cur.Bucket, BucketMs: cur.BucketMs}
+				agg[cur.Bucket] = e
 			}
-			e.InBytes += b.InBytes
-			e.OutBytes += b.OutBytes
-			e.InPackets += b.InPackets
-			e.OutPackets += b.OutPackets
+			e.InBytes += clamp(cur.InBytes - prev.InBytes)
+			e.OutBytes += clamp(cur.OutBytes - prev.OutBytes)
+			e.InPackets += clamp(cur.InPackets - prev.InPackets)
+			e.OutPackets += clamp(cur.OutPackets - prev.OutPackets)
 		}
 	}
 
@@ -800,6 +821,14 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 	err = d.db.Raw(query, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, err
+	}
+	// M12 of the 2026-07-01 audit: the SELECT list has no bucket_ms column, so
+	// every row scanned with BucketMs=0 — the 3-mode charts' normalizeDeltas
+	// then fell back to a hardcoded 60s interval, inflating Mbps 60x on the
+	// hourly-bucketed 7d/30d ranges (and 5x on a 5-min poll cadence). Backfill
+	// it from the bucket string exactly like GetInterfaceChartWindow does.
+	for i := range rows {
+		rows[i].BucketMs = parseBucketToMillis(rows[i].Bucket)
 	}
 	return rows, nil
 }
