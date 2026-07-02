@@ -1,0 +1,38 @@
+# Example Prometheus scrape config for Firewall-Mon.
+#
+# All three daemons expose Prometheus metrics. /metrics is intentionally
+# UNAUTHENTICATED (Prometheus convention) — bind it to an internal interface or
+# firewall the scrape ports; it exposes only aggregate timings/counters and route
+# templates, never secrets.
+#
+#   API server  : http://<host>:8080/metrics
+#   Poller      : POLLER_METRICS_ADDR (default 127.0.0.1:9101; set to an
+#                 interface Prometheus can reach, or ":9101")
+#   Trap recv   : TRAP_METRICS_ADDR   (default 127.0.0.1:9102)
+#
+# Adjust targets to your deployment. Behind the bundled single container the
+# poller/trap metrics addresses default to loopback — set the *_METRICS_ADDR env
+# vars if you scrape them from another host.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: fwmon-api
+    static_configs:
+      - targets: ["firewall-mon:8080"]
+        labels:
+          component: api
+
+  - job_name: fwmon-poller
+    static_configs:
+      - targets: ["firewall-mon:9101"]
+        labels:
+          component: poller
+
+  - job_name: fwmon-trap
+    static_configs:
+      - targets: ["firewall-mon:9102"]
+        labels:
+          component: trap

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.559] - 2026-07-02
+
+### Added
+- **Prometheus monitoring pack** (`docs/monitoring/`): a ready-to-adapt `prometheus.yml` scrape config for all three daemons, plus a README documenting the real exposed metrics (`fwmon_http_request_duration_seconds`, Go runtime/process, DB pool), example PromQL (request rate, p95 latency, 5xx ratio, goroutine/mem watch, pool saturation), and starter alerting rules.
+
 ## [0.10.558] - 2026-07-02
 
 ### Added
