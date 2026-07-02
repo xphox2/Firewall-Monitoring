@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.535] - 2026-07-01
+
+### Fixed
+- **An IRC outage can no longer wedge admin handlers, alert delivery, and graceful shutdown (audit 2026-07-01 finding H5).** `sendAutoStatus` held `Manager.mu.RLock` across the N+1-query status provider *and* every `Privmsg` send. In the pinned go-ircevent version a send parks forever once the connection's write channel loses its consumer during an outage (and the `DISCONNECTED` callback that would nil the conn never fires in this library version) — so statusLoop parked while holding the read lock, the next writer (`ReloadCommands`/`RestartBot` from admin HTTP handlers) blocked, and RWMutex writer-queueing then hung every subsequent reader: IRC alert delivery, `GetBot`, `Manager.Stop`, and shutdown, until SIGKILL. The due (conn, channel) pairs are now snapshotted under the lock and all DB/network work runs lock-free, gated on `conn.Connected()` — a parked send can stall auto-status only, nothing else.
+- **A panic or nil-deref in an IRC event callback no longer crashes the whole fwmon-api process (audit 2026-07-01 finding M8).** go-ircevent runs each callback in a bare goroutine with no recover, bypassing the REL-01 SafeGo containment — and the callbacks dereferenced `b.Conn` without the bot mutex while `Stop`/`RestartBot`/`onQuit` nil it concurrently, so an admin restarting a bot mid-`!status` nil-deref'd and took down ingestion, the admin UI, SSE NOC, and alerting. Every `AddCallback` closure now recovers first (`logging.Recover("irc-callback-*")`), and `onConnected`/`onPrivmsg`/`handleCommand`/`isAdmin`/`onJoin` snapshot `b.Conn` under `b.mu.RLock` with a nil-check before use — the pattern `SendMessage` and `onQuit` already followed.
+
 ## [0.10.534] - 2026-07-01
 
 ### Fixed

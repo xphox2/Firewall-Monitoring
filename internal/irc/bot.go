@@ -231,14 +231,36 @@ func (m *Manager) statusLoop() {
 	}
 }
 
+// sendAutoStatus pushes the periodic status box into every due channel.
+//
+// H5 of the 2026-07-01 audit: this must NEVER send to IRC (or run the N+1-query
+// statusFn) while holding m.mu. In the pinned go-ircevent version, Privmsg
+// sends into a buffered channel whose consumer dies during an outage and is
+// REPLACED on reconnect — a sender parked on the old channel blocks forever.
+// The pre-fix code held m.mu.RLock across those sends, so one wedged send
+// blocked every m.mu.Lock caller (ReloadCommands/RestartBot from admin HTTP
+// handlers), and RWMutex writer-queueing then hung every subsequent RLock
+// (alert delivery via SendToChannel, Manager.Stop, graceful shutdown) until
+// SIGKILL. Now the due (conn, channel) pairs are snapshotted under the lock,
+// the lock is released, and sends happen lock-free — a parked send can still
+// stall THIS loop (auto-status stops until reconnect churn frees it), but it
+// can no longer wedge the rest of the process.
+//
+// m.lastStatus is intentionally lock-free: statusLoop is its only reader and
+// writer (single goroutine).
 func (m *Manager) sendAutoStatus() {
 	if m.statusFn == nil {
 		return
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	type statusTarget struct {
+		conn    *irc.Connection
+		channel string
+		chID    uint
+	}
+	var targets []statusTarget
 
+	m.mu.RLock()
 	for _, bot := range m.bots {
 		bot.mu.RLock()
 		conn := bot.Conn
@@ -269,22 +291,33 @@ func (m *Manager) sendAutoStatus() {
 				continue
 			}
 
-			status, err := m.statusFn()
-			if err != nil {
-				log.Printf("IRC: Auto-status error for %s: %v", ch.ChannelName, err)
-				continue
-			}
-
-			response := formatStatusResponse(status)
-			lines := strings.Split(response, "\n")
-			for _, line := range lines {
-				if line != "" {
-					conn.Privmsg(ch.ChannelName, line)
-				}
-			}
-
-			m.lastStatus[ch.ID] = time.Now()
+			targets = append(targets, statusTarget{conn: conn, channel: ch.ChannelName, chID: ch.ID})
 		}
+	}
+	m.mu.RUnlock()
+
+	for _, t := range targets {
+		// The DISCONNECTED callback never fires in this go-ircevent version,
+		// so poll the connection's own liveness instead of trusting b.Conn:
+		// skipping a dead conn avoids parking on its orphaned write channel.
+		if !t.conn.Connected() {
+			continue
+		}
+
+		status, err := m.statusFn()
+		if err != nil {
+			log.Printf("IRC: Auto-status error for %s: %v", t.channel, err)
+			continue
+		}
+
+		response := formatStatusResponse(status)
+		for _, line := range strings.Split(response, "\n") {
+			if line != "" {
+				t.conn.Privmsg(t.channel, line)
+			}
+		}
+
+		m.lastStatus[t.chID] = time.Now()
 	}
 }
 
@@ -339,27 +372,38 @@ func (b *Bot) Start() {
 
 	b.Conn = conn
 
+	// M8 of the 2026-07-01 audit: go-ircevent runs every callback in a bare
+	// `go func` with NO recover, so a panic in any of these closures bypasses
+	// the REL-01 SafeGo containment and crashes the whole fwmon-api process.
+	// Every closure recovers first; the handlers additionally snapshot b.Conn
+	// under b.mu (Stop/RestartBot/onQuit nil it concurrently).
 	conn.AddCallback("001", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-001")
 		b.onConnected()
 	})
 
 	conn.AddCallback("PRIVMSG", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-privmsg")
 		b.onPrivmsg(e)
 	})
 
 	conn.AddCallback("JOIN", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-join")
 		b.onJoin(e)
 	})
 
 	conn.AddCallback("PART", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-part")
 		b.onPart(e)
 	})
 
 	conn.AddCallback("QUIT", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-quit")
 		b.onQuit(e)
 	})
 
 	conn.AddCallback("DISCONNECTED", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-disconnected")
 		log.Printf("IRC: Connection lost to %s", b.Server.ServerHost)
 		b.mu.Lock()
 		b.Conn = nil
@@ -368,10 +412,12 @@ func (b *Bot) Start() {
 	})
 
 	conn.AddCallback("NOTICE", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-notice")
 		b.onNotice(e)
 	})
 
 	conn.AddCallback("433", func(e *irc.Event) {
+		defer logging.Recover("irc-callback-433")
 		// Nick in use — append underscore to the CURRENT nick, not the original
 		currentNick := conn.GetNick()
 		newNick := currentNick + "_"
@@ -414,10 +460,18 @@ func (b *Bot) Stop() {
 }
 
 func (b *Bot) onConnected() {
-	log.Printf("IRC: Connected to %s as %s", b.Server.ServerHost, b.Conn.GetNick())
+	// M8: snapshot b.Conn under the lock — Stop/RestartBot nil it from admin
+	// handlers while this callback runs on a library goroutine.
+	b.mu.RLock()
+	conn := b.Conn
+	b.mu.RUnlock()
+	if conn == nil {
+		return
+	}
+	log.Printf("IRC: Connected to %s as %s", b.Server.ServerHost, conn.GetNick())
 
 	if b.Server.NickServIdentify && b.Server.NickServPassword != "" {
-		b.Conn.Privmsg("NickServ", "IDENTIFY "+b.Server.NickServPassword)
+		conn.Privmsg("NickServ", "IDENTIFY "+b.Server.NickServPassword)
 	}
 
 	for _, ch := range b.Server.Channels {
@@ -426,7 +480,7 @@ func (b *Bot) onConnected() {
 			if ch.ChannelKey != "" {
 				chanName += " " + ch.ChannelKey
 			}
-			b.Conn.Join(chanName)
+			conn.Join(chanName)
 		}
 	}
 
@@ -453,16 +507,26 @@ func (b *Bot) onPrivmsg(e *irc.Event) {
 		return
 	}
 
+	// M8: snapshot b.Conn under the lock before any dereference — a
+	// Stop/RestartBot racing an in-flight PRIVMSG previously nil-deref'd on
+	// an unrecovered library goroutine and crashed the whole process.
+	b.mu.RLock()
+	conn := b.Conn
+	b.mu.RUnlock()
+	if conn == nil {
+		return
+	}
+
 	cmdStr := strings.ToLower(parts[0])
 	cmd, exists := b.manager.lookupCommand(cmdStr)
 
 	if !exists {
-		b.Conn.Notice(target, fmt.Sprintf("Unknown command: %s", parts[0]))
+		conn.Notice(target, fmt.Sprintf("Unknown command: %s", parts[0]))
 		return
 	}
 
 	if cmd.AdminOnly && !b.isAdmin(target, nick) {
-		b.Conn.Notice(target, "This command is admin only")
+		conn.Notice(target, "This command is admin only")
 		return
 	}
 
@@ -515,10 +579,18 @@ func (b *Bot) handleCommand(target string, cmd *models.IRCCommand, args []string
 	}
 
 	if response != "" {
+		// M8: the multi-query statusFn/statsFn above widens the race window —
+		// re-snapshot b.Conn under the lock instead of dereferencing it raw.
+		b.mu.RLock()
+		conn := b.Conn
+		b.mu.RUnlock()
+		if conn == nil {
+			return
+		}
 		lines := strings.Split(response, "\n")
 		for _, line := range lines {
 			if line != "" {
-				b.Conn.Privmsg(target, line)
+				conn.Privmsg(target, line)
 			}
 		}
 	}
@@ -551,7 +623,12 @@ func (b *Bot) isAdmin(target, nick string) bool {
 	if target == "" {
 		return false
 	}
-	if b.Conn != nil && strings.EqualFold(target, b.Conn.GetNick()) {
+	// M8: snapshot under the lock — isAdmin runs on the PRIVMSG callback
+	// goroutine while Stop/onQuit nil b.Conn.
+	b.mu.RLock()
+	conn := b.Conn
+	b.mu.RUnlock()
+	if conn != nil && strings.EqualFold(target, conn.GetNick()) {
 		return false
 	}
 	for i := range b.Server.Channels {
@@ -604,11 +681,18 @@ func (b *Bot) onJoin(e *irc.Event) {
 				"joined_at": now,
 			})
 
-			if ch.ChanServName != "" && ch.ChanServPass != "" {
-				b.Conn.Privmsg(ch.ChanServName, "IDENTIFY "+ch.ChanServPass)
-			}
-			if ch.ChanOperPass != "" {
-				b.Conn.Privmsg(ch.ChanServName, "OP "+channel+" "+ch.ChanOperPass)
+			// M8: snapshot b.Conn under the lock before dereferencing on this
+			// library callback goroutine.
+			b.mu.RLock()
+			conn := b.Conn
+			b.mu.RUnlock()
+			if conn != nil {
+				if ch.ChanServName != "" && ch.ChanServPass != "" {
+					conn.Privmsg(ch.ChanServName, "IDENTIFY "+ch.ChanServPass)
+				}
+				if ch.ChanOperPass != "" {
+					conn.Privmsg(ch.ChanServName, "OP "+channel+" "+ch.ChanOperPass)
+				}
 			}
 			break
 		}
