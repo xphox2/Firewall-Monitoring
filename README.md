@@ -9,10 +9,17 @@
 > and the public GridStack dashboard. The **probe** half of the project
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen)](https://github.com/xphox2/Firewall-Monitoring/actions)
-[![Version](https://img.shields.io/badge/version-0.10.495-blue)](CHANGELOG.md)
+[![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.10.553-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25.11+-00ADD8)](go.mod)
+[![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
+
+> ⚠️ **Alpha.** This project is under active development and is published for early
+> adopters and feedback. Expect rough edges and occasional breaking changes between
+> versions. Pin a version, read [`MIGRATING.md`](MIGRATING.md) before upgrading, and
+> please [file issues](https://github.com/xphox2/Firewall-Monitoring/issues) — feedback
+> is exactly what this stage is for. See [Project status](#project-status) for details.
 
 ## Sibling project
 
@@ -519,6 +526,27 @@ ES2020 JavaScript:
 | Chrome / Edge (Chromium) | 105+ |
 | Safari (macOS / iOS) | 15.4+ |
 | Firefox | 121+ |
+
+## Project status
+
+**Alpha.** The core feature set (SNMP polling, trap/syslog/sFlow ingestion,
+alerting, config-change tracking, remote probes, reporting) is implemented and
+runs in the maintainer's own environment, and the codebase has been through
+several internal engineering and security audits (see [`docs/AUDIT.md`](docs/AUDIT.md)).
+That said, it is early:
+
+- **Breaking changes may land between minor versions.** Pin a version and read
+  [`MIGRATING.md`](MIGRATING.md) and [`CHANGELOG.md`](CHANGELOG.md) before upgrading.
+- **Not yet battle-tested across many environments.** It is FortiGate-first; other
+  vendor profiles are less exercised.
+- **Run it hardened.** See the [Security](#security) section and
+  [`SECURITY.md`](SECURITY.md) — put TLS in front of it, don't expose the
+  trap/syslog listeners to the public internet, and change the generated admin
+  password on first login.
+- **No telemetry.** Firewall-Mon does not phone home — see [`PRIVACY.md`](PRIVACY.md).
+
+Feedback, bug reports, and vendor-SNMP samples are very welcome — that is what
+the alpha is for. See [Support](#support).
 
 ## License
 

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.553] - 2026-07-02
+
+### Added
+- **Alpha-launch community & landing-page polish.** Added GitHub issue forms (`.github/ISSUE_TEMPLATE/bug_report.yml`, `feature_request.yml`, `config.yml` routing security reports to the private policy and questions to Discussions), a pull-request template, and a Dependabot config (`.github/dependabot.yml`) covering the gomod, github-actions, docker, and npm ecosystems. The README now carries an explicit **alpha** status banner + a **Project status** section, a live CI-status badge (replacing the static "passing" image), and a corrected version badge (was pinned at 0.10.495).
+- **`PRIVACY.md` — no-telemetry statement.** Documents that Firewall-Mon does not phone home, enumerates every default and opt-in outbound connection, and points privacy concerns at the security-disclosure process. Linked from the README.
+
+### Fixed
+- **`.playwright-mcp/` dev-dump directory is now git-ignored.** Its contents were already ignored but the directory itself showed as untracked; added an explicit ignore rule. Clarified the `CODEOWNERS` header (the `@xphox2` owner is the current maintainer, not a placeholder to replace).
+
 ## [0.10.552] - 2026-07-02
 
 ### Docs

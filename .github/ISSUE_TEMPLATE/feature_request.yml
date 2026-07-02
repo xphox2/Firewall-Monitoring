@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an enhancement for Firewall-Mon
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Firewall-Mon is intentionally **narrow and firewall-first** (see the README "When NOT to use" section).
+        Requests that turn it into a general-purpose NMS are likely out of scope, but please still open the discussion.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that Firewall-Mon can't do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to see?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

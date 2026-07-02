@@ -45,6 +45,9 @@ cookies.txt
 interfaces.json
 IRC-FORMAT.txt
 
+# Playwright MCP session dumps (dev-only)
+.playwright-mcp/
+
 # Admin password file (written at runtime)
 .admin-password
 node_modules/

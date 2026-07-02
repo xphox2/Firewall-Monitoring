@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a problem with Firewall-Mon
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Firewall-Mon. This project is in **alpha** — bug reports are especially valuable right now.
+        Please do **not** paste secrets (SNMP communities, passwords, tokens, JWT secrets) into this issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I ..., I expected ..., but ... happened.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Server version (footer of the admin UI, `GET /api/version`, or CHANGELOG top).
+      placeholder: "0.10.553"
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: Deployment
+      options:
+        - Docker (docker compose)
+        - Native / systemd
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Host OS / architecture
+      placeholder: "Ubuntu 24.04 x86_64 / Synology DSM / etc."
+    validations:
+      required: true
+  - type: input
+    id: database
+    attributes:
+      label: Database
+      placeholder: "Embedded PostgreSQL 16 / external Postgres / SQLite (dev)"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact secrets first. Set `LOG_LEVEL=debug` for more detail.
+      render: shell
+    validations:
+      required: false

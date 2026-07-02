@@ -4,8 +4,8 @@
 # touches a path. The LAST matching pattern wins, so order matters: the
 # catch-all is first, more specific paths below override it.
 #
-# Replace @xphox2 with the actual maintainer handle(s) / a team
-# (e.g. @org/maintainers) as the project grows.
+# @xphox2 is the current sole maintainer. Expand to a team handle
+# (e.g. @org/maintainers) here if the project grows.
 
 # Default owner for everything in the repo.
 *                       @xphox2
