@@ -257,15 +257,26 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 
 	query := db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 
+	// L24 of the 2026-07-01 audit: parse every numeric-column filter with
+	// strconv and only apply on success. Binding a raw non-numeric query string
+	// against an integer column throws 22P02 on PostgreSQL (a 500), while SQLite
+	// silently matches nothing — a dialect divergence and a bad-URL-becomes-500
+	// bug. The sibling filters below (dst_port, app_category, …) already do this.
 	if probeID := c.Query("probe_id"); probeID != "" {
-		query = query.Where("probe_id = ?", probeID)
+		if v, err := strconv.ParseUint(probeID, 10, 32); err == nil {
+			query = query.Where("probe_id = ?", v)
+		}
 	}
 	if deviceID := c.Query("device_id"); deviceID != "" {
-		query = query.Where("device_id = ?", deviceID)
+		if v, err := strconv.ParseUint(deviceID, 10, 32); err == nil {
+			query = query.Where("device_id = ?", v)
+		}
 	}
 	// Site filter (NOC drill-down): matches every device in the site.
 	if siteID := c.Query("site_id"); siteID != "" {
-		query = query.Where("device_id IN (SELECT id FROM devices WHERE site_id = ?)", siteID)
+		if v, err := strconv.ParseUint(siteID, 10, 32); err == nil {
+			query = query.Where("device_id IN (SELECT id FROM devices WHERE site_id = ?)", v)
+		}
 	}
 	if src := c.Query("src_addr"); src != "" {
 		if frag, arg, ok := ipFilterClause("src_addr", src); ok {
@@ -284,7 +295,9 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 		}
 	}
 	if proto := c.Query("protocol"); proto != "" {
-		query = query.Where("protocol = ?", proto)
+		if v, err := strconv.ParseUint(proto, 10, 8); err == nil { // L24: was raw-bound → 22P02/500 on PG
+			query = query.Where("protocol = ?", v)
+		}
 	}
 	// Classification drill-down (By Application / By Direction click-to-filter).
 	if cat := c.Query("app_category"); cat != "" {
@@ -496,6 +509,13 @@ func (h *Handler) AddThreatIntel(c *gin.Context) {
 	if req.Source == "" {
 		req.Source = "manual"
 	}
+	// L22 of the 2026-07-01 audit: store the CANONICAL (masked) prefix, so the
+	// stored (cidr,source) key, the value shown in the UI, and the prefix the
+	// matcher actually enforces are all identical. Pre-fix, "203.0.113.9/24"
+	// was stored verbatim but enforced as "203.0.113.0/24" — creating duplicate
+	// rows for equivalent prefixes (deleting the visible one left a hidden dup
+	// still escalating detections) and a displayed-vs-enforced scope mismatch.
+	req.CIDR = canonicalThreatCIDR(req.CIDR)
 	entry := &models.ThreatIntel{
 		CIDR:      req.CIDR,
 		Category:  req.Category,
@@ -539,6 +559,19 @@ func validThreatCIDR(s string) bool {
 	}
 	_, err := netip.ParseAddr(s)
 	return err == nil
+}
+
+// canonicalThreatCIDR returns the masked, canonical form of a validated CIDR/IP
+// so it matches exactly what the matcher enforces (L22). A bare IP becomes a
+// host prefix (/32 or /128). Assumes the input already passed validThreatCIDR.
+func canonicalThreatCIDR(s string) string {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p.Masked().String()
+	}
+	if a, err := netip.ParseAddr(s); err == nil {
+		return netip.PrefixFrom(a, a.BitLen()).String()
+	}
+	return s
 }
 
 // parseStatsDeviceFilter reads an optional device_id query parameter from

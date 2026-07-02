@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.548] - 2026-07-01
+
+### Fixed
+- **`/api/flows/stats` no longer double-scales `estimated_bytes` (audit 2026-07-01 finding L1).** `flow_samples.bytes` is already multiplied by `sampling_rate` at ingest (collector + server parser, plus the migration-v7 backfill), so multiplying `SUM(bytes)` by `AvgSamplingRate` again over-reported by roughly the sampling rate (512× at 1:512). `estimated_bytes` now equals the (already-scaled) total; the stale scaling comment is removed.
+- **Manually-added threat-intel entries are stored in canonical (masked) form (audit 2026-07-01 finding L22).** `AddThreatIntel` stored the CIDR verbatim while the matcher masks it, so `203.0.113.9/24` was stored but enforced as `203.0.113.0/24` — equivalent prefixes created duplicate `(cidr,source)` rows (deleting the visible one left a hidden duplicate still escalating detections) and the displayed scope didn't match the enforced scope. The CIDR is now canonicalized before storage, so the stored key, the displayed value, and the enforced prefix are identical.
+- **Detector thresholds reject `NaN`/`Inf` instead of silently ignoring them (audit 2026-07-01 finding L23).** `strconv.ParseFloat("NaN")` succeeds and every comparison against NaN is false, so `detect_beacon_max_cv` / `detect_capacity_threshold` accepted `NaN` — persisted and shown as the active override, but silently ignored by the poller (its `v > 0` guard is false for NaN), so the displayed threshold diverged from the effective one. The range checks are inverted to `!(v > 0 && v <= max)`, which non-finite values fail.
+- **A non-numeric Flows filter no longer 500s on PostgreSQL (audit 2026-07-01 finding L24).** `GetFlowSamples` bound the raw `protocol` (and `probe_id`/`device_id`/`site_id`) query strings against integer columns, so a hand-edited or stale URL like `?protocol=tcp` threw `22P02` (→ 500) on Postgres while SQLite silently matched nothing — a dialect divergence. These are now parsed with `strconv` and applied only on success, matching the sibling numeric filters (dst_port, app_category, direction, dst_asn).
+
 ## [0.10.547] - 2026-07-01
 
 ### Fixed

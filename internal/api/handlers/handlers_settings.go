@@ -172,9 +172,14 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				}
 			}
 		case "detect_beacon_max_cv":
+			// L23 of the 2026-07-01 audit: the inverted `!(v > 0 && v <= 5)`
+			// form rejects NaN/±Inf — `strconv.ParseFloat("NaN")` succeeds and
+			// every comparison against NaN is false, so the old
+			// `v <= 0 || v > 5` PASSED "NaN", which persisted and displayed as
+			// active but the poller's `v > 0` guard silently ignored it.
 			if s.Value != "" {
 				v, err := strconv.ParseFloat(s.Value, 64)
-				if err != nil || v <= 0 || v > 5 {
+				if err != nil || !(v > 0 && v <= 5) {
 					c.JSON(http.StatusBadRequest, response.Error("Invalid value for detect_beacon_max_cv: must be >0 and <=5 (or blank for default)"))
 					return
 				}
@@ -182,7 +187,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		case "detect_capacity_threshold":
 			if s.Value != "" {
 				v, err := strconv.ParseFloat(s.Value, 64)
-				if err != nil || v <= 0 || v > 1 {
+				if err != nil || !(v > 0 && v <= 1) { // L23: rejects NaN/Inf (see detect_beacon_max_cv)
 					c.JSON(http.StatusBadRequest, response.Error("Invalid value for detect_capacity_threshold: must be >0 and <=1 (e.g. 0.80) (or blank for default)"))
 					return
 				}

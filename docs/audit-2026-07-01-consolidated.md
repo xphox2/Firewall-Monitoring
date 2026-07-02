@@ -279,6 +279,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 ## LOW
 
 ### L1. GetFlowStats estimated_bytes double-scales by AvgSamplingRate (bytes are already sampling-scaled at ingest)
+> **✅ RESOLVED (v0.10.548)** — `EstimatedBytes = TotalBytes` (bytes is already sampling-scaled at ingest); stale scaling comment removed.
 - **server** · `internal/database/flows.go:260-261` — no UI consumer yet, but the field over-reports by ~the sampling rate, and the stale comment at `:215` invites re-introducing double-scaling. Fix: `EstimatedBytes = TotalBytes` (or drop it); fix the comments.
 
 ### L2. PruneExpiredCooldowns evicts on a fixed 10-min threshold — truncates operator-set cooldowns >10 min for event-type alerts once per day
@@ -344,12 +345,15 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `cmd/api/static/js/admin-flows.js:798` — mirror renderBandwidth's own empty path (destroy + null + clear lastBwData).
 
 ### L22. AddThreatIntel stores the CIDR un-normalized while the matcher masks it — equivalent prefixes duplicate, and deleting the visible row leaves the hidden one enforcing
+> **✅ RESOLVED (v0.10.548)** — `AddThreatIntel` canonicalizes the CIDR (`canonicalThreatCIDR`, masked) before storage, so the DB key, displayed value, and enforced prefix are identical. Test `TestCanonicalThreatCIDR_L22`.
 - **server** · `internal/api/handlers/handlers_analytics.go:499` — canonicalize with `.Masked().String()` before storage; displayed scope ≠ enforced scope otherwise.
 
 ### L23. detect_beacon_max_cv / detect_capacity_threshold accept 'NaN' — persisted and displayed as active but silently ignored by the poller
+> **✅ RESOLVED (v0.10.548)** — the range checks are inverted to `!(v > 0 && v <= max)`, which NaN/±Inf fail, so a non-finite value is rejected at write instead of persisting as displayed-but-ignored.
 - **server** · `internal/api/handlers/handlers_settings.go:177` — NaN fails every range comparison, passing write-side guards and failing the poller's `v > 0`. Fix: reject non-finite, or invert checks to `!(v > 0 && v <= max)`.
 
 ### L24. GetFlowSamples binds the raw protocol query string against a numeric column — non-numeric value 500s on PG (SQLite silently matches nothing)
+> **✅ RESOLVED (v0.10.548)** — protocol, probe_id, device_id, and site_id are now parsed with `strconv` and applied only on success (matching the sibling numeric filters), so a non-numeric value drops the filter instead of 500-ing on PostgreSQL.
 - **server** · `internal/api/handlers/handlers_analytics.go:287` — the one unparsed numeric filter in the v0.10.508+ surface; parse with strconv like the sibling filters.
 
 ---

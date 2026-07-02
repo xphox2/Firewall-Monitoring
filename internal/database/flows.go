@@ -212,7 +212,10 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		UniqueSources int64
 		UniqueDests   int64
 	}
-	// Multiply bytes/packets by sampling_rate to estimate actual traffic volume
+	// L1 of the 2026-07-01 audit: flow_samples.bytes is ALREADY sampling-scaled
+	// at ingest (collector + server parser both multiply by sampling_rate;
+	// migration v7 backfilled historical rows), so SUM(bytes) is real traffic —
+	// do NOT multiply again below.
 	if err := newRawBase().Select("COUNT(*) as total_flows, COALESCE(SUM(bytes),0) as total_bytes, " +
 		"COUNT(DISTINCT src_addr) as unique_sources, COUNT(DISTINCT dst_addr) as unique_dests").
 		Scan(&rawAgg).Error; err != nil {
@@ -257,11 +260,10 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	var avgRate struct{ Rate float64 }
 	newRawBase().Select("COALESCE(AVG(CASE WHEN sampling_rate > 0 THEN sampling_rate ELSE NULL END),0) as rate").Scan(&avgRate)
 	result.AvgSamplingRate = avgRate.Rate
-	if result.AvgSamplingRate > 1 {
-		result.EstimatedBytes = uint64(float64(result.TotalBytes) * result.AvgSamplingRate)
-	} else {
-		result.EstimatedBytes = result.TotalBytes
-	}
+	// L1: bytes is already sampling-scaled, so estimated == total (the field is
+	// retained for API back-compat; the old `* AvgSamplingRate` over-reported by
+	// ~the sampling rate).
+	result.EstimatedBytes = result.TotalBytes
 
 	// Computed throughput
 	if hours > 0 {
