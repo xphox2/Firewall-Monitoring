@@ -209,21 +209,25 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** assign the key at first enqueue (store in the envelope) and reuse across cycles; add the header to direct sends (server: L17).
 
 ### M20. Collector always advertises schema v2 with no fallback on HTTP 426 — registering against a v1 server (v0.10.382–v0.10.512) crash-loops and stops all site telemetry
+> **✅ RESOLVED (collector v1.2.158)** — `Register()` now parses the 426's `X-Probe-Schema-Version-Supported` header and re-registers once at the highest mutually-supported version (the collector speaks every version down to `SchemaVersionMin`; higher-version features are gated on the negotiated version). A v2 collector against a v1 server now negotiates v1 instead of crash-looping. Tests `TestParseSchemaRange_M20` / `TestRegister_FallsBackToV1OnUpgradeRequired_M20`.
 - **collector** · `internal/relay/relay.go:714` (+ `cmd/collector/main.go` register retry → `log.Fatalf`)
 - A handshake-aware v1 server rejects v2 with 426 before auth; the collector retries the identical request 6× then Fatalf's → container restart policy = permanent crash loop, even though the collector speaks v1 perfectly (counter samples are already gated on negotiated ≥2). Live prod lags HEAD, so collector-first upgrades are realistic; the v0.10.513 changelog's "v2 collector ↔ v1 server keep working unchanged" claim is false for registration.
 - **Fix:** on 426, re-register at the highest mutually supported version; and/or server clamps to `min(requested, max)` instead of rejecting.
 
 ### M21. RETENTION_SYSLOG_CRITICAL_DAYS still defaults to 0 (keep forever) — the syslog-bloat incident fix lives only in docker-compose.yml
+> **✅ RESOLVED (v0.10.547)** — `config.env.example` now ships a documented core-retention block (`RETENTION_SYSLOG_CRITICAL_DAYS=30` with the incident rationale + the other core knobs), so `deploy.sh`-seeded native installs get the safe value. The code default stays 0 deliberately — flipping it would silently delete existing installs' critical syslog on upgrade (the "don't assume user data is expendable" rule).
 - **server** · `internal/config/config.go:330` (+ `config.env.example`)
 - The documented root cause of the 2026-05 syslog incident (severity≤5 kept forever; FortiGate traffic logs are severity 5) is still the code default. `deploy.sh` seeds `config.env.example` verbatim on native installs, and that file has no RETENTION_* syslog lines at all — every non-compose deployment path replays the incident.
 - **Fix:** default 30 in code (matching compose), or at minimum add the var with rationale to config.env.example.
 
 ### M22. Docker image build never builds (or freshness-checks) Tailwind — `git pull && docker compose build` silently ships a stale committed tailwind.css
+> **✅ RESOLVED (v0.10.547)** — a `Tailwind CSS freshness` CI job (`.github/workflows/ci.yml`) runs `npm ci && npm run tailwind` and fails on `git diff` of `tailwind.css`, so a stale committed artifact can never merge and the file the Dockerfile copies is always in sync with `styles.css`.
 - **server** · `Dockerfile:24` (+ `.github/workflows/ci.yml`)
 - v0.10.527 wired npm into make/deploy.sh only; the Dockerfile COPYs the committed artifact, and CI has zero npm/tailwind references, so a styles.css edit without regeneration passes green and the documented compose upgrade path embeds the stale css — the exact v0.10.500→526 regression shape, with no error anywhere.
 - **Fix:** node stage in the Dockerfile, or a CI job that regenerates and fails on `git diff --exit-code` of tailwind.css.
 
 ### M23. docs/ENV-VARS.md contradicts the code on three vars (trap community "required", INSECURE_SKIP_VERIFY accepted values, queue disk-path default)
+> **✅ RESOLVED (collector v1.2.158)** — `PROBE_INSECURE_SKIP_VERIFY` now routes through `parseBool` so the documented `1`/`yes` actually work (code matches doc); the ENV-VARS.md rows for the trap community (optional allowlist; empty = accept-all with a warning, NOT rejected) and the queue disk path (container default `/queue`) are corrected to match the code/Dockerfile.
 - **collector** · `docs/ENV-VARS.md:46`, `:20`, `:91`
 - (1) PROBE_SNMP_TRAP_COMMUNITY is documented "Required — empty rejected at startup" but the code treats empty as accept-ANY-community (warning only) and the Dockerfile defaults it to "" — the shipped container accepts every community on 162/udp. (2) PROBE_INSECURE_SKIP_VERIFY documents `1`/`yes` but the code matches only literal `"true"` — doc-following operators get silent TLS failures. (3) The "production default leaves disk path empty" prose is wrong: the Dockerfile sets `/queue`.
 - **Fix:** correct the doc (source wins); route the bool through parseBool; consider fail-fast on empty trap community to match the server posture.

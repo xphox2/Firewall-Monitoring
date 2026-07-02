@@ -140,3 +140,39 @@ jobs:
         # in the dependency tree; failing CI on a new CVE means the
         # maintainer notices before the operator does.
         run: govulncheck ./...
+
+  tailwind-freshness:
+    name: Tailwind CSS freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Audit 2026-07-01 M22: the embedded tailwind.css is a GENERATED artifact
+      # (`npm run tailwind` from styles.css). The Dockerfile just COPYs the
+      # committed file, and no CI gate existed, so a commit that edited styles.css
+      # without regenerating tailwind.css shipped stale/broken theming to prod
+      # (the v0.10.500->526 regression). This job regenerates it and fails if the
+      # committed artifact is out of date, so a stale css can never merge.
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Regenerate Tailwind CSS
+        run: npm run tailwind
+
+      - name: Fail if committed tailwind.css is stale
+        run: |
+          if ! git diff --quiet -- cmd/api/static/css/tailwind.css; then
+            echo "::error::cmd/api/static/css/tailwind.css is out of date — run 'npm run tailwind' and commit the result."
+            git --no-pager diff -- cmd/api/static/css/tailwind.css
+            exit 1
+          fi

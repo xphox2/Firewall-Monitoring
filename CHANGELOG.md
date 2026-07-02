@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.547] - 2026-07-01
+
+### Fixed
+- **Native/systemd installs no longer inherit the "keep critical syslog forever" default that caused the DB-bloat incident (audit 2026-07-01 finding M21).** The `RETENTION_SYSLOG_CRITICAL_DAYS` mitigation lived only in `docker-compose.yml`; `config.env.example` — which `deploy.sh` seeds verbatim as the live config on native installs — documented none of the core retention knobs, so severity-0–5 syslog (FortiGate traffic logs are severity 5) accumulated forever. Added a documented core-retention block (`RETENTION_SYSLOG_CRITICAL_DAYS=30` with the incident rationale, plus `SYSLOG_INFO`/`FLOW`/`STATUS`/`TRAP`/`PING`/`ALERT`/`DEFAULT` days) so every install path gets the safe value. *(The code default is intentionally left at 0 to avoid silently deleting existing installs' critical syslog on upgrade — the fix is opt-in via the seeded config.)*
+
+### Added
+- **CI now fails if the committed `tailwind.css` is out of date (audit 2026-07-01 finding M22).** The embedded `cmd/api/static/css/tailwind.css` is generated from `styles.css` by `npm run tailwind`, but the Dockerfile only COPYs the committed artifact and no CI gate existed, so a `styles.css` edit without regeneration could ship stale/broken theming to prod (the v0.10.500→526 regression). A new `Tailwind CSS freshness` CI job regenerates the file and fails on any diff, so a stale artifact can never merge — which keeps the file the Dockerfile copies always fresh.
+
 ## [0.10.546] - 2026-07-01
 
 ### Fixed
