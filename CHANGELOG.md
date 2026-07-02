@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.532] - 2026-07-01
+
+### Fixed
+- **Flow-rollup and syslog-summary aggregation can no longer silently double-count, lose, or destroy historical data (audit 2026-07-01 findings H1, H2, H3).** All four paginated GROUP BY aggregations (`aggregateFlowsToRollup`, `aggregateRollupsUp`, `aggregateSyslogToSummary`, `promoteSyslogSummaries`) now share one correctness shape:
+  - **Deterministic pagination (H1):** every paged aggregate carries an `ORDER BY` over its full group key — previously PostgreSQL's hash/parallel aggregation gave no cross-query ordering, so `LIMIT/OFFSET` pages could overlap (double-counted bytes) or skip groups (silently lost) whenever a cycle exceeded one page (>50k flow groups — guaranteed in backlog-recovery cycles after downtime).
+  - **Watermark-scoped immutable source set (H2b):** a `MAX(id)` watermark is captured first and every read AND the final delete are scoped to `id <= watermark`, so rows arriving mid-pass — e.g. a collector replaying its store-and-forward backlog with old timestamps — are never deleted un-aggregated; they wait for the next cycle. Previously the blanket `timestamp < cutoff` delete destroyed them.
+  - **Single-transaction all-or-nothing pass (H2a):** page inserts and the consumed-row delete commit in one transaction. A mid-pass failure now rolls back completely and the next cycle retries identical work — previously committed pages survived while raw rows stayed, so the retry double-counted every already-inserted group.
+  - **Promote-step page-1 destruction (H3):** `promoteSyslogSummaries` ran an *unscoped* delete inside each page's transaction, so page 1's commit destroyed every still-un-promoted hourly group beyond the first 5000 — unrecoverably, since the raw syslog behind them was already consumed. This was the same bug fixed in `aggregateSyslogToSummary` as M2 of the 2026-06-23 audit; the promote step had been missed. It now uses the shared shape with one scoped delete after all pages.
+  - Regression tests: `rollup_integrity_h1h2h3_test.go` (multi-page no-loss/no-double-count on all three paths, byte-total preservation) with page sizes now test-shrinkable package vars (`flowRollupPageSize`, `syslogPromotePageSize`).
+
 ## [0.10.531] - 2026-07-01
 
 ### Docs

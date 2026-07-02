@@ -662,59 +662,98 @@ func (d *Database) RunFlowRollupCycle() {
 	}
 }
 
+// flowRollupPageSize bounds how many distinct groups each rollup aggregation
+// reads per page. A package var (not a const) so tests can shrink it to
+// exercise the multi-page path. Defaults to 50000.
+var flowRollupPageSize = 50000
+
+// flowRollupGroupKey is the full grouping key of the rollup aggregations. It
+// doubles as the ORDER BY so LIMIT/OFFSET partitions the group set
+// deterministically — without it, PostgreSQL's hash/parallel aggregation gives
+// no cross-query ordering guarantee and pages can overlap or skip groups
+// (H1 of the 2026-07-01 audit).
+const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn"
+
 // aggregateFlowsToRollup groups raw FlowSamples older than cutoff into 5-minute rollups.
 // Returns true if work was done.
+//
+// Correctness shape (H1+H2 of the 2026-07-01 audit):
+//   - A MAX(id) watermark is captured first and every read AND the final delete
+//     are scoped to `id <= watermark`, so the source set is immutable for the
+//     whole pass — rows that arrive mid-aggregation (e.g. a collector replaying
+//     its store-and-forward backlog with old timestamps) are never deleted
+//     un-aggregated; they simply wait for the next cycle.
+//   - The paginated GROUP BY carries a deterministic ORDER BY over the full
+//     group key, so OFFSET pages neither overlap nor skip groups.
+//   - The page inserts and the consumed-row delete run in ONE transaction:
+//     either the whole pass commits (rollups inserted + raw rows deleted) or
+//     nothing changed, so a mid-pass failure can never leave rollups behind
+//     for the next cycle to double-count.
 func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string) bool {
 	bucketExpr := d.dialect.TimeBucket("5min", "timestamp")
-
-	// Paginate: process in chunks to limit memory usage
-	const pageSize = 50000
-	offset := 0
+	pageSize := flowRollupPageSize
 	totalGroups := 0
 
-	for {
-		var rows []rollupRow
-		if err := d.db.Model(&models.FlowSample{}).
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		var watermark int64
+		if err := tx.Model(&models.FlowSample{}).
 			Where("timestamp < ?", cutoff).
-			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
-				"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
-				"AVG(sampling_rate) as sampling_rate_avg").
-			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn").
-			Limit(pageSize).Offset(offset).
-			Scan(&rows).Error; err != nil {
-			log.Printf("Flow rollup: error scanning raw flows: %v", err)
-			return totalGroups > 0
+			Select("COALESCE(MAX(id), 0)").
+			Scan(&watermark).Error; err != nil {
+			return fmt.Errorf("flow rollup: watermark: %w", err)
+		}
+		if watermark == 0 {
+			return nil
 		}
 
-		if len(rows) == 0 {
-			break
-		}
-
-		// Wrap insert+delete in a transaction for atomicity
-		if err := d.db.Transaction(func(tx *gorm.DB) error {
+		offset := 0
+		for {
+			var rows []rollupRow
+			if err := tx.Model(&models.FlowSample{}).
+				Where("timestamp < ? AND id <= ?", cutoff, watermark).
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
+					"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
+					"AVG(sampling_rate) as sampling_rate_avg").
+				Group(flowRollupGroupKey).
+				Order(flowRollupGroupKey).
+				Limit(pageSize).Offset(offset).
+				Scan(&rows).Error; err != nil {
+				return fmt.Errorf("flow rollup: scan raw flows: %w", err)
+			}
+			if len(rows) == 0 {
+				break
+			}
 			if err := batchInsertRollups(tx, rows, intervalType, "2006-01-02 15:04"); err != nil {
 				return fmt.Errorf("flow rollup: insert %s rollups: %w", intervalType, err)
 			}
-			return nil
-		}); err != nil {
-			log.Printf("Flow rollup: transaction error: %v", err)
-			return totalGroups > 0
+			totalGroups += len(rows)
+			if len(rows) < pageSize {
+				break
+			}
+			offset += pageSize
 		}
 
-		totalGroups += len(rows)
-		if len(rows) < pageSize {
-			break
+		if totalGroups == 0 {
+			return nil
 		}
-		offset += pageSize
+
+		// Delete exactly the rows that were aggregated (same watermark scope),
+		// inside the same transaction as the inserts.
+		if err := tx.Where("timestamp < ? AND id <= ?", cutoff, watermark).
+			Delete(&models.FlowSample{}).Error; err != nil {
+			return fmt.Errorf("flow rollup: delete consumed raw flows: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		// Full rollback: no rollups inserted, no raw rows deleted — the next
+		// cycle retries the identical work with no double-counting.
+		log.Printf("Flow rollup: %v (rolled back, will retry next cycle)", err)
+		return false
 	}
 
 	if totalGroups == 0 {
 		return false
-	}
-
-	// Delete consumed raw rows (outside the insert tx since we've confirmed inserts succeeded)
-	if err := d.db.Where("timestamp < ?", cutoff).Delete(&models.FlowSample{}).Error; err != nil {
-		log.Printf("Flow rollup: error deleting consumed raw flows: %v", err)
 	}
 	log.Printf("Flow rollup: aggregated %d groups from raw flows into %s rollups", totalGroups, intervalType)
 	return true
@@ -722,6 +761,14 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 
 // aggregateRollupsUp promotes rollups from srcInterval older than cutoff into dstInterval.
 // Uses weighted average for sampling rate. Returns true if work was done.
+//
+// Same correctness shape as aggregateFlowsToRollup (H1+H2 of the 2026-07-01
+// audit): MAX(id) watermark scopes both the reads and the delete to an
+// immutable source set (the dstInterval rows we insert into the same table get
+// ids above the watermark and a different interval_type, so they can never
+// enter the source set), the paginated GROUP BY is ordered deterministically,
+// and inserts + delete commit in one transaction. The pagination itself keeps
+// per-page memory bounded (M1 of the 2026-06-23 audit).
 func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff time.Time) bool {
 	bucketUnit := "hour"
 	bucketFmt := "2006-01-02 15:04"
@@ -730,59 +777,66 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 		bucketFmt = "2006-01-02"
 	}
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
-
-	// Paginate the high-cardinality 5-tuple GROUP BY so a long backlog doesn't
-	// materialize millions of groups in one slice held in one long transaction
-	// (M1 of the 2026-06-23 audit). The read filters interval_type = srcInterval
-	// while we insert dstInterval rows into the same table, so the source set is
-	// stable across pages; the consumed source rows are deleted ONCE after every
-	// page is promoted (mirrors aggregateFlowsToRollup).
-	const pageSize = 50000
-	offset := 0
+	pageSize := flowRollupPageSize
 	totalGroups := 0
 
-	for {
-		var rows []rollupRow
-		if err := d.db.Model(&models.FlowRollup{}).
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		var watermark int64
+		if err := tx.Model(&models.FlowRollup{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-			Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
-				"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
-				"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
-			Group("bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn").
-			Limit(pageSize).Offset(offset).
-			Scan(&rows).Error; err != nil {
-			log.Printf("Flow rollup: error scanning %s rollups: %v", srcInterval, err)
-			return totalGroups > 0
+			Select("COALESCE(MAX(id), 0)").
+			Scan(&watermark).Error; err != nil {
+			return fmt.Errorf("flow rollup: %s watermark: %w", srcInterval, err)
+		}
+		if watermark == 0 {
+			return nil
 		}
 
-		if len(rows) == 0 {
-			break
+		offset := 0
+		for {
+			var rows []rollupRow
+			if err := tx.Model(&models.FlowRollup{}).
+				Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
+					"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
+					"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
+				Group(flowRollupGroupKey).
+				Order(flowRollupGroupKey).
+				Limit(pageSize).Offset(offset).
+				Scan(&rows).Error; err != nil {
+				return fmt.Errorf("flow rollup: scan %s rollups: %w", srcInterval, err)
+			}
+			if len(rows) == 0 {
+				break
+			}
+			if err := batchInsertRollups(tx, rows, dstInterval, bucketFmt); err != nil {
+				return fmt.Errorf("flow rollup: promote %s→%s: insert: %w", srcInterval, dstInterval, err)
+			}
+			totalGroups += len(rows)
+			if len(rows) < pageSize {
+				break
+			}
+			offset += pageSize
 		}
 
-		if err := d.db.Transaction(func(tx *gorm.DB) error {
-			return batchInsertRollups(tx, rows, dstInterval, bucketFmt)
-		}); err != nil {
-			log.Printf("Flow rollup: transaction error promoting %s to %s: %v", srcInterval, dstInterval, err)
-			return totalGroups > 0
+		if totalGroups == 0 {
+			return nil
 		}
 
-		totalGroups += len(rows)
-		if len(rows) < pageSize {
-			break
+		if err := tx.Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
+			Delete(&models.FlowRollup{}).Error; err != nil {
+			return fmt.Errorf("flow rollup: delete consumed %s rollups: %w", srcInterval, err)
 		}
-		offset += pageSize
+		return nil
+	})
+	if err != nil {
+		log.Printf("Flow rollup: %v (rolled back, will retry next cycle)", err)
+		return false
 	}
 
 	if totalGroups == 0 {
 		return false
 	}
-
-	// Delete the consumed source rollups once, after every page is promoted.
-	if err := d.db.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-		Delete(&models.FlowRollup{}).Error; err != nil {
-		log.Printf("Flow rollup: error deleting consumed %s rollups: %v", srcInterval, err)
-	}
-
 	log.Printf("Flow rollup: promoted %d groups from %s to %s rollups", totalGroups, srcInterval, dstInterval)
 	return true
 }

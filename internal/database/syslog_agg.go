@@ -78,57 +78,78 @@ func (d *Database) aggregateSyslogToSummary(cutoff time.Time, intervalType strin
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
 	pageSize := syslogAggPageSize
-	offset := 0
 	totalGroups := 0
 
-	for {
-		var rows []syslogSummaryRow
-		if err := d.db.Model(&models.SyslogMessage{}).
-			Where("timestamp < ? AND severity >= 6", cutoff). // only informational (6) and debug (7)
-			Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, " +
-				"COUNT(*) as count, MIN(message) as sample_message").
-			Group("bucket, device_id, severity, facility, app_name").
-			Limit(pageSize).Offset(offset).
-			Scan(&rows).Error; err != nil {
-			log.Printf("Syslog aggregation: error scanning raw messages: %v", err)
-			return totalGroups > 0, err
+	// Correctness shape shared with the flow rollups (H1+H2 of the 2026-07-01
+	// audit, extending the M2 fix of 2026-06-23):
+	//   - MAX(id) watermark: reads and the final delete are scoped to
+	//     `id <= watermark`, so raw messages that arrive mid-pass (ingestion
+	//     runs concurrently in cmd/api, and a collector backlog replay carries
+	//     OLD timestamps) are never deleted un-summarized — they wait for the
+	//     next cycle.
+	//   - Deterministic ORDER BY over the full group key so LIMIT/OFFSET pages
+	//     neither overlap nor skip groups.
+	//   - Inserts + delete in ONE transaction: a mid-pass failure rolls back
+	//     completely instead of leaving summaries the next cycle double-counts.
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		var watermark int64
+		if err := tx.Model(&models.SyslogMessage{}).
+			Where("timestamp < ? AND severity >= 6", cutoff).
+			Select("COALESCE(MAX(id), 0)").
+			Scan(&watermark).Error; err != nil {
+			return fmt.Errorf("watermark: %w", err)
+		}
+		if watermark == 0 {
+			return nil
 		}
 
-		if len(rows) == 0 {
-			break
+		const groupKey = "bucket, device_id, severity, facility, app_name"
+		offset := 0
+		for {
+			var rows []syslogSummaryRow
+			if err := tx.Model(&models.SyslogMessage{}).
+				Where("timestamp < ? AND severity >= 6 AND id <= ?", cutoff, watermark). // only informational (6) and debug (7)
+				Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, " +
+					"COUNT(*) as count, MIN(message) as sample_message").
+				Group(groupKey).
+				Order(groupKey).
+				Limit(pageSize).Offset(offset).
+				Scan(&rows).Error; err != nil {
+				return fmt.Errorf("scan raw messages: %w", err)
+			}
+			if len(rows) == 0 {
+				break
+			}
+			if err := batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt); err != nil {
+				return err
+			}
+			totalGroups += len(rows)
+			if len(rows) < pageSize {
+				break
+			}
+			offset += pageSize
 		}
 
-		// Insert this page's summaries only. The raw rows are deleted ONCE after
-		// the whole loop (below), not here. The pre-fix code deleted ALL matching
-		// rows inside this per-page transaction, so the moment page 1 committed it
-		// wiped every still-un-summarized group — any distinct groups beyond the
-		// first page were silently dropped without ever being counted (M2 of the
-		// 2026-06-23 audit). Reading over the still-intact syslog_messages keeps
-		// the OFFSET pagination correct, exactly like aggregateFlowsToRollup.
-		if err := d.db.Transaction(func(tx *gorm.DB) error {
-			return batchInsertSyslogSummaries(tx, rows, intervalType, bucketFmt)
-		}); err != nil {
-			log.Printf("Syslog aggregation: transaction error: %v", err)
-			return totalGroups > 0, err
+		if totalGroups == 0 {
+			return nil
 		}
 
-		totalGroups += len(rows)
-		if len(rows) < pageSize {
-			break
+		// Delete exactly the rows that were summarized (same watermark scope),
+		// in the same transaction as the inserts.
+		if err := tx.Where("timestamp < ? AND severity >= 6 AND id <= ?", cutoff, watermark).
+			Delete(&models.SyslogMessage{}).Error; err != nil {
+			return fmt.Errorf("delete consumed raw messages: %w", err)
 		}
-		offset += pageSize
+		return nil
+	})
+	if err != nil {
+		log.Printf("Syslog aggregation: %v (rolled back, will retry next cycle)", err)
+		return false, err
 	}
 
 	if totalGroups == 0 {
 		return false, nil
 	}
-
-	// Delete the consumed raw informational messages once, after every group has
-	// been summarized (mirrors aggregateFlowsToRollup's post-loop delete).
-	if err := d.db.Where("timestamp < ? AND severity >= 6", cutoff).Delete(&models.SyslogMessage{}).Error; err != nil {
-		log.Printf("Syslog aggregation: error deleting consumed raw messages: %v", err)
-	}
-
 	log.Printf("Syslog aggregation: aggregated %d groups from raw syslog into %s summaries", totalGroups, intervalType)
 	return true, nil
 }
@@ -163,59 +184,93 @@ func batchInsertSyslogSummaries(tx *gorm.DB, rows []syslogSummaryRow, intervalTy
 	return nil
 }
 
+// syslogPromotePageSize bounds how many distinct groups promoteSyslogSummaries
+// reads per page. A package var (not a const) so tests can shrink it to
+// exercise the multi-page path. Defaults to 5000.
+var syslogPromotePageSize = 5000
+
 // promoteSyslogSummaries promotes summaries from srcInterval older than cutoff into dstInterval.
 // Returns true if work was done, error if fatal.
+//
+// H3 of the 2026-07-01 audit: the pre-fix code ran an UNSCOPED
+// `interval_type = src AND timestamp < cutoff` delete inside EACH page's
+// transaction, so the moment page 1 committed it destroyed every
+// still-un-promoted source group — any groups beyond the first page were
+// silently lost, and the raw syslog behind them was already gone (this is the
+// same bug fixed in aggregateSyslogToSummary as M2 of 2026-06-23; the promote
+// step had been missed). Now it uses the shared correctness shape: MAX(id)
+// watermark for an immutable source set, deterministic ORDER BY pagination,
+// and one transaction wrapping every page insert plus a single watermark-scoped
+// delete at the end.
 func (d *Database) promoteSyslogSummaries(srcInterval, dstInterval string, cutoff time.Time) (bool, error) {
 	bucketUnit := "day"
 	bucketFmt := "2006-01-02"
 	bucketExpr := d.dialect.TimeBucket(bucketUnit, "timestamp")
 
-	const pageSize = 5000
-	offset := 0
+	pageSize := syslogPromotePageSize
 	totalGroups := 0
 
-	for {
-		var rows []syslogSummaryRow
-		if err := d.db.Model(&models.SyslogSummary{}).
+	err := d.db.Transaction(func(tx *gorm.DB) error {
+		var watermark int64
+		if err := tx.Model(&models.SyslogSummary{}).
 			Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-			Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, message_pattern, " +
-				"SUM(count) as count, MIN(sample_message) as sample_message").
-			Group("bucket, device_id, severity, facility, app_name, message_pattern").
-			Limit(pageSize).Offset(offset).
-			Scan(&rows).Error; err != nil {
-			log.Printf("Syslog aggregation: error scanning %s summaries: %v", srcInterval, err)
-			return totalGroups > 0, err
+			Select("COALESCE(MAX(id), 0)").
+			Scan(&watermark).Error; err != nil {
+			return fmt.Errorf("%s watermark: %w", srcInterval, err)
 		}
-
-		if len(rows) == 0 {
-			break
-		}
-
-		if err := d.db.Transaction(func(tx *gorm.DB) error {
-			if err := batchInsertSyslogSummaries(tx, rows, dstInterval, bucketFmt); err != nil {
-				return fmt.Errorf("syslog aggregation: promote %s→%s summaries: insert: %w", srcInterval, dstInterval, err)
-			}
-			if err := tx.Where("interval_type = ? AND timestamp < ?", srcInterval, cutoff).
-				Delete(&models.SyslogSummary{}).Error; err != nil {
-				return fmt.Errorf("delete consumed %s syslog summaries: %w", srcInterval, err)
-			}
+		if watermark == 0 {
 			return nil
-		}); err != nil {
-			log.Printf("Syslog aggregation: transaction error promoting %s to %s: %v", srcInterval, dstInterval, err)
-			return totalGroups > 0, err
 		}
 
-		totalGroups += len(rows)
-		if len(rows) < pageSize {
-			break
+		const groupKey = "bucket, device_id, severity, facility, app_name, message_pattern"
+		offset := 0
+		for {
+			var rows []syslogSummaryRow
+			if err := tx.Model(&models.SyslogSummary{}).
+				Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
+				Select(bucketExpr + " as bucket, device_id, severity, facility, app_name, message_pattern, " +
+					"SUM(count) as count, MIN(sample_message) as sample_message").
+				Group(groupKey).
+				Order(groupKey).
+				Limit(pageSize).Offset(offset).
+				Scan(&rows).Error; err != nil {
+				return fmt.Errorf("scan %s summaries: %w", srcInterval, err)
+			}
+			if len(rows) == 0 {
+				break
+			}
+			if err := batchInsertSyslogSummaries(tx, rows, dstInterval, bucketFmt); err != nil {
+				return fmt.Errorf("promote %s→%s summaries: insert: %w", srcInterval, dstInterval, err)
+			}
+			totalGroups += len(rows)
+			if len(rows) < pageSize {
+				break
+			}
+			offset += pageSize
 		}
-		offset += pageSize
+
+		if totalGroups == 0 {
+			return nil
+		}
+
+		// Single delete of exactly the promoted source rows, after ALL pages,
+		// in the same transaction. The dstInterval rows inserted above have a
+		// different interval_type (and ids above the watermark), so they can
+		// never match this delete.
+		if err := tx.Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
+			Delete(&models.SyslogSummary{}).Error; err != nil {
+			return fmt.Errorf("delete consumed %s syslog summaries: %w", srcInterval, err)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("Syslog aggregation: promote %s→%s: %v (rolled back, will retry next cycle)", srcInterval, dstInterval, err)
+		return false, err
 	}
 
 	if totalGroups == 0 {
 		return false, nil
 	}
-
 	log.Printf("Syslog aggregation: promoted %d groups from %s to %s summaries", totalGroups, srcInterval, dstInterval)
 	return true, nil
 }
