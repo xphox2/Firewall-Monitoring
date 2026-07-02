@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.543] - 2026-07-01
+
+### Docs
+- **Marked audit findings M16, M17, M18 resolved in `docs/audit-2026-07-01-consolidated.md`** — all three fixed collector-side in v1.2.157 (TCP syslog now rate-limited/connection-capped/backoff-on-accept-error; corrupt spillover files quarantine-and-recreate instead of disabling all seven queues; the throttled fsync moved off the queue mutex shared by UDP workers). See the collector CHANGELOG for details.
+
 ## [0.10.542] - 2026-07-01
 
 ### Fixed

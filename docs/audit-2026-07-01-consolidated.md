@@ -179,16 +179,19 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** single owner — scheduler keeps a private snapshot, or one shared mutex for cfg.Alerts.
 
 ### M16. Collector TCP syslog has no rate limiting, no connection cap, no accept backoff — full bypass of the UDP defense on the same port
+> **✅ RESOLVED (collector v1.2.157)** — the TCP path now enforces the same per-source rate limiter (per-line, before parse), caps concurrent connections at 256, backs off on persistent Accept errors, and stops logging one line per malformed message. Tests `TestSyslogTCP_RateLimited_M16` / `TestSyslogTCP_ConnectionCap_M16`.
 - **collector** · `internal/syslog/syslog.go:82`
 - One goroutine + 64KB buffer per connection, unlimited; no `Limiter.Allow` anywhere on the TCP path; unparseable lines log unthrottled; persistent Accept errors (e.g. EMFILE caused by the flood itself) hot-loop. A hostile host on the monitored LAN exhausts FDs/memory or floods the queue at TCP line rate, sidestepping the per-source PPS budget entirely.
 - **Fix:** same SetRateLimiter hook per line/read; connection semaphore; backoff on non-temporary Accept errors.
 
 ### M17. bbolt NoSync can corrupt (not just truncate) the spool on power loss, and one corrupt file makes ensureQueues permanently disable ALL seven queues
+> **✅ RESOLVED (collector v1.2.157)** — `Open` now quarantines an unreadable/corrupt spool file (renames to `<name>.bolt.corrupt-<ts>`) and recreates a fresh one, so a single corrupt file self-heals go-forward instead of failing Open and taking all seven queues down with it. Test `TestOpen_QuarantinesCorruptFile_M17`.
 - **collector** · `internal/relay/queue/queue.go:92` (+ `relay.go:571-580`)
 - With NoSync, meta/data pages hit disk in arbitrary order — bbolt's own docs warn the DB can corrupt on crash; the file's bounded-loss comment overpromises. On next start `Open/replay` fails and ensureQueues closes and nils EVERY queue on any single failure: the collector runs durability-disabled indefinitely (one WARNING), dropping all telemetry in every future outage until an operator hand-deletes the .bolt file.
 - **Fix:** quarantine-and-recreate the corrupt file (`<name>.bolt.corrupt-<ts>`); disable only the failed queue; correct the comment.
 
 ### M18. Throttled fsync and per-item bolt transactions execute while holding the queue mutex shared by all UDP ingest workers
+> **✅ RESOLVED (collector v1.2.157)** — the throttled `db.Sync()` moved off the hot path to a dedicated background ticker goroutine (writes set a dirty flag; an idle queue never fsyncs); the full-file fsync no longer blocks every UDP worker on `q.mu`. `Close` keeps its final unconditional fsync. Test `TestQueue_BackgroundSyncDurable_M18`.
 - **collector** · `internal/relay/queue/queue.go:271`
 - Above ~333 samples/s sustained (MaxMem 10000 / 30s drain) the memory tier is in permanent overflow, so every Push pays a bolt COW transaction under `q.mu`, and up to once per 2s one Push runs `db.Sync()` — a full-file fsync of a potentially ~1 GiB spool — while holding the lock. Every worker blocks, kernel socket buffers overflow, datagrams drop silently: the M7 stall reduced in frequency but moved onto a global lock, firing exactly under flood/outage conditions.
 - **Fix:** background ticker for Sync (or release q.mu around it); batch overflow evictions.
