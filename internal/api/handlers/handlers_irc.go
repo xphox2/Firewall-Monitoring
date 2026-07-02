@@ -22,12 +22,9 @@ func (h *Handler) GetIRCServer(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get IRC servers", err)
 		return
 	}
-	for i := range servers {
-		db.DecryptIRCServerSecrets(&servers[i])
-		for j := range servers[i].Channels {
-			db.DecryptIRCChannelSecrets(&servers[i].Channels[j])
-		}
-	}
+	// Never return IRC secrets to the browser. The values are encrypted at rest;
+	// GET responses show the mask (Connect/Test read plaintext server-side).
+	httputil.RedactIRCServers(servers)
 	c.JSON(http.StatusOK, response.Success(servers))
 }
 
@@ -44,10 +41,7 @@ func (h *Handler) GetIRCServerByID(c *gin.Context) {
 		c.JSON(http.StatusNotFound, response.Error("Server not found"))
 		return
 	}
-	db.DecryptIRCServerSecrets(&server)
-	for i := range server.Channels {
-		db.DecryptIRCChannelSecrets(&server.Channels[i])
-	}
+	httputil.RedactIRCServer(&server)
 	c.JSON(http.StatusOK, response.Success(server))
 }
 
@@ -79,8 +73,7 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 		mgr.ReloadCommands()
 	}
 
-	// Decrypt before returning so client sees plaintext, not ciphertext
-	db.DecryptIRCServerSecrets(&server)
+	httputil.RedactIRCServer(&server)
 	c.JSON(http.StatusOK, response.Success(server))
 }
 
@@ -126,10 +119,16 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 		return
 	}
 
-	// Encrypt password fields before saving
+	// Encrypt password fields before saving. A value equal to the redaction mask
+	// means "unchanged" (the client GETs masked secrets now) — drop it so we
+	// never encrypt "********" over the real stored secret.
 	for _, field := range []string{"server_password", "nickserv_password", "sasl_password"} {
-		if v, ok := updates[field].(string); ok && v != "" {
-			updates[field] = db.EncryptField(v)
+		if v, ok := updates[field].(string); ok {
+			if v == httputil.RedactedMask {
+				delete(updates, field)
+			} else if v != "" {
+				updates[field] = db.EncryptField(v)
+			}
 		}
 	}
 
@@ -153,11 +152,8 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 		mgr.ReloadCommands()
 	}
 
-	// Decrypt before returning so client sees plaintext, not ciphertext
-	db.DecryptIRCServerSecrets(&server)
-	for i := range server.Channels {
-		db.DecryptIRCChannelSecrets(&server.Channels[i])
-	}
+	// Mask secrets before returning — never echo plaintext (or ciphertext) back.
+	httputil.RedactIRCServer(&server)
 	c.JSON(http.StatusOK, response.Success(server))
 }
 
@@ -250,7 +246,7 @@ func (h *Handler) GetIRCChannels(c *gin.Context) {
 		}
 	}
 	for i := range channels {
-		db.DecryptIRCChannelSecrets(&channels[i])
+		httputil.RedactIRCChannel(&channels[i])
 	}
 	c.JSON(http.StatusOK, response.Success(channels))
 }
@@ -279,7 +275,7 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 		mgr.RestartBot(channel.ServerID)
 	}
 
-	db.DecryptIRCChannelSecrets(&channel)
+	httputil.RedactIRCChannel(&channel)
 	c.JSON(http.StatusOK, response.Success(channel))
 }
 
@@ -306,10 +302,15 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 	delete(updates, "id")
 	delete(updates, "created_at")
 
-	// Encrypt password fields before saving
+	// Encrypt password fields before saving. Mask == "unchanged": drop it so we
+	// never encrypt "********" over the real stored secret.
 	for _, field := range []string{"chanserv_password", "chan_oper_pass", "channel_key"} {
-		if v, ok := updates[field].(string); ok && v != "" {
-			updates[field] = db.EncryptField(v)
+		if v, ok := updates[field].(string); ok {
+			if v == httputil.RedactedMask {
+				delete(updates, field)
+			} else if v != "" {
+				updates[field] = db.EncryptField(v)
+			}
 		}
 	}
 
@@ -322,9 +323,9 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 		mgr.RestartBot(channel.ServerID)
 	}
 
-	// Re-fetch and decrypt for response
+	// Re-fetch and mask for response.
 	db.Gorm().First(&channel, id)
-	db.DecryptIRCChannelSecrets(&channel)
+	httputil.RedactIRCChannel(&channel)
 	c.JSON(http.StatusOK, response.Success(channel))
 }
 

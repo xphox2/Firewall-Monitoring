@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.556] - 2026-07-02
+
+### Security
+Fixes for the confirmed server-side findings of the 2026-07-02 engineering security audit (adversarially verified). See `docs/audit-2026-07-02-consolidated.md`.
+
+- **HIGH — IRC credentials were returned in cleartext by the IRC API.** `GetIRCServer(ByID)`, `GetIRCChannels`, and the create/update echo responses decrypted the stored server/NickServ/SASL/ChanServ/oper/channel-key secrets and serialized the plaintext into the JSON body — defeating the at-rest encryption for anything that sees an admin response (browser cache, proxy logs, admin-context XSS). Added `RedactIRCServer`/`RedactIRCChannel` (`internal/httputil/redact.go`); all IRC read/echo paths now mask secrets with `********`. The update handlers gained the redaction write-back guard (an incoming `********` means "unchanged" and is never re-encrypted over the real secret), mirroring the device path. The Connect/Test flows still read plaintext server-side.
+- **HIGH — session revocation failed open under DB stress.** `AuthManager.ValidateToken` only rejected a token when the token-version lookup returned `err == nil`; on any DB error (transient failure, `statement_timeout`, missing row) it accepted the token regardless of version, so a stolen-but-unexpired JWT survived logout / password-change revocation exactly when the DB was stressed. It now fails closed — any lookup error rejects the token. Regression test `TestValidateToken_FailsClosedOnDBError`.
+- **HIGH — unauthenticated IDOR on `/api/public/*`.** `resolvePublicDeviceID` returned any `?device_id` verbatim with no `public_visible` check, so an anonymous caller could enumerate device IDs and pull telemetry (hostnames, firmware/signature versions, interface details, VPN peers) for devices explicitly marked non-public. The param is now gated on `enabled AND public_visible`, closing it across every per-device public endpoint at once.
+- **HIGH — public display toggles were enforced client-side only.** `GetPublicVPN` and `GetPublicConnections` ignored `public_show_vpn` / `public_show_connections` (default off) and the connections endpoint had no device filter at all, dumping the full inter-device topology to anyone. Both toggles are now enforced server-side, and public connections are restricted to pairs where BOTH endpoints are public-visible.
+- **HIGH — webhook test endpoint was a DNS-rebind SSRF.** The notification test client used a plain `http.Client`, so the pre-flight IP check could be defeated by short-TTL DNS re-resolving to an internal target on `client.Do`. It now uses the same `httputil.SafeDialContext` guarded transport as the real notifier delivery path.
+- **MEDIUM — probe device allow-list failed open.** `probeDeviceIDs` returned `nil` on a device-lookup error, and every ingestion guard enforced only when the allow-list was non-nil — so during a DB-error window an authenticated probe could push telemetry (including forged config revisions) attributed to devices assigned to a different probe. It now returns a non-nil empty set (deny-all) on error, so all ~18 ingestion guards fail closed and the collector retries.
+- **MEDIUM — `config.env` was world-readable in Docker.** `entrypoint.sh` wrote `/config/config.env` (holding `JWT_SECRET_KEY`, from which the AES-256 at-rest key is derived) at the default 0644 under a root umask; `/config` is bind-mounted to the host, so any local user could read the master secret. It is now `chmod 0600` + `chown fwmon`, matching the pg-credentials file.
+- **LOW — two unescaped `innerHTML` status sinks.** The VPN tunnel status/state on the device-detail page and the VPN status on the unauthenticated public dashboard were interpolated without escaping (enum-constrained today, but the public one is internet-facing). Both now route through the escape helper.
+
 ## [0.10.555] - 2026-07-02
 
 ### Added

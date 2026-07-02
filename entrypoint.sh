@@ -160,7 +160,14 @@ SMTP_TO=${SMTP_TO:-admin@example.com}
 SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
 DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
 EOF
-    echo "Config created at /config/config.env"
+    # config.env holds JWT_SECRET_KEY, from which the AES-256 at-rest key is
+    # derived, plus SMTP creds. /config is bind-mounted to the host, so a default
+    # 0644 (root umask 022) would let every local user on the host read the
+    # master secret and forge sessions / decrypt every stored {enc} credential.
+    # Lock it down like the pg-credentials file written above.
+    chmod 0600 /config/config.env
+    chown fwmon:fwmon /config/config.env 2>/dev/null || true
+    echo "Config created at /config/config.env (mode 0600)"
 fi
 
 # Create data directories and fix ownership (runs as root)

@@ -1061,8 +1061,8 @@
                 '<td style="color:#8b949e;font-size:0.8rem;">' + esc(v.interface_name || '-') + '</td>' +
                 '<td>' + remoteCell + '</td>' +
                 '<td style="color:#8b949e;font-size:0.78rem;">' + esc(v.mode || '-') + '</td>' +
-                '<td><span class="badge ' + v.status + '">' + v.status + '</span></td>' +
-                '<td><span class="badge ' + stateClass + '">' + stateLabel + '</span></td>' +
+                '<td><span class="badge ' + esc(v.status) + '">' + esc(v.status) + '</span></td>' +
+                '<td><span class="badge ' + stateClass + '">' + esc(stateLabel) + '</span></td>' +
                 '<td><code style="color:#58a6ff;font-size:0.8rem;">' + esc(v.local_subnet || '-') + '</code></td>' +
                 '<td><code style="color:#3fb950;font-size:0.8rem;">' + esc(v.remote_subnet || '-') + '</code></td>' +
                 '<td>' + formatBytes(v.bytes_in) + '</td>' +

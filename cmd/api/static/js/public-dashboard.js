@@ -470,7 +470,7 @@
             if (all.length === 0) { body.innerHTML = '<div class="loading">No VPN tunnels</div>'; return; }
             body.innerHTML = '<div class="vpn-grid">' + all.map(function(v) {
                 return '<div class="vpn-card"><div class="vpn-name">' + escapeHtml(v.tunnel_name) + '</div>' +
-                    '<span class="vpn-status ' + (v.status || 'down') + '">' + (v.status || 'down').toUpperCase() + '</span> ' +
+                    '<span class="vpn-status ' + escapeHtml(v.status || 'down') + '">' + escapeHtml((v.status || 'down').toUpperCase()) + '</span> ' +
                     '<span style="color:#768390;font-size:0.6rem;">' + escapeHtml(v.deviceName) + '</span></div>';
             }).join('') + '</div>';
         });

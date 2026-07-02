@@ -846,7 +846,13 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 		return
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	// Pin the dialer to the pre-flight-validated IP so DNS rebinding can't
+	// redirect this connection to a private/loopback/metadata target after the
+	// isValidExternalIP check above passed (the same guard the real notifier
+	// delivery path uses). Without this, the test endpoint is a DNS-rebind SSRF.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = httputil.SafeDialContext(10 * time.Second)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: tr}
 	httpReq, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid URL: %v", err)))

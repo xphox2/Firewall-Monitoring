@@ -189,10 +189,15 @@ func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		// Check token version against DB to reject revoked tokens
+		// Check token version against DB to reject revoked tokens. Fail CLOSED:
+		// if the version lookup errors (transient DB failure, statement_timeout,
+		// or the row is gone), reject the token rather than accept it — otherwise
+		// logout / password-change / compromise revocation silently stops working
+		// exactly when the DB is under stress. A legitimate admin simply
+		// re-authenticates; a stolen-but-unexpired JWT does not slip through.
 		if am.db != nil {
 			currentVersion, err := am.db.GetAdminTokenVersion(claims.UserID)
-			if err == nil && claims.TokenVersion != currentVersion {
+			if err != nil || claims.TokenVersion != currentVersion {
 				return nil, ErrInvalidToken
 			}
 		}

@@ -852,10 +852,18 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 
 // probeDeviceIDs returns the set of device IDs assigned to the given probe.
 // Used by data ingestion handlers to reject data for unassigned devices.
+//
+// On a lookup error it returns a NON-NIL EMPTY map (deny-all), never nil. The
+// ingestion guards enforce only when the map is non-nil, so returning nil on
+// error made the allow-list fail OPEN — during a transient DB error window an
+// authenticated probe could push telemetry (including forged config revisions)
+// attributed to devices assigned to a different probe. A security allow-list
+// must fail closed: on error, deny everything and let the collector retry.
 func (h *Handler) probeDeviceIDs(probeID uint) map[uint]bool {
 	deviceIDs, err := h.db.GetDeviceIDsByProbe(probeID)
 	if err != nil {
-		return nil
+		log.Printf("probeDeviceIDs: device lookup failed for probe %d, denying all device-attributed telemetry this batch: %v", probeID, err)
+		return map[uint]bool{}
 	}
 	ids := make(map[uint]bool, len(deviceIDs))
 	for _, id := range deviceIDs {

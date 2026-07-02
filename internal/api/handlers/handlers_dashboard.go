@@ -41,8 +41,15 @@ func (h *Handler) GetPublicDevices(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(result))
 }
 
-// resolvePublicDeviceID returns the device ID from ?device_id query param,
-// or falls back to the first enabled device.
+// resolvePublicDeviceID returns the device ID from the ?device_id query param,
+// or falls back to the first enabled + public-visible device.
+//
+// A supplied device_id MUST still pass the enabled + public_visible gate: these
+// endpoints are unauthenticated, so without the check an anonymous caller could
+// enumerate device_id=1,2,3… and pull telemetry (hostnames, firmware/signature
+// versions, interface details, VPN peers) for devices the operator explicitly
+// marked non-public. public_visible is the only exposure control and it must be
+// enforced here, not just in the default fallback.
 func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
 	db := h.reqDB(c)
 	if idStr := c.Query("device_id"); idStr != "" {
@@ -50,7 +57,16 @@ func (h *Handler) resolvePublicDeviceID(c *gin.Context) (uint, bool) {
 		if err != nil {
 			return 0, false
 		}
-		return uint(id), true
+		if db == nil {
+			return 0, false
+		}
+		var dev models.Device
+		if err := db.Gorm().Select("id").
+			Where("id = ? AND enabled = ? AND public_visible = ?", uint(id), true, true).
+			First(&dev).Error; err != nil {
+			return 0, false
+		}
+		return dev.ID, true
 	}
 	// Default to first enabled + public-visible device
 	if db != nil {
@@ -377,10 +393,33 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 	}))
 }
 
+// publicBoolSetting reads a boolean system setting for the unauthenticated
+// public surface, defaulting to false (the safe default that GetPublicDisplay-
+// Settings advertises) when the key is unset or the DB is unavailable. Used to
+// enforce the public_show_* toggles SERVER-side — the SPA only hides the widgets
+// client-side, so the API must not answer when a toggle is off.
+func (h *Handler) publicBoolSetting(c *gin.Context, key string) bool {
+	db := h.reqDB(c)
+	if db == nil {
+		return false
+	}
+	var s models.SystemSetting
+	if err := db.Gorm().Select("value").Where("\"key\" = ?", key).First(&s).Error; err != nil {
+		return false
+	}
+	return s.Value == "true"
+}
+
 func (h *Handler) GetPublicVPN(c *gin.Context) {
 	db := h.reqDB(c)
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+
+	// Enforce the public_show_vpn toggle server-side (default off).
+	if !h.publicBoolSetting(c, "public_show_vpn") {
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
+		return
+	}
 
 	deviceID, hasDevice := h.resolvePublicDeviceID(c)
 
@@ -416,8 +455,32 @@ func (h *Handler) GetPublicConnections(c *gin.Context) {
 		return
 	}
 
+	// Enforce the public_show_connections toggle server-side (default off). The
+	// SPA hides the widget, but without this the endpoint dumped the full
+	// inter-device topology (source/dest names, type, status) to anyone.
+	if !h.publicBoolSetting(c, "public_show_connections") {
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
+		return
+	}
+
+	// Only expose connections whose BOTH endpoints are public-visible devices, so
+	// a public connection can't leak the name/existence of a non-public device.
+	var publicIDs []uint
+	if err := db.Gorm().Model(&models.Device{}).
+		Where("enabled = ? AND public_visible = ?", true, true).
+		Pluck("id", &publicIDs).Error; err != nil {
+		httputil.InternalError(c, "Failed to resolve public devices", err)
+		return
+	}
+	if len(publicIDs) == 0 {
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
+		return
+	}
+
 	var connections []models.DeviceConnection
-	if err := db.Gorm().Preload("SourceDevice").Preload("DestDevice").Limit(100).Find(&connections).Error; err != nil {
+	if err := db.Gorm().Preload("SourceDevice").Preload("DestDevice").
+		Where("source_device_id IN ? AND dest_device_id IN ?", publicIDs, publicIDs).
+		Limit(100).Find(&connections).Error; err != nil {
 		httputil.InternalError(c, "Failed to get connections", err)
 		return
 	}

@@ -46,3 +46,42 @@ func RedactProbes(probes []models.Probe) {
 		RedactProbe(&probes[i])
 	}
 }
+
+// RedactIRCChannel masks channel secrets (key, ChanServ/oper passwords) on a
+// single channel. Values are stored encrypted at rest; GET responses must show
+// the mask, never the plaintext (or the ciphertext).
+func RedactIRCChannel(ch *models.IRCChannel) {
+	if ch.ChannelKey != "" {
+		ch.ChannelKey = RedactedMask
+	}
+	if ch.ChanServPass != "" {
+		ch.ChanServPass = RedactedMask
+	}
+	if ch.ChanOperPass != "" {
+		ch.ChanOperPass = RedactedMask
+	}
+}
+
+// RedactIRCServer masks server secrets (server/NickServ/SASL passwords) and the
+// secrets of any preloaded channels.
+func RedactIRCServer(s *models.IRCServer) {
+	if s.ServerPassword != "" {
+		s.ServerPassword = RedactedMask
+	}
+	if s.NickServPassword != "" {
+		s.NickServPassword = RedactedMask
+	}
+	if s.SASLPassword != "" {
+		s.SASLPassword = RedactedMask
+	}
+	for i := range s.Channels {
+		RedactIRCChannel(&s.Channels[i])
+	}
+}
+
+// RedactIRCServers masks secrets on a slice of servers (and their channels).
+func RedactIRCServers(servers []models.IRCServer) {
+	for i := range servers {
+		RedactIRCServer(&servers[i])
+	}
+}

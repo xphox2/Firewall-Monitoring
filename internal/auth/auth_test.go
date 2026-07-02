@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +251,29 @@ func TestValidateToken_TokenVersionMismatch_AUDIT117(t *testing.T) {
 	fresh, _ := am.GenerateToken("admin", 1, 2)
 	if _, err := am.ValidateToken(fresh); err != nil {
 		t.Errorf("current-version token rejected: %v", err)
+	}
+}
+
+// TestValidateToken_FailsClosedOnDBError pins the 2026-07-02 audit fix: if the
+// token-version lookup errors (transient DB failure / statement_timeout), the
+// token must be REJECTED, not accepted. Otherwise a stolen-but-unexpired JWT
+// slips through exactly when the DB is stressed, defeating logout / password-
+// change revocation.
+func TestValidateToken_FailsClosedOnDBError(t *testing.T) {
+	t.Parallel()
+	am, db := managerWithUser(t, "admin", "pw")
+	tok, err := am.GenerateToken("admin", 1, 0)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	// Sanity: with a healthy DB the token validates.
+	if _, err := am.ValidateToken(tok); err != nil {
+		t.Fatalf("healthy-DB token rejected: %v", err)
+	}
+	// Now the version lookup errors — the token must be rejected (fail closed).
+	db.versionErr = errors.New("statement timeout")
+	if _, err := am.ValidateToken(tok); err != auth.ErrInvalidToken {
+		t.Errorf("DB-error validation: got %v, want ErrInvalidToken (fail closed)", err)
 	}
 }
 
