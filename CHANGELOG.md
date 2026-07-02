@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.539] - 2026-07-01
+
+### Fixed
+- **Direct-send metric endpoints now have batch idempotency (audit 2026-07-01 finding L17, server half of the M19 pair).** The eight time-series metric endpoints (system status, interface stats, VPN statuses, HA statuses, processor stats, hardware sensors, security stats, SD-WAN health) run the same AUDIT-042 `batchDedupCheck`/`markBatchIfOK` pair the event endpoints use — previously a collector timeout after a server-side commit meant the buffered replay inserted every row twice, with duplicated cumulative interface counters skewing all delta-based bandwidth math. Pairs with collector v1.2.156, which sends a content-derived `X-Probe-Batch-ID` on those routes; a no-op for older collectors (no header ⇒ no dedup), so mixed-version deployments are unaffected. The current-state upsert endpoints (interface addresses, license info) are deliberately excluded — replays there are idempotent by design.
+
 ## [0.10.538] - 2026-07-01
 
 ### Fixed

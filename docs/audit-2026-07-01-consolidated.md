@@ -188,6 +188,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** background ticker for Sync (or release q.mu around it); batch overflow evictions.
 
 ### M19. Idempotency batch IDs are re-minted on requeue, and the direct-send metric path has no batch ID at all — timeout-after-commit duplicates rows
+> **✅ RESOLVED (collector v1.2.156)** — batch IDs are now derived from the payload content (SHA-256), so an identical body carries the identical key across retries, sync-cycle requeues, and process restarts (every payload embeds collector-stamped timestamps, so distinct collections never collide); and the direct-send metric path (`doDirectSend`/`postMetricRaw`) now sends `X-Probe-Batch-ID` on every attempt including spillover-queue replays. Test `TestContentBatchID_DeterministicAndDistinct_M19`.
 - **collector** · `internal/relay/relay.go:1543` (+ server-side M26/L17)
 - `newBatchID()` is per-`sendBatch`-call: if all 3 in-call retries fail transport-level after a server commit, the requeued items are re-chunked and re-sent under a FRESH ID the server can't match. The metric path (`doDirectSend`/`drainMetricQueue`) sends no `X-Probe-Batch-ID` — replayed system-status/interface-stats/VPN payloads insert duplicate rows; duplicated cumulative counters at near-identical timestamps skew delta-based bandwidth math.
 - **Fix:** assign the key at first enqueue (store in the envelope) and reuse across cycles; add the header to direct sends (server: L17).
@@ -303,6 +304,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `internal/api/handlers/handlers_data.go:427` — atomic UPDATE (`samples = samples + ?` …) or SELECT FOR UPDATE; pre-existing pattern, but the batch rewrite widened the loss unit from one sample to the batch.
 
 ### L17. ReceiveSystemStatuses (and the other 8 direct-send metric endpoints) have no batch idempotency on either side — timeout-after-commit replays insert duplicate rows
+> **✅ RESOLVED (v0.10.539 + collector v1.2.156)** — the eight time-series direct-send endpoints (system status, interface stats, VPN/HA statuses, processor stats, hardware sensors, security stats, SD-WAN health) now run the AUDIT-042 `batchDedupCheck`/`markBatchIfOK` pair, and the collector sends content-derived `X-Probe-Batch-ID` on those routes (M19). The current-state upsert endpoints (interface addresses, license info) were deliberately excluded — replays there are idempotent by design. No-op for pre-v1.2.156 collectors (no header ⇒ no dedup), so version skew is safe.
 - **server** · `internal/api/handlers/handlers_data.go:568` — add batchDedupCheck/markBatchIfOK server-side and X-Probe-Batch-ID to collector direct sends (pairs with M19); duplicates skew per-device history charts, and M26's new 500 path makes replays far more frequent at HEAD.
 
 ### L18. Device-detail sFlow bandwidth chart is unreachable for devices that never had an SNMP interface snapshot — precisely the devices the feature was built for

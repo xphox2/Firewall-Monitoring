@@ -506,6 +506,16 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// L17 of the 2026-07-01 audit: the direct-send metric endpoints had no
+	// batch idempotency, so a timeout-after-commit replay from the collector's
+	// spillover queue inserted every row twice (duplicate timestamps skew
+	// per-device history charts). Same AUDIT-042 pair the event endpoints use;
+	// a no-op when the collector (pre-v1.2.156) sends no X-Probe-Batch-ID.
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var stats []models.ProcessorStats
 	if err := c.ShouldBindJSON(&stats); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -539,6 +549,11 @@ func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID) // L17: see ReceiveProcessorStats
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var sensors []models.HardwareSensor
 	if err := c.ShouldBindJSON(&sensors); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -576,6 +591,11 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID) // L17: see ReceiveProcessorStats
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var statuses []models.SystemStatus
 	if err := c.ShouldBindJSON(&statuses); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -629,6 +649,14 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// L17: duplicated cumulative interface counters at near-identical
+	// timestamps are the worst replay case — they skew every delta-based
+	// bandwidth calculation.
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var stats []models.InterfaceStats
 	if err := c.ShouldBindJSON(&stats); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -678,6 +706,11 @@ func (h *Handler) ReceiveVPNStatuses(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID) // L17: see ReceiveProcessorStats
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var statuses []models.VPNStatus
 	if err := c.ShouldBindJSON(&statuses); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -723,6 +756,11 @@ func (h *Handler) ReceiveHAStatuses(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID) // L17: see ReceiveProcessorStats
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var statuses []models.HAStatus
 	if err := c.ShouldBindJSON(&statuses); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -756,6 +794,11 @@ func (h *Handler) ReceiveSecurityStats(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID) // L17: see ReceiveProcessorStats
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var stats []models.SecurityStats
 	if err := c.ShouldBindJSON(&stats); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
@@ -789,6 +832,11 @@ func (h *Handler) ReceiveSDWANHealth(c *gin.Context) {
 	if !ok {
 		return
 	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID) // L17: see ReceiveProcessorStats
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
 	var health []models.SDWANHealth
 	if err := c.ShouldBindJSON(&health); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
