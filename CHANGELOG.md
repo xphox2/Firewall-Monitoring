@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.533] - 2026-07-01
+
+### Fixed
+- **The three sFlow-analytics tables with no retention path no longer grow without bound (audit 2026-07-01 finding H4).** `flow_rollups` terminal `'1d'` rows (one row per distinct conversation per day — 10^5–10^6 rows/day on a busy network), `flow_detections` (appended every 5-minute detection cycle, only ever flagged acknowledged), and `flow_agent_drops` (one row per agent/sampling-rate/window; the "bounded by agent count" model comment was wrong) were all absent from `CleanupOldData` — the same unbounded-growth shape as the historical `syslog_messages` incident. They now age out through the batched-delete cleanup path behind three new knobs, each documented in `config.env.example` (0 inherits `RETENTION_DEFAULT_DAYS`):
+  - `RETENTION_FLOW_ROLLUP_DAYS` (default **365** — rollups are the long-term flow history; the cutoff covers every interval_type so stale 5m/1h rows are also dropped even if promotion were broken)
+  - `RETENTION_FLOW_DETECTION_DAYS` (default **90**, ages on `detected_at`)
+  - `RETENTION_AGENT_DROPS_DAYS` (default **30**, ages on `window_start`)
+  - The batched cleanup helper is now column-parameterized (`batchedDeleteOlderThanOn`) since these tables age on non-`timestamp` columns. Regression test: `cleanup_flow_tables_h4_test.go`.
+
 ## [0.10.532] - 2026-07-01
 
 ### Fixed

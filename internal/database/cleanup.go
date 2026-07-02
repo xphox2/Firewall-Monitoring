@@ -79,6 +79,15 @@ func (d *Database) batchedDeleteOlderThan(model interface{}, cutoff time.Time) e
 // (crash-loop shape). Routing them through the same 10k-row batched loop with
 // `lock_timeout='5s'` and an inter-batch sleep keeps each statement short.
 func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Time, extraWhere string, args ...interface{}) error {
+	return d.batchedDeleteOlderThanOn(model, "timestamp", cutoff, extraWhere, args...)
+}
+
+// batchedDeleteOlderThanOn is the column-parameterized core of the batched
+// cleanup deletes. Most tables age on `timestamp`, but flow_detections ages on
+// `detected_at` and flow_agent_drops on `window_start` (H4 of the 2026-07-01
+// audit). timeColumn is always a compile-time literal from this package, never
+// caller/user input.
+func (d *Database) batchedDeleteOlderThanOn(model interface{}, timeColumn string, cutoff time.Time, extraWhere string, args ...interface{}) error {
 	batchSize := cleanupDeleteBatchSize
 	for {
 		var affected int64
@@ -88,7 +97,7 @@ func (d *Database) batchedDeleteOlderThanWhere(model interface{}, cutoff time.Ti
 					return e
 				}
 			}
-			sub := tx.Model(model).Select("id").Where("timestamp < ?", cutoff)
+			sub := tx.Model(model).Select("id").Where(timeColumn+" < ?", cutoff)
 			if extraWhere != "" {
 				sub = sub.Where(extraWhere, args...)
 			}
@@ -243,6 +252,14 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// AUDIT-042: idempotency keys only matter for the probe's retry window
 		// (seconds); 2 days is far more than enough and keeps the table tiny.
 		{&models.ProcessedBatch{}, "processed_batches", 2},
+		// H4 of the 2026-07-01 audit: flow_rollups had no retention at all —
+		// terminal '1d' rollups (one row per distinct conversation per day,
+		// 10^5-10^6 rows/day on a busy network) accumulated forever. The
+		// cutoff applies to every interval_type: 5m/1h rollups are consumed by
+		// promotion long before a year, so anything older than the window —
+		// whatever its interval — is stale and safe to drop even if promotion
+		// were broken or disabled.
+		{&models.FlowRollup{}, "flow_rollups", ret.Days(ret.FlowRollupDays)},
 	}
 
 	for _, e := range entries {
@@ -257,6 +274,22 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		if err := d.batchedDeleteOlderThan(e.model, cutoff); err != nil {
 			return fmt.Errorf("failed to cleanup %s: %w", e.name, err)
 		}
+	}
+
+	// H4 of the 2026-07-01 audit: flow_detections and flow_agent_drops age on
+	// their own time columns (detected_at / window_start), so they can't ride
+	// the `timestamp`-keyed entries loop above. flow_detections rows are
+	// appended every 5-min detection cycle and only ever got an `acknowledged`
+	// flip; flow_agent_drops appends one row per (agent, sampling_rate, window)
+	// — the "bounded by the number of monitored agents" assumption in models.go
+	// was wrong because windows accumulate. Neither table is partitioned.
+	detCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.FlowDetectionDays))
+	if err := d.batchedDeleteOlderThanOn(&models.FlowDetection{}, "detected_at", detCutoff, ""); err != nil {
+		return fmt.Errorf("failed to cleanup flow_detections: %w", err)
+	}
+	dropsCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.AgentDropsDays))
+	if err := d.batchedDeleteOlderThanOn(&models.AgentDrops{}, "window_start", dropsCutoff, ""); err != nil {
+		return fmt.Errorf("failed to cleanup flow_agent_drops: %w", err)
 	}
 
 	// Syslog: handle critical (0-5) and informational (6-7) differently

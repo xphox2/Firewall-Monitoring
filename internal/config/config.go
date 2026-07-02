@@ -172,6 +172,16 @@ type RetentionConfig struct {
 	// auto-archived with a warning log so the operator can
 	// reconstruct the "stale unack" event from the logs.
 	UnackAlertDays int // unack alerts (default 90)
+	// H4 of the 2026-07-01 audit: the three sFlow-analytics tables that had no
+	// retention path and grew unbounded. Terminal '1d' flow rollups are keyed by
+	// the full conversation tuple (one row per distinct conversation per day),
+	// flow_detections appends every 5-min detection cycle, and flow_agent_drops
+	// appends per (agent, sampling_rate, window). The rollup default is a year —
+	// rollups ARE the long-term flow history; detections and agent-drop windows
+	// are operational events with shorter useful lives.
+	FlowRollupDays    int // flow_rollups     (default 365)
+	FlowDetectionDays int // flow_detections  (default 90)
+	AgentDropsDays    int // flow_agent_drops (default 30)
 }
 
 type AuthConfig struct {
@@ -349,6 +359,10 @@ func Load() *Config {
 			// operator doesn't accidentally shorten unack
 			// alert retention to 30 days.
 			UnackAlertDays: getIntEnv("RETENTION_UNACK_ALERT_DAYS", 90),
+			// H4 of the 2026-07-01 audit: see the field docs above.
+			FlowRollupDays:    getIntEnv("RETENTION_FLOW_ROLLUP_DAYS", 365),
+			FlowDetectionDays: getIntEnv("RETENTION_FLOW_DETECTION_DAYS", 90),
+			AgentDropsDays:    getIntEnv("RETENTION_AGENT_DROPS_DAYS", 30),
 		},
 		Detect: DetectConfig{
 			PortScanPorts:      getIntEnv("DETECT_PORT_SCAN_PORTS", 0),
