@@ -64,7 +64,7 @@ func TestRecordCooldownLocked_Bounded_M25(t *testing.T) {
 	for i := 0; i < maxLastAlertEntries+1500; i++ {
 		am.mu.Lock()
 		// Slightly increasing timestamps so eviction has a well-defined oldest.
-		am.recordCooldownLocked(keyN(i), base.Add(time.Duration(i)*time.Millisecond))
+		am.recordCooldownLocked(keyN(i), base.Add(time.Duration(i)*time.Millisecond), 5*time.Minute)
 		am.mu.Unlock()
 	}
 

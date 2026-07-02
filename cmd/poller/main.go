@@ -213,6 +213,13 @@ func (p *Poller) Start() error {
 	cleanupTicker := time.NewTicker(24 * time.Hour)
 	defer cleanupTicker.Stop()
 
+	// L2 of the 2026-07-01 audit: prune the alert-cooldown map hourly (not just
+	// on the daily cleanup). Now that prune respects each key's own cooldown,
+	// running it hourly keeps the map tight without truncating any configured
+	// cooldown.
+	cooldownPruneTicker := time.NewTicker(1 * time.Hour)
+	defer cooldownPruneTicker.Stop()
+
 	// Roll up flow data every 5 minutes
 	rollupTicker := time.NewTicker(5 * time.Minute)
 	defer rollupTicker.Stop()
@@ -257,6 +264,10 @@ func (p *Poller) Start() error {
 			p.startThreatFeedSyncAsync() // M9: async, off the select loop
 		case <-feedTickC:
 			p.startThreatFeedSyncAsync()
+		case <-cooldownPruneTicker.C:
+			if p.alertManager != nil {
+				p.alertManager.PruneExpiredCooldowns() // L2: hourly, cheap, no lock needed
+			}
 		case <-cleanupTicker.C:
 			p.runUnderLeaderLock("cleanup", func() {
 				if p.db != nil {

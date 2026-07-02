@@ -129,7 +129,11 @@ func RenderAlertTimelineSVG(buckets []AlertBucket) template.HTML {
 
 // RenderThroughputChart renders a beautiful area chart of interface throughput.
 func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
-	if len(card.SparklineRaw) == 0 {
+	// L8 of the 2026-07-01 audit: need >= 2 points. The X math divides by
+	// (nPoints-1), so a single-point series produced NaN path coordinates
+	// ("M NaN,NaN") — an invalid SVG path that browsers drop, breaking the
+	// report preview / print-to-PDF for that device until a second sample.
+	if len(card.SparklineRaw) < 2 {
 		return template.HTML(`
 			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
 				No throughput statistics recorded.
@@ -256,7 +260,9 @@ func RenderThroughputChart(card DeviceCard, tz string) template.HTML {
 
 // RenderCPUMemSVGChart renders a beautiful dual line chart for CPU and Memory history.
 func RenderCPUMemSVGChart(card DeviceCard, tz string) template.HTML {
-	if len(card.CPUHistory) == 0 && len(card.MemHistory) == 0 {
+	// L8: require >= 2 points in at least one series (the X math divides by
+	// nPoints-1; a 1-point max produces NaN path coordinates).
+	if len(card.CPUHistory) < 2 && len(card.MemHistory) < 2 {
 		return template.HTML(`
 			<div style="border: 1px dashed #cbd5e1; border-radius: 6px; padding: 20px; text-align: center; color: #64748b; font-size: 11px;">
 				No CPU/Memory statistics recorded.

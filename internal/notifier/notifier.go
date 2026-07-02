@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/http"
 	"net/smtp"
 	"net/textproto"
@@ -401,7 +402,18 @@ func (n *Notifier) SendHTMLEmail(subject, htmlBody string, attachments []Attachm
 		if err != nil {
 			return fmt.Errorf("failed to create HTML part: %w", err)
 		}
-		htmlPart.Write([]byte(htmlBody))
+		// L7 of the 2026-07-01 audit: the part DECLARES quoted-printable but
+		// previously wrote the body RAW, so a compliant MTA/client QP-decoded it
+		// — mangling any `=XX` sequence (alert text like `threshold=90` decodes
+		// `=90` into a byte) and choking on raw 8-bit UTF-8 / >76-char lines.
+		// Actually QP-encode the body so it matches the declared encoding.
+		qp := quotedprintable.NewWriter(htmlPart)
+		if _, err := qp.Write([]byte(htmlBody)); err != nil {
+			return fmt.Errorf("failed to write HTML part: %w", err)
+		}
+		if err := qp.Close(); err != nil {
+			return fmt.Errorf("failed to finalize HTML part: %w", err)
+		}
 
 		// Inline image attachments
 		for _, att := range attachments {

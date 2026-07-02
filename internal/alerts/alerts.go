@@ -21,7 +21,8 @@ type AlertManager struct {
 	notifier      *notifier.Notifier
 	db            *database.Database
 	lastAlert     map[string]time.Time
-	activeAlerts  map[string]bool // tracks currently-firing alert keys for recovery detection
+	cooldownFor   map[string]time.Duration // L2: per-key effective cooldown, so prune evicts only past each key's OWN window
+	activeAlerts  map[string]bool          // tracks currently-firing alert keys for recovery detection
 	mu            sync.RWMutex
 	alertCooldown time.Duration
 	policyCache   PolicyCache
@@ -39,6 +40,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		notifier:      notif,
 		db:            db,
 		lastAlert:     make(map[string]time.Time),
+		cooldownFor:   make(map[string]time.Duration),
 		activeAlerts:  make(map[string]bool),
 		alertCooldown: 5 * time.Minute,
 	}
@@ -90,7 +92,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 					PolicyID:     resolved.PolicyID,
 					Suppressed:   resolved.InMaintenance,
 				}
-				am.recordCooldownLocked(chk.metricKey, now)
+				am.recordCooldownLocked(chk.metricKey, now, cooldown)
 				am.activeAlerts[chk.metricKey] = true
 				fired = append(fired, firedEntry{alert, resolved})
 			}
@@ -158,7 +160,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 				PolicyID:     resolved.PolicyID,
 				Suppressed:   resolved.InMaintenance,
 			}
-			am.recordCooldownLocked(key, now)
+			am.recordCooldownLocked(key, now, cooldown)
 			am.activeAlerts[key] = true
 			fired = append(fired, firedEntry{alert, resolved})
 		}
@@ -224,7 +226,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.recordCooldownLocked(key, now)
+		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
@@ -299,7 +301,7 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 					PolicyID:     resolved.PolicyID,
 					Suppressed:   resolved.InMaintenance,
 				}
-				am.recordCooldownLocked(alertKey, now)
+				am.recordCooldownLocked(alertKey, now, cooldown)
 				fired = append(fired, firedEntry{alert, resolved})
 			}
 		}
@@ -329,7 +331,7 @@ func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) e
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.recordCooldownLocked(key, now)
+		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
@@ -378,7 +380,7 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.recordCooldownLocked(key, now)
+		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
@@ -467,7 +469,7 @@ const maxLastAlertEntries = 50000
 // map's size cap first. Caller holds am.mu. Replaces the raw
 // `am.lastAlert[key] = now` writes so every cooldown-bearing alert path is
 // bounded (M25).
-func (am *AlertManager) recordCooldownLocked(key string, now time.Time) {
+func (am *AlertManager) recordCooldownLocked(key string, now time.Time, cooldown time.Duration) {
 	if _, exists := am.lastAlert[key]; !exists && len(am.lastAlert) >= maxLastAlertEntries {
 		// Adding a NEW key at the cap: prune expired entries first; if that
 		// frees nothing (all still within cooldown), evict the oldest so the
@@ -478,14 +480,26 @@ func (am *AlertManager) recordCooldownLocked(key string, now time.Time) {
 		}
 	}
 	am.lastAlert[key] = now
+	// L2: remember this key's effective cooldown so prune respects it.
+	if cooldown > 0 {
+		am.cooldownFor[key] = cooldown
+	}
 }
 
-// pruneExpiredLocked deletes cooldown entries older than 2x the base cooldown.
-// Caller holds am.mu.
+// pruneExpiredLocked deletes cooldown entries past their OWN effective cooldown
+// (L2 of the 2026-07-01 audit — the pre-fix fixed `alertCooldown*2` (10 min)
+// threshold truncated any operator-set per-policy cooldown > 10 min, so the
+// next detection re-alerted before the configured window elapsed). Keys with
+// no recorded cooldown fall back to the base cooldown. Caller holds am.mu.
 func (am *AlertManager) pruneExpiredLocked(now time.Time) {
 	for key, lastTime := range am.lastAlert {
-		if now.Sub(lastTime) > am.alertCooldown*2 {
+		cd := am.cooldownFor[key]
+		if cd <= 0 {
+			cd = am.alertCooldown
+		}
+		if now.Sub(lastTime) > cd {
 			delete(am.lastAlert, key)
+			delete(am.cooldownFor, key)
 		}
 	}
 }
@@ -502,6 +516,7 @@ func (am *AlertManager) evictOldestLocked() {
 	}
 	if !first {
 		delete(am.lastAlert, oldestKey)
+		delete(am.cooldownFor, oldestKey)
 	}
 }
 
@@ -754,7 +769,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 				PolicyID:   resolved.PolicyID,
 				Suppressed: resolved.InMaintenance,
 			}
-			am.recordCooldownLocked(key, now)
+			am.recordCooldownLocked(key, now, cooldown)
 			am.activeAlerts[key] = true
 			fired = append(fired, firedEntry{alert, resolved})
 		}
@@ -783,7 +798,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.recordCooldownLocked(key, now)
+		am.recordCooldownLocked(key, now, cooldown)
 		am.activeAlerts[key] = true
 	}
 	am.mu.Unlock()
@@ -845,7 +860,7 @@ func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, newFP stri
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.recordCooldownLocked(key, now)
+		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
@@ -916,7 +931,7 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 	now := time.Now()
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.recordCooldownLocked(key, now)
+		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
@@ -1037,7 +1052,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 		canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 		if canSend {
-			am.recordCooldownLocked(key, now)
+			am.recordCooldownLocked(key, now, cooldown)
 			am.activeAlerts[key] = true
 		}
 		am.mu.Unlock()

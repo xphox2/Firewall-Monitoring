@@ -19,7 +19,10 @@ func TestParse(t *testing.T) {
 		"10.0.0.0/8 extra columns ok", // CIDR + extra columns
 	}, "\n")
 
-	got := Parse(strings.NewReader(body), feed)
+	got, err := Parse(strings.NewReader(body), feed)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
 	want := []string{"203.0.113.9", "198.51.100.0/24", "192.0.2.5", "2001:db8::/32", "10.0.0.0/8"}
 	if len(got) != len(want) {
 		t.Fatalf("parsed %d entries, want %d: %+v", len(got), len(want), got)

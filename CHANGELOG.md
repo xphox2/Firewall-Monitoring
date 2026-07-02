@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.549] - 2026-07-01
+
+### Fixed
+- **Operator-set alert cooldowns longer than ~10 minutes are no longer truncated by the prune (audit 2026-07-01 finding L2).** `PruneExpiredCooldowns` evicted every cooldown-map entry older than a fixed `alertCooldown*2` (≈10 min), so a per-policy cooldown of, say, 60 minutes (set to quiet a noisy flow/syslog/trap detector) was dropped at the next prune and the following detection re-alerted before the configured window elapsed. The map now records each key's effective cooldown alongside its timestamp and prune evicts only entries past their **own** cooldown; the poller also prunes hourly (rather than only on the daily cleanup).
+- **A truncated threat feed is now a fetch failure, not a silent partial sync (audit 2026-07-01 finding L3).** `threatfeed.Parse` ignored `bufio.Scanner` errors, so a line longer than the 1 MiB buffer (`bufio.ErrTooLong` — e.g. an HTML error page served with HTTP 200 as one giant line) or a mid-body read error stopped the scan silently and the smaller result was treated as a successful sync, quietly expiring the feed's indicators out of the matcher after the TTL. `Parse` now returns the scanner error and `Fetch` propagates it.
+- **Critical-alert emails with a chart image no longer risk mangled HTML (audit 2026-07-01 finding L7).** The `multipart/related` HTML part declared `Content-Transfer-Encoding: quoted-printable` but wrote the body raw, so a compliant client/MTA QP-decoded it — turning `=XX` sequences in alert text (e.g. `threshold=90`) into raw bytes and choking on 8-bit UTF-8 / long lines. The part is now written through `mime/quotedprintable.NewWriter` so the body matches its declared encoding.
+- **Report SVG charts no longer break on a single data point (audit 2026-07-01 finding L8).** `RenderThroughputChart` / `RenderCPUMemSVGChart` divided the X axis by `nPoints-1`, so a 1-point series (a newly added device, or sparse data at report time) produced `NaN` path coordinates — an invalid SVG path browsers drop, breaking the report preview and print-to-PDF for that device. Both now require ≥2 points and fall back to the "no statistics" placeholder otherwise.
+
 ## [0.10.548] - 2026-07-01
 
 ### Fixed

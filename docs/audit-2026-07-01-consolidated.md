@@ -283,9 +283,11 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `internal/database/flows.go:260-261` — no UI consumer yet, but the field over-reports by ~the sampling rate, and the stale comment at `:215` invites re-introducing double-scaling. Fix: `EstimatedBytes = TotalBytes` (or drop it); fix the comments.
 
 ### L2. PruneExpiredCooldowns evicts on a fixed 10-min threshold — truncates operator-set cooldowns >10 min for event-type alerts once per day
+> **✅ RESOLVED (v0.10.549)** — the cooldown map now stores each key's effective cooldown alongside its timestamp (`cooldownFor`), and prune evicts a key only once it is past its OWN window (was a fixed `alertCooldown*2` ≈ 10 min that truncated longer operator-set cooldowns). The poller also prunes hourly. Test `TestPruneExpired_RespectsPerKeyCooldown_L2`.
 - **server** · `internal/alerts/alerts.go:439` — track effective cooldown per key and evict past it; run hourly.
 
 ### L3. threatfeed.Parse ignores bufio.Scanner errors — silently truncated feeds logged as successful syncs
+> **✅ RESOLVED (v0.10.549)** — `Parse` returns `sc.Err()` and `Fetch` propagates it, so an over-long line (`bufio.ErrTooLong`, e.g. a one-line HTML error page) or a mid-body read error is a feed-fetch failure, not a silently-truncated "successful" sync. Test `TestParse_SurfacesScannerError_L3`.
 - **server** · `internal/threatfeed/threatfeed.go:137` — a >1 MiB line (HTML error page with 200) stops the scan silently; indicators past it TTL-expire. Fix: return `sc.Err()`; treat scan errors as fetch failures.
 
 ### L4. Partial GeoLite2 open logs "enrichment disabled" while half of it runs; mmap'd .mmdb has no reload path (in-place overwrite risks SIGBUS)
@@ -298,9 +300,11 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `cmd/api/static/js/admin-noc.js:410`, `admin-main.js:2711` — wrap decodeURIComponent in try/catch.
 
 ### L7. Critical-alert HTML part declares quoted-printable but writes the body raw — RFC-illegal; compliant QP decoders mangle `=XX` sequences in alert text
+> **✅ RESOLVED (v0.10.549)** — the HTML part is now written through `mime/quotedprintable.NewWriter`, so the body actually matches its declared `quoted-printable` encoding (no more `=XX` mangling / raw-8-bit rejection by compliant decoders).
 - **server** · `internal/notifier/notifier.go:376` — use `mime/quotedprintable.NewWriter`, or declare 8bit like the no-attachment branch.
 
 ### L8. SVG chart renderers divide by len(series)-1 with only a len==0 guard — 1-point series emits NaN path coordinates, chart drops
+> **✅ RESOLVED (v0.10.549)** — both SVG renderers require ≥2 points before plotting (the placeholder shows otherwise), so a 1-point series no longer emits `NaN` path coordinates that break the report preview / PDF. Test `TestSVGCharts_NoNaNOnSinglePoint_L8`.
 - **server** · `internal/report/svg_charts.go:198` — fall back to the placeholder when nPoints < 2.
 
 ### L9. sFlow sub-record parsers bound reads against the datagram, not recEnd — a lying record length bleeds adjacent-record bytes into BGP/counter telemetry

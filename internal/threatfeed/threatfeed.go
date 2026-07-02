@@ -108,13 +108,23 @@ func Fetch(ctx context.Context, client *http.Client, feed Feed) ([]Entry, error)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("feed %s: HTTP %d", feed.Name, resp.StatusCode)
 	}
-	return Parse(io.LimitReader(resp.Body, maxFeedBytes), feed), nil
+	entries, err := Parse(io.LimitReader(resp.Body, maxFeedBytes), feed)
+	if err != nil {
+		return nil, fmt.Errorf("feed %s: parse: %w", feed.Name, err)
+	}
+	return entries, nil
 }
 
 // Parse reads a plain-text feed body and returns the valid IP/CIDR indicators.
 // Comment lines (#, ;) and unparseable tokens are skipped; the result is capped
 // at maxEntriesPerFeed.
-func Parse(r io.Reader, feed Feed) []Entry {
+// Parse reads feed entries from r. It returns the scanner error (L3 of the
+// 2026-07-01 audit): a line longer than the 1 MiB buffer (bufio.ErrTooLong —
+// e.g. an HTML error page served with HTTP 200 as one giant line) or a mid-body
+// read error stops the scan silently; without surfacing sc.Err(), the caller
+// treats the truncated result as a successful (smaller) sync and the missing
+// indicators quietly TTL-expire out of the matcher.
+func Parse(r io.Reader, feed Feed) ([]Entry, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20) // allow long lines
 	out := make([]Entry, 0, 1024)
@@ -134,7 +144,7 @@ func Parse(r io.Reader, feed Feed) []Entry {
 		}
 		out = append(out, Entry{CIDR: cidr, Category: feed.Category, Severity: feed.Severity, Source: feed.Name})
 	}
-	return out
+	return out, sc.Err()
 }
 
 // normalize validates a token as a CIDR or bare IP and returns the canonical
