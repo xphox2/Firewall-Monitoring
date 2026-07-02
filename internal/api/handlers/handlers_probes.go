@@ -531,6 +531,23 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		}
 	}
 
+	// M7 of the 2026-07-01 audit: an admin's rejection or decommission must
+	// not be reversible by the key-holder. Pre-fix, any probe that wasn't
+	// already approved+online was unconditionally flipped back to
+	// approved+online below — so a REJECTED probe (RejectProbe leaves the
+	// registration key valid) silently re-approved itself by re-POSTing this
+	// unauthenticated endpoint, and a decommissioned one resurrected. Both are
+	// admin decisions: reactivation goes through the admin UI
+	// (approve / RecommissionProbe), never through the wire.
+	if existingProbe.ApprovalStatus == "rejected" {
+		probeErr(c, http.StatusForbidden, "Probe registration was rejected by an administrator")
+		return
+	}
+	if existingProbe.DecommissionedAt != nil || !existingProbe.Enabled {
+		probeErr(c, http.StatusGone, "Probe is decommissioned or disabled — re-commission it in the admin UI first")
+		return
+	}
+
 	// If already approved and online, just return success
 	if existingProbe.ApprovalStatus == "approved" && existingProbe.Status == "online" {
 		c.JSON(http.StatusOK, gin.H{
@@ -658,6 +675,18 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		return
 	}
 
+	// M7 of the 2026-07-01 audit: a still-running collector must not resurrect
+	// a rejected/decommissioned/disabled probe. Pre-fix, this handler wrote
+	// status='online' + fresh last_seen unconditionally, so within 30s of an
+	// admin decommission the probe flipped back to 'online' — permanently,
+	// since the fresh last_seen also kept it immune to the
+	// MarkStaleProbesOffline sweep. 410 tells the collector the probe is gone
+	// on purpose (non-retryable), not that its auth is transiently broken.
+	if probe.ApprovalStatus == "rejected" || probe.DecommissionedAt != nil || !probe.Enabled {
+		probeErr(c, http.StatusGone, "Probe is rejected or decommissioned — heartbeat refused")
+		return
+	}
+
 	// Validate status against allowed values
 	validStatuses := map[string]bool{"online": true, "offline": true, "degraded": true}
 	if req.Status != "" && !validStatuses[req.Status] {
@@ -779,6 +808,16 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	}
 	if probe.ApprovalStatus != "approved" {
 		c.JSON(http.StatusForbidden, response.Error("Probe not approved"))
+		return nil, false
+	}
+	// M7 of the 2026-07-01 audit: enforce the lifecycle flags on the data
+	// plane. DecommissionProbe deliberately leaves approval_status='approved'
+	// (to preserve telemetry attribution), so the approval check alone let a
+	// decommissioned or admin-disabled probe keep ingesting — and each POST
+	// refreshed last_seen/last_data_received, making the retired probe look
+	// live again.
+	if probe.DecommissionedAt != nil || !probe.Enabled {
+		c.JSON(http.StatusForbidden, response.Error("Probe is decommissioned or disabled"))
 		return nil, false
 	}
 

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.540] - 2026-07-01
+
+### Fixed
+- **Rejected and decommissioned probes can no longer resurrect themselves from the network side (audit 2026-07-01 finding M7).** Three gates were missing:
+  - The unauthenticated key-based **register** endpoint unconditionally flipped any not-already-online probe back to `approved`+`online` — so a probe the admin explicitly REJECTED (rejection leaves the registration key valid) restored full ingestion just by re-POSTing register. It now returns **403** for rejected and **410** for decommissioned/disabled probes; reactivation goes only through the admin UI (approve / re-commission).
+  - The **heartbeat** wrote `status='online'` + fresh `last_seen` unconditionally, undoing an admin decommission within 30 seconds — permanently, since the fresh `last_seen` also kept the probe immune to the stale-probe sweep. It now returns **410**.
+  - **validateProbe** (gating every ingestion endpoint) checked only `approval_status` — which decommission deliberately leaves `approved` to preserve telemetry attribution — so retired/disabled probes kept ingesting and looking live. It now refuses when `decommissioned_at` is set or `enabled` is false. `RecommissionProbe` already restores both flags, so the re-commission flow is unchanged. Regression tests: `handlers_probes_lifecycle_m7_test.go`.
+- **Decommissioning a probe no longer produces a PROBE_DATA_LAG alert storm forever (audit 2026-07-01 finding M28).** `CheckProbeDataFlow` iterated all `approval_status='approved'` probes — including soft-decommissioned ones, whose `last_data_received` is frozen by design — so every retired probe re-fired the lag alert on each cooldown expiry until hard-deleted (exactly what soft-decommission exists to avoid). Retired/disabled probes are now skipped; regression test with an active-lagging-probe positive control.
+
 ## [0.10.539] - 2026-07-01
 
 ### Fixed

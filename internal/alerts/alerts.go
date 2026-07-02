@@ -935,6 +935,15 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 
 	for _, probe := range probes {
+		// M28 of the 2026-07-01 audit: DecommissionProbe deliberately keeps
+		// approval_status='approved' (telemetry attribution), so
+		// GetApprovedProbes still returns retired probes — whose
+		// LastDataReceived is frozen by design. Without this skip, the
+		// documented soft-decommission path produced a PROBE_DATA_LAG alert
+		// on every cooldown expiry, forever.
+		if probe.DecommissionedAt != nil || !probe.Enabled {
+			continue
+		}
 		if probe.LastDataReceived.IsZero() {
 			continue
 		}
