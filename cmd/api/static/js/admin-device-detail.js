@@ -17,6 +17,8 @@
     var currentChartView = 'rate'; // 'rate' | 'total' | 'mix' — shared 3-mode bandwidth view (matches public dashboard)
     var ifaceWin = null;           // {from, to} epoch-ms when drag-zoomed; null = use the preset range
     var ifaceBucketMs = {};        // ifIndex -> bucket_ms[] of the currently rendered series (for drag→time mapping)
+    var ifaceChartSeq = {};        // ifIndex -> monotonically increasing request token; a late response whose token is stale is dropped (audit L19)
+    var tunnelChartSeq = {};       // tunnel_name -> request token (same staleness guard)
     var tunnelCharts = {};
     var expandedTunnel = null;     // tunnel_name of the currently-expanded VPN row
     var currentTunnelRange = '24h';
@@ -146,9 +148,16 @@
 
     function renderSystemStatus() {
         var ss = deviceData.system_status;
+        // Clear any prior "awaiting data" banner first, so it neither stacks on
+        // every 60s poll nor lingers once real data arrives (audit L20).
+        var statsHost = document.getElementById('systemStats');
+        if (statsHost) {
+            var prevBanner = statsHost.querySelector('.awaiting-probe-data');
+            if (prevBanner) prevBanner.remove();
+        }
         if (!ss) {
-            document.getElementById('systemStats').insertAdjacentHTML('beforeend',
-                '<div class="empty" style="grid-column:1/-1;text-align:center;padding:1.5rem 0">Awaiting data from probe\u2026</div>');
+            if (statsHost) statsHost.insertAdjacentHTML('beforeend',
+                '<div class="empty awaiting-probe-data" style="grid-column:1/-1;text-align:center;padding:1.5rem 0">Awaiting data from probe\u2026</div>');
             return;
         }
 
@@ -868,6 +877,14 @@
             delete ifaceCharts[ifIndex];
         }
 
+        // In-flight staleness guard (audit L19): quickly changing the range (or
+        // re-expanding) fires overlapping fetches whose responses can arrive out
+        // of order — a slower earlier response would overwrite the live chart with
+        // stale buckets and leak the newer Chart.js instance. Stamp each request
+        // and drop any response that is no longer the latest for this ifIndex.
+        var seq = (ifaceChartSeq[ifIndex] || 0) + 1;
+        ifaceChartSeq[ifIndex] = seq;
+
         var q = chartQuery(ifaceWin, range);
         var base = '/admin/api/devices/' + deviceId + '/interfaces/' + ifIndex;
         // M27 of the 2026-07-01 audit: fetch BOTH sources and prefer sFlow only
@@ -883,6 +900,7 @@
             fetchIfaceChart(base + '/sflow-chart?' + q).catch(function () { return null; }),
             fetchIfaceChart(base + '/chart?' + q).catch(function () { return null; })
         ]).then(function (res) {
+            if (ifaceChartSeq[ifIndex] !== seq) return; // a newer request superseded this one
             var sflow = res[0], snmp = res[1];
             var sflowOK = sflow && sflow.length >= 2;
             var snmpOK = snmp && snmp.length >= 2;
@@ -921,12 +939,18 @@
             delete tunnelCharts[tunnelName];
         }
 
+        // In-flight staleness guard (audit L19): drop a late response once a newer
+        // request for this tunnel has been issued.
+        var seq = (tunnelChartSeq[tunnelName] || 0) + 1;
+        tunnelChartSeq[tunnelName] = seq;
+
         fetch('/admin/api/devices/' + deviceId + '/vpn/' + encodeURIComponent(tunnelName) + '/chart?' + chartQuery(tunnelWin, range), { credentials: 'same-origin' })
             .then(function(resp) {
                 if (!resp.ok) return Promise.reject(new Error('Failed'));
                 return resp.json();
             })
             .then(function(result) {
+                if (tunnelChartSeq[tunnelName] !== seq) return; // superseded by a newer request
                 if (!result.success || !result.data || result.data.length < 2) {
                     tunnelBucketMs[tunnelName] = [];
                     drawChartMessage(canvas, 'Not enough history data');

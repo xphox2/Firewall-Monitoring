@@ -299,6 +299,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `internal/api/handlers/noc.go:156` — set a rolling per-write deadline instead.
 
 ### L6. Malformed ?focus= percent-encoding throws uncaught URIError — NOC page fails to init; Connections page wipes the just-rendered map
+> **✅ RESOLVED (v0.10.551)** — both `parseFocus` (NOC) and `getConnFocusParam` (Connections) wrap `decodeURIComponent` in try/catch and return null on a `URIError`, so a hand-edited or truncated `?focus=` no longer aborts NOC init or wipes the just-rendered connection map.
 - **server** · `cmd/api/static/js/admin-noc.js:410`, `admin-main.js:2711` — wrap decodeURIComponent in try/catch.
 
 ### L7. Critical-alert HTML part declares quoted-printable but writes the body raw — RFC-illegal; compliant QP decoders mangle `=XX` sequences in alert text
@@ -310,21 +311,26 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `internal/report/svg_charts.go:198` — fall back to the placeholder when nPoints < 2.
 
 ### L9. sFlow sub-record parsers bound reads against the datagram, not recEnd — a lying record length bleeds adjacent-record bytes into BGP/counter telemetry
+> **✅ RESOLVED (collector v1.2.159)** — both flow-record and counter-record dispatch loops now hand each sub-parser a slice bounded to the record's own declared length (`data[off:recEnd]`) with a record-local offset, so a lying `recLen` can no longer let `parseRawPacketHeader`/`parseExtendedGateway`/`parseIfCounters` read past `recEnd` and fold the following record's bytes into `SrcAS`/next-hop/64-bit octet counters (the fake multi-exabyte spike). Regression test `TestParseSFlowDatagram_LyingRecLenNoBleed_L9`.
 - **collector** · `internal/sflow/sflow.go:462` — garbage SrcAS/ASPath persisted; fake multi-exabyte counter spikes from one malformed packet (no crash). Fix: slice the record first (`rec := data[off:recEnd]`) and parse with local offsets.
 
 ### L10. Lax syslog priority parsing turns garbage into severity 0 (emergency) or negative severity — server classifies as critical and retains 30 days
+> **✅ RESOLVED (collector v1.2.159)** — `parsePriority` now enforces the RFC 5424 PRIVAL grammar: a leading `<`, a closing `>`, and 1–3 all-digit bytes (0–191). `<abc>`, `<>`, a missing `>`, trailing non-digits, and overflowing digit runs are rejected instead of silently decoding to severity 0 (Emergency) or a negative severity that slipped past the `>191` check. Tests updated (`TestParsePriority_OutOfRange`, `TestParseRFC5424_MalformedPriority`).
 - **collector** · `internal/syslog/syslog.go:369` — `<abc>` → severity 0; overflowing digit runs go negative and pass the `>191` check. Fix: require closing `>`, 1–3 digits, reject otherwise.
 
 ### L11. sFlow readLoop worker exits on first non-timeout error but leaves its SO_REUSEPORT socket bound — kernel keeps hashing datagrams to a dead socket
+> **✅ RESOLVED (collector v1.2.159)** — both UDP receivers (sFlow and syslog) now supervise each worker socket: on a persistent non-timeout read error they close the dead fd (so the kernel drops it from the SO_REUSEPORT hash and rebalances to the live workers) and reopen a fresh listener after a growing backoff (200ms→30s), instead of the sFlow receiver returning and blackholing its share of agents or the syslog receiver spinning a tight hot-loop re-reading the errored socket. `Stop()` snapshots the conn slice under a new `connsMu` so it closes whichever fd a worker currently holds.
 - **collector** · `internal/sflow/sflow.go:142` — 1/N of agents silently blackholed until restart (all of them if single-worker); syslog's UDP loop picked the opposite (hot-loop) behavior. Fix: close the conn on exit (kernel rebalances) and/or respawn with backoff; align both receivers.
 
 ### L12. Schema-v2 shipped asymmetrically: collector transmits if_direction, server model lacks the field — silently dropped at ingest (invariant 3)
+> **✅ RESOLVED (v0.10.551)** — `FlowInterfaceCounter` gained an `IfDirection uint32` field (`json:"if_direction"`) and migration v18 adds the `if_direction bigint` column, so the collector's schema-v2 value now binds at ingest and persists instead of being dropped. Regression test `TestFlowInterfaceCounter_IfDirectionPersists_L12`.
 - **server** · `internal/models/models.go:847` — add `IfDirection` + migration, or remove from the collector struct.
 
 ### L13. Flow-counters queue drains without re-checking the negotiated schema version — after a server rollback, endless 404s are misread as probe-not-found (approval flap + re-register every sync)
 - **collector** · `internal/relay/relay.go:1353` — skip/discard the drain when negotiated <2; treat endpoint-404 as "unsupported, drop batch" not "probe deleted".
 
 ### L14. config.env.example ships SNMP_TRAP_COMMUNITY=public and deploy.sh seeds it verbatim — native installs accept the world's best-known community on exposed 162/udp
+> **✅ RESOLVED (v0.10.551)** — `config.env.example` now ships `SNMP_TRAP_COMMUNITY=` (empty). deploy.sh seeds config.env from the example verbatim on first install, so an empty value means the trap receiver opens NO listener on 162/udp and idles (AUDIT-012) until the operator sets their real community — rather than a fresh deploy accepting spoofed traps under `public`.
 - **server** · `config.env.example:119` — ship it empty/commented so the AUDIT-012 startup rejection actually fires.
 
 ### L15. /readyz uses unbounded sql.DB.Ping() and the observability server has no write timeout — a wedged PG hangs probes and leaks a goroutine per scrape
@@ -340,15 +346,19 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `internal/api/handlers/handlers_data.go:568` — add batchDedupCheck/markBatchIfOK server-side and X-Probe-Batch-ID to collector direct sends (pairs with M19); duplicates skew per-device history charts, and M26's new 500 path makes replays far more frequent at HEAD.
 
 ### L18. Device-detail sFlow bandwidth chart is unreachable for devices that never had an SNMP interface snapshot — precisely the devices the feature was built for
+> **✅ RESOLVED (v0.10.551)** — the device-detail handler unions the interface_stats list with the latest sFlow counter per distinct `if_index` (`GetLatestInterfaceCountersByDevice`), synthesizing an interface card for each flow-only if_index. An SNMP-host-restricted device pushing sFlow if_counters now renders interface cards, and clicking one reaches the sflow-chart endpoint. Test `TestGetLatestInterfaceCountersByDevice_L18`.
 - **server** · `internal/api/handlers/handlers_devices.go:346` — the interfaces array comes only from interface_stats, so SNMP-host-restricted devices pushing sFlow if_counters render zero interface cards and the sflow-chart endpoint is never called. Fix: union the interface list with DISTINCT if_index from flow_if_counters.
 
 ### L19. loadInterfaceChart/loadTunnelChart lack an in-flight staleness guard — overlapping responses leak Chart.js instances and overwrite live state with stale buckets
+> **✅ RESOLVED (v0.10.551)** — both loaders stamp each request with a per-key monotonically increasing token (`ifaceChartSeq`/`tunnelChartSeq`) and drop any response whose token is no longer current, so a slower earlier response can't overwrite the live chart with stale buckets or leak the newer Chart.js instance.
 - **server** · `cmd/api/static/js/admin-device-detail.js:839` — the fd3315d fix class, missed on these two loaders (60s poll + range clicks make overlap routine). Fix: per-target request token + destroy any instance already in the slot.
 
 ### L20. "Awaiting data from probe…" banner appended on every 60s poll with no dedup — unbounded stacking on devices awaiting their probe
+> **✅ RESOLVED (v0.10.551)** — `renderSystemStatus` removes any prior `.awaiting-probe-data` banner before (re)rendering, so exactly one banner shows while awaiting data and none lingers once real status arrives — no more stacking on each poll.
 - **server** · `cmd/api/static/js/admin-device-detail.js:150` — guard the append / assign instead of insertAdjacentHTML; remove when data arrives.
 
 ### L21. Flows showChartEmpty() wipes the canvas without destroying charts.bandwidth or clearing lastBwData — theme toggle resurrects the previous filter's chart over "No data"
+> **✅ RESOLVED (v0.10.551)** — `showChartEmpty` (and the no-points branch of `renderBandwidth`) now destroy `charts.bandwidth` and null `lastBwData` before replacing the host innerHTML, so the orphaned-canvas Chart instance can't leak and a theme/mode toggle can't redraw the previous filter's chart over the empty state.
 - **server** · `cmd/api/static/js/admin-flows.js:798` — mirror renderBandwidth's own empty path (destroy + null + clear lastBwData).
 
 ### L22. AddThreatIntel stores the CIDR un-normalized while the matcher masks it — equivalent prefixes duplicate, and deleting the visible row leaves the hidden one enforcing

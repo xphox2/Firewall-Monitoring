@@ -82,6 +82,31 @@ func (d *Database) GetPingStatsByTarget(deviceID uint, targetIP string) (*models
 	return &stats, err
 }
 
+// GetLatestInterfaceCountersByDevice returns the most recent sFlow counter
+// sample for each distinct if_index of a device (audit L18). Used to surface
+// interface cards for SNMP-host-restricted devices that push sFlow if_counters
+// but have no interface_stats snapshot — without this the device-detail page
+// renders zero interfaces and the sflow-chart endpoint is never reached.
+func (d *Database) GetLatestInterfaceCountersByDevice(deviceID uint) ([]models.FlowInterfaceCounter, error) {
+	var ifIndexes []uint32
+	if err := d.db.Model(&models.FlowInterfaceCounter{}).
+		Where("device_id = ?", deviceID).
+		Distinct("if_index").Pluck("if_index", &ifIndexes).Error; err != nil {
+		return nil, err
+	}
+	out := make([]models.FlowInterfaceCounter, 0, len(ifIndexes))
+	for _, idx := range ifIndexes {
+		c, err := d.GetLatestInterfaceCounter(deviceID, idx)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			out = append(out, *c)
+		}
+	}
+	return out, nil
+}
+
 func (d *Database) SaveProcessorStats(stats []models.ProcessorStats) error {
 	return batchInsertWithFallback(d.db, "processor_stats", stats)
 }

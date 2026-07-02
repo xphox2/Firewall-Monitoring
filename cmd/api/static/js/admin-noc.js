@@ -407,7 +407,12 @@
     function parseFocus() {
         var m = /[?&]focus=(site|device):([^&]+)/.exec(window.location.search || '');
         if (!m) return null;
-        return { kind: m[1], id: decodeURIComponent(m[2]) };
+        // A malformed percent-escape (e.g. ?focus=device:%ZZ) makes
+        // decodeURIComponent throw a URIError; catching it keeps a hand-edited or
+        // truncated URL from aborting NOC init entirely (audit L6).
+        var id;
+        try { id = decodeURIComponent(m[2]); } catch (e) { return null; }
+        return { kind: m[1], id: id };
     }
 
     function onClick(ev) {

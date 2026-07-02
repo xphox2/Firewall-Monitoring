@@ -1104,3 +1104,26 @@ func (d *Database) migrateThreatIntelCIDRColumnRename() error {
 	}
 	return nil
 }
+
+// migrateFlowIfCountersAddDirection (v18) adds flow_if_counters.if_direction
+// (audit 2026-07-01 finding L12). The collector has always sent
+// the sFlow ifDirection field on the schema-v2 counter-sample wire form, but the
+// server model lacked the column, so GORM's JSON bind silently dropped it at
+// ingest. Adding the column lets the value persist; existing rows backfill to 0
+// (unknown), which is the correct "not observed" sentinel.
+//
+// `bigint NOT NULL DEFAULT 0` matches the uint32 model field's gorm type. Adding
+// a column with a constant default is metadata-only on PostgreSQL 11+ (no table
+// rewrite), routed through execMaintenanceDDL so the lifted statement_timeout
+// covers propagation across flow_if_counters' partitions. Idempotent via
+// `ADD COLUMN IF NOT EXISTS`; SQLite (tests/fresh installs) uses AutoMigrate.
+func (d *Database) migrateFlowIfCountersAddDirection() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowInterfaceCounter{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE flow_if_counters ADD COLUMN IF NOT EXISTS if_direction bigint NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("migrate v18 add flow_if_counters.if_direction: %w", err)
+	}
+	log.Printf("migrate v18 flow_if_counters.if_direction: ensured column exists (bigint not null default 0)")
+	return nil
+}

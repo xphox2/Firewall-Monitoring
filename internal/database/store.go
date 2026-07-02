@@ -162,6 +162,7 @@ type TelemetryReadStore interface {
 	GetSecurityStatsHistory(deviceID uint, hours int) ([]models.SecurityStats, error)
 	GetPingResultHistory(deviceID uint, hours int) ([]models.PingResult, error)
 	GetPingStatsByTarget(deviceID uint, targetIP string) (*models.PingStats, error)
+	GetLatestInterfaceCountersByDevice(deviceID uint) ([]models.FlowInterfaceCounter, error)
 	GetUptimeRecords(limit int) ([]models.UptimeRecord, error)
 	RecentHAFailover(deviceID uint, window time.Duration) bool
 	GetTelemetryTotals() (*TelemetryTotals, error)

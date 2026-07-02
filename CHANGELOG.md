@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.551] - 2026-07-02
+
+### Added
+- **sFlow `if_direction` now persists on interface counters (audit 2026-07-01 finding L12).** The collector has always sent the sFlow ifDirection field as JSON `if_direction` on the schema-v2 counter-sample wire form, but `FlowInterfaceCounter` had no matching column, so GORM's bind silently dropped it at ingest. Added the `IfDirection uint32` field and migration v18 (`flow_if_counters_add_direction`, `bigint NOT NULL DEFAULT 0`, metadata-only on PostgreSQL 11+).
+- **Device-detail page surfaces sFlow-only interfaces (audit 2026-07-01 finding L18).** The interface list was built solely from `interface_stats` (SNMP), so a device that is SNMP host-restricted but pushes sFlow if_counters rendered zero interface cards and the sflow-chart endpoint — the whole point of the feature — was never called. The handler now unions the SNMP list with the latest sFlow counter per distinct `if_index` (`GetLatestInterfaceCountersByDevice`), synthesizing a card for each flow-only interface so it appears and its bandwidth chart is reachable.
+
+### Fixed
+- **A malformed `?focus=` no longer breaks the NOC/Connections pages (audit 2026-07-01 finding L6).** `parseFocus` (NOC) and `getConnFocusParam` (Connections) ran `decodeURIComponent` on the URL fragment unguarded, so a hand-edited or truncated escape (e.g. `?focus=device:%ZZ`) threw an uncaught `URIError` that aborted NOC initialization and wiped the just-rendered connection map. Both now wrap the decode in try/catch and treat a bad value as "no focus".
+- **`SNMP_TRAP_COMMUNITY` ships empty instead of `public` (audit 2026-07-01 finding L14).** `config.env.example` shipped `SNMP_TRAP_COMMUNITY=public`, and deploy.sh seeds `config.env` from the example verbatim on first install — so a fresh native deploy opened 162/udp accepting the world's best-known community, letting anyone on the network inject spoofed trap events into the alert pipeline. It now ships empty, so the trap receiver keeps its listener closed and idles (AUDIT-012) until the operator sets their devices' real community.
+- **Interface/tunnel bandwidth charts drop stale overlapping responses (audit 2026-07-01 finding L19).** `loadInterfaceChart`/`loadTunnelChart` had no in-flight guard, so quickly changing the range fired overlapping fetches whose responses could land out of order — a slower earlier response overwrote the live chart with stale buckets and leaked the newer Chart.js instance. Each request now carries a per-key sequence token and a response that is no longer the latest is discarded.
+- **The "Awaiting data from probe…" banner no longer stacks (audit 2026-07-01 finding L20).** `renderSystemStatus` appended the banner via `insertAdjacentHTML` on every 60s poll for a device with no system status, stacking copies without bound, and never removed it once data arrived. It now clears any prior banner before (re)rendering, so exactly one shows while awaiting data and none lingers afterward.
+- **The Flows bandwidth chart no longer resurrects the previous filter over "No data" (audit 2026-07-01 finding L21).** `showChartEmpty` replaced the chart host's innerHTML without destroying `charts.bandwidth` or clearing `lastBwData`, orphaning the Chart instance and leaving stale cached data that a theme/mode toggle (which re-renders from `lastBwData`) would draw over the empty state. Both the empty-message path and the no-points path now destroy the chart and null the cache first.
+
 ## [0.10.550] - 2026-07-02
 
 ### Fixed

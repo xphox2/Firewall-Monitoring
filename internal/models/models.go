@@ -853,6 +853,7 @@ type FlowInterfaceCounter struct {
 	IfIndex        uint32    `json:"if_index" gorm:"type:bigint;index:idx_ficnt_dev_ts,priority:3"`
 	IfType         uint32    `json:"if_type" gorm:"type:bigint"`
 	IfSpeed        uint64    `json:"if_speed"` // bits/sec
+	IfDirection    uint32    `json:"if_direction" gorm:"type:bigint"`
 	IfStatus       uint32    `json:"if_status" gorm:"type:bigint"`
 	InOctets       uint64    `json:"in_octets"`
 	InErrors       uint64    `json:"in_errors"`

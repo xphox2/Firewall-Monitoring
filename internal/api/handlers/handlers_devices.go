@@ -347,6 +347,45 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		log.Printf("Device %d: failed to get interface stats: %v", id, err)
 	}
 
+	// Union with sFlow-only interfaces (audit L18): a device that is SNMP
+	// host-restricted but pushes sFlow if_counters has no interface_stats
+	// snapshot, so it would render zero interface cards and the sflow-chart
+	// endpoint — the whole point of the feature — would never be called. Add a
+	// synthetic card for each flow if_index not already present, so the operator
+	// sees the interface and clicking it hits loadInterfaceChart → sflow-chart.
+	if counters, err := db.GetLatestInterfaceCountersByDevice(id); err != nil {
+		log.Printf("Device %d: failed to get sFlow interface counters: %v", id, err)
+	} else if len(counters) > 0 {
+		haveIdx := make(map[int]struct{}, len(interfaces))
+		for _, iface := range interfaces {
+			haveIdx[iface.Index] = struct{}{}
+		}
+		for _, ctr := range counters {
+			idx := int(ctr.IfIndex)
+			if _, ok := haveIdx[idx]; ok {
+				continue
+			}
+			haveIdx[idx] = struct{}{}
+			status := "up"
+			if ctr.IfStatus == 0 {
+				status = "unknown"
+			}
+			interfaces = append(interfaces, models.InterfaceStats{
+				DeviceID:  id,
+				Timestamp: ctr.Timestamp,
+				Name:      fmt.Sprintf("if%d", idx), // sFlow counters carry no ifName
+				Index:     idx,
+				Type:      int(ctr.IfType),
+				Speed:     ctr.IfSpeed,
+				Status:    status,
+				InBytes:   ctr.InOctets,
+				InErrors:  ctr.InErrors,
+				OutBytes:  ctr.OutOctets,
+				OutErrors: ctr.OutErrors,
+			})
+		}
+	}
+
 	// Latest VPN statuses
 	vpnStatuses, err := db.GetLatestVPNStatuses(id)
 	if err != nil {

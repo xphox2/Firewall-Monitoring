@@ -2708,7 +2708,12 @@
     function getConnFocusParam() {
         var m = /[?&]focus=(site|device):([^&]+)/.exec(window.location.search || '');
         if (!m) return null;
-        return { kind: m[1], id: decodeURIComponent(m[2]) };
+        // A malformed percent-escape makes decodeURIComponent throw a URIError;
+        // catching it stops a bad ?focus= from aborting drawConnectionDiagram and
+        // wiping the just-rendered map (audit L6).
+        var id;
+        try { id = decodeURIComponent(m[2]); } catch (e) { return null; }
+        return { kind: m[1], id: id };
     }
 
     function drawConnectionDiagram() {

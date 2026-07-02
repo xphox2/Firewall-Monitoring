@@ -750,6 +750,7 @@
         var points = d.bytes_over_time || [];
         if (!points.length) {
             if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+            lastBwData = null; // don't let a theme toggle redraw the prior filter's chart (audit L21)
             host.innerHTML = '<div class="chart-empty">No traffic in this range</div>';
             return;
         }
@@ -794,6 +795,13 @@
         }
     }
     function showChartEmpty(msg) {
+        // Tear down any live chart + cached data before replacing the host
+        // innerHTML: the replacement orphans the canvas, so a surviving
+        // charts.bandwidth instance leaks, and a stale lastBwData would let a
+        // theme/mode toggle redraw the previous filter's chart over this empty
+        // state (audit L21).
+        if (charts.bandwidth) { charts.bandwidth.destroy(); charts.bandwidth = null; }
+        lastBwData = null;
         var host = document.getElementById('flows-bandwidth-chart');
         if (host) host.innerHTML = '<div class="chart-empty">' + esc(msg) + '</div>';
     }
