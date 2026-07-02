@@ -56,10 +56,15 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 	// (GEOIP_ENABLED): a nil resolver is nil-safe, so when geo is off or the
 	// .mmdb files are absent the ingest path simply leaves the columns empty.
 	geo, err := classify.NewGeoResolver(cfg.Server.GeoIPEnabled, cfg.Server.GeoIPDBDir)
-	if err != nil {
-		log.Printf("geoip: %v — geo/ASN enrichment disabled", err)
-	} else if geo.Enabled() {
+	switch {
+	case geo.Enabled() && err != nil:
+		// One database opened, the other didn't: enrichment IS running, just with
+		// reduced coverage. Don't report it as disabled (audit L4).
+		log.Printf("geoip: partial load (%v) — enrichment enabled from %s with reduced coverage", err, cfg.Server.GeoIPDBDir)
+	case geo.Enabled():
 		log.Printf("geoip: GeoLite2 enrichment enabled from %s", cfg.Server.GeoIPDBDir)
+	case err != nil:
+		log.Printf("geoip: %v — geo/ASN enrichment disabled", err)
 	}
 	h := &Handler{
 		config:      cfg,
@@ -101,6 +106,13 @@ func (h *Handler) RefreshThreatMatcher() {
 		return
 	}
 	h.threatMatch.Store(threatintel.New(rows, time.Now()))
+}
+
+// ReloadGeoIP re-stats the GeoLite2 databases and hot-swaps any that changed on
+// disk, so a MaxMind update takes effect in the ingest path without a restart
+// (audit L4). Nil-safe when geo is disabled. Intended for a periodic ticker.
+func (h *Handler) ReloadGeoIP() {
+	h.geoResolver.Reload()
 }
 
 // reqDB returns the request-scoped database handle: h.db bound to the request

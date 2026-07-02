@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.549"
+const ServerVersion = "0.10.550"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -322,6 +322,23 @@ func main() {
 			select {
 			case <-ticker.C:
 				handler.RefreshThreatMatcher()
+			case <-bgCtx.Done():
+				return
+			}
+		}
+	})
+
+	// Periodically hot-reload the GeoLite2 databases so a MaxMind update (written
+	// atomically via rename) applies to sFlow geo/ASN enrichment without a
+	// restart, and without unmapping a live reader under an in-flight lookup
+	// (audit L4). No-op when geo is disabled.
+	logging.SafeGo("geoip-reload", func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				handler.ReloadGeoIP()
 			case <-bgCtx.Done():
 				return
 			}

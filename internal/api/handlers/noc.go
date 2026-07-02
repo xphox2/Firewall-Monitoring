@@ -26,6 +26,13 @@ const nocSnapshotInterval = 5 * time.Second
 // reflects "now", not an hourly average).
 const nocWindow = 5 * time.Minute
 
+// sseWriteTimeout bounds a single SSE flush. Armed before every write on the
+// stream as a rolling deadline so an unresponsive client (stalled TCP window)
+// can't pin the handler goroutine in a blocked Write forever (audit L5). A
+// healthy reader resets it on each snapshot/keepalive, so it never truncates a
+// live stream — it only fires when a write genuinely can't make progress.
+const sseWriteTimeout = 15 * time.Second
+
 // nocHub is an in-process fan-out broadcaster: a single goroutine recomputes the
 // NOC snapshot on a ticker and pushes the marshaled JSON to every subscribed SSE
 // connection. One DB computation serves all viewers. Sends are non-blocking — a
@@ -183,11 +190,14 @@ func (h *Handler) GetNOCStream(c *gin.Context) {
 		httputil.InternalError(c, "streaming unsupported", nil)
 		return
 	}
-	// Clear the server's WriteTimeout for this long-lived connection — otherwise
-	// the SSE stream is force-closed after SERVER_WRITE_TIMEOUT (default 30s).
-	// Best-effort: if the writer chain doesn't support deadlines the stream still
-	// works (it just inherits the 30s cap), so the error is ignored.
-	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{})
+	// This is a long-lived stream, so the server's fixed WriteTimeout (default
+	// 30s) must not force-close it — but clearing the deadline outright let a
+	// client that stops reading (zero TCP window) pin this handler goroutine in a
+	// blocked Write forever, since there was then no deadline to unblock it
+	// (audit L5). Instead each write below arms a fresh rolling deadline via rc:
+	// a healthy reader keeps resetting it, while a stuck write eventually errors
+	// out so the handler returns and unsubscribes.
+	rc := http.NewResponseController(c.Writer)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -199,6 +209,10 @@ func (h *Handler) GetNOCStream(c *gin.Context) {
 	defer h.nocHub.unsubscribe(ch)
 
 	writeSSE := func(b []byte) bool {
+		// Rolling per-write deadline (audit L5): bound how long a single flush can
+		// block on an unresponsive client. Best-effort — if the writer chain has no
+		// deadline support this is a no-op and the write behaves as before.
+		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 		if _, err := c.Writer.Write([]byte("data: ")); err != nil {
 			return false
 		}
@@ -230,6 +244,7 @@ func (h *Handler) GetNOCStream(c *gin.Context) {
 			}
 		case <-keepalive.C:
 			// SSE comment line keeps idle proxies/load-balancers from closing the conn.
+			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 			if _, err := c.Writer.Write([]byte(": keepalive\n\n")); err != nil {
 				return
 			}

@@ -53,6 +53,7 @@ func NewDatabaseForTesting(t interface {
 		&models.SiteAlertConfig{},
 		&models.MaintenanceWindow{},
 		&models.PingResult{},
+		&models.PingStats{},
 		// AUDIT-029: the four tables that the cleanup regression
 		// tests exercise. They were previously missing from
 		// this list, which made the test discover the missing

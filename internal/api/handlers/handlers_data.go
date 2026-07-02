@@ -436,39 +436,12 @@ func (h *Handler) updatePingStatsBatch(probeID uint, results []models.PingResult
 	now := time.Now()
 	for deviceID, byTarget := range groups {
 		for targetIP, a := range byTarget {
-			existing, err := h.db.GetPingStatsByTarget(deviceID, targetIP)
-			if err != nil {
-				log.Printf("updatePingStatsBatch: get existing (device %d target %s): %v", deviceID, targetIP, err)
-				continue
-			}
-			if existing == nil {
-				stats := &models.PingStats{
-					DeviceID:   deviceID,
-					ProbeID:    probeID,
-					TargetIP:   targetIP,
-					MinLatency: a.min,
-					MaxLatency: a.max,
-					AvgLatency: a.sum / float64(a.count),
-					PacketLoss: a.lastLoss,
-					Samples:    a.count,
-					UpdatedAt:  now,
-				}
-				if err := h.db.SavePingStats(stats); err != nil {
-					log.Printf("updatePingStatsBatch: save new (device %d target %s): %v", deviceID, targetIP, err)
-				}
-				continue
-			}
-
-			newSamples := existing.Samples + a.count
-			existing.MinLatency = math.Min(existing.MinLatency, a.min)
-			existing.MaxLatency = math.Max(existing.MaxLatency, a.max)
-			existing.AvgLatency = ((existing.AvgLatency * float64(existing.Samples)) + a.sum) / float64(newSamples)
-			existing.PacketLoss = a.lastLoss
-			existing.Samples = newSamples
-			existing.ProbeID = probeID // last-writer provenance
-			existing.UpdatedAt = now
-			if err := h.db.SavePingStats(existing); err != nil {
-				log.Printf("updatePingStatsBatch: update (device %d target %s): %v", deviceID, targetIP, err)
+			// Fold atomically in the DB (INSERT … ON CONFLICT DO UPDATE) rather than
+			// read-modify-writing here: two batches folding the same (device,target)
+			// concurrently would otherwise both read the same base row and the last
+			// writer would erase the other's whole batch (audit L16).
+			if err := h.db.FoldPingStats(deviceID, probeID, targetIP, a.min, a.max, a.sum, a.count, a.lastLoss, now); err != nil {
+				log.Printf("updatePingStatsBatch: fold (device %d target %s): %v", deviceID, targetIP, err)
 			}
 		}
 	}

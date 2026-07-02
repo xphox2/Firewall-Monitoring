@@ -207,6 +207,7 @@ type IngestStore interface {
 	SaveLicenseInfo(licenses []models.LicenseInfo) error
 	SavePingResults(results []models.PingResult) error
 	SavePingStats(stats *models.PingStats) error
+	FoldPingStats(deviceID, probeID uint, targetIP string, minL, maxL, sum float64, count int, packetLoss float64, now time.Time) error
 	SaveProcessorStats(stats []models.ProcessorStats) error
 	SaveSDWANHealth(health []models.SDWANHealth) error
 	SaveSecurityStats(stats []models.SecurityStats) error

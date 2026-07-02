@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -33,6 +34,39 @@ func (d *Database) SavePingStats(stats *models.PingStats) error {
 		return d.db.Create(stats).Error
 	}
 	return d.db.Save(stats).Error
+}
+
+// FoldPingStats atomically folds one batch's aggregate (min/max/sum/count for a
+// single device+target) into the running PingStats series with a single
+// INSERT … ON CONFLICT DO UPDATE, so concurrent folds for the same
+// (device_id, target_ip) can no longer lose or double-count a whole batch the
+// way the previous read-modify-write did (audit L16). The running average is
+// recomputed in-SQL against the row's pre-update samples/avg —
+// (avg·samples + Σ) / (samples + K) — which is exact regardless of interleaving
+// because each conflicting statement reads the current row under the upsert's
+// row lock. probe_id/packet_loss keep last-writer semantics.
+//
+// count must be > 0 (the caller only folds targets that had samples), so the
+// divisors are always positive.
+func (d *Database) FoldPingStats(deviceID, probeID uint, targetIP string, minL, maxL, sum float64, count int, packetLoss float64, now time.Time) error {
+	avg := sum / float64(count)
+	// SQLite exposes scalar min()/max(); PostgreSQL spells them LEAST/GREATEST.
+	minFn, maxFn := "min", "max"
+	if d.dialect.IsPostgres() {
+		minFn, maxFn = "LEAST", "GREATEST"
+	}
+	sql := fmt.Sprintf(`INSERT INTO ping_stats
+  (device_id, probe_id, target_ip, min_latency, max_latency, avg_latency, packet_loss, samples, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (device_id, target_ip) DO UPDATE SET
+  min_latency = %s(ping_stats.min_latency, excluded.min_latency),
+  max_latency = %s(ping_stats.max_latency, excluded.max_latency),
+  avg_latency = (ping_stats.avg_latency * ping_stats.samples + ?) / (ping_stats.samples + excluded.samples),
+  packet_loss = excluded.packet_loss,
+  samples     = ping_stats.samples + excluded.samples,
+  probe_id    = excluded.probe_id,
+  updated_at  = excluded.updated_at`, minFn, maxFn)
+	return d.db.Exec(sql, deviceID, probeID, targetIP, minL, maxL, avg, packetLoss, count, now, sum).Error
 }
 
 // GetPingStatsByTarget returns the single ping-stats series for a device+target,

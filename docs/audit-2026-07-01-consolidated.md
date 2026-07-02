@@ -291,9 +291,11 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `internal/threatfeed/threatfeed.go:137` — a >1 MiB line (HTML error page with 200) stops the scan silently; indicators past it TTL-expire. Fix: return `sc.Err()`; treat scan errors as fetch failures.
 
 ### L4. Partial GeoLite2 open logs "enrichment disabled" while half of it runs; mmap'd .mmdb has no reload path (in-place overwrite risks SIGBUS)
+> **✅ RESOLVED (v0.10.550)** — a partial open (one of Country/ASN loads) now logs "partial load … enrichment enabled … with reduced coverage" instead of "disabled". `GeoResolver` holds each reader behind an `atomic.Pointer`; a new `Reload()` re-stats the `.mmdb` files on a 6h ticker and hot-swaps any that changed, retiring the old reader and closing it only on the *next* cycle so an in-flight lookup never dereferences an unmapped reader. Operators must rename-into-place (MaxMind's updater does); documented. Test `TestGeoResolver_ReloadNilSafe`.
 - **server** · `internal/classify/geo.go:38` (+ `handlers.go:52-53`) — periodic mtime check + atomic swap; fix the log; document rename-not-overwrite.
 
 ### L5. SSE stream clears the write deadline — a zero-window client pins its handler goroutine in a blocked Write indefinitely
+> **✅ RESOLVED (v0.10.550)** — the NOC SSE handler no longer clears the write deadline outright; it arms a rolling 15s per-write deadline (`SetWriteDeadline`) before every snapshot/keepalive flush. A healthy reader keeps resetting it (so a live stream is never truncated), while a client that stops reading unblocks the goroutine so it returns and unsubscribes.
 - **server** · `internal/api/handlers/noc.go:156` — set a rolling per-write deadline instead.
 
 ### L6. Malformed ?focus= percent-encoding throws uncaught URIError — NOC page fails to init; Connections page wipes the just-rendered map
@@ -330,6 +332,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `cmd/poller/main.go:1982` (+ `internal/metrics/metrics.go:117`) — PingContext with a 2s deadline; WriteTimeout/TimeoutHandler on the mux.
 
 ### L16. updatePingStatsBatch is an unlocked read-modify-write — concurrent folds for the same (device,target) lose or double-count a whole batch in the lifetime series
+> **✅ RESOLVED (v0.10.550)** — the per-target fold is now a single atomic `FoldPingStats` (`INSERT … ON CONFLICT (device_id, target_ip) DO UPDATE`) that recomputes min/max and the running average `(avg·samples + Σ)/(samples+K)` in-SQL against the row's pre-update values, so interleaved folds can no longer clobber each other's batch. Dialect-aware `min`/`max` vs `LEAST`/`GREATEST`. Tests `TestFoldPingStats_AtomicAccumulation_L16`, `TestFoldPingStats_ManyFoldsSumSamples_L16`.
 - **server** · `internal/api/handlers/handlers_data.go:427` — atomic UPDATE (`samples = samples + ?` …) or SELECT FOR UPDATE; pre-existing pattern, but the batch rewrite widened the loss unit from one sample to the batch.
 
 ### L17. ReceiveSystemStatuses (and the other 8 direct-send metric endpoints) have no batch idempotency on either side — timeout-after-commit replays insert duplicate rows

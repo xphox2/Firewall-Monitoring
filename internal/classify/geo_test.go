@@ -49,3 +49,19 @@ func TestGeoResolver_EmptyDir(t *testing.T) {
 		t.Error("NewGeoResolver(true, \"\") err = nil, want a config error")
 	}
 }
+
+// TestGeoResolver_ReloadNilSafe verifies the audit-L4 reload path is nil-safe:
+// Reload on a disabled (nil) resolver, and repeated Reloads on a resolver whose
+// DB files are missing, must neither panic nor spuriously flip Enabled().
+func TestGeoResolver_ReloadNilSafe(t *testing.T) {
+	var g *GeoResolver // disabled
+	g.Reload()         // must not panic
+
+	// A resolver constructed with missing files is nil (see EnabledMissingFiles),
+	// so this also exercises Reload on the nil path via the same code.
+	r, _ := NewGeoResolver(true, t.TempDir())
+	r.Reload()
+	if r.Enabled() {
+		t.Error("resolver with no .mmdb files reported Enabled after Reload")
+	}
+}
