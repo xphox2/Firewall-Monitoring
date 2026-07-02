@@ -39,7 +39,26 @@ func (d *Database) UpsertThreatIntelBatch(entries []models.ThreatIntel) error {
 		return nil
 	}
 	now := time.Now().UTC()
+
+	// M5 of the 2026-07-01 audit: dedup by (cidr, source) BEFORE the upsert,
+	// keeping the first occurrence. Feed normalization masks prefixes, so two
+	// distinct feed lines (e.g. "203.0.113.4/24" and "203.0.113.200/24") — or
+	// a plain repeated IP, common in aggregate lists — collapse to the same
+	// conflict key. PostgreSQL rejects a statement where two inserted rows hit
+	// the same ON CONFLICT target ("cannot affect row a second time") and
+	// CreateInBatches wraps all chunks in ONE transaction, so a single in-batch
+	// duplicate rolled back the WHOLE feed's upsert every sync; the feed's
+	// indicators then TTL-expired out of the matcher with only a log line as
+	// evidence. SQLite tolerates in-statement duplicates, which is why
+	// dev/tests never caught it.
+	seen := make(map[string]struct{}, len(entries))
+	deduped := entries[:0]
 	for i := range entries {
+		key := entries[i].CIDR + "\x00" + entries[i].Source
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
 		if entries[i].FirstSeen.IsZero() {
 			entries[i].FirstSeen = now
 		}
@@ -49,11 +68,13 @@ func (d *Database) UpsertThreatIntelBatch(entries []models.ThreatIntel) error {
 		if entries[i].Severity == "" {
 			entries[i].Severity = "warning"
 		}
+		deduped = append(deduped, entries[i])
 	}
+
 	return d.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "cidr"}, {Name: "source"}},
 		DoUpdates: clause.AssignmentColumns([]string{"category", "severity", "last_seen", "expires_at"}),
-	}).CreateInBatches(entries, 1000).Error
+	}).CreateInBatches(deduped, 1000).Error
 }
 
 // PruneExpiredThreatIntel deletes threat-intel rows whose expiry has passed, so

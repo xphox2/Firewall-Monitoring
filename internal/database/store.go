@@ -196,6 +196,10 @@ type EventStatsStore interface {
 // IngestStore covers the probe-ingestion write path and batch idempotency.
 type IngestStore interface {
 	SaveFlowSamples(samples []models.FlowSample) error
+	// SaveAgentDrops persists one per-window sFlow sample-pool drops delta
+	// (M2 of the 2026-07-01 audit: previously this had no production caller,
+	// so the sampling_backoff detector read a table nothing wrote).
+	SaveAgentDrops(agentAddress string, samplingRate uint32, windowStart time.Time, dropsCount uint64) error
 	SaveFlowInterfaceCounters(counters []models.FlowInterfaceCounter) error
 	SaveHAStatuses(statuses []models.HAStatus) error
 	SaveInterfaceAddresses(addrs []models.InterfaceAddress) error

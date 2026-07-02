@@ -101,6 +101,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** 413 on oversize (collector re-chunks), or process all rows; clamp the collector knob; log + RecordProbeDataTruncation.
 
 ### M2. samplingBackoffDetector reads flow_agent_drops, which nothing in production writes — sFlow drop monitoring silently inert (invariant 2)
+> **✅ RESOLVED (v0.10.542)** — the flow-ingest handler now folds each batch's CUMULATIVE per-agent drops counters into `flow_agent_drops` via per-agent deltas (`recordAgentDrops`: baseline on first sighting, positive delta on growth, re-baseline on counter reset, bounded tracking map). End-to-end test `TestFlowIngest_AggregatesAgentDrops_M2` ingests two batches and asserts the `sampling_backoff` detection fires.
 - **server** · `internal/detect/detectors.go:130` (+ `internal/database/agent_drops.go` TODO)
 - `SaveAgentDrops` has only test callers; the promised 1-minute rollup of `FlowSample.Drops` into `flow_agent_drops` was never built (the doc comment admits it's a TODO). Per-sample `Drops` IS persisted into `flow_samples` but nothing reads that column. An overloaded agent drops samples in prod → detector sees 0 rows → no SFLOW_SAMPLING_BACKOFF alert ever fires while operators believe drop monitoring is active. Traffic under-reporting goes unnoticed — the condition the drops work was meant to catch.
 - **Fix:** aggregate `Drops` by (agent, sampling_rate, minute) at ingest or in the 5-min rollup and upsert via `SaveAgentDrops`; regression-test the pipeline end to end.
@@ -111,11 +112,13 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** default SFLOW_* cooldown ≥ the window length; apply the `>0` guard; dedupe persisted detections on (dedup_key, overlapping window).
 
 ### M4. Threat-intel Matcher.Match is an O(n) scan called twice per flow sample on the ingest hot path
+> **✅ RESOLVED (v0.10.542)** — prefixes are bucketed by bit length into maps keyed on the masked prefix; a lookup is one map probe per distinct prefix length (a handful), independent of feed size, still lock-free and allocation-free. Bonus: overlapping prefixes now return the MOST SPECIFIC match, and 4-in-6 mapped addresses match the IPv4 buckets. Test + benchmark in `threatintel_m4_test.go`.
 - **server** · `internal/threatintel/threatintel.go:80`
 - Flat `[]entry` scanned to the end on every miss (the common case), twice per sample, synchronously in `ReceiveFlowSamples`. With THREAT_FEEDS_ENABLED the default bundle is ~40–70k prefixes (feeds allow 500k each): ~0.3–0.7 ms per non-matching sample ≈ a full core at ~2k samples/sec — two orders of magnitude off the 100k/sec target; ingest slows, collector pushes time out, BoltDB backlog grows.
 - **Fix:** longest-prefix-match structure — per-prefix-length maps keyed on masked addr (~O(24) lookups) or a binary radix trie; build once in New, lock-free lookup.
 
 ### M5. UpsertThreatIntelBatch has no in-batch (cidr,source) dedup — PG error 21000 aborts the whole feed; indicators then TTL-expire out silently
+> **✅ RESOLVED (v0.10.542)** — the batch is deduped by (cidr, source) before the ON CONFLICT upsert, keeping the first occurrence. Also closes its duplicate finding (M-severity #40 in the raw set). Test `TestUpsertThreatIntelBatch_InBatchDedup_M5`.
 - **server** · `internal/database/threat_intel.go:53` (+ `internal/threatfeed/threatfeed.go:143`)
 - `normalize()` masks prefixes, so distinct feed lines collapse to identical (cidr,source) pairs; repeated lines are common in aggregate lists. PostgreSQL rejects a statement where two rows hit the same ON CONFLICT target ("cannot affect row a second time"), and `CreateInBatches` wraps all chunks in one transaction, so the WHOLE feed rolls back; `runThreatFeedSync` just logs. Every sync fails → after the 14-day TTL that feed's coverage silently drops to zero. SQLite tolerates it, so dev/tests pass while prod PG fails (invariant 4).
 - **Fix:** dedup by (CIDR, Source) before insert.

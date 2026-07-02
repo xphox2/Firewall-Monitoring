@@ -280,6 +280,10 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		samples[i].ThreatFlag = tf
 		filtered = append(filtered, samples[i])
 	}
+	// M2 of the 2026-07-01 audit: fold the batch's cumulative drops counters
+	// into flow_agent_drops so the sampling_backoff detector has data.
+	h.recordAgentDrops(filtered)
+
 	if err := h.db.SaveFlowSamples(filtered); err != nil {
 		log.Printf("ReceiveFlowSamples: DB save error: %v", err)
 		httputil.InternalError(c, "Failed to save flow samples", err)

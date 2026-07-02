@@ -6,12 +6,11 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// SaveAgentDrops persists one (agent, sampling_rate, window) aggregate row
-// of sFlow sample-pool drops. Called by the alert/reporting layer after
-// each 1-minute rollup of per-sample Drops values. Duplicates
-// (same agent+sampling_rate+window) are tolerated; the caller is
-// expected to upsert via INSERT ON CONFLICT in production (TODO follow-up
-// when the alert-policy hook lands).
+// SaveAgentDrops persists one (agent, sampling_rate, window) delta row of
+// sFlow sample-pool drops. Called from the flow-ingest handler
+// (recordAgentDrops, M2 of the 2026-07-01 audit), which deltas each agent's
+// CUMULATIVE drops counter per batch. Multiple rows per (agent, window) are
+// fine — the sampling_backoff detector SUMs drops_count over the window.
 func (d *Database) SaveAgentDrops(agentAddress string, samplingRate uint32, windowStart time.Time, dropsCount uint64) error {
 	row := models.AgentDrops{
 		AgentAddress: agentAddress,

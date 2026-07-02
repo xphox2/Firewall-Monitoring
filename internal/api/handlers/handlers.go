@@ -42,6 +42,13 @@ type Handler struct {
 	// GORM-backed *database.Database supplied by NewHandler.
 	db database.Store
 	mu sync.RWMutex
+
+	// agentDropsLast tracks the last CUMULATIVE sFlow sample-pool drops
+	// counter seen per agent, so recordAgentDrops (M2 of the 2026-07-01
+	// audit) can fold per-batch deltas into flow_agent_drops. Guarded by
+	// agentDropsMu; bounded by maxTrackedDropAgents.
+	agentDropsMu   sync.Mutex
+	agentDropsLast map[string]uint64
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {

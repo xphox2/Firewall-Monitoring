@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.542] - 2026-07-01
+
+### Fixed
+- **sFlow agent drop monitoring actually works now (audit 2026-07-01 finding M2).** The `sampling_backoff` detector read `flow_agent_drops`, but nothing in production ever wrote it — the promised aggregation of `FlowSample.Drops` was a TODO — so `SFLOW_SAMPLING_BACKOFF` could never fire while operators believed drop monitoring was active, and agent-side traffic under-reporting went unnoticed. The flow-ingest handler now folds each batch's drops counters into `flow_agent_drops`. The sFlow v5 drops field is a **cumulative** per-agent counter, so the handler tracks the last seen value per agent and stores only the positive delta per batch (counter regression = agent restart → re-baseline), in a bounded tracking map. End-to-end regression test: ingest two batches with a growing counter → the detector fires.
+- **Threat-intel matching is no longer an O(feed-size) scan on the ingest hot path (audit 2026-07-01 finding M4).** `Matcher.Match` — called twice per flow sample, synchronously, in the ingest handler — scanned a flat slice to the end on every miss; with the default feeds' tens of thousands of prefixes that burned a full CPU core at a few thousand samples/sec. Prefixes are now bucketed by bit length into maps keyed on the masked prefix: a lookup is one map probe per distinct prefix length present in the feed (a handful), independent of feed size, still lock-free and allocation-free. Overlapping prefixes now return the most specific match, and IPv4-mapped IPv6 addresses match the IPv4 buckets.
+- **A duplicate feed entry no longer aborts an entire threat-feed sync on PostgreSQL (audit 2026-07-01 finding M5).** Feed normalization masks prefixes, so distinct lines can collapse to the same (cidr, source) key — and PostgreSQL rejects a multi-row `INSERT ... ON CONFLICT DO UPDATE` that touches the same key twice, rolling back the whole feed's upsert every sync until the feed's indicators silently TTL-expired out of the matcher (SQLite tolerated it, so dev/tests never caught it — the invariant-4 dialect divergence). `UpsertThreatIntelBatch` now dedups the batch first, keeping the first occurrence.
+
 ## [0.10.541] - 2026-07-01
 
 ### Fixed
