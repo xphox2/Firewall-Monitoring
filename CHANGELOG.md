@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.534] - 2026-07-01
+
+### Fixed
+- **Poller advisory work-lock no longer leaks across pooled connections (audit 2026-07-01 finding H9).** `pg_try_advisory_lock`/`pg_advisory_unlock` are session-scoped, but both ran through GORM's connection pool, so during a busy poll cycle the unlock routinely landed on a *different* Postgres backend than the lock. `pg_advisory_unlock` on a non-owning session returns `false` with only a WARNING — no SQL error — so the failed release was invisible: the lock sat on an idle pooled connection for up to 5 minutes and the next tick logged "Skipping poll cycle: another poller holds the work lock" and silently skipped the **entire** cycle (polling, offline detection, rollups, flow detection, threat feeds, cleanup) in a single-poller deployment. `TryAcquirePollerWorkLock` now pins a dedicated `*sql.Conn` — the exact pattern its sibling `AcquireAPISingletonLock` documents for this exact hazard — and returns a release func that unlocks on that same backend, checks the unlock's boolean, and returns the connection to the pool.
+- **A panicked poller loop no longer becomes a permanent zombie behind green health checks (audit 2026-07-01 finding M30).** REL-01's SafeGo contained a `Start()`-loop panic but never restarted the loop, and `/readyz` only pinged the DB — so one bad tick silently killed polling, alerting, rollups, and cleanup forever while orchestrators and Prometheus saw green. Two complementary fixes: (1) the loop goroutine is now **supervised** — panic recovered per attempt, restarted with capped exponential backoff (1s→1m), clean exit only on `Stop()`; (2) `/readyz` now also requires a **loop heartbeat** within max(3× poll interval, 10 min), stamped at loop start, before each select wait, and when leader-locked work is picked up — a halted *or wedged* loop flips the daemon to not-ready. Regression test `TestPollerLoopHeartbeat_M30`.
+- **`/readyz` DB probes are now bounded and the observability server has a write timeout (audit 2026-07-01 finding L15, same lines as M30).** Both the poller's and trap-receiver's readiness closures use `PingContext` with a 2-second deadline instead of an unbounded `Ping()` (which blocked forever when the pool was wedged — hanging the probe and leaking a goroutine per scrape instead of answering 503), and `StartObservabilityServer` sets `WriteTimeout: 30s`.
+
 ## [0.10.533] - 2026-07-01
 
 ### Fixed

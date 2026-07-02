@@ -120,8 +120,13 @@ func main() {
 		metrics.RegisterDBPool(sqlDB, "fwmon_trap")
 	}
 	obsSrv := metrics.StartObservabilityServer(trapMetricsAddr(), "trap-receiver", func() bool {
+		// L15 of the 2026-07-01 audit: bound the DB probe — an unbounded
+		// Ping() blocks forever when the pool is wedged, hanging /readyz
+		// instead of answering 503.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 		sqlDB, derr := db.Gorm().DB()
-		return derr == nil && sqlDB.Ping() == nil
+		return derr == nil && sqlDB.PingContext(ctx) == nil
 	})
 	defer shutdownObs(obsSrv)
 

@@ -76,6 +76,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** in entrypoint (runs as root) `chown fwmon:fwmon /data` non-recursively (leaving pgdata postgres-owned), or point SECRETS_DIR at the already-chowned `/config`, or seed ADMIN_PASSWORD into the generated config.env like JWT_SECRET_KEY.
 
 ### H9. Poller advisory work-lock is released on a different pooled connection — silent no-op release makes a SINGLE poller skip its own poll/rollup/detect/cleanup ticks
+> **✅ RESOLVED (v0.10.534)** — `TryAcquirePollerWorkLock` now pins a dedicated `*sql.Conn` (the `AcquireAPISingletonLock` pattern) and returns a release func that unlocks on that SAME backend then closes it; the unlock's boolean return is also checked and logged.
 - **server** · `internal/database/database.go:429-456`
 - `pg_try_advisory_lock`/`pg_advisory_unlock` are session-scoped, but `TryAcquirePollerWorkLock`/`ReleasePollerWorkLock` issue them through GORM's pool, so the unlock routinely lands on a different backend than the lock. `pg_advisory_unlock` on a non-owning session returns `false` with a WARNING — not a SQL error — so the `err != nil` check never fires. The lock stays held by an idle pooled conn until recycled (≤5 min); the next tick's probe returns false and `runUnderLeaderLock` logs "another poller holds the work lock" and skips the ENTIRE tick — polling, offline detection, rollup, flow-detect, threat feeds, cleanup — in a single-poller deployment, chronically and silently, with a log that misattributes it to a second poller. The sibling `AcquireAPISingletonLock` (`database.go:469-495`) documents this exact hazard and pins a `sql.Conn` — the poller lock is the one advisory lock that skips the pattern.
 - **Fix:** pin one `*sql.Conn` for acquire, stash it, release on the SAME conn, then Close; also check `pg_advisory_unlock`'s boolean.
@@ -235,6 +236,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** `fwmon_trap_ratelimit_drops_total{reason}` counter + throttled summary log line.
 
 ### M30. A panic in the poller's Start() loop is swallowed by SafeGo with no restart — zombie poller behind green /healthz and /readyz
+> **✅ RESOLVED (v0.10.534)** — both halves shipped: the Start() goroutine is now supervised (recover per attempt, restart with capped exponential backoff, clean exit only on Stop()), and /readyz additionally requires a loop heartbeat within max(3× poll interval, 10 min) — stamped at loop start, before each select wait, and when leader-locked work is picked up — so a halted or wedged loop flips the daemon to not-ready. Test `TestPollerLoopHeartbeat_M30`.
 - **server** · `cmd/poller/main.go:1980`
 - The entire ticker select loop (poll, rollup, flow-detect, feeds, cleanup, sweeps) runs in one SafeGo goroutine; Recover logs and swallows, nothing restarts the loop. readyz only pings the DB and healthz is unconditional 200, so any panic in one tick's work (exactly the new-code class shipped in R1–R6) permanently halts the daemon's entire purpose while orchestrators and Prometheus see green. Crashing would be safer — the supervisor would restart it.
 - **Fix:** restart-with-backoff for the loop goroutine, or a lastCycleCompleted timestamp that fails readyz when stale (>3× interval).
@@ -286,6 +288,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **server** · `config.env.example:119` — ship it empty/commented so the AUDIT-012 startup rejection actually fires.
 
 ### L15. /readyz uses unbounded sql.DB.Ping() and the observability server has no write timeout — a wedged PG hangs probes and leaks a goroutine per scrape
+> **✅ RESOLVED (v0.10.534)** — both daemons' readyz closures use `PingContext` with a 2s deadline, and `StartObservabilityServer` sets a 30s `WriteTimeout` (shipped with the M30 readyz rework — same lines).
 - **server** · `cmd/poller/main.go:1982` (+ `internal/metrics/metrics.go:117`) — PingContext with a 2s deadline; WriteTimeout/TimeoutHandler on the mux.
 
 ### L16. updatePingStatsBatch is an unlocked read-modify-write — concurrent folds for the same (device,target) lose or double-count a whole batch in the lifetime series

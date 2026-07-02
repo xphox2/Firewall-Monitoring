@@ -114,7 +114,11 @@ func StartObservabilityServer(addr, component string, ready func() bool) *http.S
 	if addr == "" {
 		return nil
 	}
-	srv := &http.Server{Addr: addr, Handler: ObservabilityHandler(ready), ReadHeaderTimeout: 5 * time.Second}
+	// L15 of the 2026-07-01 audit: WriteTimeout bounds each probe/scrape
+	// response so a stalled client (or a wedged ready func) can't pin its
+	// handler goroutine forever — without it, an orchestrator probing every
+	// 10-15s leaks goroutines indefinitely while the endpoint hangs.
+	srv := &http.Server{Addr: addr, Handler: ObservabilityHandler(ready), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 30 * time.Second}
 	go func() {
 		slog.Info("observability server started", "component", component, "addr", addr, "endpoints", "/metrics /healthz /readyz")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

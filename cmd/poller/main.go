@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -56,6 +57,15 @@ type Poller struct {
 	ifaceStatsMu   sync.RWMutex
 	stopChan       chan struct{}
 
+	// loopBeat is the unix-seconds timestamp of the Start() loop's last sign of
+	// life (M30 of the 2026-07-01 audit). Stamped when the loop starts, before
+	// each select wait, and when leader-locked work is picked up. /readyz
+	// compares it against ~3x the poll interval so a halted loop (panicked and
+	// awaiting supervisor restart, or wedged inside one tick's work) flips the
+	// daemon to not-ready instead of staying green while polling, alerting,
+	// rollups, and cleanup are dead.
+	loopBeat atomic.Int64
+
 	// Injectable seam so pollDevice can be tested without a live SNMP
 	// connection. Wired to snmp.NewSNMPClient in NewPoller; overridden in tests.
 	newSNMP snmpDialer
@@ -70,6 +80,9 @@ func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManage
 		prevIfaceStats: make(map[string]*models.InterfaceStats),
 		stopChan:       make(chan struct{}),
 	}
+	// M30: pre-stamp the loop heartbeat so /readyz is ready during startup,
+	// before Start()'s first tick.
+	p.markLoopAlive()
 	// Wire the SNMP dialer to the live client; tests override p.newSNMP.
 	p.newSNMP = func(cfg *config.Config) (deviceSNMP, error) {
 		cl, err := snmp.NewSNMPClient(cfg)
@@ -158,6 +171,7 @@ func (p *Poller) Start() error {
 	}
 
 	log.Printf("Starting SNMP poller with interval: %v", p.cfg.SNMP.PollInterval)
+	p.markLoopAlive()
 
 	// Clean up stale auto-detected connections from generic interface names
 	if p.db != nil {
@@ -201,6 +215,7 @@ func (p *Poller) Start() error {
 	}
 
 	for {
+		p.markLoopAlive() // M30: previous case completed / loop is waiting for work
 		select {
 		case <-ticker.C:
 			// AUDIT-007: per-tick advisory lock so two poller processes
@@ -266,11 +281,13 @@ func (p *Poller) runUnderLeaderLock(taskName string, fn func()) {
 		fn()
 		return
 	}
-	if !p.db.TryAcquirePollerWorkLock() {
+	release, acquired := p.db.TryAcquirePollerWorkLock()
+	if !acquired {
 		log.Printf("Skipping %s: another poller holds the work lock", taskName)
 		return
 	}
-	defer p.db.ReleasePollerWorkLock()
+	defer release()
+	p.markLoopAlive() // M30: work picked up — a hang inside fn goes stale from here
 	fn()
 }
 
@@ -1916,6 +1933,18 @@ func (p *Poller) Stop() error {
 	return nil
 }
 
+// markLoopAlive stamps the Start()-loop heartbeat (M30 of the 2026-07-01 audit).
+func (p *Poller) markLoopAlive() {
+	p.loopBeat.Store(time.Now().Unix())
+}
+
+// LoopAliveWithin reports whether the Start() loop showed a sign of life within
+// maxAge. Used by the /readyz probe so a halted loop (swallowed panic awaiting
+// restart, or a wedge inside one tick's work) flips the daemon to not-ready.
+func (p *Poller) LoopAliveWithin(maxAge time.Duration) bool {
+	return time.Since(time.Unix(p.loopBeat.Load(), 0)) <= maxAge
+}
+
 func main() {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
@@ -1977,9 +2006,34 @@ func main() {
 	if sqlDB, dberr := db.Gorm().DB(); dberr == nil {
 		metrics.RegisterDBPool(sqlDB, "fwmon_poller")
 	}
+	notif := notifier.NewNotifier(cfg)
+	alertManager := alerts.NewAlertManager(cfg, notif, db)
+
+	poller := NewPoller(cfg, db, alertManager, notif)
+
+	// M30 of the 2026-07-01 audit: /readyz must reflect whether the poller is
+	// actually DOING its job, not just whether the DB answers a ping — a
+	// panicked-and-halted loop previously kept green health checks forever.
+	// Staleness threshold: 3x the (clamped) poll interval, floored at 10
+	// minutes so legitimately long single-tick work (backlog rollups, big
+	// cleanup batches) doesn't flap readiness.
+	loopMaxAge := 3 * cfg.SNMP.PollInterval
+	if minIv := 3 * 30 * time.Second; loopMaxAge < minIv {
+		loopMaxAge = minIv // Start() clamps the interval to >=30s
+	}
+	if loopMaxAge < 10*time.Minute {
+		loopMaxAge = 10 * time.Minute
+	}
 	obsSrv := metrics.StartObservabilityServer(pollerMetricsAddr, "poller", func() bool {
+		// L15: bound the DB probe — an unbounded Ping() blocks forever when
+		// the pool is wedged, hanging /readyz instead of answering 503.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 		sqlDB, derr := db.Gorm().DB()
-		return derr == nil && sqlDB.Ping() == nil
+		if derr != nil || sqlDB.PingContext(ctx) != nil {
+			return false
+		}
+		return poller.LoopAliveWithin(loopMaxAge)
 	})
 	defer func() {
 		if obsSrv != nil {
@@ -1989,19 +2043,36 @@ func main() {
 		}
 	}()
 
-	notif := notifier.NewNotifier(cfg)
-	alertManager := alerts.NewAlertManager(cfg, notif, db)
-
-	poller := NewPoller(cfg, db, alertManager, notif)
-
 	reportScheduler := report.NewReportScheduler(cfg, db, notif)
 	go reportScheduler.Start()
 
-	logging.SafeGo("poller", func() { // REL-01: contain a polling-loop panic, don't crash the daemon
-		if err := poller.Start(); err != nil {
-			log.Printf("Poller error: %v", err)
+	// M30 of the 2026-07-01 audit: REL-01's SafeGo contained a poller-loop
+	// panic but never restarted the loop — the process stayed up as a zombie
+	// (no polling, alerting, rollups, or cleanup) behind green health checks.
+	// Supervise instead: recover per attempt, restart with capped backoff, and
+	// exit only on a clean return (Stop()). The /readyz loop-heartbeat check
+	// above covers the gap between crash and restart.
+	go func() {
+		backoff := time.Second
+		for {
+			clean := false
+			func() {
+				defer logging.Recover("poller")
+				if err := poller.Start(); err != nil {
+					log.Printf("Poller error: %v", err)
+				}
+				clean = true
+			}()
+			if clean {
+				return // Stop() requested (or a non-panic return) — no restart
+			}
+			log.Printf("Poller loop crashed (panic recovered); restarting in %s", backoff)
+			time.Sleep(backoff)
+			if backoff < time.Minute {
+				backoff *= 2
+			}
 		}
-	})
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

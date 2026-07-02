@@ -420,40 +420,64 @@ const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 // the daily report, and both contend on the 24h cleanup's row-lock
 // schedule.
 //
-// Pair every call with `defer db.ReleasePollerWorkLock()`. If the caller
-// crashes between acquire and release, the lock is dropped at session
-// close (5 min `SetConnMaxLifetime` boundary or sooner) — a minor
-// availability hit (one cron tick skipped) but not stuck forever.
+// Pair every call with `defer release()`. If the caller crashes between
+// acquire and release, the lock is dropped at session close (5 min
+// `SetConnMaxLifetime` boundary or sooner) — a minor availability hit
+// (one cron tick skipped) but not stuck forever.
 //
-// SQLite (tests) returns true unconditionally — single-process there.
-func (d *Database) TryAcquirePollerWorkLock() bool {
+// H9 of the 2026-07-01 audit: advisory locks are SESSION-scoped, so the
+// acquire and release MUST run on the same backend. The pre-fix code
+// issued both through gorm's connection pool, so during a busy poll
+// cycle the unlock routinely landed on a DIFFERENT connection —
+// pg_advisory_unlock on a non-owning session returns false with only a
+// WARNING (no SQL error), so the failed release was invisible, the lock
+// leaked on an idle pooled conn for up to ConnMaxLifetime (5 min), and
+// the next tick's probe concluded "another poller holds the work lock"
+// and skipped the ENTIRE cycle — in a single-poller deployment. Now the
+// lock is taken on a dedicated PINNED *sql.Conn (the pattern
+// AcquireAPISingletonLock / acquireMigrationLock already use) and the
+// returned release func unlocks on that same conn, then closes it.
+//
+// SQLite (tests) returns acquired=true + a no-op release — single-process there.
+func (d *Database) TryAcquirePollerWorkLock() (release func(), acquired bool) {
 	if !d.dialect.IsPostgres() {
-		return true
+		return func() {}, true
 	}
-	var acquired bool
-	if err := d.db.Raw("SELECT pg_try_advisory_lock(?)", pollerWorkLockKey).Scan(&acquired).Error; err != nil {
+	sqlDB, err := d.db.DB()
+	if err != nil {
 		// Probe failure: bias toward DOING the work over skipping it.
 		// A duplicate poll cycle is recoverable; a missed one is not.
 		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
-		return true
+		return func() {}, true
 	}
-	return acquired
-}
-
-// ReleasePollerWorkLock releases the lock obtained by TryAcquirePollerWorkLock.
-// Call via defer immediately after a successful acquire so the lock is
-// released on any return path (including panic).
-//
-// SQLite (tests) is a no-op.
-func (d *Database) ReleasePollerWorkLock() {
-	if !d.dialect.IsPostgres() {
-		return
+	ctx := context.Background()
+	conn, err := sqlDB.Conn(ctx) // pins one backend out of the pool
+	if err != nil {
+		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
+		return func() {}, true
 	}
-	if err := d.db.Exec("SELECT pg_advisory_unlock(?)", pollerWorkLockKey).Error; err != nil {
-		// Best-effort release. On error the session-close fallback
-		// (SetConnMaxLifetime) eventually drops the lock.
-		log.Printf("Poller work lock release failed (%v); will auto-release on connection close.", err)
+	var got bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", pollerWorkLockKey).Scan(&got); err != nil {
+		conn.Close()
+		log.Printf("Poller work lock probe failed (%v); proceeding with work anyway.", err)
+		return func() {}, true
 	}
+	if !got {
+		conn.Close() // held by another session — don't leak the pinned conn
+		return func() {}, false
+	}
+	return func() {
+		var released bool
+		if err := conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", pollerWorkLockKey).Scan(&released); err != nil {
+			log.Printf("Poller work lock release failed (%v); will auto-release on connection close.", err)
+		} else if !released {
+			// Cannot happen on the pinned conn, but pg_advisory_unlock
+			// reports non-ownership via its return value (not an error) —
+			// surface it instead of silently ignoring it like the pre-fix code.
+			log.Printf("Poller work lock release returned false (lock not held by this session)")
+		}
+		conn.Close() // returns the (now-unlocked) connection to the pool
+	}, true
 }
 
 // apiSingletonLockKey is the advisory-lock key the API process holds for its
