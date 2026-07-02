@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.544] - 2026-07-01
+
+### Fixed
+- **Flow-detection alert storms fixed (audit 2026-07-01 finding M3).** Two causes: (1) an `AlertPolicy`/`AlertRule` with `CooldownMinutes=0` zeroed the effective cooldown — `now.Sub(lastAlert) > 0` is always true, so every alert type on that policy re-fired every cycle. The policy- and rule-level cooldown copies now use the same `> 0` floor the site/device overrides already had (0 inherits the default instead of disabling the cooldown). (2) The SFLOW_* flow detections run a 15-minute window scanned every 5 minutes, so one event is re-detected in ~3 cycles and the old flat 5-minute default (== the cycle period) let each re-detection notify; SFLOW_* alert types now default to a 15-minute cooldown (≥ the window), collapsing the duplicates and pacing a persistent condition to once per window. Operators can still override lower.
+- **Multicast/broadcast/unspecified addresses no longer misclassified as external traffic (audit 2026-07-01 finding M6).** `classify.Direction` treated IPv4/IPv6 multicast, the limited broadcast (255.255.255.255), and the unspecified address (0.0.0.0 / ::) as "external", so periodic SSDP/mDNS announcements to 239.255.255.250, IPTV multicast, and DHCP DISCOVER were stamped Outbound/External — feeding false `c2_beacon` ("periodic small callout") and `data_exfil` ("large outbound transfer") detections and skewing the Flows ByDirection widget on any LAN. These are now correctly classified as local/internal scope.
+- **A slow threat feed no longer stalls the poller (audit 2026-07-01 finding M9).** `runThreatFeedSync` ran inline in the poller's single `select` loop — sequential fetches (90s ctx each, up to 5 default feeds) plus large upserts — so a blackholed feed host froze SNMP polling, alert evaluation, offline detection, rollups, and cleanup for minutes, and `stopChan` wasn't serviced (shutdown hung). It now runs in a `SafeGo` goroutine guarded against overlapping intervals, with the cross-process leader lock taken inside the goroutine; the select loop stays free of network I/O.
+
 ## [0.10.543] - 2026-07-01
 
 ### Docs

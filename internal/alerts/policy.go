@@ -106,7 +106,7 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertType models.AlertType) ResolvedAlertConfig {
 	resolved := ResolvedAlertConfig{
 		AlertEnabled:    true,
-		CooldownMinutes: 5,
+		CooldownMinutes: defaultCooldownForType(alertType),
 		Severity:        defaultSeverityForType(alertType),
 	}
 
@@ -148,7 +148,14 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		resolved.SlackURL = policy.SlackWebhookURL
 		resolved.DiscordURL = policy.DiscordWebhookURL
 		resolved.WebhookURL = policy.WebhookURL
-		resolved.CooldownMinutes = policy.CooldownMinutes
+		// M3 of the 2026-07-01 audit: apply the same `> 0` floor the site/device
+		// overrides use (below). A policy row with CooldownMinutes=0 previously
+		// zeroed the resolved cooldown — making `now.Sub(last) > 0` always true,
+		// i.e. a per-cycle alert STORM for every alert type on that policy.
+		// 0 now means "inherit the per-type default".
+		if policy.CooldownMinutes > 0 {
+			resolved.CooldownMinutes = policy.CooldownMinutes
+		}
 		resolved.EscalationEnabled = policy.EscalationEnabled
 		resolved.EscalationMinutes = policy.EscalationMinutes
 		resolved.EscalationRepeat = policy.EscalationRepeat
@@ -176,7 +183,9 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		if rule.Threshold > 0 {
 			resolved.Threshold = rule.Threshold
 		}
-		if rule.CooldownMinutes != nil {
+		// M3: same `> 0` floor for a per-rule override (an explicit 0 inherits
+		// the default rather than disabling the cooldown entirely).
+		if rule.CooldownMinutes != nil && *rule.CooldownMinutes > 0 {
 			resolved.CooldownMinutes = *rule.CooldownMinutes
 		}
 		// Per-rule channel overrides (non-nil = override)
@@ -270,6 +279,24 @@ func (am *AlertManager) globalThresholdForType(alertType models.AlertType) float
 	default:
 		return 0
 	}
+}
+
+// defaultCooldownForType is the per-type default alert cooldown in minutes when
+// no policy/rule/site/device override applies.
+//
+// M3 of the 2026-07-01 audit: the SFLOW_* flow detections run on a 15-minute
+// window scanned every 5 minutes (cmd/poller runFlowDetectionCycle), so one
+// underlying event is re-detected in ~3 consecutive cycles. With the old flat
+// 5-minute default (== the cycle period) each re-detection got past the
+// cooldown and notified 2-3 times, and a persistently-present condition
+// re-alerted every ~5 minutes forever. A default cooldown >= the detection
+// window collapses the duplicates and paces a persistent condition to once per
+// window. Operators can still override lower per policy/rule/site/device.
+func defaultCooldownForType(alertType models.AlertType) int {
+	if strings.HasPrefix(string(alertType), "SFLOW_") {
+		return 15 // >= runFlowDetectionCycle's 15-minute window
+	}
+	return 5
 }
 
 func defaultSeverityForType(alertType models.AlertType) models.Severity {

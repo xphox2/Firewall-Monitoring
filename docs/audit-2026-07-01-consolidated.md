@@ -107,6 +107,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** aggregate `Drops` by (agent, sampling_rate, minute) at ingest or in the 5-min rollup and upsert via `SaveAgentDrops`; regression-test the pipeline end to end.
 
 ### M3. Flow-detection re-alerts a one-shot finding 2–3× and a persistent one every ~5 min; a CooldownMinutes=0 policy row means per-cycle alert storms
+> **✅ RESOLVED (v0.10.544)** — the policy- and rule-level cooldown copies now use the same `> 0` floor the site/device overrides already had (a 0 policy/rule inherits the default instead of disabling the cooldown → no per-cycle storm), and SFLOW_* alert types default to a 15-minute cooldown (≥ the detection window), so overlapping re-detections collapse and a persistent condition paces to once per window. Tests in `cooldown_floor_m3_test.go`.
 - **server** · `cmd/poller/main.go:355` (+ `internal/alerts/policy.go:151`)
 - A 15-min detection window on a 5-min cadence re-detects one event in 3 consecutive cycles, and the default cooldown (5 min) equals the cycle period, so each re-detection notifies. `policy.go:151` copies `policy.CooldownMinutes` without the `>0` floor that site/device overrides get, so a policy row with 0 gives a guaranteed per-cycle storm for every SFLOW_* type. No DB restart backstop in `ProcessFlowDetection` — a poller restart re-fires every still-detected finding at once.
 - **Fix:** default SFLOW_* cooldown ≥ the window length; apply the `>0` guard; dedupe persisted detections on (dedup_key, overlapping window).
@@ -124,6 +125,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** dedup by (CIDR, Source) before insert.
 
 ### M6. Direction() classifies multicast/broadcast/unspecified as external — false C2-beacon and data-exfil detections from LAN chatter
+> **✅ RESOLVED (v0.10.544)** — `isInternal` now treats `IsMulticast()`, `IsUnspecified()`, and the limited broadcast 255.255.255.255 as local scope, so SSDP/mDNS/IPTV multicast and DHCP DISCOVER no longer land in Outbound/External. Test `TestDirection_MulticastBroadcastUnspecified_M6` with real-outbound/inbound controls.
 - **server** · `internal/classify/classify.go:219`
 - `privateNets` covers RFC1918/loopback/link-local/CGNAT/ULA only. SSDP/mDNS to 239.255.255.250 (small, perfectly periodic) is stamped Outbound and matches the c2_beacon candidate query — recurring false "C2 beacon" detections for every chatty IoT/UPnP host; internal IPTV multicast bytes count toward data_exfil; DHCP DISCOVER (0.0.0.0→255.255.255.255) lands in "external transit".
 - **Fix:** treat `IsMulticast()`, `IsUnspecified()`, and 255.255.255.255 as local scope; regression-test 239.255.255.250, ff02::1, 255.255.255.255, 0.0.0.0.
@@ -141,6 +143,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** `defer logging.Recover(...)` first in every callback; copy `b.Conn` under RLock and nil-check (the pattern `SendMessage` already follows).
 
 ### M9. Threat-feed sync runs inline in the poller's single select loop — a blackholed feed host stalls polling, alerting, and offline detection for minutes
+> **✅ RESOLVED (v0.10.544)** — the sync now runs in its own `logging.SafeGo` goroutine, guarded by a `feedSyncRunning` atomic (intervals can't stack) with the cross-process leader lock acquired inside the goroutine. The select loop stays free of network I/O, so a slow/blackholed feed no longer stalls polling/alerting/offline-detection or hangs shutdown. Tests `TestStartThreatFeedSyncAsync_*_M9`.
 - **server** · `cmd/poller/main.go:406`
 - `runThreatFeedSync` executes synchronously in a select arm: sequential fetches (90s ctx each, 5 default feeds) + up-to-500k-row upserts. Worst case ~7.5 min of fetch alone during which no SNMP polls run (ticks dropped), no alert evaluation, no stale sweeps, and stopChan isn't serviced (shutdown stalls).
 - **Fix:** run in its own SafeGo goroutine with an already-running guard; keep the select loop free of network I/O.

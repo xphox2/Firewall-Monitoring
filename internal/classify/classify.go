@@ -202,8 +202,19 @@ var privateNets = func() []*net.IPNet {
 	return nets
 }()
 
-// isInternal reports whether ip falls in one of the private/local ranges.
+// isInternal reports whether ip falls in one of the private/local ranges, or is
+// otherwise LAN-scope (multicast / broadcast / unspecified).
+//
+// M6 of the 2026-07-01 audit: multicast (IPv4 224.0.0.0/4, IPv6 ff00::/8), the
+// limited broadcast 255.255.255.255, and the unspecified 0.0.0.0 / :: are all
+// local-scope, not "external". Pre-fix they were stamped Outbound/External, so
+// periodic SSDP/mDNS announcements (→ 239.255.255.250), IPTV multicast, and
+// DHCP DISCOVER (0.0.0.0 → 255.255.255.255) fed false c2_beacon and data_exfil
+// detections and skewed the Flows ByDirection widget on any LAN.
 func isInternal(ip net.IP) bool {
+	if ip.IsMulticast() || ip.IsUnspecified() || ip.Equal(net.IPv4bcast) {
+		return true
+	}
 	for _, n := range privateNets {
 		if n.Contains(ip) {
 			return true

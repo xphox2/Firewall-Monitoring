@@ -66,9 +66,31 @@ type Poller struct {
 	// rollups, and cleanup are dead.
 	loopBeat atomic.Int64
 
+	// feedSyncRunning guards the async threat-feed sync (M9 of the 2026-07-01
+	// audit) so a slow/blackholed feed host can't (a) stall the poller's single
+	// select loop — which starved SNMP polling, alert evaluation, offline
+	// detection, and made shutdown hang — or (b) stack overlapping syncs when
+	// an interval fires while the previous one is still running.
+	feedSyncRunning atomic.Bool
+
 	// Injectable seam so pollDevice can be tested without a live SNMP
 	// connection. Wired to snmp.NewSNMPClient in NewPoller; overridden in tests.
 	newSNMP snmpDialer
+}
+
+// startThreatFeedSyncAsync runs the threat-feed sync off the poller's select
+// loop (M9). It no-ops if a sync is already in flight, so intervals can't
+// stack; the cross-process leader lock is acquired inside the goroutine so two
+// poller processes still don't sync concurrently.
+func (p *Poller) startThreatFeedSyncAsync() {
+	if !p.feedSyncRunning.CompareAndSwap(false, true) {
+		log.Println("threat-feeds: previous sync still running; skipping this interval")
+		return
+	}
+	logging.SafeGo("threat-feed-sync", func() {
+		defer p.feedSyncRunning.Store(false)
+		p.runUnderLeaderLock("threat-feeds", p.runThreatFeedSync)
+	})
 }
 
 func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManager, notif *notifier.Notifier) *Poller {
@@ -232,9 +254,9 @@ func (p *Poller) Start() error {
 		case <-detectTicker.C:
 			p.runUnderLeaderLock("flow-detect", p.runFlowDetectionCycle)
 		case <-feedInitC:
-			p.runUnderLeaderLock("threat-feeds", p.runThreatFeedSync)
+			p.startThreatFeedSyncAsync() // M9: async, off the select loop
 		case <-feedTickC:
-			p.runUnderLeaderLock("threat-feeds", p.runThreatFeedSync)
+			p.startThreatFeedSyncAsync()
 		case <-cleanupTicker.C:
 			p.runUnderLeaderLock("cleanup", func() {
 				if p.db != nil {
