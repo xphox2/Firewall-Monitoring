@@ -172,6 +172,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** re-create the canvas if missing on the data path, or render the empty message into a sibling element.
 
 ### M14. Webhook failure errors embed the full Slack/Discord webhook URL (secret token) and are logged (invariant 7)
+> **✅ RESOLVED (v0.10.545)** — `postJSON` now redacts to scheme+host on both error paths: the non-2xx error and the transport error (Go's `*url.Error` stringifies the whole request URL). Test `TestPostJSON_RedactsWebhookSecret_M14` covers both.
 - **server** · `internal/notifier/notifier.go:262`
 - `postJSON` formats the destination URL into the error on non-2xx; Slack/Discord tokens live in the URL path. A revoked/rate-limited webhook writes the secret to container logs on every alert — hundreds of lines during a storm.
 - **Fix:** log scheme+host (or channel label) + status only.
@@ -226,11 +227,13 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** correct the doc (source wins); route the bool through parseBool; consider fail-fast on empty trap community to match the server posture.
 
 ### M24. LINK_UP trap from any device auto-resolves and auto-acknowledges LINK_DOWN alerts of EVERY device — direct trap path never resolves DeviceID
+> **✅ RESOLVED (v0.10.545)** — `ProcessTrap` resolves DeviceID from the trap's source IP (`ResolveDeviceByIP`, so per-device policies apply and device_id scopes recovery) and scopes every trap alert's `MetricName` to `snmp_trap_<sourceIP>` as defense-in-depth when the IP maps to no device. A LINK_UP now resolves only the same source's LINK_DOWN. Test `TestProcessTrap_LinkUpScopedBySource_M24`.
 - **server** · `internal/alerts/alerts.go:590` (+ `internal/snmp/trap.go:190-311`, `cmd/trap-receiver/main.go:132-139`)
 - Direct traps carry DeviceID=0, and sendRecovery's UPDATE matches `device_id=0 AND alert_type='LINK_DOWN' AND metric_name='snmp_trap'` — which is ALL direct-trap LINK_DOWNs. Firewall B's LINK_UP closes firewall A's still-open LINK_DOWN with "Auto-resolved". Same root cause: per-device alert policies never apply to direct traps.
 - **Fix:** resolve DeviceID from trap.SourceIP (as the poller pipeline does); if unresolvable, scope the resolve by source IP.
 
 ### M25. trap-receiver never prunes AlertManager.lastAlert — unbounded growth keyed by spoofable source IPs
+> **✅ RESOLVED (v0.10.545)** — two layers: the trap-receiver now runs a 1-minute `PruneExpiredCooldowns` ticker (mirroring the poller), and `AlertManager` hard-caps `lastAlert` at 50k entries via `recordCooldownLocked` (all cooldown writes route through it; inline expired-prune then oldest-eviction), so any embedding process is bounded by construction. Test `TestRecordCooldownLocked_Bounded_M25`.
 - **server** · `cmd/trap-receiver/main.go:129` (+ `internal/alerts/alerts.go:194,203,434`)
 - `PruneExpiredCooldowns` is called only from the poller; the trap-receiver's own AlertManager never evicts. The per-IP token map is bounded, but its idle sweep re-admits ~10k new IPs per 5-min window; each spoofed IP carrying a known warning/critical OID with the correct community adds a permanent lastAlert entry (~2.8M/day max, hundreds of MB), each also producing an alert row + notification (cooldown is per-key, so unique IPs bypass it).
 - **Fix:** prune ticker in the trap-receiver; cap lastAlert with LRU eviction inside AlertManager so every embedder is safe by construction.

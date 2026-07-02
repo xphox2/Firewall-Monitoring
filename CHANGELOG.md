@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.545] - 2026-07-01
+
+### Fixed
+- **Webhook failure logs no longer leak the Slack/Discord secret token (audit 2026-07-01 finding M14).** Slack incoming-webhook and Discord webhook URLs carry their auth token in the URL path; `postJSON` embedded the full URL in both its non-2xx error and — via Go's `*url.Error` — its transport error, writing the secret to container logs on every failed send (hundreds of lines during an alert storm). Both paths now redact to `scheme://host`.
+- **A LINK_UP trap no longer auto-resolves every device's LINK_DOWN (audit 2026-07-01 finding M24).** The direct trap-receiver pipeline never populated `DeviceID`, so every direct trap had `DeviceID=0` + `MetricName="snmp_trap"` and a LINK_UP's recovery `UPDATE … WHERE device_id=0 AND metric_name='snmp_trap'` matched **all** direct-trap LINK_DOWN alerts — firewall B's LINK_UP silently closed (and auto-acknowledged) firewall A's still-open LINK_DOWN. `ProcessTrap` now resolves the device from the trap's source IP (so per-device policies apply and `device_id` scopes recovery) and scopes each trap alert's `MetricName` to `snmp_trap_<sourceIP>`, so recovery can never cross devices.
+- **The trap-receiver's alert-cooldown map is now bounded (audit 2026-07-01 finding M25).** The trap-receiver embeds its own `AlertManager` whose `lastAlert` map is keyed by spoofable source IPs, and — unlike the poller — it never ran `PruneExpiredCooldowns`, so a spoof-flood grew it ~unbounded (hundreds of MB/day). Two layers now bound it: the trap-receiver runs a 1-minute prune ticker, and `AlertManager` hard-caps the map at 50k entries (every cooldown write routes through a bounded helper that prunes expired entries then evicts the oldest), so any process embedding it is safe by construction.
+
 ## [0.10.544] - 2026-07-01
 
 ### Fixed

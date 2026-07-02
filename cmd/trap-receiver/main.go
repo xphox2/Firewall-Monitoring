@@ -150,7 +150,28 @@ func main() {
 
 	log.Printf("Trap receiver listening on %s", cfg.SNMP.TrapListenAddr)
 
+	// M25 of the 2026-07-01 audit: the trap-receiver embeds its own
+	// AlertManager whose lastAlert cooldown map is keyed by spoofable source
+	// IPs. The poller runs PruneExpiredCooldowns on its cleanup tick, but this
+	// process never did, so the map grew ~unbounded under a spoof flood. Run
+	// the same prune here. (The in-map hard cap added in AlertManager is the
+	// belt; this ticker is the suspenders, keeping steady-state small.)
+	pruneTicker := time.NewTicker(1 * time.Minute)
+	defer pruneTicker.Stop()
+	pruneStop := make(chan struct{}) // dedicated stop — must NOT read `quit` (single-consumer signal chan)
+	go func() {
+		for {
+			select {
+			case <-pruneTicker.C:
+				alertManager.PruneExpiredCooldowns()
+			case <-pruneStop:
+				return
+			}
+		}
+	}()
+
 	<-quit
+	close(pruneStop)
 
 	log.Println("Shutting down trap receiver...")
 	trapReceiver.Stop()

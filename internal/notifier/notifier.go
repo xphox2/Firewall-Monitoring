@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/smtp"
 	"net/textproto"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -238,8 +240,23 @@ func (n *Notifier) sendSlack(alert *models.Alert, nc NotifyConfig) error {
 	return n.postJSON(nc.SlackWebhookURL, buildSlackPayload(alert))
 }
 
+// webhookHost extracts scheme://host from a webhook URL for safe logging.
+//
+// M14 of the 2026-07-01 audit: Slack incoming-webhook and Discord webhook URLs
+// carry their AUTH TOKEN in the PATH (e.g. hooks.slack.com/services/T…/B…/<secret>,
+// discord.com/api/webhooks/<id>/<token>). Any error that embeds the full URL —
+// the non-2xx error below AND Go's *url.Error from client.Do, which stringifies
+// the whole request URL — writes that secret to container logs on every failed
+// send (hundreds of lines during an alert storm). We only ever log the host.
+func webhookHost(rawURL string) string {
+	if u, err := neturl.Parse(rawURL); err == nil && u.Host != "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return "webhook"
+}
+
 // postJSON marshals payload to JSON and POSTs it to url, returning an error on
-// non-2xx status codes.
+// non-2xx status codes. Errors never include the full URL (M14) — only the host.
 func (n *Notifier) postJSON(url string, payload interface{}) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -254,12 +271,18 @@ func (n *Notifier) postJSON(url string, payload interface{}) error {
 
 	resp, err := n.client.Do(req)
 	if err != nil {
-		return err
+		// A *url.Error stringifies the full request URL (token and all) — redact
+		// to the host and surface only the underlying cause.
+		var uerr *neturl.Error
+		if errors.As(err, &uerr) {
+			return fmt.Errorf("webhook %s: %w", webhookHost(url), uerr.Err)
+		}
+		return fmt.Errorf("webhook %s: %w", webhookHost(url), err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook %s returned status %d", url, resp.StatusCode)
+		return fmt.Errorf("webhook %s returned status %d", webhookHost(url), resp.StatusCode)
 	}
 	return nil
 }

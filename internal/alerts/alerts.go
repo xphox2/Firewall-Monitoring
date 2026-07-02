@@ -90,7 +90,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 					PolicyID:     resolved.PolicyID,
 					Suppressed:   resolved.InMaintenance,
 				}
-				am.lastAlert[chk.metricKey] = now
+				am.recordCooldownLocked(chk.metricKey, now)
 				am.activeAlerts[chk.metricKey] = true
 				fired = append(fired, firedEntry{alert, resolved})
 			}
@@ -158,7 +158,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 				PolicyID:     resolved.PolicyID,
 				Suppressed:   resolved.InMaintenance,
 			}
-			am.lastAlert[key] = now
+			am.recordCooldownLocked(key, now)
 			am.activeAlerts[key] = true
 			fired = append(fired, firedEntry{alert, resolved})
 		}
@@ -179,11 +179,35 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	return nil
 }
 
+// trapMetricName scopes a trap alert's MetricName to its source IP (M24), so a
+// LINK_UP recovery resolves only the same source's LINK_DOWN, never another
+// device's. Falls back to the bare "snmp_trap" when the source IP is unknown.
+func trapMetricName(sourceIP string) string {
+	if sourceIP == "" {
+		return "snmp_trap"
+	}
+	return "snmp_trap_" + sourceIP
+}
+
 func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error {
+	// M24 of the 2026-07-01 audit: the direct trap-receiver pipeline never
+	// populates trap.DeviceID (parseTrap doesn't resolve it), so EVERY direct
+	// trap arrived with DeviceID=0 and MetricName="snmp_trap". A LINK_UP then
+	// resolved WHERE device_id=0 AND metric_name='snmp_trap', which matched ALL
+	// direct-trap LINK_DOWN alerts, so firewall B's LINK_UP silently closed
+	// firewall A's still-open LINK_DOWN. Fix both: resolve the device from the
+	// source IP (so per-device policies apply and device_id scopes recovery),
+	// and scope the trap's MetricName by source IP as defense-in-depth for
+	// traps from an unknown IP that stay DeviceID=0.
+	if trap.DeviceID == 0 && trap.SourceIP != "" && am.db != nil {
+		trap.DeviceID = am.db.ResolveDeviceByIP(trap.SourceIP)
+	}
+	metricName := trapMetricName(trap.SourceIP)
+
 	// Handle LINK_UP as recovery for any active LINK_DOWN alert on this device
 	if trap.TrapType == "LINK_UP" {
 		key := fmt.Sprintf("trap_LINK_DOWN_%s", trap.SourceIP)
-		am.sendRecovery(key, "LINK_DOWN", "snmp_trap", trap.Message, trap.DeviceID)
+		am.sendRecovery(key, "LINK_DOWN", metricName, trap.Message, trap.DeviceID)
 		return nil
 	}
 
@@ -200,7 +224,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.lastAlert[key] = now
+		am.recordCooldownLocked(key, now)
 	}
 	am.mu.Unlock()
 
@@ -214,7 +238,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 		AlertType:  models.AlertType(trap.TrapType),
 		Severity:   models.Severity(trap.Severity),
 		Message:    trap.Message,
-		MetricName: "snmp_trap",
+		MetricName: metricName, // M24: source-scoped so LINK_UP recovery can't cross devices
 		PolicyID:   resolved.PolicyID,
 		Suppressed: resolved.InMaintenance,
 	}
@@ -275,7 +299,7 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 					PolicyID:     resolved.PolicyID,
 					Suppressed:   resolved.InMaintenance,
 				}
-				am.lastAlert[alertKey] = now
+				am.recordCooldownLocked(alertKey, now)
 				fired = append(fired, firedEntry{alert, resolved})
 			}
 		}
@@ -305,7 +329,7 @@ func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) e
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.lastAlert[key] = now
+		am.recordCooldownLocked(key, now)
 	}
 	am.mu.Unlock()
 
@@ -354,7 +378,7 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.lastAlert[key] = now
+		am.recordCooldownLocked(key, now)
 	}
 	am.mu.Unlock()
 
@@ -430,16 +454,62 @@ func (am *AlertManager) dbCooldownActive(deviceID uint, alertType models.AlertTy
 	return cnt > 0
 }
 
-// PruneExpiredCooldowns removes expired cooldown entries to prevent unbounded map growth.
-func (am *AlertManager) PruneExpiredCooldowns() {
-	am.mu.Lock()
-	defer am.mu.Unlock()
-	now := time.Now()
+// maxLastAlertEntries hard-caps the in-memory cooldown map (M25 of the
+// 2026-07-01 audit). PruneExpiredCooldowns bounds it in the poller (which runs
+// a prune ticker), but the trap-receiver embeds its OWN AlertManager and never
+// pruned, and its keys are "trap_<TYPE>_<sourceIP>" derived from SPOOFABLE
+// source IPs, so a spoof-flood grew the map ~unbounded (hundreds of MB/day).
+// This cap makes any embedding process safe by construction, independent of
+// whether it runs the ticker.
+const maxLastAlertEntries = 50000
+
+// recordCooldownLocked records a cooldown timestamp for key, enforcing the
+// map's size cap first. Caller holds am.mu. Replaces the raw
+// `am.lastAlert[key] = now` writes so every cooldown-bearing alert path is
+// bounded (M25).
+func (am *AlertManager) recordCooldownLocked(key string, now time.Time) {
+	if _, exists := am.lastAlert[key]; !exists && len(am.lastAlert) >= maxLastAlertEntries {
+		// Adding a NEW key at the cap: prune expired entries first; if that
+		// frees nothing (all still within cooldown), evict the oldest so the
+		// map can never grow past the cap.
+		am.pruneExpiredLocked(now)
+		if len(am.lastAlert) >= maxLastAlertEntries {
+			am.evictOldestLocked()
+		}
+	}
+	am.lastAlert[key] = now
+}
+
+// pruneExpiredLocked deletes cooldown entries older than 2x the base cooldown.
+// Caller holds am.mu.
+func (am *AlertManager) pruneExpiredLocked(now time.Time) {
 	for key, lastTime := range am.lastAlert {
 		if now.Sub(lastTime) > am.alertCooldown*2 {
 			delete(am.lastAlert, key)
 		}
 	}
+}
+
+// evictOldestLocked removes the single oldest cooldown entry. Caller holds am.mu.
+func (am *AlertManager) evictOldestLocked() {
+	var oldestKey string
+	var oldestTime time.Time
+	first := true
+	for key, t := range am.lastAlert {
+		if first || t.Before(oldestTime) {
+			oldestKey, oldestTime, first = key, t, false
+		}
+	}
+	if !first {
+		delete(am.lastAlert, oldestKey)
+	}
+}
+
+// PruneExpiredCooldowns removes expired cooldown entries to prevent unbounded map growth.
+func (am *AlertManager) PruneExpiredCooldowns() {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.pruneExpiredLocked(time.Now())
 }
 
 // RefreshThresholds reads alert threshold settings from the database and updates
@@ -684,7 +754,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 				PolicyID:   resolved.PolicyID,
 				Suppressed: resolved.InMaintenance,
 			}
-			am.lastAlert[key] = now
+			am.recordCooldownLocked(key, now)
 			am.activeAlerts[key] = true
 			fired = append(fired, firedEntry{alert, resolved})
 		}
@@ -713,7 +783,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.lastAlert[key] = now
+		am.recordCooldownLocked(key, now)
 		am.activeAlerts[key] = true
 	}
 	am.mu.Unlock()
@@ -775,7 +845,7 @@ func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, newFP stri
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.lastAlert[key] = now
+		am.recordCooldownLocked(key, now)
 	}
 	am.mu.Unlock()
 
@@ -846,7 +916,7 @@ func (am *AlertManager) CheckConfigRevision(deviceID uint, oldChecksum, newCheck
 	now := time.Now()
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
-		am.lastAlert[key] = now
+		am.recordCooldownLocked(key, now)
 	}
 	am.mu.Unlock()
 
@@ -967,7 +1037,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 		canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 		if canSend {
-			am.lastAlert[key] = now
+			am.recordCooldownLocked(key, now)
 			am.activeAlerts[key] = true
 		}
 		am.mu.Unlock()
