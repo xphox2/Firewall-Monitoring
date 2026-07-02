@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.546] - 2026-07-01
+
+### Fixed
+- **Connection-traffic charts no longer break permanently after an empty range (audit 2026-07-01 finding M13).** The empty-state overwrote `canvas.parentElement.innerHTML`, removing the canvas from the DOM; a later range switch then either threw (`FwmonBwChart.mount` on a null canvas → a false "Failed to load" toast on every 30s re-poll until reload) on the connection-detail page, or silently never rendered again (`if (!canvas) return`) on the diagram side panel. Both now use a stable host container (`#traffic-chart-host` / `#panel-traffic-chart-host`) and re-create the canvas on the data path if a prior empty-state removed it.
+- **Fixed a data race between the report scheduler and the alert manager (audit 2026-07-01 finding M15).** Both mutated the same shared `config.Config.Alerts` fields under two different mutexes (`rs.mu` vs `am.mu`) — no mutual exclusion, so concurrent string writes/reads were a data race (a torn string header could send a report to a garbage recipient or panic). The `ReportScheduler` now owns a private copy of `AlertsConfig`, seeded at construction and refreshed from the database (report, email/SMTP/webhook, and spike settings — the same source the alert manager reads), so it never touches the shared config.
+- **The device-detail bandwidth chart no longer lets stale sFlow hide live SNMP data (audit 2026-07-01 finding M27).** `loadInterfaceChart` preferred the sFlow series whenever it had ≥2 buckets anywhere in the window, with no recency check — so a stopped sFlow export (collector down mid-incident), a brief past sFlow trial stretched across a 7d/30d view, or a zoom sub-window with sparse sFlow silently ended the chart in the past and hid the current SNMP-measured traffic. It now fetches both sources and prefers sFlow only when its last bucket is at least as recent as SNMP's; otherwise SNMP wins.
+
 ## [0.10.545] - 2026-07-01
 
 ### Fixed

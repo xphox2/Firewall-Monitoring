@@ -870,20 +870,31 @@
 
         var q = chartQuery(ifaceWin, range);
         var base = '/admin/api/devices/' + deviceId + '/interfaces/' + ifIndex;
-        fetchIfaceChart(base + '/sflow-chart?' + q).then(function(sflow) {
-            if (sflow && sflow.length >= 2) {
+        // M27 of the 2026-07-01 audit: fetch BOTH sources and prefer sFlow only
+        // when it is at least as FRESH as SNMP (its last bucket is not older).
+        // The pre-fix code took sFlow whenever it had >=2 buckets ANYWHERE in
+        // the window, so a stopped/partial sFlow export (collector down, a brief
+        // sFlow trial last week, or a sub-window with sparse sFlow) silently
+        // hid the live SNMP-measured traffic and ended the chart in the past.
+        function lastBucketMs(series) {
+            return (series && series.length) ? (series[series.length - 1].bucket_ms || 0) : 0;
+        }
+        Promise.all([
+            fetchIfaceChart(base + '/sflow-chart?' + q).catch(function () { return null; }),
+            fetchIfaceChart(base + '/chart?' + q).catch(function () { return null; })
+        ]).then(function (res) {
+            var sflow = res[0], snmp = res[1];
+            var sflowOK = sflow && sflow.length >= 2;
+            var snmpOK = snmp && snmp.length >= 2;
+            if (sflowOK && (!snmpOK || lastBucketMs(sflow) >= lastBucketMs(snmp))) {
                 renderIfaceChart(ifIndex, canvas, sflow, 'sFlow');
-                return;
-            }
-            fetchIfaceChart(base + '/chart?' + q).then(function(snmp) {
-                if (snmp && snmp.length >= 2) {
-                    renderIfaceChart(ifIndex, canvas, snmp, 'SNMP');
-                    return;
-                }
+            } else if (snmpOK) {
+                renderIfaceChart(ifIndex, canvas, snmp, 'SNMP');
+            } else {
                 ifaceBucketMs[ifIndex] = [];
                 setIfaceChartSource(ifIndex, '');
                 drawChartMessage(canvas, 'Not enough history data');
-            });
+            }
         });
     }
 

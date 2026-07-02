@@ -322,13 +322,25 @@
             var data = result.data;
             if (!data) return;
 
+            // M13 of the 2026-07-01 audit: use the STABLE host container, never
+            // the canvas's parent, so an empty-state that replaced the canvas
+            // with a message can't later throw (canvas would be null) — and the
+            // data path re-creates the canvas if a prior empty-state removed it
+            // (the admin-flows.js pattern).
+            var host = document.getElementById('traffic-chart-host');
             var canvas = document.getElementById('traffic-chart');
 
             if (!Array.isArray(data) || data.length === 0) {
                 if (trafficChart) { trafficChart.destroy(); trafficChart = null; }
-                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#8b949e;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
+                if (host) host.innerHTML = '<div style="text-align:center;color:#8b949e;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
                 return;
             }
+
+            if (!canvas && host) {
+                host.innerHTML = '<canvas id="traffic-chart"></canvas>';
+                canvas = document.getElementById('traffic-chart');
+            }
+            if (!canvas) return;
 
             // Throughput gauges — use server-computed bytes/sec, gauge max = 1 Gbps (125 MB/s)
             var oneGbps = 125000000; // 1 Gbps in bytes/sec

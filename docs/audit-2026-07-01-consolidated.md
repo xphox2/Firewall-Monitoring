@@ -167,6 +167,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** backfill `rows[i].BucketMs = parseBucketToMillis(...)` like `GetInterfaceChartWindow`; JS fallback to parsing `d.bucket` when bucket_ms is 0.
 
 ### M13. Chart empty-state destroys the canvas permanently — later range switches throw and show a false error toast (two files)
+> **✅ RESOLVED (v0.10.546)** — both traffic charts now use a STABLE host container (`#traffic-chart-host` / `#panel-traffic-chart-host`): the empty-state writes the message into the host (not `canvas.parentElement`), and the data path re-creates the canvas if a prior empty-state removed it — the admin-flows.js pattern. No more throw-on-next-range (connection-detail) or silent-dead-tab (panel).
 - **server** · `cmd/api/static/js/admin-connection-detail.js:329`; `diagram-panels.js:333-335`
 - The no-data branch replaces `canvas.parentElement.innerHTML`, removing the canvas; the next load finds null and either throws inside `FwmonBwChart.mount` (error toast on every 30s re-poll until reload) or silently never renders again (panel variant). `admin-flows.js:756-761` shows the intended re-create pattern — this is a missed sibling of an applied fix.
 - **Fix:** re-create the canvas if missing on the data path, or render the empty message into a sibling element.
@@ -178,6 +179,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** log scheme+host (or channel label) + status only.
 
 ### M15. ReportScheduler and AlertManager guard the same *config.Config fields with two different mutexes — data race
+> **✅ RESOLVED (v0.10.546)** — `ReportScheduler` now owns a PRIVATE copy of `AlertsConfig`, seeded at construction and refreshed from the DB (report + email/SMTP/webhook + spike, same source AlertManager reads), so it never touches the shared cfg. No shared mutable memory ⇒ no race. Test `TestReportScheduler_PrivateConfigIsolation_M15`.
 - **server** · `internal/report/report.go:199` (+ `cmd/poller/main.go:1993-1998`)
 - Same cfg pointer; `AlertManager.RefreshThresholds` writes `cfg.Alerts.Report*`/SMTP* under `am.mu` while `ReportScheduler` reads/writes the same strings under `rs.mu`. Two mutexes = no mutual exclusion; torn string headers can panic or send to garbage recipients.
 - **Fix:** single owner — scheduler keeps a private snapshot, or one shared mutex for cfg.Alerts.
@@ -245,6 +247,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** on batch failure fall back to per-row (log-and-skip) with 200 + saved count, or 400 for never-succeeds rows so the collector drops them; longer-term a DEFAULT partition or server-side timestamp clamp.
 
 ### M27. Device-detail chart prefers sFlow whenever ≥2 buckets exist anywhere in the window — stale/partial sFlow hides live SNMP bandwidth
+> **✅ RESOLVED (v0.10.546)** — `loadInterfaceChart` now fetches both sources and prefers sFlow only when it is at least as FRESH as SNMP (its last `bucket_ms` is not older); otherwise SNMP wins. A stopped/partial sFlow export (collector down, a brief past trial, a sparse zoom sub-window) no longer hides the live SNMP-measured traffic.
 - **server** · `cmd/api/static/js/admin-device-detail.js:874`
 - No recency/coverage check: sFlow that died 3h into an incident still wins the 24h view (chart silently ends 3h ago); a 30-min sFlow trial last week claims the whole 7d/30d view; zooming past sFlow coverage silently flips source (different counter baseline). No UI override to force SNMP.
 - **Fix:** accept sFlow only if its last bucket is within ~2 intervals of the window end; otherwise pick the series with the newer last bucket.

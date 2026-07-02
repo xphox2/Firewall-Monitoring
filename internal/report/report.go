@@ -2,6 +2,7 @@ package report
 
 import (
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,12 +14,21 @@ import (
 )
 
 // ReportScheduler manages scheduled daily/weekly HTML email reports.
+//
+// M15 of the 2026-07-01 audit: the scheduler and the AlertManager previously
+// mutated the SAME shared *config.Config.Alerts fields under two DIFFERENT
+// mutexes (rs.mu vs am.mu) — no mutual exclusion, a data race (torn string
+// headers could send a report to a garbage recipient or panic). The scheduler
+// now owns a PRIVATE copy of AlertsConfig (alertCfg), seeded at construction
+// and refreshed from the DB (the same source AM reads), so it never touches
+// AM's config. cfg is retained only for the read-only SNMP.PollInterval.
 type ReportScheduler struct {
 	cfg      *config.Config
 	db       *database.Database
 	notifier *notifier.Notifier
 	stopChan chan struct{}
 	mu       sync.RWMutex
+	alertCfg config.AlertsConfig // private copy; guarded by mu
 }
 
 // NewReportScheduler creates a new report scheduler.
@@ -28,6 +38,7 @@ func NewReportScheduler(cfg *config.Config, db *database.Database, notif *notifi
 		db:       db,
 		notifier: notif,
 		stopChan: make(chan struct{}),
+		alertCfg: cfg.Alerts, // one-time value copy at construction (no goroutines running yet)
 	}
 }
 
@@ -52,9 +63,9 @@ func (rs *ReportScheduler) Stop() {
 func (rs *ReportScheduler) runDaily() {
 	for {
 		rs.mu.RLock()
-		enabled := rs.cfg.Alerts.ReportDailyEnabled
-		targetTime := rs.cfg.Alerts.ReportDailyTime
-		tz := rs.cfg.Alerts.ReportTimezone
+		enabled := rs.alertCfg.ReportDailyEnabled
+		targetTime := rs.alertCfg.ReportDailyTime
+		tz := rs.alertCfg.ReportTimezone
 		rs.mu.RUnlock()
 
 		if !enabled {
@@ -74,7 +85,7 @@ func (rs *ReportScheduler) runDaily() {
 		case <-time.After(delay):
 			rs.RefreshSettings()
 			rs.mu.RLock()
-			stillEnabled := rs.cfg.Alerts.ReportDailyEnabled
+			stillEnabled := rs.alertCfg.ReportDailyEnabled
 			rs.mu.RUnlock()
 			if stillEnabled {
 				rs.generateAndSendReport(24)
@@ -88,10 +99,10 @@ func (rs *ReportScheduler) runDaily() {
 func (rs *ReportScheduler) runWeekly() {
 	for {
 		rs.mu.RLock()
-		enabled := rs.cfg.Alerts.ReportWeeklyEnabled
-		targetDay := rs.cfg.Alerts.ReportWeeklyDay
-		targetTime := rs.cfg.Alerts.ReportDailyTime
-		tz := rs.cfg.Alerts.ReportTimezone
+		enabled := rs.alertCfg.ReportWeeklyEnabled
+		targetDay := rs.alertCfg.ReportWeeklyDay
+		targetTime := rs.alertCfg.ReportDailyTime
+		tz := rs.alertCfg.ReportTimezone
 		rs.mu.RUnlock()
 
 		if !enabled {
@@ -110,7 +121,7 @@ func (rs *ReportScheduler) runWeekly() {
 		case <-time.After(delay):
 			rs.RefreshSettings()
 			rs.mu.RLock()
-			stillEnabled := rs.cfg.Alerts.ReportWeeklyEnabled
+			stillEnabled := rs.alertCfg.ReportWeeklyEnabled
 			rs.mu.RUnlock()
 			if stillEnabled {
 				rs.generateAndSendReport(168)
@@ -137,9 +148,9 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 
 	rs.mu.RLock()
 	pollInterval := int(rs.cfg.SNMP.PollInterval.Seconds())
-	spikeThreshold := rs.cfg.Alerts.SpikeStdDevThreshold
-	tz := rs.cfg.Alerts.ReportTimezone
-	recipients := rs.cfg.Alerts.ReportRecipients
+	spikeThreshold := rs.alertCfg.SpikeStdDevThreshold
+	tz := rs.alertCfg.ReportTimezone
+	recipients := rs.alertCfg.ReportRecipients
 	rs.mu.RUnlock()
 
 	if pollInterval < 30 {
@@ -166,7 +177,7 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 
 	// Send
 	rs.mu.RLock()
-	nc := notifier.SnapshotConfig(&rs.cfg.Alerts)
+	nc := notifier.SnapshotConfig(&rs.alertCfg)
 	rs.mu.RUnlock()
 
 	if err := rs.notifier.SendHTMLEmail(subject, htmlBody, nil, nc, recipients); err != nil {
@@ -186,11 +197,17 @@ func (rs *ReportScheduler) RefreshSettings() {
 		Key   string
 		Value string
 	}
+	// Load report fields AND the email/SMTP/webhook fields SnapshotConfig needs,
+	// so the private alertCfg stays current when an operator changes SMTP or
+	// recipients in the admin UI (M15 — the scheduler no longer piggybacks on
+	// the AlertManager's shared cfg for that freshness).
 	var settings []settingRow
 	if err := rs.db.Gorm().Table("system_settings").Where("\"key\" IN ?", []string{
 		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
 		"report_weekly_day", "report_recipients", "report_timezone",
-		"spike_stddev_threshold", "spike_alert_enabled",
+		"spike_stddev_threshold",
+		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
+		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",
 	}).Find(&settings).Error; err != nil {
 		log.Printf("Report: failed to refresh settings: %v", err)
 		return
@@ -205,17 +222,45 @@ func (rs *ReportScheduler) RefreshSettings() {
 		}
 		switch s.Key {
 		case "report_daily_enabled":
-			rs.cfg.Alerts.ReportDailyEnabled = s.Value == "true"
+			rs.alertCfg.ReportDailyEnabled = s.Value == "true"
 		case "report_daily_time":
-			rs.cfg.Alerts.ReportDailyTime = s.Value
+			rs.alertCfg.ReportDailyTime = s.Value
 		case "report_weekly_enabled":
-			rs.cfg.Alerts.ReportWeeklyEnabled = s.Value == "true"
+			rs.alertCfg.ReportWeeklyEnabled = s.Value == "true"
 		case "report_weekly_day":
-			rs.cfg.Alerts.ReportWeeklyDay = s.Value
+			rs.alertCfg.ReportWeeklyDay = s.Value
 		case "report_recipients":
-			rs.cfg.Alerts.ReportRecipients = s.Value
+			rs.alertCfg.ReportRecipients = s.Value
 		case "report_timezone":
-			rs.cfg.Alerts.ReportTimezone = s.Value
+			rs.alertCfg.ReportTimezone = s.Value
+		case "spike_stddev_threshold":
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil && v > 0 {
+				rs.alertCfg.SpikeStdDevThreshold = v
+			}
+		case "email_enabled":
+			rs.alertCfg.EmailEnabled = s.Value == "true"
+		case "smtp_host":
+			rs.alertCfg.SMTPHost = s.Value
+		case "smtp_port":
+			if v, err := strconv.Atoi(s.Value); err == nil && v > 0 {
+				rs.alertCfg.SMTPPort = v
+			}
+		case "smtp_username":
+			rs.alertCfg.SMTPUsername = s.Value
+		case "smtp_password":
+			// DecryptField is idempotent for plaintext, so this is safe whether
+			// the password was stored "{enc}…" (admin UI) or as a raw env value.
+			rs.alertCfg.SMTPPassword = rs.db.DecryptField(s.Value)
+		case "smtp_from":
+			rs.alertCfg.SMTPFrom = s.Value
+		case "smtp_to":
+			rs.alertCfg.SMTPTo = s.Value
+		case "slack_webhook":
+			rs.alertCfg.SlackWebhookURL = s.Value
+		case "discord_webhook":
+			rs.alertCfg.DiscordWebhookURL = s.Value
+		case "webhook_url":
+			rs.alertCfg.WebHookURL = s.Value
 		}
 	}
 }

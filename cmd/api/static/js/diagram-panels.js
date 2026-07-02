@@ -198,7 +198,7 @@
                             <div class="panel-range-pill" data-action="dp-traffic-range" data-range="7d">7d</div>
                             <div class="panel-range-pill" data-action="dp-traffic-range" data-range="30d">30d</div>
                         </div>
-                        <div class="panel-chart-container"><canvas id="panel-traffic-chart"></canvas></div>
+                        <div id="panel-traffic-chart-host" class="panel-chart-container"><canvas id="panel-traffic-chart"></canvas></div>
                     </div>
                     <div class="panel-tab-content" id="ptab-tunnels">
                         <div class="tunnel-columns">
@@ -327,13 +327,21 @@
             const resp = await window.apiFetch(`${window.API_BASE}/connections/${connId}/traffic?range=${range}`);
             const data = resp && resp.data ? resp.data : resp;
             if (!data || currentPanelConnId !== connId) return;
-            const canvas = document.getElementById('panel-traffic-chart');
-            if (!canvas) return;
+            // M13 of the 2026-07-01 audit: operate on the stable host, and
+            // re-create the canvas if a prior empty-state removed it — otherwise
+            // `if (!canvas) return` silently killed the panel traffic tab forever.
+            const host = document.getElementById('panel-traffic-chart-host');
+            let canvas = document.getElementById('panel-traffic-chart');
             if (panelChartInstances['traffic']) panelChartInstances['traffic'].destroy();
             if (!Array.isArray(data) || data.length === 0) {
-                canvas.parentElement.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No traffic data available for this connection.</div>';
+                if (host) host.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No traffic data available for this connection.</div>';
                 return;
             }
+            if (!canvas && host) {
+                host.innerHTML = '<canvas id="panel-traffic-chart"></canvas>';
+                canvas = document.getElementById('panel-traffic-chart');
+            }
+            if (!canvas) return;
             // Connection traffic arrives as per-bucket deltas — render
             // throughput/transfer/combined via the shared 3-mode component.
             const series = window.FwmonBwChart.normalizeDeltas(data);
