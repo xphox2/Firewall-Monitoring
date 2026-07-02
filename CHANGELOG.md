@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.552] - 2026-07-02
+
+### Docs
+- **Marked audit finding L13 resolved in the consolidated report.** L13 (collector flow-counter backlog flapping probe approval after a server schema-v1 rollback) was fixed in collector v1.2.160; this records its `✅ RESOLVED` banner in the server-repo copy of `docs/audit-2026-07-01-consolidated.md`, which now carries the resolved markers for all 64 findings of the 2026-07-01 audit (10 HIGH + 30 MEDIUM + 24 LOW — the full audit is complete). No code change.
+
 ## [0.10.551] - 2026-07-02
 
 ### Added
