@@ -34,10 +34,7 @@ func (d *Database) SaveTrapEvent(trap *models.TrapEvent) error {
 }
 
 func (d *Database) SaveTrapEvents(traps []models.TrapEvent) error {
-	if len(traps) == 0 {
-		return nil
-	}
-	return d.db.Create(&traps).Error
+	return batchInsertWithFallback(d.db, "trap_events", traps)
 }
 
 func (d *Database) GetTrapEvents(limit int) ([]models.TrapEvent, error) {
@@ -107,8 +104,5 @@ func (d *Database) SaveProcessStats(stats *models.ProcessStats) error {
 }
 
 func (d *Database) SaveInterfaceErrors(errs []models.InterfaceErrors) error {
-	if len(errs) == 0 {
-		return nil
-	}
-	return d.db.Create(&errs).Error
+	return batchInsertWithFallback(d.db, "interface_errors", errs)
 }

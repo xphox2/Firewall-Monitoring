@@ -19,10 +19,7 @@ func (d *Database) SaveSystemStatus(status *models.SystemStatus) error {
 // ingestion handler accepts up to 100 rows per request. Mirrors the other
 // high-volume batch savers (SaveInterfaceStats, SaveFlowSamples, …).
 func (d *Database) SaveSystemStatuses(statuses []models.SystemStatus) error {
-	if len(statuses) == 0 {
-		return nil
-	}
-	return d.db.Create(&statuses).Error
+	return batchInsertWithFallback(d.db, "system_status", statuses)
 }
 
 func (d *Database) GetSystemStatus(limit int) ([]models.SystemStatus, error) {
@@ -32,10 +29,7 @@ func (d *Database) GetSystemStatus(limit int) ([]models.SystemStatus, error) {
 }
 
 func (d *Database) SaveInterfaceStats(stats []models.InterfaceStats) error {
-	if len(stats) == 0 {
-		return nil
-	}
-	return d.db.Create(&stats).Error
+	return batchInsertWithFallback(d.db, "interface_stats", stats)
 }
 
 func (d *Database) GetInterfaceStats(limit int) ([]models.InterfaceStats, error) {
@@ -132,10 +126,7 @@ func (d *Database) GetLatestInterfaceStats() ([]models.InterfaceStats, error) {
 }
 
 func (d *Database) SaveVPNStatuses(statuses []models.VPNStatus) error {
-	if len(statuses) == 0 {
-		return nil
-	}
-	return d.db.Create(&statuses).Error
+	return batchInsertWithFallback(d.db, "vpn_status", statuses)
 }
 
 func (d *Database) GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error) {

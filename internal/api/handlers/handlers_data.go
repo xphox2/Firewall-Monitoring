@@ -51,6 +51,32 @@ func (h *Handler) markBatchIfOK(c *gin.Context, probeID uint, batchID string) {
 	}
 }
 
+// truncateProbeBatch enforces a per-request item cap on an ingestion batch.
+//
+// M1 of the 2026-07-01 audit: the flows/counters/pings/interface paths
+// truncated silently — `items = items[:1000]` with no log or alert — then
+// returned 200 and marked the idempotency batch ID processed, so the
+// collector's retry machinery could never resend the tail. Any operator who
+// raised PROBE_MAX_BATCH_SIZE above the server cap lost every batch's tail
+// permanently and invisibly. Every truncation is now logged, and (matching the
+// pre-existing traps/syslog behavior) an operator-visible probe alert is
+// recorded when the overshoot exceeds 20%. The collector additionally clamps
+// PROBE_MAX_BATCH_SIZE to 1000 as of v1.2.155 so updated deployments never
+// truncate at all.
+func truncateProbeBatch[T any](h *Handler, probe *models.Probe, kind string, capN int, items []T) []T {
+	if len(items) <= capN {
+		return items
+	}
+	orig := len(items)
+	items = items[:capN]
+	log.Printf("%s: probe %d (%s) sent %d items; truncated to %d — the tail is DROPPED. Clamp PROBE_MAX_BATCH_SIZE <= %d on the collector.",
+		kind, probe.ID, probe.Name, orig, capN, capN)
+	if h.alertManager != nil && orig > capN+capN/5 {
+		h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, orig, capN)
+	}
+	return items
+}
+
 func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {
@@ -66,13 +92,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	originalLen := len(messages)
-	if originalLen > 1000 {
-		messages = messages[:1000]
-		if h.alertManager != nil && originalLen > 1200 {
-			h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, originalLen, 1000)
-		}
-	}
+	messages = truncateProbeBatch(h, probe, "syslog", 1000, messages)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	// Pre-resolve the source IPs of device-less messages in one batch query
@@ -149,13 +169,7 @@ func (h *Handler) ReceiveTrapEvents(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	originalLen := len(traps)
-	if originalLen > 1000 {
-		traps = traps[:1000]
-		if h.alertManager != nil && originalLen > 1200 {
-			h.alertManager.RecordProbeDataTruncation(probe.ID, probe.Name, originalLen, 1000)
-		}
-	}
+	traps = truncateProbeBatch(h, probe, "traps", 1000, traps)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := traps[:0]
@@ -192,9 +206,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	if len(samples) > 1000 {
-		samples = samples[:1000]
-	}
+	samples = truncateProbeBatch(h, probe, "flows", 1000, samples)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	// Server-side device-resolution fallback for unresolved samples, batched into
 	// one query for the whole payload instead of a lookup per sample.
@@ -295,9 +307,7 @@ func (h *Handler) ReceiveFlowCounterSamples(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	if len(counters) > 1000 {
-		counters = counters[:1000]
-	}
+	counters = truncateProbeBatch(h, probe, "flow-counters", 1000, counters)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	var ipToDevice map[string]uint
 	if h.db != nil {
@@ -355,9 +365,7 @@ func (h *Handler) ReceivePingResults(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	if len(results) > 1000 {
-		results = results[:1000]
-	}
+	results = truncateProbeBatch(h, probe, "pings", 1000, results)
 	log.Printf("ReceivePingResults: probe %d received %d results", probe.ID, len(results))
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -472,9 +480,7 @@ func (h *Handler) ReceiveInterfaceAddresses(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	if len(addrs) > 1000 {
-		addrs = addrs[:1000]
-	}
+	addrs = truncateProbeBatch(h, probe, "interface-addresses", 1000, addrs)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
 	filtered := addrs[:0]
@@ -575,9 +581,7 @@ func (h *Handler) ReceiveSystemStatuses(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	if len(statuses) > 100 {
-		statuses = statuses[:100]
-	}
+	statuses = truncateProbeBatch(h, probe, "system-status", 100, statuses)
 
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	now := time.Now()
@@ -630,9 +634,7 @@ func (h *Handler) ReceiveInterfaceStats(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
 		return
 	}
-	if len(stats) > 1000 {
-		stats = stats[:1000]
-	}
+	stats = truncateProbeBatch(h, probe, "interface-stats", 1000, stats)
 	allowedDevices := h.probeDeviceIDs(probe.ID)
 	deviceIDs := make(map[uint]bool)
 	filtered := stats[:0]

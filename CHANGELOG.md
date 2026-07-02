@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.538] - 2026-07-01
+
+### Fixed
+- **One bad row can no longer reject (and poison-loop) an entire ingestion batch (audit 2026-07-01 finding M26).** The M4/M5 batch rewrites made the plural savers all-or-nothing: on partitioned prod Postgres a single row outside the existing partition range — a clock-skewed collector, or a spillover replay after its month's partition was dropped (no DEFAULT partition exists) — failed the whole INSERT, the handler 500'd, the collector buffered the batch as retryable, and its drain requeued the poison item forever: that metric type's ingestion stopped entirely. All **14** plural batch savers now share `batchInsertWithFallback`: the multi-row INSERT remains the fast path; on failure it retries per-row, logging and dropping only the unsalvageable rows (the pre-rewrite semantics), and returns an error only when *every* row fails. Regression test `TestBatchInsertWithFallback_M26` forces a poison batch through a unique-index violation.
+- **Ingestion batch truncation is no longer silent (audit 2026-07-01 finding M1).** Flows, flow counters, pings, interface addresses, interface stats, and system statuses truncated oversize batches with no log or alert — then returned 200 and marked the idempotency batch ID processed, so the collector could never resend the tail: permanent, invisible loss whenever `PROBE_MAX_BATCH_SIZE` was raised above the server's cap. All eight capped endpoints now share `truncateProbeBatch`, which logs every truncation and records the operator-visible probe alert (the pre-existing traps/syslog behavior) on >20% overshoot. A 413-reject was deliberately avoided — live pre-fix collectors treat non-2xx as retryable and would requeue oversize batches forever.
+
 ## [0.10.537] - 2026-07-01
 
 ### Fixed

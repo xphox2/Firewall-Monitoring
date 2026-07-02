@@ -19,10 +19,7 @@ func (d *Database) SavePingResult(result *models.PingResult) error {
 }
 
 func (d *Database) SavePingResults(results []models.PingResult) error {
-	if len(results) == 0 {
-		return nil
-	}
-	return d.db.Create(&results).Error
+	return batchInsertWithFallback(d.db, "ping_results", results)
 }
 
 func (d *Database) GetPingResults(deviceID uint, limit int) ([]models.PingResult, error) {
@@ -52,10 +49,7 @@ func (d *Database) GetPingStatsByTarget(deviceID uint, targetIP string) (*models
 }
 
 func (d *Database) SaveProcessorStats(stats []models.ProcessorStats) error {
-	if len(stats) == 0 {
-		return nil
-	}
-	return d.db.Create(&stats).Error
+	return batchInsertWithFallback(d.db, "processor_stats", stats)
 }
 
 func (d *Database) GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error) {
@@ -73,31 +67,19 @@ func (d *Database) GetLatestProcessorStats(deviceID uint) ([]models.ProcessorSta
 }
 
 func (d *Database) SaveHardwareSensors(sensors []models.HardwareSensor) error {
-	if len(sensors) == 0 {
-		return nil
-	}
-	return d.db.Create(&sensors).Error
+	return batchInsertWithFallback(d.db, "hardware_sensors", sensors)
 }
 
 func (d *Database) SaveHAStatuses(statuses []models.HAStatus) error {
-	if len(statuses) == 0 {
-		return nil
-	}
-	return d.db.Create(&statuses).Error
+	return batchInsertWithFallback(d.db, "ha_status", statuses)
 }
 
 func (d *Database) SaveSecurityStats(stats []models.SecurityStats) error {
-	if len(stats) == 0 {
-		return nil
-	}
-	return d.db.Create(&stats).Error
+	return batchInsertWithFallback(d.db, "security_stats", stats)
 }
 
 func (d *Database) SaveSDWANHealth(health []models.SDWANHealth) error {
-	if len(health) == 0 {
-		return nil
-	}
-	return d.db.Create(&health).Error
+	return batchInsertWithFallback(d.db, "sdwan_health", health)
 }
 
 // GetLatestSecurityStats returns the most recent security stats for a device.
@@ -171,10 +153,7 @@ func (d *Database) SaveSyslogMessage(msg *models.SyslogMessage) error {
 }
 
 func (d *Database) SaveSyslogMessages(msgs []models.SyslogMessage) error {
-	if len(msgs) == 0 {
-		return nil
-	}
-	return d.db.Create(&msgs).Error
+	return batchInsertWithFallback(d.db, "syslog_messages", msgs)
 }
 
 func (d *Database) GetSyslogMessages(limit int) ([]models.SyslogMessage, error) {
@@ -202,7 +181,7 @@ func (d *Database) SaveFlowSamples(samples []models.FlowSample) error {
 	}
 	if d.pgxPool == nil {
 		// SQLite / no-pool fallback. The slow path; correct.
-		return d.db.Create(&samples).Error
+		return batchInsertWithFallback(d.db, "flow_samples", samples)
 	}
 	// Extract the GORM session context so pgx honors the same deadline /
 	// cancellation as the GORM session (AUDIT-032 invariant).
@@ -223,10 +202,7 @@ func (d *Database) GetFlowSamples(limit int) ([]models.FlowSample, error) {
 // (schema v2). Plain GORM batch insert — the row rate is per-interface, far
 // below the flow firehose, so the pgx COPY fast path isn't needed.
 func (d *Database) SaveFlowInterfaceCounters(counters []models.FlowInterfaceCounter) error {
-	if len(counters) == 0 {
-		return nil
-	}
-	return d.db.Create(&counters).Error
+	return batchInsertWithFallback(d.db, "flow_if_counters", counters)
 }
 
 // GetLatestInterfaceCounter returns the most recent sFlow counter sample for a
