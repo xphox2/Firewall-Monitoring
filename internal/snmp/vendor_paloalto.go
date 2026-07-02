@@ -22,15 +22,8 @@ var (
 	paOIDSwVersion     = ".1.3.6.1.4.1.25461.2.1.2.1.1.0"
 	paOIDHwVersion     = ".1.3.6.1.4.1.25461.2.1.2.1.2.0"
 	paOIDSerialNumber  = ".1.3.6.1.4.1.25461.2.1.2.1.3.0"
-	paOIDAppVersion    = ".1.3.6.1.4.1.25461.2.1.2.1.7.0"
 	paOIDAvVersion     = ".1.3.6.1.4.1.25461.2.1.2.1.8.0"
 	paOIDThreatVersion = ".1.3.6.1.4.1.25461.2.1.2.1.9.0"
-	paOIDWildfireVer   = ".1.3.6.1.4.1.25461.2.1.2.1.17.0"
-
-	// --- PAN-COMMON-MIB HA ---
-	paOIDHAState     = ".1.3.6.1.4.1.25461.2.1.2.1.11.0"
-	paOIDHAPeerState = ".1.3.6.1.4.1.25461.2.1.2.1.12.0"
-	paOIDHAMode      = ".1.3.6.1.4.1.25461.2.1.2.1.13.0"
 
 	// --- PAN-COMMON-MIB panSession (.1.3.6.1.4.1.25461.2.1.2.3) ---
 	paOIDSessionUtil   = ".1.3.6.1.4.1.25461.2.1.2.3.1.0"

@@ -61,11 +61,7 @@ var (
 	fgBaseOIDProcessor  = ".1.3.6.1.4.1.12356.101.4.4.2.1"
 	fgOIDProcessorUsage = ".1.3.6.1.4.1.12356.101.4.4.2.1.2"
 
-	fgOIDHaMode      = ".1.3.6.1.4.1.12356.101.13.1.1"
-	fgOIDHaGroupName = ".1.3.6.1.4.1.12356.101.13.1.2"
-	fgOIDHaMasterIP  = ".1.3.6.1.4.1.12356.101.13.1.3"
-	fgOIDHaSlaveIP   = ".1.3.6.1.4.1.12356.101.13.1.4"
-	fgOIDHaTable     = ".1.3.6.1.4.1.12356.101.13.2.1"
+	fgOIDHaTable = ".1.3.6.1.4.1.12356.101.13.2.1"
 
 	fgTrapVPNTunnelUp   = ".1.3.6.1.4.1.12356.101.2.0.301"
 	fgTrapVPNTunnelDown = ".1.3.6.1.4.1.12356.101.2.0.302"

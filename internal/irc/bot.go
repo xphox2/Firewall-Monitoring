@@ -1026,7 +1026,7 @@ func (b *Bot) SendMessage(channel, message string) error {
 	conn := b.Conn
 	b.mu.RUnlock()
 
-	if conn == nil || conn.Connected() == false {
+	if conn == nil || !conn.Connected() {
 		return fmt.Errorf("not connected")
 	}
 

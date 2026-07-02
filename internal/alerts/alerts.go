@@ -415,14 +415,7 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	return nil
 }
 
-func (am *AlertManager) canAlert(key string, now time.Time) bool {
-	if lastTime, exists := am.lastAlert[key]; exists {
-		return now.Sub(lastTime) > am.alertCooldown
-	}
-	return true
-}
-
-// canAlertWithCooldown is like canAlert but uses a specific cooldown duration.
+// canAlertWithCooldown reports whether the per-key cooldown has elapsed.
 func (am *AlertManager) canAlertWithCooldown(key string, now time.Time, cooldown time.Duration) bool {
 	if lastTime, exists := am.lastAlert[key]; exists {
 		return now.Sub(lastTime) > cooldown

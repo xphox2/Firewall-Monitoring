@@ -47,7 +47,6 @@ const (
 	oidIfIndex      = ".1.3.6.1.2.1.2.2.1.1"
 	oidIfDescr      = ".1.3.6.1.2.1.2.2.1.2"
 	oidIfOperStatus = ".1.3.6.1.2.1.2.2.1.8"
-	oidIfAdminStat  = ".1.3.6.1.2.1.2.2.1.7"
 )
 
 // AUDIT-012 rate-limiter defaults. 10 traps/sec per source IP with a burst
@@ -338,8 +337,6 @@ func (t *TrapReceiver) parseLinkTrap(packet *gosnmp.SnmpPacket) *models.TrapEven
 			default:
 				ifOperStatus = fmt.Sprintf("%v", v.Value)
 			}
-		case strings.HasPrefix(oid, oidIfAdminStat):
-			// Captured but not used in message — available for future use
 		}
 	}
 

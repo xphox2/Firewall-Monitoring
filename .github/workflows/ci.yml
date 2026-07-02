@@ -68,6 +68,31 @@ jobs:
         # both.
         run: go test -race -count=1 -timeout=5m ./...
 
+  static-analysis:
+    name: staticcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install staticcheck
+        # Pinned (not @latest) so a new staticcheck release can't fail CI
+        # out from under an unrelated PR. Bump deliberately. v0.7.0 = the
+        # 2026.1 release; config lives in staticcheck.conf (ST1005 disabled).
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+
+      - name: Run staticcheck
+        run: staticcheck ./...
+
   integration-postgres:
     name: Integration (PostgreSQL)
     runs-on: ubuntu-latest

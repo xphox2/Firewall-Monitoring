@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.554] - 2026-07-02
+
+### Added
+- **`staticcheck` is now a CI gate** (`.github/workflows/ci.yml` `static-analysis` job, pinned to v0.7.0). A `staticcheck.conf` inherits the full default check set and disables only ST1005 (trailing-punctuation on error strings), which the codebase's deliberately multi-sentence operator-facing diagnostics legitimately trip.
+- **SNMP vendor parsers now have a hostile-input robustness suite** (`internal/snmp/vendor_robustness_test.go`). Every registered vendor profile (firewalla, fortigate, opnsense, paloalto, pfsense, sonicwall) has all five parse methods (`ParseSystemStatus`/`ParseVPNStatus`/`ParseHardwareSensors`/`ParseProcessors`/`ParseHAStatus`) hammered with adversarial PDUs — malformed OIDs, truncated indices, wrong ASN.1 types, overflow/NaN/nil values, SNMP exception tags — asserting no parser panics. Previously only fortigate had any parser test; a panic here would take down a poll goroutine on a malfunctioning or hostile device's response. All parsers pass.
+
+### Fixed
+- **Removed dead code flagged by staticcheck.** Unused OID constants not read by any parser (FortiGate HA scalars, Palo Alto HA + app/wildfire version OIDs, Firewalla HOST-RESOURCES storage OIDs, an unused SNMP-trap admin-status OID), an unused `AlertManager.canAlert` (superseded by `canAlertWithCooldown`), an unused `bucketResult` type, an unused `autoScale` report helper, and an empty switch case. Also simplified two `append`-in-loop bodies and a `== false` comparison. No behavior change; the OIDs remain in git history and the vendor MIBs for when those capabilities are wired.
+
 ## [0.10.553] - 2026-07-02
 
 ### Added

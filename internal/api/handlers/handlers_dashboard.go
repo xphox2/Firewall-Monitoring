@@ -216,12 +216,6 @@ func (h *Handler) GetPublicInterfaceChart(c *gin.Context) {
 
 	rangeStr := c.DefaultQuery("range", "1h")
 
-	type bucketResult struct {
-		Bucket   string
-		InBytes  float64
-		OutBytes float64
-	}
-
 	var hours int
 	var maxPoints int
 

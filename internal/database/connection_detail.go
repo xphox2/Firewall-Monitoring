@@ -760,12 +760,8 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 	// Collect all tunnel conditions
 	var allNames []string
 	var deviceIDs []uint
-	for _, n := range srcTunnelNames {
-		allNames = append(allNames, n)
-	}
-	for _, n := range dstTunnelNames {
-		allNames = append(allNames, n)
-	}
+	allNames = append(allNames, srcTunnelNames...)
+	allNames = append(allNames, dstTunnelNames...)
 	if len(srcTunnelNames) > 0 {
 		deviceIDs = append(deviceIDs, srcDeviceID)
 	}

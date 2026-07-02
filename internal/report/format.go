@@ -5,28 +5,6 @@ import (
 	"math"
 )
 
-// autoScale returns a unit suffix and divisor for the given magnitude.
-// Moved out of charts.go (v0.10.236) so the HTML report model builder can
-// format byte values without pulling in the go-chart dependency.
-func autoScale(maxVal float64) (string, float64) {
-	if maxVal == 0 {
-		return "Bytes", 1
-	}
-	abs := math.Abs(maxVal)
-	switch {
-	case abs >= 1e12:
-		return "TB", 1e12
-	case abs >= 1e9:
-		return "GB", 1e9
-	case abs >= 1e6:
-		return "MB", 1e6
-	case abs >= 1e3:
-		return "KB", 1e3
-	default:
-		return "Bytes", 1
-	}
-}
-
 // formatBytes renders a byte count as a human-readable string (e.g. "412.3 GB").
 func formatBytes(n float64) string {
 	if n <= 0 {
