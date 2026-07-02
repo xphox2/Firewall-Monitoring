@@ -143,11 +143,13 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** run in its own SafeGo goroutine with an already-running guard; keep the select loop free of network I/O.
 
 ### M10. GetNOCSnapshotFiltered ignores every query error and returns nil — DB failures broadcast an all-zero "live" NOC dashboard
+> **✅ RESOLVED (v0.10.541)** — the core flow aggregate, device status counts, and site breakdown now propagate errors (top-N/country sub-queries stay tolerated per the original design), so the hub's keep-last-good branch and the one-shot handler's 500 branch are live code again; the hub also logs compute failures rate-limited to once/min. Test `TestGetNOCSnapshot_PropagatesCoreErrors_M10`.
 - **server** · `internal/database/noc.go:204` (errors ignored from `:129` on)
 - Every `.Error` is discarded; the function unconditionally returns `(snap, nil)`, so the hub's keep-last-good branch and the handler's 500 branch are dead code. A statement_timeout on the COUNT(DISTINCT) (known prod incident class) → wall-board shows 0 bps / "No sites or devices yet" with a green "● live" badge during exactly the incident window.
 - **Fix:** propagate errors (or a hadErrors flag) so computeAndBroadcast keeps `h.latest`; rate-limited log.
 
 ### M11. NOC hub runs ~7–15 aggregate scans (incl. two COUNT(DISTINCT)) every 5s unconditionally — never gated on subscribers, duplicated on every ALLOW_MULTI_API follower
+> **✅ RESOLVED (v0.10.541)** — ticks compute only while ≥1 SSE subscriber is connected; the 0→1 transition computes a fresh snapshot inline for the first paint. This also zeroes the follower duplication (an unwatched follower computes nothing) without breaking follower SSE the way primary-gating the hub would. Covers the L-severity duplicate of this finding too. Test `TestNOCHub_ComputesOnFirstSubscribe_M11`.
 - **server** · `internal/api/handlers/noc.go:22`, `:63`
 - `Run()` never consults `len(h.subs)`; `main.go:333` starts the hub on followers too (only IRC bots are gated). ~84+ flow-table aggregate scans/minute 24/7 against the same PG doing ingest, whether anyone watches or not; at the design target the 5-min window is ~30M rows and the tick just degrades.
 - **Fix:** skip compute when no subscribers (compute on first subscribe); gate the hub to the singleton primary.
@@ -242,6 +244,7 @@ Multi-agent consensus report: 15 finder dimensions + 8 critic-directed follow-up
 - **Fix:** skip `DecommissionedAt != nil` (and arguably `!Enabled`) in CheckProbeDataFlow.
 
 ### M29. Trap rate-limiter drops (token exhaustion and map-cap lockout) are completely silent — despite three code/CHANGELOG claims of drop visibility
+> **✅ RESOLVED (v0.10.541)** — `fwmon_trap_ratelimit_drops_total{reason="rate"|"cap"}` counts every drop on the trap-receiver's /metrics, and a summary log line fires at most once per minute (so a flood can't turn the defense into a log-volume DoS). The code comments now match reality. Test `TestTrapRateLimiter_DropsAreVisible_M29`.
 - **server** · `internal/snmp/trap.go:161` (claims at `trap.go:89-91`, `cmd/trap-receiver/main.go:117`)
 - `allow()==false` → bare return: no log, no metric, though comments assert "the operator sees a clear rate-limited pattern in the logs" and "/metrics carries the trap rate-limiter". A legit link-flap storm past 10/sec loses traps tracelessly; worse, a spoof flood filling the 10k-bucket cap silently rejects every NEW legitimate device IP for up to 5 min — real LINK_DOWN/HA-failover traps vanish during exactly the event traps exist to report.
 - **Fix:** `fwmon_trap_ratelimit_drops_total{reason}` counter + throttled summary log line.

@@ -3,6 +3,7 @@ package snmp
 import (
 	"crypto/subtle"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -12,7 +13,31 @@ import (
 	"firewall-mon/internal/models"
 
 	"github.com/gosnmp/gosnmp"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// trapRateLimitDrops counts trap datagrams the AUDIT-012 limiter dropped, by
+// reason: "rate" = a tracked source exhausted its token bucket, "cap" = the
+// source map was full so a NEW source was rejected. M29 of the 2026-07-01
+// audit: drops were previously completely silent — no log line, no metric —
+// despite code comments and the CHANGELOG claiming visibility, so legitimate
+// traps lost during flap storms or spoof-flood lockouts left zero trace.
+// Registered on the default registry, which the trap-receiver's /metrics
+// serves; the metric simply stays 0 in the other binaries that link this
+// package.
+var trapRateLimitDrops = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: "fwmon",
+		Subsystem: "trap",
+		Name:      "ratelimit_drops_total",
+		Help:      "Trap datagrams dropped by the per-source rate limiter, by reason (rate = token exhaustion, cap = source-map full).",
+	},
+	[]string{"reason"},
+)
+
+func init() {
+	prometheus.MustRegister(trapRateLimitDrops)
+}
 
 // Standard IETF trap OIDs (RFC 3418)
 const (
@@ -65,6 +90,11 @@ type TrapReceiver struct {
 	rlRate      float64
 	rlBurst     float64
 	rlLastSweep time.Time
+	// M29: drop tallies since the last summary log line, so drops are
+	// operator-visible without one log write per flooded packet. Guarded by rlMu.
+	rlDropsRate   uint64
+	rlDropsCap    uint64
+	rlLastDropLog time.Time
 }
 
 func NewTrapReceiver(cfg *config.Config) (*TrapReceiver, error) {
@@ -109,6 +139,7 @@ func (t *TrapReceiver) allow(ip string) bool {
 				t.rlLastSweep = now
 			}
 			if len(t.rlBuckets) >= maxRateLimitedIPs {
+				t.recordDropLocked("cap", now)
 				return false
 			}
 		}
@@ -124,10 +155,30 @@ func (t *TrapReceiver) allow(ip string) bool {
 		b.last = now
 	}
 	if b.tokens < 1 {
+		t.recordDropLocked("rate", now)
 		return false
 	}
 	b.tokens--
 	return true
+}
+
+// recordDropLocked makes a rate-limiter drop operator-visible (M29 of the
+// 2026-07-01 audit): the Prometheus counter increments per drop, and a summary
+// log line fires at most once per minute so a flood can't turn the defense
+// into a log-volume DoS. Caller holds rlMu.
+func (t *TrapReceiver) recordDropLocked(reason string, now time.Time) {
+	trapRateLimitDrops.WithLabelValues(reason).Inc()
+	if reason == "cap" {
+		t.rlDropsCap++
+	} else {
+		t.rlDropsRate++
+	}
+	if now.Sub(t.rlLastDropLog) >= time.Minute {
+		log.Printf("trap rate-limiter: dropped %d datagram(s) in the last interval (%d over per-source rate, %d new sources rejected at the %d-source cap) — legitimate traps may be lost during a flood; see fwmon_trap_ratelimit_drops_total",
+			t.rlDropsRate+t.rlDropsCap, t.rlDropsRate, t.rlDropsCap, maxRateLimitedIPs)
+		t.rlDropsRate, t.rlDropsCap = 0, 0
+		t.rlLastDropLog = now
+	}
 }
 
 // Enabled reports whether trap ingestion is configured. Trap reception requires

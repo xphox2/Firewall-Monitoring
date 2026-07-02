@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.541] - 2026-07-01
+
+### Fixed
+- **DB failures no longer render as an all-zero "live" NOC dashboard (audit 2026-07-01 finding M10).** `GetNOCSnapshotFiltered` discarded every query error and always returned `(snap, nil)`, so during a statement-timeout or outage the hub broadcast a zeroed snapshot — overwriting the last good frame — while the badge said "● live" and the site grid claimed "No sites or devices yet"; the hub's keep-last-good branch and the one-shot handler's 500 branch were dead code. The core flow aggregate, device status counts, and site breakdown now propagate errors (the top-N/country sub-queries stay tolerant by design), the hub keeps the last good snapshot, and compute failures are logged rate-limited to once per minute.
+- **The NOC broadcaster no longer taxes the database while nobody is watching (audit 2026-07-01 finding M11).** The hub ran its ~15 aggregate scans — including two `COUNT(DISTINCT)` over the 5-minute flow window — every 5 seconds, 24/7, subscriber or not, and every `ALLOW_MULTI_API` follower duplicated the full load against the shared prod Postgres. Ticks now compute only while at least one SSE subscriber is connected; the first subscriber (0→1) gets a freshly computed snapshot inline. This also zeroes the follower duplication without breaking follower SSE the way primary-gating the hub would have.
+- **Trap rate-limiter drops are now operator-visible (audit 2026-07-01 finding M29).** Drops from token exhaustion and from the 10k-source map cap were completely silent — no log, no metric — despite three code/CHANGELOG claims to the contrary, so legitimate traps lost during a link-flap storm or a spoof-flood lockout left zero trace. Every drop now increments `fwmon_trap_ratelimit_drops_total{reason="rate"|"cap"}` on the trap-receiver's `/metrics`, and a summary log line fires at most once per minute so a flood can't turn the defense into a log-volume DoS.
+
 ## [0.10.540] - 2026-07-01
 
 ### Fixed

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -126,8 +127,16 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 		Dsts   int64
 		Threat int64
 	}
-	base().Select("COUNT(*) as flows, COALESCE(SUM(bytes),0) as bytes, COUNT(DISTINCT src_addr) as srcs, COUNT(DISTINCT dst_addr) as dsts, COALESCE(SUM(CASE WHEN threat_flag <> 0 THEN 1 ELSE 0 END),0) as threat").
-		Scan(&agg)
+	// M10 of the 2026-07-01 audit: the core aggregate's error MUST propagate.
+	// Pre-fix every .Error in this function was discarded and it always
+	// returned (snap, nil), so during a DB failure (statement_timeout on the
+	// COUNT(DISTINCT), transient outage) the hub broadcast an all-zero
+	// snapshot — overwriting the last good one — while the dashboard badge
+	// said "live". The handlers' keep-last-good/500 branches were dead code.
+	if err := base().Select("COUNT(*) as flows, COALESCE(SUM(bytes),0) as bytes, COUNT(DISTINCT src_addr) as srcs, COUNT(DISTINCT dst_addr) as dsts, COALESCE(SUM(CASE WHEN threat_flag <> 0 THEN 1 ELSE 0 END),0) as threat").
+		Scan(&agg).Error; err != nil {
+		return nil, fmt.Errorf("noc snapshot: core flow aggregate: %w", err)
+	}
 	snap.TotalFlows = agg.Flows
 	snap.TotalBytes = agg.Bytes
 	snap.UniqueSources = agg.Srcs
@@ -172,7 +181,11 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 			Cnt    int
 		}
 		var scs []sc
-		q.Select("status, COUNT(*) as cnt").Group("status").Scan(&scs)
+		// M10: device online/offline counts are core dashboard state — a
+		// failure here must not render as "0 devices".
+		if err := q.Select("status, COUNT(*) as cnt").Group("status").Scan(&scs).Error; err != nil {
+			return nil, fmt.Errorf("noc snapshot: device status counts: %w", err)
+		}
 		for _, s := range scs {
 			if s.Status == "online" || s.Status == "up" {
 				snap.DevicesOnline += s.Cnt
@@ -198,7 +211,13 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 			}
 		}
 		snap.ActiveThreatIntel, _ = d.CountActiveThreatIntel()
-		snap.Sites = d.buildSiteBreakdown(cutoff, secs)
+		// M10: the site grid is the NOC's primary surface — a device-query
+		// failure must not render as "No sites or devices yet".
+		sites, err := d.buildSiteBreakdown(cutoff, secs)
+		if err != nil {
+			return nil, fmt.Errorf("noc snapshot: site breakdown: %w", err)
+		}
+		snap.Sites = sites
 	}
 
 	return snap, nil
@@ -266,11 +285,13 @@ func (d *Database) GetDeviceAlertSeverities() (map[uint]string, error) {
 // scan, plus device/probe/connection lists) and composes the result in Go — no
 // per-device N+1 and no extra flow_samples scan beyond the one the snapshot
 // already does. Any sub-query error degrades to zero for that dimension.
-func (d *Database) buildSiteBreakdown(cutoff time.Time, secs float64) []SiteBreakdown {
+func (d *Database) buildSiteBreakdown(cutoff time.Time, secs float64) ([]SiteBreakdown, error) {
 	// Device rows (lightweight: no preloads).
 	devs, err := d.GetDeviceStatusRows()
 	if err != nil {
-		return nil
+		// M10: swallowing this rendered "No sites or devices yet" on a live
+		// fleet during any DB hiccup.
+		return nil, err
 	}
 
 	// Valid site ids + names (so an orphaned site_id falls into Unassigned).
@@ -441,7 +462,7 @@ func (d *Database) buildSiteBreakdown(cutoff time.Time, secs float64) []SiteBrea
 	if unassigned != nil {
 		out = append(out, *unassigned)
 	}
-	return out
+	return out, nil
 }
 
 // GetDeviceStatusRows returns the lightweight device fields the NOC breakdown
