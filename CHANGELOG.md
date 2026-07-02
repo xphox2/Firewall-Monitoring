@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.536] - 2026-07-01
+
+### Docs
+- **Marked audit findings H6 and H7 resolved in `docs/audit-2026-07-01-consolidated.md`** — both fixed collector-side in v1.2.154 (per-source rate-limiter idle eviction was dead code due to an unsatisfiable stored-tokens predicate; spillover-queue replay loaded the entire spool into RAM at startup). See the collector CHANGELOG for the full details. All ten HIGH findings of the 2026-07-01 audit except H10 are now resolved.
+
 ## [0.10.535] - 2026-07-01
 
 ### Fixed
