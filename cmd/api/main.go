@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.565"
+const ServerVersion = "0.10.566"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -640,6 +640,28 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	// still flagged must_change_password, so the rotation can't be skipped by
 	// calling the API directly. After AdminAuth so user_id is on the context.
 	admin.Use(handler.RequirePasswordChanged())
+	// RBAC (P0-1): viewer=read-only, operator=day-to-day mutations, admin=all.
+	// Maps hold route templates; everything not listed falls to the method
+	// defaults (GET/HEAD=viewer, mutation=operator). Keep adminOnlyRoutes in
+	// sync when adding routes that expose settings, users, or credential
+	// material — the role-matrix test enumerates router.Routes() as a guard.
+	admin.Use(middleware.RequireRole(
+		map[string]bool{ // selfServiceRoutes — any authenticated role
+			"/admin/api/csrf-token":        true,
+			"/admin/api/logout":            true,
+			"/admin/api/settings/password": true,
+			"/admin/api/me":                true,
+		},
+		map[string]bool{ // adminOnlyRoutes — role=admin, any method
+			"/admin/api/settings":                  true,
+			"/admin/api/settings/test-email":       true,
+			"/admin/api/settings/test-webhook":     true,
+			"/admin/api/users":                     true,
+			"/admin/api/users/:id":                 true,
+			"/admin/api/users/:id/reset-password":  true,
+			"/admin/api/probes/:id/regenerate-key": true,
+		},
+	))
 	{
 		admin.GET("", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
@@ -835,6 +857,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.DELETE("/api/maintenance-windows/:id", handler.DeleteMaintenanceWindow)
 
 		admin.POST("/api/logout", handler.Logout)
+		// User management (RBAC, P0-1) — admin-only via adminOnlyRoutes above;
+		// /api/me is self-service so the SPA can gate UI by role.
+		admin.GET("/api/me", handler.GetMe)
+		admin.GET("/api/users", handler.ListUsers)
+		admin.POST("/api/users", handler.CreateUser)
+		admin.PUT("/api/users/:id", handler.UpdateUser)
+		admin.DELETE("/api/users/:id", handler.DeleteUser)
+		admin.POST("/api/users/:id/reset-password", handler.ResetUserPassword)
 
 		admin.GET("/api/settings", handler.GetSettings)
 		admin.POST("/api/settings", handler.UpdateSettings)

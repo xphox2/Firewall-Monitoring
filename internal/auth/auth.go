@@ -26,7 +26,22 @@ type Claims struct {
 	Username     string `json:"username"`
 	UserID       uint   `json:"user_id"`
 	TokenVersion uint   `json:"token_version"`
+	// Role is the RBAC role baked into the session at login. Tokens minted
+	// before the RBAC upgrade have no role claim; EffectiveRole defaults those
+	// to admin — safe because pre-upgrade exactly one user existed and it was
+	// the admin, and such tokens age out within TokenExpiry (≤24h). Role
+	// changes bump TokenVersion, so a stale role can't outlive revocation.
+	Role string `json:"role,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// EffectiveRole returns the role this session grants, defaulting legacy
+// pre-RBAC tokens (no role claim) to admin. See the Role field comment.
+func (c *Claims) EffectiveRole() string {
+	if c.Role == "" {
+		return RoleAdmin
+	}
+	return c.Role
 }
 
 type AdminAuth struct {
@@ -35,6 +50,8 @@ type AdminAuth struct {
 	Password           string
 	TokenVersion       uint
 	MustChangePassword bool
+	Role               string
+	Disabled           bool
 }
 
 type Database interface {
@@ -123,6 +140,15 @@ func (am *AuthManager) ValidateCredentials(username, password string, ips ...str
 		return ErrInvalidCredentials
 	}
 
+	// A disabled account is indistinguishable from bad credentials to the
+	// caller (no account-state oracle), and the failed attempt still counts
+	// toward lockout. Checked only after the bcrypt compare so timing stays
+	// uniform with the credential-failure path.
+	if admin.Disabled {
+		am.loginAttempts[lockoutKey] = append(recentAttempts, time.Now())
+		return ErrInvalidCredentials
+	}
+
 	// Successful login clears attempts for this IP
 	delete(am.loginAttempts, lockoutKey)
 	return nil
@@ -144,7 +170,7 @@ func (am *AuthManager) CheckPassword(password, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-func (am *AuthManager) GenerateToken(username string, userID uint, tokenVersion uint) (string, error) {
+func (am *AuthManager) GenerateToken(username string, userID uint, tokenVersion uint, role string) (string, error) {
 	if am.config == nil || am.config.Server.JWTSecretKey == "" {
 		return "", ErrNoJWTSecret
 	}
@@ -160,6 +186,7 @@ func (am *AuthManager) GenerateToken(username string, userID uint, tokenVersion 
 		Username:     username,
 		UserID:       userID,
 		TokenVersion: tokenVersion,
+		Role:         role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

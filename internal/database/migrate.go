@@ -1142,3 +1142,36 @@ func (d *Database) migrateAdminMustChangePassword() error {
 	log.Printf("migrate v19 admins.must_change_password: ensured column exists (boolean not null default false)")
 	return nil
 }
+
+// migrateAdminRoles (v20, RBAC / P0-1) adds admins.role + admins.disabled and
+// backfills every pre-existing row to role='admin' — the pre-RBAC deployment
+// had exactly one account and it was the admin, so this preserves its rights
+// with no operator action. Also AutoMigrates AuditLog: deployments whose
+// baseline ran before ActorID was added to the model never got the actor_id
+// column (baseline only runs once), and RBAC makes per-actor attribution
+// load-bearing.
+func (d *Database) migrateAdminRoles() error {
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.Admin{}); err != nil {
+			return err
+		}
+		if err := d.db.Exec(`UPDATE admins SET role = 'admin' WHERE role IS NULL OR role = ''`).Error; err != nil {
+			return fmt.Errorf("migrate v20 backfill admins.role: %w", err)
+		}
+		return d.db.AutoMigrate(&models.AuditLog{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'admin'`); err != nil {
+		return fmt.Errorf("migrate v20 add admins.role: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS disabled boolean NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("migrate v20 add admins.disabled: %w", err)
+	}
+	if err := d.db.Exec(`UPDATE admins SET role = 'admin' WHERE role IS NULL OR role = ''`).Error; err != nil {
+		return fmt.Errorf("migrate v20 backfill admins.role: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_id bigint`); err != nil {
+		return fmt.Errorf("migrate v20 add audit_logs.actor_id: %w", err)
+	}
+	log.Printf("migrate v20 admin_roles: ensured admins.role/disabled + audit_logs.actor_id exist; pre-existing accounts backfilled to role=admin")
+	return nil
+}

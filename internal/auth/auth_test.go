@@ -162,7 +162,7 @@ func TestGenerateAndValidateToken_RoundTrip_AUDIT117(t *testing.T) {
 	t.Parallel()
 	am, db := managerWithUser(t, "admin", "pw")
 	db.version[1] = 7 // current token version in DB must match the minted token
-	tok, err := am.GenerateToken("admin", 1, 7)
+	tok, err := am.GenerateToken("admin", 1, 7, auth.RoleAdmin)
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestGenerateToken_NoSecret_AUDIT117(t *testing.T) {
 	cfg := testConfig()
 	cfg.Server.JWTSecretKey = ""
 	am := auth.NewAuthManager(cfg, newFakeDB())
-	if _, err := am.GenerateToken("admin", 1, 0); err != auth.ErrNoJWTSecret {
+	if _, err := am.GenerateToken("admin", 1, 0, auth.RoleAdmin); err != auth.ErrNoJWTSecret {
 		t.Errorf("got %v, want ErrNoJWTSecret", err)
 	}
 }
@@ -239,7 +239,7 @@ func TestValidateToken_TokenVersionMismatch_AUDIT117(t *testing.T) {
 	am, db := managerWithUser(t, "admin", "pw")
 	// Issue at version 1, then the DB advances to version 2 (a forced logout /
 	// password change). The old token must be rejected.
-	tok, err := am.GenerateToken("admin", 1, 1)
+	tok, err := am.GenerateToken("admin", 1, 1, auth.RoleAdmin)
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestValidateToken_TokenVersionMismatch_AUDIT117(t *testing.T) {
 		t.Errorf("stale token version: got %v, want ErrInvalidToken", err)
 	}
 	// A freshly issued token at the current version still validates.
-	fresh, _ := am.GenerateToken("admin", 1, 2)
+	fresh, _ := am.GenerateToken("admin", 1, 2, auth.RoleAdmin)
 	if _, err := am.ValidateToken(fresh); err != nil {
 		t.Errorf("current-version token rejected: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestValidateToken_TokenVersionMismatch_AUDIT117(t *testing.T) {
 func TestValidateToken_FailsClosedOnDBError(t *testing.T) {
 	t.Parallel()
 	am, db := managerWithUser(t, "admin", "pw")
-	tok, err := am.GenerateToken("admin", 1, 0)
+	tok, err := am.GenerateToken("admin", 1, 0, auth.RoleAdmin)
 	if err != nil {
 		t.Fatalf("GenerateToken: %v", err)
 	}

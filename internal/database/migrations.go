@@ -68,6 +68,7 @@ var registeredMigrations = []migration{
 	{version: 17, name: "threat_intel_cidr_column_rename", run: (*Database).migrateThreatIntelCIDRColumnRename},
 	{version: 18, name: "flow_if_counters_add_direction", run: (*Database).migrateFlowIfCountersAddDirection},
 	{version: 19, name: "admin_must_change_password", run: (*Database).migrateAdminMustChangePassword},
+	{version: 20, name: "admin_roles", run: (*Database).migrateAdminRoles},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.566] - 2026-07-02
+
+### Added
+- **Multi-user + RBAC** (v0.11 program Tranche 1, Phase A / P0-1): the server now supports multiple accounts with three roles — **admin** (everything), **operator** (day-to-day mutations, no settings/users/credentials), **viewer** (read-only). New Users card on the settings page (admin-only) creates accounts with a temporary password shown once and forced first-login change (reusing the v0.10.555 flow), changes roles, disables/enables, resets passwords, and deletes — with last-enabled-admin and self-lockout guards. New `GET /admin/api/me` lets the UI gate itself by role; the server enforces via a new `RequireRole` middleware on the whole `/admin` group (GET=viewer, mutation=operator, settings/users/credential routes=admin; unknown roles fail closed). Role changes and disables revoke the target's live sessions instantly through the existing fail-closed token-version check. Pre-upgrade JWTs without a role claim are honored as admin until they expire (≤24h; there was exactly one account and it was the admin). Migration v20 adds `admins.role`/`admins.disabled`, backfills existing rows to admin, and guarantees `audit_logs.actor_id` exists on old deployments.
+- Tests: RBAC role×method×route matrix (`rbac_test.go`), user-management guard suite (`handlers_users_test.go`), role/disable lifecycle + migration idempotency (`admin_roles_test.go`).
+
 ## [0.10.565] - 2026-07-02
 
 ### Docs

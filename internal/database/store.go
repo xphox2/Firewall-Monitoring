@@ -39,6 +39,7 @@ type Store interface {
 	EventStatsStore
 	IngestStore
 	AuthStore
+	UserStore
 	AuditStore
 	SecretStore
 	MaintenanceOpsStore
@@ -228,6 +229,20 @@ type AuthStore interface {
 	SetAdminMustChangePassword(id uint, must bool) error
 	GetAdminMustChangePassword(id uint) (bool, error)
 	SaveLoginAttempt(attempt *models.LoginAttempt) error
+}
+
+// UserStore covers multi-user management (RBAC, P0-1). The rows live in the
+// historical `admins` table; "user" is the API/UI-facing name.
+type UserStore interface {
+	ListAdmins() ([]models.Admin, error)
+	GetAdminByID(id uint) (*models.Admin, error)
+	CreateAdmin(admin *models.Admin) error
+	UpdateAdminRole(id uint, role string) error
+	SetAdminDisabled(id uint, disabled bool) error
+	DeleteAdmin(id uint) error
+	// CountOtherEnabledAdmins counts enabled role-admin accounts EXCLUDING the
+	// given id — the last-admin guard (must stay ≥1 before demote/disable/delete).
+	CountOtherEnabledAdmins(excludeID uint) (int64, error)
 }
 
 // AuditStore covers the admin-action audit trail.

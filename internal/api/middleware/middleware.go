@@ -218,6 +218,7 @@ func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
 		c.Set("is_admin", true)
+		c.Set("role", claims.EffectiveRole())
 		c.Next()
 	}
 }
@@ -242,6 +243,52 @@ func CheckAdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
 		c.Set("is_admin", true)
+		c.Set("role", claims.EffectiveRole())
+		c.Next()
+	}
+}
+
+// RequireRole enforces the RBAC ladder on the /admin group (P0-1). It runs
+// after AdminAuth (which stores the session's role in context) and mirrors the
+// RequirePasswordChanged route-template style: method defaults plus explicit
+// route maps, so the ~150 flat route registrations in main.go stay untouched.
+//
+// Rules, evaluated in order:
+//  1. selfServiceRoutes — any authenticated role (password change, logout,
+//     CSRF, session/self-info endpoints).
+//  2. adminOnlyRoutes — matched on route template regardless of method
+//     (settings incl. GET — it exposes credential metadata; user, token, and
+//     probe-key management).
+//  3. GET/HEAD (and SPA page loads) — viewer and above.
+//  4. Any other mutation — operator and above.
+//
+// Fail-closed: a session with a missing/unknown role gets level 0 and is
+// denied everything the maps don't explicitly allow.
+func RequireRole(selfServiceRoutes, adminOnlyRoutes map[string]bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		route := c.FullPath()
+		if selfServiceRoutes[route] {
+			c.Next()
+			return
+		}
+		roleVal, _ := c.Get("role")
+		role, _ := roleVal.(string)
+
+		required := auth.RoleOperator
+		switch {
+		case adminOnlyRoutes[route]:
+			required = auth.RoleAdmin
+		case c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead:
+			required = auth.RoleViewer
+		}
+
+		if !auth.RoleAtLeast(role, required) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Insufficient role for this action",
+				"code":  "insufficient_role",
+			})
+			return
+		}
 		c.Next()
 	}
 }

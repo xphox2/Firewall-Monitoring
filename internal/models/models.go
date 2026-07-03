@@ -561,10 +561,19 @@ type Admin struct {
 	// admin API. Set when the admin is bootstrapped with an auto-generated
 	// password (which is written to logs/disk), so a first-time operator can't
 	// silently keep that credential. Cleared on the first successful change.
-	MustChangePassword bool      `json:"-" gorm:"default:false"`
-	TokenVersion       uint      `json:"-" gorm:"default:0"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	MustChangePassword bool `json:"-" gorm:"default:false"`
+	TokenVersion       uint `json:"-" gorm:"default:0"`
+	// Role is the RBAC role (auth.RoleAdmin/Operator/Viewer). The table keeps
+	// its historical name `admins` but holds ALL users; the default `admin`
+	// means the pre-RBAC single admin migrates to full rights with no data
+	// step (migration v20). Role changes must bump TokenVersion so live JWTs
+	// carrying the old role die immediately (fail-closed check in auth).
+	Role string `json:"role" gorm:"default:admin"`
+	// Disabled blocks login and invalidates sessions (via TokenVersion bump on
+	// set) without destroying the account row or its audit-log identity.
+	Disabled  bool      `json:"disabled" gorm:"default:false"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Site struct {

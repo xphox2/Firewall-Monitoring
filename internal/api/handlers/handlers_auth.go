@@ -95,20 +95,24 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 	}
 
-	// Get admin record to use real ID and token version in JWT
+	// Get admin record to use real ID, token version, and role in JWT
 	var adminID uint = 1
 	var tokenVersion uint
 	var mustChangePassword bool
+	role := auth.RoleAdmin
 	if db != nil {
 		adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
 		if adminErr == nil && adminRecord != nil {
 			adminID = adminRecord.ID
 			tokenVersion = adminRecord.TokenVersion
 			mustChangePassword = adminRecord.MustChangePassword
+			if adminRecord.Role != "" {
+				role = adminRecord.Role
+			}
 		}
 	}
 
-	token, err := h.authManager.GenerateToken(creds.Username, adminID, tokenVersion)
+	token, err := h.authManager.GenerateToken(creds.Username, adminID, tokenVersion, role)
 	if err != nil {
 		httputil.InternalError(c, "Failed to generate token", err)
 		return

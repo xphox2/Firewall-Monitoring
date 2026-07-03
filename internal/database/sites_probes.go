@@ -67,6 +67,7 @@ func (d *Database) InitAdmin(username, password string, mustChangePassword bool)
 			Username:           username,
 			Password:           password,
 			MustChangePassword: mustChangePassword,
+			Role:               auth.RoleAdmin,
 		})
 	}
 	log.Printf("Admin user already exists, skipping initialization")
@@ -103,6 +104,8 @@ func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) 
 		Password:           admin.Password,
 		TokenVersion:       admin.TokenVersion,
 		MustChangePassword: admin.MustChangePassword,
+		Role:               admin.Role,
+		Disabled:           admin.Disabled,
 	}, nil
 }
 
@@ -122,6 +125,60 @@ func (d *Database) GetAdminTokenVersion(id uint) (uint, error) {
 func (d *Database) IncrementAdminTokenVersion(id uint) error {
 	return d.db.Model(&models.Admin{}).Where("id = ?", id).
 		UpdateColumn("token_version", gorm.Expr("token_version + 1")).Error
+}
+
+// --- UserStore (RBAC, P0-1) ------------------------------------------------
+
+func (d *Database) ListAdmins() ([]models.Admin, error) {
+	var admins []models.Admin
+	err := d.db.Order("username").Find(&admins).Error
+	return admins, err
+}
+
+func (d *Database) GetAdminByID(id uint) (*models.Admin, error) {
+	var admin models.Admin
+	err := d.db.First(&admin, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &admin, nil
+}
+
+// UpdateAdminRole sets the role and bumps the token version in one shot so a
+// live session carrying the old role dies on its next request (the JWT
+// version check fails closed). Callers validate the role string.
+func (d *Database) UpdateAdminRole(id uint, role string) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).
+		UpdateColumns(map[string]interface{}{
+			"role":          role,
+			"token_version": gorm.Expr("token_version + 1"),
+		}).Error
+}
+
+// SetAdminDisabled flips the disabled flag; disabling also bumps the token
+// version to kill live sessions immediately (re-enable doesn't need a bump,
+// but one more is harmless and keeps this a single UPDATE shape).
+func (d *Database) SetAdminDisabled(id uint, disabled bool) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).
+		UpdateColumns(map[string]interface{}{
+			"disabled":      disabled,
+			"token_version": gorm.Expr("token_version + 1"),
+		}).Error
+}
+
+func (d *Database) DeleteAdmin(id uint) error {
+	return d.db.Delete(&models.Admin{}, id).Error
+}
+
+func (d *Database) CountOtherEnabledAdmins(excludeID uint) (int64, error) {
+	var n int64
+	err := d.db.Model(&models.Admin{}).
+		Where("role = ? AND disabled = ? AND id <> ?", "admin", false, excludeID).
+		Count(&n).Error
+	return n, err
 }
 
 func (d *Database) GetAllSites() ([]models.Site, error) {
