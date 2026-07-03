@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.12] - 2026-07-03
+
+### Docs
+- **Tranche 2 local functional walkthrough completed** — the full alerting-maturity bundle was exercised live against a local PostgreSQL 16 using the production `AlertManager` code path with synthetic metric feeds: F14 clear-band hold/release, F17 z-score dynamic threshold (fire at baseline+K·σ, static-floor suppression of in-band values), F13 flap suppression (`[FLAPPING]` + muted recovery), F12 incident open/attach-mute/close with `INC#n` chips and summary alert, F19 step due/route/retry-without-skip semantics, escalation-step API validation (ascending times, unknown channel), policy-editor round-trip for all new fields, HMAC webhook signing cross-verified against an independent implementation, role-aware UI hiding + `insufficient_role` enforcement, forced first-login password change, and the report Operations section (MTTA/MTTR + noisiest alerts). New lesson recorded in `tasks/lessons.md` (local testing is Postgres-only). Known cosmetic nit found: a flap-suppressed alert's suppression chip reads `MAINT` regardless of suppression source.
+
 ## [0.11.11] - 2026-07-03
 
 ### Docs

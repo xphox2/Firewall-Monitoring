@@ -1,6 +1,10 @@
 # Lessons
 
-## A pipe eats exit codes — `gh run watch --exit-status | tail` reported green on a RED run (2026-07-03)
+## Local functional testing runs against PostgreSQL, never SQLite (2026-07-03)
+
+**Mistake:** planned a local feature walkthrough "with SQLite" because the unit tests use it. User: "why do you keep testing with SQLite instead of Postgres that we use?" The runtime binary is PG-only anyway (`database.NewDatabase` opens only `gorm.io/driver/postgres`, database.go:143; SQLite exists solely as the `!production` in-memory test helper in `internal/database/testing.go`) — and SQLite-green has lied before (FK enforcement, `to_char`, partitioning are PG-only).
+
+**Rules:** (a) any local run of fwmon-api/poller/harness uses a real PostgreSQL 16 (prod's major version) — quickest recipe: `initdb` into a scratch dir, `pg_ctl -o "-p 5544 -c unix_socket_directories=''"` (TCP-only; macOS 103-byte socket-path limit trips on long dirs), `createdb`, then `fwmon-api migrate`; (b) SQLite is for `go test` only — never present it as "testing the server"; (c) two live-test constraints discovered 2026-07-03: the AUDIT-020 SSRF guard blocks webhook deliveries to loopback/private IPs with NO bypass (by design — live webhook tests need a public receiver or the on-the-wire unit tests), and `psql -c "STMT1; STMT2"` is one implicit transaction — an error in STMT2 silently rolls back STMT1 (a "committed" test fixture wasn't; verify with a separate `-c` SELECT). — `gh run watch --exit-status | tail` reported green on a RED run (2026-07-03)
 
 **Mistake:** every CI watch used `gh run watch "$ID" --exit-status … | tail -3 && echo CI_GREEN`. The pipeline's status is tail's (always 0), so `CI_GREEN` printed even when the run FAILED. Master was red for two pushes (v0.10.568, v0.11.0 — Tailwind freshness gate) while I reported green, and Docker Hub publishing silently skipped both. Same failure family as the benchmark workflow's `go test | tee` mask fixed earlier the same day — the lesson didn't transfer to my own tooling.
 
