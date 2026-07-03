@@ -244,6 +244,13 @@ type AlertsConfig struct {
 	SpikeStdDevThreshold    float64
 	SpikeAlertEnabled       bool
 	SpikeMinDurationMinutes int // a real-time spike must persist this long before it alerts
+	// Flap suppression (F13): when an alert fires and auto-resolves in under
+	// FlapMinActiveSeconds at least FlapMaxFires times within
+	// FlapWindowMinutes, the next fire is saved suppressed (no notification)
+	// until the flapping stops. FlapMaxFires=0 disables.
+	FlapMaxFires         int
+	FlapWindowMinutes    int
+	FlapMinActiveSeconds int
 }
 
 type UptimeConfig struct {
@@ -431,6 +438,9 @@ func Load() *Config {
 			SpikeStdDevThreshold:     getFloatEnv("SPIKE_STDDEV_THRESHOLD", 3.0),
 			SpikeAlertEnabled:        getBoolEnv("SPIKE_ALERT_ENABLED", false),
 			SpikeMinDurationMinutes:  getIntEnv("SPIKE_MIN_DURATION_MINUTES", 15),
+			FlapMaxFires:             getIntEnv("ALERT_FLAP_MAX_FIRES", 5),
+			FlapWindowMinutes:        getIntEnv("ALERT_FLAP_WINDOW_MINUTES", 60),
+			FlapMinActiveSeconds:     getIntEnv("ALERT_FLAP_MIN_ACTIVE_SECONDS", 120),
 			ProbeDataLagAlertMinutes: getIntEnv("PROBE_DATA_LAG_ALERT_MINUTES", 60),
 		},
 		Uptime: UptimeConfig{

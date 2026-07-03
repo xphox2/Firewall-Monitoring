@@ -17,33 +17,87 @@ import (
 )
 
 type AlertManager struct {
-	config        *config.Config
-	notifier      *notifier.Notifier
-	db            *database.Database
-	lastAlert     map[string]time.Time
-	cooldownFor   map[string]time.Duration // L2: per-key effective cooldown, so prune evicts only past each key's OWN window
-	activeAlerts  map[string]bool          // tracks currently-firing alert keys for recovery detection
-	mu            sync.RWMutex
-	alertCooldown time.Duration
-	policyCache   PolicyCache
+	config       *config.Config
+	notifier     *notifier.Notifier
+	db           *database.Database
+	lastAlert    map[string]time.Time
+	cooldownFor  map[string]time.Duration // L2: per-key effective cooldown, so prune evicts only past each key's OWN window
+	activeAlerts map[string]bool          // tracks currently-firing alert keys for recovery detection
+	// Flap suppression (F13): fireStart records when a key went active so
+	// sendRecovery can measure how long the alert lived; flapShortResolves
+	// accumulates the timestamps of short-lived (< FlapMinActiveSeconds)
+	// fire→resolve cycles inside the rolling window. Once the count reaches
+	// FlapMaxFires, dispatchFired saves further fires SUPPRESSED (no
+	// notification) until the flapping subsides out of the window. Both maps
+	// are pruned alongside the cooldown maps, sharing the M25 bound.
+	fireStart         map[string]time.Time
+	flapShortResolves map[string][]time.Time
+	mu                sync.RWMutex
+	alertCooldown     time.Duration
+	policyCache       PolicyCache
 }
 
-// firedEntry pairs an alert with its resolved policy config for deferred notification.
+// firedEntry pairs an alert with its resolved policy config for deferred
+// notification. key is the in-memory alert key (cooldown/active/flap state);
+// empty for event alerts that don't participate in flap suppression.
 type firedEntry struct {
 	alert    models.Alert
 	resolved ResolvedAlertConfig
+	key      string
 }
 
 func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.Database) *AlertManager {
 	return &AlertManager{
-		config:        cfg,
-		notifier:      notif,
-		db:            db,
-		lastAlert:     make(map[string]time.Time),
-		cooldownFor:   make(map[string]time.Duration),
-		activeAlerts:  make(map[string]bool),
-		alertCooldown: 5 * time.Minute,
+		config:            cfg,
+		notifier:          notif,
+		db:                db,
+		lastAlert:         make(map[string]time.Time),
+		cooldownFor:       make(map[string]time.Duration),
+		activeAlerts:      make(map[string]bool),
+		fireStart:         make(map[string]time.Time),
+		flapShortResolves: make(map[string][]time.Time),
+		alertCooldown:     5 * time.Minute,
 	}
+}
+
+// markActiveLocked flips a state-alert key to active and stamps when it fired
+// (the flap detector measures active duration at recovery). Caller holds am.mu.
+func (am *AlertManager) markActiveLocked(key string, now time.Time) {
+	am.activeAlerts[key] = true
+	am.fireStart[key] = now
+}
+
+// flapPruneLocked drops short-resolve records older than the window and
+// returns the surviving count. Caller holds am.mu.
+func (am *AlertManager) flapPruneLocked(key string, now time.Time) int {
+	window := time.Duration(am.config.Alerts.FlapWindowMinutes) * time.Minute
+	if window <= 0 {
+		window = time.Hour
+	}
+	rs := am.flapShortResolves[key]
+	keep := rs[:0]
+	for _, t := range rs {
+		if now.Sub(t) <= window {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) == 0 {
+		delete(am.flapShortResolves, key)
+	} else {
+		am.flapShortResolves[key] = keep
+	}
+	return len(keep)
+}
+
+// flapSuppress reports whether key is currently flapping (enough short-lived
+// cycles inside the window) — the caller marks the fire suppressed.
+func (am *AlertManager) flapSuppress(key string, now time.Time) bool {
+	if key == "" || am.config.Alerts.FlapMaxFires <= 0 {
+		return false
+	}
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	return am.flapPruneLocked(key, now) >= am.config.Alerts.FlapMaxFires
 }
 
 func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *uint) error {
@@ -93,8 +147,8 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 					Suppressed:   resolved.InMaintenance,
 				}
 				am.recordCooldownLocked(chk.metricKey, now, cooldown)
-				am.activeAlerts[chk.metricKey] = true
-				fired = append(fired, firedEntry{alert, resolved})
+				am.markActiveLocked(chk.metricKey, now)
+				fired = append(fired, firedEntry{alert, resolved, chk.metricKey})
 			}
 		}
 	}
@@ -170,8 +224,8 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 				Suppressed:   resolved.InMaintenance,
 			}
 			am.recordCooldownLocked(key, now, cooldown)
-			am.activeAlerts[key] = true
-			fired = append(fired, firedEntry{alert, resolved})
+			am.markActiveLocked(key, now)
+			fired = append(fired, firedEntry{alert, resolved, key})
 		}
 	}
 	am.mu.Unlock()
@@ -311,7 +365,7 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 					Suppressed:   resolved.InMaintenance,
 				}
 				am.recordCooldownLocked(alertKey, now, cooldown)
-				fired = append(fired, firedEntry{alert, resolved})
+				fired = append(fired, firedEntry{alert, resolved, ""})
 			}
 		}
 	}
@@ -526,7 +580,23 @@ func (am *AlertManager) evictOldestLocked() {
 func (am *AlertManager) PruneExpiredCooldowns() {
 	am.mu.Lock()
 	defer am.mu.Unlock()
-	am.pruneExpiredLocked(time.Now())
+	now := time.Now()
+	am.pruneExpiredLocked(now)
+	// F13: age out flap history and orphaned fire-start stamps on the same
+	// hourly cadence (fireStart entries for keys that recovered are deleted
+	// in sendRecovery; ones whose recovery never came are bounded here).
+	for key := range am.flapShortResolves {
+		am.flapPruneLocked(key, now)
+	}
+	window := time.Duration(am.config.Alerts.FlapWindowMinutes) * time.Minute
+	if window <= 0 {
+		window = time.Hour
+	}
+	for key, t := range am.fireStart {
+		if !am.activeAlerts[key] && now.Sub(t) > window {
+			delete(am.fireStart, key)
+		}
+	}
 }
 
 // RefreshThresholds reads alert threshold settings from the database and updates
@@ -664,6 +734,25 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 	if wasActive {
 		delete(am.activeAlerts, key)
 	}
+	// F13: measure how long this alert lived. A short-lived fire→resolve
+	// cycle counts toward the flap window, and while the key is flapping the
+	// recovery notification is muted too (the fire is already muted — its
+	// "back to normal" pair would just double the residual noise).
+	flapping := false
+	if wasActive && am.config.Alerts.FlapMaxFires > 0 {
+		nowF := time.Now()
+		if start, ok := am.fireStart[key]; ok {
+			minActive := time.Duration(am.config.Alerts.FlapMinActiveSeconds) * time.Second
+			if minActive <= 0 {
+				minActive = 2 * time.Minute
+			}
+			if nowF.Sub(start) < minActive {
+				am.flapShortResolves[key] = append(am.flapShortResolves[key], nowF)
+			}
+		}
+		flapping = am.flapPruneLocked(key, nowF) >= am.config.Alerts.FlapMaxFires
+	}
+	delete(am.fireStart, key)
 	nc := notifier.SnapshotConfig(&am.config.Alerts)
 	am.mu.Unlock()
 
@@ -714,6 +803,9 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 		ResolvedAt:     &now,
 	}
 	am.saveAlert(&alert)
+	if flapping {
+		return
+	}
 	if err := am.notifier.SendAlert(&alert, nc); err != nil {
 		log.Printf("Failed to send recovery notification: %v", err)
 	}
@@ -741,6 +833,16 @@ func (am *AlertManager) dispatchFired(fired []firedEntry, globalNC notifier.Noti
 		cooldown := time.Duration(fired[i].resolved.CooldownMinutes) * time.Minute
 		if am.dbCooldownActive(fired[i].alert.DeviceID, fired[i].alert.AlertType, fired[i].alert.MetricName, fired[i].alert.Timestamp, cooldown) {
 			continue
+		}
+		// F13 flap suppression: a key that has been rapid-cycling (fire →
+		// resolve in under FlapMinActiveSeconds, FlapMaxFires times inside the
+		// window) is saved SUPPRESSED — visible in the UI with the [FLAPPING]
+		// tag, but no notification. Same contract as maintenance suppression.
+		if am.flapSuppress(fired[i].key, fired[i].alert.Timestamp) {
+			fired[i].alert.Suppressed = true
+			fired[i].alert.Message = "[FLAPPING] " + fired[i].alert.Message
+			log.Printf("flap suppression: %s notifications muted (key=%s) — ≥%d short-lived cycles within window",
+				fired[i].alert.AlertType, fired[i].key, am.config.Alerts.FlapMaxFires)
 		}
 		am.saveAlert(&fired[i].alert)
 		if !fired[i].alert.Suppressed {
@@ -780,8 +882,8 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 				Suppressed: resolved.InMaintenance,
 			}
 			am.recordCooldownLocked(key, now, cooldown)
-			am.activeAlerts[key] = true
-			fired = append(fired, firedEntry{alert, resolved})
+			am.markActiveLocked(key, now)
+			fired = append(fired, firedEntry{alert, resolved, key})
 		}
 	}
 	am.mu.Unlock()
@@ -809,7 +911,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	canSend := am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
-		am.activeAlerts[key] = true
+		am.markActiveLocked(key, now)
 	}
 	am.mu.Unlock()
 
@@ -1063,7 +1165,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 		if canSend {
 			am.recordCooldownLocked(key, now, cooldown)
-			am.activeAlerts[key] = true
+			am.markActiveLocked(key, now)
 		}
 		am.mu.Unlock()
 		if !canSend {

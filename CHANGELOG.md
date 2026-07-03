@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-07-03
+
+### Added
+- **Flapping suppression** (v0.11 Tranche 2, F13): an alert that keeps firing and auto-resolving in under `ALERT_FLAP_MIN_ACTIVE_SECONDS` (default 120) at least `ALERT_FLAP_MAX_FIRES` times (default 5) within `ALERT_FLAP_WINDOW_MINUTES` (default 60) has its further fires saved **suppressed** — visible in the UI tagged `[FLAPPING]`, but no email/Slack/webhook noise; the matching recovery notifications are muted too, and normal alerting resumes automatically once the flapping ages out of the window. `ALERT_FLAP_MAX_FIRES=0` disables. Applies to the threshold/interface/VPN state-alert paths (device-offline keeps its own restart-safe dedup). Flap state is in-memory in the poller alongside the existing cooldown maps and shares their pruning/caps. Tests: suppression + tagging, short-cycle recording, disabled mode, stale-history pruning (`flap_f13_test.go`).
+
 ## [0.11.4] - 2026-07-03
 
 ### Added
