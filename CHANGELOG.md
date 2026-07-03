@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.13] - 2026-07-03
+
+### Docs
+- **Post-publish test plan for the v0.11 line** (`tasks/todo.md`): a checkable, per-feature list of what to verify on production after deploying 0.11.12 — upgrade pre-flight (backup, key continuity, migrations v20–v27), Tranche 1 access-control spot-checks, and every Tranche 2 alerting feature with expected behavior, prioritizing the paths local testing could not close (live PagerDuty/Opsgenie/Teams deliveries, on-the-wire webhook signing to a public receiver, escalation-step success-path advancement, real-data MTTA/MTTR).
+
 ## [0.11.12] - 2026-07-03
 
 ### Docs

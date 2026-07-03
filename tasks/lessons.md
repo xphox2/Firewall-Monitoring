@@ -1,5 +1,11 @@
 # Lessons
 
+## A test session's deliverable includes the user's own post-publish checklist (2026-07-03)
+
+**Mistake:** ran a thorough local walkthrough of Tranche 2, reported the results, and stopped. User: "you failed to outline all the changes I need to test once I publish." The verification I can do locally (synthetic feeds, no real PD/Opsgenie/SMTP, SSRF-blocked webhooks) is not the verification that matters to the operator — the deploy-and-confirm pass on prod is theirs, and they need the list.
+
+**Rules:** (a) whenever a batch of features ships or gets validated, END with a concrete post-deploy checklist in `tasks/todo.md`: per feature, what to click/curl and what to expect; (b) explicitly flag the items local testing could NOT close (live channel deliveries, success-path side effects, real-data reports) — those are the prod checklist's priority items; (c) include the upgrade pre-flight (backup, key continuity, migration expectations) whenever prod lags by multiple migrations.
+
 ## Local functional testing runs against PostgreSQL, never SQLite (2026-07-03)
 
 **Mistake:** planned a local feature walkthrough "with SQLite" because the unit tests use it. User: "why do you keep testing with SQLite instead of Postgres that we use?" The runtime binary is PG-only anyway (`database.NewDatabase` opens only `gorm.io/driver/postgres`, database.go:143; SQLite exists solely as the `!production` in-memory test helper in `internal/database/testing.go`) — and SQLite-green has lied before (FK enforcement, `to_char`, partitioning are PG-only).
