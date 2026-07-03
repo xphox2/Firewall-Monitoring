@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.563] - 2026-07-02
+
+### Fixed
+- **Ingestion benchmarks: create monthly partitions before writing** — `RunMigrations` alone leaves the six partitioned tables with zero partitions (`EnsurePartitions` is a runtime call), so every benchmark insert failed with `23514 no partition of relation "flow_samples" found` on the first CI run. Benchmark setup now calls `EnsurePartitions()` first.
+- **Benchmark workflow could go green on failing benchmarks** — the default Actions run shell has no `pipefail`, so `go test … | tee` masked the failure; now `set -o pipefail`. The job summary also blew the 1024k upload cap on log spam; it now keeps only benchmark result lines.
+- **Docker publish job skips (green) instead of failing when `DOCKERHUB_*` secrets are absent** — step-level credential guard, since the secrets context isn't available in job-level `if`. Publishing starts automatically on the first green master push after the secrets are added.
+
 ## [0.10.562] - 2026-07-02
 
 ### Added

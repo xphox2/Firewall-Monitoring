@@ -23,11 +23,18 @@ import (
 	"firewall-mon/internal/models"
 )
 
-// benchSeedDevice creates the one device the sample rows reference, so any
-// present-or-future FK on device_id holds (PG enforces FKs; SQLite habits
-// don't transfer — see the integration-test lessons).
+// benchSeedDevice readies a freshly migrated DB for ingest writes: monthly
+// partitions first — RunMigrations does NOT create them (EnsurePartitions is
+// a runtime concern of the poller/API; a fresh schema has zero partitions and
+// every flow_samples/syslog_messages insert fails 23514 "no partition found",
+// as the first CI benchmark run proved) — then the one device the sample rows
+// reference, so any present-or-future FK on device_id holds (PG enforces FKs;
+// SQLite habits don't transfer — see the integration-test lessons).
 func benchSeedDevice(b *testing.B, d *Database) uint {
 	b.Helper()
+	if err := d.EnsurePartitions(); err != nil {
+		b.Fatalf("EnsurePartitions: %v", err)
+	}
 	dev := models.Device{
 		Name:      "bench-fw1",
 		IPAddress: "192.0.2.1",

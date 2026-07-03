@@ -47,16 +47,23 @@ jobs:
       - name: Run ingestion benchmarks
         env:
           TEST_PG_DSN: postgres://firewall_mon:firewall_mon@localhost:5432/firewall_mon_test?sslmode=disable
+        # pipefail is NOT in the default `bash -e {0}` run shell — without it,
+        # `tee` masks a failing `go test` and the job goes green on broken
+        # benchmarks (exactly what happened on the first run of this workflow).
         run: |
-          make bench-ingest | tee bench.out
+          set -o pipefail
+          make bench-ingest 2>&1 | tee bench.out
 
       - name: Publish results to job summary
         if: always()
+        # Summary uploads are capped at 1024k; raw output includes migration
+        # and fallback log lines (3MB+ on a bad run), so keep only the
+        # benchmark result lines.
         run: |
           {
             echo "## Ingestion benchmark results"
             echo
             echo '```'
-            cat bench.out
+            grep -E '^(goos|goarch|pkg|cpu|Benchmark|PASS|FAIL|ok  |--- FAIL)' bench.out || echo "no benchmark output captured"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
