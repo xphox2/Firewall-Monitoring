@@ -1,7 +1,11 @@
 services:
   firewall-mon:
     build: .
-    image: firewall-mon:latest
+    # Published to Docker Hub by .github/workflows/docker.yml on every green
+    # master push. `docker compose pull` upgrades to the latest published
+    # image; `docker compose build` still produces a local image under the
+    # same name for from-source workflows.
+    image: xphox/firewall-mon:latest
     container_name: firewall-mon
     restart: unless-stopped
     environment:

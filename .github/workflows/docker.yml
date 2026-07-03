@@ -1,0 +1,89 @@
+# Publish the combined server image (api + poller + trap-receiver + embedded
+# PostgreSQL, per entrypoint.sh) to Docker Hub as xphox/firewall-mon —
+# same registry/namespace as the collector (xphox/firewall-collector), whose
+# workflow this mirrors.
+#
+# Unlike the collector (whose docker.yml is also its CI), the server has a
+# separate CI workflow — so this triggers on CI *completing successfully* on a
+# master push rather than duplicating the test matrix. Broken builds never
+# publish.
+#
+# Needs the DOCKERHUB_USERNAME / DOCKERHUB_TOKEN repo secrets (same values as
+# the collector repo).
+name: Publish Docker image
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+jobs:
+  publish:
+    name: Build and push to Docker Hub
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only green CI runs of actual pushes (CI also runs for pull_request;
+    # those workflow_run events must never publish).
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    steps:
+      - name: Check out the commit CI validated
+        uses: actions/checkout@v5
+        with:
+          # Pin to the exact SHA the CI run tested — github.sha in a
+          # workflow_run context is the default-branch head, which may have
+          # moved past what was validated.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Extract version from source
+        id: version
+        run: |
+          VERSION=$(grep -E 'const ServerVersion' cmd/api/main.go | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not extract ServerVersion from cmd/api/main.go"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: xphox/firewall-mon
+          # Collector-parity tag set. The branch-conditional and sha-context
+          # tag types don't resolve against a workflow_run event, so the
+          # latest/stable/sha tags are raw values — the job-level gate above
+          # already guarantees this is a green master push.
+          tags: |
+            type=semver,pattern={{version}},value=v${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ steps.version.outputs.version }}
+            type=raw,value=latest
+            type=raw,value=stable
+            type=raw,value=${{ steps.version.outputs.version }}-sha-${{ github.event.workflow_run.head_sha }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            REVISION=${{ github.event.workflow_run.head_sha }}
+            CREATED=${{ steps.version.outputs.created }}
+          platforms: linux/amd64

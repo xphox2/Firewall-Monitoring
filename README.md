@@ -308,6 +308,11 @@ inbound ports at the site.
 
 ### Docker (recommended)
 
+Prebuilt images are published to Docker Hub as
+[`xphox/firewall-mon`](https://hub.docker.com/r/xphox/firewall-mon)
+(tags: `latest`, `stable`, and one per version) on every green build of
+`master`, so `docker compose up` pulls the image — no local build needed.
+
 ```bash
 git clone https://github.com/xphox2/Firewall-Monitoring.git
 cd Firewall-Monitoring
@@ -315,6 +320,8 @@ docker compose up -d
 # wait ~30s for Postgres to come up
 open http://localhost:8080
 ```
+
+To build from source instead, use `docker compose up -d --build`.
 
 The first boot auto-generates the admin password and writes it to
 `./data/admin-password`. Tail `./data/firewall-mon.log` to see it.

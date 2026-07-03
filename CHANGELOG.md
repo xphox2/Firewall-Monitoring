@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.562] - 2026-07-02
+
+### Added
+- **Docker Hub publishing** (`.github/workflows/docker.yml`): every green `master` CI run now builds and pushes the combined server image to Docker Hub as `xphox/firewall-mon` — same registry/namespace and tag scheme as the collector (`<version>`, `<major.minor>`, `latest`, `stable`, `<version>-sha-<sha>`). Triggered via `workflow_run` on CI success (never on PR runs), checked out at the exact SHA CI validated, with `VERSION`/`REVISION`/`CREATED` OCI build args stamped. Requires the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` repo secrets.
+
+### Changed
+- `docker-compose.yml` now references `xphox/firewall-mon:latest`, so `docker compose pull && docker compose up -d` (the documented upgrade path) works against the published image; `docker compose up -d --build` still builds from source under the same name. README quickstart documents the prebuilt-image path.
+
 ## [0.10.561] - 2026-07-02
 
 ### Added

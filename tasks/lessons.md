@@ -1,5 +1,11 @@
 # Lessons
 
+## Answer the user's "why X vs Y" question before re-asking for the decision (2026-07-02)
+
+**Mistake:** user asked "why ghcr vs. docker hub?"; I gave a generic trade-off list and immediately re-presented the same choice still recommending ghcr. User: "I asked this question and you ignored me."
+
+**Rules:** (a) when the user questions a recommendation, answer that question anchored to THEIR existing setup, not a neutral comparison; (b) re-weigh the recommendation against infrastructure they already run — a working pipeline/registry/library is a strong prior that usually beats marginal generic advantages; (c) the wording of an old note ("ghcr publish" in a deferred-items list) is not a user decision — don't inherit requirements from phrasing.
+
 ## Inspect external PR commits for AI-attribution trailers BEFORE merging (2026-07-01)
 
 **Mistake:** merged community PR #50 as a merge commit without reading the commit message body. The contributor's commit carried `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` (their Claude Code default), which put "Claude" back on the repo's contributors graph — something the maintainer had deliberately removed before. The only way to undo a contributor entry is a history rewrite + force push (done as a one-time maintainer-authorized exception, preserving the contributor's authorship).
