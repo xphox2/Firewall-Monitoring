@@ -54,6 +54,12 @@ type ReportModel struct {
 	AlertBuckets []AlertBucket
 	HasAlerts    bool
 
+	// Operations (F05/F06): response times + noise leaderboard over the
+	// trailing 30 days (independent of the report window — response metrics
+	// need a longer horizon than 24h to mean anything). Nil = data
+	// unavailable; the template omits the section.
+	Ops *OpsStats
+
 	Devices []DeviceCard
 }
 
@@ -580,4 +586,35 @@ func clampPct(v float64) int {
 		return 100
 	}
 	return int(v)
+}
+
+// OpsStats carries the F05 MTTA/MTTR figures and the F06 noisiest-alerts
+// leaderboard for the report's Operations section.
+type OpsStats struct {
+	Days          int
+	MTTAMinutes   float64
+	MTTRMinutes   float64
+	AckedCount    int64
+	ResolvedCount int64
+	Noise         []NoiseRow
+}
+
+// NoiseRow mirrors database.NoiseRow (kept local so the report package's
+// template layer stays decoupled from the database package).
+type NoiseRow struct {
+	AlertType  string
+	DeviceName string
+	Count      int64
+	Suppressed int64
+}
+
+// FormatMinutes renders a duration in minutes as a compact human string.
+func FormatMinutes(m float64) string {
+	if m <= 0 {
+		return "–"
+	}
+	if m < 60 {
+		return fmt.Sprintf("%.0f min", m)
+	}
+	return fmt.Sprintf("%.1f h", m/60)
 }

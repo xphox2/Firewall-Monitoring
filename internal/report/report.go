@@ -165,10 +165,11 @@ func (rs *ReportScheduler) generateAndSendReport(hours int) {
 
 	// Build report (single self-contained HTML body, no attachments)
 	var subject, htmlBody string
+	ops := GatherOpsStats(rs.db) // F05/F06 Operations section
 	if hours <= 24 {
-		subject, htmlBody, err = BuildDailyReport(devices, deviceData, tz)
+		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 24, "Daily", "", false, ops)
 	} else {
-		subject, htmlBody, err = BuildWeeklyReport(devices, deviceData, tz)
+		subject, htmlBody, err = BuildReportWithOps(devices, deviceData, tz, 168, "Weekly", "", false, ops)
 	}
 	if err != nil {
 		log.Printf("Report: failed to build report: %v", err)

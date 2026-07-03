@@ -89,7 +89,7 @@ func (h *Handler) buildReportHTML(db database.Store, period string, collapsible 
 	version := h.version
 	h.mu.RUnlock()
 
-	return report.BuildReport(devices, deviceData, tz, hours, label, version, collapsible)
+	return report.BuildReportWithOps(devices, deviceData, tz, hours, label, version, collapsible, report.GatherOpsStats(cdb))
 }
 
 // PreviewReport renders the executive report as HTML for in-panel viewing.

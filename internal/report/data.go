@@ -347,3 +347,29 @@ func DurationUntilWeekday(targetDay, targetTime, tz string) time.Duration {
 	target := time.Date(now.Year(), now.Month(), now.Day()+daysUntil, hour, minute, 0, 0, loc)
 	return target.Sub(now)
 }
+
+// GatherOpsStats loads the F05/F06 operations metrics (30-day horizon).
+// Returns nil on error or nil db so the report simply omits the section.
+func GatherOpsStats(db *database.Database) *OpsStats {
+	if db == nil {
+		return nil
+	}
+	const days = 30
+	mtta, mttr, acked, resolved, err := db.GetAlertResponseStats(days)
+	if err != nil {
+		return nil
+	}
+	noisy, err := db.GetNoisiestAlerts(days, 10)
+	if err != nil {
+		return nil
+	}
+	ops := &OpsStats{Days: days, MTTAMinutes: mtta, MTTRMinutes: mttr, AckedCount: acked, ResolvedCount: resolved}
+	for _, n := range noisy {
+		name := n.DeviceName
+		if name == "" {
+			name = fmt.Sprintf("device %d", n.DeviceID)
+		}
+		ops.Noise = append(ops.Noise, NoiseRow{AlertType: n.AlertType, DeviceName: name, Count: n.Count, Suppressed: n.Suppressed})
+	}
+	return ops
+}

@@ -23,7 +23,14 @@ func BuildWeeklyReport(devices []models.Device, deviceData []*DeviceReportData, 
 // collapsible flag wraps per-device detail in <details> (admin preview); email
 // sends always-open blocks. Returns (subject, html, error).
 func BuildReport(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool) (string, string, error) {
+	return BuildReportWithOps(devices, deviceData, tz, hours, period, version, collapsible, nil)
+}
+
+// BuildReportWithOps is BuildReport plus the F05/F06 Operations section
+// (nil ops = section omitted).
+func BuildReportWithOps(devices []models.Device, deviceData []*DeviceReportData, tz string, hours int, period, version string, collapsible bool, ops *OpsStats) (string, string, error) {
 	m := BuildReportModel(devices, deviceData, tz, hours, period)
+	m.Ops = ops
 	m.Version = version
 	m.Collapsible = collapsible
 	m.IsEmail = !collapsible

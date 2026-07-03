@@ -3,6 +3,7 @@ package database
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -345,4 +346,70 @@ func (d *Database) GetUnacknowledgedAlerts(since time.Time) ([]models.Alert, err
 	err := d.db.Where("acknowledged = ? AND suppressed = ? AND timestamp > ?", false, false, since).
 		Find(&alerts).Error
 	return alerts, err
+}
+
+// --- Operational response stats (v0.11 Tranche 2, F05/F06) -----------------
+
+// NoiseRow is one row of the noisiest-alerts leaderboard: a (type, device)
+// pair with its fire count over the window.
+type NoiseRow struct {
+	AlertType  string `json:"alert_type"`
+	DeviceID   uint   `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	Count      int64  `json:"count"`
+	Suppressed int64  `json:"suppressed"`
+}
+
+// GetAlertResponseStats computes MTTA/MTTR over the trailing window (days).
+// Durations are averaged in Go for dialect portability. Companion recovery
+// rows are excluded everywhere; auto-resolved rows (notes "Auto-resolved: …")
+// count toward MTTR (the condition's lifetime) but NOT MTTA — auto-ack would
+// fake instant operator response.
+func (d *Database) GetAlertResponseStats(days int) (mttaMinutes, mttrMinutes float64, ackedCount, resolvedCount int64, err error) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	var rows []models.Alert
+	if err = d.db.Select("timestamp, acknowledged_at, resolved_at, notes").
+		Where("timestamp > ? AND metric_name <> ? AND (acknowledged_at IS NOT NULL OR resolved_at IS NOT NULL)", cutoff, "recovery").
+		Limit(20000).Find(&rows).Error; err != nil {
+		return 0, 0, 0, 0, err
+	}
+	var ackSum, resSum float64
+	for i := range rows {
+		auto := strings.HasPrefix(rows[i].Notes, "Auto-resolved:")
+		if rows[i].AcknowledgedAt != nil && !auto {
+			if dur := rows[i].AcknowledgedAt.Sub(rows[i].Timestamp); dur >= 0 {
+				ackSum += dur.Minutes()
+				ackedCount++
+			}
+		}
+		if rows[i].ResolvedAt != nil {
+			if dur := rows[i].ResolvedAt.Sub(rows[i].Timestamp); dur >= 0 {
+				resSum += dur.Minutes()
+				resolvedCount++
+			}
+		}
+	}
+	if ackedCount > 0 {
+		mttaMinutes = ackSum / float64(ackedCount)
+	}
+	if resolvedCount > 0 {
+		mttrMinutes = resSum / float64(resolvedCount)
+	}
+	return mttaMinutes, mttrMinutes, ackedCount, resolvedCount, nil
+}
+
+// GetNoisiestAlerts returns the top (alert_type, device) pairs by fire count
+// over the trailing window — the F06 noise leaderboard.
+func (d *Database) GetNoisiestAlerts(days, limit int) ([]NoiseRow, error) {
+	cutoff := time.Now().AddDate(0, 0, -days)
+	var out []NoiseRow
+	err := d.db.Model(&models.Alert{}).
+		Select("alerts.alert_type AS alert_type, alerts.device_id AS device_id, COALESCE(devices.name, '') AS device_name, COUNT(*) AS count, SUM(CASE WHEN alerts.suppressed THEN 1 ELSE 0 END) AS suppressed").
+		Joins("LEFT JOIN devices ON devices.id = alerts.device_id").
+		Where("alerts.timestamp > ? AND alerts.metric_name <> ?", cutoff, "recovery").
+		Group("alerts.alert_type, alerts.device_id, devices.name").
+		Order("count DESC").
+		Limit(limit).
+		Scan(&out).Error
+	return out, err
 }

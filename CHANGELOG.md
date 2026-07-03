@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.10] - 2026-07-03
+
+### Added
+- **Operations section in the executive report** (v0.11 Tranche 2, F05+F06): every report (email, preview, PDF export) now includes 30-day **MTTA/MTTR** — mean time to acknowledge counts only operator acks (auto-resolves would fake instant response) while mean time to resolve includes them, recovery companions excluded — plus a **noisiest-alerts leaderboard** (top 10 alert-type × device pairs by fire count, with how many were suppressed by maintenance/flap/incident muting). Wired into both the scheduled email path and the admin preview. Aggregate-math and render tests (`response_stats_f05_test.go`, `ops_section_test.go`).
+
 ## [0.11.9] - 2026-07-03
 
 ### Added

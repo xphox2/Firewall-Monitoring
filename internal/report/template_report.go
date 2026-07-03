@@ -24,6 +24,7 @@ var reportTemplate = template.Must(template.New("report").Funcs(template.FuncMap
 	"dict":                  templateDict,
 	"gtColor":               gtColor,
 	"renderAlertChart":      RenderAlertTimelineSVG,
+	"fmtMinutes":            FormatMinutes,
 	"renderThroughputChart": RenderThroughputChart,
 	"renderCPUMemChart":     RenderCPUMemSVGChart,
 }).Parse(reportTemplateSrc))
@@ -393,6 +394,38 @@ const reportTemplateSrc = `
     <div style="width:100%;overflow-x:auto;">
       {{renderAlertChart .AlertBuckets}}
     </div>
+    {{end}}
+  </td></tr>
+  {{end}}
+
+  <!-- Operations (F05/F06): response times + noise leaderboard, 30d -->
+  {{if .Ops}}
+  <tr><td class="content-cell" style="padding:24px 36px;border-bottom:1px solid #f1f5f9;">
+    {{template "secthead" "Operations (30 days)"}}
+    <div style="font-size:12.5px;color:#475569;line-height:1.7;">
+      Mean time to acknowledge: <strong style="color:#0f172a;">{{fmtMinutes .Ops.MTTAMinutes}}</strong>
+      <span style="color:#94a3b8;">({{.Ops.AckedCount}} operator-acknowledged)</span>
+      &nbsp;·&nbsp; Mean time to resolve: <strong style="color:#0f172a;">{{fmtMinutes .Ops.MTTRMinutes}}</strong>
+      <span style="color:#94a3b8;">({{.Ops.ResolvedCount}} resolved)</span>
+    </div>
+    {{if .Ops.Noise}}
+    <div style="font-size:12px;color:#334155;font-weight:600;margin-top:14px;margin-bottom:6px;">Noisiest alerts</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;color:#475569;border-collapse:collapse;">
+      <tr style="color:#94a3b8;text-align:left;">
+        <th style="padding:4px 8px 4px 0;font-weight:600;">Alert</th>
+        <th style="padding:4px 8px;font-weight:600;">Device</th>
+        <th style="padding:4px 8px;font-weight:600;text-align:right;">Fires</th>
+        <th style="padding:4px 0 4px 8px;font-weight:600;text-align:right;">Suppressed</th>
+      </tr>
+      {{range .Ops.Noise}}
+      <tr style="border-top:1px solid #f1f5f9;">
+        <td style="padding:5px 8px 5px 0;font-family:ui-monospace,monospace;">{{.AlertType}}</td>
+        <td style="padding:5px 8px;">{{.DeviceName}}</td>
+        <td style="padding:5px 8px;text-align:right;font-weight:600;color:#0f172a;">{{.Count}}</td>
+        <td style="padding:5px 0 5px 8px;text-align:right;color:#94a3b8;">{{.Suppressed}}</td>
+      </tr>
+      {{end}}
+    </table>
     {{end}}
   </td></tr>
   {{end}}
