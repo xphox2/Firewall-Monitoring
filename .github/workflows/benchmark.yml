@@ -1,0 +1,62 @@
+# Manual ingestion load benchmark (deferred follow-up of the 2026-07-02 audit).
+#
+# workflow_dispatch only — benchmarks are minutes of runner time and their
+# numbers only matter when someone is looking at them, so they don't run on
+# every push. Results land in the job's step summary.
+#
+# Caveat for reading the numbers: GitHub-hosted runners are shared VMs and
+# Postgres runs as a sidecar container on the same host, so treat results as
+# order-of-magnitude / relative (COPY vs batch vs per-row), not absolute
+# prod throughput.
+name: Benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bench-ingest:
+    name: Ingestion benchmarks (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: firewall_mon
+          POSTGRES_PASSWORD: firewall_mon
+          POSTGRES_DB: firewall_mon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U firewall_mon -d firewall_mon_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run ingestion benchmarks
+        env:
+          TEST_PG_DSN: postgres://firewall_mon:firewall_mon@localhost:5432/firewall_mon_test?sslmode=disable
+        run: |
+          make bench-ingest | tee bench.out
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          {
+            echo "## Ingestion benchmark results"
+            echo
+            echo '```'
+            cat bench.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.561] - 2026-07-02
+
+### Added
+- **Ingestion load benchmarks** (`internal/database/bench_ingest_integration_test.go`, behind the `integration` build tag): measures the sFlow write path on real PostgreSQL in three shapes — pgx COPY (`SaveFlowSamples` production path), one multi-row GORM INSERT (`batchInsertWithFallback`), and per-row INSERT (the shape the "COPY is 5-10x faster" doc-comment claim compares against) — plus the syslog batch path, at realistic batch sizes with rows/s reported. Deferred follow-up of the 2026-07-02 audit.
+- **`make bench-ingest`** target (same `TEST_PG_DSN` contract as `test-integration`) and a **manual `Benchmark` workflow** (`.github/workflows/benchmark.yml`, `workflow_dispatch` only so regular CI stays fast) that runs the suite against a postgres:16 service container and publishes results to the job summary.
+
 ## [0.10.560] - 2026-07-02
 
 ### Added

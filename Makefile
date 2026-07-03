@@ -51,6 +51,15 @@ test-integration: ## Run the Postgres integration suite (AUDIT-118; needs TEST_P
 	# at a time keeps a single owner of the shared database. See ci.yml.
 	$(GO) test -tags=integration -p 1 -count=1 -timeout=5m ./internal/database/... ./internal/api/handlers/...
 
+.PHONY: bench-ingest
+bench-ingest: ## Run the Postgres ingestion benchmarks (needs TEST_PG_DSN)
+	# Ingestion load benchmarks (bench_ingest_integration_test.go): pgx COPY vs
+	# GORM multi-row INSERT vs per-row INSERT on flow_samples, plus the syslog
+	# batch path. Same TEST_PG_DSN contract as test-integration (schema is
+	# RESET — throwaway database only; dbname must contain "test").
+	# CI counterpart: the manual Benchmark workflow (.github/workflows/benchmark.yml).
+	$(GO) test -tags=integration -p 1 -run '^$$' -bench 'BenchmarkSave' -benchtime=2s -timeout=20m ./internal/database/
+
 # AUDIT-102: -trimpath strips local filesystem paths and -buildvcs=false
 # keeps VCS state out of the binary, so builds are reproducible across hosts.
 GOFLAGS_REPRO ?= -trimpath -buildvcs=false
