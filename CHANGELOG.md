@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.560] - 2026-07-02
+
+### Added
+- **Prebuilt Grafana dashboard** (`docs/monitoring/grafana-dashboard.json`): importable overview dashboard — API health (up, request rate by route, p50/p95/p99 latency, 4xx/5xx error rates, slowest routes by p95), Go runtime for all three daemons (goroutines, RSS vs heap, CPU, open FDs), and DB pool health (connections, saturation vs pool ceiling, connection-wait rate). Import instructions added to `docs/monitoring/README.md`.
+
+### Fixed
+- **Corrected DB-pool metric names in `docs/monitoring/README.md`**: the doc referenced `go_sql_stats_connections_*`, but the client_golang `DBStatsCollector` actually exposes `go_sql_open_connections` / `go_sql_in_use_connections` / `go_sql_idle_connections` / `go_sql_max_open_connections` / `go_sql_wait_*_total` (label `db_name="fwmon"`). The example pool-saturation PromQL now uses the real series and divides by the pool ceiling.
+
 ## [0.10.559] - 2026-07-02
 
 ### Added

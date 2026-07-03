@@ -23,8 +23,10 @@ a ready-to-adapt [`prometheus.yml`](prometheus.yml) scrape config.
 - **Go runtime / process** (from the client_golang default collectors):
   `go_goroutines`, `go_memstats_*`, `process_resident_memory_bytes`,
   `process_cpu_seconds_total`, `process_open_fds`, …
-- **DB connection pool** (`go_sql_stats_*`): open / in-use / idle connections,
-  wait count, wait duration.
+- **DB connection pool** (label `db_name="fwmon"`): `go_sql_open_connections`,
+  `go_sql_in_use_connections`, `go_sql_idle_connections`,
+  `go_sql_max_open_connections`, `go_sql_wait_count_total`,
+  `go_sql_wait_duration_seconds_total`, and the `*_closed_total` counters.
 
 ## Useful PromQL
 
@@ -45,8 +47,8 @@ process_resident_memory_bytes{component="api"}
 # Goroutine count (leak watch)
 go_goroutines{component="api"}
 
-# DB pool saturation (in-use vs open)
-go_sql_stats_connections_in_use / go_sql_stats_connections_open
+# DB pool saturation (in-use vs pool ceiling)
+go_sql_in_use_connections{db_name="fwmon"} / go_sql_max_open_connections{db_name="fwmon"}
 ```
 
 ## Alerting starters
@@ -76,6 +78,16 @@ groups:
         annotations: { summary: "API goroutine count unusually high" }
 ```
 
-A prebuilt Grafana dashboard JSON is not shipped yet — build panels from the
-PromQL above, or import any generic Go-process dashboard and add the
-`fwmon_http_request_duration_seconds` panels.
+## Grafana dashboard
+
+A prebuilt dashboard ships as [`grafana-dashboard.json`](grafana-dashboard.json):
+API health (up, request rate by route, latency quantiles, error rates, slowest
+routes), Go runtime for all three daemons (goroutines, memory, CPU, FDs), and
+DB pool health (connections, saturation, connection wait).
+
+To import: Grafana → **Dashboards → New → Import** → upload
+`grafana-dashboard.json` → pick your Prometheus datasource when prompted. The
+job/component labels match the scrape config in [`prometheus.yml`](prometheus.yml)
+(`fwmon-api` / `fwmon-poller` / `fwmon-trap`); if you renamed the jobs, adjust
+the panel queries accordingly. Poller/trap panels stay empty until their
+`*_METRICS_ADDR` endpoints are reachable by Prometheus.
