@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.565] - 2026-07-02
+
+### Docs
+- **v0.11 feature program recorded in `docs/FEATURE-ROADMAP.md` (new Part IV)** — the full 2026-07-02 feature-by-feature triage of the strategic roadmap (P0–P2) and all 89 AUDIT-F ideas: corrections for items already built since the lists were written (topology view, geo/ASN, SSE, theme, audit log, and more), the deliberate skips (self-monitoring page, device notes/tags, GDPR purge, multi-tenancy, demo mode), and the selected work sequenced into 13 build tranches starting with the access-control epic (multi-user/RBAC → scoped API tokens → TOTP 2FA).
+
 ## [0.10.564] - 2026-07-02
 
 ### Docs

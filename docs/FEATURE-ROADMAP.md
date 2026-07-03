@@ -1,6 +1,6 @@
 # Firewall-Mon — Master Feature Inventory & Roadmap
 
-**Last updated:** 2026-06-24 (docs cleanup; open-audit follow-ups absorbed).
+**Last updated:** 2026-07-02 (v0.11 program triage — see Part IV for the full feature-by-feature decisions and build sequence).
 
 Two-repo product. **Server** = `Firewall-Mon` (Go module `firewall-mon`, ~v0.10.476): central store + brain + UI. **Collector** = `Firewall-Collector` (`firewall-collector`, ~v1.2.131): stateless remote edge probe. Some ingestion capabilities exist in **both** (server can ingest directly OR receive relayed from a probe).
 
@@ -284,3 +284,59 @@ Benchmarked vs **LibreNMS, Observium, PRTG, Zabbix, Auvik, RANCID/Oxidized, Pano
 6. **P2** opportunistically; keep multi-tenancy explicitly deferred unless MSP is chosen.
 
 **Single highest-ROI item:** the **P0 access-control epic** — the one gap that disqualifies the product in enterprise/SOC procurement regardless of data-plane quality, and mostly assembly of stacks already present (JWT, bcrypt, hashed-key compare, audit log).
+
+---
+
+## Part IV — v0.11 program decisions (2026-07-02 triage)
+
+Every open item above and every AUDIT-F idea (docs/AUDIT.md F01–F89) was reviewed
+feature-by-feature on 2026-07-02. This section is the authoritative record; where
+it disagrees with older text above, this wins.
+
+### Corrections — already built since the lists were written (do not rebuild)
+
+| Item | Status | Where |
+|---|---|---|
+| F23/F24 geo + ASN enrichment | DONE | FlowSample Src/DstCountry + Src/DstASN, analytics filters (v0.10.514) |
+| F25 threat category stats | DONE | SecurityStats + GetDeviceSecurityStats |
+| F28 topology view | DONE | Connection Map (Cytoscape), admin.html |
+| F31 real-time event stream | DONE | NOC SSE hub (handlers/noc.go) |
+| F46 audit log | DONE | AUDIT-078 (ActorID already threaded) |
+| F74 dark/light theme | DONE | Day/Night theme (v0.10.499) |
+| F82 partition migration path | DONE | docs/partition-migration.md |
+| F81 hot-query indexes | MOSTLY | idx_flow_src/dst_addr exist; only idx_iface_device_name_ts remains |
+| F21 top talkers | PARTIAL | report-only; live API/UI still open |
+| F42 decommission | PARTIAL | probes only; devices still open |
+| F55 poll staleness | PARTIAL | probes only (MarkStaleProbesOffline); device POLL_STALE open |
+
+### Declined (deliberate skips — do not re-propose without new cause)
+
+/admin/system self-monitoring page F50–F56 (Prometheus/Grafana pack covers it;
+only exception: none — even F52/F56 self-alerting was declined), device
+notes/tags/wiki F43/F44/F49, attachments F45, GDPR purge F77, status-page email
+subscriptions F59, sample-data/demo mode F71, multi-tenancy + white-label
+F86–F89 (standing non-goal).
+
+### Selected — build sequence (tranches)
+
+| # | Tranche | Contents |
+|---|---|---|
+| 1 | **Access-control epic** | P0-1 multi-user/RBAC → P0-2 scoped API tokens (F64) → P0-3 TOTP 2FA (F68). Bumps 0.11.0 on completion. |
+| 2 | Alerting maturity | F14 hysteresis → F13 flap suppression → F12 incident grouping; F19 escalation chains; PagerDuty/Opsgenie/Teams notifiers; F17 z-score baselining (P2-5); F18 webhook signing; F05/F06 MTTR+noise reports |
+| 3 | NetFlow v5/v9 + IPFIX (P0-4) | cross-repo, normalize into flow_samples |
+| 4 | Flow detection engine | sFlow roadmap R3/R4, after NetFlow so both sources covered |
+| 5 | SLA & reporting | P1-2 SLA objects + F03 + F33; F01 ad-hoc range; F04+F26 capacity; F07 security posture |
+| 6 | Analytics & syslog intel | F20 heatmap; F21+F27 top-talkers UI + conversation matrix; P1-5 correlation rules + F22 top destinations (shared syslog aggregator) |
+| 7 | Topology auto-discovery | P1-3 LLDP/CDP/FDB → Connection Map |
+| 8 | Config intelligence | P1-6 revision-encryption verify (first, small); P1-4 compliance policy engine |
+| 9 | Vendor + collection health | F34 FortiGate deep; probe collection-health/readiness relay (gaps #4/#5); F36 Palo Alto (+ PAN capture); F35 Cisco ASA (+ collector port) |
+| 10 | API & integration | F62 /api/v1 + F63 OpenAPI; F65 outbound webhook bus; F66 inbound ingest (P2-2); F67 OIDC/SSO |
+| 11 | Public status page | F57+F58+F60+F61 core only |
+| 12 | Data lifecycle | F79 rollups; F80 dashboard mat-view; F83 Parquet/CSV archive; F81 remaining index |
+| 13 | Onboarding & polish | F69 wizard; F70 SNMP discovery; F72 tooltips; F73 Cmd-K; F47 bulk actions; P2-1 SNMPv3 posture; P2-4 mobile/push |
+| — | Compliance riders | F76 tamper-evident audit log + F75 signed backups (after T8); F78 SOC2 evidence (after F76) |
+
+Sequencing rationale: access control first (strategic unblock for tokens, OIDC,
+OpenAPI), alerting second (daily-use pain), data-plane epic third/fourth in the
+user-chosen order (NetFlow before detection), then operational bundles;
+cross-repo tranches (3, 9) coordinate both changelogs and CIs.
