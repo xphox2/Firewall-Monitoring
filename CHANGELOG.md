@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-07-03
+
+### Milestone
+- **Access-control epic complete** — the opening tranche of the v0.11 feature program (see `docs/FEATURE-ROADMAP.md` Part IV). This release rolls up the three phases shipped as 0.10.566–0.10.568 into the 0.11 line:
+  - **Multi-user + RBAC** (0.10.566): admin / operator / viewer roles with server-side enforcement across the whole admin surface, user management UI, session revocation on role change.
+  - **Scoped API tokens** (0.10.567): `fwm_…` bearer credentials riding the same role ladder, hashed at rest, shown once, soft-revoked.
+  - **TOTP 2FA** (0.10.568): opt-in two-step login with recovery codes, replay guard, shared lockout budget, encrypted secrets.
+- Upgrade notes: all three migrations (v20–v22) are additive and zero-touch — the existing admin keeps full rights, live sessions survive, 2FA stays off until enrolled. Pre-upgrade JWTs without a role claim are honored as admin until they expire (≤24h).
+
 ## [0.10.568] - 2026-07-03
 
 ### Added
