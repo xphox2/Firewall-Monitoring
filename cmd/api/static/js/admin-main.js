@@ -3203,6 +3203,7 @@
             var enabled = r.alert_type ? r.enabled : true;
             var severity = r.severity || '';
             var threshold = r.threshold || '';
+            var clearThreshold = r.clear_threshold || '';
             var cooldown = (r.cooldown_minutes != null) ? r.cooldown_minutes : '';
 
             function triState(field, val) {
@@ -3216,6 +3217,7 @@
                 '<td><input type="checkbox" data-field="enabled" ' + (enabled ? 'checked' : '') + '></td>' +
                 '<td><select data-field="severity" class="sm"><option value="">Inherit</option><option value="critical"' + (severity==='critical' ? ' selected' : '') + '>Critical</option><option value="warning"' + (severity==='warning' ? ' selected' : '') + '>Warning</option><option value="info"' + (severity==='info' ? ' selected' : '') + '>Info</option></select></td>' +
                 '<td><input type="number" data-field="threshold" value="' + threshold + '" step="0.1" class="sm" style="width:70px"></td>' +
+                '<td><input type="number" data-field="clear_threshold" value="' + clearThreshold + '" step="0.1" class="sm" style="width:70px" title="Recovery band (hysteresis): auto-resolve only below this. Blank/0 = resolve at threshold."></td>' +
                 '<td>' + triState('notify_email', r.notify_email) + '</td>' +
                 '<td>' + triState('notify_slack', r.notify_slack) + '</td>' +
                 '<td>' + triState('notify_discord', r.notify_discord) + '</td>' +
@@ -3234,6 +3236,7 @@
             var enabled = row.querySelector('[data-field="enabled"]').checked;
             var severity = row.querySelector('[data-field="severity"]').value;
             var threshold = parseFloat(row.querySelector('[data-field="threshold"]').value) || 0;
+            var clearThreshold = parseFloat(row.querySelector('[data-field="clear_threshold"]').value) || 0;
             var cooldownVal = row.querySelector('[data-field="cooldown_minutes"]').value;
             var cooldown = cooldownVal ? parseInt(cooldownVal) : null;
 
@@ -3249,6 +3252,7 @@
                 enabled: enabled,
                 severity: severity,
                 threshold: threshold,
+                clear_threshold: clearThreshold,
                 notify_email: triVal('notify_email'),
                 notify_slack: triVal('notify_slack'),
                 notify_discord: triVal('notify_discord'),

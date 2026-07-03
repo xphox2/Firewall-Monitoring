@@ -118,7 +118,16 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		if rc.resolved.InMaintenance {
 			continue
 		}
-		if rc.resolved.Threshold > 0 && rc.current < rc.resolved.Threshold {
+		// F14 hysteresis: with a ClearThreshold set (and sane — below the fire
+		// threshold), recovery requires dropping below the CLEAR band, not just
+		// under the fire threshold — a value hovering at the boundary stays in
+		// the fired state instead of flapping. ClearThreshold=0 keeps the
+		// legacy recover-at-threshold behavior bit-for-bit.
+		recoverBelow := rc.resolved.Threshold
+		if rc.resolved.ClearThreshold > 0 && rc.resolved.ClearThreshold < recoverBelow {
+			recoverBelow = rc.resolved.ClearThreshold
+		}
+		if rc.resolved.Threshold > 0 && rc.current < recoverBelow {
 			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
 				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID)
 		}

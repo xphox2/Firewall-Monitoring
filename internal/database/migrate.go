@@ -1211,3 +1211,16 @@ func (d *Database) migrateAdminTOTP() error {
 	log.Printf("migrate v22 admin_totp: ensured admins TOTP columns + admin_recovery_codes table")
 	return nil
 }
+
+// migrateAlertRuleClearThreshold (v23, F14 hysteresis) adds the recovery-band
+// column. Additive with default 0 = legacy recover-at-threshold behavior.
+func (d *Database) migrateAlertRuleClearThreshold() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.AlertRule{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS clear_threshold double precision NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("migrate v23 add alert_rules.clear_threshold: %w", err)
+	}
+	log.Printf("migrate v23 alert_rule_clear_threshold: column ensured")
+	return nil
+}

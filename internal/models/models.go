@@ -322,12 +322,18 @@ type AlertPolicy struct {
 func (AlertPolicy) TableName() string { return "alert_policies" }
 
 type AlertRule struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	PolicyID        uint      `json:"policy_id" gorm:"uniqueIndex:idx_policy_alert_type,priority:1;not null"`
-	AlertType       AlertType `json:"alert_type" gorm:"uniqueIndex:idx_policy_alert_type,priority:2;not null"`
-	Enabled         bool      `json:"enabled" gorm:"default:true"`
-	Severity        Severity  `json:"severity"`
-	Threshold       float64   `json:"threshold"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	PolicyID  uint      `json:"policy_id" gorm:"uniqueIndex:idx_policy_alert_type,priority:1;not null"`
+	AlertType AlertType `json:"alert_type" gorm:"uniqueIndex:idx_policy_alert_type,priority:2;not null"`
+	Enabled   bool      `json:"enabled" gorm:"default:true"`
+	Severity  Severity  `json:"severity"`
+	Threshold float64   `json:"threshold"`
+	// ClearThreshold is the recovery band (F14 hysteresis): once fired, the
+	// alert only auto-resolves when the value drops BELOW this (must be lower
+	// than Threshold to widen the band). 0 = disabled — recovery at Threshold,
+	// exactly the pre-hysteresis behavior. Kills fire/recover flapping when a
+	// metric hovers at the boundary.
+	ClearThreshold  float64   `json:"clear_threshold"`
 	NotifyEmail     *bool     `json:"notify_email"`
 	NotifySlack     *bool     `json:"notify_slack"`
 	NotifyDiscord   *bool     `json:"notify_discord"`

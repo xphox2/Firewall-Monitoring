@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-07-03
+
+### Added
+- **Clear-band hysteresis on threshold alerts** (v0.11 Tranche 2, F14): alert rules gain an optional **Clear below** value — once fired, a CPU/memory/disk/sessions alert only auto-resolves when the metric drops below the clear band, not merely under the fire threshold, so a value hovering at the boundary no longer flaps fire/recover every poll cycle. Blank/0 keeps the exact legacy behavior; a misconfigured clear band at/above the fire threshold is ignored (never blocks recovery). New column in the policy rules editor with an explanatory tooltip. Migration v23 (additive). Regression tests: band-hold/recover matrix, legacy-behavior guarantee, misconfiguration clamp (`hysteresis_f14_test.go`).
+
 ## [0.11.1] - 2026-07-03
 
 ### Fixed

@@ -13,9 +13,12 @@ import (
 // ResolvedAlertConfig is the computed configuration for a specific (device, alertType) pair.
 // It is not persisted — it is resolved on-the-fly from the inheritance chain.
 type ResolvedAlertConfig struct {
-	PolicyID          *uint
-	AlertEnabled      bool
-	Threshold         float64
+	PolicyID     *uint
+	AlertEnabled bool
+	Threshold    float64
+	// ClearThreshold is the F14 hysteresis recovery band from the winning
+	// AlertRule (0 = recover at Threshold, legacy behavior).
+	ClearThreshold    float64
 	Severity          models.Severity
 	CooldownMinutes   int
 	NotifyEmail       bool
@@ -182,6 +185,9 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		}
 		if rule.Threshold > 0 {
 			resolved.Threshold = rule.Threshold
+		}
+		if rule.ClearThreshold > 0 {
+			resolved.ClearThreshold = rule.ClearThreshold
 		}
 		// M3: same `> 0` floor for a per-rule override (an explicit 0 inherits
 		// the default rather than disabling the cooldown entirely).
