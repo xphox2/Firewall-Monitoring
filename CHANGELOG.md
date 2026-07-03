@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-07-03
+
+### Added
+- **HMAC-signed webhooks** (v0.11 Tranche 2, F18): set a **Webhook Signing Secret** (Settings → Notifications, encrypted at rest, or `WEBHOOK_SECRET`) and every generic-webhook delivery — alerts and the test button alike — carries `X-FirewallMon-Timestamp` + `X-FirewallMon-Signature: sha256=…` computed as HMAC-SHA256 over `timestamp.body`, so receivers can verify authenticity and reject replays. Slack/Discord unaffected; no secret = unsigned, exactly as before. Verification snippet in `docs/OPERATIONS.md`. Golden-format + on-the-wire tests (`webhook_signing_f18_test.go`).
+
 ## [0.11.3] - 2026-07-03
 
 ### Added

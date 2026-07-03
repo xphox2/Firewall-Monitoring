@@ -58,6 +58,36 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
 
 ---
 
+## Verifying signed webhooks
+
+When a **Webhook Signing Secret** is set (Settings → Notification Settings, or
+`WEBHOOK_SECRET`), every generic-webhook delivery — including the test button —
+carries two headers:
+
+```
+X-FirewallMon-Timestamp: 1719990000                  (unix seconds)
+X-FirewallMon-Signature: sha256=<hex hmac digest>
+```
+
+The signature is `HMAC-SHA256(secret, timestamp + "." + raw_body)`. Verify and
+reject replays older than your tolerance:
+
+```python
+import hmac, hashlib, time
+def verify(headers, body: bytes, secret: str, tolerance=300) -> bool:
+    ts = headers["X-FirewallMon-Timestamp"]
+    if abs(time.time() - int(ts)) > tolerance:
+        return False
+    want = "sha256=" + hmac.new(secret.encode(), f"{ts}.".encode() + body,
+                                hashlib.sha256).hexdigest()
+    return hmac.compare_digest(want, headers["X-FirewallMon-Signature"])
+```
+
+Slack/Discord deliveries are unaffected (they use their own schemes). No secret
+configured = unsigned requests, exactly as before.
+
+---
+
 ## Failure modes
 
 | Symptom | Likely cause | Action |

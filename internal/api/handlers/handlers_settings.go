@@ -28,7 +28,8 @@ import (
 // responses. Defined at package scope so GetSettings, UpdateSettings, and
 // the startup backfill share one list. v0.10.226 (see CHANGELOG).
 var settingsSecretKeys = map[string]bool{
-	"smtp_password": true,
+	"smtp_password":  true,
+	"webhook_secret": true,
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -89,6 +90,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"slack_webhook":              true,
 		"discord_webhook":            true,
 		"webhook_url":                true,
+		"webhook_secret":             true,
 		"public_refresh_interval":    true,
 		"public_show_vpn":            true,
 		"public_show_connections":    true,
@@ -846,6 +848,16 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 		return
 	}
 
+	// F18: sign the generic-webhook test exactly like production deliveries so
+	// receivers can verify their integration end-to-end from the test button.
+	var signTS, signSig string
+	if req.Type != "slack_webhook" && req.Type != "discord_webhook" {
+		if secret := h.getNotificationSetting("webhook_secret"); secret != "" {
+			signTS = fmt.Sprintf("%d", time.Now().Unix())
+			signSig = notifier.SignWebhookPayload(jsonData, secret, signTS)
+		}
+	}
+
 	// Pin the dialer to the pre-flight-validated IP so DNS rebinding can't
 	// redirect this connection to a private/loopback/metadata target after the
 	// isValidExternalIP check above passed (the same guard the real notifier
@@ -859,6 +871,10 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if signSig != "" {
+		httpReq.Header.Set("X-FirewallMon-Timestamp", signTS)
+		httpReq.Header.Set("X-FirewallMon-Signature", signSig)
+	}
 
 	resp, err := client.Do(httpReq)
 	if err != nil {

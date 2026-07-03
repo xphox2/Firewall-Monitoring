@@ -2383,7 +2383,8 @@
                 { key: 'email_enabled', label: 'Enable Email', type: 'checkbox' },
                 { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
                 { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' },
-                { key: 'webhook_url', label: 'Generic Webhook URL', type: 'text' }
+                { key: 'webhook_url', label: 'Generic Webhook URL', type: 'text' },
+                { key: 'webhook_secret', label: 'Webhook Signing Secret (HMAC-SHA256, optional)', type: 'password' }
             ].map(function(s) {
                 var found = notifSettings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : '';
@@ -2391,7 +2392,7 @@
                     var checked = savedVal === 'true' ? 'checked' : '';
                     return '<div class="toggle-row"><label>' + s.label + '</label><input type="checkbox" name="' + s.key + '" ' + checked + '></div>';
                 }
-                return '<div class="setting-item"><label>' + s.label + '</label><input type="text" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" autocomplete="one-time-code"></div>';
+                return '<div class="setting-item"><label>' + s.label + '</label><input type="' + (s.type === 'password' ? 'password' : 'text') + '" name="' + s.key + '" value="' + escapeHtml(savedVal) + '" autocomplete="one-time-code"></div>';
             }).join('');
 
             document.getElementById('settings-smtp').innerHTML = [

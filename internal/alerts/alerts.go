@@ -543,7 +543,7 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 	if err := db.Where("\"key\" IN ?", []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
-		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url",
+		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url", "webhook_secret",
 		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
 		"report_weekly_day", "report_recipients", "report_timezone",
 		"spike_stddev_threshold", "spike_alert_enabled", "spike_min_duration_minutes",
@@ -610,6 +610,14 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 			am.config.Alerts.DiscordWebhookURL = s.Value
 		case "webhook_url":
 			am.config.Alerts.WebHookURL = s.Value
+		case "webhook_secret":
+			// Encrypted at rest like smtp_password; DecryptField is idempotent
+			// for plaintext (env-sourced) values.
+			if am.db != nil {
+				am.config.Alerts.WebhookSecret = am.db.DecryptField(s.Value)
+			} else {
+				am.config.Alerts.WebhookSecret = s.Value
+			}
 		case "report_daily_enabled":
 			am.config.Alerts.ReportDailyEnabled = s.Value == "true"
 		case "report_daily_time":

@@ -2,7 +2,10 @@ package notifier
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +54,8 @@ type NotifyConfig struct {
 	SlackWebhookURL   string
 	DiscordWebhookURL string
 	WebHookURL        string
+	// WebhookSecret signs generic-webhook payloads (F18). Empty = unsigned.
+	WebhookSecret string
 	// Per-channel enable flags from alert policy resolution.
 	// When all are false and no policy is active, SendAlert falls through to
 	// the legacy behaviour (check EmailEnabled / webhook URL presence).
@@ -98,6 +103,7 @@ func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
 		SlackWebhookURL:   cfg.SlackWebhookURL,
 		DiscordWebhookURL: cfg.DiscordWebhookURL,
 		WebHookURL:        cfg.WebHookURL,
+		WebhookSecret:     cfg.WebhookSecret,
 	}
 }
 
@@ -341,7 +347,52 @@ func buildWebhookPayload(alert *models.Alert) map[string]interface{} {
 }
 
 func (n *Notifier) sendWebhook(alert *models.Alert, nc NotifyConfig) error {
-	return n.postJSON(nc.WebHookURL, buildWebhookPayload(alert))
+	return n.PostJSONSigned(nc.WebHookURL, buildWebhookPayload(alert), nc.WebhookSecret)
+}
+
+// SignWebhookPayload computes the F18 signature headers over ts+"."+body:
+// receivers verify with hmac.Equal(hex(HMAC-SHA256(secret, ts+"."+body)), sig).
+// Binding the timestamp into the MAC (and sending it in a header) lets the
+// receiver reject replays older than its tolerance window.
+func SignWebhookPayload(body []byte, secret, ts string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// PostJSONSigned posts payload like postJSON and, when secret is non-empty,
+// adds X-FirewallMon-Timestamp + X-FirewallMon-Signature (F18). Exported so
+// the settings test-webhook endpoint sends exactly what production sends.
+func (n *Notifier) PostJSONSigned(url string, payload interface{}, secret string) error {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret != "" {
+		ts := fmt.Sprintf("%d", time.Now().Unix())
+		req.Header.Set("X-FirewallMon-Timestamp", ts)
+		req.Header.Set("X-FirewallMon-Signature", SignWebhookPayload(jsonData, secret, ts))
+	}
+	resp, err := n.client.Do(req)
+	if err != nil {
+		var uerr *neturl.Error
+		if errors.As(err, &uerr) {
+			return fmt.Errorf("webhook %s: %w", webhookHost(url), uerr.Err)
+		}
+		return fmt.Errorf("webhook %s: %w", webhookHost(url), err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook %s returned status %d", webhookHost(url), resp.StatusCode)
+	}
+	return nil
 }
 
 // SendHTMLEmail sends an HTML email with optional inline image attachments.

@@ -213,16 +213,19 @@ type AuthConfig struct {
 }
 
 type AlertsConfig struct {
-	EmailEnabled       bool
-	SMTPHost           string
-	SMTPPort           int
-	SMTPUsername       string
-	SMTPPassword       string
-	SMTPFrom           string
-	SMTPTo             string
-	SlackWebhookURL    string
-	DiscordWebhookURL  string
-	WebHookURL         string
+	EmailEnabled      bool
+	SMTPHost          string
+	SMTPPort          int
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFrom          string
+	SMTPTo            string
+	SlackWebhookURL   string
+	DiscordWebhookURL string
+	WebHookURL        string
+	// WebhookSecret enables HMAC signing of generic-webhook payloads (F18):
+	// X-FirewallMon-Signature over timestamp+body. Empty = unsigned (legacy).
+	WebhookSecret      string
 	CPUThreshold       float64
 	MemoryThreshold    float64
 	DiskThreshold      float64
@@ -413,6 +416,7 @@ func Load() *Config {
 			SlackWebhookURL:          getEnv("SLACK_WEBHOOK_URL", ""),
 			DiscordWebhookURL:        getEnv("DISCORD_WEBHOOK_URL", ""),
 			WebHookURL:               getEnv("WEBHOOK_URL", ""),
+			WebhookSecret:            getEnv("WEBHOOK_SECRET", ""),
 			CPUThreshold:             getFloatEnv("CPU_THRESHOLD", 80.0),
 			MemoryThreshold:          getFloatEnv("MEMORY_THRESHOLD", 80.0),
 			DiskThreshold:            getFloatEnv("DISK_THRESHOLD", 90.0),
