@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.14] - 2026-07-03
+
+### Changed
+- **Settings page redesigned** — the single long stack of 14 cards is now a proper settings console: a sticky **vertical section nav** (Account / Access / Alerting / Notifications / Reports / Display / Detection) shows one section at a time, with `#hash` deep links (`/admin/settings#notifications` survives refresh) and no polluted browser history. The bottom save button is replaced by a **sticky save bar** that appears only when tracked fields differ from the last loaded/saved values ("N unsaved changes — Discard / Save"); Discard re-renders from the server. Dirty tracking covers exactly the fields the global save collects — the password, 2FA, user-management, token, and test-email-override inputs never trigger it. Role-aware: the Access section (Users, API Tokens) and the save bar are admin-only, and a viewer deep-linking `#access` is redirected once the session role resolves. All styling rides the `--fwmon-*` tokens (both Day/Night themes), and the nav collapses to a horizontal strip under 900px. No backend or API changes; every input ID and endpoint is untouched. New files `admin-settings.css`/`admin-settings.js` (`FwmonSettingsUI`), plus a `fwmon:role-resolved` event emitted by admin-users.js.
+
 ## [0.11.13] - 2026-07-03
 
 ### Docs

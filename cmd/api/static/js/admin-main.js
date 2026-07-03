@@ -126,7 +126,12 @@
                 });
                 break;
             case 'noc': if (window.FwmonNOC && window.FwmonNOC.init) window.FwmonNOC.init(); break;
-            case 'settings': loadSettings(); break;
+            case 'settings':
+                // v0.11.14: section nav / hash routing / dirty tracking. The
+                // reload hook makes Discard = re-run loadSettings().
+                if (window.FwmonSettingsUI) FwmonSettingsUI.init({ reload: loadSettings });
+                loadSettings();
+                break;
             case 'reports': if (window.AdminReports && window.AdminReports.init) window.AdminReports.init(); break;
             case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
             case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
@@ -2495,6 +2500,11 @@
             }
         }).catch(function(e) {
             console.error('Failed to load settings:', e);
+        }).finally(function() {
+            // v0.11.14: the just-rendered values become the clean baseline
+            // for the sticky save bar (also on partial failure — an empty
+            // baseline means nothing counts dirty, which is the safe state).
+            if (window.FwmonSettingsUI) FwmonSettingsUI.snapshotBaseline();
         });
 
     }
@@ -2945,6 +2955,9 @@
             // save flow.
             var warnings = (result && result.data && Array.isArray(result.data.warnings)) ? result.data.warnings : [];
             warnings.forEach(function(w) { AC.showError(w); });
+            // v0.11.14: saved values are the new clean baseline — hides the
+            // sticky save bar. On save error the bar correctly stays up.
+            if (window.FwmonSettingsUI) FwmonSettingsUI.snapshotBaseline();
         }).catch(function(err) {
             console.error('Settings save failed:', err);
             AC.showError('Error: ' + err.message);
@@ -3851,6 +3864,7 @@
         'esc-add-step': function() { addEscalationStepRow({}); },
         'esc-del-step': function(el) { el.closest('.esc-step-row').remove(); },
         'save-settings': function() { saveSettings(); },
+        'discard-settings': function() { if (window.FwmonSettingsUI) FwmonSettingsUI.discard(); },
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },

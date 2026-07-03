@@ -25,6 +25,7 @@
     <!-- v0.10.212: shared design-system primitives now live in their own file. -->
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/admin-flows.css">
+    <link rel="stylesheet" href="/static/css/admin-settings.css">
     <!-- Tailwind arbitrary-hex → Console token bridge. Linked last so it wins
          over the precompiled tailwind.css utility classes. -->
     <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
@@ -235,6 +236,7 @@
          All six are now injected on demand. -->
     <script defer src="/static/js/admin-common.js"></script>
     <script defer src="/static/js/admin-users.js"></script>
+    <script defer src="/static/js/admin-settings.js"></script>
     <script defer src="/static/js/admin-reports.js"></script>
     <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
@@ -986,8 +988,24 @@
             </div>
         </div>
 
-        <!-- Settings Page -->
+        <!-- Settings Page (v0.11.14 redesign): vertical section nav + sticky
+             save bar. Cards moved verbatim into <section> wrappers — input/
+             button IDs and data-action attributes are unchanged; section
+             switching, hash deep-links, and dirty tracking live in
+             admin-settings.js (FwmonSettingsUI). -->
         <div class="page" id="page-settings">
+            <div class="settings-layout">
+            <nav class="settings-nav" id="settings-nav" aria-label="Settings sections">
+                <a class="settings-nav-item active" href="#account" data-settings-section="account">Account</a>
+                <a class="settings-nav-item" href="#access" data-settings-section="access" data-min-role="admin">Access</a>
+                <a class="settings-nav-item" href="#alerting" data-settings-section="alerting">Alerting</a>
+                <a class="settings-nav-item" href="#notifications" data-settings-section="notifications">Notifications</a>
+                <a class="settings-nav-item" href="#reports" data-settings-section="reports">Reports</a>
+                <a class="settings-nav-item" href="#display" data-settings-section="display">Display</a>
+                <a class="settings-nav-item" href="#detection" data-settings-section="detection">Detection</a>
+            </nav>
+            <div class="settings-content">
+            <section class="settings-section active" id="settings-section-account" data-section="account">
             <div class="card">
                 <div class="card-header"><h2>Admin Password</h2></div>
                 <div class="form-group">
@@ -1018,6 +1036,8 @@
                 <div id="twofa-status" style="margin-bottom:12px;"></div>
                 <div id="twofa-flow"></div>
             </div>
+            </section>
+            <section class="settings-section" id="settings-section-access" data-section="access" data-min-role="admin">
             <!-- Users (RBAC, P0-1). Hidden until /admin/api/me confirms the
                  session is role=admin — server enforces regardless (the users
                  endpoints are in the adminOnlyRoutes map). Rendered/managed by
@@ -1082,6 +1102,8 @@
                 </div>
                 <div id="token-plaintext" style="margin-top:10px;"></div>
             </div>
+            </section>
+            <section class="settings-section" id="settings-section-display" data-section="display">
             <div class="card">
                 <div class="card-header"><h2>Display Timezone</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>
@@ -1103,10 +1125,19 @@
                     </div>
                 </div>
             </div>
+            </section>
+            <section class="settings-section" id="settings-section-alerting" data-section="alerting">
             <div class="card">
                 <div class="card-header"><h2>Alert Settings</h2></div>
                 <div class="settings-grid" id="settings-alerts"></div>
             </div>
+            <div class="card">
+                <div class="card-header"><h2>Traffic Spike Detection</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
+                <div class="settings-grid" id="settings-spike"></div>
+            </div>
+            </section>
+            <section class="settings-section" id="settings-section-notifications" data-section="notifications">
             <div class="card">
                 <div class="card-header"><h2>Notification Settings</h2></div>
                 <div class="settings-grid" id="settings-notifications"></div>
@@ -1140,23 +1171,31 @@
                     <span id="test-webhook-result" style="margin-left: 12px; font-size: 0.82rem; align-self: center;"></span>
                 </div>
             </div>
+            </section>
+            <section class="settings-section" id="settings-section-reports" data-section="reports">
             <div class="card">
                 <div class="card-header"><h2>Email Reports</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Schedule automated email reports with device status summaries.</p>
                 <div class="settings-grid" id="settings-reports"></div>
             </div>
-            <div class="card">
-                <div class="card-header"><h2>Traffic Spike Detection</h2></div>
-                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
-                <div class="settings-grid" id="settings-spike"></div>
-            </div>
+            </section>
+            <section class="settings-section" id="settings-section-detection" data-section="detection">
             <div class="card">
                 <div class="card-header"><h2>sFlow Detection Thresholds</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Tune the sFlow detection engine. Leave a field blank to use the built-in default (or the <code>DETECT_*</code> env value). Changes apply within ~5 minutes — no restart. A port scan from a known-bad source (threat feed) always escalates to critical.</p>
                 <div class="settings-grid" id="settings-detection"></div>
             </div>
-            <div class="card">
-                <button class="btn" data-action="save-settings" data-min-role="admin">Save Settings</button>
+            </section>
+            <!-- Sticky save bar: hidden until FwmonSettingsUI counts unsaved
+                 changes among the fields saveSettings() collects. -->
+            <div class="settings-savebar" id="settings-savebar" data-min-role="admin" hidden>
+                <span class="settings-savebar-msg" id="settings-dirty-msg">0 unsaved changes</span>
+                <div class="settings-savebar-actions">
+                    <button class="btn secondary" data-action="discard-settings">Discard</button>
+                    <button class="btn" data-action="save-settings" data-min-role="admin">Save Settings</button>
+                </div>
+            </div>
+            </div>
             </div>
         </div>
 

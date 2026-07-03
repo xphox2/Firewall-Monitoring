@@ -288,6 +288,9 @@
             // for operators/viewers so hidden controls aren't a mystery.
             if (me && me.role) {
                 document.documentElement.dataset.role = me.role;
+                // v0.11.14: let page modules react to the role landing (the
+                // settings section nav re-validates its active section).
+                document.dispatchEvent(new CustomEvent('fwmon:role-resolved', { detail: { role: me.role } }));
                 if (me.role !== 'admin') {
                     var sub = document.querySelector('.sidebar-header .subtitle');
                     if (sub && !document.getElementById('role-badge')) {
