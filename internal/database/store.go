@@ -42,6 +42,7 @@ type Store interface {
 	UserStore
 	TokenStore
 	TOTPStore
+	IncidentStore
 	AuditStore
 	SecretStore
 	MaintenanceOpsStore
@@ -254,6 +255,13 @@ type TOTPStore interface {
 	ClearAdminTOTP(id uint) error
 	ReplaceRecoveryCodes(adminID uint, hashes []string) error
 	ConsumeRecoveryCode(adminID uint, codeHash string) (bool, error)
+}
+
+// IncidentStore covers F12 incident grouping (read side for the API; the
+// poller's correlator uses the concrete type).
+type IncidentStore interface {
+	ListIncidents(limit, offset int) ([]models.Incident, int64, error)
+	GetIncidentAlerts(incidentID uint) ([]models.Alert, error)
 }
 
 // TokenStore covers scoped API-token management (P0-2). Resolution for the

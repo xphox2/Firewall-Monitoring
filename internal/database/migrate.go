@@ -1268,3 +1268,23 @@ func (d *Database) migrateAlertPolicyEscalationSteps() error {
 	log.Printf("migrate v26 alert_policy_escalation_steps: column ensured")
 	return nil
 }
+
+// migrateIncidents (v27, F12) creates the incidents table and the grouping FK
+// column on alerts. Both additive; alerts is NOT one of the partitioned
+// tables, so plain DDL is safe.
+func (d *Database) migrateIncidents() error {
+	if err := d.db.AutoMigrate(&models.Incident{}); err != nil {
+		return fmt.Errorf("migrate v27 incidents table: %w", err)
+	}
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.Alert{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS incident_id bigint`); err != nil {
+		return fmt.Errorf("migrate v27 add alerts.incident_id: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`CREATE INDEX IF NOT EXISTS idx_alerts_incident_id ON alerts (incident_id)`); err != nil {
+		return fmt.Errorf("migrate v27 index alerts.incident_id: %w", err)
+	}
+	log.Printf("migrate v27 incidents: table + alerts.incident_id ensured")
+	return nil
+}

@@ -267,10 +267,14 @@ type TrapEvent struct {
 }
 
 type Alert struct {
-	ID              uint       `json:"id" gorm:"primaryKey"`
-	Timestamp       time.Time  `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2;index:idx_alert_unack,priority:3"`
-	DeviceID        uint       `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
-	ProbeID         *uint      `json:"probe_id" gorm:"index"`
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2;index:idx_alert_unack,priority:3"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
+	ProbeID   *uint     `json:"probe_id" gorm:"index"`
+	// IncidentID groups this alert under an open incident (F12): alerts fired
+	// for a device while its DEVICE_OFFLINE incident is open attach here and
+	// their individual notifications are muted — the incident is the story.
+	IncidentID      *uint      `json:"incident_id" gorm:"index"`
 	AlertType       AlertType  `json:"alert_type"`
 	Severity        Severity   `json:"severity"`
 	Message         string     `json:"message"`
@@ -365,6 +369,24 @@ type AlertRule struct {
 }
 
 func (AlertRule) TableName() string { return "alert_rules" }
+
+// Incident (F12) groups the alert storm around a device outage: opened when
+// DEVICE_OFFLINE fires, it absorbs every subsequent alert for that device
+// (their notifications are muted — see AlertManager.dispatchFired) and closes
+// with ONE summary notification when the device recovers.
+type Incident struct {
+	ID         uint       `json:"id" gorm:"primaryKey"`
+	DeviceID   uint       `json:"device_id" gorm:"index"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at" gorm:"index"`
+	Severity   Severity   `json:"severity"`
+	Title      string     `json:"title"`
+	AlertCount int        `json:"alert_count"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+func (Incident) TableName() string { return "incidents" }
 
 type DeviceAlertConfig struct {
 	ID               uint      `json:"id" gorm:"primaryKey"`

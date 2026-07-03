@@ -34,8 +34,10 @@ type AlertManager struct {
 	flapShortResolves map[string][]time.Time
 	// F17 zscore baselines: per-device trailing stats, own mutex — refreshed
 	// OUTSIDE am.mu so alert evaluation never holds the lock across a DB read.
-	baselines     map[uint]deviceBaselines
-	baselineMu    sync.Mutex
+	baselines  map[uint]deviceBaselines
+	baselineMu sync.Mutex
+	// F12: open incidents by device (mu-guarded; reloaded each poll cycle).
+	openIncidents map[uint]uint
 	mu            sync.RWMutex
 	alertCooldown time.Duration
 	policyCache   PolicyCache
@@ -61,6 +63,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		fireStart:         make(map[string]time.Time),
 		flapShortResolves: make(map[string][]time.Time),
 		baselines:         make(map[uint]deviceBaselines),
+		openIncidents:     make(map[uint]uint),
 		alertCooldown:     5 * time.Minute,
 	}
 }
@@ -632,6 +635,7 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 
 	// Refresh policy cache alongside thresholds
 	am.RefreshPolicyCache(am.db)
+	am.refreshOpenIncidents()
 
 	var settings []models.SystemSetting
 	if err := db.Where("\"key\" IN ?", []string{
@@ -883,8 +887,17 @@ func (am *AlertManager) dispatchFired(fired []firedEntry, globalNC notifier.Noti
 			log.Printf("flap suppression: %s notifications muted (key=%s) — ≥%d short-lived cycles within window",
 				fired[i].alert.AlertType, fired[i].key, am.config.Alerts.FlapMaxFires)
 		}
+		// F12: while the device has an open incident, attach the alert and
+		// mute its individual notification — the incident is the story.
+		incidentMuted := false
+		if incID := am.incidentFor(fired[i].alert.DeviceID); incID != 0 {
+			fired[i].alert.IncidentID = &incID
+			incidentMuted = true
+			log.Printf("incident %d: attached %s for device %d (notification muted)",
+				incID, fired[i].alert.AlertType, fired[i].alert.DeviceID)
+		}
 		am.saveAlert(&fired[i].alert)
-		if !fired[i].alert.Suppressed {
+		if !fired[i].alert.Suppressed && !incidentMuted {
 			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
 			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
 				log.Printf("Failed to send %s alert %s: %v", label, fired[i].alert.AlertType, err)
@@ -978,6 +991,14 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 		return nil
 	}
 
+	// F12: an offline device opens (or joins) its incident; everything that
+	// fires for the device while it's open attaches and is muted. The
+	// DEVICE_OFFLINE alert itself is the incident-opening event and DOES
+	// notify.
+	if inc := am.openIncident(device, alert.Severity); inc != nil {
+		alert.IncidentID = &inc.ID
+	}
+
 	am.saveAlert(&alert)
 	if !alert.Suppressed {
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
@@ -993,6 +1014,8 @@ func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 	key := fmt.Sprintf("device_offline_%d", device.ID)
 	am.sendRecovery(key, "DEVICE_OFFLINE", "device_status",
 		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
+	// F12: recovery closes the device's incident with one summary notification.
+	am.closeIncident(device)
 }
 
 // CheckSSHHostKeyChanged fires a CRITICAL alert when a device's reported SSH

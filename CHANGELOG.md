@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.9] - 2026-07-03
+
+### Added
+- **Incident grouping** (v0.11 Tranche 2, F12): a device outage is now ONE story instead of an email storm. When `DEVICE_OFFLINE` fires, an incident opens for the device (the offline alert itself still notifies); every state alert that fires for that device while the incident is open **attaches to it and is muted** — visible in the alerts table with an `INC#n` chip, no individual email/Slack/page. Device recovery closes the incident and sends a single summary ("Incident resolved: … — N alerts over M minutes"). One open incident per device (idempotent reopen); the open-incident set survives poller restarts (reloaded from the DB each cycle). New read-only endpoints `GET /admin/api/incidents` and `/admin/api/incidents/:id/alerts`. Migration v27 (`incidents` table + `alerts.incident_id`). Full storm-lifecycle test incl. non-grouping of healthy devices and post-recovery ungrouping (`incidents_f12_test.go`).
+
 ## [0.11.8] - 2026-07-03
 
 ### Added

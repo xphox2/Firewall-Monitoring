@@ -1921,6 +1921,11 @@
             // the operator opted in via the "Show snoozed" toggle (the
             // server default filters them out).
             var snoozedActive = !!(a.snoozed_until && (new Date(a.snoozed_until).getTime() > Date.now()));
+            // F12: alerts grouped under an incident carry a chip so the storm
+            // reads as one story (notification was muted for children).
+            var incidentChip = a.incident_id
+                ? ' <span class="badge critical" style="opacity:0.85" title="Grouped under incident #' + a.incident_id + ' — individual notification muted">INC#' + a.incident_id + '</span>'
+                : '';
             if (a.suppressed) {
                 statusCol = '<span class="badge unknown">MAINT</span>';
             } else if (snoozedActive) {
@@ -1946,7 +1951,7 @@
                 checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + deviceCell + '</td>' +
-                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + '</span></td>' +
+                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + incidentChip + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td class="expandable-msg">' + escapeHtml(a.message) + '</td>' +
                 '<td>' + statusCol + '</td>' +
@@ -1967,6 +1972,11 @@
             // status, with an Unsnooze button. Snooze is orthogonal to
             // acknowledged: a snoozed-then-acked alert is still acked.
             var snoozedActive = !!(a.snoozed_until && (new Date(a.snoozed_until).getTime() > Date.now()));
+            // F12: alerts grouped under an incident carry a chip so the storm
+            // reads as one story (notification was muted for children).
+            var incidentChip = a.incident_id
+                ? ' <span class="badge critical" style="opacity:0.85" title="Grouped under incident #' + a.incident_id + ' — individual notification muted">INC#' + a.incident_id + '</span>'
+                : '';
             if (a.suppressed) {
                 statusHtml = '<span class="badge unknown">SUPPRESSED (MAINT)</span>';
             } else if (snoozedActive) {
