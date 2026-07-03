@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.7] - 2026-07-03
+
+### Added
+- **PagerDuty, Opsgenie, and Microsoft Teams notification channels** (v0.11 Tranche 2, closes the P1-1 channel gap): PagerDuty via Events API v2 and Opsgenie via the Alerts API are **stateful** — alerts carry a deterministic dedup key/alias, severity maps to their native scales (critical→critical/P1, warning→warning/P3), and the companion recovery events **resolve/close** the incident instead of double-paging; Teams gets severity-colored MessageCards. Credentials are global (Settings → Notifications: routing key + API key encrypted at rest, Teams URL; or `PAGERDUTY_ROUTING_KEY`/`OPSGENIE_API_KEY`/`TEAMS_WEBHOOK_URL`), and routing is **policy-gated hard**: unlike the legacy channels there is no presence-only fallback — a policy must explicitly enable PagerDuty/Opsgenie/Teams (new checkboxes in the policy editor), because paging a human is a routing decision, not a default. Test buttons for all three on the settings page. Migration v25. Payload golden tests + eligibility matrix (`incident_channels_test.go`).
+
 ## [0.11.6] - 2026-07-03
 
 ### Added

@@ -2384,7 +2384,10 @@
                 { key: 'slack_webhook', label: 'Slack Webhook URL', type: 'text' },
                 { key: 'discord_webhook', label: 'Discord Webhook URL', type: 'text' },
                 { key: 'webhook_url', label: 'Generic Webhook URL', type: 'text' },
-                { key: 'webhook_secret', label: 'Webhook Signing Secret (HMAC-SHA256, optional)', type: 'password' }
+                { key: 'webhook_secret', label: 'Webhook Signing Secret (HMAC-SHA256, optional)', type: 'password' },
+                { key: 'pagerduty_routing_key', label: 'PagerDuty Routing Key (Events API v2)', type: 'password' },
+                { key: 'opsgenie_api_key', label: 'Opsgenie API Key', type: 'password' },
+                { key: 'teams_webhook', label: 'Microsoft Teams Webhook URL', type: 'text' }
             ].map(function(s) {
                 var found = notifSettings.find(function(x) { return x.key === s.key; });
                 var savedVal = found ? found.value : '';
@@ -3181,6 +3184,9 @@
             document.getElementById('policy-notify-slack').checked = p.notify_slack;
             document.getElementById('policy-notify-discord').checked = p.notify_discord;
             document.getElementById('policy-notify-webhook').checked = p.notify_webhook;
+            document.getElementById('policy-notify-pagerduty').checked = p.notify_pagerduty;
+            document.getElementById('policy-notify-opsgenie').checked = p.notify_opsgenie;
+            document.getElementById('policy-notify-teams').checked = p.notify_teams;
             document.getElementById('policy-email-recipients').value = p.email_recipients || '';
             document.getElementById('policy-slack-url').value = p.slack_webhook_url || '';
             document.getElementById('policy-discord-url').value = p.discord_webhook_url || '';
@@ -3290,6 +3296,9 @@
                 notify_slack: document.getElementById('policy-notify-slack').checked,
                 notify_discord: document.getElementById('policy-notify-discord').checked,
                 notify_webhook: document.getElementById('policy-notify-webhook').checked,
+                notify_pagerduty: document.getElementById('policy-notify-pagerduty').checked,
+                notify_opsgenie: document.getElementById('policy-notify-opsgenie').checked,
+                notify_teams: document.getElementById('policy-notify-teams').checked,
                 email_recipients: document.getElementById('policy-email-recipients').value,
                 slack_webhook_url: document.getElementById('policy-slack-url').value,
                 discord_webhook_url: document.getElementById('policy-discord-url').value,

@@ -28,8 +28,10 @@ import (
 // responses. Defined at package scope so GetSettings, UpdateSettings, and
 // the startup backfill share one list. v0.10.226 (see CHANGELOG).
 var settingsSecretKeys = map[string]bool{
-	"smtp_password":  true,
-	"webhook_secret": true,
+	"smtp_password":         true,
+	"webhook_secret":        true,
+	"pagerduty_routing_key": true,
+	"opsgenie_api_key":      true,
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -91,6 +93,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		"discord_webhook":            true,
 		"webhook_url":                true,
 		"webhook_secret":             true,
+		"pagerduty_routing_key":      true,
+		"opsgenie_api_key":           true,
+		"teams_webhook":              true,
 		"public_refresh_interval":    true,
 		"public_show_vpn":            true,
 		"public_show_connections":    true,
@@ -801,9 +806,29 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	}
 
 	webhookURL := req.URL
-	if webhookURL == "" {
-		// Fall back to DB/config
-		webhookURL = h.getNotificationSetting(req.Type)
+	// T2-5: the incident channels post to FIXED vendor endpoints with a stored
+	// credential — no user URL involved.
+	extraHeaders := map[string]string{}
+	switch req.Type {
+	case "pagerduty":
+		if h.getNotificationSetting("pagerduty_routing_key") == "" {
+			c.JSON(http.StatusBadRequest, response.Error("No PagerDuty routing key configured"))
+			return
+		}
+		webhookURL = "https://events.pagerduty.com/v2/enqueue"
+	case "opsgenie":
+		key := h.getNotificationSetting("opsgenie_api_key")
+		if key == "" {
+			c.JSON(http.StatusBadRequest, response.Error("No Opsgenie API key configured"))
+			return
+		}
+		webhookURL = "https://api.opsgenie.com/v2/alerts"
+		extraHeaders["Authorization"] = "GenieKey " + key
+	default:
+		if webhookURL == "" {
+			// Fall back to DB/config
+			webhookURL = h.getNotificationSetting(req.Type)
+		}
 	}
 
 	if webhookURL == "" {
@@ -833,6 +858,32 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	case "discord_webhook":
 		payload = map[string]interface{}{
 			"content": "Firewall Monitor - Test notification. Your Discord webhook is working!",
+		}
+	case "pagerduty":
+		payload = map[string]interface{}{
+			"routing_key":  h.getNotificationSetting("pagerduty_routing_key"),
+			"event_action": "trigger",
+			"dedup_key":    "fwmon-test-event",
+			"payload": map[string]interface{}{
+				"summary":  "Firewall Monitor - Test event. Your PagerDuty integration is working! (auto-resolves)",
+				"source":   "firewall-mon",
+				"severity": "info",
+			},
+		}
+	case "opsgenie":
+		payload = map[string]interface{}{
+			"message":  "Firewall Monitor - Test alert. Your Opsgenie integration is working!",
+			"alias":    "fwmon-test-alert",
+			"priority": "P5",
+			"source":   "firewall-mon",
+		}
+	case "teams_webhook":
+		payload = map[string]interface{}{
+			"@type":    "MessageCard",
+			"@context": "http://schema.org/extensions",
+			"summary":  "Firewall Monitor test",
+			"title":    "Firewall Monitor - Test notification",
+			"text":     "Your Microsoft Teams webhook is working!",
 		}
 	default:
 		payload = map[string]interface{}{
@@ -871,6 +922,9 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	for k, v := range extraHeaders {
+		httpReq.Header.Set(k, v)
+	}
 	if signSig != "" {
 		httpReq.Header.Set("X-FirewallMon-Timestamp", signTS)
 		httpReq.Header.Set("X-FirewallMon-Signature", signSig)

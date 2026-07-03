@@ -56,6 +56,13 @@ type NotifyConfig struct {
 	WebHookURL        string
 	// WebhookSecret signs generic-webhook payloads (F18). Empty = unsigned.
 	WebhookSecret string
+	// Incident channels (T2-5): global credentials; presence = configured.
+	PagerDutyRoutingKey string
+	OpsgenieAPIKey      string
+	TeamsWebhookURL     string
+	EnablePagerDuty     bool
+	EnableOpsgenie      bool
+	EnableTeams         bool
 	// Per-channel enable flags from alert policy resolution.
 	// When all are false and no policy is active, SendAlert falls through to
 	// the legacy behaviour (check EmailEnabled / webhook URL presence).
@@ -93,17 +100,20 @@ func NewNotifier(cfg *config.Config) *Notifier {
 // The caller must hold any necessary locks when reading cfg.
 func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
 	return NotifyConfig{
-		EmailEnabled:      cfg.EmailEnabled,
-		SMTPHost:          cfg.SMTPHost,
-		SMTPPort:          cfg.SMTPPort,
-		SMTPUsername:      cfg.SMTPUsername,
-		SMTPPassword:      cfg.SMTPPassword,
-		SMTPFrom:          cfg.SMTPFrom,
-		SMTPTo:            cfg.SMTPTo,
-		SlackWebhookURL:   cfg.SlackWebhookURL,
-		DiscordWebhookURL: cfg.DiscordWebhookURL,
-		WebHookURL:        cfg.WebHookURL,
-		WebhookSecret:     cfg.WebhookSecret,
+		EmailEnabled:        cfg.EmailEnabled,
+		SMTPHost:            cfg.SMTPHost,
+		SMTPPort:            cfg.SMTPPort,
+		SMTPUsername:        cfg.SMTPUsername,
+		SMTPPassword:        cfg.SMTPPassword,
+		SMTPFrom:            cfg.SMTPFrom,
+		SMTPTo:              cfg.SMTPTo,
+		SlackWebhookURL:     cfg.SlackWebhookURL,
+		DiscordWebhookURL:   cfg.DiscordWebhookURL,
+		WebHookURL:          cfg.WebHookURL,
+		WebhookSecret:       cfg.WebhookSecret,
+		PagerDutyRoutingKey: cfg.PagerDutyRoutingKey,
+		OpsgenieAPIKey:      cfg.OpsgenieAPIKey,
+		TeamsWebhookURL:     cfg.TeamsWebhookURL,
 	}
 }
 
@@ -121,10 +131,38 @@ func channelEligibility(nc NotifyConfig) (email, slack, discord, webhook bool) {
 	return
 }
 
+// incidentChannelEligibility mirrors channelEligibility for the T2-5 channels.
+// The incident channels are policy-gated HARD: with no active policy they stay
+// off (unlike the legacy channels' presence-only fallback) — paging a human is
+// an explicit routing decision, not a default.
+func incidentChannelEligibility(nc NotifyConfig) (pagerduty, opsgenie, teams bool) {
+	pagerduty = nc.PagerDutyRoutingKey != "" && nc.PolicyActive && nc.EnablePagerDuty
+	opsgenie = nc.OpsgenieAPIKey != "" && nc.PolicyActive && nc.EnableOpsgenie
+	teams = nc.TeamsWebhookURL != "" && nc.PolicyActive && nc.EnableTeams
+	return
+}
+
 func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	var errs []error
 
 	sendEmail, sendSlack, sendDiscord, sendWebhook := channelEligibility(nc)
+	sendPD, sendOG, sendTeams := incidentChannelEligibility(nc)
+
+	if sendPD {
+		if err := n.sendPagerDuty(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("pagerduty failed: %w", err))
+		}
+	}
+	if sendOG {
+		if err := n.sendOpsgenie(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("opsgenie failed: %w", err))
+		}
+	}
+	if sendTeams {
+		if err := n.sendTeams(alert, nc); err != nil {
+			errs = append(errs, fmt.Errorf("teams failed: %w", err))
+		}
+	}
 
 	if sendEmail {
 		if err := n.sendEmail(alert, nc); err != nil {
@@ -366,6 +404,17 @@ func SignWebhookPayload(body []byte, secret, ts string) string {
 // adds X-FirewallMon-Timestamp + X-FirewallMon-Signature (F18). Exported so
 // the settings test-webhook endpoint sends exactly what production sends.
 func (n *Notifier) PostJSONSigned(url string, payload interface{}, secret string) error {
+	var headers map[string]string
+	if secret != "" {
+		headers = map[string]string{"__sign__": secret}
+	}
+	return n.postJSONWithHeaders(url, payload, headers)
+}
+
+// postJSONWithHeaders is the shared POST core: JSON body, optional extra
+// headers (the reserved "__sign__" pseudo-header triggers F18 signing), SSRF-
+// guarded client, host-only error redaction (M14).
+func (n *Notifier) postJSONWithHeaders(url string, payload interface{}, headers map[string]string) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -375,10 +424,14 @@ func (n *Notifier) PostJSONSigned(url string, payload interface{}, secret string
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if secret != "" {
-		ts := fmt.Sprintf("%d", time.Now().Unix())
-		req.Header.Set("X-FirewallMon-Timestamp", ts)
-		req.Header.Set("X-FirewallMon-Signature", SignWebhookPayload(jsonData, secret, ts))
+	for k, v := range headers {
+		if k == "__sign__" {
+			ts := fmt.Sprintf("%d", time.Now().Unix())
+			req.Header.Set("X-FirewallMon-Timestamp", ts)
+			req.Header.Set("X-FirewallMon-Signature", SignWebhookPayload(jsonData, v, ts))
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 	resp, err := n.client.Do(req)
 	if err != nil {

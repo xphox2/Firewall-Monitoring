@@ -638,6 +638,7 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"email_enabled", "smtp_host", "smtp_port", "smtp_username", "smtp_password",
 		"smtp_from", "smtp_to", "slack_webhook", "discord_webhook", "webhook_url", "webhook_secret",
+		"pagerduty_routing_key", "opsgenie_api_key", "teams_webhook",
 		"report_daily_enabled", "report_daily_time", "report_weekly_enabled",
 		"report_weekly_day", "report_recipients", "report_timezone",
 		"spike_stddev_threshold", "spike_alert_enabled", "spike_min_duration_minutes",
@@ -712,6 +713,20 @@ func (am *AlertManager) RefreshThresholds(db *gorm.DB) {
 			} else {
 				am.config.Alerts.WebhookSecret = s.Value
 			}
+		case "pagerduty_routing_key":
+			if am.db != nil {
+				am.config.Alerts.PagerDutyRoutingKey = am.db.DecryptField(s.Value)
+			} else {
+				am.config.Alerts.PagerDutyRoutingKey = s.Value
+			}
+		case "opsgenie_api_key":
+			if am.db != nil {
+				am.config.Alerts.OpsgenieAPIKey = am.db.DecryptField(s.Value)
+			} else {
+				am.config.Alerts.OpsgenieAPIKey = s.Value
+			}
+		case "teams_webhook":
+			am.config.Alerts.TeamsWebhookURL = s.Value
 		case "report_daily_enabled":
 			am.config.Alerts.ReportDailyEnabled = s.Value == "true"
 		case "report_daily_time":

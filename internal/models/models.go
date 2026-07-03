@@ -298,14 +298,19 @@ type Alert struct {
 }
 
 type AlertPolicy struct {
-	ID                uint        `json:"id" gorm:"primaryKey"`
-	Name              string      `json:"name" gorm:"uniqueIndex;not null"`
-	Description       string      `json:"description"`
-	IsDefault         bool        `json:"is_default" gorm:"default:false;index"`
-	NotifyEmail       bool        `json:"notify_email" gorm:"default:false"`
-	NotifySlack       bool        `json:"notify_slack" gorm:"default:false"`
-	NotifyDiscord     bool        `json:"notify_discord" gorm:"default:false"`
-	NotifyWebhook     bool        `json:"notify_webhook" gorm:"default:false"`
+	ID            uint   `json:"id" gorm:"primaryKey"`
+	Name          string `json:"name" gorm:"uniqueIndex;not null"`
+	Description   string `json:"description"`
+	IsDefault     bool   `json:"is_default" gorm:"default:false;index"`
+	NotifyEmail   bool   `json:"notify_email" gorm:"default:false"`
+	NotifySlack   bool   `json:"notify_slack" gorm:"default:false"`
+	NotifyDiscord bool   `json:"notify_discord" gorm:"default:false"`
+	NotifyWebhook bool   `json:"notify_webhook" gorm:"default:false"`
+	// Incident channels (T2-5): credentials are global (settings/env);
+	// these flags route a policy's alerts to them.
+	NotifyPagerDuty   bool        `json:"notify_pagerduty" gorm:"default:false"`
+	NotifyOpsgenie    bool        `json:"notify_opsgenie" gorm:"default:false"`
+	NotifyTeams       bool        `json:"notify_teams" gorm:"default:false"`
 	EmailRecipients   string      `json:"email_recipients"`
 	SlackWebhookURL   string      `json:"slack_webhook_url"`
 	DiscordWebhookURL string      `json:"discord_webhook_url"`

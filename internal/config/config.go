@@ -244,6 +244,11 @@ type AlertsConfig struct {
 	SpikeStdDevThreshold    float64
 	SpikeAlertEnabled       bool
 	SpikeMinDurationMinutes int // a real-time spike must persist this long before it alerts
+	// Incident-channel credentials (T2-5). Presence = configured, mirroring
+	// the Slack/Discord/webhook convention; per-policy flags gate routing.
+	PagerDutyRoutingKey string
+	OpsgenieAPIKey      string
+	TeamsWebhookURL     string
 	// Flap suppression (F13): when an alert fires and auto-resolves in under
 	// FlapMinActiveSeconds at least FlapMaxFires times within
 	// FlapWindowMinutes, the next fire is saved suppressed (no notification)
@@ -441,6 +446,9 @@ func Load() *Config {
 			FlapMaxFires:             getIntEnv("ALERT_FLAP_MAX_FIRES", 5),
 			FlapWindowMinutes:        getIntEnv("ALERT_FLAP_WINDOW_MINUTES", 60),
 			FlapMinActiveSeconds:     getIntEnv("ALERT_FLAP_MIN_ACTIVE_SECONDS", 120),
+			PagerDutyRoutingKey:      getEnv("PAGERDUTY_ROUTING_KEY", ""),
+			OpsgenieAPIKey:           getEnv("OPSGENIE_API_KEY", ""),
+			TeamsWebhookURL:          getEnv("TEAMS_WEBHOOK_URL", ""),
 			ProbeDataLagAlertMinutes: getIntEnv("PROBE_DATA_LAG_ALERT_MINUTES", 60),
 		},
 		Uptime: UptimeConfig{

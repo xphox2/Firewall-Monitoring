@@ -29,6 +29,9 @@ type ResolvedAlertConfig struct {
 	NotifySlack       bool
 	NotifyDiscord     bool
 	NotifyWebhook     bool
+	NotifyPagerDuty   bool
+	NotifyOpsgenie    bool
+	NotifyTeams       bool
 	EmailRecipients   string
 	SlackURL          string
 	DiscordURL        string
@@ -159,6 +162,9 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		resolved.NotifySlack = policy.NotifySlack
 		resolved.NotifyDiscord = policy.NotifyDiscord
 		resolved.NotifyWebhook = policy.NotifyWebhook
+		resolved.NotifyPagerDuty = policy.NotifyPagerDuty
+		resolved.NotifyOpsgenie = policy.NotifyOpsgenie
+		resolved.NotifyTeams = policy.NotifyTeams
 		resolved.EmailRecipients = policy.EmailRecipients
 		resolved.SlackURL = policy.SlackWebhookURL
 		resolved.DiscordURL = policy.DiscordWebhookURL
@@ -363,11 +369,18 @@ func overrideThreshold(current float64, alertType models.AlertType, cpu, mem, di
 // It merges resolved policy config with global notification settings as fallbacks.
 func BuildNotifyConfigFromResolved(resolved ResolvedAlertConfig, globalNC notifier.NotifyConfig) notifier.NotifyConfig {
 	nc := notifier.NotifyConfig{
-		PolicyActive:  resolved.PolicyID != nil,
-		EnableEmail:   resolved.NotifyEmail,
-		EnableSlack:   resolved.NotifySlack,
-		EnableDiscord: resolved.NotifyDiscord,
-		EnableWebhook: resolved.NotifyWebhook,
+		PolicyActive:    resolved.PolicyID != nil,
+		EnableEmail:     resolved.NotifyEmail,
+		EnableSlack:     resolved.NotifySlack,
+		EnableDiscord:   resolved.NotifyDiscord,
+		EnableWebhook:   resolved.NotifyWebhook,
+		EnablePagerDuty: resolved.NotifyPagerDuty,
+		EnableOpsgenie:  resolved.NotifyOpsgenie,
+		EnableTeams:     resolved.NotifyTeams,
+		// Incident-channel creds are global-only (no per-policy override)
+		PagerDutyRoutingKey: globalNC.PagerDutyRoutingKey,
+		OpsgenieAPIKey:      globalNC.OpsgenieAPIKey,
+		TeamsWebhookURL:     globalNC.TeamsWebhookURL,
 		// SMTP settings always come from global
 		EmailEnabled: globalNC.EmailEnabled,
 		SMTPHost:     globalNC.SMTPHost,

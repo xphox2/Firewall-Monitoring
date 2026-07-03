@@ -1240,3 +1240,18 @@ func (d *Database) migrateAlertRuleZScoreMode() error {
 	log.Printf("migrate v24 alert_rule_zscore_mode: columns ensured")
 	return nil
 }
+
+// migrateAlertPolicyIncidentChannels (v25, T2-5) adds the PagerDuty/Opsgenie/
+// Teams routing flags to alert policies. Additive, default off.
+func (d *Database) migrateAlertPolicyIncidentChannels() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.AlertPolicy{})
+	}
+	for _, col := range []string{"notify_pager_duty", "notify_opsgenie", "notify_teams"} {
+		if err := d.execMaintenanceDDL(`ALTER TABLE alert_policies ADD COLUMN IF NOT EXISTS ` + col + ` boolean NOT NULL DEFAULT false`); err != nil {
+			return fmt.Errorf("migrate v25 add alert_policies.%s: %w", col, err)
+		}
+	}
+	log.Printf("migrate v25 alert_policy_incident_channels: columns ensured")
+	return nil
+}
