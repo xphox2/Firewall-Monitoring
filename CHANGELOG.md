@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-07-03
+
+### Fixed
+- **CI: regenerated `tailwind.css`** — the 2FA login form (v0.10.568) added new utility classes to `login.html` without regenerating the CSS, tripping the Tailwind-freshness gate on the 0.10.568 and 0.11.0 pushes (Go lanes were green; Docker Hub publishing correctly skipped both). Images resume publishing from this release — `0.11.1` supersedes the unpublished `0.11.0` tag.
+
 ## [0.11.0] - 2026-07-03
 
 ### Milestone

@@ -1,5 +1,11 @@
 # Lessons
 
+## A pipe eats exit codes — `gh run watch --exit-status | tail` reported green on a RED run (2026-07-03)
+
+**Mistake:** every CI watch used `gh run watch "$ID" --exit-status … | tail -3 && echo CI_GREEN`. The pipeline's status is tail's (always 0), so `CI_GREEN` printed even when the run FAILED. Master was red for two pushes (v0.10.568, v0.11.0 — Tailwind freshness gate) while I reported green, and Docker Hub publishing silently skipped both. Same failure family as the benchmark workflow's `go test | tee` mask fixed earlier the same day — the lesson didn't transfer to my own tooling.
+
+**Rules:** (a) any command whose exit code matters must not end in a bare pipe — use `set -o pipefail` first, or capture the status explicitly; (b) after "CI green", verify the OUTCOME too when something depends on it (the publish run + Hub tags, not just the CI check); (c) when a gate exists for generated artifacts (tailwind.css freshness), regenerate after ANY edit to files it scans — login.html/admin.html class changes require `npm run tailwind`.
+
 ## Plan mode per feature — an approved program plan is not blanket execution authority (2026-07-03)
 
 **Mistake:** after the v0.11 Tranche 1 plan was approved, I shipped Phase A, rolled straight into Phase B, and began Phase C without re-entering plan mode. User: "please make sure you are going into plan mode to plan each one do not just execute it live."
