@@ -106,6 +106,10 @@ func (d *Database) GetAdminByUsername(username string) (*auth.AdminAuth, error) 
 		MustChangePassword: admin.MustChangePassword,
 		Role:               admin.Role,
 		Disabled:           admin.Disabled,
+		TOTPEnabled:        admin.TOTPEnabled,
+		// Decrypted like device secrets; fail-closed "" if the key is gone —
+		// an empty secret validates no code (P0-3).
+		TOTPSecret: d.DecryptField(admin.TOTPSecret),
 	}, nil
 }
 

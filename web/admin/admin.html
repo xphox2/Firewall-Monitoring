@@ -1006,6 +1006,18 @@
                 </div>
                 <button class="btn" data-action="change-password">Change Password</button>
             </div>
+            <!-- Two-factor authentication (P0-3). Self-service: visible to
+                 EVERY role for their own account. Driven by admin-users.js. -->
+            <div class="card" id="card-2fa">
+                <div class="card-header"><h2>Two-Factor Authentication</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">
+                    Adds a 6-digit authenticator code to your login. Enabling revokes your other sessions;
+                    you'll get 10 single-use recovery codes (shown once) for when the authenticator is unavailable.
+                    API tokens are unaffected by design.
+                </p>
+                <div id="twofa-status" style="margin-bottom:12px;"></div>
+                <div id="twofa-flow"></div>
+            </div>
             <!-- Users (RBAC, P0-1). Hidden until /admin/api/me confirms the
                  session is role=admin — server enforces regardless (the users
                  endpoints are in the adminOnlyRoutes map). Rendered/managed by

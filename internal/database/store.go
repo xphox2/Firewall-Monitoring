@@ -41,6 +41,7 @@ type Store interface {
 	AuthStore
 	UserStore
 	TokenStore
+	TOTPStore
 	AuditStore
 	SecretStore
 	MaintenanceOpsStore
@@ -244,6 +245,15 @@ type UserStore interface {
 	// CountOtherEnabledAdmins counts enabled role-admin accounts EXCLUDING the
 	// given id — the last-admin guard (must stay ≥1 before demote/disable/delete).
 	CountOtherEnabledAdmins(excludeID uint) (int64, error)
+}
+
+// TOTPStore covers two-factor enrollment state (P0-3). Secrets arrive already
+// encrypted (EncryptField); recovery-code params are sha256: hashes.
+type TOTPStore interface {
+	SetAdminTOTP(id uint, encSecret string, enabled bool) error
+	ClearAdminTOTP(id uint) error
+	ReplaceRecoveryCodes(adminID uint, hashes []string) error
+	ConsumeRecoveryCode(adminID uint, codeHash string) (bool, error)
 }
 
 // TokenStore covers scoped API-token management (P0-2). Resolution for the

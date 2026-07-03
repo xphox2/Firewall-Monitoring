@@ -1,5 +1,11 @@
 # Lessons
 
+## Plan mode per feature — an approved program plan is not blanket execution authority (2026-07-03)
+
+**Mistake:** after the v0.11 Tranche 1 plan was approved, I shipped Phase A, rolled straight into Phase B, and began Phase C without re-entering plan mode. User: "please make sure you are going into plan mode to plan each one do not just execute it live."
+
+**Rules:** (a) every feature/phase of a multi-part program starts with its own plan-mode session and ExitPlanMode approval, even when the umbrella plan already sketched it; (b) the per-unit plan should be a short delta — what changed since the umbrella design, exact files, verification — not a re-derivation; (c) momentum after a green CI run is the trigger to watch for: finish the unit, report, then PLAN the next one.
+
 ## Answer the user's "why X vs Y" question before re-asking for the decision (2026-07-02)
 
 **Mistake:** user asked "why ghcr vs. docker hub?"; I gave a generic trade-off list and immediately re-presented the same choice still recommending ghcr. User: "I asked this question and you ignored me."

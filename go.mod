@@ -9,6 +9,7 @@ require (
 	github.com/gosnmp/gosnmp v1.43.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/oschwald/geoip2-golang v1.13.0
+	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/thoj/go-ircevent v0.0.0-20210723090443-73e444401d64
 	github.com/wcharczuk/go-chart/v2 v2.1.2
@@ -25,6 +26,7 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect

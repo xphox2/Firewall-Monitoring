@@ -72,6 +72,7 @@ func NewDatabaseForTesting(t interface {
 		&models.SystemSetting{},
 		&models.Admin{},
 		&models.ApiToken{},
+		&models.AdminRecoveryCode{},
 	}
 
 	for _, m := range testModels {

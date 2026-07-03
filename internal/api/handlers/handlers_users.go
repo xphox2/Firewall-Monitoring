@@ -26,6 +26,7 @@ type userDTO struct {
 	Role               string    `json:"role"`
 	Disabled           bool      `json:"disabled"`
 	MustChangePassword bool      `json:"must_change_password"`
+	TOTPEnabled        bool      `json:"totp_enabled"`
 	CreatedAt          time.Time `json:"created_at"`
 }
 
@@ -36,6 +37,7 @@ func toUserDTO(a *models.Admin) userDTO {
 		Role:               a.Role,
 		Disabled:           a.Disabled,
 		MustChangePassword: a.MustChangePassword,
+		TOTPEnabled:        a.TOTPEnabled,
 		CreatedAt:          a.CreatedAt,
 	}
 }
@@ -47,10 +49,19 @@ func (h *Handler) GetMe(c *gin.Context) {
 	username, _ := c.Get("username")
 	role, _ := c.Get("role")
 	userID, _ := c.Get("user_id")
+	totpEnabled := false
+	if db := h.reqDB(c); db != nil {
+		if name, ok := username.(string); ok {
+			if admin, err := db.GetAdminByUsername(name); err == nil && admin != nil {
+				totpEnabled = admin.TOTPEnabled
+			}
+		}
+	}
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"id":       userID,
-		"username": username,
-		"role":     role,
+		"id":           userID,
+		"username":     username,
+		"role":         role,
+		"totp_enabled": totpEnabled,
 	}))
 }
 

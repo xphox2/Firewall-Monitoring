@@ -74,7 +74,21 @@
                 </div>
                 <button type="submit" id="login-btn" class="w-full px-4 py-3.5 rounded-xl border-none btn-gradient text-white text-base font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">Login</button>
             </form>
-            
+
+            <!-- 2FA second step (P0-3): shown when login answers totp_required;
+                 posts the code to /api/auth/totp. Driven by admin-login.js. -->
+            <form id="totp-form" class="hidden">
+                <div class="mb-6">
+                    <label for="totp-code" class="block mb-2 text-xs font-semibold uppercase tracking-wider text-[#8b949e]">Authentication Code</label>
+                    <input type="text" id="totp-code" name="totp-code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" required class="w-full px-4 py-3.5 rounded-xl input-premium text-white text-base text-center tracking-[0.3em]">
+                    <p class="mt-2 text-xs text-[#8b949e]">Enter the code from your authenticator app, or a recovery code.</p>
+                </div>
+                <button type="submit" id="totp-btn" class="w-full px-4 py-3.5 rounded-xl border-none btn-gradient text-white text-base font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">Verify</button>
+                <div class="text-center mt-4">
+                    <a href="/admin/login" class="text-sm font-medium text-[#7dd3fc] hover:text-[#c4b5fd] no-underline transition-colors">Start over</a>
+                </div>
+            </form>
+
             <div class="text-center mt-6">
                 <a href="/" class="text-sm font-medium text-[#7dd3fc] hover:text-[#c4b5fd] no-underline transition-colors">&larr; Back to Dashboard</a>
             </div>

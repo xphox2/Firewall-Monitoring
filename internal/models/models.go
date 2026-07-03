@@ -571,10 +571,31 @@ type Admin struct {
 	Role string `json:"role" gorm:"default:admin"`
 	// Disabled blocks login and invalidates sessions (via TokenVersion bump on
 	// set) without destroying the account row or its audit-log identity.
-	Disabled  bool      `json:"disabled" gorm:"default:false"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Disabled bool `json:"disabled" gorm:"default:false"`
+	// TOTPSecret is the RFC 6238 shared secret, stored {enc}-encrypted via the
+	// field-encryption key chain (crypto.go) — never plaintext at rest. Empty
+	// until the user starts enrollment; TOTPEnabled stays false until the
+	// first code is verified, so an abandoned setup never locks anyone out.
+	TOTPSecret      string     `json:"-"`
+	TOTPEnabled     bool       `json:"totp_enabled" gorm:"default:false"`
+	TOTPConfirmedAt *time.Time `json:"-"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
+
+// AdminRecoveryCode is a single-use 2FA fallback code (P0-3). Only the
+// sha256: hash is stored (same at-rest scheme as probe keys / API tokens);
+// consumption is an atomic UPDATE ... WHERE used_at IS NULL so two concurrent
+// presentations of the same code can never both succeed.
+type AdminRecoveryCode struct {
+	ID        uint       `json:"id" gorm:"primaryKey"`
+	AdminID   uint       `json:"admin_id" gorm:"index;not null"`
+	CodeHash  string     `json:"-" gorm:"index;not null"`
+	UsedAt    *time.Time `json:"used_at"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func (AdminRecoveryCode) TableName() string { return "admin_recovery_codes" }
 
 // ApiToken is a scoped bearer credential for programmatic API access (P0-2).
 // The plaintext is `fwm_` + 43 url-safe random chars, shown exactly once at

@@ -1185,3 +1185,29 @@ func (d *Database) migrateAPITokens() error {
 	log.Printf("migrate v21 api_tokens: table ensured")
 	return nil
 }
+
+// migrateAdminTOTP (v22, P0-3) adds the TOTP columns to admins and creates the
+// admin_recovery_codes table. All additive: TOTP is opt-in per account and
+// defaults off, so upgrading changes nothing until a user enrolls.
+func (d *Database) migrateAdminTOTP() error {
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.Admin{}); err != nil {
+			return fmt.Errorf("migrate v22 admins totp columns: %w", err)
+		}
+		return d.db.AutoMigrate(&models.AdminRecoveryCode{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS totp_secret text NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate v22 add admins.totp_secret: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS totp_enabled boolean NOT NULL DEFAULT false`); err != nil {
+		return fmt.Errorf("migrate v22 add admins.totp_enabled: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS totp_confirmed_at timestamptz`); err != nil {
+		return fmt.Errorf("migrate v22 add admins.totp_confirmed_at: %w", err)
+	}
+	if err := d.db.AutoMigrate(&models.AdminRecoveryCode{}); err != nil {
+		return fmt.Errorf("migrate v22 admin_recovery_codes: %w", err)
+	}
+	log.Printf("migrate v22 admin_totp: ensured admins TOTP columns + admin_recovery_codes table")
+	return nil
+}

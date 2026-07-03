@@ -70,6 +70,7 @@ var registeredMigrations = []migration{
 	{version: 19, name: "admin_must_change_password", run: (*Database).migrateAdminMustChangePassword},
 	{version: 20, name: "admin_roles", run: (*Database).migrateAdminRoles},
 	{version: 21, name: "api_tokens", run: (*Database).migrateAPITokens},
+	{version: 22, name: "admin_totp", run: (*Database).migrateAdminTOTP},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

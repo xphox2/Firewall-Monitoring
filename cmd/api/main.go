@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.567"
+const ServerVersion = "0.10.568"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -599,6 +599,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		}
 
 		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)
+		// 2FA second step (P0-3): exchanges the pending_2fa cookie + a TOTP or
+		// recovery code for a session. Same rate limiter as login.
+		api.POST("/auth/totp", middleware.LoginRateLimiter(), handler.TOTPLogin)
 
 		api.POST("/probes/register", handler.RegisterProbe)
 		api.POST("/probes/heartbeat", handler.ProbeHeartbeat)
@@ -651,6 +654,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/logout":            true,
 			"/admin/api/settings/password": true,
 			"/admin/api/me":                true,
+			"/admin/api/2fa/setup":         true,
+			"/admin/api/2fa/verify":        true,
+			"/admin/api/2fa/disable":       true,
 		},
 		map[string]bool{ // adminOnlyRoutes — role=admin, any method
 			"/admin/api/settings":                  true,
@@ -659,6 +665,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/users":                     true,
 			"/admin/api/users/:id":                 true,
 			"/admin/api/users/:id/reset-password":  true,
+			"/admin/api/users/:id/reset-2fa":       true,
 			"/admin/api/tokens":                    true,
 			"/admin/api/tokens/:id":                true,
 			"/admin/api/probes/:id/regenerate-key": true,
@@ -867,6 +874,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.PUT("/api/users/:id", handler.UpdateUser)
 		admin.DELETE("/api/users/:id", handler.DeleteUser)
 		admin.POST("/api/users/:id/reset-password", handler.ResetUserPassword)
+		// TOTP 2FA (P0-3): self-service enrollment + admin-only reset.
+		admin.POST("/api/2fa/setup", handler.Setup2FA)
+		admin.POST("/api/2fa/verify", handler.Verify2FA)
+		admin.POST("/api/2fa/disable", handler.Disable2FA)
+		admin.POST("/api/users/:id/reset-2fa", handler.ResetUser2FA)
 		// Scoped API tokens (P0-2) — admin-only; creation is session-only
 		// (enforced in the handler: no token-mints-token).
 		admin.GET("/api/tokens", handler.ListAPITokens)

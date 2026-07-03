@@ -104,6 +104,33 @@ effect on an already-initialized install. To reset:
 3. Start with `ADMIN_USERNAME` + `ADMIN_PASSWORD` set — `InitAdmin` recreates
    the admin from those env values on boot.
 
+Note: with multiple users (v0.11 RBAC), `DELETE FROM admins WHERE username='<name>';`
+targets one account; deleting all rows removes every user and re-bootstraps only
+the env-configured admin.
+
+---
+
+## Two-factor authentication lockout (last admin)
+
+If a user loses both their authenticator and recovery codes, any **admin** can
+clear their 2FA from Settings → Users → *Reset 2FA*. If the **last admin** is
+the one locked out, clear the flag directly in the database:
+
+```sql
+UPDATE admins SET totp_enabled = false, totp_secret = '' WHERE username = '<name>';
+DELETE FROM admin_recovery_codes WHERE admin_id = (SELECT id FROM admins WHERE username = '<name>');
+```
+
+(In the single container: wrap in the same `docker exec … psql` as above.) The
+user then logs in with password only and can re-enroll.
+
+Two design notes worth knowing during an incident: **API tokens bypass TOTP by
+design** (they are their own credential class — revoke them from Settings → API
+Tokens if an account is suspect), and TOTP secrets are encrypted with the same
+field-encryption key chain as device credentials — if `ENCRYPTION_KEY` is lost,
+TOTP validation fails closed (codes stop working) and the startup canary flags
+the key problem loudly (see “Failure modes”).
+
 ---
 
 ## JWT secret rotation

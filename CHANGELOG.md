@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.568] - 2026-07-03
+
+### Added
+- **TOTP two-factor authentication** (v0.11 program Tranche 1, Phase C / P0-3, closes F68): opt-in per account. Login becomes two steps for enrolled users — password issues only a 5-minute httpOnly `pending_2fa` token (Stage-marked; rejected by every admin middleware, so it grants exactly one thing: `POST /api/auth/totp`), and a valid RFC 6238 code (±1 period skew, single-use-per-slot replay guard) or single-use recovery code completes the session. TOTP failures share the password lockout bucket (5/15min), so the second factor can't be brute-forced on a fresh budget. Self-service enrollment on the settings page (password re-auth → manual-entry secret + otpauth URI → verify → 10 recovery codes shown once, hashes-only at rest); disable requires password AND a code; admins can reset another user's 2FA (Settings → Users). Secrets are stored `{enc}`-encrypted via the existing field-encryption key chain (fail-closed). Enabling/disabling revokes the account's live sessions. API tokens bypass TOTP by design (own credential class). Migration v22; new dep `pquerna/otp`. Last-admin lockout runbook in `docs/OPERATIONS.md`.
+- Tests: pending-token stage/expiry + replay-slot guard + shared-lockout (`totp_pending_test.go`), pending-token-rejected-everywhere (`pending_stage_test.go`), full second-step flow incl. replay and recovery single-use (`handlers_totp_test.go`), secret encryption round-trip + recovery-code burn + migration idempotency (`totp_lifecycle_test.go`).
+
 ## [0.10.567] - 2026-07-03
 
 ### Added

@@ -288,6 +288,12 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 			handleAuthFailure(c)
 			return
 		}
+		// A pending 2FA token (Stage=totp) is NOT a session — it only grants
+		// POST /api/auth/totp. Never let it into /admin (P0-3).
+		if claims.Stage != "" {
+			handleAuthFailure(c)
+			return
+		}
 
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
@@ -309,7 +315,9 @@ func CheckAdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 		}
 
 		claims, err := authManager.ValidateToken(token)
-		if err != nil {
+		if err != nil || claims.Stage != "" {
+			// Invalid — or a pending 2FA token, which must not count as an
+			// admin session anywhere (P0-3).
 			c.Set("is_admin", false)
 			c.Next()
 			return

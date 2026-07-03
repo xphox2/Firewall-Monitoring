@@ -99,6 +99,7 @@ func (h *Handler) Login(c *gin.Context) {
 	var adminID uint = 1
 	var tokenVersion uint
 	var mustChangePassword bool
+	totpEnabled := false
 	role := auth.RoleAdmin
 	if db != nil {
 		adminRecord, adminErr := db.GetAdminByUsername(creds.Username)
@@ -106,13 +107,64 @@ func (h *Handler) Login(c *gin.Context) {
 			adminID = adminRecord.ID
 			tokenVersion = adminRecord.TokenVersion
 			mustChangePassword = adminRecord.MustChangePassword
+			totpEnabled = adminRecord.TOTPEnabled
 			if adminRecord.Role != "" {
 				role = adminRecord.Role
 			}
 		}
 	}
 
-	token, err := h.authManager.GenerateToken(creds.Username, adminID, tokenVersion, role)
+	// 2FA-enabled accounts don't get a session yet: they get a short-lived
+	// pending token that only unlocks POST /api/auth/totp (P0-3).
+	if totpEnabled {
+		pending, perr := h.authManager.GeneratePendingToken(creds.Username, adminID, tokenVersion)
+		if perr != nil {
+			httputil.InternalError(c, "Failed to generate token", perr)
+			return
+		}
+		cookieSecure, cookieSameSite, _ := h.sessionCookieParams()
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name:     "pending_2fa",
+			Value:    pending,
+			MaxAge:   int(auth.PendingTokenExpiry.Seconds()),
+			Path:     "/",
+			Secure:   cookieSecure,
+			HttpOnly: true,
+			SameSite: cookieSameSite,
+		})
+		c.JSON(http.StatusOK, response.Success(gin.H{
+			"totp_required": true,
+		}))
+		return
+	}
+
+	h.issueSession(c, creds.Username, adminID, tokenVersion, role, gin.H{
+		"message":              "Login successful",
+		"csrf_token":           "", // filled by issueSession
+		"must_change_password": mustChangePassword,
+	})
+}
+
+// sessionCookieParams derives the cookie attributes every auth cookie shares.
+func (h *Handler) sessionCookieParams() (secure bool, sameSite http.SameSite, maxAge int) {
+	secure = h.config != nil && h.config.Server.CookieSecure
+	sameSite = http.SameSiteStrictMode
+	if h.config != nil && h.config.Server.CookieSameSite != "" {
+		sameSite = parseSameSite(h.config.Server.CookieSameSite)
+	}
+	maxAge = 86400
+	if h.config != nil && h.config.Auth.TokenExpiry > 0 {
+		maxAge = int(h.config.Auth.TokenExpiry.Seconds())
+	}
+	return
+}
+
+// issueSession mints the JWT + CSRF pair and sets both cookies — the tail of
+// a fully-completed authentication, shared by password-only logins and the
+// TOTP second step. extra is merged into the success payload (csrf_token is
+// always set/overwritten here).
+func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, tokenVersion uint, role string, extra gin.H) {
+	token, err := h.authManager.GenerateToken(username, adminID, tokenVersion, role)
 	if err != nil {
 		httputil.InternalError(c, "Failed to generate token", err)
 		return
@@ -120,16 +172,7 @@ func (h *Handler) Login(c *gin.Context) {
 
 	// Generate HMAC-signed CSRF token tied to the auth token
 	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
-
-	cookieSecure := h.config != nil && h.config.Server.CookieSecure
-	cookieSameSite := http.SameSiteStrictMode
-	if h.config != nil && h.config.Server.CookieSameSite != "" {
-		cookieSameSite = parseSameSite(h.config.Server.CookieSameSite)
-	}
-	cookieMaxAge := 86400
-	if h.config != nil && h.config.Auth.TokenExpiry > 0 {
-		cookieMaxAge = int(h.config.Auth.TokenExpiry.Seconds())
-	}
+	cookieSecure, cookieSameSite, cookieMaxAge := h.sessionCookieParams()
 
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
@@ -150,11 +193,13 @@ func (h *Handler) Login(c *gin.Context) {
 		SameSite: cookieSameSite,
 	})
 
-	c.JSON(http.StatusOK, response.Success(gin.H{
-		"message":              "Login successful",
-		"csrf_token":           csrfToken,
-		"must_change_password": mustChangePassword,
-	}))
+	payload := gin.H{}
+	for k, v := range extra {
+		payload[k] = v
+	}
+	payload["csrf_token"] = csrfToken
+
+	c.JSON(http.StatusOK, response.Success(payload))
 }
 
 func (h *Handler) Logout(c *gin.Context) {
