@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.11] - 2026-07-03
+
+### Docs
+- **v0.11 Tranche 2 (alerting maturity) marked complete in `docs/FEATURE-ROADMAP.md` Part IV** — the full bundle shipped as v0.11.1–v0.11.10: clear-band hysteresis, role-aware admin UI, HMAC webhook signing, flapping suppression, z-score adaptive baselining, PagerDuty/Opsgenie/Teams channels, escalation step chains, incident grouping, and the MTTA/MTTR + alert-noise report section (migrations v23–v27, all additive). Next tranche in sequence: NetFlow v5/v9 + IPFIX ingestion (cross-repo).
+
 ## [0.11.10] - 2026-07-03
 
 ### Added

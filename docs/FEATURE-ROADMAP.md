@@ -321,8 +321,8 @@ F86–F89 (standing non-goal).
 
 | # | Tranche | Contents |
 |---|---|---|
-| 1 | **Access-control epic** | P0-1 multi-user/RBAC → P0-2 scoped API tokens (F64) → P0-3 TOTP 2FA (F68). Bumps 0.11.0 on completion. |
-| 2 | Alerting maturity | F14 hysteresis → F13 flap suppression → F12 incident grouping; F19 escalation chains; PagerDuty/Opsgenie/Teams notifiers; F17 z-score baselining (P2-5); F18 webhook signing; F05/F06 MTTR+noise reports |
+| 1 | **Access-control epic** | ✅ **SHIPPED v0.11.0** — RBAC (v0.10.566), scoped API tokens/F64 (v0.10.567), TOTP 2FA/F68 (v0.10.568); migrations v20–22. |
+| 2 | Alerting maturity | ✅ **SHIPPED v0.11.1–v0.11.10** — F14 hysteresis (.2), role-aware UI (.3), F18 webhook signing (.4), F13 flap suppression (.5), F17 z-score baselining/P2-5 (.6), PagerDuty+Opsgenie+Teams (.7), F19 escalation chains (.8), F12 incident grouping (.9), F05/F06 MTTA/MTTR+noise reports (.10); migrations v23–27. |
 | 3 | NetFlow v5/v9 + IPFIX (P0-4) | cross-repo, normalize into flow_samples |
 | 4 | Flow detection engine | sFlow roadmap R3/R4, after NetFlow so both sources covered |
 | 5 | SLA & reporting | P1-2 SLA objects + F03 + F33; F01 ad-hoc range; F04+F26 capacity; F07 security posture |
