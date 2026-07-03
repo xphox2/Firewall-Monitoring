@@ -9,7 +9,7 @@
     "prebuild": "npm run tailwind"
   },
   "dependencies": {
-    "tailwindcss": "^3.4.19"
+    "tailwindcss": "^4.3.2"
   },
   "_comment_vendoredBrowserLibraries": "AUDIT-160: provenance/version pins for the pre-minified browser libs committed under cmd/api/static (embedded via go:embed, NOT npm-installed). Full table incl. upstream URLs + licenses in cmd/api/static/js/VENDOR.md. The three cytoscape-fcose-stack files have no version embedded in their artifact; pin on next refresh.",
   "vendoredBrowserLibraries": {
