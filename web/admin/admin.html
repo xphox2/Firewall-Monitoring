@@ -403,7 +403,7 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Devices</h2>
-                    <button class="btn" data-action="show-device-modal">+ Add Device</button>
+                    <button class="btn" data-action="show-device-modal" data-min-role="operator">+ Add Device</button>
                 </div>
                 <div class="table-wrap">
                     <table id="devices-table">
@@ -419,7 +419,7 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Network Connections</h2>
-                    <button class="btn" data-action="show-connection-modal">+ Add Connection</button>
+                    <button class="btn" data-action="show-connection-modal" data-min-role="operator">+ Add Connection</button>
                 </div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 16px; font-size: 0.85rem;">Map IPSec and VXLAN tunnels between your firewalls.</p>
                 <div class="table-wrap">
@@ -838,7 +838,7 @@
                 </div>
                 <div id="alerts-bulk-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;">
                     <span id="alerts-bulk-summary" style="color:var(--fwmon-text-faint);font-size:0.82rem;">No alerts selected</span>
-                    <button class="btn sm" id="alerts-bulk-ack-btn" disabled data-action="bulk-ack-alerts" style="margin-left:auto;">Acknowledge selected</button>
+                    <button class="btn sm" id="alerts-bulk-ack-btn" disabled data-action="bulk-ack-alerts" data-min-role="operator" style="margin-left:auto;">Acknowledge selected</button>
                     <button class="btn sm secondary" id="alerts-bulk-clear-btn" disabled data-action="clear-alert-selection">Clear</button>
                 </div>
                 <div id="alerts-select-all-matching" style="display:none;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-accent-bg);border:1px solid var(--fwmon-accent);border-radius:6px;color:var(--fwmon-text-dim);font-size:0.82rem;text-align:center;"></div>
@@ -862,7 +862,7 @@
                         <textarea id="alerts-bulk-ack-notes" rows="3" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none" placeholder="Same notes will be applied to all selected alerts"></textarea>
                         <div class="flex justify-end gap-2 mt-4">
                             <button type="button" class="btn secondary sm" data-action="close-bulk-ack">Cancel</button>
-                            <button type="button" class="btn sm" id="alerts-bulk-ack-confirm" data-action="confirm-bulk-ack">Acknowledge</button>
+                            <button type="button" class="btn sm" id="alerts-bulk-ack-confirm" data-action="confirm-bulk-ack" data-min-role="operator">Acknowledge</button>
                         </div>
                     </div>
                 </div>
@@ -899,7 +899,7 @@
                     <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Alert Policies</h2>
                     <p class="text-xs text-[#8b949e] mt-1">Define routing logic and thresholds for firewall status notifications.</p>
                 </div>
-                <button class="btn" data-action="show-policy-modal">+ Create Policy</button>
+                <button class="btn" data-action="show-policy-modal" data-min-role="operator">+ Create Policy</button>
             </div>
             
             <div id="alert-policies-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -919,7 +919,7 @@
                     <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Maintenance Windows</h2>
                     <p class="text-xs text-[#8b949e] mt-1">Schedule periods to suppress alerts for specific devices or sites.</p>
                 </div>
-                <button class="btn" data-action="show-maint-modal">+ Create Window</button>
+                <button class="btn" data-action="show-maint-modal" data-min-role="operator">+ Create Window</button>
             </div>
             
             <div id="maintenance-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -1116,7 +1116,7 @@
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Configure SMTP settings for email alerts. These override environment variables.</p>
                 <div class="settings-grid" id="settings-smtp"></div>
                 <div style="margin-top: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                    <button class="btn secondary" data-action="test-email">Send Test Email</button>
+                    <button class="btn secondary" data-action="test-email" data-min-role="admin">Send Test Email</button>
                     <span style="color:var(--fwmon-text-faint); font-size:0.82rem;">to (optional override):</span>
                     <input type="email" id="test-email-to-override" placeholder="leave blank for configured smtp_to"
                            class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1"
@@ -1131,9 +1131,9 @@
                 <div class="card-header"><h2>Webhook Test</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Send a test notification to verify your webhook integrations.</p>
                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                    <button class="btn secondary" data-action="test-webhook" data-type="slack_webhook">Test Slack</button>
-                    <button class="btn secondary" data-action="test-webhook" data-type="discord_webhook">Test Discord</button>
-                    <button class="btn secondary" data-action="test-webhook" data-type="webhook_url">Test Webhook</button>
+                    <button class="btn secondary" data-action="test-webhook" data-min-role="admin" data-type="slack_webhook">Test Slack</button>
+                    <button class="btn secondary" data-action="test-webhook" data-min-role="admin" data-type="discord_webhook">Test Discord</button>
+                    <button class="btn secondary" data-action="test-webhook" data-min-role="admin" data-type="webhook_url">Test Webhook</button>
                     <span id="test-webhook-result" style="margin-left: 12px; font-size: 0.82rem; align-self: center;"></span>
                 </div>
             </div>
@@ -1153,7 +1153,7 @@
                 <div class="settings-grid" id="settings-detection"></div>
             </div>
             <div class="card">
-                <button class="btn" data-action="save-settings">Save Settings</button>
+                <button class="btn" data-action="save-settings" data-min-role="admin">Save Settings</button>
             </div>
         </div>
 
@@ -1458,7 +1458,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn danger sm" data-action="reset-device-alert-config" style="margin-right:auto;">Reset to Defaults</button>
+                    <button type="button" class="btn danger sm" data-action="reset-device-alert-config" data-min-role="operator" style="margin-right:auto;">Reset to Defaults</button>
                     <button type="button" class="btn secondary" data-action="close-device-alert-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
                 </div>

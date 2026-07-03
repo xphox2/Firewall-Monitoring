@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-07-03
+
+### Added
+- **Role-aware admin UI** (v0.11 Tranche 2): the SPA now hides controls the session's role can't use instead of serving 403 bait — the session role is stamped on `<html data-role>` and a CSS rule hides any `[data-min-role]` element above the session's level (works for dynamically rendered rows for free; the server still enforces every route). 37 mutation controls tagged: device/site/probe/connection add-edit-delete, alert ack/snooze, policy and maintenance editors (operator+); settings save/tests (admin). Operators and viewers get a role badge in the sidebar, and a 403 from a missed control now reads "Your role (viewer) doesn't allow this action" instead of a bare Forbidden.
+
 ## [0.11.2] - 2026-07-03
 
 ### Added

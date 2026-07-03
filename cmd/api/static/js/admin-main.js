@@ -687,9 +687,9 @@
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td>' +
                         AC.sshLaunchButton(d) +
-                        '<button class="btn secondary sm" data-action="device-alert-config" data-id="' + d.id + '">Alerts</button> ' +
-                        '<button class="btn secondary sm" data-action="edit-device" data-id="' + d.id + '">Edit</button> ' +
-                        '<button class="btn danger sm" data-action="delete-device" data-id="' + d.id + '">Delete</button>' +
+                        '<button class="btn secondary sm" data-action="device-alert-config" data-min-role="operator" data-id="' + d.id + '">Alerts</button> ' +
+                        '<button class="btn secondary sm" data-action="edit-device" data-min-role="operator" data-id="' + d.id + '">Edit</button> ' +
+                        '<button class="btn danger sm" data-action="delete-device" data-min-role="operator" data-id="' + d.id + '">Delete</button>' +
                     '</td>' +
                 '</tr>';
             }).join('') || '<tr><td colspan="10" class="empty-state">No devices configured</td></tr>';
@@ -825,8 +825,8 @@
             tbody.innerHTML = currentConnections.map(function(c) {
                 var deleteBtn = c.auto_detected
                     ? '<span style="color:#8b949e;font-size:0.75rem;">Auto-managed</span>'
-                    : '<button class="btn danger sm" data-action="delete-connection" data-id="' + c.id + '">Delete</button>';
-                var editBtn = '<button class="btn secondary sm" data-action="edit-connection" data-id="' + c.id + '">Edit</button>';
+                    : '<button class="btn danger sm" data-action="delete-connection" data-min-role="operator" data-id="' + c.id + '">Delete</button>';
+                var editBtn = '<button class="btn secondary sm" data-action="edit-connection" data-min-role="operator" data-id="' + c.id + '">Edit</button>';
                 // Cross-page nav (v0.10.215, bundle E2): source + dest
                 // device names link straight to each device's detail page.
                 var srcName = c.source_device ? c.source_device.name : ('DEV-' + c.source_device_id);
@@ -937,7 +937,7 @@
                         tbody.innerHTML = currentConnections.map(function(c) {
                             var deleteBtn = c.auto_detected
                                 ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>'
-                                : '<button class="btn danger sm" data-action="delete-connection" data-id="' + c.id + '">Delete</button>';
+                                : '<button class="btn danger sm" data-action="delete-connection" data-min-role="operator" data-id="' + c.id + '">Delete</button>';
                             return '<tr>' +
                                 '<td>' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
                                 '<td>' + (escapeHtml(c.source_device ? c.source_device.name : '') || c.source_device_id) + '</td>' +
@@ -1933,7 +1933,7 @@
             } else if (a.acknowledged) {
                 statusCol = '<span class="badge info" title="' + escapeHtml((a.acknowledged_at ? formatDate(a.acknowledged_at) : '') + (a.notes ? ' — ' + a.notes : '')) + '">ACK</span>';
             } else {
-                statusCol = '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Ack</button>';
+                statusCol = '<button class="btn sm" data-action="show-ack-modal" data-min-role="operator" data-id="' + a.id + '">Ack</button>';
             }
             // Cross-page nav (v0.10.215, bundle E2): the device cell links
             // straight to that device's detail page so an alerts triage
@@ -1972,7 +1972,7 @@
             } else if (snoozedActive) {
                 statusHtml =
                     '<span class="badge warning">SNOOZED until ' + escapeHtml(formatDate(a.snoozed_until)) + '</span>' +
-                    '<button class="btn secondary sm" style="margin-left:8px;" data-action="unsnooze-alert" data-id="' + a.id + '">Unsnooze</button>';
+                    '<button class="btn secondary sm" style="margin-left:8px;" data-action="unsnooze-alert" data-min-role="operator" data-id="' + a.id + '">Unsnooze</button>';
                 if (a.snoozed_by || a.snoozed_reason) {
                     statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
                     if (a.snoozed_by) statusHtml += 'By: ' + escapeHtml(a.snoozed_by);
@@ -2000,8 +2000,8 @@
                 // Open alert — offer both Acknowledge (close it) and
                 // Snooze (postpone surfacing).
                 statusHtml =
-                    '<button class="btn sm" data-action="show-ack-modal" data-id="' + a.id + '">Acknowledge</button>' +
-                    ' <button class="btn secondary sm" data-action="snooze-alert" data-id="' + a.id + '">Snooze</button>';
+                    '<button class="btn sm" data-action="show-ack-modal" data-min-role="operator" data-id="' + a.id + '">Acknowledge</button>' +
+                    ' <button class="btn secondary sm" data-action="snooze-alert" data-min-role="operator" data-id="' + a.id + '">Snooze</button>';
             }
 
             var isSyslogAlert = a.metric_name === 'syslog';
@@ -3153,9 +3153,9 @@
                     '<span class="policy-channel-tag ' + webhookClass + '">Webhook</span>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
-                    '<button class="btn secondary sm" data-action="edit-policy" data-id="' + p.id + '">Edit</button>' +
-                    '<button class="btn secondary sm" data-action="clone-policy" data-id="' + p.id + '">Clone</button>' +
-                    (p.is_default ? '' : '<button class="btn secondary sm" data-action="delete-policy" data-id="' + p.id + '">Delete</button>') +
+                    '<button class="btn secondary sm" data-action="edit-policy" data-min-role="operator" data-id="' + p.id + '">Edit</button>' +
+                    '<button class="btn secondary sm" data-action="clone-policy" data-min-role="operator" data-id="' + p.id + '">Clone</button>' +
+                    (p.is_default ? '' : '<button class="btn secondary sm" data-action="delete-policy" data-min-role="operator" data-id="' + p.id + '">Delete</button>') +
                 '</div>' +
             '</div>';
         }).join('');
@@ -3412,8 +3412,8 @@
                         '</div>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
-                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button>' +
-                        '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
+                        '<button class="btn secondary sm" data-action="edit-maint" data-min-role="operator" data-id="' + w.id + '">Edit</button>' +
+                        '<button class="btn secondary sm" data-action="delete-maint" data-min-role="operator" data-id="' + w.id + '">Delete</button>' +
                     '</div>' +
                 '</div>';
             }).join('');
@@ -3451,8 +3451,8 @@
                         '</div>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
-                        '<button class="btn secondary sm" data-action="edit-maint" data-id="' + w.id + '">Edit</button>' +
-                        '<button class="btn secondary sm" data-action="delete-maint" data-id="' + w.id + '">Delete</button>' +
+                        '<button class="btn secondary sm" data-action="edit-maint" data-min-role="operator" data-id="' + w.id + '">Edit</button>' +
+                        '<button class="btn secondary sm" data-action="delete-maint" data-min-role="operator" data-id="' + w.id + '">Delete</button>' +
                     '</div>' +
                 '</div>';
             }).join('');

@@ -54,8 +54,8 @@
                     '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid var(--fwmon-border);padding-top:12px;">' +
-                    '<button class="btn sm secondary" data-action="edit-site" data-id="' + site.id + '">Edit</button> ' +
-                    '<button class="btn sm danger" data-action="delete-site" data-id="' + site.id + '">Delete</button>' +
+                    '<button class="btn sm secondary" data-action="edit-site" data-min-role="operator" data-id="' + site.id + '">Edit</button> ' +
+                    '<button class="btn sm danger" data-action="delete-site" data-min-role="operator" data-id="' + site.id + '">Delete</button>' +
                 '</div>' +
                 '</div>';
         }

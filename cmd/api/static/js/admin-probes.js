@@ -149,18 +149,18 @@
             // expose a hard Delete.
             var buttons;
             if (isDecommissioned) {
-                buttons = '<button class="btn sm" data-action="recommission-probe" data-id="' + p.id + '">Restore</button>';
+                buttons = '<button class="btn sm" data-action="recommission-probe" data-min-role="operator" data-id="' + p.id + '">Restore</button>';
             } else {
                 buttons = '<button class="btn sm secondary" data-action="deploy-info" data-id="' + p.id + '">Deploy Info</button>';
                 if (approvalStatus === 'pending') {
-                    buttons += '<button class="btn sm" data-action="approve-probe" data-id="' + p.id + '">Approve</button>' +
-                        '<button class="btn sm danger" data-action="reject-probe" data-id="' + p.id + '">Reject</button>';
+                    buttons += '<button class="btn sm" data-action="approve-probe" data-min-role="operator" data-id="' + p.id + '">Approve</button>' +
+                        '<button class="btn sm danger" data-action="reject-probe" data-min-role="operator" data-id="' + p.id + '">Reject</button>';
                 }
-                buttons += '<button class="btn sm secondary" data-action="edit-probe" data-id="' + p.id + '">Edit</button>';
+                buttons += '<button class="btn sm secondary" data-action="edit-probe" data-min-role="operator" data-id="' + p.id + '">Edit</button>';
                 if (approvalStatus === 'approved') {
-                    buttons += '<button class="btn sm danger" data-action="decommission-probe" data-id="' + p.id + '">Decommission</button>';
+                    buttons += '<button class="btn sm danger" data-action="decommission-probe" data-min-role="operator" data-id="' + p.id + '">Decommission</button>';
                 } else {
-                    buttons += '<button class="btn sm danger" data-action="delete-probe" data-id="' + p.id + '">Delete</button>';
+                    buttons += '<button class="btn sm danger" data-action="delete-probe" data-min-role="operator" data-id="' + p.id + '">Delete</button>';
                 }
             }
 

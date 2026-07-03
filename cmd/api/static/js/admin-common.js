@@ -365,6 +365,11 @@
                         forcePasswordChange();
                         throw new Error('Password change required');
                     }
+                    // RBAC (T2-8b): a viewer/operator hit a control above their
+                    // role — say so plainly instead of a bare "Forbidden".
+                    if (err && err.code === 'insufficient_role') {
+                        throw new Error('Your role (' + (window.AdminCommon && AdminCommon.sessionRole || 'viewer') + ") doesn't allow this action");
+                    }
                     var msg = err.error || 'Forbidden';
                     if (msg.indexOf('CSRF') !== -1) {
                         msg += ' - please refresh the page and try again';

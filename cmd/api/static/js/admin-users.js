@@ -282,6 +282,24 @@
         AC.apiFetch(API_BASE + '/me').then(function (res) {
             me = (res && res.data) || null;
             AC.sessionRole = me ? me.role : null;
+            // T2-8b role-aware UI: stamp the role on <html> so the CSS
+            // attribute rules hide any [data-min-role] control this session
+            // can't use (server enforces regardless), and badge the sidebar
+            // for operators/viewers so hidden controls aren't a mystery.
+            if (me && me.role) {
+                document.documentElement.dataset.role = me.role;
+                if (me.role !== 'admin') {
+                    var sub = document.querySelector('.sidebar-header .subtitle');
+                    if (sub && !document.getElementById('role-badge')) {
+                        var badge = document.createElement('span');
+                        badge.id = 'role-badge';
+                        badge.className = 'role-badge';
+                        badge.textContent = me.role + ' · ' + (me.username || '');
+                        sub.appendChild(document.createElement('br'));
+                        sub.appendChild(badge);
+                    }
+                }
+            }
             render2FA();
             if (me && me.role === 'admin') {
                 card.style.display = '';

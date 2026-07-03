@@ -1084,3 +1084,28 @@ body {
 /* The Tailwind arbitrary-hex bridge lives in its own stylesheet
  * (admin-tw-bridge.css) loaded LAST on every admin page, because some pages
  * link tailwind.css AFTER this file — a bridge here would lose the cascade. */
+
+/* ---- RBAC role gating (v0.11 T2-8b) -------------------------------------
+   admin-users.js stamps the session role on <html data-role="...">; any
+   element tagged data-min-role hides when the session can't use it (the
+   server enforces regardless — this only removes 403 bait from the UI).
+   CSS-attribute matching applies to dynamically rendered nodes for free. */
+html[data-role="viewer"] [data-min-role="operator"],
+html[data-role="viewer"] [data-min-role="admin"],
+html[data-role="operator"] [data-min-role="admin"] {
+    display: none !important;
+}
+
+/* Session role badge in the sidebar (hidden for the usual admin case). */
+.role-badge {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fwmon-text-faint);
+    border: 1px solid var(--fwmon-border);
+}
