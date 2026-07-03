@@ -1255,3 +1255,16 @@ func (d *Database) migrateAlertPolicyIncidentChannels() error {
 	log.Printf("migrate v25 alert_policy_incident_channels: columns ensured")
 	return nil
 }
+
+// migrateAlertPolicyEscalationSteps (v26, F19) adds the JSON steps column.
+// Empty default = legacy escalation behavior everywhere.
+func (d *Database) migrateAlertPolicyEscalationSteps() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.AlertPolicy{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE alert_policies ADD COLUMN IF NOT EXISTS escalation_steps text NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate v26 add alert_policies.escalation_steps: %w", err)
+	}
+	log.Printf("migrate v26 alert_policy_escalation_steps: column ensured")
+	return nil
+}

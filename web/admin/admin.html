@@ -1670,6 +1670,20 @@
                     <span class="escalation-hint">Automatically escalate alerts if not acknowledged within the escalation time</span>
                 </div>
 
+                <!-- F19 escalation step chains: when steps exist they REPLACE the
+                     thin minutes/repeat model above. Rows managed by admin-main.js. -->
+                <div class="policy-section">
+                    <div class="policy-section-header"><h3>Escalation Steps (advanced)</h3></div>
+                    <div class="policy-section-body">
+                        <p style="color: var(--fwmon-text-faint); font-size:0.82rem; margin-bottom:8px;">
+                            Optional tiered chain — e.g. step 1: Slack after 5 min; step 2: PagerDuty + email after 15 min.
+                            Each step fires once per unacknowledged alert, to exactly its channels. When steps are defined they replace the simple escalation above.
+                        </p>
+                        <div id="policy-escalation-steps"></div>
+                        <button type="button" class="btn secondary sm" data-action="esc-add-step">+ Add Step</button>
+                    </div>
+                </div>
+
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" data-action="close-policy-modal">Cancel</button>
                     <button type="submit" class="btn">Save Policy</button>

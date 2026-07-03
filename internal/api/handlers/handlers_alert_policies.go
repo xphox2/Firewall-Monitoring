@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
+	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -65,6 +67,10 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Name (max 200) or description (max 1000) too long"))
 		return
 	}
+	if _, err := alerts.ParseEscalationSteps(policy.EscalationSteps); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid escalation steps: %v", err)))
+		return
+	}
 
 	policy.ID = 0
 	if err := db.CreateAlertPolicy(&policy); err != nil {
@@ -94,6 +100,11 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 	var policy models.AlertPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+
+	if _, perr := alerts.ParseEscalationSteps(policy.EscalationSteps); perr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid escalation steps: %v", perr)))
 		return
 	}
 

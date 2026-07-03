@@ -3187,6 +3187,7 @@
             document.getElementById('policy-notify-pagerduty').checked = p.notify_pagerduty;
             document.getElementById('policy-notify-opsgenie').checked = p.notify_opsgenie;
             document.getElementById('policy-notify-teams').checked = p.notify_teams;
+            renderEscalationSteps(parseEscSteps(p.escalation_steps));
             document.getElementById('policy-email-recipients').value = p.email_recipients || '';
             document.getElementById('policy-slack-url').value = p.slack_webhook_url || '';
             document.getElementById('policy-discord-url').value = p.discord_webhook_url || '';
@@ -3198,6 +3199,54 @@
         } else {
             populateRulesTable([]);
         }
+    }
+
+    var ESC_CHANNELS = ['email', 'slack', 'discord', 'webhook', 'pagerduty', 'opsgenie', 'teams'];
+
+    function parseEscSteps(raw) {
+        if (!raw) { return []; }
+        try { var v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+    }
+
+    function addEscalationStepRow(step) {
+        var wrap = document.getElementById('policy-escalation-steps');
+        var row = document.createElement('div');
+        row.className = 'esc-step-row';
+        row.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;padding:6px 8px;border:1px solid var(--fwmon-border);border-radius:8px;';
+        var chans = (step.channels || []).reduce(function(m, c) { m[c] = true; return m; }, {});
+        row.innerHTML =
+            '<label style="font-size:0.8rem;">after <input type="number" class="esc-minutes sm" style="width:60px" min="1" max="1440" value="' + (step.after_minutes || 5) + '"> min</label>' +
+            ESC_CHANNELS.map(function(c) {
+                return '<label style="font-size:0.78rem;white-space:nowrap;"><input type="checkbox" class="esc-chan" value="' + c + '"' + (chans[c] ? ' checked' : '') + '> ' + c + '</label>';
+            }).join('') +
+            '<input type="text" class="esc-recipients" placeholder="email recipients override (optional)" style="flex:1;min-width:160px;font-size:0.8rem;" value="' + escapeHtml(step.recipients || '') + '">' +
+            '<button type="button" class="btn danger sm" data-action="esc-del-step">✕</button>';
+        wrap.appendChild(row);
+    }
+
+    function renderEscalationSteps(steps) {
+        var wrap = document.getElementById('policy-escalation-steps');
+        if (!wrap) { return; }
+        wrap.innerHTML = '';
+        (steps || []).forEach(addEscalationStepRow);
+    }
+
+    // collectEscalationSteps serializes the rows to the policy JSON ('' = none).
+    function collectEscalationSteps() {
+        var rows = document.querySelectorAll('#policy-escalation-steps .esc-step-row');
+        var steps = [];
+        rows.forEach(function(row) {
+            var mins = parseInt(row.querySelector('.esc-minutes').value, 10) || 0;
+            var channels = Array.prototype.slice.call(row.querySelectorAll('.esc-chan:checked')).map(function(cb) { return cb.value; });
+            var recipients = row.querySelector('.esc-recipients').value.trim();
+            if (mins > 0 && channels.length) {
+                var st = { after_minutes: mins, channels: channels };
+                if (recipients) { st.recipients = recipients; }
+                steps.push(st);
+            }
+        });
+        steps.sort(function(a, b) { return a.after_minutes - b.after_minutes; });
+        return steps.length ? JSON.stringify(steps) : '';
     }
 
     function populateRulesTable(existingRules) {
@@ -3299,6 +3348,7 @@
                 notify_pagerduty: document.getElementById('policy-notify-pagerduty').checked,
                 notify_opsgenie: document.getElementById('policy-notify-opsgenie').checked,
                 notify_teams: document.getElementById('policy-notify-teams').checked,
+                escalation_steps: collectEscalationSteps(),
                 email_recipients: document.getElementById('policy-email-recipients').value,
                 slack_webhook_url: document.getElementById('policy-slack-url').value,
                 discord_webhook_url: document.getElementById('policy-discord-url').value,
@@ -3788,6 +3838,8 @@
         'refresh-audit': function() { loadAuditLogs(); },
         'close-audit-detail': function() { closeAuditDetail(); },
         'change-password': function() { changePassword(); },
+        'esc-add-step': function() { addEscalationStepRow({}); },
+        'esc-del-step': function(el) { el.closest('.esc-step-row').remove(); },
         'save-settings': function() { saveSettings(); },
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },

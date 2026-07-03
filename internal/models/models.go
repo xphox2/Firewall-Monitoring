@@ -308,20 +308,27 @@ type AlertPolicy struct {
 	NotifyWebhook bool   `json:"notify_webhook" gorm:"default:false"`
 	// Incident channels (T2-5): credentials are global (settings/env);
 	// these flags route a policy's alerts to them.
-	NotifyPagerDuty   bool        `json:"notify_pagerduty" gorm:"default:false"`
-	NotifyOpsgenie    bool        `json:"notify_opsgenie" gorm:"default:false"`
-	NotifyTeams       bool        `json:"notify_teams" gorm:"default:false"`
-	EmailRecipients   string      `json:"email_recipients"`
-	SlackWebhookURL   string      `json:"slack_webhook_url"`
-	DiscordWebhookURL string      `json:"discord_webhook_url"`
-	WebhookURL        string      `json:"webhook_url"`
-	CooldownMinutes   int         `json:"cooldown_minutes" gorm:"default:5"`
-	EscalationEnabled bool        `json:"escalation_enabled" gorm:"default:false"`
-	EscalationMinutes int         `json:"escalation_minutes" gorm:"default:30"`
-	EscalationRepeat  int         `json:"escalation_repeat" gorm:"default:3"`
-	CreatedAt         time.Time   `json:"created_at"`
-	UpdatedAt         time.Time   `json:"updated_at"`
-	Rules             []AlertRule `json:"rules,omitempty" gorm:"foreignKey:PolicyID"`
+	NotifyPagerDuty   bool   `json:"notify_pagerduty" gorm:"default:false"`
+	NotifyOpsgenie    bool   `json:"notify_opsgenie" gorm:"default:false"`
+	NotifyTeams       bool   `json:"notify_teams" gorm:"default:false"`
+	EmailRecipients   string `json:"email_recipients"`
+	SlackWebhookURL   string `json:"slack_webhook_url"`
+	DiscordWebhookURL string `json:"discord_webhook_url"`
+	WebhookURL        string `json:"webhook_url"`
+	CooldownMinutes   int    `json:"cooldown_minutes" gorm:"default:5"`
+	EscalationEnabled bool   `json:"escalation_enabled" gorm:"default:false"`
+	EscalationMinutes int    `json:"escalation_minutes" gorm:"default:30"`
+	EscalationRepeat  int    `json:"escalation_repeat" gorm:"default:3"`
+	// EscalationSteps (F19) is a JSON array of per-tier steps:
+	// [{"after_minutes":5,"channels":["slack"],"recipients":"a@b"}, …].
+	// Non-empty REPLACES the thin Minutes/Repeat model: step i fires once when
+	// an alert stays unacknowledged past its after_minutes, to exactly its
+	// channels/recipients. Empty = legacy behavior (existing policies
+	// untouched). Validated on save via alerts.ParseEscalationSteps.
+	EscalationSteps string      `json:"escalation_steps"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
+	Rules           []AlertRule `json:"rules,omitempty" gorm:"foreignKey:PolicyID"`
 }
 
 func (AlertPolicy) TableName() string { return "alert_policies" }

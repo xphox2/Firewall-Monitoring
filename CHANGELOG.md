@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.8] - 2026-07-03
+
+### Added
+- **Escalation step chains** (v0.11 Tranche 2, F19): alert policies gain an optional tiered escalation chain — e.g. *step 1: Slack after 5 min; step 2: PagerDuty + tier-2 email after 15 min* — replacing the thin repeat-every-N-minutes model for that policy (policies without steps keep the legacy behavior untouched). Each step fires **once** per unacknowledged alert, routed to **exactly** its channels (all seven supported, including the new incident channels) with an optional per-step email-recipient override; a failed step send retries next cycle without skipping ahead. Steps are validated on save (ascending times, known channels, ≤10 steps) and edited via a new step-builder in the policy modal. Migration v26. Tests: validation matrix, exact channel targeting, due-step/once-only semantics (`escalation_steps_f19_test.go`).
+
 ## [0.11.7] - 2026-07-03
 
 ### Added

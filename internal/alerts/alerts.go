@@ -1283,10 +1283,18 @@ func (am *AlertManager) CheckEscalations() {
 		return
 	}
 
-	// Collect policies with escalation enabled
+	// Collect policies with escalation enabled — legacy (minutes/repeat) or
+	// F19 step chains (a step definition implies escalation regardless of the
+	// legacy toggle).
 	escalationPolicies := make(map[uint]*models.AlertPolicy)
+	policySteps := make(map[uint][]EscalationStep)
 	for i := range am.policyCache.policies {
 		p := &am.policyCache.policies[i]
+		if steps, err := ParseEscalationSteps(p.EscalationSteps); err == nil && len(steps) > 0 {
+			escalationPolicies[p.ID] = p
+			policySteps[p.ID] = steps
+			continue
+		}
 		if p.EscalationEnabled && p.EscalationMinutes > 0 {
 			escalationPolicies[p.ID] = p
 		}
@@ -1321,26 +1329,57 @@ func (am *AlertManager) CheckEscalations() {
 		if !ok {
 			continue
 		}
-		if alert.EscalationCount >= policy.EscalationRepeat {
-			continue
-		}
 		elapsed := time.Since(alert.Timestamp)
-		expectedEscalations := int(elapsed.Minutes()) / policy.EscalationMinutes
-		if expectedEscalations <= alert.EscalationCount {
-			continue
-		}
 
-		nc := BuildNotifyConfigFromResolved(ResolvedAlertConfig{
+		resolvedShape := ResolvedAlertConfig{
 			PolicyID:        alert.PolicyID,
 			NotifyEmail:     policy.NotifyEmail,
 			NotifySlack:     policy.NotifySlack,
 			NotifyDiscord:   policy.NotifyDiscord,
 			NotifyWebhook:   policy.NotifyWebhook,
+			NotifyPagerDuty: policy.NotifyPagerDuty,
+			NotifyOpsgenie:  policy.NotifyOpsgenie,
+			NotifyTeams:     policy.NotifyTeams,
 			EmailRecipients: policy.EmailRecipients,
 			SlackURL:        policy.SlackWebhookURL,
 			DiscordURL:      policy.DiscordWebhookURL,
 			WebhookURL:      policy.WebhookURL,
-		}, globalNC)
+		}
+
+		// F19 step chains: EscalationCount = steps completed. Fire every step
+		// whose after_minutes has elapsed and hasn't fired yet, each to
+		// exactly its own channels/recipients.
+		if steps := policySteps[policy.ID]; len(steps) > 0 {
+			completed := alert.EscalationCount
+			for i := completed; i < len(steps); i++ {
+				if elapsed < time.Duration(steps[i].AfterMinutes)*time.Minute {
+					break
+				}
+				nc := stepNotifyConfig(steps[i], resolvedShape, globalNC)
+				escalatedAlert := alert
+				escalatedAlert.Message = fmt.Sprintf("[ESCALATION step %d/%d] %s", i+1, len(steps), alert.Message)
+				if err := am.notifier.SendAlert(&escalatedAlert, nc); err != nil {
+					log.Printf("CheckEscalations: step %d send failed for alert %d: %v", i+1, alert.ID, err)
+					break // retry this step next cycle; don't skip ahead
+				}
+				completed = i + 1
+			}
+			if completed > alert.EscalationCount {
+				escalatedIDs = append(escalatedIDs, escalated{alert.ID, completed})
+			}
+			continue
+		}
+
+		// Legacy thin model: re-send on a fixed cadence up to Repeat times.
+		if alert.EscalationCount >= policy.EscalationRepeat {
+			continue
+		}
+		expectedEscalations := int(elapsed.Minutes()) / policy.EscalationMinutes
+		if expectedEscalations <= alert.EscalationCount {
+			continue
+		}
+
+		nc := BuildNotifyConfigFromResolved(resolvedShape, globalNC)
 
 		escalatedAlert := alert
 		escalatedAlert.Message = fmt.Sprintf("[ESCALATION %d/%d] %s", alert.EscalationCount+1, policy.EscalationRepeat, alert.Message)

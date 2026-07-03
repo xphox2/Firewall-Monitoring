@@ -74,6 +74,7 @@ var registeredMigrations = []migration{
 	{version: 23, name: "alert_rule_clear_threshold", run: (*Database).migrateAlertRuleClearThreshold},
 	{version: 24, name: "alert_rule_zscore_mode", run: (*Database).migrateAlertRuleZScoreMode},
 	{version: 25, name: "alert_policy_incident_channels", run: (*Database).migrateAlertPolicyIncidentChannels},
+	{version: 26, name: "alert_policy_escalation_steps", run: (*Database).migrateAlertPolicyEscalationSteps},
 }
 
 // RunMigrations applies every registered migration not yet recorded in
