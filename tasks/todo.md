@@ -1,4 +1,4 @@
-# Post-publish test plan — v0.11.12 on rust-01 (2026-07-03)
+# Post-publish test plan — v0.11.14 on rust-01 (2026-07-03)
 
 Everything that changed since the last prod deploy needs a live check. Items marked
 **(prod-only)** could NOT be fully verified in the local walkthrough and matter most.
@@ -65,7 +65,15 @@ Everything that changed since the last prod deploy needs a live check. Items mar
 - [ ] Noisiest-alerts top-10 (type × device) shows fire counts + how many were suppressed (maintenance/flap/incident)
 - [ ] Scheduled email report carries the same section
 
-## Walkthrough results for reference (local, v0.11.12, PG16)
+## 11. Settings page redesign (v0.11.14)
+- [ ] `/admin/settings` shows the vertical section nav (Account / Access / Alerting / Notifications / Reports / Display / Detection), Account active by default
+- [ ] Deep link survives refresh (`/admin/settings#notifications`); Back button unaffected by section clicks
+- [ ] Edit a threshold → sticky "1 unsaved change" bar; Discard reverts; Save persists (reload to confirm)
+- [ ] Typing in password / 2FA / user / token / test-email-override fields does NOT raise the bar
+- [ ] Operator/viewer: no Access section, no save bar; `#access` deep link redirects to Account
+- [ ] Day + Night themes and a narrow window (nav collapses to horizontal strip)
+
+## Walkthrough results for reference (local, v0.11.12–.14, PG16)
 All verified locally with the production AlertManager code: F14 band hold/release,
 F17 dynamic threshold + static-floor suppression, F13 [FLAPPING] + muted recovery,
 F12 open/attach-mute/close + INC chips + endpoints, F19 due/route/retry-not-skip,
