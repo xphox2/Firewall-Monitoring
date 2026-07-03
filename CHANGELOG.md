@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.567] - 2026-07-03
+
+### Added
+- **Scoped API tokens** (v0.11 program Tranche 1, Phase B / P0-2, closes F64): programmatic access via `Authorization: Bearer fwm_…` with three scopes riding the RBAC ladder — **read** (viewer), **write** (operator), **admin**. Tokens are hashed at rest (`sha256:` scheme shared with probe registration keys; deliberately non-idempotent so a leaked stored hash cannot be replayed as a bearer), shown once at creation, soft-revoked (row kept for the audit trail), with optional expiry and throttled `last_used_at` tracking. Token requests skip CSRF (no cookie, no ambient authority) and the forced-password-change gate, are labeled `token:<name>` in the audit log with the creating admin as actor, fail closed on DB errors, and can never mint further tokens (session-only creation). New admin-only API Tokens card on the settings page; endpoints `GET/POST /admin/api/tokens`, `DELETE /admin/api/tokens/:id`. Migration v21 creates `api_tokens`.
+- Tests: bearer-auth matrix incl. scope→role enforcement, revoked/expired/unknown/hash-replay rejection and fail-closed lookup (`token_auth_test.go`), CSRF skip-for-token/enforced-for-session, at-rest lifecycle + double-hash property (`api_tokens_test.go`).
+
 ## [0.10.566] - 2026-07-02
 
 ### Added

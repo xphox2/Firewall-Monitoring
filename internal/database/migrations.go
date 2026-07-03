@@ -69,6 +69,7 @@ var registeredMigrations = []migration{
 	{version: 18, name: "flow_if_counters_add_direction", run: (*Database).migrateFlowIfCountersAddDirection},
 	{version: 19, name: "admin_must_change_password", run: (*Database).migrateAdminMustChangePassword},
 	{version: 20, name: "admin_roles", run: (*Database).migrateAdminRoles},
+	{version: 21, name: "api_tokens", run: (*Database).migrateAPITokens},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

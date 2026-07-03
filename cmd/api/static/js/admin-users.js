@@ -119,14 +119,82 @@
             if (el) { actions['user-role'](el); }
         });
 
+        /* ---- API tokens card (P0-2) — same admin-only gating ---- */
+        var tokensCard = document.getElementById('card-tokens');
+
+        function renderTokens(toks) {
+            var rows = toks.map(function (t) {
+                var status = t.revoked_at ? 'revoked'
+                    : (t.expires_at && new Date(t.expires_at) < new Date()) ? 'expired' : 'active';
+                return '<tr>' +
+                    '<td>' + esc(t.name) + '</td>' +
+                    '<td><code>' + esc(t.prefix) + '…</code></td>' +
+                    '<td>' + esc(t.scope) + '</td>' +
+                    '<td>' + status + '</td>' +
+                    '<td>' + (t.last_used_at ? new Date(t.last_used_at).toLocaleString() : 'never') + '</td>' +
+                    '<td>' + (t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'never') + '</td>' +
+                    '<td>' + (t.revoked_at ? '' :
+                        '<button class="btn danger" data-action="revoke-token" data-id="' + t.id + '" data-name="' + esc(t.name) + '">Revoke</button>') +
+                    '</td></tr>';
+            }).join('');
+            document.getElementById('tokens-table').innerHTML =
+                '<table class="data-table"><thead><tr>' +
+                '<th>Name</th><th>Token</th><th>Scope</th><th>Status</th><th>Last used</th><th>Expires</th><th></th>' +
+                '</tr></thead><tbody>' + (rows || '<tr><td colspan="7" style="color:var(--fwmon-text-faint)">No tokens yet</td></tr>') + '</tbody></table>';
+        }
+
+        function loadTokens() {
+            return AC.apiFetch(API_BASE + '/tokens').then(function (res) {
+                renderTokens((res && res.data) || []);
+            }).catch(function () { AC.showError('Failed to load API tokens'); });
+        }
+
+        var tokenActions = {
+            'create-token': function () {
+                var name = document.getElementById('new-token-name').value.trim();
+                var scope = document.getElementById('new-token-scope').value;
+                var days = parseInt(document.getElementById('new-token-expiry').value, 10) || 0;
+                if (name.length < 3) { AC.showError('Token name must be at least 3 characters'); return; }
+                AC.apiFetch(API_BASE + '/tokens', { method: 'POST', body: { name: name, scope: scope, expires_in_days: days } })
+                    .then(function (res) {
+                        document.getElementById('new-token-name').value = '';
+                        document.getElementById('token-plaintext').innerHTML =
+                            '<div class="card" style="border-color:var(--fwmon-warn,#d29922)">' +
+                            'Token <strong>' + esc(name) + '</strong> (shown once — copy it now): ' +
+                            '<code style="user-select:all">' + esc(res.data.token) + '</code></div>';
+                        AC.showSuccess('Token created');
+                        loadTokens();
+                    })
+                    .catch(function (err) { AC.showError((err && err.message) || 'Failed to create token'); });
+            },
+            'revoke-token': function (el) {
+                AC.confirm('Revoke token "' + el.dataset.name + '"? Anything using it stops working immediately.', function () {
+                    AC.apiFetch(API_BASE + '/tokens/' + el.dataset.id, { method: 'DELETE' })
+                        .then(function () { AC.showSuccess('Token revoked'); loadTokens(); })
+                        .catch(function (err) { AC.showError((err && err.message) || 'Failed to revoke token'); });
+                });
+            }
+        };
+
+        if (tokensCard) {
+            tokensCard.addEventListener('click', function (e) {
+                var el = e.target.closest('[data-action]');
+                if (el && tokenActions[el.dataset.action]) { tokenActions[el.dataset.action](el); }
+            });
+        }
+
         AC.apiFetch(API_BASE + '/me').then(function (res) {
             me = (res && res.data) || null;
             AC.sessionRole = me ? me.role : null;
             if (me && me.role === 'admin') {
                 card.style.display = '';
                 loadUsers();
+                if (tokensCard) {
+                    tokensCard.style.display = '';
+                    loadTokens();
+                }
             }
-        }).catch(function () { /* leave the card hidden */ });
+        }).catch(function () { /* leave the cards hidden */ });
     }
 
     if (document.readyState === 'loading') {

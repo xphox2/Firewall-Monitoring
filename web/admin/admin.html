@@ -1036,6 +1036,40 @@
                 </div>
                 <div id="user-temp-password" style="margin-top:10px;"></div>
             </div>
+            <!-- API tokens (P0-2). Admin-only, same gating as the Users card;
+                 rendered by admin-users.js. Tokens authenticate with
+                 `Authorization: Bearer fwm_…` and skip CSRF (no cookies). -->
+            <div class="card" id="card-tokens" style="display:none">
+                <div class="card-header"><h2>API Tokens</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">
+                    Scoped bearer credentials for scripts and integrations (<code>Authorization: Bearer fwm_…</code>).
+                    Scope <strong>read</strong> = viewer, <strong>write</strong> = operator, <strong>admin</strong> = full.
+                    The token value is shown once at creation; revoking is immediate.
+                </p>
+                <div id="tokens-table"></div>
+                <div class="form-row" style="margin-top:12px; align-items:flex-end;">
+                    <div class="form-group">
+                        <label for="new-token-name">Name</label>
+                        <input type="text" id="new-token-name" autocomplete="off" placeholder="grafana-poller">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-token-scope">Scope</label>
+                        <select id="new-token-scope">
+                            <option value="read" selected>read</option>
+                            <option value="write">write</option>
+                            <option value="admin">admin</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="new-token-expiry">Expires (days, 0 = never)</label>
+                        <input type="number" id="new-token-expiry" value="0" min="0" max="3650">
+                    </div>
+                    <div class="form-group">
+                        <button class="btn" data-action="create-token">Create Token</button>
+                    </div>
+                </div>
+                <div id="token-plaintext" style="margin-top:10px;"></div>
+            </div>
             <div class="card">
                 <div class="card-header"><h2>Display Timezone</h2></div>
                 <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">All dates and times on the admin and public dashboards will be displayed in this timezone.</p>

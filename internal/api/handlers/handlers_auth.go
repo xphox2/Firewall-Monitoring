@@ -339,6 +339,12 @@ var passwordChangeAllowlist = map[string]bool{
 
 func (h *Handler) RequirePasswordChanged() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// API-token principals (P0-2) have no password to rotate — the gate
+		// only makes sense for cookie sessions.
+		if c.GetString("auth_method") == "token" {
+			c.Next()
+			return
+		}
 		route := c.FullPath()
 		// HTML SPA pages (no /api/ segment) must load so the change-password
 		// modal can render; the completion endpoints are explicitly allowed.

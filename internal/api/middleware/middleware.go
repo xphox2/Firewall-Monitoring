@@ -19,6 +19,8 @@ import (
 
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -201,8 +203,80 @@ func ProbeRateLimiter() gin.HandlerFunc {
 	}
 }
 
-func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
+// TokenAuthStore is the narrow token-resolution dependency of AdminAuth
+// (P0-2); *database.Database satisfies it. Mirrors how auth.Database keeps the
+// auth package decoupled from the concrete store.
+type TokenAuthStore interface {
+	LookupAPIToken(plaintext string) (*models.ApiToken, error)
+	TouchAPITokenLastUsed(id uint, t time.Time) error
+}
+
+// apiTokenScopeRoles maps token scopes onto the RBAC ladder so RequireRole is
+// the single enforcement path for sessions AND tokens. An unknown scope maps
+// to "" (level 0) and is denied everything — fail closed.
+var apiTokenScopeRoles = map[string]string{
+	"read":  auth.RoleViewer,
+	"write": auth.RoleOperator,
+	"admin": auth.RoleAdmin,
+}
+
+// APITokenScopeRole resolves a token scope to its effective role ("" for
+// unknown). Exported for the token-management handlers to validate scopes.
+func APITokenScopeRole(scope string) string { return apiTokenScopeRoles[scope] }
+
+// lastUsedTouches throttles api_tokens.last_used_at writes to at most one per
+// token per minute — observability metadata must not write-amplify every
+// programmatic API call.
+var (
+	lastUsedMu      sync.Mutex
+	lastUsedTouches = map[uint]time.Time{}
+)
+
+func touchTokenLastUsed(tokens TokenAuthStore, id uint) {
+	now := time.Now()
+	lastUsedMu.Lock()
+	if last, ok := lastUsedTouches[id]; ok && now.Sub(last) < time.Minute {
+		lastUsedMu.Unlock()
+		return
+	}
+	lastUsedTouches[id] = now
+	lastUsedMu.Unlock()
+	if err := tokens.TouchAPITokenLastUsed(id, now); err != nil {
+		log.Printf("api token %d: failed to record last_used_at: %v", id, err)
+	}
+}
+
+// AdminAuth authenticates /admin requests by EITHER a scoped API token
+// (Authorization: Bearer fwm_…) or the session cookie (JWT). The bearer path
+// only intercepts fwm_-prefixed values, so probe keys and any other bearer
+// scheme are unaffected. Token failures fail CLOSED (same philosophy as the
+// JWT token-version check): a DB error rejects rather than admits.
+// auth_method on the context ("token"|"session") lets CSRF and the forced
+// password-change gate skip token calls — CSRF defends cookies, and tokens
+// have no password to rotate.
+func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if ah := c.GetHeader("Authorization"); tokens != nil && strings.HasPrefix(ah, "Bearer "+database.APITokenPlaintextPrefix) {
+			plaintext := strings.TrimPrefix(ah, "Bearer ")
+			tok, err := tokens.LookupAPIToken(plaintext)
+			if err != nil || tok == nil ||
+				tok.RevokedAt != nil ||
+				(tok.ExpiresAt != nil && time.Now().After(*tok.ExpiresAt)) {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API token"})
+				c.Abort()
+				return
+			}
+			c.Set("username", "token:"+tok.Name)
+			c.Set("user_id", tok.CreatedByID)
+			c.Set("is_admin", true)
+			c.Set("role", APITokenScopeRole(tok.Scope))
+			c.Set("auth_method", "token")
+			c.Set("token_id", tok.ID)
+			touchTokenLastUsed(tokens, tok.ID)
+			c.Next()
+			return
+		}
+
 		token, err := c.Cookie("auth_token")
 		if err != nil {
 			handleAuthFailure(c)
@@ -219,6 +293,7 @@ func AdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 		c.Set("user_id", claims.UserID)
 		c.Set("is_admin", true)
 		c.Set("role", claims.EffectiveRole())
+		c.Set("auth_method", "session")
 		c.Next()
 	}
 }
@@ -312,6 +387,13 @@ func GenerateCSRFToken(authToken, secret string) string {
 
 func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// API-token requests carry no cookies, so there is no ambient
+		// authority for a cross-site request to ride — CSRF is a cookie-session
+		// defense. auth_method is set by AdminAuth earlier in the chain.
+		if c.GetString("auth_method") == "token" {
+			c.Next()
+			return
+		}
 		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "DELETE" || c.Request.Method == "PATCH" {
 			csrfToken := c.GetHeader("X-CSRF-Token")
 			if csrfToken == "" {

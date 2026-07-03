@@ -576,6 +576,31 @@ type Admin struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ApiToken is a scoped bearer credential for programmatic API access (P0-2).
+// The plaintext is `fwm_` + 43 url-safe random chars, shown exactly once at
+// creation; only TokenHash ("sha256:"+hex, same at-rest scheme as probe
+// registration keys) is stored. Scope maps onto the RBAC ladder (read→viewer,
+// write→operator, admin→admin) so enforcement rides the same RequireRole
+// middleware as sessions. Revocation is soft (RevokedAt) so the row keeps its
+// audit-trail identity.
+type ApiToken struct {
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	Name      string `json:"name" gorm:"uniqueIndex;not null"`
+	TokenHash string `json:"-" gorm:"uniqueIndex;not null"`
+	// Prefix is the first 12 plaintext chars ("fwm_" + 8) kept for display so
+	// an operator can match a token in hand against the list.
+	Prefix      string     `json:"prefix"`
+	Scope       string     `json:"scope" gorm:"not null;default:read"`
+	CreatedBy   string     `json:"created_by"`
+	CreatedByID uint       `json:"created_by_id"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	LastUsedAt  *time.Time `json:"last_used_at"`
+	RevokedAt   *time.Time `json:"revoked_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+func (ApiToken) TableName() string { return "api_tokens" }
+
 type Site struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
 	Name         string    `json:"name" gorm:"uniqueIndex;not null"`

@@ -71,6 +71,7 @@ func NewDatabaseForTesting(t interface {
 		&models.ProcessedBatch{},
 		&models.SystemSetting{},
 		&models.Admin{},
+		&models.ApiToken{},
 	}
 
 	for _, m := range testModels {

@@ -1175,3 +1175,13 @@ func (d *Database) migrateAdminRoles() error {
 	log.Printf("migrate v20 admin_roles: ensured admins.role/disabled + audit_logs.actor_id exist; pre-existing accounts backfilled to role=admin")
 	return nil
 }
+
+// migrateAPITokens (v21, P0-2) creates the api_tokens table. AutoMigrate is
+// idempotent and the model is new, so this is safe on both dialects.
+func (d *Database) migrateAPITokens() error {
+	if err := d.db.AutoMigrate(&models.ApiToken{}); err != nil {
+		return fmt.Errorf("migrate v21 api_tokens: %w", err)
+	}
+	log.Printf("migrate v21 api_tokens: table ensured")
+	return nil
+}

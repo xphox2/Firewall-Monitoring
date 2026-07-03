@@ -40,6 +40,7 @@ type Store interface {
 	IngestStore
 	AuthStore
 	UserStore
+	TokenStore
 	AuditStore
 	SecretStore
 	MaintenanceOpsStore
@@ -243,6 +244,17 @@ type UserStore interface {
 	// CountOtherEnabledAdmins counts enabled role-admin accounts EXCLUDING the
 	// given id — the last-admin guard (must stay ≥1 before demote/disable/delete).
 	CountOtherEnabledAdmins(excludeID uint) (int64, error)
+}
+
+// TokenStore covers scoped API-token management (P0-2). Resolution for the
+// auth middleware is LookupAPIToken (plaintext in, row out — hashing stays in
+// the database package).
+type TokenStore interface {
+	LookupAPIToken(plaintext string) (*models.ApiToken, error)
+	CreateAPIToken(tok *models.ApiToken) error
+	ListAPITokens() ([]models.ApiToken, error)
+	RevokeAPIToken(id uint) error
+	TouchAPITokenLastUsed(id uint, t time.Time) error
 }
 
 // AuditStore covers the admin-action audit trail.

@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.10.566"
+const ServerVersion = "0.10.567"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -630,7 +630,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	}
 
 	admin := router.Group("/admin")
-	admin.Use(middleware.AdminAuth(authManager))
+	admin.Use(middleware.AdminAuth(authManager, db))
 	admin.Use(middleware.CSRFProtection(cfg))
 	// AUDIT-078: record authenticated admin mutations. After auth+CSRF so it
 	// only fires for genuine admin actions and the actor is on the context.
@@ -659,6 +659,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/users":                     true,
 			"/admin/api/users/:id":                 true,
 			"/admin/api/users/:id/reset-password":  true,
+			"/admin/api/tokens":                    true,
+			"/admin/api/tokens/:id":                true,
 			"/admin/api/probes/:id/regenerate-key": true,
 		},
 	))
@@ -865,6 +867,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.PUT("/api/users/:id", handler.UpdateUser)
 		admin.DELETE("/api/users/:id", handler.DeleteUser)
 		admin.POST("/api/users/:id/reset-password", handler.ResetUserPassword)
+		// Scoped API tokens (P0-2) — admin-only; creation is session-only
+		// (enforced in the handler: no token-mints-token).
+		admin.GET("/api/tokens", handler.ListAPITokens)
+		admin.POST("/api/tokens", handler.CreateAPIToken)
+		admin.DELETE("/api/tokens/:id", handler.RevokeAPIToken)
 
 		admin.GET("/api/settings", handler.GetSettings)
 		admin.POST("/api/settings", handler.UpdateSettings)

@@ -31,7 +31,9 @@ func TestAuditWiring_AUDIT078(t *testing.T) {
 
 	// The middleware must come AFTER auth — otherwise the actor isn't on the
 	// context. Assert the registration order in the source.
-	authIdx := strings.Index(body, "middleware.AdminAuth(authManager)")
+	// (P0-2 widened AdminAuth's signature to take the token store, so match
+	// the call prefix rather than the full literal.)
+	authIdx := strings.Index(body, "middleware.AdminAuth(authManager")
 	auditIdx := strings.Index(body, "audit.Middleware(db)")
 	if authIdx < 0 || auditIdx < 0 || auditIdx < authIdx {
 		t.Error("audit.Middleware must be registered AFTER middleware.AdminAuth so the actor is on the context (AUDIT-078).")
