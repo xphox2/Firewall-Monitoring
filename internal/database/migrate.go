@@ -1224,3 +1224,19 @@ func (d *Database) migrateAlertRuleClearThreshold() error {
 	log.Printf("migrate v23 alert_rule_clear_threshold: column ensured")
 	return nil
 }
+
+// migrateAlertRuleZScoreMode (v24, F17 adaptive baselining) adds the firing
+// mode + deviation multiplier. Defaults keep every existing rule static.
+func (d *Database) migrateAlertRuleZScoreMode() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.AlertRule{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS mode text NOT NULL DEFAULT 'static'`); err != nil {
+		return fmt.Errorf("migrate v24 add alert_rules.mode: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS z_score_k double precision NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("migrate v24 add alert_rules.z_score_k: %w", err)
+	}
+	log.Printf("migrate v24 alert_rule_zscore_mode: columns ensured")
+	return nil
+}

@@ -32,9 +32,13 @@ type AlertManager struct {
 	// are pruned alongside the cooldown maps, sharing the M25 bound.
 	fireStart         map[string]time.Time
 	flapShortResolves map[string][]time.Time
-	mu                sync.RWMutex
-	alertCooldown     time.Duration
-	policyCache       PolicyCache
+	// F17 zscore baselines: per-device trailing stats, own mutex — refreshed
+	// OUTSIDE am.mu so alert evaluation never holds the lock across a DB read.
+	baselines     map[uint]deviceBaselines
+	baselineMu    sync.Mutex
+	mu            sync.RWMutex
+	alertCooldown time.Duration
+	policyCache   PolicyCache
 }
 
 // firedEntry pairs an alert with its resolved policy config for deferred
@@ -56,6 +60,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		activeAlerts:      make(map[string]bool),
 		fireStart:         make(map[string]time.Time),
 		flapShortResolves: make(map[string][]time.Time),
+		baselines:         make(map[uint]deviceBaselines),
 		alertCooldown:     5 * time.Minute,
 	}
 }
@@ -117,22 +122,39 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 
 	var fired []firedEntry
 
+	// F17: refresh this device's baseline BEFORE taking am.mu (DB read).
+	// No-op unless some rule opted into zscore mode.
+	if am.zscoreConfigured() {
+		am.ensureBaseline(status.DeviceID)
+	}
+
 	am.mu.Lock()
 	now := time.Now()
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 
 	for _, chk := range checks {
 		resolved := am.resolveAlertConfig(status.DeviceID, siteID, chk.alertType)
-		if !resolved.AlertEnabled || resolved.Threshold == 0 {
+		if !resolved.AlertEnabled {
+			continue
+		}
+		// F17: in zscore mode the effective threshold is the device's own
+		// baseline + K·σ (static Threshold acts as a floor); otherwise the
+		// static threshold as always. fireAt==0 = nothing configured.
+		fireAt, _, dynamic := am.zscoreFireAt(resolved, status.DeviceID, chk.metric)
+		if fireAt == 0 {
 			continue
 		}
 
-		if chk.current >= resolved.Threshold {
+		if chk.current >= fireAt {
 			cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 			if am.canAlertWithCooldown(chk.metricKey, now, cooldown) {
-				msg := fmt.Sprintf("%s is %.1f (threshold: %.1f)", chk.metric, chk.current, resolved.Threshold)
+				thLabel := "threshold"
+				if dynamic {
+					thLabel = "baseline threshold"
+				}
+				msg := fmt.Sprintf("%s is %.1f (%s: %.1f)", chk.metric, chk.current, thLabel, fireAt)
 				if chk.alertType == models.AlertTypeSessionsHigh {
-					msg = fmt.Sprintf("Session count is %d (threshold: %d)", int(chk.current), int(resolved.Threshold))
+					msg = fmt.Sprintf("Session count is %d (%s: %d)", int(chk.current), thLabel, int(fireAt))
 				}
 				alert := models.Alert{
 					Timestamp:    now,
@@ -141,7 +163,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 					Severity:     resolved.Severity,
 					Message:      msg,
 					MetricName:   chk.metric,
-					Threshold:    resolved.Threshold,
+					Threshold:    fireAt,
 					CurrentValue: chk.current,
 					PolicyID:     resolved.PolicyID,
 					Suppressed:   resolved.InMaintenance,
@@ -172,16 +194,18 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		if rc.resolved.InMaintenance {
 			continue
 		}
-		// F14 hysteresis: with a ClearThreshold set (and sane — below the fire
-		// threshold), recovery requires dropping below the CLEAR band, not just
-		// under the fire threshold — a value hovering at the boundary stays in
-		// the fired state instead of flapping. ClearThreshold=0 keeps the
-		// legacy recover-at-threshold behavior bit-for-bit.
-		recoverBelow := rc.resolved.Threshold
+		// Effective fire level (static or F17 zscore), then the recovery band:
+		// F14 clear-band when configured; zscore mode gets a built-in half-σ
+		// band below its dynamic threshold so baseline noise doesn't flap.
+		fireAt, std, dynamic := am.zscoreFireAt(rc.resolved, status.DeviceID, rc.metric)
+		recoverBelow := fireAt
+		if dynamic {
+			recoverBelow = fireAt - 0.5*std
+		}
 		if rc.resolved.ClearThreshold > 0 && rc.resolved.ClearThreshold < recoverBelow {
 			recoverBelow = rc.resolved.ClearThreshold
 		}
-		if rc.resolved.Threshold > 0 && rc.current < recoverBelow {
+		if fireAt > 0 && rc.current < recoverBelow {
 			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
 				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID)
 		}

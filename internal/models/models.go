@@ -333,7 +333,16 @@ type AlertRule struct {
 	// than Threshold to widen the band). 0 = disabled — recovery at Threshold,
 	// exactly the pre-hysteresis behavior. Kills fire/recover flapping when a
 	// metric hovers at the boundary.
-	ClearThreshold  float64   `json:"clear_threshold"`
+	ClearThreshold float64 `json:"clear_threshold"`
+	// Mode selects the firing model (F17): "static" (default; empty = static)
+	// fires at Threshold; "zscore" fires when the value exceeds the device's
+	// own trailing-24h baseline by ZScoreK standard deviations (generalizes
+	// the traffic-spike detector to CPU/mem/disk/sessions). In zscore mode a
+	// non-zero Threshold acts as a FLOOR — the value must beat both — so a
+	// flat baseline can't make trivial values alert.
+	Mode string `json:"mode" gorm:"default:static"`
+	// ZScoreK is the deviation multiplier for zscore mode (0 = default 3.0).
+	ZScoreK         float64   `json:"zscore_k"`
 	NotifyEmail     *bool     `json:"notify_email"`
 	NotifySlack     *bool     `json:"notify_slack"`
 	NotifyDiscord   *bool     `json:"notify_discord"`

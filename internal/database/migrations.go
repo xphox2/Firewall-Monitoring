@@ -72,6 +72,7 @@ var registeredMigrations = []migration{
 	{version: 21, name: "api_tokens", run: (*Database).migrateAPITokens},
 	{version: 22, name: "admin_totp", run: (*Database).migrateAdminTOTP},
 	{version: 23, name: "alert_rule_clear_threshold", run: (*Database).migrateAlertRuleClearThreshold},
+	{version: 24, name: "alert_rule_zscore_mode", run: (*Database).migrateAlertRuleZScoreMode},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

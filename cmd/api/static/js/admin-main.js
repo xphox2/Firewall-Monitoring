@@ -3205,6 +3205,8 @@
             var severity = r.severity || '';
             var threshold = r.threshold || '';
             var clearThreshold = r.clear_threshold || '';
+            var mode = r.mode || 'static';
+            var zscoreK = r.zscore_k || '';
             var cooldown = (r.cooldown_minutes != null) ? r.cooldown_minutes : '';
 
             function triState(field, val) {
@@ -3219,6 +3221,8 @@
                 '<td><select data-field="severity" class="sm"><option value="">Inherit</option><option value="critical"' + (severity==='critical' ? ' selected' : '') + '>Critical</option><option value="warning"' + (severity==='warning' ? ' selected' : '') + '>Warning</option><option value="info"' + (severity==='info' ? ' selected' : '') + '>Info</option></select></td>' +
                 '<td><input type="number" data-field="threshold" value="' + threshold + '" step="0.1" class="sm" style="width:70px"></td>' +
                 '<td><input type="number" data-field="clear_threshold" value="' + clearThreshold + '" step="0.1" class="sm" style="width:70px" title="Recovery band (hysteresis): auto-resolve only below this. Blank/0 = resolve at threshold."></td>' +
+                '<td><select data-field="mode" class="sm" title="static: fire at threshold. zscore: fire when the value exceeds the device baseline by K standard deviations (threshold becomes a floor)."><option value="static"' + (mode!=='zscore' ? ' selected' : '') + '>static</option><option value="zscore"' + (mode==='zscore' ? ' selected' : '') + '>zscore</option></select></td>' +
+                '<td><input type="number" data-field="zscore_k" value="' + zscoreK + '" step="0.1" class="sm" style="width:55px" title="Deviation multiplier for zscore mode (blank = 3.0)"></td>' +
                 '<td>' + triState('notify_email', r.notify_email) + '</td>' +
                 '<td>' + triState('notify_slack', r.notify_slack) + '</td>' +
                 '<td>' + triState('notify_discord', r.notify_discord) + '</td>' +
@@ -3238,6 +3242,8 @@
             var severity = row.querySelector('[data-field="severity"]').value;
             var threshold = parseFloat(row.querySelector('[data-field="threshold"]').value) || 0;
             var clearThreshold = parseFloat(row.querySelector('[data-field="clear_threshold"]').value) || 0;
+            var mode = row.querySelector('[data-field="mode"]').value || 'static';
+            var zscoreK = parseFloat(row.querySelector('[data-field="zscore_k"]').value) || 0;
             var cooldownVal = row.querySelector('[data-field="cooldown_minutes"]').value;
             var cooldown = cooldownVal ? parseInt(cooldownVal) : null;
 
@@ -3254,6 +3260,8 @@
                 severity: severity,
                 threshold: threshold,
                 clear_threshold: clearThreshold,
+                mode: mode,
+                zscore_k: zscoreK,
                 notify_email: triVal('notify_email'),
                 notify_slack: triVal('notify_slack'),
                 notify_discord: triVal('notify_discord'),

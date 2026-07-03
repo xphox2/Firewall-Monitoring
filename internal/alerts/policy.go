@@ -18,7 +18,11 @@ type ResolvedAlertConfig struct {
 	Threshold    float64
 	// ClearThreshold is the F14 hysteresis recovery band from the winning
 	// AlertRule (0 = recover at Threshold, legacy behavior).
-	ClearThreshold    float64
+	ClearThreshold float64
+	// Mode/ZScoreK select the F17 firing model from the winning AlertRule
+	// ("static" default; "zscore" = baseline + K·σ with Threshold as floor).
+	Mode              string
+	ZScoreK           float64
 	Severity          models.Severity
 	CooldownMinutes   int
 	NotifyEmail       bool
@@ -44,7 +48,10 @@ type PolicyCache struct {
 	siteConfigs   map[uint]*models.SiteAlertConfig
 	windows       []models.MaintenanceWindow
 	defaultPolicy *models.AlertPolicy
-	loaded        bool
+	// anyZScore is true when at least one rule uses Mode=zscore, so the
+	// baseline prefetch (a DB read) only ever runs on installs that opted in.
+	anyZScore bool
+	loaded    bool
 }
 
 // RefreshPolicyCache reloads all policy data from the database.
@@ -90,6 +97,11 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 		cache.policyByID[policies[i].ID] = &policies[i]
 		if policies[i].IsDefault {
 			cache.defaultPolicy = &policies[i]
+		}
+		for j := range policies[i].Rules {
+			if policies[i].Rules[j].Mode == "zscore" {
+				cache.anyZScore = true
+			}
 		}
 	}
 	for i := range deviceConfigs {
@@ -188,6 +200,12 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		}
 		if rule.ClearThreshold > 0 {
 			resolved.ClearThreshold = rule.ClearThreshold
+		}
+		if rule.Mode != "" {
+			resolved.Mode = rule.Mode
+		}
+		if rule.ZScoreK > 0 {
+			resolved.ZScoreK = rule.ZScoreK
 		}
 		// M3: same `> 0` floor for a per-rule override (an explicit 0 inherits
 		// the default rather than disabling the cooldown entirely).

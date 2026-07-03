@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-07-03
+
+### Added
+- **Adaptive z-score baselining for threshold alerts** (v0.11 Tranche 2, F17, closes P2-5): alert rules gain a **Mode** — `static` (unchanged default) or `zscore`, which fires when a metric exceeds the device's OWN trailing-24h baseline by **K** standard deviations (default 3.0), generalizing the traffic-spike detector's approach to CPU/memory/disk/sessions. The rule's static threshold becomes a floor in zscore mode (both must be beaten), flat baselines (σ≈0) fall back to static so noise can't alert, devices without history behave statically, and recovery gets a built-in half-σ band (stacking with F14 clear-band if lower). Baselines are cached per device for 6h and refreshed outside the alert lock; installs with no zscore rules never touch the baseline path. Alert rows and messages carry the dynamic threshold ("baseline threshold: 46.2"). New Mode + K columns in the policy rules editor. Migration v24. Tests: fire-above-baseline with dynamic threshold, static floor, no-baseline fallback, flat-line guard (`zscore_f17_test.go`).
+
 ## [0.11.5] - 2026-07-03
 
 ### Added
