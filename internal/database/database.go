@@ -209,7 +209,7 @@ func Connect(cfg *config.Config) (*Database, error) {
 	// (default 25) with a small floor of 2 so even a 1-conn GORM pool gets
 	// parallel COPY capacity.
 	if pgxPool, pgxErr := openPGXPool(cfg, maxOpen); pgxErr != nil {
-		log.Printf("WARNING: failed to open pgxpool for COPY inserts (%v); SaveFlowSamples will fall back to GORM Create (5-10x slower on hot path)", pgxErr)
+		log.Printf("WARNING: failed to open pgxpool for COPY inserts (%v); SaveFlowSamples will fall back to GORM batch insert (~2x slower on hot path, measured — see docs/OPERATIONS.md)", pgxErr)
 	} else {
 		d.pgxPool = pgxPool
 		log.Printf("Database: pgxpool opened for bulk COPY inserts")

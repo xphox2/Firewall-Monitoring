@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.564] - 2026-07-02
+
+### Docs
+- **Measured ingest throughput published in `docs/OPERATIONS.md`** (from the first successful Benchmark-workflow run, 4-vCPU runner + postgres:16): pgx COPY hits ~60k/111k/121k rows/s at batch 100/500/1000 on `flow_samples`, vs ~47–60k for the multi-row-INSERT fallback and ~1.7–1.8k for per-row INSERTs; syslog multi-row INSERT ~81k rows/s at batch 500. The folklore "COPY is 5–10x faster than row-by-row" comments in `SaveFlowSamples`/`saveFlowSamplesPGX`/the pgxpool fallback warning were corrected with the measured ratios (~30–70x vs per-row, ~2x vs the actual M26 multi-row fallback); COPY at batch 1000 clears the 100k samples/sec sFlow design target.
+
 ## [0.10.563] - 2026-07-02
 
 ### Fixed

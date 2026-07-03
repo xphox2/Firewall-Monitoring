@@ -50,8 +50,10 @@ var flowSamplesCopyColumns = []string{
 
 // saveFlowSamplesPGX inserts the slice via the Postgres COPY protocol.
 // Equivalent to a row-by-row INSERT but in a single round-trip and without
-// per-row transaction overhead — typically 5-10x faster on the sFlow hot
-// path. Returns any error from COPY.
+// per-row transaction overhead. Measured (bench_ingest_integration_test.go,
+// 2026-07-03): ~30-70x faster than per-row INSERTs and ~2x faster than one
+// multi-row INSERT, reaching ~120k rows/s at batch 1000 on a 4-vCPU runner —
+// numbers in docs/OPERATIONS.md. Returns any error from COPY.
 //
 // The created_at column is server-stamped (one time.Now() call amortized
 // across the whole batch) so every row in a batch shares the same creation

@@ -1,9 +1,11 @@
 //go:build integration
 
 // Ingestion load benchmarks (deferred follow-up of the 2026-07-02 audit).
-// Measures the sFlow ingest hot path on a real Postgres so the "COPY is 5-10x
-// faster than row-by-row" claim in SaveFlowSamples' doc comment rests on
-// numbers, not folklore. Three write shapes, worst to best:
+// Measures the sFlow ingest hot path on a real Postgres — originally to test
+// the folklore "COPY is 5-10x faster than row-by-row" claim; the 2026-07-03
+// run measured ~30-70x vs per-row and ~2x vs one multi-row INSERT, and the
+// SaveFlowSamples/OPERATIONS.md numbers now come from here. Three write
+// shapes, worst to best:
 //
 //	GORMPerRow  — one INSERT per row (the pre-M4/M5 shape the claim compares against)
 //	GORMBatch   — one multi-row INSERT via batchInsertWithFallback (SQLite fallback path)

@@ -225,6 +225,27 @@ estimate from the drivers:
 CPU is dominated by SNMP poll fan-out (poller) and sFlow parsing (ingest); both
 scale with fleet size and sampling rate rather than a fixed baseline.
 
+### Measured ingest throughput
+
+From the ingestion benchmark suite (`make bench-ingest`, run 2026-07-03 via the
+manual Benchmark workflow on a 4-vCPU GitHub runner with a postgres:16 sidecar —
+shared-VM numbers, so treat them as order-of-magnitude, and relative comparisons
+as the reliable part):
+
+| Write path (flow_samples)             | batch 100 | batch 500 | batch 1000 |
+|---------------------------------------|-----------|-----------|------------|
+| pgx COPY (production Postgres path)   | 60k rows/s| 111k rows/s| 121k rows/s|
+| One multi-row INSERT (M26 fallback)   | 47k rows/s| 55k rows/s | 60k rows/s |
+| Per-row INSERTs                       | 1.8k rows/s| 1.7k rows/s| —         |
+
+Syslog (`syslog_messages`, one multi-row INSERT): ~81k rows/s at batch 500.
+
+Takeaways: COPY beats per-row INSERTs by ~30–70x (the old "5–10x" comment was a
+large understatement) and the multi-row-INSERT fallback by ~2x; COPY at batch
+1000 clears the 100k samples/sec sFlow design target on modest hardware; and
+batch size matters — the collector's 500–1000-row batches sit in the right
+range, so don't shrink them to "smooth" load.
+
 ## Running a single API instance (AUDIT-040)
 
 The API process keeps four pieces of state **in memory**, not in the database:
