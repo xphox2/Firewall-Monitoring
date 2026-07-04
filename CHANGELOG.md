@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.17] - 2026-07-03
+
+### Fixed
+- **MFA wizard "Not now" now really means "ask me again next login"** — the once-per-session guard used a sessionStorage flag, which outlives a logout in the same browser tab, so after "Not now" the prompt only returned when the tab was closed (found by the maintainer on the first prod-side try). A successful login (both the password-only and TOTP second-step paths in admin-login.js) now clears the flag before redirecting, so every fresh sign-in re-offers the wizard until the user either enrolls or explicitly declines ("Don't ask me again" stays permanent, server-side, as designed). Verified with the exact repro: prompt → Not now → logout → login → prompt returns.
+
 ## [0.11.16] - 2026-07-03
 
 ### Added

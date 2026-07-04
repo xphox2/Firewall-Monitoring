@@ -38,6 +38,11 @@
                 document.getElementById('totp-form').classList.remove('hidden');
                 document.getElementById('totp-code').focus();
             } else if (data.success) {
+                // v0.11.17: a fresh login resets the MFA-wizard "offered this
+                // session" flag, so "Not now" really means "ask me again next
+                // login" (sessionStorage outlives a logout in the same tab —
+                // without this the prompt only returned when the tab closed).
+                try { sessionStorage.removeItem('fwmon:mfa-wizard-offered'); } catch (err) { /* ignore */ }
                 window.location.href = '/admin';
             } else {
                 errorDiv.textContent = data.error || 'Invalid credentials';
@@ -73,6 +78,7 @@
         .then(function(response) { return response.json(); })
         .then(function(data) {
             if (data.success) {
+                try { sessionStorage.removeItem('fwmon:mfa-wizard-offered'); } catch (err) { /* ignore */ }
                 window.location.href = '/admin';
             } else {
                 errorDiv.textContent = data.error || 'Invalid code';
