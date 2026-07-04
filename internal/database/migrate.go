@@ -1288,3 +1288,24 @@ func (d *Database) migrateIncidents() error {
 	log.Printf("migrate v27 incidents: table + alerts.incident_id ensured")
 	return nil
 }
+
+// migrateAdminProfile (v28, profile page + MFA onboarding wizard) adds the
+// self-service profile columns. All additive with empty/NULL defaults —
+// upgrading changes nothing until a user edits their profile or declines the
+// MFA prompt.
+func (d *Database) migrateAdminProfile() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.Admin{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS email text NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate v28 add admins.email: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS full_name text NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate v28 add admins.full_name: %w", err)
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS mfa_prompt_dismissed_at timestamptz`); err != nil {
+		return fmt.Errorf("migrate v28 add admins.mfa_prompt_dismissed_at: %w", err)
+	}
+	log.Printf("migrate v28 admin_profile: ensured admins email/full_name/mfa_prompt_dismissed_at columns")
+	return nil
+}

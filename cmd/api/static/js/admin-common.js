@@ -1124,7 +1124,7 @@
             var pageMap = { 'dashboard':'', 'devices':'devices', 'connections':'connections',
                 'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
-                'irc':'irc', 'audit':'audit' };
+                'irc':'irc', 'audit':'audit', 'profile':'profile' };
             currentPage = pageMap[lastSegment] || 'dashboard';
         }
 
@@ -1166,6 +1166,17 @@
         var sidebarNav = document.querySelector('.sidebar-nav');
         if (sidebarNav) {
             sidebarNav.innerHTML = navHtml;
+        }
+        // The Profile link lives in the static sidebar-footer (above Logout)
+        // on every admin page; highlight it when the profile page is current.
+        var profileLink = document.getElementById('profile-link');
+        if (profileLink) {
+            profileLink.classList.toggle('active', currentPage === 'profile');
+            if (currentPage === 'profile') {
+                profileLink.setAttribute('aria-current', 'page');
+            } else {
+                profileLink.removeAttribute('aria-current');
+            }
         }
     }
 

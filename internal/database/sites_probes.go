@@ -173,6 +173,27 @@ func (d *Database) SetAdminDisabled(id uint, disabled bool) error {
 		}).Error
 }
 
+// UpdateAdminProfile writes exactly the self-service profile columns (v28).
+// A column-targeted UPDATE, never Save — a full-struct write here would
+// clobber password/role/TOTP state from a stale in-memory row.
+func (d *Database) UpdateAdminProfile(id uint, email, fullName string) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).
+		UpdateColumns(map[string]interface{}{
+			"email":     email,
+			"full_name": fullName,
+		}).Error
+}
+
+// SetAdminMFAPromptDismissed records the user's explicit decline of the MFA
+// onboarding wizard. The WHERE guard keeps the FIRST decline timestamp — the
+// audit-relevant moment the risk was accepted — across repeat calls.
+func (d *Database) SetAdminMFAPromptDismissed(id uint) error {
+	now := time.Now()
+	return d.db.Model(&models.Admin{}).
+		Where("id = ? AND mfa_prompt_dismissed_at IS NULL", id).
+		UpdateColumn("mfa_prompt_dismissed_at", &now).Error
+}
+
 func (d *Database) DeleteAdmin(id uint) error {
 	return d.db.Delete(&models.Admin{}, id).Error
 }

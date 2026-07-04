@@ -621,6 +621,16 @@ type Admin struct {
 	// Disabled blocks login and invalidates sessions (via TokenVersion bump on
 	// set) without destroying the account row or its audit-log identity.
 	Disabled bool `json:"disabled" gorm:"default:false"`
+	// Email / FullName are self-service profile fields (migration v28). Email
+	// is deliberately NOT unique: login is by username, and ops teams share
+	// mailboxes — uniqueness would add a failure mode with no security value.
+	Email    string `json:"email"`
+	FullName string `json:"full_name"`
+	// MFAPromptDismissedAt records the user's explicit "I accept the risk"
+	// decline of the login-time MFA onboarding wizard. NULL = never declined
+	// (keep offering). Set once; enabling 2FA supersedes it. Never exposed
+	// raw — GetMe reports only a boolean.
+	MFAPromptDismissedAt *time.Time `json:"-"`
 	// TOTPSecret is the RFC 6238 shared secret, stored {enc}-encrypted via the
 	// field-encryption key chain (crypto.go) — never plaintext at rest. Empty
 	// until the user starts enrollment; TOTPEnabled stays false until the

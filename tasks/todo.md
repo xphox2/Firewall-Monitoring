@@ -1,4 +1,4 @@
-# Post-publish test plan — v0.11.14 on rust-01 (2026-07-03)
+# Post-publish test plan — v0.11.16 on rust-01 (2026-07-03)
 
 Everything that changed since the last prod deploy needs a live check. Items marked
 **(prod-only)** could NOT be fully verified in the local walkthrough and matter most.
@@ -73,7 +73,16 @@ Everything that changed since the last prod deploy needs a live check. Items mar
 - [ ] Operator/viewer: no Access section, no save bar; `#access` deep link redirects to Account
 - [ ] Day + Night themes and a narrow window (nav collapses to horizontal strip)
 
-## Walkthrough results for reference (local, v0.11.12–.14, PG16)
+## 12. Profile page + MFA onboarding wizard (v0.11.16, migration v28)
+- [ ] Migration v28 applies (admins gains email/full_name/mfa_prompt_dismissed_at)
+- [ ] Profile link appears above Logout on all pages (incl. device-detail/irc/probes/sites) and in the mobile slide-in sidebar
+- [ ] `/admin/profile`: username/role/member-since read-only; email + display name save and survive reload; Settings no longer has an Account section; `/admin/settings#account` redirects to the profile
+- [ ] After login without 2FA: wizard offers once; "Not now" → re-offered next login; "Don't ask me again" + checkbox → never again (server-side), but the profile banner + Enable button remain
+- [ ] Full enrollment on a test account: QR scans, `otpauth://` link opens the authenticator when browsing on the phone itself, wrong code shows a recoverable error, recovery codes copy + download, forced re-login with password + code works
+- [ ] Forced-password-change accounts get the password modal, never the wizard
+- [ ] Audit log shows the PUT /admin/api/me and mfa-decline entries with the right actor
+
+## Walkthrough results for reference (local, v0.11.12–.16, PG16)
 All verified locally with the production AlertManager code: F14 band hold/release,
 F17 dynamic threshold + static-floor suppression, F13 [FLAPPING] + muted recovery,
 F12 open/attach-mute/close + INC chips + endpoints, F19 due/route/retry-not-skip,

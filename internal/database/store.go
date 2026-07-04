@@ -246,6 +246,12 @@ type UserStore interface {
 	// CountOtherEnabledAdmins counts enabled role-admin accounts EXCLUDING the
 	// given id — the last-admin guard (must stay ≥1 before demote/disable/delete).
 	CountOtherEnabledAdmins(excludeID uint) (int64, error)
+	// UpdateAdminProfile writes only the self-service email/full_name columns
+	// (v28) — never role/password.
+	UpdateAdminProfile(id uint, email, fullName string) error
+	// SetAdminMFAPromptDismissed records the explicit MFA-wizard decline;
+	// idempotent, first timestamp wins.
+	SetAdminMFAPromptDismissed(id uint) error
 }
 
 // TOTPStore covers two-factor enrollment state (P0-3). Secrets arrive already

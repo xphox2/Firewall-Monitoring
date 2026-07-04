@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.16] - 2026-07-03
+
+### Added
+- **User profile page** (`/admin/profile`, Profile link above Logout in every sidebar): each signed-in user — any role — now fully manages their own account: new **email** and **display name** fields (migration v28; email deliberately non-unique, username stays permanent as the audit/JWT identity), password change and the 2FA card (both moved from Settings → Account, which is gone — the old `#account` deep link redirects), plus a persistent "2FA is off" banner. Self-service endpoints `PUT /admin/api/me` and `POST /admin/api/me/mfa-decline` are viewer-reachable (selfServiceRoutes) and audit-logged; the update path accepts ONLY email/full_name, so it can never rename or escalate.
+- **MFA onboarding wizard**: users without 2FA get a friendly six-step wizard once per login session — intro → password re-auth → add key (server-rendered **QR code** via the existing otp dependency, an `otpauth://` **deep link for phone-as-authenticator users**, and a copyable manual key) → verify (double-submit guard, lockout-aware errors) → recovery codes (copy-all + **download .txt**, ESC swallowed until explicitly saved — the session is already revoked at that point and the codes are shown exactly once) → sign back in. Declining requires an explicit "I understand the risk" acknowledgment stored server-side (`mfa_prompt_dismissed_at`) — never nagged again, but the profile banner keeps enrollment one click away. "Not now" simply re-offers next login. The wizard never fights the forced-password-change gate and is fully responsive (dedicated ≤480px layout, 44px touch targets).
+- Tests: profile-column isolation + first-decline-timestamp semantics (`admin_profile_test.go`), viewer self-service authz, validation matrix, escalation-field rejection, decline idempotency, GetMe contract, QR PNG decode (`handlers_profile_test.go`); verified live end-to-end with a real computed TOTP enrollment → session revocation → two-step login, on desktop and 375px viewports.
+
 ## [0.11.15] - 2026-07-03
 
 ### Docs

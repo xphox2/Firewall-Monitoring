@@ -27,6 +27,8 @@ type userDTO struct {
 	Disabled           bool      `json:"disabled"`
 	MustChangePassword bool      `json:"must_change_password"`
 	TOTPEnabled        bool      `json:"totp_enabled"`
+	Email              string    `json:"email"`
+	FullName           string    `json:"full_name"`
 	CreatedAt          time.Time `json:"created_at"`
 }
 
@@ -38,6 +40,8 @@ func toUserDTO(a *models.Admin) userDTO {
 		Disabled:           a.Disabled,
 		MustChangePassword: a.MustChangePassword,
 		TOTPEnabled:        a.TOTPEnabled,
+		Email:              a.Email,
+		FullName:           a.FullName,
 		CreatedAt:          a.CreatedAt,
 	}
 }
@@ -49,19 +53,40 @@ func (h *Handler) GetMe(c *gin.Context) {
 	username, _ := c.Get("username")
 	role, _ := c.Get("role")
 	userID, _ := c.Get("user_id")
-	totpEnabled := false
+	// Profile fields (v28). The dismissed timestamp is reported only as a
+	// boolean — the client needs "should I offer the MFA wizard", not when
+	// the risk was accepted (that stays server-side for the audit story).
+	var (
+		totpEnabled        bool
+		email, fullName    string
+		createdAt          *time.Time
+		mustChange         bool
+		mfaPromptDismissed bool
+	)
 	if db := h.reqDB(c); db != nil {
 		if name, ok := username.(string); ok {
-			if admin, err := db.GetAdminByUsername(name); err == nil && admin != nil {
-				totpEnabled = admin.TOTPEnabled
+			if authRow, err := db.GetAdminByUsername(name); err == nil && authRow != nil {
+				if admin, err := db.GetAdminByID(authRow.ID); err == nil && admin != nil {
+					totpEnabled = admin.TOTPEnabled
+					email = admin.Email
+					fullName = admin.FullName
+					createdAt = &admin.CreatedAt
+					mustChange = admin.MustChangePassword
+					mfaPromptDismissed = admin.MFAPromptDismissedAt != nil
+				}
 			}
 		}
 	}
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"id":           userID,
-		"username":     username,
-		"role":         role,
-		"totp_enabled": totpEnabled,
+		"id":                   userID,
+		"username":             username,
+		"role":                 role,
+		"totp_enabled":         totpEnabled,
+		"email":                email,
+		"full_name":            fullName,
+		"created_at":           createdAt,
+		"must_change_password": mustChange,
+		"mfa_prompt_dismissed": mfaPromptDismissed,
 	}))
 }
 

@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.15"
+const ServerVersion = "0.11.16"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -654,6 +654,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/logout":            true,
 			"/admin/api/settings/password": true,
 			"/admin/api/me":                true,
+			"/admin/api/me/mfa-decline":    true,
 			"/admin/api/2fa/setup":         true,
 			"/admin/api/2fa/verify":        true,
 			"/admin/api/2fa/disable":       true,
@@ -685,6 +686,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		})
 
 		admin.GET("/settings", func(c *gin.Context) {
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
+		})
+
+		admin.GET("/profile", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
@@ -872,6 +877,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// User management (RBAC, P0-1) — admin-only via adminOnlyRoutes above;
 		// /api/me is self-service so the SPA can gate UI by role.
 		admin.GET("/api/me", handler.GetMe)
+		// Self-service profile (v28): own email/display-name, and the
+		// explicit MFA-onboarding decline. Both in selfServiceRoutes.
+		admin.PUT("/api/me", handler.UpdateProfile)
+		admin.POST("/api/me/mfa-decline", handler.DeclineMFAPrompt)
 		admin.GET("/api/users", handler.ListUsers)
 		admin.POST("/api/users", handler.CreateUser)
 		admin.PUT("/api/users/:id", handler.UpdateUser)

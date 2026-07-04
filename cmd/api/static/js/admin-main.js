@@ -132,6 +132,7 @@
                 if (window.FwmonSettingsUI) FwmonSettingsUI.init({ reload: loadSettings });
                 loadSettings();
                 break;
+            case 'profile': if (window.FwmonProfile) FwmonProfile.initPage(); break;
             case 'reports': if (window.AdminReports && window.AdminReports.init) window.AdminReports.init(); break;
             case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
             case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
@@ -3111,7 +3112,7 @@
         // this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
-            'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit' };
+            'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile' };
         var page = pageMap[lastSegment];
         if (page) {
             document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });

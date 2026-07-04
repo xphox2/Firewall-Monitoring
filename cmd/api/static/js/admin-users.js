@@ -192,96 +192,18 @@
             });
         }
 
-        /* ---- Two-factor authentication card (P0-3) — every role, own account ---- */
-        var twofaCard = document.getElementById('card-2fa');
-
-        function render2FA() {
-            if (!twofaCard || !me) { return; }
-            var status = document.getElementById('twofa-status');
-            var flow = document.getElementById('twofa-flow');
-            if (me.totp_enabled) {
-                status.innerHTML = '<span style="color:var(--fwmon-sig-ok,#36c98a)">✓ Two-factor authentication is enabled.</span>';
-                flow.innerHTML =
-                    '<div class="form-row" style="align-items:flex-end;">' +
-                    '<div class="form-group"><label for="twofa-disable-pw">Password</label><input type="password" id="twofa-disable-pw" autocomplete="current-password"></div>' +
-                    '<div class="form-group"><label for="twofa-disable-code">Code (or recovery code)</label><input type="text" id="twofa-disable-code" autocomplete="one-time-code"></div>' +
-                    '<div class="form-group"><button class="btn danger" data-action="twofa-disable">Disable 2FA</button></div>' +
-                    '</div>';
-            } else {
-                status.innerHTML = '<span style="color:var(--fwmon-text-faint)">Two-factor authentication is off.</span>';
-                flow.innerHTML =
-                    '<div class="form-row" style="align-items:flex-end;">' +
-                    '<div class="form-group"><label for="twofa-setup-pw">Confirm your password to begin</label><input type="password" id="twofa-setup-pw" autocomplete="current-password"></div>' +
-                    '<div class="form-group"><button class="btn" data-action="twofa-setup">Set Up 2FA</button></div>' +
-                    '</div>';
-            }
-        }
-
-        function render2FAVerifyStep(secret, url) {
-            document.getElementById('twofa-flow').innerHTML =
-                '<div class="card" style="border-color:var(--fwmon-warn,#d29922)">' +
-                '<p style="margin-bottom:8px;">Add this key to your authenticator app (manual entry), then confirm with a code:</p>' +
-                '<p>Secret: <code style="user-select:all">' + esc(secret) + '</code></p>' +
-                '<p style="margin-top:4px; word-break:break-all;">URI: <code style="user-select:all; font-size:0.78rem;">' + esc(url) + '</code></p>' +
-                '</div>' +
-                '<div class="form-row" style="align-items:flex-end; margin-top:10px;">' +
-                '<div class="form-group"><label for="twofa-verify-code">6-digit code</label><input type="text" id="twofa-verify-code" inputmode="numeric" autocomplete="one-time-code"></div>' +
-                '<div class="form-group"><button class="btn" data-action="twofa-verify">Verify &amp; Enable</button></div>' +
-                '</div>';
-            document.getElementById('twofa-verify-code').focus();
-        }
-
-        var twofaActions = {
-            'twofa-setup': function () {
-                var pw = document.getElementById('twofa-setup-pw').value;
-                if (!pw) { AC.showError('Enter your password first'); return; }
-                AC.apiFetch(API_BASE + '/2fa/setup', { method: 'POST', body: { password: pw } })
-                    .then(function (res) { render2FAVerifyStep(res.data.secret, res.data.otpauth_url); })
-                    .catch(function (err) { AC.showError((err && err.message) || 'Setup failed'); });
-            },
-            'twofa-verify': function () {
-                var code = document.getElementById('twofa-verify-code').value.trim();
-                if (!code) { AC.showError('Enter the code from your app'); return; }
-                AC.apiFetch(API_BASE + '/2fa/verify', { method: 'POST', body: { code: code } })
-                    .then(function (res) {
-                        var codes = (res.data.recovery_codes || []).map(function (c) {
-                            return '<code style="user-select:all">' + esc(c) + '</code>';
-                        }).join(' &nbsp; ');
-                        document.getElementById('twofa-status').innerHTML =
-                            '<span style="color:var(--fwmon-sig-ok,#36c98a)">✓ Enabled.</span>';
-                        document.getElementById('twofa-flow').innerHTML =
-                            '<div class="card" style="border-color:var(--fwmon-warn,#d29922)">' +
-                            '<p style="margin-bottom:8px;"><strong>Recovery codes</strong> (shown once — store them somewhere safe):</p>' +
-                            '<p style="line-height:2">' + codes + '</p>' +
-                            '<p style="margin-top:8px; color:var(--fwmon-text-faint)">Your sessions were revoked — you\'ll be asked to log in again with your new code.</p>' +
-                            '</div>';
-                    })
-                    .catch(function (err) { AC.showError((err && err.message) || 'Verification failed'); });
-            },
-            'twofa-disable': function () {
-                var pw = document.getElementById('twofa-disable-pw').value;
-                var code = document.getElementById('twofa-disable-code').value.trim();
-                if (!pw || !code) { AC.showError('Password and a code are required'); return; }
-                AC.apiFetch(API_BASE + '/2fa/disable', { method: 'POST', body: { password: pw, code: code } })
-                    .then(function () {
-                        me.totp_enabled = false;
-                        AC.showSuccess('Two-factor authentication disabled');
-                        render2FA();
-                    })
-                    .catch(function (err) { AC.showError((err && err.message) || 'Disable failed'); });
-            }
-        };
-
-        if (twofaCard) {
-            twofaCard.addEventListener('click', function (e) {
-                var el = e.target.closest('[data-action]');
-                if (el && twofaActions[el.dataset.action]) { twofaActions[el.dataset.action](el); }
-            });
-        }
+        /* The 2FA card + enrollment flow moved to admin-profile.js
+           (FwmonProfile) with the v0.11.16 profile page — one enrollment UX
+           shared by the profile card and the MFA onboarding wizard. This
+           module keeps the /me fetch and role gating. */
 
         AC.apiFetch(API_BASE + '/me').then(function (res) {
             me = (res && res.data) || null;
             AC.sessionRole = me ? me.role : null;
+            // v0.11.16: publish the whole identity for other modules
+            // (admin-profile.js renders from it and decides whether to offer
+            // the MFA onboarding wizard).
+            AC.sessionMe = me;
             // T2-8b role-aware UI: stamp the role on <html> so the CSS
             // attribute rules hide any [data-min-role] control this session
             // can't use (server enforces regardless), and badge the sidebar
@@ -303,7 +225,9 @@
                     }
                 }
             }
-            render2FA();
+            // v0.11.16: hand the identity to page modules (profile page
+            // rendering + MFA wizard trigger live in admin-profile.js).
+            document.dispatchEvent(new CustomEvent('fwmon:me-resolved', { detail: me }));
             if (me && me.role === 'admin') {
                 card.style.display = '';
                 loadUsers();

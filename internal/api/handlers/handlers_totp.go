@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"image/png"
 	"log"
 	"net/http"
 	"time"
@@ -172,9 +175,22 @@ func (h *Handler) Setup2FA(c *gin.Context) {
 		httputil.InternalError(c, "Failed to store TOTP secret", err)
 		return
 	}
+	// qr_png (v0.11.16 MFA wizard): the otpauth URI as a scannable QR,
+	// rendered server-side via the otp lib's bundled barcode generator (no
+	// new deps, no extra route — the QR lives and dies with this response,
+	// which already carries the secret as text). Failure is non-fatal: the
+	// client falls back to manual entry.
+	qrB64 := ""
+	if img, err := key.Image(220, 220); err == nil {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err == nil {
+			qrB64 = base64.StdEncoding.EncodeToString(buf.Bytes())
+		}
+	}
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"secret":      key.Secret(),
 		"otpauth_url": key.URL(),
+		"qr_png":      qrB64,
 	}))
 }
 

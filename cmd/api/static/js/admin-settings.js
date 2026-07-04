@@ -125,6 +125,12 @@
 
     function sectionFromHash() {
         var h = (location.hash || '').replace(/^#/, '');
+        // v0.11.16: the Account section moved to the Profile page — honor the
+        // old deep link.
+        if (h === 'account') {
+            window.location.replace('/admin/profile');
+            return firstVisibleSection();
+        }
         return h && sectionExists(h) ? h : firstVisibleSection();
     }
 
