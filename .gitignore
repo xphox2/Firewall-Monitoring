@@ -55,3 +55,4 @@ node_modules/
 # Go coverage artifacts (go test -cover -coverprofile)
 coverage.out
 coverage.html
+/api

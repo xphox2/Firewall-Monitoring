@@ -162,10 +162,28 @@ func (d *Database) MarkStaleProbeDevicesOffline(staleThreshold time.Time) ([]mod
 // syslog/flow/ping rows already survive a device delete, and the project rule
 // that telemetry is a running total. DeviceConnection IS removed: it is pure
 // user-drawn map config that is meaningless once an endpoint device is gone.
+// Any OPEN incident for the device is RESOLVED (not deleted) — see LC-21 below.
 func (d *Database) DeleteDevice(id uint) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("source_device_id = ? OR dest_device_id = ?", id, id).Delete(&models.DeviceConnection{}).Error; err != nil {
 			return fmt.Errorf("delete device %d: delete connections: %w", id, err)
+		}
+		// LC-21 (2026-07-04 audit): close any open incident for this device.
+		// The ONLY other resolve path is the device-recovery correlator
+		// (incidents_f12.go closeIncident), which can never fire once the
+		// device row is gone — pre-fix, "device offline → incident opens →
+		// operator deletes the device" stranded a permanently-open incident in
+		// the poller's cache and the UI. This resolves the state machine
+		// without deleting the incident row (telemetry preservation: history
+		// stays, retention ages it out per LC-22); the title records why it
+		// closed. `||` string concat is valid on both Postgres and SQLite.
+		if err := tx.Model(&models.Incident{}).
+			Where("device_id = ? AND resolved_at IS NULL", id).
+			Updates(map[string]interface{}{
+				"resolved_at": time.Now(),
+				"title":       gorm.Expr("title || ' (device deleted)'"),
+			}).Error; err != nil {
+			return fmt.Errorf("delete device %d: resolve open incidents: %w", id, err)
 		}
 		return tx.Delete(&models.Device{}, id).Error
 	})

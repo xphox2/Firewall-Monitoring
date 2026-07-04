@@ -22,7 +22,7 @@ Finding IDs are LC-nn. Severity counts (unique): HIGH 5 / MEDIUM 26 / LOW 20.
 
 ### LC-20 [HIGH] (server) — Five per-poll status tables (vpn_status, ha_status, security_stats, sdwan_health, license_info) have NO retention path — unbounded growth, missed by both prior retention passes
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.24)
 
 **Location:** `internal/database/cleanup.go:228` · Dimension: db-migrations,retention-cleanup
 
@@ -250,7 +250,7 @@ The adminOnlyRoutes rationale is 'settings, users, or credential material', and 
 
 ### LC-19 [MEDIUM] (server) — Partition conversion silently drops the AUDIT-034 flow_samples src/dst indexes (and other model-tag indexes) on every fresh PG install; per-partition recreation list never got them
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.24)
 
 **Location:** `internal/database/migrate.go:443` · Dimension: db-migrations
 
@@ -262,7 +262,7 @@ Migration v2 (migratePartitionHighVolume, within the audit window: v0.10.380) co
 
 ### LC-22 [MEDIUM] (server) — T2 incidents table (migration v27) has no retention path, and an incident open when its device is deleted is a permanent dead-end state
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.24)
 
 **Location:** `internal/database/incidents.go:12` · Dimension: retention-cleanup
 
@@ -478,7 +478,7 @@ The role-gating mechanism (fetch /admin/api/me → stamp document.documentElemen
 
 ### LC-21 [LOW] (server) — Incident state machine dead-end: deleting a device with an open incident leaves the incident open forever — no code path or API can ever resolve it
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.24)
 
 **Location:** `internal/database/devices.go:165` · Dimension: db-migrations
 
@@ -490,7 +490,7 @@ An incident (v27/F12) is opened by the poller's AlertManager when DEVICE_OFFLINE
 
 ### LC-23 [LOW] (server) — syslog_messages is partitioned but its retention is DELETE-only — partition drop is skipped even when provably safe, on the table that dominates prod DB size
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.24)
 
 **Location:** `internal/database/cleanup.go:321` · Dimension: retention-cleanup,retention-cleanup
 

@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.24] - 2026-07-04
+
+### Fixed — retention & schema consistency (audit LC-19..23)
+- **Five per-poll status tables gain a retention path** (LC-20, HIGH): `vpn_status`, `ha_status`, `security_stats`, `sdwan_health` follow `RETENTION_STATUS_DAYS` unless their own knob is set (`RETENTION_VPN_STATUS_DAYS` / `RETENTION_HA_STATUS_DAYS` / `RETENTION_SECURITY_STATS_DAYS` / `RETENTION_SDWAN_HEALTH_DAYS`); `license_info` defaults to 365 days (`RETENTION_LICENSE_INFO_DAYS`). Previously none of the five had ANY delete path — unbounded growth.
+- **Per-partition indexes are now derived from the GORM model tags** (LC-19): the hand-maintained recreation list in `EnsurePartitions` had drifted and silently dropped the AUDIT-034 `src_addr`/`dst_addr` indexes (plus `probe_id`, `interval_type`, `severity`) on fresh PG installs. One source of truth now (`partitionIndexPlan` parses the model tags; legacy per-partition index names pinned so existing deployments no-op), index-ensuring also backfills pre-existing partitions, and a drift-guard test fails the build if a future model index isn't covered.
+- **Resolved incidents age out** (LC-22): new `RETENTION_INCIDENT_DAYS` (0 = follow `RETENTION_DEFAULT_DAYS`, 90); open incidents are never deleted.
+- **Deleting a device closes its open incidents** (LC-21): previously stranded open forever with no code path able to resolve them. Rows are preserved (telemetry-preservation rule) — only the state machine closes, title suffixed "(device deleted)".
+- **syslog_messages joins the partition-drop fast path where provably safe** (LC-23): whole month-partitions strictly older than *both* the normal and the `RETENTION_SYSLOG_CRITICAL_DAYS` windows are dropped before the severity-scoped DELETEs (which still handle straddling partitions); never drops when critical severity is kept forever (the default). PG-only; DELETE fallback unchanged on both dialects.
+- Regression tests per finding + two new PG integration subtests (partition index coverage, syslog partition drop). Report statuses annotated.
+
 ## [0.11.23] - 2026-07-04
 
 ### Fixed — alerting lifecycle (audit LC-09..14, LC-26..28, LC-30, LC-42)

@@ -182,6 +182,23 @@ type RetentionConfig struct {
 	FlowRollupDays    int // flow_rollups     (default 365)
 	FlowDetectionDays int // flow_detections  (default 90)
 	AgentDropsDays    int // flow_agent_drops (default 30)
+	// LC-20 (2026-07-04 audit): the five per-poll status tables that had no
+	// retention path at all — every poll cycle (and every collector push)
+	// appended rows forever. vpn_status/ha_status/security_stats/sdwan_health
+	// are charted per-poll telemetry like interface_stats, so 0 here follows
+	// StatusDays (the knob their chart siblings use) rather than DefaultDays.
+	// license_info is a slow-moving expiry snapshot whose history is useful
+	// year-over-year, so it gets its own longer default.
+	VPNStatusDays     int // vpn_status     (default 0 = follow RETENTION_STATUS_DAYS)
+	HAStatusDays      int // ha_status      (default 0 = follow RETENTION_STATUS_DAYS)
+	SecurityStatsDays int // security_stats (default 0 = follow RETENTION_STATUS_DAYS)
+	SDWANHealthDays   int // sdwan_health   (default 0 = follow RETENTION_STATUS_DAYS)
+	LicenseInfoDays   int // license_info   (default 365)
+	// LC-22 (2026-07-04 audit): resolved incidents (T2/F12 outage groupings)
+	// age out like alert history — 0 = DefaultDays (90), matching how
+	// RETENTION_ALERT_DAYS defaults. Open incidents are never deleted; the
+	// device-recovery path (or a device delete, LC-21) closes them first.
+	IncidentDays int // resolved incidents (default 0 = RETENTION_DEFAULT_DAYS)
 }
 
 type AuthConfig struct {
@@ -378,6 +395,13 @@ func Load() *Config {
 			FlowRollupDays:    getIntEnv("RETENTION_FLOW_ROLLUP_DAYS", 365),
 			FlowDetectionDays: getIntEnv("RETENTION_FLOW_DETECTION_DAYS", 90),
 			AgentDropsDays:    getIntEnv("RETENTION_AGENT_DROPS_DAYS", 30),
+			// LC-20 / LC-22 (2026-07-04 audit): see the field docs above.
+			VPNStatusDays:     getIntEnv("RETENTION_VPN_STATUS_DAYS", 0),
+			HAStatusDays:      getIntEnv("RETENTION_HA_STATUS_DAYS", 0),
+			SecurityStatsDays: getIntEnv("RETENTION_SECURITY_STATS_DAYS", 0),
+			SDWANHealthDays:   getIntEnv("RETENTION_SDWAN_HEALTH_DAYS", 0),
+			LicenseInfoDays:   getIntEnv("RETENTION_LICENSE_INFO_DAYS", 365),
+			IncidentDays:      getIntEnv("RETENTION_INCIDENT_DAYS", 0),
 		},
 		Detect: DetectConfig{
 			PortScanPorts:      getIntEnv("DETECT_PORT_SCAN_PORTS", 0),

@@ -211,6 +211,41 @@ func parsePartitionUpperBound(bound string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// statusFallback resolves a per-table retention knob for the charted per-poll
+// status tables (LC-20): the table's own knob when set, otherwise the shared
+// statusDays window its chart siblings (system_status/interface_stats) use.
+func statusFallback(perTable, statusDays int) int {
+	if perTable > 0 {
+		return perTable
+	}
+	return statusDays
+}
+
+// syslogPartitionDropDays returns the age in days past which an ENTIRE
+// syslog_messages monthly partition is provably expired under EVERY retention
+// window — the max of the critical (severity 0-5) and informational (6-7)
+// windows — so dropPartitionsOlderThan may reclaim it wholesale (LC-23).
+// Returns 0 ("never drop") when any severity class is kept forever:
+//   - SyslogCriticalDays > 0: both windows are bounded → max of the two.
+//   - legacy single-window mode (SyslogCriticalDays == 0 && SyslogInfoDays == 0
+//     && SyslogDays > 0): every row ages out by max(SyslogDays, effInfoDays)
+//     (the info DELETE always runs at the effective default).
+//   - otherwise SyslogCriticalDays == 0 means critical rows are kept forever,
+//     so no partition is ever wholly expired.
+//
+// effInfoDays is the caller's effective informational window (SyslogInfoDays
+// with its 7-day default applied).
+func syslogPartitionDropDays(ret config.RetentionConfig, effInfoDays int) int {
+	switch {
+	case ret.SyslogCriticalDays > 0:
+		return max(ret.SyslogCriticalDays, effInfoDays)
+	case ret.SyslogInfoDays == 0 && ret.SyslogDays > 0:
+		return max(ret.SyslogDays, effInfoDays)
+	default:
+		return 0
+	}
+}
+
 func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 	type cleanupEntry struct {
 		model interface{}
@@ -260,6 +295,20 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		// whatever its interval — is stale and safe to drop even if promotion
 		// were broken or disabled.
 		{&models.FlowRollup{}, "flow_rollups", ret.Days(ret.FlowRollupDays)},
+		// LC-20 (2026-07-04 audit): the five per-poll status tables the
+		// AUDIT-029 and H4 retention passes both missed — appended every poll
+		// cycle by the poller AND per push by every collector, with no delete
+		// path anywhere (vpn_status alone is tunnels × 1440 rows/day at a 60s
+		// interval). The four charted tables follow statusDays (like their
+		// chart siblings system_status/interface_stats) unless their own
+		// RETENTION_*_DAYS knob is set; license_info has its own longer knob
+		// (default 365 — expiry snapshots are low-volume and useful
+		// year-over-year).
+		{&models.VPNStatus{}, "vpn_status", statusFallback(ret.VPNStatusDays, statusDays)},
+		{&models.HAStatus{}, "ha_status", statusFallback(ret.HAStatusDays, statusDays)},
+		{&models.SecurityStats{}, "security_stats", statusFallback(ret.SecurityStatsDays, statusDays)},
+		{&models.SDWANHealth{}, "sdwan_health", statusFallback(ret.SDWANHealthDays, statusDays)},
+		{&models.LicenseInfo{}, "license_info", ret.Days(ret.LicenseInfoDays)},
 	}
 
 	for _, e := range entries {
@@ -292,7 +341,31 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		return fmt.Errorf("failed to cleanup flow_agent_drops: %w", err)
 	}
 
-	// Syslog: handle critical (0-5) and informational (6-7) differently
+	// Syslog: handle critical (0-5) and informational (6-7) differently.
+	// infoDays is the effective informational window (default 7), shared by the
+	// info DELETE, the summaries cutoff, and the partition-drop bound below.
+	infoDays := ret.SyslogInfoDays
+	if infoDays <= 0 {
+		infoDays = 7 // default fallback
+	}
+
+	// LC-23 (2026-07-04 audit): partition-drop fast path for syslog_messages —
+	// the table that dominates prod DB size. The old blanket "never
+	// partition-drop syslog" rule over-generalized: a partition can straddle
+	// the two severity cutoffs, but one whose entire range is older than BOTH
+	// windows (max of critical + informational) holds only expired rows and is
+	// safe to drop wholesale — instant space reclamation instead of the
+	// batched DELETE bloating it with dead tuples and leaving empty monthly
+	// children behind forever. syslogPartitionDropDays returns 0 (never drop)
+	// whenever any severity class is kept forever; straddling/newer partitions
+	// still rely on the severity-scoped DELETEs below for exact retention.
+	if dropDays := syslogPartitionDropDays(ret, infoDays); dropDays > 0 {
+		dropCutoff := time.Now().AddDate(0, 0, -dropDays)
+		if _, err := d.dropPartitionsOlderThan("syslog_messages", dropCutoff); err != nil {
+			log.Printf("cleanup: drop-old-partitions warning for syslog_messages: %v", err)
+		}
+	}
+
 	// Critical syslog (severity 0-5): delete after SyslogCriticalDays (0 = never delete)
 	if ret.SyslogCriticalDays > 0 {
 		criticalCutoff := time.Now().AddDate(0, 0, -ret.SyslogCriticalDays)
@@ -303,25 +376,15 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 
 	// Informational syslog (severity 6-7): delete after SyslogInfoDays
 	// This catches any informational syslog that wasn't aggregated (aggregation runs every 5 min)
-	infoDays := ret.SyslogInfoDays
-	if infoDays <= 0 {
-		infoDays = 7 // default fallback
-	}
 	infoCutoff := time.Now().AddDate(0, 0, -infoDays)
 	if err := d.batchedDeleteOlderThanWhere(&models.SyslogMessage{}, infoCutoff, "severity >= 6"); err != nil {
 		return fmt.Errorf("failed to cleanup informational syslog_message: %w", err)
 	}
 
-	// Syslog summaries: delete after SyslogInfoDays (they are derived from informational syslog)
-	summaryDays := ret.SyslogInfoDays
-	if summaryDays <= 0 {
-		summaryDays = 7 // default fallback
-	}
-	summaryCutoff := time.Now().AddDate(0, 0, -summaryDays)
-	// AUDIT-028: drop whole old partitions first (no-op if plain). syslog_messages
-	// is intentionally NOT partition-dropped here — its dual critical(<6)/info(>=6)
-	// retention means a partition can hold rows under two different cutoffs, so it
-	// stays on the severity-scoped DELETEs above.
+	// Syslog summaries: delete after SyslogInfoDays (they are derived from
+	// informational syslog). AUDIT-028: drop whole old partitions first
+	// (no-op if plain).
+	summaryCutoff := time.Now().AddDate(0, 0, -infoDays)
 	if _, err := d.dropPartitionsOlderThan("syslog_summaries", summaryCutoff); err != nil {
 		log.Printf("cleanup: drop-old-partitions warning for syslog_summaries: %v", err)
 	}
@@ -398,6 +461,20 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		if err := d.db.Where("id IN ?", ids).Delete(&models.Alert{}).Error; err != nil {
 			return fmt.Errorf("failed to cleanup stale unack alerts: %w", err)
 		}
+	}
+
+	// Incidents: LC-22 (2026-07-04 audit). The T2 incidents table (migration
+	// v27) shipped with no retention — one row per device outage accumulated
+	// forever on flapping networks, long after the alerts attached to it were
+	// aged out above. RESOLVED incidents older than the window are deleted
+	// (aging on resolved_at, the moment the record became history); OPEN
+	// incidents are never touched — they are live state, closed only by device
+	// recovery or a device delete (LC-21). Plain DELETE like the alerts above:
+	// the table is small (one row per outage, not per poll).
+	incidentCutoff := time.Now().AddDate(0, 0, -ret.Days(ret.IncidentDays))
+	if err := d.db.Where("resolved_at IS NOT NULL AND resolved_at < ?", incidentCutoff).
+		Delete(&models.Incident{}).Error; err != nil {
+		return fmt.Errorf("failed to cleanup resolved incidents: %w", err)
 	}
 
 	return nil

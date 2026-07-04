@@ -35,6 +35,11 @@ func NewDatabaseForTesting(t interface {
 		&models.InterfaceStats{},
 		&models.VPNStatus{},
 		&models.HAStatus{},
+		// LC-20: the remaining per-poll status tables, now covered by
+		// CleanupOldData's entries slice (vpn_status/ha_status are above).
+		&models.SecurityStats{},
+		&models.SDWANHealth{},
+		&models.LicenseInfo{},
 		&models.HardwareSensor{},
 		&models.ProcessorStats{},
 		&models.DeviceConfigRevision{},

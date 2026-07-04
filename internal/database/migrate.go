@@ -5,11 +5,13 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // migrateBaseline is the v1 "baseline" migration (AUDIT-044): it brings an empty
@@ -205,6 +207,133 @@ var partitionTables = []partitionDef{
 	{"flow_samples", "timestamp"},
 }
 
+// partitionModels maps each partitioned table to its GORM model so the
+// per-partition index list can be DERIVED from the model's `gorm:"index:..."`
+// tags (LC-19, 2026-07-04 audit). The previous hand-maintained list in
+// EnsurePartitions was a second copy of what the tags already declare, and it
+// had drifted: the AUDIT-034 flow_samples src/dst indexes (plus the probe_id
+// and syslog_summaries interval/severity indexes) were silently absent from
+// every partition on a fresh Postgres install, because
+// convertEmptyTableToPartitioned recreates the parent with
+// `INCLUDING DEFAULTS` only (dropping the AutoMigrate-created indexes with the
+// _prepart table) and nothing ever re-created the tag indexes. The drift guard
+// in partition_index_lc19_test.go cross-checks this map against
+// partitionTables and the model tags so the lists can't diverge again.
+var partitionModels = map[string]interface{}{
+	"interface_stats":  &models.InterfaceStats{},
+	"system_status":    &models.SystemStatus{},
+	"syslog_messages":  &models.SyslogMessage{},
+	"syslog_summaries": &models.SyslogSummary{},
+	"trap_events":      &models.TrapEvent{},
+	"flow_samples":     &models.FlowSample{},
+}
+
+// partitionIndex is one per-partition index to (re)create: the physical name
+// is idx_<partitionName>_<suffix>, over cols (unquoted column names).
+type partitionIndex struct {
+	suffix string
+	cols   []string
+}
+
+// partitionSchemaCache backs schema.Parse in partitionIndexPlan (each model is
+// parsed once per process).
+var partitionSchemaCache sync.Map
+
+// partitionIndexPlan computes the index set every monthly partition of a table
+// must carry: the two baseline indexes every partitioned table gets —
+// (device_id, <partition column>) and (<partition column>) — plus every index
+// declared by `gorm:"index:..."` tags on the table's model (the single source
+// of truth; see partitionModels). Redundant candidates are dropped: an index
+// whose column list is a leading prefix of another planned index (e.g. the
+// models' standalone device_id index, which the (device_id, timestamp)
+// baseline already serves on a btree) adds nothing. Unique and expression
+// indexes are excluded — none of the partitioned models declare any, and a
+// per-partition unique index couldn't enforce global uniqueness anyway.
+func partitionIndexPlan(def partitionDef) ([]partitionIndex, error) {
+	model, ok := partitionModels[def.tableName]
+	if !ok {
+		return nil, fmt.Errorf("partition index plan: no model registered for table %q (add it to partitionModels)", def.tableName)
+	}
+	sch, err := schema.Parse(model, &partitionSchemaCache, schema.NamingStrategy{IdentifierMaxLength: 64})
+	if err != nil {
+		return nil, fmt.Errorf("partition index plan: parse model for %q: %w", def.tableName, err)
+	}
+
+	candidates := [][]string{
+		{"device_id", def.column},
+		{def.column},
+	}
+	for _, idx := range sch.ParseIndexes() {
+		if idx.Class == "UNIQUE" {
+			continue
+		}
+		cols := make([]string, 0, len(idx.Fields))
+		expr := false
+		for _, f := range idx.Fields {
+			if f.Expression != "" {
+				expr = true
+				break
+			}
+			cols = append(cols, f.DBName)
+		}
+		if expr || len(cols) == 0 {
+			continue
+		}
+		candidates = append(candidates, cols)
+	}
+
+	var plan []partitionIndex
+	for i, c := range candidates {
+		covered := false
+		for j, o := range candidates {
+			if i == j || !isColPrefix(c, o) {
+				continue
+			}
+			// c is a prefix of (or equal to) o: keep only the longer index;
+			// for exact duplicates keep the earlier candidate.
+			if len(c) < len(o) || j < i {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			plan = append(plan, partitionIndex{suffix: partitionIndexSuffix(c), cols: c})
+		}
+	}
+	return plan, nil
+}
+
+// isColPrefix reports whether a is a leading prefix of b (or equal to it).
+func isColPrefix(a, b []string) bool {
+	if len(a) > len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// partitionIndexSuffix maps an index's column list to the per-partition name
+// suffix (idx_<partition>_<suffix>). The first three cases pin the names the
+// pre-LC-19 hard-coded list already created, so `CREATE INDEX IF NOT EXISTS`
+// no-ops on existing deployments instead of building duplicate indexes under
+// new names.
+func partitionIndexSuffix(cols []string) string {
+	switch strings.Join(cols, ",") {
+	case "device_id,timestamp":
+		return "device_ts"
+	case "timestamp":
+		return "timestamp"
+	case "device_id,index,timestamp":
+		return "device_idx_ts"
+	default:
+		return strings.Join(cols, "_")
+	}
+}
+
 // execMaintenanceDDL runs one maintenance DDL statement with the connection's
 // statement_timeout lifted for just that statement (REL-04). Partition
 // create/drop, autovacuum tuning, and the empty-table partition conversion can
@@ -271,6 +400,18 @@ func (d *Database) EnsurePartitions() error {
 		return nil
 	}
 
+	// LC-19: compute each table's per-partition index plan once — derived from
+	// the model's gorm index tags (partitionIndexPlan), not a second hard-coded
+	// list that can drift from the model.
+	indexPlans := make(map[string][]partitionIndex, len(partitioned))
+	for _, def := range partitioned {
+		plan, err := partitionIndexPlan(def)
+		if err != nil {
+			return fmt.Errorf("partition index plan for %s: %w", def.tableName, err)
+		}
+		indexPlans[def.tableName] = plan
+	}
+
 	// Create partitions for current month + 6 months ahead
 	now := time.Now()
 	for i := 0; i <= 6; i++ {
@@ -293,71 +434,39 @@ func (d *Database) EnsurePartitions() error {
 			// Check if partition already exists
 			var count int
 			d.db.Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", partitionName).Scan(&count)
-			if count > 0 {
-				continue // Partition exists
-			}
-
-			// Create the partition
-			sql := fmt.Sprintf(`
-				CREATE TABLE %s PARTITION OF %s
-				FOR VALUES FROM ('%s') TO ('%s')`,
-				partitionName, def.tableName, startStr, endStr)
-			if err := d.execMaintenanceDDL(sql); err != nil {
-				log.Printf("Partition creation warning for %s: %v", partitionName, err)
-				continue
-			}
-
-			// Create indexes on the partition for efficient queries
-			indexes := []struct {
-				name  string
-				cols  string
-				where string
-			}{
-				{fmt.Sprintf("idx_%s_device_ts", partitionName), fmt.Sprintf("(%s, %s)", "device_id", def.column), ""},
-				{fmt.Sprintf("idx_%s_timestamp", partitionName), fmt.Sprintf("(%s)", def.column), ""},
-			}
-
-			// Add severity index for syslog/trap tables
-			if def.tableName == "syslog_messages" {
-				indexes = append(indexes,
-					struct {
-						name  string
-						cols  string
-						where string
-					}{fmt.Sprintf("idx_%s_severity", partitionName), "(severity)", ""})
-			}
-			if def.tableName == "trap_events" {
-				indexes = append(indexes,
-					struct {
-						name  string
-						cols  string
-						where string
-					}{fmt.Sprintf("idx_%s_severity", partitionName), "(severity)", ""})
-			}
-			// AUDIT-028: interface_stats is also queried by (device_id, ifIndex,
-			// timestamp) for per-interface charts; recreate that 3-col index per
-			// partition (the plain-table idx_iface_device_idx_ts). "index" is a
-			// reserved word — quote it.
-			if def.tableName == "interface_stats" {
-				indexes = append(indexes,
-					struct {
-						name  string
-						cols  string
-						where string
-					}{fmt.Sprintf("idx_%s_device_idx_ts", partitionName), `(device_id, "index", timestamp)`, ""})
-			}
-
-			for _, idx := range indexes {
-				createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s %s", idx.name, partitionName, idx.cols)
-				if idx.where != "" {
-					createIdxSQL += " WHERE " + idx.where
+			if count == 0 {
+				// Create the partition
+				sql := fmt.Sprintf(`
+					CREATE TABLE %s PARTITION OF %s
+					FOR VALUES FROM ('%s') TO ('%s')`,
+					partitionName, def.tableName, startStr, endStr)
+				if err := d.execMaintenanceDDL(sql); err != nil {
+					log.Printf("Partition creation warning for %s: %v", partitionName, err)
+					continue
 				}
+				log.Printf("Created partition: %s", partitionName)
+			}
+
+			// Ensure the per-partition indexes exist. LC-19: the list is derived
+			// from the model's gorm index tags (see partitionIndexPlan) — the
+			// previous hard-coded list here had drifted and dropped the AUDIT-034
+			// flow_samples src/dst indexes on fresh installs. This runs for
+			// pre-existing partitions too (IF NOT EXISTS makes it a cheap no-op
+			// when the index is present), so a partition created while an index
+			// was missing from the old list is backfilled on the next startup.
+			// Column names are quoted — interface_stats has an "index" column,
+			// which is a reserved word.
+			for _, idx := range indexPlans[def.tableName] {
+				quoted := make([]string, len(idx.cols))
+				for i, c := range idx.cols {
+					quoted[i] = `"` + c + `"`
+				}
+				createIdxSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_%s ON %s (%s)",
+					partitionName, idx.suffix, partitionName, strings.Join(quoted, ", "))
 				if err := d.execMaintenanceDDL(createIdxSQL); err != nil {
 					log.Printf("Index creation warning on %s: %v", partitionName, err)
 				}
 			}
-
-			log.Printf("Created partition: %s", partitionName)
 		}
 	}
 

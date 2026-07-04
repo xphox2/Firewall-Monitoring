@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
 )
 
@@ -123,6 +124,40 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	})
 
+	// LC-19 (2026-07-04 audit): on a real Postgres, every model-tag index must
+	// exist on the current-month child partitions after EnsurePartitions. The
+	// pre-fix hard-coded recreation list silently dropped the AUDIT-034
+	// flow_samples src/dst indexes (and probe_id / syslog_summaries indexes)
+	// on every fresh install — the sqlite-mode AutoMigrate test could never
+	// catch it because the partition conversion is PG-only.
+	t.Run("PartitionModelTagIndexes_LC19", func(t *testing.T) {
+		now := time.Now().UTC()
+		suffix := fmt.Sprintf("%d%02d", now.Year(), int(now.Month()))
+		want := map[string][]string{
+			"flow_samples":     {"device_ts", "timestamp", "probe_id", "src_addr", "dst_addr"},
+			"syslog_messages":  {"device_ts", "timestamp", "probe_id", "severity"},
+			"trap_events":      {"device_ts", "timestamp", "probe_id", "severity"},
+			"syslog_summaries": {"device_ts", "timestamp", "interval_type", "severity"},
+			"interface_stats":  {"device_ts", "timestamp", "device_idx_ts"},
+			"system_status":    {"device_ts", "timestamp"},
+		}
+		for table, idxSuffixes := range want {
+			child := fmt.Sprintf("%s_%s", table, suffix)
+			for _, s := range idxSuffixes {
+				idxName := fmt.Sprintf("idx_%s_%s", child, s)
+				var n int
+				if err := d.Gorm().Raw(
+					"SELECT COUNT(*) FROM pg_indexes WHERE tablename = ? AND indexname = ?",
+					child, idxName).Scan(&n).Error; err != nil {
+					t.Fatalf("pg_indexes probe %s: %v", idxName, err)
+				}
+				if n != 1 {
+					t.Errorf("partition %s is missing index %s (LC-19: per-partition indexes must cover the model's gorm index tags)", child, idxName)
+				}
+			}
+		}
+	})
+
 	// NOTE: the PopulatedTableSkipped subtest is intentionally registered LAST
 	// (after DeviceCRUD), not here. It resets the shared `public` schema via a
 	// second handle to the same physical test database, which would leave
@@ -148,6 +183,50 @@ func TestPostgresIntegration(t *testing.T) {
 		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", cur).Scan(&n)
 		if n != 1 {
 			t.Fatalf("current-month partition %s should survive the drop", cur)
+		}
+	})
+
+	// LC-23 (2026-07-04 audit): syslog_messages now takes the partition-drop
+	// fast path when BOTH severity windows are bounded — a monthly partition
+	// wholly older than max(critical, info) holds only expired rows. When the
+	// critical class is kept forever (SyslogCriticalDays=0, the code default),
+	// no partition may ever be dropped.
+	t.Run("CleanupSyslogPartitionDrop_LC23", func(t *testing.T) {
+		mkOld := func(name, from, to string) {
+			t.Helper()
+			if err := d.Gorm().Exec(fmt.Sprintf(
+				`CREATE TABLE IF NOT EXISTS %s PARTITION OF syslog_messages FOR VALUES FROM ('%s') TO ('%s')`,
+				name, from, to)).Error; err != nil {
+				t.Fatalf("create old partition %s: %v", name, err)
+			}
+		}
+		partCount := func(name string) int {
+			var n int
+			d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = ?", name).Scan(&n)
+			return n
+		}
+
+		// Keep-forever config: the old partition must survive cleanup.
+		mkOld("syslog_messages_200001", "2000-01-01", "2000-02-01")
+		if err := d.CleanupOldData(config.RetentionConfig{DefaultDays: 90, SyslogCriticalDays: 0, SyslogInfoDays: 7}); err != nil {
+			t.Fatalf("CleanupOldData (keep-forever): %v", err)
+		}
+		if partCount("syslog_messages_200001") != 1 {
+			t.Fatal("syslog_messages_200001 was dropped despite SyslogCriticalDays=0 (critical rows are kept forever)")
+		}
+
+		// Bounded windows: the wholly-expired partition is dropped, the
+		// current-month partition survives.
+		if err := d.CleanupOldData(config.RetentionConfig{DefaultDays: 90, SyslogCriticalDays: 30, SyslogInfoDays: 7}); err != nil {
+			t.Fatalf("CleanupOldData (bounded): %v", err)
+		}
+		if partCount("syslog_messages_200001") != 0 {
+			t.Fatal("syslog_messages_200001 was not dropped despite being older than both severity windows (LC-23 fast path)")
+		}
+		now := time.Now().UTC()
+		cur := fmt.Sprintf("syslog_messages_%d%02d", now.Year(), int(now.Month()))
+		if partCount(cur) != 1 {
+			t.Fatalf("current-month partition %s should survive the syslog partition drop", cur)
 		}
 	})
 
