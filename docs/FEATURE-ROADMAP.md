@@ -24,7 +24,7 @@ Maturity legend: **Stable** = shipping; **Beta** = shipping with a known follow-
 | TFTP config-backup receive (UDP/69) | Collector | Stable | 2 MB cap, per-source allow-list + rate limit *(see audit H2 — not wired in production)*, masked-password detection (FortiOS 7.2.1+). |
 | Syslog-triggered debounced config backup | Collector | Stable | 60s debounce on `logid=0100044546`/`447`. |
 | Uptime tracking & rollup | Server | Stable | Per-device calc + reset endpoint. |
-| NetFlow v5/v9/IPFIX ingest | Collector | Planned | Tracked, not scheduled. **(P0 roadmap.)** |
+| NetFlow v5/v9/IPFIX ingest | Collector | ✅ Shipped | Server v0.11.20 + collector v1.3.0 (Tranche 3). |
 
 ### 2. Alerting
 
@@ -323,8 +323,8 @@ F86–F89 (standing non-goal).
 |---|---|---|
 | 1 | **Access-control epic** | ✅ **SHIPPED v0.11.0** — RBAC (v0.10.566), scoped API tokens/F64 (v0.10.567), TOTP 2FA/F68 (v0.10.568); migrations v20–22. |
 | 2 | Alerting maturity | ✅ **SHIPPED v0.11.1–v0.11.10** — F14 hysteresis (.2), role-aware UI (.3), F18 webhook signing (.4), F13 flap suppression (.5), F17 z-score baselining/P2-5 (.6), PagerDuty+Opsgenie+Teams (.7), F19 escalation chains (.8), F12 incident grouping (.9), F05/F06 MTTA/MTTR+noise reports (.10); migrations v23–27. |
-| 3 | NetFlow v5/v9 + IPFIX (P0-4) | cross-repo, normalize into flow_samples |
-| 4 | Flow detection engine | sFlow roadmap R3/R4, after NetFlow so both sources covered |
+| 3 | **NetFlow v5/v9 + IPFIX** (P0-4) | ✅ **SHIPPED server v0.11.20 + collector v1.3.0** (migration v29) — collector-side receiver (UDP 2055/4739, content-based version dispatch), shared v9/IPFIX template engine (persisted caches, quarantine, withdrawal handling), nfdump-style sampler resolution chain, biflow reverse-record emission (RFC 5103 / OUT_BYTES / NSEL initiator-responder), sequence-gap metrics, per-exporter dual-export dedup with failover (`PROBE_FLOW_DEDUP`); server-side `flow_source` labeling + filter/UI, denied-flow events (IE 233), flow_start/flow_end, post-NAT tuple, mixed-source warning. Vendor conformance fixtures: FortiGate (sampled-scale ×rate), PAN (App-ID), ASA NSEL (byte-only), SonicWall (EntID 8741), MikroTik (IE34-in-data), pfSense/OPNsense/generic. Design record: `docs/flow-protocol-research-2026-07-03.md`. Fast-follows (from research §3): template debug admin page, unknown-exporter approval UX, PAN App-ID/FortiGate app-options → app_category precedence, config-driven vendor-IE map, UDP datagram tee, NSEL update-reconciliation, duration-aware chart bucketing. |
+| 4 | Flow detection engine | sFlow roadmap R3/R4, after NetFlow so both sources covered. Research inputs ready (`flow-protocol-research` §4): completeness-gated detectors (sampling_rate==1 + source flag), DDoS bps/pps/fps OR-thresholds + per-prefix, denied-flow storms via firewall_event, flow stitching via flow_end_reason==2, RITA-model beaconing, DNS tunneling, interface-%-from-flows. |
 | 5 | SLA & reporting | P1-2 SLA objects + F03 + F33; F01 ad-hoc range; F04+F26 capacity; F07 security posture |
 | 6 | Analytics & syslog intel | F20 heatmap; F21+F27 top-talkers UI + conversation matrix; P1-5 correlation rules + F22 top destinations (shared syslog aggregator) |
 | 7 | Topology auto-discovery | P1-3 LLDP/CDP/FDB → Connection Map |

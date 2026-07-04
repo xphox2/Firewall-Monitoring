@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.21] - 2026-07-04
+
+### Docs
+- **v0.11 Tranche 3 (NetFlow v5/v9 + IPFIX) marked complete** — the cross-repo pair shipped as server v0.11.20 (migration v29) + collector v1.3.0. Roadmap Part IV row 3 flipped with the shipped-scope summary and the research-derived fast-follow backlog (template debug page, unknown-exporter approval UX, vendor app-ID precedence, config-driven IE map, datagram tee, NSEL update-reconciliation, duration-aware bucketing); Tranche 4's detection inputs annotated. FEATURES.md row → Stable. Post-publish test plan section 13 updated with the FortiGate cutover + dedup-failover live checks. End-to-end verified locally before the flip: crafted v5/v9/IPFIX datagrams through a registered collector into Postgres with correct sampled-byte math, biflow pairs, denied-flow events, and template-cache persistence.
+
 ## [0.11.20] - 2026-07-04
 
 ### Added

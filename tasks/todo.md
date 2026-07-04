@@ -82,11 +82,14 @@ Everything that changed since the last prod deploy needs a live check. Items mar
 - [ ] Forced-password-change accounts get the password modal, never the wizard
 - [ ] Audit log shows the PUT /admin/api/me and mfa-decline entries with the right actor
 
-## 13. NetFlow/IPFIX server side (v0.11.20, migration v29) — full test after collector 1.3.0 ships
+## 13. NetFlow/IPFIX (server v0.11.20 + collector v1.3.0, migration v29)
 - [ ] `migrate-status` shows v29; `\d flow_samples` on prod shows flow_source/flow_start/flow_end/firewall_event/... columns; `\d flow_rollups` shows flow_source
 - [ ] Flows page renders unchanged for existing sFlow data (Source column shows "sFlow", no mixed-source banner)
-- [ ] Source filter + chip + URL param + CSV column work (values only meaningful post-collector-1.3.0)
-- [ ] After collector 1.3.0: point a device's NetFlow at the collector → rows labeled correctly, byte math sane vs interface counters, denied flows visible, dedup policy suppresses dual-export
+- [ ] Pull collector 1.3.0 on the Synology probe; startup logs show "NetFlow/IPFIX: true (ports 2055/4739, dedup prefer-netflow)"
+- [ ] `config system netflow` on the FortiGate → collector IP:2055; flows appear labeled "NetFlow v9"; byte totals sane vs SNMP interface counters
+- [ ] With sFlow ALSO enabled briefly: collector logs the dedup suppression line, no mixed-source banner appears, byte totals do NOT double; disable NetFlow → sFlow resumes within ~5 min (failover)
+- [ ] `go run ./cmd/netflow-test -target <collector>:2055 -proto all` from a whitelisted device IP works as a smoke tool
+- [ ] Collector /metrics shows firewall_collector_netflow_events_total{event="ok"} advancing; template cache file exists under the queue dir
 
 ## Walkthrough results for reference (local, v0.11.12–.16, PG16)
 All verified locally with the production AlertManager code: F14 band hold/release,
