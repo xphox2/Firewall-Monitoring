@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.22] - 2026-07-04
+
+### Docs
+- **2026-07-04 Logic & Consistency Audit report committed** (`docs/audit-2026-07-04-logic-consistency.md`). Dual-repo audit targeting logical flaws and inconsistencies accumulated over the last three months (server v0.10.x → v0.11.21, collector → v1.3.0): 13-dimension multi-agent sweep + gap round, every finding adversarially verified by 2–3 independent refutation lenses. 51 unique confirmed findings (5 HIGH / 26 MEDIUM / 20 LOW), IDs LC-00–LC-52; 11 touch the collector repo (copy committed there). Fixes land in the following releases and are annotated per-finding in the report.
+
 ## [0.11.21] - 2026-07-04
 
 ### Docs
