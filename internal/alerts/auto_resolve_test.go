@@ -75,7 +75,7 @@ func TestSendRecovery_PreciseLinking(t *testing.T) {
 	// drive the recovery exactly as CheckInterfaceStatus does.
 	am.activeAlerts["iface_down_1_port1"] = true
 	am.sendRecovery("iface_down_1_port1", "INTERFACE_DOWN", "interface_port1",
-		"Interface port1 is back up", 1)
+		"Interface port1 is back up", 1, nil)
 
 	got1 := getAlert(t, db, port1.ID)
 	if got1.ResolvedAt == nil {
@@ -109,7 +109,7 @@ func TestSendRecovery_AutoAcknowledge(t *testing.T) {
 
 	am.activeAlerts["device_offline_5"] = true
 	am.sendRecovery("device_offline_5", "DEVICE_OFFLINE", "device_status",
-		"Device r1 (10.0.0.1) is back online", 5)
+		"Device r1 (10.0.0.1) is back online", 5, nil)
 
 	got := getAlert(t, db, off.ID)
 	if got.ResolvedAt == nil {
@@ -175,10 +175,10 @@ func TestSendRecovery_Idempotent(t *testing.T) {
 	seedAlert(t, db, &off)
 
 	am.activeAlerts["device_offline_9"] = true
-	am.sendRecovery("device_offline_9", "DEVICE_OFFLINE", "device_status", "back online", 9)
+	am.sendRecovery("device_offline_9", "DEVICE_OFFLINE", "device_status", "back online", 9, nil)
 	// Second call: activeAlerts was cleared by the first call, and the row is
 	// already resolved+acked, so the DB update matches nothing.
-	am.sendRecovery("device_offline_9", "DEVICE_OFFLINE", "device_status", "back online", 9)
+	am.sendRecovery("device_offline_9", "DEVICE_OFFLINE", "device_status", "back online", 9, nil)
 
 	if n := countResolvedCompanions(t, db); n != 1 {
 		t.Errorf("companion _RESOLVED rows = %d, want 1 (second recovery must not create another)", n)
@@ -199,7 +199,7 @@ func TestSendRecovery_PerDeviceBackwardCompat(t *testing.T) {
 	seedAlert(t, db, &off)
 
 	am.activeAlerts["device_offline_3"] = true
-	am.sendRecovery("device_offline_3", "DEVICE_OFFLINE", "device_status", "back online", 3)
+	am.sendRecovery("device_offline_3", "DEVICE_OFFLINE", "device_status", "back online", 3, nil)
 
 	got := getAlert(t, db, off.ID)
 	if got.ResolvedAt == nil || !got.Acknowledged {

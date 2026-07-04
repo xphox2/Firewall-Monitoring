@@ -164,6 +164,12 @@ func main() {
 			select {
 			case <-pruneTicker.C:
 				alertManager.PruneExpiredCooldowns()
+				// LC-9: refresh the policy/maintenance/threshold cache on the
+				// same tick so admin edits (alert policies, maintenance
+				// windows, notification credentials) reach the trap alert path
+				// without a restart — the poller refreshes every cycle; this
+				// process previously loaded the cache exactly once at startup.
+				alertManager.RefreshThresholds(db.Gorm())
 			case <-pruneStop:
 				return
 			}

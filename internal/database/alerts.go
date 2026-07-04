@@ -168,6 +168,17 @@ func (d *Database) GetActiveMaintenanceWindows() ([]models.MaintenanceWindow, er
 	return windows, err
 }
 
+// GetUnexpiredMaintenanceWindows returns windows whose end_time is still in the
+// future — active now OR scheduled ahead. The alert-policy cache loads these
+// (rather than only currently-active ones, LC-9) so a window created in advance
+// is already in a long-lived process's snapshot when it starts;
+// resolveAlertConfig re-checks start/end against time.Now() on every evaluation.
+func (d *Database) GetUnexpiredMaintenanceWindows() ([]models.MaintenanceWindow, error) {
+	var windows []models.MaintenanceWindow
+	err := d.db.Where("end_time >= ?", time.Now()).Find(&windows).Error
+	return windows, err
+}
+
 func (d *Database) CreateMaintenanceWindow(w *models.MaintenanceWindow) error {
 	return d.db.Create(w).Error
 }
@@ -343,7 +354,11 @@ func (d *Database) UpdateAlertNotes(id uint, notes string) error {
 
 func (d *Database) GetUnacknowledgedAlerts(since time.Time) ([]models.Alert, error) {
 	var alerts []models.Alert
-	err := d.db.Where("acknowledged = ? AND suppressed = ? AND timestamp > ?", false, false, since).
+	// LC-10: an actively-snoozed alert is operator-silenced — it must not feed
+	// the escalation engine until the snooze expires (mirrors the UI's default
+	// list filter, which hides rows with snoozed_until in the future).
+	err := d.db.Where("acknowledged = ? AND suppressed = ? AND timestamp > ? AND (snoozed_until IS NULL OR snoozed_until < ?)",
+		false, false, since, time.Now()).
 		Find(&alerts).Error
 	return alerts, err
 }
@@ -360,16 +375,23 @@ type NoiseRow struct {
 	Suppressed int64  `json:"suppressed"`
 }
 
+// syntheticCompanionMetrics are the metric_name discriminators of rows the
+// alert paths create as instant-acked companions, not operator work items:
+// sendRecovery's "recovery" records and closeIncident's F12 "incident"
+// summaries. Both carry AcknowledgedAt==ResolvedAt==Timestamp, so counting
+// them would inject zero-minute samples into MTTA/MTTR (LC-27).
+var syntheticCompanionMetrics = []string{"recovery", "incident"}
+
 // GetAlertResponseStats computes MTTA/MTTR over the trailing window (days).
-// Durations are averaged in Go for dialect portability. Companion recovery
-// rows are excluded everywhere; auto-resolved rows (notes "Auto-resolved: …")
-// count toward MTTR (the condition's lifetime) but NOT MTTA — auto-ack would
-// fake instant operator response.
+// Durations are averaged in Go for dialect portability. Synthetic companion
+// rows (recovery + incident summaries) are excluded everywhere; auto-resolved
+// rows (notes "Auto-resolved: …") count toward MTTR (the condition's lifetime)
+// but NOT MTTA — auto-ack would fake instant operator response.
 func (d *Database) GetAlertResponseStats(days int) (mttaMinutes, mttrMinutes float64, ackedCount, resolvedCount int64, err error) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	var rows []models.Alert
 	if err = d.db.Select("timestamp, acknowledged_at, resolved_at, notes").
-		Where("timestamp > ? AND metric_name <> ? AND (acknowledged_at IS NOT NULL OR resolved_at IS NOT NULL)", cutoff, "recovery").
+		Where("timestamp > ? AND metric_name NOT IN ? AND (acknowledged_at IS NOT NULL OR resolved_at IS NOT NULL)", cutoff, syntheticCompanionMetrics).
 		Limit(20000).Find(&rows).Error; err != nil {
 		return 0, 0, 0, 0, err
 	}
@@ -406,7 +428,7 @@ func (d *Database) GetNoisiestAlerts(days, limit int) ([]NoiseRow, error) {
 	err := d.db.Model(&models.Alert{}).
 		Select("alerts.alert_type AS alert_type, alerts.device_id AS device_id, COALESCE(devices.name, '') AS device_name, COUNT(*) AS count, SUM(CASE WHEN alerts.suppressed THEN 1 ELSE 0 END) AS suppressed").
 		Joins("LEFT JOIN devices ON devices.id = alerts.device_id").
-		Where("alerts.timestamp > ? AND alerts.metric_name <> ?", cutoff, "recovery").
+		Where("alerts.timestamp > ? AND alerts.metric_name NOT IN ?", cutoff, syntheticCompanionMetrics).
 		Group("alerts.alert_type, alerts.device_id, devices.name").
 		Order("count DESC").
 		Limit(limit).

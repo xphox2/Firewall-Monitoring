@@ -20,6 +20,10 @@ func fireAlert(sev models.Severity) *models.Alert {
 	}
 }
 
+// recoveryAlert mirrors the alert shape sendRecovery hands to the notifier:
+// the _RESOLVED type with the FIRE's MetricName (LC-42 — the persisted
+// companion row keeps metric_name="recovery", but the notify copy carries the
+// original metric so the dedup key below reproduces the fire's).
 func recoveryAlert() *models.Alert {
 	a := fireAlert("info")
 	a.AlertType = "CPU_HIGH_RESOLVED"

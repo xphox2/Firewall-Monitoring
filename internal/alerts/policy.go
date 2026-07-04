@@ -21,8 +21,15 @@ type ResolvedAlertConfig struct {
 	ClearThreshold float64
 	// Mode/ZScoreK select the F17 firing model from the winning AlertRule
 	// ("static" default; "zscore" = baseline + K·σ with Threshold as floor).
-	Mode              string
-	ZScoreK           float64
+	Mode    string
+	ZScoreK float64
+	// RuleMatched / RuleSeverity report whether an enabled AlertRule matched
+	// this type, and whether that rule explicitly set a severity. Trap alerts
+	// keep the trap parser's own severity unless a rule overrides it (LC-14),
+	// so the defaulted Severity below can't distinguish "rule said warning"
+	// from "no rule matched".
+	RuleMatched       bool
+	RuleSeverity      models.Severity
 	Severity          models.Severity
 	CooldownMinutes   int
 	NotifyEmail       bool
@@ -81,7 +88,11 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 		return
 	}
 
-	windows, err := db.GetActiveMaintenanceWindows()
+	// LC-9: load future-scheduled windows too, not just currently-active ones —
+	// resolveAlertConfig re-checks start/end against time.Now(), so a window
+	// created in advance suppresses correctly the moment it starts even if the
+	// cache was loaded before then.
+	windows, err := db.GetUnexpiredMaintenanceWindows()
 	if err != nil {
 		log.Printf("RefreshPolicyCache: failed to load maintenance windows: %v", err)
 		return
@@ -198,8 +209,10 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 			resolved.AlertEnabled = false
 			return resolved
 		}
+		resolved.RuleMatched = true
 		if rule.Severity != "" {
 			resolved.Severity = rule.Severity
+			resolved.RuleSeverity = rule.Severity
 		}
 		if rule.Threshold > 0 {
 			resolved.Threshold = rule.Threshold

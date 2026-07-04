@@ -232,19 +232,32 @@ func NewSeasonalSpikeDetector(refreshInterval, cooldown time.Duration, profileFo
 // alerts. It returns at most one Fire or one Resolve per call.
 func (d *SeasonalSpikeDetector) Observe(key string, now time.Time, bps, k float64, minDuration time.Duration) SpikeDecision {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	st := d.states[key]
 	if st == nil {
 		st = &seasonalState{}
 		d.states[key] = st
 	}
-
-	if d.profileFor != nil && (st.profile == nil || now.Sub(st.profileAt) >= d.refreshInterval) {
-		if p := d.profileFor(key); p != nil {
-			st.profile = p
-		}
+	// Refresh the seasonal profile OUTSIDE the detector mutex: profileFor runs
+	// a multi-day DB aggregation, and holding d.mu across it would serialize
+	// every concurrent pollDevice goroutine's spike checks behind one
+	// interface's query (same locking rule as the F17 baseline cache: never
+	// hold the shared lock across a DB read). profileAt is stamped before
+	// unlocking so a slow fetch can't be re-triggered concurrently.
+	needProfile := d.profileFor != nil && (st.profile == nil || now.Sub(st.profileAt) >= d.refreshInterval)
+	if needProfile {
 		st.profileAt = now
+	}
+	d.mu.Unlock()
+
+	var fresh *SeasonalProfile
+	if needProfile {
+		fresh = d.profileFor(key)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if fresh != nil {
+		st.profile = fresh
 	}
 
 	// Resolve the expected band: seasonal first, then a rolling fallback from

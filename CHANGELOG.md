@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.23] - 2026-07-04
+
+### Fixed — alerting lifecycle (audit LC-09..14, LC-26..28, LC-30, LC-42)
+- **Policy/maintenance edits now take effect in the API and trap-receiver processes** (LC-09). Both loaded the alert-policy cache once at startup; the API gains a 1-minute `alert-config-refresh` ticker (same pattern as the threat-intel refresher) and the trap-receiver refreshes on its existing prune tick. The cache also loads *unexpired* (active + future) maintenance windows instead of only currently-active ones — `resolveAlertConfig` re-checks start/end at evaluation time, so future windows kick in without waiting for a refresh.
+- **PagerDuty/Opsgenie incidents opened by alerts now auto-resolve on recovery** (LC-42, HIGH). The recovery path never reached the incident channels (its NotifyConfig skipped the policy gates) and its dedup key embedded the `recovery` companion metric name, so it could never match the key used at open. Recovery now resolves config exactly like the fire path and notifies with the original metric name; the persisted companion row keeps the `recovery` discriminator.
+- **Snoozed alerts no longer escalate or notify through the snooze window** (LC-10): `GetUnacknowledgedAlerts` excludes actively-snoozed alerts; escalation resumes if still unacked after expiry.
+- **Incident muting is no longer defeated by escalation** (LC-11): alerts attached to a still-open incident are skipped by `CheckEscalations` (same incident cache the fire path uses to mute); they escalate again only if unacked after the incident closes.
+- **Disabled alert policies no longer emit "back online" noise** (LC-12): `CheckDeviceOffline` checks `AlertEnabled` before recording active/cooldown state; the same gate applied to the diverged siblings (`ProcessTrap`, `ProcessSyslog`, `ProcessFlowDetection`, `CheckSSHHostKeyChanged`).
+- **Recovery notifications now respect maintenance windows on every path** (LC-13): `sendRecovery` resolves site config, marks the companion `Suppressed` and skips the notification during maintenance (auto-resolve still runs); the system-metrics special case that deferred resolution entirely is gone.
+- **Per-rule severity overrides now work for trap alerts** (LC-14): `ProcessTrap` uses the policy-resolved rule severity, and an enabled matching rule opts info-level traps in past the critical/warning filter.
+- **PROBE_DATA_TRUNCATED can actually fire** (LC-26): the alert read a cooldown key nothing wrote and its 5-minute guard was inverted; rewritten on the standard `canAlertWithCooldown` pattern.
+- **MTTA/MTTR no longer counts INCIDENT_RESOLVED summary rows as zero-minute responses** (LC-27): both response-stats queries exclude the synthetic `recovery` *and* `incident` companion metrics.
+- **INTERFACE_ERRORS message text clamps per-counter resets** (LC-28) — no more ~1.8e19 "new errors" when a single counter wraps.
+- **Seasonal spike detector no longer serializes all pollers behind a 30-day DB query** (LC-30): the profile fetch runs outside the detector-wide mutex (stamp-unlock-fetch-relock-swap), `-race` clean.
+- Regression tests for all eleven fixes (verified failing against pre-fix HEAD in a throwaway worktree). Report statuses annotated.
+
 ## [0.11.22] - 2026-07-04
 
 ### Docs

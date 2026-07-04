@@ -8,8 +8,10 @@ import (
 )
 
 // TestGetAlertResponseStats_F05 pins the MTTA/MTTR math: operator acks count
-// toward MTTA, auto-resolved rows count toward MTTR only, and recovery
-// companion rows are excluded entirely.
+// toward MTTA, auto-resolved rows count toward MTTR only, and synthetic
+// companion rows (recovery records AND F12 incident summaries, LC-27) are
+// excluded entirely — both are instant-acked and would bias the averages
+// toward zero.
 func TestGetAlertResponseStats_F05(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	base := time.Now().Add(-2 * time.Hour)
@@ -36,6 +38,9 @@ func TestGetAlertResponseStats_F05(t *testing.T) {
 		mk(60*time.Minute, 60*time.Minute, "Auto-resolved: cpu recovered", "cpu_usage"),
 		// Recovery companion: excluded from both.
 		mk(time.Minute, time.Minute, "", "recovery"),
+		// F12 incident summary companion (closeIncident sets ack=resolve=now,
+		// a zero-minute sample): excluded from both (LC-27).
+		mk(time.Second, time.Second, "", "incident"),
 	}
 	if err := d.Gorm().Create(&rows).Error; err != nil {
 		t.Fatalf("seed: %v", err)
@@ -46,7 +51,7 @@ func TestGetAlertResponseStats_F05(t *testing.T) {
 		t.Fatalf("GetAlertResponseStats: %v", err)
 	}
 	if acked != 2 {
-		t.Errorf("acked = %d, want 2 (auto-resolve and recovery excluded)", acked)
+		t.Errorf("acked = %d, want 2 (auto-resolve, recovery and incident rows excluded)", acked)
 	}
 	if mtta < 14 || mtta > 16 { // (10+20)/2 = 15
 		t.Errorf("MTTA = %.1f min, want ≈15", mtta)
@@ -72,7 +77,9 @@ func TestGetNoisiestAlerts_F06(t *testing.T) {
 		rows = append(rows, models.Alert{Timestamp: now.Add(-time.Hour), DeviceID: 1, AlertType: "CPU_HIGH", MetricName: "cpu_usage", Suppressed: i == 0})
 	}
 	rows = append(rows, models.Alert{Timestamp: now.Add(-time.Hour), DeviceID: 2, AlertType: "VPN_DOWN", MetricName: "vpn_x"})
-	rows = append(rows, models.Alert{Timestamp: now.AddDate(0, 0, -40), DeviceID: 1, AlertType: "DISK_HIGH", MetricName: "disk_usage"}) // outside window
+	rows = append(rows, models.Alert{Timestamp: now.AddDate(0, 0, -40), DeviceID: 1, AlertType: "DISK_HIGH", MetricName: "disk_usage"})          // outside window
+	rows = append(rows, models.Alert{Timestamp: now.Add(-time.Hour), DeviceID: 1, AlertType: "INCIDENT_RESOLVED", MetricName: "incident"})       // F12 summary: excluded (LC-27)
+	rows = append(rows, models.Alert{Timestamp: now.Add(-time.Hour), DeviceID: 1, AlertType: "DEVICE_OFFLINE_RESOLVED", MetricName: "recovery"}) // companion: excluded
 	if err := d.Gorm().Create(&rows).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}

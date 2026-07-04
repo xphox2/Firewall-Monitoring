@@ -58,7 +58,7 @@ GetSettings masks all four settingsSecretKeys as '********' (handlers_settings.g
 
 ### LC-42 [HIGH] (server) — PagerDuty/Opsgenie incidents opened by alerts are never auto-resolved: recovery path never reaches incident channels AND the dedup key can't match anyway
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:799` · Dimension: sibling-divergence
 
@@ -82,7 +82,7 @@ No audit dimension owned internal/detect (the R3/R4 sFlow detection engine the p
 
 ### LC-00 [MEDIUM] (collector) — Dual-export flow dedup keys sFlow by in-band agent address but NetFlow by UDP source IP — suppression silently no-ops when they differ, defeating the Tranche 3 double-count defense
 
-**Status:** OPEN
+**Status:** RESOLVED (collector v1.3.2)
 
 **Location:** `cmd/collector/main.go:505` · Dimension: cross-repo-contract
 
@@ -154,7 +154,7 @@ The sampler-resolution chain is documented as '1. operator override for the expo
 
 ### LC-09 [MEDIUM] (server) — Maintenance windows and alert-policy edits never take effect in the API and trap-receiver alert paths (policy cache frozen at startup)
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `cmd/api/main.go:361` · Dimension: alerting,concurrency-state,config-settings
 
@@ -166,7 +166,7 @@ Three processes embed an AlertManager, but only the poller refreshes its policy/
 
 ### LC-10 [MEDIUM] (server) — CheckEscalations ignores snooze: a snoozed alert keeps escalating/notifying through the snooze window
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:1334` · Dimension: alerting,time-units-math
 
@@ -178,7 +178,7 @@ The snooze feature is documented as 'temporarily silences an alert' and is expli
 
 ### LC-11 [MEDIUM] (server) — F12 incident muting is defeated by escalation: incident-attached alerts whose initial notification was muted escalate individually later
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:893` · Dimension: alerting,sibling-divergence
 
@@ -190,7 +190,7 @@ F12 incident grouping mutes the individual notification of every alert that fire
 
 ### LC-12 [MEDIUM] (server) — CheckDeviceOffline marks the alert active before checking AlertEnabled — disabled DEVICE_OFFLINE policy still produces 'back online' notifications and _RESOLVED rows
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:963` · Dimension: alerting,concurrency-state
 
@@ -202,7 +202,7 @@ Every other state-alert path gates on resolved.AlertEnabled BEFORE recording coo
 
 ### LC-13 [MEDIUM] (server) — Recovery notifications ignore maintenance windows on all paths except system metrics — 'back up' emails fire during maintenance for suppressed 'down' alerts
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:196` · Dimension: alerting
 
@@ -274,7 +274,7 @@ The incidents table shipped in Tranche 2 (migrations.go:78, v27) with no cleanup
 
 ### LC-26 [MEDIUM] (server) — PROBE_DATA_TRUNCATED alert promised by the M1 truncation fix can never fire: RecordProbeDataTruncation reads a lastAlert key that nothing ever writes, and its 5-minute guard is inverted
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:1275` · Dimension: time-units-math,concurrency-state
 
@@ -286,7 +286,7 @@ The M1 fix (v0.10.538, in the audit window) wired truncateProbeBatch to 'record 
 
 ### LC-27 [MEDIUM] (server) — F05 MTTA/MTTR counts F12 INCIDENT_RESOLVED summary rows as zero-minute responses: the 'recovery' companion-row exclusion was not extended to the 'incident' companion rows shipped one version earlier
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/database/alerts.go:372` · Dimension: time-units-math,sibling-divergence
 
@@ -454,7 +454,7 @@ clampFlowTimes checks the derived END against ±15 min of receive time and, only
 
 ### LC-14 [LOW] (server) — ProcessTrap ignores the policy-resolved severity — per-rule severity overrides work for syslog/system/interface alerts but silently do nothing for trap alert types
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:331` · Dimension: alerting
 
@@ -514,7 +514,7 @@ The doc opens with 'Every fact below is grounded in the code ... applied by Clea
 
 ### LC-28 [LOW] (server) — INTERFACE_ERRORS message prints unclamped unsigned counter deltas: a single counter reset while the total still rises yields ~1.8e19 'new errors' in the alert text
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/alerts/alerts.go:388` · Dimension: time-units-math
 
@@ -538,7 +538,7 @@ The TOTP single-use-per-slot replay guard added with 2FA (v0.10.568) is an in-pr
 
 ### LC-30 [LOW] (server) — SeasonalSpikeDetector.Observe holds the detector-wide mutex across a 30-day interface-history DB query — all concurrent pollDevice goroutines' spike checks serialize behind DB I/O on every profile refresh
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.23)
 
 **Location:** `internal/report/spike.go:243` · Dimension: concurrency-state
 

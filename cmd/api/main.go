@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.22"
+const ServerVersion = "0.11.23"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -361,6 +361,24 @@ func main() {
 	alertMgr := alerts.NewAlertManager(cfg, notif, db)
 	alertMgr.RefreshThresholds(db.Gorm())
 	handler.SetAlertManager(alertMgr)
+
+	// LC-9: periodically refresh the alert policy/maintenance/threshold cache so
+	// admin edits (policies, maintenance windows, SMTP/webhook credentials) take
+	// effect in THIS process's alert paths (syslog-critical, SSH host-key,
+	// config-change) without a restart — the poller refreshes every poll cycle;
+	// this process previously loaded the cache exactly once at startup.
+	logging.SafeGo("alert-config-refresh", func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				alertMgr.RefreshThresholds(db.Gorm())
+			case <-bgCtx.Done():
+				return
+			}
+		}
+	})
 
 	// Wire the notifier + version for on-demand report sends / rendering from
 	// the admin Reports page (scheduled reports run in the poller process).

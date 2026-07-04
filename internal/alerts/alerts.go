@@ -181,7 +181,10 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 
 	am.dispatchFired(fired, globalNC, "system")
 
-	// Recovery checks — batch resolve under one lock, skip if in maintenance
+	// Recovery checks — batch resolve under one lock. Maintenance no longer
+	// defers resolution here (LC-13): sendRecovery itself performs the DB
+	// auto-resolve and mutes the notification while in maintenance, matching
+	// the other recovery paths.
 	am.mu.Lock()
 	type recoveryCheck struct {
 		metricCheck
@@ -194,9 +197,6 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 	am.mu.Unlock()
 
 	for _, rc := range recoveryChecks {
-		if rc.resolved.InMaintenance {
-			continue
-		}
 		// Effective fire level (static or F17 zscore), then the recovery band:
 		// F14 clear-band when configured; zscore mode gets a built-in half-σ
 		// band below its dynamic threshold so baseline noise doesn't flap.
@@ -210,7 +210,7 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		}
 		if fireAt > 0 && rc.current < recoverBelow {
 			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
-				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID)
+				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID, siteID)
 		}
 	}
 
@@ -264,7 +264,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		if iface.Status == "up" {
 			key := fmt.Sprintf("iface_down_%d_%s", iface.DeviceID, iface.Name)
 			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
-				fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID)
+				fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID, siteID)
 		}
 	}
 
@@ -299,11 +299,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	// Handle LINK_UP as recovery for any active LINK_DOWN alert on this device
 	if trap.TrapType == "LINK_UP" {
 		key := fmt.Sprintf("trap_LINK_DOWN_%s", trap.SourceIP)
-		am.sendRecovery(key, "LINK_DOWN", metricName, trap.Message, trap.DeviceID)
-		return nil
-	}
-
-	if trap.Severity != "critical" && trap.Severity != "warning" {
+		am.sendRecovery(key, "LINK_DOWN", metricName, trap.Message, trap.DeviceID, siteID)
 		return nil
 	}
 
@@ -313,22 +309,37 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	now := time.Now()
 	resolved := am.resolveAlertConfig(trap.DeviceID, siteID, models.AlertType(trap.TrapType))
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	// Severity filter AFTER policy resolution (LC-14): info/notice traps stay
+	// dropped by default, but an enabled rule for this trap type opts it in.
+	if trap.Severity != "critical" && trap.Severity != "warning" && !resolved.RuleMatched {
+		am.mu.Unlock()
+		return nil
+	}
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
-	if !canSend || !resolved.AlertEnabled {
+	if !canSend {
 		return nil
+	}
+
+	// LC-14: honor a per-rule severity override (operators can upgrade a
+	// LINK_DOWN to critical or downgrade a noisy trap type); otherwise keep
+	// the trap parser's own severity — the same fallback pattern as
+	// ProcessFlowDetection.
+	severity := models.Severity(trap.Severity)
+	if resolved.RuleSeverity != "" {
+		severity = resolved.RuleSeverity
 	}
 
 	alert := models.Alert{
 		Timestamp:  trap.Timestamp,
 		DeviceID:   trap.DeviceID,
 		AlertType:  models.AlertType(trap.TrapType),
-		Severity:   models.Severity(trap.Severity),
+		Severity:   severity,
 		Message:    trap.Message,
 		MetricName: metricName, // M24: source-scoped so LINK_UP recovery can't cross devices
 		PolicyID:   resolved.PolicyID,
@@ -344,6 +355,15 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	}
 
 	return nil
+}
+
+// clampDelta returns cur-prev, clamped to 0 when the counter reset or wrapped
+// (cur < prev) — unsigned subtraction would otherwise underflow to ~1.8e19.
+func clampDelta(cur, prev uint64) uint64 {
+	if cur < prev {
+		return 0
+	}
+	return cur - prev
 }
 
 // CheckInterfaceErrors alerts when interfaces accumulate errors or discards since last poll.
@@ -365,12 +385,9 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 			continue
 		}
 
-		var errorDelta uint64
 		totalErrors := iface.InErrors + iface.OutErrors + iface.InDiscards + iface.OutDiscards
 		prevTotalErrors := prev.InErrors + prev.OutErrors + prev.InDiscards + prev.OutDiscards
-		if totalErrors >= prevTotalErrors {
-			errorDelta = totalErrors - prevTotalErrors
-		}
+		errorDelta := clampDelta(totalErrors, prevTotalErrors)
 
 		if errorDelta > 0 {
 			resolved := am.resolveAlertConfig(iface.DeviceID, siteID, "INTERFACE_ERRORS")
@@ -381,11 +398,13 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 			cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 			if am.canAlertWithCooldown(alertKey, now, cooldown) {
 				alert := models.Alert{
-					Timestamp:    now,
-					DeviceID:     iface.DeviceID,
-					AlertType:    "INTERFACE_ERRORS",
-					Severity:     resolved.Severity,
-					Message:      fmt.Sprintf("Interface %s has %d new errors/discards (in_err: %d, out_err: %d, in_disc: %d, out_disc: %d)", iface.Name, errorDelta, iface.InErrors-prev.InErrors, iface.OutErrors-prev.OutErrors, iface.InDiscards-prev.InDiscards, iface.OutDiscards-prev.OutDiscards),
+					Timestamp: now,
+					DeviceID:  iface.DeviceID,
+					AlertType: "INTERFACE_ERRORS",
+					Severity:  resolved.Severity,
+					// LC-28: per-counter deltas get the same reset clamp as the
+					// aggregate above, so one reset counter can't print ~1.8e19.
+					Message:      fmt.Sprintf("Interface %s has %d new errors/discards (in_err: %d, out_err: %d, in_disc: %d, out_disc: %d)", iface.Name, errorDelta, clampDelta(iface.InErrors, prev.InErrors), clampDelta(iface.OutErrors, prev.OutErrors), clampDelta(iface.InDiscards, prev.InDiscards), clampDelta(iface.OutDiscards, prev.OutDiscards)),
 					MetricName:   fmt.Sprintf("interface_errors_%s", iface.Name),
 					CurrentValue: float64(errorDelta),
 					PolicyID:     resolved.PolicyID,
@@ -419,13 +438,15 @@ func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) e
 	resolved := am.resolveAlertConfig(msg.DeviceID, siteID, alertType)
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	// LC-12 sibling: gate on AlertEnabled BEFORE recording cooldown state, so a
+	// disabled rule leaves no stale in-memory cooldown behind.
+	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
-	if !canSend || !resolved.AlertEnabled {
+	if !canSend {
 		return nil
 	}
 
@@ -468,13 +489,14 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	resolved := am.resolveAlertConfig(det.DeviceID, siteID, alertType)
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	// LC-12 sibling: AlertEnabled gates the cooldown recording too.
+	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
-	if !canSend || !resolved.AlertEnabled {
+	if !canSend {
 		return nil
 	}
 
@@ -771,7 +793,7 @@ func (am *AlertManager) SetCooldown(duration time.Duration) {
 // stored in Alert.MetricName, e.g. "interface_<name>", "vpn_<tunnel>", "device_status").
 // Without it, a recovery for one interface would wrongly resolve every INTERFACE_DOWN
 // alert on the device.
-func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, metricName, message string, deviceID uint) {
+func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, metricName, message string, deviceID uint, siteID *uint) {
 	am.mu.Lock()
 	wasActive := am.activeAlerts[key]
 	if wasActive {
@@ -796,7 +818,13 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 		flapping = am.flapPruneLocked(key, nowF) >= am.config.Alerts.FlapMaxFires
 	}
 	delete(am.fireStart, key)
-	nc := notifier.SnapshotConfig(&am.config.Alerts)
+	// LC-13/LC-42: resolve the device/type config exactly like the fire path,
+	// so the recovery notification honors maintenance windows and routes
+	// through the policy's channels — including the stateful PagerDuty /
+	// Opsgenie resolve, which the plain global snapshot could never reach
+	// (its PolicyActive/Enable* flags are always false).
+	resolved := am.resolveAlertConfig(deviceID, siteID, alertType)
+	nc := BuildNotifyConfigFromResolved(resolved, notifier.SnapshotConfig(&am.config.Alerts))
 	am.mu.Unlock()
 
 	// Always run the precisely-scoped DB resolve, independent of the in-memory
@@ -844,12 +872,22 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 		Acknowledged:   true,
 		AcknowledgedAt: &now,
 		ResolvedAt:     &now,
+		// LC-13: a recovery inside a maintenance window is muted like its fire
+		// (same contract as flap muting below) — the DB auto-resolve above
+		// already ran, so the ticket still clears silently.
+		Suppressed: resolved.InMaintenance,
 	}
 	am.saveAlert(&alert)
-	if flapping {
+	if flapping || alert.Suppressed {
 		return
 	}
-	if err := am.notifier.SendAlert(&alert, nc); err != nil {
+	// LC-42: notify with the ORIGINAL metric name so PagerDuty's dedup_key and
+	// Opsgenie's alias reproduce the fire's key and the incident auto-resolves;
+	// the persisted companion row keeps the "recovery" discriminator that the
+	// response stats and companion queries rely on.
+	notifyAlert := alert
+	notifyAlert.MetricName = metricName
+	if err := am.notifier.SendAlert(&notifyAlert, nc); err != nil {
 		log.Printf("Failed to send recovery notification: %v", err)
 	}
 }
@@ -947,7 +985,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 		if vpn.Status == "up" {
 			key := fmt.Sprintf("vpn_down_%d_%s", vpn.DeviceID, vpn.TunnelName)
 			am.sendRecovery(key, "VPN_TUNNEL_DOWN", fmt.Sprintf("vpn_%s", vpn.TunnelName),
-				fmt.Sprintf("VPN tunnel %s to %s is back up", vpn.TunnelName, vpn.RemoteIP), vpn.DeviceID)
+				fmt.Sprintf("VPN tunnel %s to %s is back up", vpn.TunnelName, vpn.RemoteIP), vpn.DeviceID, siteID)
 		}
 	}
 	return nil
@@ -960,14 +998,18 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	resolved := am.resolveAlertConfig(device.ID, device.SiteID, "DEVICE_OFFLINE")
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	// LC-12: gate on AlertEnabled BEFORE marking the key active (mirrors
+	// CheckProbeDataFlow). Marking active with the rule disabled left
+	// activeAlerts[key] set, so recovery still sent a "back online"
+	// notification + _RESOLVED row for an alert type the operator disabled.
+	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 		am.markActiveLocked(key, now)
 	}
 	am.mu.Unlock()
 
-	if !canSend || !resolved.AlertEnabled {
+	if !canSend {
 		return nil
 	}
 
@@ -1013,7 +1055,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 func (am *AlertManager) CheckDeviceOnline(device *models.Device) {
 	key := fmt.Sprintf("device_offline_%d", device.ID)
 	am.sendRecovery(key, "DEVICE_OFFLINE", "device_status",
-		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID)
+		fmt.Sprintf("Device %s (%s) is back online", device.Name, device.IPAddress), device.ID, device.SiteID)
 	// F12: recovery closes the device's incident with one summary notification.
 	am.closeIncident(device)
 }
@@ -1032,13 +1074,14 @@ func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, newFP stri
 	resolved := am.resolveAlertConfig(device.ID, device.SiteID, "SSH_HOST_KEY_CHANGED")
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	canSend := am.canAlertWithCooldown(key, now, cooldown)
+	// LC-12 sibling: AlertEnabled gates the cooldown recording too.
+	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
 	if canSend {
 		am.recordCooldownLocked(key, now, cooldown)
 	}
 	am.mu.Unlock()
 
-	if !canSend || !resolved.AlertEnabled {
+	if !canSend {
 		return nil
 	}
 
@@ -1211,7 +1254,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		if lag < lagThreshold {
 			key := fmt.Sprintf("probe_data_lag_%d", probe.ID)
 			am.sendRecovery(key, "PROBE_DATA_LAG", "probe_data_flow",
-				fmt.Sprintf("Probe %s is receiving data again (lag cleared)", probe.Name), 0)
+				fmt.Sprintf("Probe %s is receiving data again (lag cleared)", probe.Name), 0, &probe.SiteID)
 			continue
 		}
 
@@ -1257,7 +1300,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 	return nil
 }
 
-// CheckProbeDataTruncation should be called when a data batch is truncated.
+// RecordProbeDataTruncation should be called when a data batch is truncated.
 // It flags the probe for monitoring - frequent truncation may indicate misconfiguration.
 func (am *AlertManager) RecordProbeDataTruncation(probeID uint, probeName string, totalItems, retainedItems int) {
 	if am.db == nil {
@@ -1266,17 +1309,19 @@ func (am *AlertManager) RecordProbeDataTruncation(probeID uint, probeName string
 
 	key := fmt.Sprintf("probe_truncation_%d", probeID)
 	now := time.Now()
+	const cooldown = 5 * time.Minute
 
+	// Anti-spam: at most one alert per probe per cooldown window. LC-26: the
+	// previous guard read a lastAlert key nothing ever wrote and returned early
+	// unless a prior alert was RECENT (inverted), so this alert could never fire.
 	am.mu.Lock()
-	lastTruncation := am.lastAlert[key]
-	am.mu.Unlock()
-
-	// Only alert if truncation happened recently (within 5 minutes) to avoid spam
-	if lastTruncation.IsZero() || now.Sub(lastTruncation) > 5*time.Minute {
+	if !am.canAlertWithCooldown(key, now, cooldown) {
+		am.mu.Unlock()
 		return
 	}
-
+	am.recordCooldownLocked(key, now, cooldown)
 	nc := notifier.SnapshotConfig(&am.config.Alerts)
+	am.mu.Unlock()
 
 	alert := models.Alert{
 		Timestamp:  now,
@@ -1346,6 +1391,13 @@ func (am *AlertManager) CheckEscalations() {
 
 	for _, alert := range alerts {
 		if alert.PolicyID == nil {
+			continue
+		}
+		// F12/LC-11: an alert attached to a still-open incident had its
+		// individual notification muted at fire time — the incident is the
+		// story. Don't resurrect it as per-alert escalations while the
+		// incident stays open.
+		if alert.IncidentID != nil && am.incidentFor(alert.DeviceID) == *alert.IncidentID {
 			continue
 		}
 		policy, ok := escalationPolicies[*alert.PolicyID]
