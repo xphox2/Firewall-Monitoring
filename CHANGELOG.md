@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.19] - 2026-07-03
+
+### Fixed
+- **User delete / password reset / 2FA reset / token revoke actually execute after confirming** (found by the maintainer: deleting a user did nothing). All four destructive actions on the Users and API Tokens cards passed a callback to `AdminCommon.confirm`, but the shared confirm dialog is Promise-based — the callback was silently treated as the options object and never invoked, so the dialog confirmed into a no-op. This has been broken since the cards shipped (v0.10.566/567). All four now use the Promise form, get the red danger styling, and carry explicit confirm labels ("Delete user", "Reset password", "Reset 2FA", "Revoke token"). Verified live: create → delete round-trip removes the row from the table and the database.
+
 ## [0.11.18] - 2026-07-03
 
 ### Fixed

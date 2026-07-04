@@ -92,8 +92,13 @@
                     .then(function () { AC.showSuccess('User updated'); loadUsers(); })
                     .catch(function (err) { AC.showError((err && err.message) || 'Failed to update user'); });
             },
+            // v0.11.19: AC.confirm is Promise-based ({danger} opts, resolves
+            // true/false). These four actions passed a CALLBACK as the second
+            // argument, which confirmModal never invokes — the dialog showed,
+            // Confirm clicked, and nothing happened.
             'user-reset-password': function (el) {
-                AC.confirm('Reset the password for "' + el.dataset.name + '"? Their sessions will be revoked.', function () {
+                AC.confirm('Reset the password for "' + el.dataset.name + '"? Their sessions will be revoked.', { danger: true, confirmLabel: 'Reset password' }).then(function (ok) {
+                    if (!ok) { return; }
                     AC.apiFetch(API_BASE + '/users/' + el.dataset.id + '/reset-password', { method: 'POST' })
                         .then(function (res) {
                             showTempPassword(el.dataset.name, res.data.temp_password);
@@ -103,14 +108,16 @@
                 });
             },
             'user-reset-2fa': function (el) {
-                AC.confirm('Reset 2FA for "' + el.dataset.name + '"? They will log in with password only until they re-enroll.', function () {
+                AC.confirm('Reset 2FA for "' + el.dataset.name + '"? They will log in with password only until they re-enroll.', { danger: true, confirmLabel: 'Reset 2FA' }).then(function (ok) {
+                    if (!ok) { return; }
                     AC.apiFetch(API_BASE + '/users/' + el.dataset.id + '/reset-2fa', { method: 'POST' })
                         .then(function () { AC.showSuccess('2FA reset'); loadUsers(); })
                         .catch(function (err) { AC.showError((err && err.message) || 'Failed to reset 2FA'); });
                 });
             },
             'user-delete': function (el) {
-                AC.confirm('Delete user "' + el.dataset.name + '"? This cannot be undone.', function () {
+                AC.confirm('Delete user "' + el.dataset.name + '"? This cannot be undone.', { danger: true, confirmLabel: 'Delete user' }).then(function (ok) {
+                    if (!ok) { return; }
                     AC.apiFetch(API_BASE + '/users/' + el.dataset.id, { method: 'DELETE' })
                         .then(function () { AC.showSuccess('User deleted'); loadUsers(); })
                         .catch(function (err) { AC.showError((err && err.message) || 'Failed to delete user'); });
@@ -177,7 +184,8 @@
                     .catch(function (err) { AC.showError((err && err.message) || 'Failed to create token'); });
             },
             'revoke-token': function (el) {
-                AC.confirm('Revoke token "' + el.dataset.name + '"? Anything using it stops working immediately.', function () {
+                AC.confirm('Revoke token "' + el.dataset.name + '"? Anything using it stops working immediately.', { danger: true, confirmLabel: 'Revoke token' }).then(function (ok) {
+                    if (!ok) { return; }
                     AC.apiFetch(API_BASE + '/tokens/' + el.dataset.id, { method: 'DELETE' })
                         .then(function () { AC.showSuccess('Token revoked'); loadTokens(); })
                         .catch(function (err) { AC.showError((err && err.message) || 'Failed to revoke token'); });
