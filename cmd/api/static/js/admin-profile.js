@@ -24,9 +24,29 @@
     var AC = null;
     var API_BASE = '';
     var me = null;
-    var state = { step: null, secret: '', otpauthUrl: '', qrPng: '', codes: [], offerDecline: true, busy: false };
+    var state = { step: null, secret: '', otpauthUrl: '', qrPng: '', codes: [], codesSaved: false, offerDecline: true, busy: false };
     var bound = false;
     var escGuard = null;
+    var unloadGuard = null;
+
+    // The codes/done steps run on a revoked session by design. Three guards
+    // keep the once-only recovery codes on screen until the user has them:
+    // the auth-redirect hold (admin-common.js honors it on 401), a browser
+    // leave-warning, and a confirm button that stays disabled until the codes
+    // were actually copied or downloaded.
+    function holdSession(on) {
+        window.__fwmonAuthRedirectHold = on || undefined;
+        if (on && !unloadGuard) {
+            unloadGuard = function (ev) {
+                ev.preventDefault();
+                ev.returnValue = '';
+            };
+            window.addEventListener('beforeunload', unloadGuard);
+        } else if (!on && unloadGuard) {
+            window.removeEventListener('beforeunload', unloadGuard);
+            unloadGuard = null;
+        }
+    }
 
     function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
     function $(id) { return document.getElementById(id); }
@@ -192,6 +212,8 @@
     }
 
     function stepCodes() {
+        state.codesSaved = false;
+        holdSession(true);
         var grid = state.codes.map(function (c) { return '<code>' + esc(c) + '</code>'; }).join('');
         setStep('codes',
             '<h3>Save your recovery codes</h3>' +
@@ -200,8 +222,18 @@
             '<p style="display:flex; gap:8px; flex-wrap:wrap;">' +
             '<button class="btn secondary" data-action="mfa-w-copy-codes">Copy all</button>' +
             '<button class="btn secondary" data-action="mfa-w-download-codes">Download .txt</button>' +
-            '</p>',
-            '<button class="btn" data-action="mfa-w-codes-saved">I’ve saved my recovery codes</button>');
+            '</p>' +
+            '<p id="mfa-w-codes-hint" style="font-size:0.8rem; color:var(--fwmon-text-faint);">Copy or download your codes to continue.</p>',
+            '<button class="btn" id="mfa-w-codes-saved-btn" data-action="mfa-w-codes-saved" disabled>I’ve saved my recovery codes</button>');
+    }
+
+    // Called after a successful copy/download: unlocks the confirm button.
+    function markCodesSaved() {
+        state.codesSaved = true;
+        var btn = $('mfa-w-codes-saved-btn');
+        if (btn) { btn.disabled = false; }
+        var hint = $('mfa-w-codes-hint');
+        if (hint) { hint.textContent = 'Codes saved — double-check they’re really there, then continue.'; }
     }
 
     function stepDone() {
@@ -211,8 +243,11 @@
             '<button class="btn" data-action="mfa-w-login">Continue to sign in</button>');
     }
 
-    function copyText(text, okMsg) {
-        var done = function () { AC.showSuccess(okMsg); };
+    function copyText(text, okMsg, onSuccess) {
+        var done = function () {
+            AC.showSuccess(okMsg);
+            if (onSuccess) { onSuccess(); }
+        };
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(done).catch(function () {
                 AC.showError('Copy failed — select the text manually');
@@ -229,10 +264,17 @@
         // capture handler — registration order decides who runs first.
         if (!escGuard) {
             escGuard = function (ev) {
-                if (ev.key === 'Escape' && (state.step === 'codes')) {
+                if (ev.key !== 'Escape') { return; }
+                if (state.step === 'codes') {
                     ev.preventDefault();
                     ev.stopImmediatePropagation();
                     showError('Save your recovery codes first — they are shown only once.');
+                } else if (state.step === 'done') {
+                    // The session is revoked; closing the dialog would strand
+                    // the user on a dead page. ESC = the intended exit.
+                    ev.preventDefault();
+                    ev.stopImmediatePropagation();
+                    actions['mfa-w-login']();
                 }
             };
             document.addEventListener('keydown', escGuard, true);
@@ -243,6 +285,7 @@
 
     function closeWizard() {
         AC.closeModal('mfa-wizard-modal');
+        holdSession(false);
         if (escGuard) {
             document.removeEventListener('keydown', escGuard, true);
             escGuard = null;
@@ -329,7 +372,7 @@
                     if (btn) { btn.disabled = false; }
                 });
         },
-        'mfa-w-copy-codes': function () { copyText(state.codes.join('\n'), 'Recovery codes copied'); },
+        'mfa-w-copy-codes': function () { copyText(state.codes.join('\n'), 'Recovery codes copied', markCodesSaved); },
         'mfa-w-download-codes': function () {
             // Pure client-side: the session is already revoked at this step.
             var blob = new Blob([
@@ -344,9 +387,21 @@
             a.click();
             a.remove();
             setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+            markCodesSaved();
         },
-        'mfa-w-codes-saved': function () { stepDone(); },
-        'mfa-w-login': function () { window.location.href = '/admin/login'; },
+        'mfa-w-codes-saved': function () {
+            if (!state.codesSaved) {
+                showError('Copy or download your codes first — they are shown only once.');
+                return;
+            }
+            stepDone();
+        },
+        'mfa-w-login': function () {
+            // Drop the guards BEFORE navigating, or our own beforeunload
+            // prompt would second-guess the deliberate exit.
+            holdSession(false);
+            window.location.href = '/admin/login';
+        },
 
         /* Profile page actions */
         'profile-save': function (el) { saveProfile(el); },

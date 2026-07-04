@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.18] - 2026-07-03
+
+### Fixed
+- **The recovery-codes screen can no longer vanish before the codes are saved** (found by the maintainer live: the screen disappeared before the download). Root cause: at that step the session is already revoked by design, so the SPA's background pollers (dashboard/vitals timers) start receiving 401s — and the global 401 handler navigated the whole tab to the login page, taking the once-only codes with it. Three guards now hold the step: (1) the wizard raises an auth-redirect hold that admin-common.js honors, so background 401s reject quietly instead of navigating; (2) a browser leave-warning (`beforeunload`) catches accidental refresh/close/navigation while the codes are up; (3) the "I've saved my recovery codes" button stays **disabled until the codes were actually copied or downloaded**. ESC on the final step now exits to the login page instead of stranding the user on a dead session. Verified live: a real 401 fired mid-display no longer steals the screen.
+
 ## [0.11.17] - 2026-07-03
 
 ### Fixed

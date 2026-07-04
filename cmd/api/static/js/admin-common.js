@@ -349,6 +349,16 @@
                     .then(function() { return doFetch(attempt + 1); });
             }
             if (res.status === 401 || res.status === 302) {
+                // v0.11.18: while the MFA wizard is showing the once-only
+                // recovery codes, the session is ALREADY revoked by design —
+                // background pollers (dashboard/vitals timers) start 401ing,
+                // and this redirect was yanking the whole tab to the login
+                // page before the user could save their codes. The wizard
+                // raises the hold flag for exactly that window; failed
+                // background calls just reject quietly.
+                if (window.__fwmonAuthRedirectHold) {
+                    return Promise.reject(new Error('Not authenticated'));
+                }
                 // AUDIT-058: redirect the TOP frame, not the current one. A 401
                 // inside the Reports preview iframe would otherwise render the
                 // login page inside the report frame instead of navigating the
