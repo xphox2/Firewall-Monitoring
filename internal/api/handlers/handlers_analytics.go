@@ -318,6 +318,13 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 			query = query.Where("dst_asn = ?", v)
 		}
 	}
+	// Tranche 3: exporting-protocol filter (0=sFlow is a real value — the UI
+	// sends the param only when a source is explicitly selected).
+	if fs := c.Query("flow_source"); fs != "" {
+		if v, err := strconv.ParseUint(fs, 10, 8); err == nil {
+			query = query.Where("flow_source = ?", v)
+		}
+	}
 
 	var samples []models.FlowSample
 	if err := query.Find(&samples).Error; err != nil {
@@ -387,6 +394,12 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 			filter.DstASN = &a
 		}
 	}
+	if fs := c.Query("flow_source"); fs != "" {
+		if v, err := strconv.ParseUint(fs, 10, 8); err == nil {
+			p := uint8(v)
+			filter.FlowSource = &p
+		}
+	}
 	filter.SrcAddr = c.Query("src_addr")
 	filter.DstAddr = c.Query("dst_addr")
 
@@ -395,6 +408,12 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get flow stats", err)
 		return
 	}
+
+	// Dual-export visibility: devices whose last hour contains more than one
+	// distinct flow_source are double-counting bytes (same traffic metered by
+	// two protocols) — the UI shows a warning banner. Cheap 1h-window GROUP BY
+	// on the indexed (device_id, timestamp) prefix; failure is non-fatal.
+	stats.MixedSourceDevices = db.GetMixedFlowSourceDevices()
 
 	c.JSON(http.StatusOK, response.Success(stats))
 }

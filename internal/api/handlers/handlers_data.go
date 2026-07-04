@@ -241,6 +241,17 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		if samples[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[samples[i].DeviceID] {
 			continue
 		}
+		// Tranche 3: clamp the exporting-protocol label. Clamp, don't reject —
+		// a 400 would bounce an entire batch over one field from a future
+		// collector (violating the additive-wire rule), and pass-through of
+		// junk values would fragment rollup groups (flow_source is a GROUP BY
+		// key). Bump FlowSourceMax when a new source ships.
+		if samples[i].FlowSource > models.FlowSourceMax {
+			samples[i].FlowSource = models.FlowSourceSFlow
+		}
+		// NOTE: zero-byte rows are deliberately legal — NSEL create/denied
+		// records and NAT-event records carry no byte counters, and denied-
+		// flow visibility (firewall_event=3) is the headline NetFlow feature.
 		// Ingest-time classification: stamp the app/L7 category and direction
 		// (internal/classify) so the Flows page can GROUP BY them. Pure
 		// (proto, ports, flags / addr-scope) functions — cheap per sample.

@@ -702,6 +702,13 @@
                     <select id="flows-filter-site" class="fwmon-flows-select"><option value="">All sites</option></select>
                     <select id="flows-filter-device" class="fwmon-flows-select"><option value="">All devices</option></select>
                     <select id="flows-filter-probe" class="fwmon-flows-select"><option value="">All probes</option></select>
+                    <select id="flows-filter-source" class="fwmon-flows-select">
+                        <option value="">All sources</option>
+                        <option value="0">sFlow</option>
+                        <option value="1">NetFlow v5</option>
+                        <option value="2">NetFlow v9</option>
+                        <option value="3">IPFIX</option>
+                    </select>
                     <div class="chart-range-pills" id="flows-protocol-pills">
                         <button type="button" class="chart-range-pill active" data-protocol="" title="All protocols">All</button>
                         <button type="button" class="chart-range-pill" data-protocol="6">TCP</button>
@@ -716,6 +723,11 @@
                     <button type="button" class="btn secondary sm fwmon-flows-clear" id="flows-clear-filters">clear</button>
                 </div>
 
+                <!-- Dual-export warning (Tranche 3): a device reporting flows
+                     via BOTH sFlow and NetFlow double-counts every byte.
+                     Populated by admin-flows.js from mixed_source_devices. -->
+                <div id="flows-mixed-source-warning" class="fwmon-flows-mixed-warning" hidden></div>
+
                 <!-- Conversations view — click row to filter src+dst+port and jump to Samples -->
                 <div class="table-wrap fwmon-flows-view" id="flows-view-conversations" style="max-height: 600px;">
                     <table id="flows-conversations-table" class="fwmon-flows-table">
@@ -727,7 +739,7 @@
                 <!-- Flow Samples view — raw FlowSample rows, paginated -->
                 <div class="table-wrap fwmon-flows-view" id="flows-view-samples" style="max-height: 600px;" hidden>
                     <table id="flows-table" class="fwmon-flows-table">
-                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Source</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>

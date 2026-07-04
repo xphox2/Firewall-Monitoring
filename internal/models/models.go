@@ -924,6 +924,48 @@ type FlowSample struct {
 	// next-hop address (varchar(45) holds IPv6). Both omitempty on the wire.
 	ASPath  string `json:"as_path,omitempty" gorm:"column:as_path"`
 	NextHop string `json:"next_hop,omitempty" gorm:"column:next_hop;type:varchar(45)"`
+	// ---- Tranche 3 (NetFlow v5/v9 + IPFIX) columns, migration v29. All
+	// additive omitempty: pre-1.3.0 collectors never send them (zero values =
+	// sFlow semantics), pre-0.11.20 servers drop the unknown JSON keys. Full
+	// rationale: docs/flow-protocol-research-2026-07-03.md §2.1.
+
+	// FlowSource labels the exporting protocol: 0/absent = sFlow (and every
+	// pre-adoption collector), 1 = NetFlow v5, 2 = NetFlow v9, 3 = IPFIX.
+	// Ingest clamps unknown values to 0. Joins the rollup group key.
+	FlowSource uint8 `json:"flow_source,omitempty" gorm:"column:flow_source;default:0;not null"`
+	// FlowStart/FlowEnd bound the interval a NetFlow/IPFIX record aggregates
+	// (active timeouts run to 30 min — a flow is NOT an instant). For sFlow
+	// point samples both equal Timestamp. Timestamp stays = flow end for
+	// chart compatibility; duration-aware bucketing is a Tranche 4 item.
+	FlowStart *time.Time `json:"flow_start,omitempty" gorm:"column:flow_start"`
+	FlowEnd   *time.Time `json:"flow_end,omitempty" gorm:"column:flow_end"`
+	// FirewallEvent is IE 233 (NSEL/FortiGate): 0 none, 1 created, 2 deleted,
+	// 3 denied, 4 alert, 5 update. Denied-flow visibility is the headline
+	// NetFlow-over-sFlow win; denied/create records legally carry 0 bytes.
+	FirewallEvent uint8 `json:"firewall_event,omitempty" gorm:"column:firewall_event;default:0;not null"`
+	// FlowEndReason is IE 136; 2 = active timeout (the flow CONTINUES in a
+	// later record) — required for Tranche 4 flow stitching.
+	FlowEndReason uint8 `json:"flow_end_reason,omitempty" gorm:"column:flow_end_reason;default:0;not null"`
+	// Post-NAT tuple (IEs 225-228/281-282, ASA legacy 40001-40004): what the
+	// flow looked like AFTER translation. Empty/0 when the exporter is not
+	// NATing or doesn't report it.
+	PostNATSrcAddr string `json:"post_nat_src_addr,omitempty" gorm:"column:post_nat_src_addr;type:varchar(45)"`
+	PostNATDstAddr string `json:"post_nat_dst_addr,omitempty" gorm:"column:post_nat_dst_addr;type:varchar(45)"`
+	PostNATSrcPort uint16 `json:"post_nat_src_port,omitempty" gorm:"column:post_nat_src_port;type:integer;default:0;not null"`
+	PostNATDstPort uint16 `json:"post_nat_dst_port,omitempty" gorm:"column:post_nat_dst_port;type:integer;default:0;not null"`
+	// ICMPTypeCode is IE 32/139 (type*256+code) for protocol 1/58 rows; the
+	// port columns are zeroed for ICMP by convention (both parsers).
+	ICMPTypeCode uint16 `json:"icmp_type_code,omitempty" gorm:"column:icmp_type_code;type:integer;default:0;not null"`
+	// TOS is IE 5 (or the v5 tos byte).
+	TOS uint8 `json:"tos,omitempty" gorm:"column:tos;default:0;not null"`
+	// SrcVLAN/DstVLAN are IEs 58/59 (sFlow extended_switch to follow later).
+	SrcVLAN uint16 `json:"src_vlan,omitempty" gorm:"column:src_vlan;type:integer;default:0;not null"`
+	DstVLAN uint16 `json:"dst_vlan,omitempty" gorm:"column:dst_vlan;type:integer;default:0;not null"`
+	// AppName is the EXPORTER's application identification (PAN App-ID 56701,
+	// FortiGate app options) — vendor truth that outranks the port heuristic
+	// in app_category when present.
+	AppName string `json:"app_name,omitempty" gorm:"column:app_name;type:varchar(64)"`
+
 	// BGPSrcAS / BGPDstAS are inbound-only (gorm:"-", not persisted): the
 	// collector sends src_as/dst_as from extended_gateway, and at ingest they
 	// take precedence over the GeoLite2 ASN lookup, populating SrcASN/DstASN.
@@ -932,6 +974,26 @@ type FlowSample struct {
 
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// Flow source labels (FlowSample.FlowSource / FlowRollup.FlowSource).
+const (
+	FlowSourceSFlow     = 0
+	FlowSourceNetFlowV5 = 1
+	FlowSourceNetFlowV9 = 2
+	FlowSourceIPFIX     = 3
+	// FlowSourceMax is the ingest clamp ceiling — bump when a new source ships.
+	FlowSourceMax = FlowSourceIPFIX
+)
+
+// FirewallEvent values (IE 233).
+const (
+	FirewallEventNone    = 0
+	FirewallEventCreated = 1
+	FirewallEventDeleted = 2
+	FirewallEventDenied  = 3
+	FirewallEventAlert   = 4
+	FirewallEventUpdate  = 5
+)
 
 func (FlowSample) TableName() string { return "flow_samples" }
 
@@ -1037,6 +1099,13 @@ type FlowRollup struct {
 	// no rollup cardinality. Migration v12 adds the columns.
 	DstCountry string `json:"dst_country,omitempty" gorm:"column:dst_country;type:varchar(2)"`
 	DstASN     uint32 `json:"dst_asn,omitempty" gorm:"column:dst_asn;type:bigint;default:0;not null"`
+	// FlowSource carries the exporting-protocol label through the rollup so
+	// the Flows page source filter survives past the raw retention window.
+	// Unlike app_category it is NOT functionally determined by the group key —
+	// it multiplies groups by the number of sources actually in use for that
+	// conversation (realistically 1, hard-capped at 4 by the ingest clamp).
+	// Migration v29 adds the column.
+	FlowSource uint8 `json:"flow_source,omitempty" gorm:"column:flow_source;default:0;not null"`
 }
 
 func (FlowRollup) TableName() string { return "flow_rollups" }

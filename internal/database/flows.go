@@ -63,6 +63,30 @@ type FlowStatsResult struct {
 		Packets uint64 `json:"packets"`
 		Flows   int64  `json:"flows"`
 	} `json:"local_traffic"`
+	// MixedSourceDevices lists device names whose recent flows carry more
+	// than one flow_source — the same traffic metered by two protocols
+	// double-counts every byte, so the UI warns (Tranche 3 dual-export
+	// visibility; the collector-side dedup policy normally prevents this).
+	MixedSourceDevices []string `json:"mixed_source_devices,omitempty"`
+}
+
+// GetMixedFlowSourceDevices returns the names of devices whose last hour of
+// flow_samples contains >1 distinct flow_source. Uses the (device_id,
+// timestamp) index prefix; errors degrade to an empty list (the banner is
+// advisory, never load-bearing).
+func (d *Database) GetMixedFlowSourceDevices() []string {
+	var names []string
+	err := d.db.Raw(`SELECT dv.name FROM devices dv WHERE dv.id IN (
+			SELECT device_id FROM flow_samples
+			WHERE timestamp > ? AND device_id > 0
+			GROUP BY device_id
+			HAVING COUNT(DISTINCT flow_source) > 1
+		) ORDER BY dv.name`, time.Now().Add(-time.Hour)).Scan(&names).Error
+	if err != nil {
+		log.Printf("GetMixedFlowSourceDevices: %v", err)
+		return nil
+	}
+	return names
 }
 
 // topAddrsByBytes returns top N addresses grouped by addrCol, ordered by total bytes descending.
@@ -113,6 +137,7 @@ type FlowStatsFilter struct {
 	Direction   *uint8  // classify.Dir* id; nil = all
 	DstCountry  string  // ISO alpha-2 destination country; "" = all
 	DstASN      *uint32 // destination ASN; nil = all
+	FlowSource  *uint8  // models.FlowSource* (0=sFlow,1=v5,2=v9,3=IPFIX); nil = all
 }
 
 // flowAddrFilter applies an IP/CIDR filter on an address column. It reuses
@@ -178,6 +203,11 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		}
 		if filter.DstASN != nil {
 			q = q.Where("dst_asn = ?", *filter.DstASN)
+		}
+		// flow_source exists on BOTH flow_samples and flow_rollups (v29), so
+		// this filter works across the raw window and rolled-up history alike.
+		if filter.FlowSource != nil {
+			q = q.Where("flow_source = ?", *filter.FlowSource)
 		}
 		q = flowAddrFilter(q, "src_addr", filter.SrcAddr)
 		q = flowAddrFilter(q, "dst_addr", filter.DstAddr)
@@ -591,6 +621,7 @@ type rollupRow struct {
 	Direction       uint8
 	DstCountry      string
 	DstASN          uint32
+	FlowSource      uint8
 	BytesSum        uint64
 	PacketsSum      uint64
 	FlowCount       int64
@@ -620,6 +651,7 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 				Direction:       r.Direction,
 				DstCountry:      r.DstCountry,
 				DstASN:          r.DstASN,
+				FlowSource:      r.FlowSource,
 				BytesSum:        r.BytesSum,
 				PacketsSum:      r.PacketsSum,
 				FlowCount:       r.FlowCount,
@@ -674,7 +706,7 @@ var flowRollupPageSize = 50000
 // deterministically — without it, PostgreSQL's hash/parallel aggregation gives
 // no cross-query ordering guarantee and pages can overlap or skip groups
 // (H1 of the 2026-07-01 audit).
-const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn"
+const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source"
 
 // aggregateFlowsToRollup groups raw FlowSamples older than cutoff into 5-minute rollups.
 // Returns true if work was done.
@@ -713,7 +745,7 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowSample{}).
 				Where("timestamp < ? AND id <= ?", cutoff, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, " +
 					"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 					"AVG(sampling_rate) as sampling_rate_avg").
 				Group(flowRollupGroupKey).
@@ -799,7 +831,7 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowRollup{}).
 				Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, " +
 					"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 					"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
 				Group(flowRollupGroupKey).

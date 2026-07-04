@@ -40,6 +40,17 @@ func (h *Handler) recordAgentDrops(samples []models.FlowSample) {
 		if samples[i].SamplerAddress == "" {
 			continue
 		}
+		// Tranche 3: only sFlow rows feed this. The delta logic below assumes
+		// sFlow's CUMULATIVE sample-pool drops counter (RFC 3176 §3.1.1);
+		// NetFlow/IPFIX has no such counter — the collector sends drops=0 for
+		// those rows, but the server must not depend on that: a future
+		// collector sending per-batch sequence-gap counts here would corrupt
+		// the cumulative baseline for a dual-exporting sampler address and
+		// mis-compute every delta. NetFlow export-loss lives in the
+		// collector's seq-gap metric instead.
+		if samples[i].FlowSource != models.FlowSourceSFlow {
+			continue
+		}
 		k := agentKey{samples[i].SamplerAddress, samples[i].SamplingRate}
 		if cur, ok := batchMax[k]; !ok || samples[i].Drops > cur {
 			batchMax[k] = samples[i].Drops

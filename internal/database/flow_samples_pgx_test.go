@@ -80,6 +80,20 @@ func TestFlowSamplesCopyColumns_OrderAndFieldTypes(t *testing.T) {
 		"threat_flag",
 		"as_path",
 		"next_hop",
+		"flow_source",
+		"flow_start",
+		"flow_end",
+		"firewall_event",
+		"flow_end_reason",
+		"post_nat_src_addr",
+		"post_nat_dst_addr",
+		"post_nat_src_port",
+		"post_nat_dst_port",
+		"icmp_type_code",
+		"tos",
+		"src_vlan",
+		"dst_vlan",
+		"app_name",
 	}
 
 	if got, want := len(flowSamplesCopyColumns), len(want)+1; got != want {

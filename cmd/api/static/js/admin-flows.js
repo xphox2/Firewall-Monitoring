@@ -40,13 +40,14 @@
         direction: '',  // direction id (classify.Dir*), drives By Direction filter
         country: '',    // dst ISO country code, drives Top Countries filter
         asn: '',        // dst ASN number, drives Top ASNs filter
+        source: '',     // flow_source id (0=sFlow..3=IPFIX); '' = all — NOTE '0' is a real filter
         // Which view of the combined data card is active: 'conversations' | 'samples'.
         tab: 'conversations'
     };
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'tab'];
+    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'source', 'tab'];
 
     // Label <-> id maps for the classification breakdowns. These MIRROR
     // internal/classify (Category / Dir* — documented as stable). The widgets
@@ -58,6 +59,8 @@
         11: 'Management', 12: 'P2P', 13: 'ICMP'
     };
     var DIRECTION_LABELS = { 0: 'Unknown', 1: 'Inbound', 2: 'Outbound', 3: 'Internal', 4: 'External' };
+    // Exporting protocol (FlowSample.flow_source; absent on the wire = 0 = sFlow).
+    var SOURCE_LABELS = { 0: 'sFlow', 1: 'NetFlow v5', 2: 'NetFlow v9', 3: 'IPFIX' };
     var CATEGORY_IDS = invertLabels(CATEGORY_LABELS);
     var DIRECTION_IDS = invertLabels(DIRECTION_LABELS);
 
@@ -189,10 +192,11 @@
             });
         }
 
-        // Site / device / probe selects — auto-apply on change
+        // Site / device / probe / source selects — auto-apply on change
         bindSelectAuto('flows-filter-site',   'site_id');
         bindSelectAuto('flows-filter-device', 'device_id');
         bindSelectAuto('flows-filter-probe',  'probe_id');
+        bindSelectAuto('flows-filter-source', 'source');
 
         // IP / port inputs — debounced auto-apply on input, immediate on Enter/blur
         bindInputAuto('flows-filter-src',   'src',   400);
@@ -214,6 +218,7 @@
                 state.direction = '';
                 state.country = '';
                 state.asn = '';
+                state.source = '';
                 applyStateToControls();
                 syncURL();
                 reload();
@@ -347,6 +352,7 @@
         setVal('flows-filter-site',   state.site_id);
         setVal('flows-filter-device', state.device_id);
         setVal('flows-filter-probe',  state.probe_id);
+        setVal('flows-filter-source', state.source);
         setVal('flows-filter-src',    state.src);
         setVal('flows-filter-dst',    state.dst);
         setVal('flows-filter-dport',  state.dport);
@@ -402,6 +408,7 @@
         if (state.direction !== '') chips.push({ key: 'direction', val: DIRECTION_LABELS[state.direction] || state.direction, stateKey: 'direction' });
         if (state.country)   chips.push({ key: 'country', val: state.country,         stateKey: 'country' });
         if (state.asn)       chips.push({ key: 'asn',     val: 'AS' + state.asn,       stateKey: 'asn' });
+        if (state.source !== '') chips.push({ key: 'source', val: SOURCE_LABELS[state.source] || state.source, stateKey: 'source' });
         if (state.site_id)   chips.push({ key: 'site',   val: siteLabel(state.site_id),     stateKey: 'site_id' });
         if (state.device_id) chips.push({ key: 'device', val: deviceLabel(state.device_id), stateKey: 'device_id' });
         if (state.probe_id)  chips.push({ key: 'probe',  val: probeLabel(state.probe_id),   stateKey: 'probe_id' });
@@ -468,6 +475,7 @@
         if (state.direction !== '') params.push('direction='   + encodeURIComponent(state.direction));
         if (state.country)   params.push('dst_country=' + encodeURIComponent(state.country));
         if (state.asn)       params.push('dst_asn='     + encodeURIComponent(state.asn));
+        if (state.source !== '') params.push('flow_source=' + encodeURIComponent(state.source));
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
@@ -485,6 +493,7 @@
         if (state.direction !== '') p.push('direction='   + encodeURIComponent(state.direction));
         if (state.country)   p.push('dst_country=' + encodeURIComponent(state.country));
         if (state.asn)       p.push('dst_asn='     + encodeURIComponent(state.asn));
+        if (state.source !== '') p.push('flow_source=' + encodeURIComponent(state.source));
         return '/admin/api/flows?' + p.join('&');
     }
 
@@ -510,6 +519,24 @@
     }
 
     function renderStats(d) {
+        // Dual-export warning: devices reporting via BOTH sFlow and NetFlow
+        // double-count every byte. Normally prevented by the collector's
+        // PROBE_FLOW_DEDUP policy; this banner covers dedup=off and
+        // multi-collector splits.
+        var mixedBar = document.getElementById('flows-mixed-source-warning');
+        if (mixedBar) {
+            var mixed = d.mixed_source_devices || [];
+            if (mixed.length > 0) {
+                var esc = (window.AdminCommon && AdminCommon.escapeHtml) || function(s) { return s; };
+                mixedBar.hidden = false;
+                mixedBar.innerHTML = '⚠ ' + mixed.map(function(n) { return '<strong>' + esc(n) + '</strong>'; }).join(', ') +
+                    (mixed.length === 1 ? ' is' : ' are') +
+                    ' reporting flows via both sFlow and NetFlow — byte totals may be double-counted. Prefer one flow protocol per device (see SUPPORT-MATRIX).';
+            } else {
+                mixedBar.hidden = true;
+            }
+        }
+
         // Stat tiles
         setText('flows-total',      (d.total_flows || 0).toLocaleString());
         setText('flows-bytes',      formatBytes(d.total_bytes || 0));
@@ -994,7 +1021,7 @@
                 return;
             }
             var headers = ['timestamp', 'src_addr', 'src_port', 'dst_addr', 'dst_port',
-                           'protocol', 'protocol_name', 'bytes', 'packets', 'sampling_rate',
+                           'protocol', 'protocol_name', 'flow_source', 'bytes', 'packets', 'sampling_rate',
                            'device_id', 'probe_id', 'sampler_address'];
             var lines = [headers.join(',')];
             for (var i = 0; i < samples.length; i++) {
@@ -1007,6 +1034,7 @@
                     f.dst_port == null ? '' : f.dst_port,
                     f.protocol == null ? '' : f.protocol,
                     csvField(protocolName(f.protocol)),
+                    csvField(SOURCE_LABELS[f.flow_source || 0] || ''),
                     f.bytes == null ? '' : f.bytes,
                     f.packets == null ? '' : f.packets,
                     f.sampling_rate == null ? '' : f.sampling_rate,
@@ -1058,6 +1086,7 @@
         if (state.src)       bits.push('src-' + state.src.replace(/[^a-z0-9._-]/gi, ''));
         if (state.dst)       bits.push('dst-' + state.dst.replace(/[^a-z0-9._-]/gi, ''));
         if (state.dport)     bits.push('port' + state.dport);
+        if (state.source !== '') bits.push('src' + state.source);
         return bits.join('-');
     }
 
@@ -1085,13 +1114,14 @@
                 '<td>→</td>' +
                 '<td>' + esc(f.dst_addr) + ':' + f.dst_port + '</td>' +
                 '<td>' + esc(protocolName(f.protocol)) + '</td>' +
+                '<td>' + esc(SOURCE_LABELS[f.flow_source || 0] || '—') + '</td>' +
                 '<td class="num">' + formatBytes(f.bytes) + '</td>' +
                 '<td class="num">' + (f.packets || 0).toLocaleString() + '</td>' +
                 '<td class="num">' + (f.sampling_rate ? '1:' + f.sampling_rate : '—') + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples match these filters</td></tr>';
+        else tbody.innerHTML = html || '<tr><td colspan="9" class="empty-state">No flow samples match these filters</td></tr>';
     }
 
     function updateLoadedCount() {

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.20] - 2026-07-04
+
+### Added
+- **NetFlow v5/v9 + IPFIX ingestion — server side** (v0.11 Tranche 3 / P0-4, first of two cross-repo phases; collector 1.3.0 carries the parsers). Migration v29 adds the multi-protocol flow columns in one pass (flow_samples is partitioned — one cheap shot): `flow_source` (0 sFlow / 1 v5 / 2 v9 / 3 IPFIX, clamped at ingest, carried through rollups as a group key), `flow_start`/`flow_end` (NetFlow records are interval aggregates, not instants), `firewall_event` (IE 233 — **denied-flow visibility**; zero-byte denied/create records are deliberately legal at ingest), `flow_end_reason`, the post-NAT tuple, `icmp_type_code`, `tos`, VLANs, and the exporter-provided `app_name`. All wire fields are additive `omitempty` — no `schema_version` change, old collectors and old servers interoperate in both directions (see SUPPORT-MATRIX). NetFlow-sourced rows are excluded from the sFlow cumulative agent-drops pipeline. Flows page gains a **Source filter** (select + chip + URL param + CSV column + samples-table column) and a **dual-export warning banner** listing devices reporting via more than one protocol in the last hour. Design input committed as `docs/flow-protocol-research-2026-07-03.md` (13-agent adversarially-verified research: FortiGate sampled-scale counter math, ASA byte-only NSEL counters, v9-vs-IPFIX options-template semantics, the full vendor matrix incl. SonicWall EntID-8741 extensions and Firewalla's lack of flow export). Tests: ingest clamp/zero-byte/drops-isolation, source filter over raw + rollups, rollup source grouping, mixed-source device query, COPY column pinning.
+
 ## [0.11.19] - 2026-07-03
 
 ### Fixed

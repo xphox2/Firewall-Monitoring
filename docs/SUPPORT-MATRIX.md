@@ -29,6 +29,7 @@ it when planning upgrades, since the two are deployed and upgraded
 | 1.2.72+ | (any current 0.10.x) | Sends `backup_quality` on `ConfigRevision`. Older servers ignore the field (Go `encoding/json`); v0.10.x honors it. Wire-compatible. |
 | 1.2.74+ | (any current 0.10.x) | Sends the `X-Probe-Batch-ID` header for server-side dedup. Older servers ignore the header (a retry just creates a duplicate; data integrity is preserved). Wire-compatible. |
 | (future) sends `schema_version` | **0.10.382+** | A server ≥ 0.10.382 validates `schema_version` against `relay.SchemaVersionMin..Max` (currently `1-1`) and returns **HTTP 426** with `X-Probe-Schema-Version-Supported` for anything out of range. Sending the field against an older server is harmless (ignored). |
+| 1.3.0+ (NetFlow/IPFIX) | (any current 0.11.x; **0.11.20+ for labeling**) | Sends `flow_source` + the Tranche 3 flow fields (`flow_start`/`flow_end`, `firewall_event`, `flow_end_reason`, post-NAT tuple, `icmp_type_code`, `tos`, VLANs, `app_name`) on flow rows — all additive `omitempty`, **no `schema_version` change**. Servers < 0.11.20 ignore the fields (Go `encoding/json`): NetFlow data ingests with correct byte math but is labeled sFlow and the source filter is unavailable. Server 0.11.20+ (migration v29) stores and filters them. Wire-compatible both directions. |
 
 > The collector-side version notes above describe behavior owned by the
 > `Firewall-Collector` repo; this server's only **version-gated** behavior is
@@ -57,6 +58,32 @@ field, a removed endpoint, a `schema_version` bump) will:
    the collector reports its own via its `--version` flag. The server's
    Prometheus surface is at `GET /metrics` (`fwmon_http_request_duration_seconds`
    and the DB-pool/runtime collectors — API-server metrics only).
+
+## Flow-export vendor matrix (NetFlow v5/v9 · IPFIX · sFlow)
+
+What each firewall vendor can export and what to watch for. Full sourced
+detail in `docs/flow-protocol-research-2026-07-03.md` §5. **Configure ONE
+flow protocol per device** — dual-exporting the same interfaces double-counts
+every byte (the collector's `PROBE_FLOW_DEDUP` policy defends against this,
+default `prefer-netflow`, and the Flows page warns when it sees mixed
+sources for one device).
+
+| Vendor | Protocols | Sampling | Operator notes |
+|---|---|---|---|
+| FortiGate (kernel) | NetFlow v9 + sFlow v5 | Session-based, unsampled < 7.6; 7.6+ `netflow-sample-rate` (exported counters are sampled-scale — the collector re-multiplies) | **Prefer NetFlow: sFlow disables NPU offload.** Lower `template-tx-timeout` (default 1800 s) to shrink the post-restart template wait. The only mainstream dual-export vendor. |
+| FortiGate NP7 CGN | NetFlow v9 or IPFIX | Unsampled | `config log npu-server`; distinct observation domains per NP7 vs CPU. |
+| Palo Alto PAN-OS | NetFlow v9 only | Never sampled | App-ID/User-ID come as PAN-specific fields; template refresh 30 min. |
+| Cisco ASA/FTD | NSEL (v9 transport) | Never sampled | Bytes only (no packet counters exist); denied/create records carry zero counters — expected. |
+| SonicWall | NetFlow v5/v9, IPFIX, IPFIX-with-extensions (EntID 8741) | Unsampled | Plain modes fully supported; AppFlow extension fields are skipped safely (mapping is a planned fast-follow). |
+| Firewalla | **No flow export** | — | Flows are internal to the Firewalla app/MSP API only. |
+| pfSense | Plus 24.03+: pflow v5 + IPFIX; CE: softflowd v5/v9/IPFIX | Unsampled | Use IPFIX mode on CE — softflowd's v9 has known timestamp bugs. |
+| OPNsense | NetFlow v5/v9 | Unsampled | v5 = IPv4 only. |
+| MikroTik | v1/v5/v9/IPFIX | ROS 7+ | ROS 6.49.x has a byte-order bug in the exported sampling rate (fixed 7.10) — use a per-exporter rate override, never trust auto-detection. Fasttrack/HW-offloaded traffic is invisible to traffic-flow. |
+| Juniper SRX | J-Flow v9/IPFIX | Sampled | Rate arrives via options templates. |
+| Sophos XG/XGS | NetFlow v5 only | Unsampled | IPv4 only (vendor limit). |
+| WatchGuard | v5 + v9 (12.3+) | Optional | v9 needed for IPv6 + post-NAT fields (12.7.1+). |
+| Ubiquiti EdgeOS / UniFi | v5/v9/IPFIX (UniFi Network 8.5.6+ selectable) | Configurable | Not available on UniFi Express / UXG-Lite. |
+| VyOS | v5/v9/IPFIX + sFlow | Both | Second dual-export vendor; VyOS recommends sFlow at high pps. |
 
 ## Wire-format reference
 

@@ -82,6 +82,12 @@ Everything that changed since the last prod deploy needs a live check. Items mar
 - [ ] Forced-password-change accounts get the password modal, never the wizard
 - [ ] Audit log shows the PUT /admin/api/me and mfa-decline entries with the right actor
 
+## 13. NetFlow/IPFIX server side (v0.11.20, migration v29) — full test after collector 1.3.0 ships
+- [ ] `migrate-status` shows v29; `\d flow_samples` on prod shows flow_source/flow_start/flow_end/firewall_event/... columns; `\d flow_rollups` shows flow_source
+- [ ] Flows page renders unchanged for existing sFlow data (Source column shows "sFlow", no mixed-source banner)
+- [ ] Source filter + chip + URL param + CSV column work (values only meaningful post-collector-1.3.0)
+- [ ] After collector 1.3.0: point a device's NetFlow at the collector → rows labeled correctly, byte math sane vs interface counters, denied flows visible, dedup policy suppresses dual-export
+
 ## Walkthrough results for reference (local, v0.11.12–.16, PG16)
 All verified locally with the production AlertManager code: F14 band hold/release,
 F17 dynamic threshold + static-floor suppression, F13 [FLAPPING] + muted recovery,

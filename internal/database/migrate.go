@@ -1309,3 +1309,49 @@ func (d *Database) migrateAdminProfile() error {
 	log.Printf("migrate v28 admin_profile: ensured admins email/full_name/mfa_prompt_dismissed_at columns")
 	return nil
 }
+
+// migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
+// column the multi-protocol flow ingest needs in ONE migration — flow_samples
+// is monthly RANGE-partitioned on prod-shaped installs, so column adds are a
+// thing we want to do exactly once. All additive with constant defaults:
+// metadata-only on PG11+ (no table rewrite), the ALTER propagates to all
+// monthly children on the partitioned-parent case, and the populated
+// plain-table prod case (skipped by the v2 partition conversion) takes the
+// same statement. Column rationale: docs/flow-protocol-research-2026-07-03.md
+// §2.1 — flow_start/flow_end because NetFlow records are interval aggregates
+// (up to 30-min active timeouts) not instants; firewall_event because
+// denied-flow visibility is the headline NetFlow win (zero-byte rows are
+// legal); flow_end_reason for future flow stitching (2 = active timeout);
+// post-NAT tuple for pre/post-NAT correlation; the rest are cheap now and
+// unpayable later. No new indexes: flow_source is a 4-value column and every
+// filtered query also carries the indexed timestamp/device predicates —
+// revisit only if a source-first hot path appears.
+func (d *Database) migrateFlowIngestColumns() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowSample{}, &models.FlowRollup{})
+	}
+	stmts := []string{
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS flow_source smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS flow_start timestamptz`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS flow_end timestamptz`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS firewall_event smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS flow_end_reason smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS post_nat_src_addr varchar(45)`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS post_nat_dst_addr varchar(45)`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS post_nat_src_port integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS post_nat_dst_port integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS icmp_type_code integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS tos smallint NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS src_vlan integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS dst_vlan integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS app_name varchar(64)`,
+		`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS flow_source smallint NOT NULL DEFAULT 0`,
+	}
+	for _, s := range stmts {
+		if err := d.execMaintenanceDDL(s); err != nil {
+			return fmt.Errorf("migrate v29 flow ingest columns (%s): %w", s, err)
+		}
+	}
+	log.Printf("migrate v29 flow_ingest_columns: ensured flow_samples multi-protocol columns + flow_rollups.flow_source")
+	return nil
+}

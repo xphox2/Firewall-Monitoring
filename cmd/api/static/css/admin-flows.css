@@ -848,3 +848,20 @@
         max-width: none;
     }
 }
+
+/* Dual-export warning (Tranche 3): shown when a device reports flows via
+   both sFlow and NetFlow in the last hour (double-counted bytes). */
+.fwmon-flows-mixed-warning {
+    margin: 0 0 var(--fwmon-sp-3, 12px);
+    padding: var(--fwmon-sp-2, 8px) var(--fwmon-sp-3, 12px);
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-sig-warn, #d29922);
+    border-radius: var(--fwmon-radius, 8px);
+    color: var(--fwmon-text-dim);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.fwmon-flows-mixed-warning[hidden] {
+    display: none;
+}

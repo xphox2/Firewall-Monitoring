@@ -15,7 +15,7 @@ monitored **directly** (the central poller polls them over SNMP) or **remotely**
 ```mermaid
 flowchart TB
     subgraph firewalls["Firewalls (FortiGate / Palo Alto / Cisco ASA / generic)"]
-        FW["SNMP agent · traps · syslog · sFlow"]
+        FW["SNMP agent · traps · syslog · sFlow · NetFlow/IPFIX"]
     end
 
     subgraph site["Remote site"]
@@ -36,7 +36,7 @@ flowchart TB
 
     FW -- "SNMP poll" --> POLLER
     FW -- "SNMP traps" --> TRAP
-    FW -- "SNMP / syslog / sFlow / ICMP" --> PROBE
+    FW -- "SNMP / syslog / sFlow / NetFlow / IPFIX / ICMP" --> PROBE
     PROBE -- "HTTPS relay (X-Probe-Batch-ID)" --> API
 
     POLLER --> DB
