@@ -197,9 +197,16 @@ func (s *SNMPClient) Walk(oid string) ([]gosnmp.SnmpPDU, error) {
 
 func (s *SNMPClient) resolveVendor(vendor string) VendorProfile {
 	if vendor == "" {
+		// Legacy/empty vendor values have always meant FortiGate
+		// (Device.Vendor defaults to "fortigate") — keep that mapping.
 		vendor = "fortigate"
 	}
 	profile := GetVendorProfile(vendor)
+	if profile == nil {
+		// Unknown vendor strings resolve to the standards-only generic
+		// profile rather than polling FortiGate enterprise OIDs.
+		profile = GetVendorProfile("generic")
+	}
 	if profile == nil {
 		profile = DefaultVendor()
 	}

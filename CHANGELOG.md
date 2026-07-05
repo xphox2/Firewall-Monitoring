@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.27] - 2026-07-04
+
+### Fixed — vendor SNMP registry (audit LC-43, cross-repo with collector v1.3.4)
+- **`cisco_asa` and `generic` devices no longer silently poll FortiGate enterprise OIDs**: both vendors were valid in the API/UI but had no SNMP profile in either repo — `resolveVendor` fell through to the FortiGate default. New `generic` profile (standards-only: MIB-II system scalars, hrProcessor CPU, hrMemorySize; VPN/sensors/HA/sessions cleanly unsupported) and `cisco_asa` profile (MIB-II base + CISCO-PROCESS-MIB CPU, CISCO-MEMORY-POOL memory, CISCO-FIREWALL-MIB connection count and failover state; ASA VPN/sensor OIDs deliberately omitted as build-dependent). Genuinely-unmapped vendor strings now resolve to `generic` instead of FortiGate; the empty-vendor → fortigate default stays (load-bearing for pre-vendor-column devices).
+- Registry-completeness test gates every API `validVendors` entry to a real profile (list pinned to `handlers.go`); per-vendor conformance fixtures for both new profiles; hostile-input robustness suite extended 6→8 vendors.
+- `docs/FEATURE-ROADMAP.md` corrected: it claimed the server already registered cisco_asa/generic (and listed helper files as vendors); now reflects what actually ships.
+
 ## [0.11.26] - 2026-07-04
 
 ### Fixed — flow analytics correctness (audit LC-03, LC-05, LC-25, LC-36, LC-50, LC-52 + LC-00 server side)

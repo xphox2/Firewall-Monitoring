@@ -18,9 +18,9 @@ import (
 // vendor-specific parse branches are actually reached) crossed with a battery of
 // hostile value shapes. The property under test is simply: no panic, ever.
 //
-// Historically only fortigate had any parser test; this covers all six
-// registered vendors (firewalla, fortigate, opnsense, paloalto, pfsense,
-// sonicwall) against the untrusted-input path.
+// Historically only fortigate had any parser test; this covers all eight
+// registered vendors (cisco_asa, firewalla, fortigate, generic, opnsense,
+// paloalto, pfsense, sonicwall) against the untrusted-input path.
 
 // adversarialValues is the set of hostile Value payloads a device might deliver
 // for any OID, regardless of the ASN.1 type the parser expects.
@@ -120,7 +120,7 @@ func buildAdversarialPDUs(p VendorProfile) []gosnmp.SnmpPDU {
 }
 
 func TestVendorParsers_NoPanicOnHostileInput(t *testing.T) {
-	vendors := []string{"firewalla", "fortigate", "opnsense", "paloalto", "pfsense", "sonicwall"}
+	vendors := []string{"cisco_asa", "firewalla", "fortigate", "generic", "opnsense", "paloalto", "pfsense", "sonicwall"}
 
 	// Input variants each parser must survive.
 	inputs := map[string]func(p VendorProfile) []gosnmp.SnmpPDU{
