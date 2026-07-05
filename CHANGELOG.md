@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.30] - 2026-07-04
+
+### Docs — truth pass (audit LC-24, LC-40, LC-46, LC-47)
+- **DATA-RETENTION.md matches the code** (LC-24): the retention table now enumerates every table `CleanupOldData` touches (was missing 10, including the new v0.11.24 status-table and incident retention), flags `flow_rollups` as PII (src/dst conversation pairs kept 365 days), relabels `flow_samples` for NetFlow/IPFIX, and documents the status-table fallback + syslog partition-drop fast path. The NOT-auto-pruned section covers open incidents, threat_intel (poller-TTL), and bounded upsert tables.
+- **Outbound-processor disclosure complete** (LC-46): PagerDuty, Opsgenie, Teams, generic-webhook HMAC, threat-feed downloads, and OTLP trace export added with what-leaves/to-whom/enabling-config per channel; SSH capture correctly attributed to the collector.
+- **config.env.example is actually authoritative again** (LC-40): 51 vars reconciled against the code (32 live vars added with real defaults — SNMP_V3_*, ALERT_FLAP_*, incident-channel keys, REPORT_*, server timeouts; 19 dead PROBE_*/allowlist vars quarantined under an explicit LEGACY-UNUSED banner). A two-way diff of env reads vs the file is now clean.
+- **Stale sFlow NOC redesign plan tombstoned** (LC-47): the 1,776-line "pre-implementation" doc contradicting shipped reality (claimed 0.11.x for an sFlow rewrite, excluded NetFlow/IPFIX) replaced with a SUPERSEDED banner pointing at FEATURE-ROADMAP Part IV + the flow-protocol research; full text remains in git history.
+
 ## [0.11.29] - 2026-07-04
 
 ### Fixed — probe lifecycle status-code contract (audit LC-01, server side)

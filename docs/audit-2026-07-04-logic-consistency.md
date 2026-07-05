@@ -406,7 +406,7 @@ The collector released v1.3.0 (NetFlow v5/v9 + IPFIX receiver) but the committed
 
 ### LC-46 [MEDIUM] (server) — DATA-RETENTION.md 'outbound connections / third-party processors' section contradicts code: PagerDuty/Opsgenie/Teams SaaS delivery and threat-feed downloads are missing
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.30)
 
 **Location:** `docs/DATA-RETENTION.md:94` · Dimension: dead-stale
 
@@ -502,7 +502,7 @@ syslog_messages is one of the six monthly RANGE-partitioned tables (migrate.go:1
 
 ### LC-24 [LOW] (server) — DATA-RETENTION.md retention table omits three auto-pruned tables (flow_rollups holds src/dst IPs for 365 days) and still labels flow_samples 'sFlow samples' after NetFlow/IPFIX ingestion landed
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.30)
 
 **Location:** `docs/DATA-RETENTION.md:30` · Dimension: retention-cleanup,dead-stale
 
@@ -574,7 +574,7 @@ Tranche 2's incident grouping registered GET /admin/api/incidents (ListIncidents
 
 ### LC-40 [LOW] (server) — config.env.example is declared 'the authoritative reference ... lists every variable' but is missing 47 env vars including every Tranche-2 knob (ALERT_FLAP_*, PAGERDUTY_ROUTING_KEY, OPSGENIE_API_KEY, TEAMS_WEBHOOK_URL, WEBHOOK_SECRET) and all SNMP_V3_* credentials
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.30)
 
 **Location:** `config.env.example:1` · Dimension: config-settings
 
@@ -586,7 +586,7 @@ README.md:368-370 states: 'The authoritative reference is config.env.example —
 
 ### LC-47 [LOW] (server) — Committed tasks/SFLOW-NOC-REDESIGN-PLAN.md (1,776 lines, 'Status: design / pre-implementation') contradicts the shipped roadmap: claims 0.11.0-0.15.0 are the sFlow-rewrite releases, explicitly excludes NetFlow/IPFIX, and describes long-fixed bugs as current
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.30)
 
 **Location:** `tasks/SFLOW-NOC-REDESIGN-PLAN.md:3` · Dimension: dead-stale
 
