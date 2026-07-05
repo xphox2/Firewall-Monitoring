@@ -214,7 +214,7 @@ The fire path honors maintenance everywhere (alerts save Suppressed=resolved.InM
 
 ### LC-15 [MEDIUM] (server) — API tokens survive account disable/delete/demotion — session revocation and token revocation diverged
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.28)
 
 **Location:** `internal/api/middleware/middleware.go:262` · Dimension: rbac-authz,mfa-auth-flow
 
@@ -226,7 +226,7 @@ Tranche 1 built two credential types onto one RBAC ladder but only one participa
 
 ### LC-16 [MEDIUM] (server) — Operator probe-onboarding dead-end: CreateProbe is operator-level but the only key reveal (regenerate-key) is admin-only; deploy modal shows the redaction mask '********' as the key
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.28)
 
 **Location:** `cmd/api/main.go:672` · Dimension: rbac-authz,rbac-authz,rbac-authz
 
@@ -238,7 +238,7 @@ roles.go declares 'probes lifecycle' as operator territory, and POST /admin/api/
 
 ### LC-17 [MEDIUM] (server) — Copy-paste sibling diverged after RBAC: test-webhook/test-email are admin-only but the identical-shape POST /admin/api/irc/servers/test (and all IRC credential mutations) are operator-level
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.28)
 
 **Location:** `cmd/api/main.go:920` · Dimension: rbac-authz
 
@@ -466,7 +466,7 @@ resolveAlertConfig lets an AlertRule override Severity for any alert type (polic
 
 ### LC-18 [LOW] (server) — T2-8b role-aware UI gating is inert on all standalone admin pages: only admin.html loads admin-users.js, so html[data-role] is never stamped on probes/sites/irc/device-detail/connection-detail pages
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.28)
 
 **Location:** `web/admin/probes.html:181` · Dimension: rbac-authz
 
@@ -526,7 +526,7 @@ CheckInterfaceErrors correctly clamps the AGGREGATE delta against counter resets
 
 ### LC-29 [LOW] (server) — TOTP replay guard (lastTOTPSlot) is per-process but its correctness comment claims an API singleton — an ALLOW_MULTI_API follower serves logins with its own empty replay map, and the OPERATIONS.md follower caveat list omits it
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.28)
 
 **Location:** `internal/auth/auth.go:88` · Dimension: concurrency-state
 
@@ -550,7 +550,7 @@ Observe takes the single detector mutex `d.mu` (spike.go:234) and, while holding
 
 ### LC-33 [LOW] (server) — Disable-2FA flow: server revokes every session (token-version bump) but the profile page shows success and keeps operating as if logged in — sibling enable flow handles the revocation, disable doesn't
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.28)
 
 **Location:** `cmd/api/static/js/admin-profile.js:412` · Dimension: frontend-backend
 

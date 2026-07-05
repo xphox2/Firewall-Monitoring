@@ -53,7 +53,7 @@
     <main class="main-content p-6" id="main-content" tabindex="-1">
         <div class="flex justify-end items-center mb-6">
             <h1 class="text-xl font-semibold text-[#e6edf3]" style="display: none;">Probe Management</h1>
-            <button class="bg-[#238636] text-white border-none py-1.5 px-3.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:bg-[#2ea043]" data-action="show-add-modal">+ Add Probe</button>
+            <button class="bg-[#238636] text-white border-none py-1.5 px-3.5 rounded-md cursor-pointer text-sm font-medium transition-colors hover:bg-[#2ea043]" data-action="show-add-modal" data-min-role="operator">+ Add Probe</button>
         </div>
 
 
@@ -135,7 +135,7 @@
                     <div class="bg-[#0d1117] p-3 rounded-md font-mono break-all border border-[#30363d] text-[#58a6ff] text-sm" id="deploy-key"></div>
                     <div class="mt-2 flex gap-2">
                         <button class="bg-[#21262d] border border-[#484f58] text-[#8b949e] py-1 px-2.5 rounded cursor-pointer text-xs hover:bg-[#484f58] hover:text-white" data-action="copy-deploy-key">Copy Key</button>
-                        <button class="bg-[#9e6a03] text-white border-none py-1 px-2.5 rounded cursor-pointer text-xs hover:bg-[#bb8009]" data-action="regenerate-key">Regenerate Key</button>
+                        <button class="bg-[#9e6a03] text-white border-none py-1 px-2.5 rounded cursor-pointer text-xs hover:bg-[#bb8009]" data-action="regenerate-key" data-min-role="admin">Regenerate Key</button>
                     </div>
                 </div>
                 <div class="mb-4">

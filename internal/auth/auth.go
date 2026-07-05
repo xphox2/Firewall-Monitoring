@@ -85,8 +85,12 @@ type AuthManager struct {
 	attemptsMu    sync.RWMutex
 	// lastTOTPSlot records, per user, the most recent 30s TOTP time-slot that
 	// successfully authenticated — a valid code is single-use within its slot
-	// (replay guard). In-memory is sufficient: only ONE cmd/api process serves
-	// logins (AUDIT-040 singleton).
+	// (replay guard). The map is PER-PROCESS: under the normal AUDIT-040
+	// singleton exactly one cmd/api serves logins, so the guard is complete.
+	// Under ALLOW_MULTI_API=true each instance keeps its own map, so a
+	// still-fresh intercepted code could be replayed once per extra instance
+	// — an accepted follower-mode divergence, documented alongside the
+	// lockout/rate-limit caveats in docs/OPERATIONS.md.
 	lastTOTPSlot map[uint]int64
 }
 

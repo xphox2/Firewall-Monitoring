@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.28] - 2026-07-04
+
+### Fixed — RBAC / auth lifecycle (audit LC-15..18, LC-29, LC-33)
+- **API tokens no longer survive account disable/delete/demotion** (LC-15): the bearer path now resolves the token's creator at auth time and rejects when the account is missing or disabled (fail closed), capping the effective role at min(token scope, creator's CURRENT role) — covers all three divergence cases. Defense in depth: disabling or deleting a user soft-revokes their tokens in the same transaction; re-enable does not resurrect them.
+- **Operator probe onboarding works end-to-end** (LC-16): `CreateProbe` returns the registration key once in the create response (subsequent reads stay redacted; regenerate-key stays admin-only), and the deploy modal never renders the `********` mask as a copyable key. Bonus fix: the single-probe GET leaked the raw at-rest key hash and TLS paths unredacted — now redacted like the list endpoint.
+- **IRC credential endpoints aligned to admin-only** (LC-17): server/channel CRUD and `/irc/servers/test` join test-webhook/test-email at admin level (connect/disconnect/send stay operator); SPA buttons gated to match.
+- **Role-aware UI gating now works on every standalone admin page** (LC-18): the `/me` fetch + `html[data-role]` stamp moved into shared `AdminCommon.whenMe()` — previously only admin.html loaded the bundle that stamped roles, leaving probes/sites/irc/device-detail/connection-detail pages ungated.
+- **TOTP replay-guard documentation honest under ALLOW_MULTI_API** (LC-29): the comment now states the per-process guarantee, and the follower-mode divergence list in OPERATIONS.md includes it.
+- **Disable-2FA no longer leaves a dead session UI** (LC-33): the flow now mirrors the enable sibling — announce sign-out, then redirect to login, instead of rendering a fake live session after the server revoked everything.
+- Tests: token-creator lifecycle matrix (disabled/deleted/demoted/fail-closed), IRC RBAC matrix + route-map pin, create-key once + redaction, cascade revoke without resurrection.
+
 ## [0.11.27] - 2026-07-04
 
 ### Fixed — vendor SNMP registry (audit LC-43, cross-repo with collector v1.3.4)

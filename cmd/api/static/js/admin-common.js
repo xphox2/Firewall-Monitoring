@@ -1083,9 +1083,67 @@
         }
     }
 
+    /* ------------------------------------------------------------------
+     * Session role bootstrap (T2-8b / LC-18).
+     *
+     * Lives HERE (not admin-users.js) because every admin page loads
+     * admin-common.js while only admin.html loads admin-users.js — the
+     * standalone pages (probes/sites/irc/device-detail/connection-detail)
+     * previously never stamped <html data-role>, so their [data-min-role]
+     * controls rendered for every role and dead-ended in a 403, and the
+     * insufficient_role message fell back to the wrong role ("viewer").
+     *
+     * whenMe() fetches /admin/api/me exactly once per page, publishes
+     * AdminCommon.sessionRole / sessionMe, stamps the role on <html> (the
+     * CSS attribute rules in admin-design-system.css hide any
+     * [data-min-role] control the session can't use — the server enforces
+     * regardless), badges the sidebar for non-admins, and dispatches
+     * fwmon:role-resolved + fwmon:me-resolved for page modules. The fetch
+     * starts at DOMContentLoaded so every deferred page script has already
+     * registered its event listeners by the time the events fire.
+     * ------------------------------------------------------------------ */
+    var sessionMePromise = null;
+
+    function whenMe() {
+        if (!sessionMePromise) {
+            sessionMePromise = apiFetch(API_BASE + '/me').then(function (res) {
+                var me = (res && res.data) || null;
+                window.AdminCommon.sessionRole = me ? me.role : null;
+                window.AdminCommon.sessionMe = me;
+                if (me && me.role) {
+                    document.documentElement.dataset.role = me.role;
+                    document.dispatchEvent(new CustomEvent('fwmon:role-resolved', { detail: { role: me.role } }));
+                    if (me.role !== 'admin') {
+                        var sub = document.querySelector('.sidebar-header .subtitle');
+                        if (sub && !document.getElementById('role-badge')) {
+                            var badge = document.createElement('span');
+                            badge.id = 'role-badge';
+                            badge.className = 'role-badge';
+                            badge.textContent = me.role + ' · ' + (me.username || '');
+                            sub.appendChild(document.createElement('br'));
+                            sub.appendChild(badge);
+                        }
+                    }
+                }
+                document.dispatchEvent(new CustomEvent('fwmon:me-resolved', { detail: me }));
+                return me;
+            }).catch(function () { return null; });
+        }
+        return sessionMePromise;
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { whenMe(); });
+    } else {
+        whenMe();
+    }
+
     // Export to window for use by other scripts and diagram modules
     window.AdminCommon = {
         API_BASE: API_BASE,
+        sessionRole: null,
+        sessionMe: null,
+        whenMe: whenMe,
         fetchCsrfToken: fetchCsrfToken,
         getCsrfToken: getCsrfToken,
         escapeHtml: escapeHtml,

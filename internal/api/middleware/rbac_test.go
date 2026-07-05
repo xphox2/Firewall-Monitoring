@@ -21,6 +21,17 @@ func TestRequireRole_Matrix(t *testing.T) {
 		"/admin/api/settings":  true,
 		"/admin/api/users":     true,
 		"/admin/api/users/:id": true,
+		// LC-17: the IRC credential-bearing family mirrors main.go's
+		// adminOnlyRoutes — server/channel config carries passwords, and
+		// the test endpoint dials a request-supplied host with request-
+		// supplied credentials (sibling of settings/test-email and
+		// test-webhook). Connect/disconnect/send/commands stay at the
+		// operator mutation default.
+		"/admin/api/irc/servers":      true,
+		"/admin/api/irc/servers/:id":  true,
+		"/admin/api/irc/servers/test": true,
+		"/admin/api/irc/channels":     true,
+		"/admin/api/irc/channels/:id": true,
 	}
 
 	newRouter := func(role string) *gin.Engine {
@@ -43,6 +54,13 @@ func TestRequireRole_Matrix(t *testing.T) {
 		r.PUT("/admin/api/users/:id", ok)
 		r.POST("/admin/api/logout", ok)
 		r.GET("/admin/dashboard", ok) // SPA page load
+		r.GET("/admin/api/irc/servers", ok)
+		r.POST("/admin/api/irc/servers", ok)
+		r.PUT("/admin/api/irc/servers/:id", ok)
+		r.POST("/admin/api/irc/servers/test", ok)
+		r.POST("/admin/api/irc/servers/:id/connect", ok)
+		r.POST("/admin/api/irc/channels", ok)
+		r.POST("/admin/api/irc/send", ok)
 		return r
 	}
 
@@ -73,6 +91,19 @@ func TestRequireRole_Matrix(t *testing.T) {
 		{auth.RoleAdmin, http.MethodGet, "/admin/api/users", 200},
 		{auth.RoleAdmin, http.MethodPut, "/admin/api/users/1", 200},
 		{auth.RoleAdmin, http.MethodDelete, "/admin/api/devices/1", 200},
+
+		// LC-17: IRC credential family is admin-only (incl. GET, like
+		// settings); connect and send stay operator; viewer gets nothing.
+		{auth.RoleOperator, http.MethodPost, "/admin/api/irc/servers/test", 403},
+		{auth.RoleOperator, http.MethodPost, "/admin/api/irc/servers", 403},
+		{auth.RoleOperator, http.MethodPut, "/admin/api/irc/servers/1", 403},
+		{auth.RoleOperator, http.MethodPost, "/admin/api/irc/channels", 403},
+		{auth.RoleOperator, http.MethodGet, "/admin/api/irc/servers", 403},
+		{auth.RoleOperator, http.MethodPost, "/admin/api/irc/servers/1/connect", 200},
+		{auth.RoleOperator, http.MethodPost, "/admin/api/irc/send", 200},
+		{auth.RoleViewer, http.MethodPost, "/admin/api/irc/send", 403},
+		{auth.RoleAdmin, http.MethodPost, "/admin/api/irc/servers/test", 200},
+		{auth.RoleAdmin, http.MethodPost, "/admin/api/irc/servers", 200},
 
 		// unknown / missing role: fail closed on everything but self-service.
 		{"ghost", http.MethodGet, "/admin/api/devices", 403},

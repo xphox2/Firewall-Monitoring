@@ -92,10 +92,10 @@ function renderServers() {
                     <h3>${escapeHtml(server.name)}</h3>
                     <div class="actions">
                         <span class="status-badge ${getStatusClass(server.status)}">${escapeHtml(server.status)}</span>
-                        <button class="btn sm secondary" data-action="connect-server" data-id="${server.id}">Connect</button>
-                        <button class="btn sm secondary" data-action="disconnect-server" data-id="${server.id}">Disconnect</button>
-                        <button class="btn sm secondary" data-action="edit-server" data-id="${server.id}">Edit</button>
-                        <button class="btn sm danger" data-action="delete-server" data-id="${server.id}">Delete</button>
+                        <button class="btn sm secondary" data-action="connect-server" data-min-role="operator" data-id="${server.id}">Connect</button>
+                        <button class="btn sm secondary" data-action="disconnect-server" data-min-role="operator" data-id="${server.id}">Disconnect</button>
+                        <button class="btn sm secondary" data-action="edit-server" data-min-role="admin" data-id="${server.id}">Edit</button>
+                        <button class="btn sm danger" data-action="delete-server" data-min-role="admin" data-id="${server.id}">Delete</button>
                     </div>
                 </div>
                 <div class="server-info">
@@ -304,8 +304,8 @@ function renderChannels() {
                             <td><span class="status-badge ${getStatusClass(ch.status)}">${escapeHtml(ch.status)}</span></td>
                             <td>
                                 <div class="actions">
-                                    <button class="btn sm secondary" data-action="edit-channel" data-id="${ch.id}">Edit</button>
-                                    <button class="btn sm danger" data-action="delete-channel" data-id="${ch.id}">Delete</button>
+                                    <button class="btn sm secondary" data-action="edit-channel" data-min-role="admin" data-id="${ch.id}">Edit</button>
+                                    <button class="btn sm danger" data-action="delete-channel" data-min-role="admin" data-id="${ch.id}">Delete</button>
                                 </div>
                             </td>
                         </tr>
@@ -434,8 +434,8 @@ function renderCommands() {
             <td>${cmd.enabled ? 'Yes' : 'No'}</td>
             <td>
                 <div class="actions">
-                    <button class="btn sm secondary" data-action="edit-command" data-id="${cmd.id}">Edit</button>
-                    <button class="btn sm danger" data-action="delete-command" data-id="${cmd.id}">Delete</button>
+                    <button class="btn sm secondary" data-action="edit-command" data-min-role="operator" data-id="${cmd.id}">Edit</button>
+                    <button class="btn sm danger" data-action="delete-command" data-min-role="operator" data-id="${cmd.id}">Delete</button>
                 </div>
             </td>
         </tr>

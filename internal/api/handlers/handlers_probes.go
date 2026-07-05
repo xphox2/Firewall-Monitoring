@@ -60,6 +60,9 @@ func (h *Handler) GetProbe(c *gin.Context) {
 		return
 	}
 
+	// LC-16: reads after create are always redacted (the list endpoint already
+	// was; this one leaked the at-rest key hash + TLS paths).
+	httputil.RedactProbe(probe)
 	c.JSON(http.StatusOK, response.Success(probe))
 }
 
@@ -112,15 +115,18 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	probe.LastSeen = time.Time{}
 	probe.RegistrationKey = ""
 
-	// AUDIT-017: store the key HASHED at rest. The plaintext is never persisted
-	// (and these endpoints always redact it — RegenerateProbeKey is the
-	// show-once reveal path, unchanged), so a DB compromise yields no usable
-	// probe tokens.
+	// AUDIT-017: store the key HASHED at rest. The plaintext is never persisted,
+	// so a DB compromise yields no usable probe tokens. LC-16: the plaintext IS
+	// returned once, in this create response — the creator (operator-level)
+	// needs it to deploy the collector, and the only other reveal path
+	// (RegenerateProbeKey) is admin-only. Every subsequent read stays redacted.
+	plainKey := ""
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
 		log.Printf("Failed to generate registration key: %v", err)
 	} else {
-		probe.RegistrationKey = database.HashProbeKey(hex.EncodeToString(keyBytes))
+		plainKey = hex.EncodeToString(keyBytes)
+		probe.RegistrationKey = database.HashProbeKey(plainKey)
 	}
 
 	if err := db.CreateProbe(&probe); err != nil {
@@ -145,6 +151,11 @@ func (h *Handler) CreateProbe(c *gin.Context) {
 	}
 
 	httputil.RedactProbe(&probe)
+	// LC-16 show-once reveal: after redacting everything else, put the
+	// plaintext key (never the hash, never the mask) on the create response
+	// only. Empty when key generation failed — the UI then points at the
+	// admin-only Regenerate Key path instead of rendering a fake key.
+	probe.RegistrationKey = plainKey
 	c.JSON(http.StatusCreated, response.Success(probe))
 }
 

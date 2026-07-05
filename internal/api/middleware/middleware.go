@@ -205,10 +205,13 @@ func ProbeRateLimiter() gin.HandlerFunc {
 
 // TokenAuthStore is the narrow token-resolution dependency of AdminAuth
 // (P0-2); *database.Database satisfies it. Mirrors how auth.Database keeps the
-// auth package decoupled from the concrete store.
+// auth package decoupled from the concrete store. GetAdminByID resolves the
+// token's creator so token auth tracks the account's CURRENT state (LC-15):
+// a token must not outlive or outrank the user behind it.
 type TokenAuthStore interface {
 	LookupAPIToken(plaintext string) (*models.ApiToken, error)
 	TouchAPITokenLastUsed(id uint, t time.Time) error
+	GetAdminByID(id uint) (*models.Admin, error)
 }
 
 // apiTokenScopeRoles maps token scopes onto the RBAC ladder so RequireRole is
@@ -266,10 +269,26 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 				c.Abort()
 				return
 			}
+			// LC-15: a token is only as alive — and as privileged — as the
+			// account that minted it. Session revocation works via the
+			// token-version bump; the bearer path must mirror it: reject when
+			// the creator is gone or disabled (fail closed, incl. DB errors),
+			// and cap the effective role at the creator's CURRENT role so a
+			// demoted admin's old admin-scope token doesn't outrank them.
+			creator, err := tokens.GetAdminByID(tok.CreatedByID)
+			if err != nil || creator == nil || creator.Disabled {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API token"})
+				c.Abort()
+				return
+			}
+			role := APITokenScopeRole(tok.Scope)
+			if auth.RoleLevel(creator.Role) < auth.RoleLevel(role) {
+				role = creator.Role
+			}
 			c.Set("username", "token:"+tok.Name)
 			c.Set("user_id", tok.CreatedByID)
 			c.Set("is_admin", true)
-			c.Set("role", APITokenScopeRole(tok.Scope))
+			c.Set("role", role)
 			c.Set("auth_method", "token")
 			c.Set("token_id", tok.ID)
 			touchTokenLastUsed(tokens, tok.ID)

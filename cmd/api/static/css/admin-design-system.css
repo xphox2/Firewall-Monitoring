@@ -1086,7 +1086,8 @@ body {
  * link tailwind.css AFTER this file — a bridge here would lose the cascade. */
 
 /* ---- RBAC role gating (v0.11 T2-8b) -------------------------------------
-   admin-users.js stamps the session role on <html data-role="...">; any
+   admin-common.js (AdminCommon.whenMe, LC-18) stamps the session role on
+   <html data-role="..."> on EVERY admin page; any
    element tagged data-min-role hides when the session can't use it (the
    server enforces regardless — this only removes 403 bait from the UI).
    CSS-attribute matching applies to dynamically rendered nodes for free. */

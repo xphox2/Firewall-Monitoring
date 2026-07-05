@@ -257,17 +257,26 @@
         });
     }
 
+    // realKey filters out the server's redaction mask: after the create-time
+    // show-once reveal (LC-16), every GET returns '********' for a probe with
+    // a key — which is truthy, so without this the deploy modal rendered the
+    // mask as if it were a copyable key.
+    function realKey(k) {
+        return (k && k !== '********') ? k : '';
+    }
+
     function showDeployInfoForProbe(probe) {
         currentDeployProbe = probe;
         document.getElementById('deploy-probe-id').value = probe.id;
 
-        var key = probe.registration_key || '(no key — click Regenerate Key)';
+        var key = realKey(probe.registration_key) ||
+            '(key shown once at creation — an admin can issue a new one with Regenerate Key)';
         document.getElementById('deploy-key').textContent = key;
 
         var serverUrl = getServerUrl();
         var envContent = 'PROBE_NAME=' + probe.name +
             '\nPROBE_SITE_ID=' + (probe.site_id || 0) +
-            '\nPROBE_REGISTRATION_KEY=' + (probe.registration_key || 'MISSING') +
+            '\nPROBE_REGISTRATION_KEY=' + (realKey(probe.registration_key) || 'MISSING') +
             '\nPROBE_SERVER_URL=' + serverUrl;
 
         var envBlock = document.getElementById('deploy-env');

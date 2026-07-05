@@ -411,11 +411,19 @@
             if (!pw || !code) { AC.showError('Password and a code are required'); return; }
             AC.apiFetch(API_BASE + '/2fa/disable', { method: 'POST', body: { password: pw, code: code } })
                 .then(function () {
-                    if (me) { me.totp_enabled = false; }
-                    if (AC.sessionMe) { AC.sessionMe.totp_enabled = false; }
-                    AC.showSuccess('Two-factor authentication disabled');
-                    renderIdentity();
-                    render2FA();
+                    // LC-33: the server bumped the token version before this
+                    // 200 landed — every session, including this one, is
+                    // already revoked, exactly like the enable flow. Mirror
+                    // its exit: hold the 401 redirect so a background poller
+                    // can't yank the tab mid-message, say what happened, then
+                    // go sign in again. Re-rendering the profile here would
+                    // fake a live session whose every next call 401s.
+                    holdSession(true);
+                    AC.showSuccess('Two-factor authentication disabled. For security, your sessions were signed out — sign in again.');
+                    setTimeout(function () {
+                        holdSession(false);
+                        window.location.href = '/admin/login';
+                    }, 1800);
                 })
                 .catch(function (err) { AC.showError((err && err.message) || 'Disable failed'); });
         }

@@ -164,13 +164,24 @@ func (d *Database) UpdateAdminRole(id uint, role string) error {
 
 // SetAdminDisabled flips the disabled flag; disabling also bumps the token
 // version to kill live sessions immediately (re-enable doesn't need a bump,
-// but one more is harmless and keeps this a single UPDATE shape).
+// but one more is harmless and keeps the UPDATE shape uniform). Disabling
+// additionally revokes the account's API tokens in the same transaction
+// (LC-15) so both credential types die together; re-enabling does NOT
+// resurrect them — token revocation is final by design.
 func (d *Database) SetAdminDisabled(id uint, disabled bool) error {
-	return d.db.Model(&models.Admin{}).Where("id = ?", id).
-		UpdateColumns(map[string]interface{}{
-			"disabled":      disabled,
-			"token_version": gorm.Expr("token_version + 1"),
-		}).Error
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Admin{}).Where("id = ?", id).
+			UpdateColumns(map[string]interface{}{
+				"disabled":      disabled,
+				"token_version": gorm.Expr("token_version + 1"),
+			}).Error; err != nil {
+			return err
+		}
+		if disabled {
+			return revokeAPITokensForAdmin(tx, id)
+		}
+		return nil
+	})
 }
 
 // UpdateAdminProfile writes exactly the self-service profile columns (v28).
@@ -194,8 +205,17 @@ func (d *Database) SetAdminMFAPromptDismissed(id uint) error {
 		UpdateColumn("mfa_prompt_dismissed_at", &now).Error
 }
 
+// DeleteAdmin removes the account and revokes its API tokens in the same
+// transaction (LC-15). The token rows are kept (soft revoke) for the audit
+// trail; the auth middleware also rejects any token whose creator row is
+// gone, so the revoke is belt-and-braces.
 func (d *Database) DeleteAdmin(id uint) error {
-	return d.db.Delete(&models.Admin{}, id).Error
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		if err := revokeAPITokensForAdmin(tx, id); err != nil {
+			return err
+		}
+		return tx.Delete(&models.Admin{}, id).Error
+	})
 }
 
 func (d *Database) CountOtherEnabledAdmins(excludeID uint) (int64, error) {

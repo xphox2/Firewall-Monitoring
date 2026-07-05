@@ -58,7 +58,7 @@
     <main class="main-content p-6" id="main-content" tabindex="-1">
         <div class="flex justify-end items-center mb-6">
             <h1 class="text-xl font-semibold text-[#e6edf3]" style="display: none;">IRC Management</h1>
-            <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="open-server-modal">Add Server</button>
+            <button class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="open-server-modal" data-min-role="admin">Add Server</button>
         </div>
 
         <div id="alertMessage" class="hidden"></div>
@@ -83,7 +83,7 @@
             <div class="card p-6 mb-6">
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">
                     Channels
-                    <button class="btn sm" data-action="open-channel-modal">+ Add Channel</button>
+                    <button class="btn sm" data-action="open-channel-modal" data-min-role="admin">+ Add Channel</button>
                 </h2>
                 <div id="channelsList" class="table-wrap">
                     <div class="text-center p-10 text-[#8b949e]">Loading channels...</div>
@@ -95,7 +95,7 @@
             <div class="card p-6 mb-6">
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">
                     Custom Commands
-                    <button class="btn sm" data-action="open-command-modal">+ Add Command</button>
+                    <button class="btn sm" data-action="open-command-modal" data-min-role="operator">+ Add Command</button>
                 </h2>
                 <div class="table-wrap">
                     <table class="w-full border-collapse">
@@ -136,7 +136,7 @@
                     <label for="sendMessage" class="block mb-1 text-[#8b949e] text-xs font-medium">Message</label>
                     <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
                 </div>
-                <button class="btn" data-action="send-message">Send Message</button>
+                <button class="btn" data-action="send-message" data-min-role="operator">Send Message</button>
             </div>
         </div>
     </main>
@@ -236,7 +236,7 @@
                 </div>
                 <div class="flex justify-end gap-2 mt-4">
                     <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="close-server-modal">Cancel</button>
-                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="test-server">Test</button>
+                    <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150" data-action="test-server" data-min-role="admin">Test</button>
                     <button type="submit" class="bg-[#238636] text-white border-none px-3.5 py-1.75 rounded-md cursor-pointer text-sm font-medium transition-colors duration-150">Save</button>
                 </div>
             </form>

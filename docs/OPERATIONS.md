@@ -338,6 +338,11 @@ actionable error. This is the default and recommended behavior.
   Moving them to shared storage is the long-term fix and is deliberately **not**
   done here — a Postgres round-trip per request at dashboard-polling rates is the
   wrong tool for rate-limiting.
+- The **TOTP replay guard** (a valid 2FA code is single-use within its 30-second
+  slot) is also per-instance: each API process keeps its own last-used-slot map,
+  so an intercepted still-fresh code could be replayed **once per extra
+  instance**. With followers serving logins this weakens the single-use property
+  accordingly — one more reason follower mode is not recommended.
 - Edge case: a follower's admin **Connect** action on an IRC server can still
   start a single bot for that server (best-effort; the background reconnect/
   status loops don't run on a follower). Don't connect IRC servers from a

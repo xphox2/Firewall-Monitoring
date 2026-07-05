@@ -82,6 +82,17 @@ func (d *Database) RevokeAPIToken(id uint) error {
 		Update("revoked_at", time.Now()).Error
 }
 
+// revokeAPITokensForAdmin soft-revokes every live token the given admin
+// created (LC-15, defense in depth). Runs on the passed handle so the
+// disable/delete flows can include it in their own transaction; the
+// authoritative enforcement is the auth middleware re-checking the creator's
+// state on every bearer request.
+func revokeAPITokensForAdmin(tx *gorm.DB, adminID uint) error {
+	return tx.Model(&models.ApiToken{}).
+		Where("created_by_id = ? AND revoked_at IS NULL", adminID).
+		Update("revoked_at", time.Now()).Error
+}
+
 func (d *Database) TouchAPITokenLastUsed(id uint, t time.Time) error {
 	return d.db.Model(&models.ApiToken{}).Where("id = ?", id).
 		UpdateColumn("last_used_at", t).Error

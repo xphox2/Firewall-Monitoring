@@ -1,8 +1,7 @@
 /* User management (RBAC, P0-1) — renders the Users card on the settings page.
- * The card is hidden until GET /admin/api/me confirms the session is
- * role=admin; the server enforces the same via the adminOnlyRoutes map, so
- * this gating is purely cosmetic. The session's role is also published as
- * AdminCommon.sessionRole for other modules to gate UI on. */
+ * The card is hidden until the shared identity (AdminCommon.whenMe, see
+ * admin-common.js) confirms the session is role=admin; the server enforces
+ * the same via the adminOnlyRoutes map, so this gating is purely cosmetic. */
 (function () {
     'use strict';
 
@@ -201,41 +200,15 @@
         }
 
         /* The 2FA card + enrollment flow moved to admin-profile.js
-           (FwmonProfile) with the v0.11.16 profile page — one enrollment UX
-           shared by the profile card and the MFA onboarding wizard. This
-           module keeps the /me fetch and role gating. */
+           (FwmonProfile) with the v0.11.16 profile page. The /me fetch,
+           role stamping, sidebar badge, and role events moved to
+           admin-common.js (AC.whenMe, LC-18) so EVERY admin page —
+           including the standalone ones that never load this module —
+           stamps <html data-role>. This module only gates the admin-only
+           users/tokens cards off the shared identity. */
 
-        AC.apiFetch(API_BASE + '/me').then(function (res) {
-            me = (res && res.data) || null;
-            AC.sessionRole = me ? me.role : null;
-            // v0.11.16: publish the whole identity for other modules
-            // (admin-profile.js renders from it and decides whether to offer
-            // the MFA onboarding wizard).
-            AC.sessionMe = me;
-            // T2-8b role-aware UI: stamp the role on <html> so the CSS
-            // attribute rules hide any [data-min-role] control this session
-            // can't use (server enforces regardless), and badge the sidebar
-            // for operators/viewers so hidden controls aren't a mystery.
-            if (me && me.role) {
-                document.documentElement.dataset.role = me.role;
-                // v0.11.14: let page modules react to the role landing (the
-                // settings section nav re-validates its active section).
-                document.dispatchEvent(new CustomEvent('fwmon:role-resolved', { detail: { role: me.role } }));
-                if (me.role !== 'admin') {
-                    var sub = document.querySelector('.sidebar-header .subtitle');
-                    if (sub && !document.getElementById('role-badge')) {
-                        var badge = document.createElement('span');
-                        badge.id = 'role-badge';
-                        badge.className = 'role-badge';
-                        badge.textContent = me.role + ' · ' + (me.username || '');
-                        sub.appendChild(document.createElement('br'));
-                        sub.appendChild(badge);
-                    }
-                }
-            }
-            // v0.11.16: hand the identity to page modules (profile page
-            // rendering + MFA wizard trigger live in admin-profile.js).
-            document.dispatchEvent(new CustomEvent('fwmon:me-resolved', { detail: me }));
+        AC.whenMe().then(function (resolved) {
+            me = resolved;
             if (me && me.role === 'admin') {
                 card.style.display = '';
                 loadUsers();
@@ -244,7 +217,7 @@
                     loadTokens();
                 }
             }
-        }).catch(function () { /* leave the cards hidden */ });
+        });
     }
 
     if (document.readyState === 'loading') {
