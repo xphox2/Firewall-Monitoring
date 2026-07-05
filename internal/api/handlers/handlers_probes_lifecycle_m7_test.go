@@ -141,6 +141,12 @@ func TestProbeHeartbeat_DecommissionedRefused_M7(t *testing.T) {
 // DecommissionProbe deliberately leaves approval_status='approved', so the
 // pre-fix approval-only check let a decommissioned probe keep ingesting (and
 // each POST refreshed last_seen/last_data_received, making it look live).
+//
+// LC-01 (2026-07-04 audit): the refusal must be 410 Gone — the same code
+// RegisterProbe and ProbeHeartbeat return for this lifecycle state — NOT 403.
+// The collector's taxonomy reads 403 as "auth broken → re-register", so the
+// pre-fix 403 here turned every admin decommission into a permanent
+// re-register/requeue loop instead of the documented non-retryable quiesce.
 func TestValidateProbe_DecommissionedIngestRefused_M7(t *testing.T) {
 	h, db := setupTestHandler(t)
 	gin.SetMode(gin.TestMode)
@@ -163,12 +169,83 @@ func TestValidateProbe_DecommissionedIngestRefused_M7(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("decommissioned ingest status = %d, want 403; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusGone {
+		t.Errorf("decommissioned ingest status = %d, want 410 (LC-01: must match register/heartbeat, 403 = re-register loop); body: %s", w.Code, w.Body.String())
 	}
 	var n int64
 	db.Gorm().Model(&models.SystemStatus{}).Count(&n)
 	if n != 0 {
 		t.Errorf("system_status rows = %d, want 0 (decommissioned probe's data must be refused)", n)
+	}
+}
+
+// TestValidateProbe_StatusCodeContract_LC01 pins the full status-code contract
+// of the data-plane gate (validateProbe) so the collector's retry taxonomy can
+// rely on it: 404 unknown probe, 403 not-approved, 401 bad/missing key, 410
+// decommissioned-or-disabled (and ONLY that state — 410 is the non-retryable
+// "gone on purpose" signal). The 410 branch sits after bearer verification, so
+// a decommissioned probe presented with a WRONG key is still 401, and
+// lifecycle state is never disclosed to an unauthenticated caller.
+func TestValidateProbe_StatusCodeContract_LC01(t *testing.T) {
+	h, db := setupTestHandler(t)
+	gin.SetMode(gin.TestMode)
+	if err := db.Gorm().AutoMigrate(&models.Probe{}, &models.SystemStatus{}, &models.ProcessedBatch{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	router := gin.New()
+	router.POST("/api/probes/:id/system-status", h.ReceiveSystemStatuses)
+
+	ingest := func(probeID uint, bearer string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal([]models.SystemStatus{{DeviceID: 0, CPUUsage: 10}})
+		req := httptest.NewRequest("POST", "/api/probes/"+strconv.FormatUint(uint64(probeID), 10)+"/system-status", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	now := time.Now().UTC()
+	goodKey := "lc01-good-key"
+	active := seedLifecycleProbe(t, db, "lc01-active", goodKey, nil)
+	decKey := "lc01-dec-key"
+	dec := seedLifecycleProbe(t, db, "lc01-decommissioned", decKey, map[string]interface{}{
+		"decommissioned_at": now, "enabled": false, "status": "offline",
+	})
+	pendKey := "lc01-pending-key"
+	pending := seedLifecycleProbe(t, db, "lc01-pending", pendKey, map[string]interface{}{
+		"approval_status": "pending",
+	})
+
+	// Unknown probe ID → 404 (not 410: only a KNOWN retired probe is "gone").
+	if w := ingest(99999, goodKey); w.Code != http.StatusNotFound {
+		t.Errorf("unknown probe ingest status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+	// Known but not approved → 403 (admin decision pending; re-register path).
+	if w := ingest(pending.ID, pendKey); w.Code != http.StatusForbidden {
+		t.Errorf("unapproved probe ingest status = %d, want 403; body: %s", w.Code, w.Body.String())
+	}
+	// Bad key on an ACTIVE probe → 401, never 410.
+	if w := ingest(active.ID, "wrong-key"); w.Code != http.StatusUnauthorized {
+		t.Errorf("bad-key ingest status = %d, want 401; body: %s", w.Code, w.Body.String())
+	}
+	// Bad key on a DECOMMISSIONED probe → still 401: auth failure dominates,
+	// lifecycle state must not leak to a caller who can't authenticate.
+	if w := ingest(dec.ID, "wrong-key"); w.Code != http.StatusUnauthorized {
+		t.Errorf("bad-key ingest on decommissioned probe status = %d, want 401; body: %s", w.Code, w.Body.String())
+	}
+	// Missing bearer entirely → 401 as well.
+	if w := ingest(dec.ID, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("no-auth ingest on decommissioned probe status = %d, want 401; body: %s", w.Code, w.Body.String())
+	}
+	// Valid key + decommissioned → 410 Gone (the LC-01 fix).
+	if w := ingest(dec.ID, decKey); w.Code != http.StatusGone {
+		t.Errorf("decommissioned ingest status = %d, want 410; body: %s", w.Code, w.Body.String())
+	}
+	// Control: valid key + active probe → 2xx and last_seen is refreshed.
+	if w := ingest(active.ID, goodKey); w.Code != http.StatusOK {
+		t.Errorf("active probe ingest status = %d, want 200; body: %s", w.Code, w.Body.String())
 	}
 }

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.29] - 2026-07-04
+
+### Fixed — probe lifecycle status-code contract (audit LC-01, server side)
+- **Decommissioned/disabled probes now get 410 Gone on the data-plane too**: register and heartbeat returned the documented non-retryable 410, but `validateProbe` — the single gate in front of all ~20 probe ingestion endpoints — returned 403, which the collector's error taxonomy reads as "re-register", producing a permanent re-register/requeue loop instead of a quiesce. The lifecycle check also moved after bearer verification (matching the heartbeat's order), so lifecycle state is only disclosed to the key-holder; 403 now exclusively means "known but not approved". Full contract (404/403/401/410 per state) documented on `validateProbe` and pinned by a status-code contract test.
+
 ## [0.11.28] - 2026-07-04
 
 ### Fixed — RBAC / auth lifecycle (audit LC-15..18, LC-29, LC-33)

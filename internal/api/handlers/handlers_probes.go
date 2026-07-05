@@ -801,6 +801,14 @@ func (h *Handler) authenticateProbeByBearer(c *gin.Context) (*models.Probe, bool
 
 // validateProbe parses probe ID from URL param and checks it exists, is approved,
 // and the caller provides a valid Bearer token matching the probe's registration key.
+//
+// Status-code contract (must stay consistent with RegisterProbe/ProbeHeartbeat —
+// the collector's retry taxonomy keys off these):
+//   - 404: probe ID unknown
+//   - 403: probe exists but is not approved (admin decision pending/rejected)
+//   - 401: missing or invalid Bearer token
+//   - 410: probe is decommissioned or disabled — deliberate admin retirement,
+//     non-retryable; the collector must quiesce, NOT re-register
 func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	if h.db == nil {
 		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
@@ -821,17 +829,6 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 		c.JSON(http.StatusForbidden, response.Error("Probe not approved"))
 		return nil, false
 	}
-	// M7 of the 2026-07-01 audit: enforce the lifecycle flags on the data
-	// plane. DecommissionProbe deliberately leaves approval_status='approved'
-	// (to preserve telemetry attribution), so the approval check alone let a
-	// decommissioned or admin-disabled probe keep ingesting — and each POST
-	// refreshed last_seen/last_data_received, making the retired probe look
-	// live again.
-	if probe.DecommissionedAt != nil || !probe.Enabled {
-		c.JSON(http.StatusForbidden, response.Error("Probe is decommissioned or disabled"))
-		return nil, false
-	}
-
 	// Verify Bearer token matches this probe's registration key
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
@@ -849,6 +846,27 @@ func (h *Handler) validateProbe(c *gin.Context) (*models.Probe, bool) {
 	// digests in constant time (preserves the AUDIT-016 timing-safety property).
 	if token == "" || subtle.ConstantTimeCompare([]byte(database.HashProbeKey(token)), []byte(probe.RegistrationKey)) != 1 {
 		c.JSON(http.StatusUnauthorized, response.Error("Invalid authorization"))
+		return nil, false
+	}
+
+	// M7 of the 2026-07-01 audit: enforce the lifecycle flags on the data
+	// plane. DecommissionProbe deliberately leaves approval_status='approved'
+	// (to preserve telemetry attribution), so the approval check alone let a
+	// decommissioned or admin-disabled probe keep ingesting — and each POST
+	// refreshed last_seen/last_data_received, making the retired probe look
+	// live again.
+	//
+	// LC-01 of the 2026-07-04 audit: this must be 410 Gone, matching
+	// RegisterProbe and ProbeHeartbeat for the SAME lifecycle state. The
+	// pre-fix 403 here fed the collector's "auth broken → re-register" branch,
+	// so a decommission produced a permanent re-register/requeue loop (403 on
+	// ingest → deapprove + Register → 410 → requeue batch as transient →
+	// repeat forever) instead of the documented non-retryable quiesce. 403
+	// stays reserved for not-approved above; 401 for bad/missing key. The
+	// check sits AFTER bearer verification (like ProbeHeartbeat) so lifecycle
+	// state is only disclosed to the key-holder and never reached pre-auth.
+	if probe.DecommissionedAt != nil || !probe.Enabled {
+		c.JSON(http.StatusGone, response.Error("Probe is decommissioned or disabled — re-commission it in the admin UI first"))
 		return nil, false
 	}
 
