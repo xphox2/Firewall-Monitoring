@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.31] - 2026-07-04
+
+### Docs
+- **2026-07-04 Logic & Consistency Audit complete — all 51 findings RESOLVED** (5 HIGH / 26 MEDIUM / 20 LOW; LC-00–LC-52 with two cross-dimension merges). Fixes shipped in server v0.11.23–v0.11.30 and collector v1.3.2–v1.3.5; every finding in `docs/audit-2026-07-04-logic-consistency.md` is annotated with its resolving version, and the collector copy matches. One migration consumed (v30, flow_rollups.firewall_event); one cross-repo contract change (probe decommission = 410 Gone on all three planes, collector quiesces).
+
 ## [0.11.30] - 2026-07-04
 
 ### Docs — truth pass (audit LC-24, LC-40, LC-46, LC-47)
