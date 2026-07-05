@@ -709,6 +709,15 @@
                         <option value="2">NetFlow v9</option>
                         <option value="3">IPFIX</option>
                     </select>
+                    <select id="flows-filter-event" class="fwmon-flows-select" title="Firewall event (IE 233 — NSEL/FortiGate)">
+                        <option value="">All events</option>
+                        <option value="3">Denied</option>
+                        <option value="1">Created</option>
+                        <option value="2">Deleted</option>
+                        <option value="4">Alert</option>
+                        <option value="5">Update</option>
+                        <option value="0">None</option>
+                    </select>
                     <div class="chart-range-pills" id="flows-protocol-pills">
                         <button type="button" class="chart-range-pill active" data-protocol="" title="All protocols">All</button>
                         <button type="button" class="chart-range-pill" data-protocol="6">TCP</button>
@@ -739,7 +748,7 @@
                 <!-- Flow Samples view — raw FlowSample rows, paginated -->
                 <div class="table-wrap fwmon-flows-view" id="flows-view-samples" style="max-height: 600px;" hidden>
                     <table id="flows-table" class="fwmon-flows-table">
-                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Source</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
+                        <thead><tr><th>Time</th><th>Src IP:Port</th><th></th><th>Dst IP:Port</th><th>Protocol</th><th>Source</th><th>Event</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Rate</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -852,6 +861,13 @@
                         <option value="false">Unacknowledged</option>
                         <option value="true">Acknowledged</option>
                     </select>
+                    <!-- LC-32: the server hides snoozed alerts unless
+                         include_snoozed=true — this toggle is the only way to
+                         see (and therefore unsnooze) them before expiry. -->
+                    <div class="auto-refresh-toggle" title="Include snoozed alerts (hidden by default until their snooze expires)">
+                        <input type="checkbox" id="alerts-show-snoozed">
+                        <label for="alerts-show-snoozed">Show snoozed</label>
+                    </div>
                 </div>
                 <div id="alerts-bulk-toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;">
                     <span id="alerts-bulk-summary" style="color:var(--fwmon-text-faint);font-size:0.82rem;">No alerts selected</span>
@@ -1650,6 +1666,24 @@
             <div id="alert-detail-body" style="color:var(--fwmon-text-dim);font-size:0.9rem;line-height:1.6;"></div>
             <div class="modal-footer">
                 <button type="button" class="btn secondary" data-action="close-alert-detail">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Incident Detail Modal (LC-35): opened from the INC#id chip on grouped
+         alerts. Read-only view over GET /admin/api/incidents +
+         /admin/api/incidents/:id/alerts. -->
+    <div class="modal" id="incident-detail-modal" role="dialog" aria-modal="true" aria-labelledby="incident-detail-modal-title">
+        <!-- width overrides the 520px default for the member-alerts table;
+             .modal-content's max-width:92vw keeps it inside small viewports -->
+        <div class="modal-content" style="width:680px;">
+            <div class="modal-header">
+                <h2 id="incident-detail-modal-title">Incident</h2>
+                <button class="modal-close" data-action="close-incident-detail">&times;</button>
+            </div>
+            <div id="incident-detail-body" style="color:var(--fwmon-text-dim);font-size:0.9rem;line-height:1.6;"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn secondary" data-action="close-incident-detail">Close</button>
             </div>
         </div>
     </div>

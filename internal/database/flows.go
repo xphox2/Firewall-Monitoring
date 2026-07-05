@@ -74,18 +74,49 @@ type FlowStatsResult struct {
 // flow_samples contains >1 distinct flow_source. Uses the (device_id,
 // timestamp) index prefix; errors degrade to an empty list (the banner is
 // advisory, never load-bearing).
+//
+// Two groupings, because device resolution can fail for one flow family while
+// succeeding for the other (a `device_id > 0`-only GROUP BY then never sees
+// both sources in one group and the advisory stays silent):
+//  1. by device_id over attributed rows — catches a device whose two families
+//     export from DIFFERENT sampler IPs (multi-VDOM / mgmt-interface exports);
+//  2. by sampler_address over ALL rows (attributed or not) — catches the same
+//     exporter IP sending two families regardless of whether either family
+//     resolved to a device. Labeled with the device name when any row
+//     resolved, else with the bare sampler address.
 func (d *Database) GetMixedFlowSourceDevices() []string {
-	var names []string
-	err := d.db.Raw(`SELECT dv.name FROM devices dv WHERE dv.id IN (
+	cutoff := time.Now().Add(-time.Hour)
+	var byDevice []string
+	if err := d.db.Raw(`SELECT dv.name FROM devices dv WHERE dv.id IN (
 			SELECT device_id FROM flow_samples
 			WHERE timestamp > ? AND device_id > 0
 			GROUP BY device_id
 			HAVING COUNT(DISTINCT flow_source) > 1
-		) ORDER BY dv.name`, time.Now().Add(-time.Hour)).Scan(&names).Error
-	if err != nil {
+		)`, cutoff).Scan(&byDevice).Error; err != nil {
 		log.Printf("GetMixedFlowSourceDevices: %v", err)
 		return nil
 	}
+	var bySampler []string
+	if err := d.db.Raw(`SELECT COALESCE(NULLIF(dv.name, ''), m.addr) FROM (
+			SELECT sampler_address AS addr, MAX(device_id) AS did
+			FROM flow_samples
+			WHERE timestamp > ? AND sampler_address <> ''
+			GROUP BY sampler_address
+			HAVING COUNT(DISTINCT flow_source) > 1
+		) m LEFT JOIN devices dv ON dv.id = m.did`, cutoff).Scan(&bySampler).Error; err != nil {
+		log.Printf("GetMixedFlowSourceDevices (sampler grouping): %v", err)
+		bySampler = nil // keep the device-grouped result — advisory degrades, never fails
+	}
+	seen := make(map[string]struct{}, len(byDevice)+len(bySampler))
+	names := make([]string, 0, len(byDevice)+len(bySampler))
+	for _, n := range append(byDevice, bySampler...) {
+		if _, dup := seen[n]; dup || n == "" {
+			continue
+		}
+		seen[n] = struct{}{}
+		names = append(names, n)
+	}
+	sort.Strings(names)
 	return names
 }
 
@@ -138,6 +169,10 @@ type FlowStatsFilter struct {
 	DstCountry  string  // ISO alpha-2 destination country; "" = all
 	DstASN      *uint32 // destination ASN; nil = all
 	FlowSource  *uint8  // models.FlowSource* (0=sFlow,1=v5,2=v9,3=IPFIX); nil = all
+	// FirewallEvent filters on the IE 233 event label (models.FirewallEvent*;
+	// 3 = denied). 0 (none) is a real value — nil = all. Carried onto rollups
+	// by migration v30, so the filter resolves past the raw window.
+	FirewallEvent *uint8
 }
 
 // flowAddrFilter applies an IP/CIDR filter on an address column. It reuses
@@ -158,6 +193,24 @@ func flowAddrFilter(q *gorm.DB, column, val string) *gorm.DB {
 		return q.Where(column+" LIKE ? ESCAPE '\\'", pattern)
 	}
 	return q.Where(column+" = ?", pattern)
+}
+
+// rollupIntervalsForWindow returns every rollup tier whose age band intersects
+// a lookback window of `hours`. The rollup ladder (RunFlowRollupCycle) keeps
+// tiers DISJOINT — each promotion deletes its source rows — so raw covers the
+// last ~1h, 5m covers (1h,48h], 1h covers (48h,30d], 1d covers >30d. Any
+// window longer than a band's start intersects that band, so the tier list is
+// cumulative, and summing across the returned tiers can neither gap nor
+// double-count. Shared by GetFlowStats and GetConnectionFlowStats.
+func rollupIntervalsForWindow(hours int) []string {
+	intervals := []string{"5m"}
+	if hours > 48 {
+		intervals = append(intervals, "1h")
+	}
+	if hours > 720 { // 30 days
+		intervals = append(intervals, "1d")
+	}
+	return intervals
 }
 
 // GetFlowStats returns aggregated flow statistics, optionally narrowed by filter.
@@ -209,6 +262,11 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		if filter.FlowSource != nil {
 			q = q.Where("flow_source = ?", *filter.FlowSource)
 		}
+		// firewall_event likewise exists on both tables (v30) — the Denied
+		// filter holds up after raw samples age out.
+		if filter.FirewallEvent != nil {
+			q = q.Where("firewall_event = ?", *filter.FirewallEvent)
+		}
 		q = flowAddrFilter(q, "src_addr", filter.SrcAddr)
 		q = flowAddrFilter(q, "dst_addr", filter.DstAddr)
 		return q
@@ -223,16 +281,17 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		return q
 	}
 
-	// --- Rollup base (best available interval for the time range) ---
-	rollupInterval := "5m"
-	if hours > 48 {
-		rollupInterval = "1h"
-	}
-	if hours > 720 { // 30 days
-		rollupInterval = "1d"
-	}
+	// --- Rollup base ---
+	// The rollup lifecycle keeps each age band in exactly ONE tier (promotion
+	// deletes the source rows in the same transaction): 5m covers (1h,48h],
+	// 1h covers (48h,30d], 1d covers >30d. A window therefore needs EVERY tier
+	// whose band it intersects — querying a single "best" interval left the
+	// younger bands out entirely (a 7d view silently dropped (1h,48h], ~28% of
+	// its window and the most recent part). Because the tiers are disjoint by
+	// construction, summing across them can never double-count.
+	rollupIntervals := rollupIntervalsForWindow(hours)
 	newRollupBase := func() *gorm.DB {
-		return applyCommonFilters(d.db.Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type = ?", cutoff, rollupInterval))
+		return applyCommonFilters(d.db.Model(&models.FlowRollup{}).Where("timestamp > ? AND interval_type IN ?", cutoff, rollupIntervals))
 	}
 
 	// Combined aggregates: count, bytes, unique src/dst from raw samples
@@ -622,6 +681,7 @@ type rollupRow struct {
 	DstCountry      string
 	DstASN          uint32
 	FlowSource      uint8
+	FirewallEvent   uint8
 	BytesSum        uint64
 	PacketsSum      uint64
 	FlowCount       int64
@@ -652,6 +712,7 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 				DstCountry:      r.DstCountry,
 				DstASN:          r.DstASN,
 				FlowSource:      r.FlowSource,
+				FirewallEvent:   r.FirewallEvent,
 				BytesSum:        r.BytesSum,
 				PacketsSum:      r.PacketsSum,
 				FlowCount:       r.FlowCount,
@@ -706,7 +767,12 @@ var flowRollupPageSize = 50000
 // deterministically — without it, PostgreSQL's hash/parallel aggregation gives
 // no cross-query ordering guarantee and pages can overlap or skip groups
 // (H1 of the 2026-07-01 audit).
-const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source"
+// firewall_event joined the key in v30 (LC-03): without it a denied record —
+// "the headline NetFlow win" — was collapsed into an anonymous flow_count and
+// erased one hour after ingest. Like flow_source it is near-functionally
+// determined per conversation (1-2 values in practice, 6 possible), so the
+// cardinality cost is bounded.
+const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, firewall_event"
 
 // aggregateFlowsToRollup groups raw FlowSamples older than cutoff into 5-minute rollups.
 // Returns true if work was done.
@@ -745,7 +811,7 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowSample{}).
 				Where("timestamp < ? AND id <= ?", cutoff, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, firewall_event, " +
 					"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 					"AVG(sampling_rate) as sampling_rate_avg").
 				Group(flowRollupGroupKey).
@@ -831,7 +897,7 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowRollup{}).
 				Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, firewall_event, " +
 					"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 					"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
 				Group(flowRollupGroupKey).

@@ -1464,3 +1464,21 @@ func (d *Database) migrateFlowIngestColumns() error {
 	log.Printf("migrate v29 flow_ingest_columns: ensured flow_samples multi-protocol columns + flow_rollups.flow_source")
 	return nil
 }
+
+// migrateFlowRollupFirewallEvent (v30) adds firewall_event to flow_rollups so
+// the rollup cycle can carry the IE 233 event label (denied=3 above all) as a
+// group key instead of erasing denied-flow visibility one hour after ingest —
+// v29 justified the flow_samples column as "the headline NetFlow win" and the
+// rollup ladder then deleted it. Additive with constant default (metadata-only
+// on PG11+), exactly like the v29 flow_rollups.flow_source add. flow_rollups
+// is not partitioned, so plain DDL is safe.
+func (d *Database) migrateFlowRollupFirewallEvent() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowRollup{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS firewall_event smallint NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("migrate v30 add flow_rollups.firewall_event: %w", err)
+	}
+	log.Printf("migrate v30 flow_rollup_firewall_event: column ensured")
+	return nil
+}

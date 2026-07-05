@@ -26,7 +26,6 @@
     var connRefreshTimer;
     var syslogRefreshTimer;
     var syslogOffset = 0;
-    var flowsOffset = 0;
     // v0.10.212 (bundle A2) — per-analytics-page state. Initialized from URL
     // on first tab activation by wireSyslog/Alerts/TrapsAnalyticsPage(). The
     // `hours` value drives both the stats fetch and is mirrored back to the
@@ -37,14 +36,12 @@
     var trapsOffset = 0;
     var chartInstances = {};
     var deviceSiteMap = {};
-    var flowStatsHours = 24;
 
     // Expose globals for diagram-panels.js and other diagram modules
     window.currentConnections = currentConnections;
     window.currentDevices = currentDevices;
 
     var SEVERITY_NAMES = ['Emergency','Alert','Critical','Error','Warning','Notice','Info','Debug'];
-    var PROTOCOL_NAMES = {0:'HOPOPT',1:'ICMP',2:'IGMP',4:'IPv4',6:'TCP',8:'EGP',17:'UDP',41:'IPv6',43:'IPv6-Route',44:'IPv6-Frag',47:'GRE',50:'ESP',51:'AH',58:'ICMPv6',59:'IPv6-NoNxt',60:'IPv6-Opts',88:'EIGRP',89:'OSPF',103:'PIM',112:'VRRP',132:'SCTP',137:'MPLS-in-IP'};
 
     function severityBadgeClass(sev) {
         if (sev <= 1) return 'emergency';
@@ -112,16 +109,20 @@
             case 'flows':
                 // v0.10.211: the Flows tab is owned by FwmonFlows (admin-flows.js).
                 // It binds its own controls, syncs filters with the URL, and
-                // handles uPlot rendering. The legacy loadFlows()/loadFlowCharts()
-                // path is left below as a fallback in case admin-flows.js fails
-                // to load. Devices + probes lists are populated for the filter
-                // dropdowns first so FwmonFlows.applyStateToControls() can label
-                // any pre-applied filter chips.
+                // handles uPlot rendering. Devices + probes lists are populated
+                // for the filter dropdowns first so
+                // FwmonFlows.applyStateToControls() can label any pre-applied
+                // filter chips. There is no legacy fallback renderer anymore —
+                // the pre-v0.10.211 loadFlows()/loadFlowCharts() path was
+                // removed (LC-49): it targeted DOM ids that no longer exist and
+                // rendered 8-column rows into the current 9-column table, so it
+                // crashed instead of degrading. Surface the failure instead.
                 ensureFlowFilterLists().then(function() {
                     if (window.FwmonFlows && window.FwmonFlows.init) {
                         window.FwmonFlows.init();
                     } else {
-                        loadFlows();
+                        console.error('admin-flows.js failed to load — Flows page unavailable');
+                        AC.showError('Flows module failed to load — try refreshing the page');
                     }
                 });
                 break;
@@ -1386,199 +1387,6 @@
         });
     }
 
-    function loadFlows() {
-        flowsOffset = 0;
-        var p = Promise.resolve();
-        if (currentProbes.length === 0) {
-            p = apiFetch(API_BASE + '/probes').then(function(pr) { currentProbes = pr && pr.data ? pr.data : []; });
-        }
-        p.then(function() {
-            if (currentDevices.length === 0) {
-                return apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
-            }
-        }).then(function() {
-            populateFilterProbes('flows-filter-probe');
-            populateFilterDevices('flows-filter-device');
-            var params = buildFlowParams(100);
-            return apiFetch(API_BASE + '/flows?' + params);
-        }).then(function(result) {
-            if (!result) return;
-            var samples = result.data || [];
-            renderFlowsTable(samples, false);
-            flowsOffset = samples.length;
-            loadFlowCharts();
-        }).catch(function(e) {
-            console.error('Failed to load flows:', e);
-        });
-    }
-
-    function setFlowRange(hours) {
-        flowStatsHours = hours;
-        document.querySelectorAll('.flow-range-btn').forEach(function(b) { b.classList.remove('active'); });
-        var activeBtn = document.querySelector('.flow-range-btn[data-hours="' + hours + '"]');
-        if (activeBtn) activeBtn.classList.add('active');
-        var label = document.getElementById('flow-range-label');
-        if (label) label.textContent = activeBtn ? activeBtn.textContent : hours + 'h';
-        var select = document.getElementById('flow-range-select');
-        if (select) select.value = hours;
-        loadFlowCharts();
-    }
-
-    // Initialize flows range select dropdown
-    var flowRangeSelect = document.getElementById('flow-range-select');
-    if (flowRangeSelect) {
-        flowRangeSelect.addEventListener('change', function() {
-            setFlowRange(parseFloat(this.value));
-        });
-    }
-
-    var bytesTickCallback = function(value) { return formatBytes(value); };
-    var bytesTooltipCallback = function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBytes(v != null ? v : 0); };
-    var bpsTickCallback = function(value) { return formatBps(value); };
-    var bpsTooltipCallback = function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBps(v != null ? v : 0); };
-
-    // Shared options for horizontal bar charts
-    var horizBarOpts = function(color) {
-        return {
-            indexAxis:'y',
-            scales: {
-                x: { beginAtZero: true, ticks: { color: '#484f58', font:{size:10}, callback: bytesTickCallback }, grid: { color: '#21262d' } },
-                y: { ticks: { color: '#484f58', font:{size:10} }, grid: { color: '#21262d' } }
-            },
-            plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bytesTooltipCallback } } }
-        };
-    };
-
-    function loadFlowCharts() {
-        var statsUrl = API_BASE + '/flows/stats?hours=' + flowStatsHours;
-        var deviceFilter = document.getElementById('flows-filter-device');
-        if (deviceFilter && deviceFilter.value) statsUrl += '&device_id=' + deviceFilter.value;
-        apiFetch(statsUrl).then(function(result) {
-            if (!result || !result.data) return;
-            var d = result.data;
-            // 5 stat cards
-            document.getElementById('flows-total').textContent = (d.total_flows || 0).toLocaleString();
-            document.getElementById('flows-bytes').textContent = formatBytes(d.total_bytes || 0);
-            document.getElementById('flows-throughput').textContent = formatBps(d.bits_per_second || 0);
-            document.getElementById('flows-sources').textContent = (d.unique_sources || 0).toLocaleString();
-            document.getElementById('flows-dests').textContent = (d.unique_dests || 0).toLocaleString();
-            document.getElementById('flows-protocols').textContent = (d.protocol_count || 0).toLocaleString();
-            document.getElementById('flows-sampling-rate').textContent = d.avg_sampling_rate > 1 ? '1:' + Math.round(d.avg_sampling_rate) : 'None';
-            document.getElementById('flows-packets').textContent = (d.total_packets || 0).toLocaleString();
-
-            // Local traffic info bar
-            var localBar = document.getElementById('flows-local-traffic-bar');
-            if (localBar && d.local_traffic && d.local_traffic.bytes > 0) {
-                localBar.style.display = 'block';
-                document.getElementById('flows-local-bytes').textContent = formatBytes(d.local_traffic.bytes);
-                document.getElementById('flows-local-flows').textContent = (d.local_traffic.flows || 0).toLocaleString();
-                document.getElementById('flows-local-packets').textContent = (d.local_traffic.packets || 0).toLocaleString();
-            } else if (localBar) {
-                localBar.style.display = 'none';
-            }
-
-            // Protocol doughnut
-            var protoLabels = (d.by_protocol || []).map(function(p) { return p.key; });
-            var protoCounts = (d.by_protocol || []).map(function(p) { return p.count; });
-            var protoColors = ['#58a6ff','#3fb950','#d2992a','#f85149','#bc8cff','#8b949e','#388bfd','#da3633'];
-            createChart('flows-protocol-chart','doughnut',protoLabels,[{data:protoCounts,backgroundColor:protoColors.slice(0,protoLabels.length),borderWidth:0}]);
-
-            // Top sources bar (horizontal)
-            var srcLabels = (d.top_sources || []).map(function(s) { return s.key; });
-            var srcCounts = (d.top_sources || []).map(function(s) { return s.count; });
-            createChart('flows-top-talkers-chart','bar',srcLabels,[{label:'Bytes',data:srcCounts,backgroundColor:'#58a6ff',borderRadius:3}], horizBarOpts('#58a6ff'));
-
-            // Top destinations bar (horizontal)
-            var dstLabels = (d.top_destinations || []).map(function(s) { return s.key; });
-            var dstCounts = (d.top_destinations || []).map(function(s) { return s.count; });
-            createChart('flows-top-dests-chart','bar',dstLabels,[{label:'Bytes',data:dstCounts,backgroundColor:'#3fb950',borderRadius:3}], horizBarOpts('#3fb950'));
-
-            // Top ports bar (horizontal)
-            var portLabels = (d.top_ports || []).map(function(s) { return s.key; });
-            var portCounts = (d.top_ports || []).map(function(s) { return s.count; });
-            createChart('flows-top-ports-chart','bar',portLabels,[{label:'Bytes',data:portCounts,backgroundColor:'#d2992a',borderRadius:3}], horizBarOpts('#d2992a'));
-
-            // Bandwidth over time (bits/sec) — use server-provided bucket interval
-            var intervalSec = d.bucket_seconds || 3600;
-            var timeLabels = (d.bytes_over_time || []).map(function(b) { return formatBucketTime(b.bucket, flowStatsHours); });
-            var timeBps = (d.bytes_over_time || []).map(function(b) {
-                return (b.count * 8) / intervalSec;
-            });
-            createChart('flows-bytes-time-chart','line',timeLabels,[{label:'Throughput',data:timeBps,borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.1)',fill:true,tension: 0}],{
-                scales: {
-                    x: { ticks: { color: '#484f58', font:{size:10}, maxRotation: 0 }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#484f58', font:{size:10}, callback: bpsTickCallback }, grid: { color: '#21262d' }, beginAtZero: true }
-                },
-                plugins: { legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: {size:11} } }, tooltip: { callbacks: { label: bpsTooltipCallback } } }
-            });
-
-            // Top conversations table
-            var convTbody = document.querySelector('#flows-conversations-table tbody');
-            if (convTbody) {
-                var totalBytes = d.total_bytes || 1;
-                var convos = d.top_conversations || [];
-                convTbody.innerHTML = convos.map(function(c) {
-                    var pct = ((c.bytes / totalBytes) * 100).toFixed(1);
-                    return '<tr class="conv-row" style="cursor:pointer" data-src="' + escapeHtml(c.src_addr) + '" data-dst="' + escapeHtml(c.dst_addr) + '" data-dport="' + c.dst_port + '">' +
-                        '<td class="mono">' + escapeHtml(c.src_addr) + '</td>' +
-                        '<td>&#8594;</td>' +
-                        '<td class="mono">' + escapeHtml(c.dst_addr) + ':' + c.dst_port + '</td>' +
-                        '<td>' + escapeHtml(c.protocol) + '</td>' +
-                        '<td>' + formatBytes(c.bytes) + '</td>' +
-                        '<td>' + (c.packets || 0).toLocaleString() + '</td>' +
-                        '<td>' + pct + '%</td>' +
-                    '</tr>';
-                }).join('') || '<tr><td colspan="7" class="empty-state">No conversations</td></tr>';
-            }
-        }).catch(function(e) { console.error('Failed to load flow charts:', e); });
-    }
-
-    function buildFlowParams(limit) {
-        var parts = ['limit=' + limit];
-        var device = document.getElementById('flows-filter-device');
-        var probe = document.getElementById('flows-filter-probe');
-        var proto = document.getElementById('flows-filter-protocol');
-        var src = document.getElementById('flows-filter-src');
-        var dst = document.getElementById('flows-filter-dst');
-        if (device && device.value) parts.push('device_id=' + device.value);
-        if (probe && probe.value) parts.push('probe_id=' + probe.value);
-        if (proto && proto.value) parts.push('protocol=' + proto.value);
-        if (src && src.value) parts.push('src_addr=' + encodeURIComponent(src.value));
-        if (dst && dst.value) parts.push('dst_addr=' + encodeURIComponent(dst.value));
-        return parts.join('&');
-    }
-
-    function renderFlowsTable(samples, append) {
-        var tbody = document.querySelector('#flows-table tbody');
-        var html = samples.map(function(f) {
-            return '<tr>' +
-                '<td style="white-space:nowrap;">' + formatDate(f.timestamp) + '</td>' +
-                '<td class="mono">' + escapeHtml(f.src_addr) + ':' + f.src_port + '</td>' +
-                '<td>&#8594;</td>' +
-                '<td class="mono">' + escapeHtml(f.dst_addr) + ':' + f.dst_port + '</td>' +
-                '<td>' + (PROTOCOL_NAMES[f.protocol] || f.protocol) + '</td>' +
-                '<td>' + formatBytes(f.bytes) + '</td>' +
-                '<td>' + f.packets + '</td>' +
-                '<td>' + (f.sampling_rate ? '1:' + f.sampling_rate : '-') + '</td>' +
-            '</tr>';
-        }).join('');
-        if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="8" class="empty-state">No flow samples</td></tr>';
-    }
-
-    function loadMoreFlows() {
-        var params = buildFlowParams(100);
-        apiFetch(API_BASE + '/flows?' + params + '&offset=' + flowsOffset).then(function(result) {
-            if (result && result.data && result.data.length) {
-                renderFlowsTable(result.data, true);
-                flowsOffset += result.data.length;
-            }
-        }).catch(function(err) {
-            console.error('Failed to load more flows:', err);
-            AC.showError('Failed to load more flows');
-        });
-    }
-
     function populateFilterProbes(selectId) {
         var sel = document.getElementById(selectId);
         if (!sel) return;
@@ -1627,6 +1435,14 @@
 
     // ---- Alerts ----
     var ALERTS_PAGE_SIZE = 10;
+
+    // LC-32: "Show snoozed" toggle — re-query from page 1 whenever it flips.
+    // buildAlertParams() reads the checkbox state on every fetch, so paging
+    // and the bulk-ack "select all matching" filter stay consistent with it.
+    var alertsShowSnoozedEl = document.getElementById('alerts-show-snoozed');
+    if (alertsShowSnoozedEl) {
+        alertsShowSnoozedEl.addEventListener('change', function() { loadAlerts(); });
+    }
     var alertSelection = {}; // map id (string) -> true for currently-selected rows on the current page
     var selectAllMatchingMode = false; // true when user clicked "Select all N matching" — bulk-ack uses filter, not IDs
 
@@ -1890,6 +1706,11 @@
         if (type && type.value) parts.push('alert_type=' + encodeURIComponent(type.value));
         if (sev && sev.value) parts.push('severity=' + sev.value);
         if (ack && ack.value) parts.push('acknowledged=' + ack.value);
+        // LC-32: the server filters out snoozed alerts unless
+        // include_snoozed=true (handlers_analytics.go applyAlertFilters).
+        // The "Show snoozed" toggle is the only path to view/unsnooze them.
+        var snoozed = document.getElementById('alerts-show-snoozed');
+        if (snoozed && snoozed.checked) parts.push('include_snoozed=true');
         return parts.join('&');
     }
 
@@ -1922,20 +1743,25 @@
                 ? '<td><input type="checkbox" data-action="toggle-alert-selection" data-id="' + a.id + '"></td>'
                 : '<td></td>';
             // Snooze badge (v0.10.218, bundle G2): operator sees at-a-
-            // glance which rows are currently snoozed. Hovering reveals
-            // the wake-up timestamp. Snoozed rows are only visible if
-            // the operator opted in via the "Show snoozed" toggle (the
-            // server default filters them out).
+            // glance which rows are currently snoozed. Snoozed rows are
+            // only visible when the operator opts in via the "Show
+            // snoozed" checkbox in the filter bar (LC-32) — the server
+            // default filters them out. Rows are muted, show the wake-up
+            // time, and carry an inline Unsnooze so a fat-fingered
+            // 720-hour snooze is a one-click reversal.
             var snoozedActive = !!(a.snoozed_until && (new Date(a.snoozed_until).getTime() > Date.now()));
             // F12: alerts grouped under an incident carry a chip so the storm
             // reads as one story (notification was muted for children).
+            // LC-35: the chip is clickable — opens the incident detail modal.
             var incidentChip = a.incident_id
-                ? ' <span class="badge critical" style="opacity:0.85" title="Grouped under incident #' + a.incident_id + ' — individual notification muted">INC#' + a.incident_id + '</span>'
+                ? ' <span class="badge critical" style="opacity:0.85;cursor:pointer;" data-action="show-incident" data-id="' + a.incident_id + '" title="Grouped under incident #' + a.incident_id + ' — individual notification muted. Click for incident detail.">INC#' + a.incident_id + '</span>'
                 : '';
             if (a.suppressed) {
                 statusCol = '<span class="badge unknown">MAINT</span>';
             } else if (snoozedActive) {
-                statusCol = '<span class="badge warning" title="Until ' + escapeHtml(formatDate(a.snoozed_until)) + '">SNOOZED</span>';
+                statusCol = '<span class="badge warning" title="Until ' + escapeHtml(formatDate(a.snoozed_until)) + '">SNOOZED</span>' +
+                    '<span style="font-size:0.72rem;color:var(--fwmon-text-faint);margin-left:6px;white-space:nowrap;">until ' + escapeHtml(formatDate(a.snoozed_until)) + '</span>' +
+                    ' <button class="btn secondary sm" data-action="unsnooze-alert" data-min-role="operator" data-id="' + a.id + '">Unsnooze</button>';
             } else if (a.resolved_at) {
                 // Auto-cleared by a recovery signal (device back online, interface up,
                 // etc.). These rows are also acknowledged, so this branch MUST precede
@@ -1953,7 +1779,8 @@
             var deviceCell = a.device_id
                 ? AC.deviceLink(a.device_id, dev ? dev.name : ('DEV-' + a.device_id))
                 : '';
-            return '<tr class="alert-row" data-id="' + a.id + '">' +
+            // Muted opacity marks snoozed rows apart from live ones (LC-32).
+            return '<tr class="alert-row" data-id="' + a.id + '"' + (snoozedActive ? ' style="opacity:0.55;"' : '') + '>' +
                 checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + deviceCell + '</td>' +
@@ -1980,8 +1807,9 @@
             var snoozedActive = !!(a.snoozed_until && (new Date(a.snoozed_until).getTime() > Date.now()));
             // F12: alerts grouped under an incident carry a chip so the storm
             // reads as one story (notification was muted for children).
+            // LC-35: clickable — opens the incident detail modal on top.
             var incidentChip = a.incident_id
-                ? ' <span class="badge critical" style="opacity:0.85" title="Grouped under incident #' + a.incident_id + ' — individual notification muted">INC#' + a.incident_id + '</span>'
+                ? ' <span class="badge critical" style="opacity:0.85;cursor:pointer;" data-action="show-incident" data-id="' + a.incident_id + '" title="Grouped under incident #' + a.incident_id + ' — individual notification muted. Click for incident detail.">INC#' + a.incident_id + '</span>'
                 : '';
             if (a.suppressed) {
                 statusHtml = '<span class="badge unknown">SUPPRESSED (MAINT)</span>';
@@ -2050,6 +1878,7 @@
                     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
                         '<span class="badge ' + sevClass + '" style="font-size:0.9rem;padding:4px 12px;">' + (a.severity || 'UNKNOWN').toUpperCase() + '</span>' +
                         '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml(a.alert_type || 'ALERT') + '</span>' +
+                        incidentChip +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +
                         '<div><span style="color:#8b949e;">Time:</span> ' + formatDate(a.timestamp) + '</div>' +
@@ -2131,6 +1960,77 @@
         });
     }
     function closeAlertDetail() { AC.closeModal('alert-detail-modal'); }
+
+    // ---- Incident detail (LC-35) ----
+    // The poller's correlator groups alert storms into incidents (F12). The
+    // server exposes two read-only endpoints: GET /admin/api/incidents
+    // (paginated list, id DESC) and GET /admin/api/incidents/:id/alerts
+    // (member alerts, capped at 500). There is NO single-incident GET, so the
+    // header metadata is resolved by scanning the most recent 500 incidents;
+    // if the incident is older than that window the modal still renders the
+    // member alerts with a bare "#N" header.
+    function showIncidentDetail(incidentId) {
+        Promise.all([
+            apiFetch(API_BASE + '/incidents?limit=500').catch(function() { return null; }),
+            apiFetch(API_BASE + '/incidents/' + incidentId + '/alerts')
+        ]).then(function(results) {
+            var incs = (results[0] && results[0].data && results[0].data.incidents) || [];
+            var inc = incs.find(function(i) { return i.id === incidentId; }) || null;
+            var alerts = (results[1] && results[1].data) || [];
+
+            document.getElementById('incident-detail-modal-title').textContent = 'Incident #' + incidentId;
+            var body = document.getElementById('incident-detail-body');
+
+            var headerHtml = '';
+            if (inc) {
+                var open = !inc.resolved_at;
+                var sevClass = (inc.severity || 'info').toLowerCase();
+                headerHtml =
+                    '<div style="margin-bottom:16px;">' +
+                        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">' +
+                            '<span class="badge ' + (open ? 'critical' : 'online') + '">' + (open ? 'OPEN' : 'RESOLVED') + '</span>' +
+                            '<span class="badge ' + escapeHtml(sevClass) + '">' + escapeHtml((inc.severity || 'unknown')).toUpperCase() + '</span>' +
+                            '<span style="font-weight:600;color:var(--fwmon-text);">' + escapeHtml(inc.title || ('Incident #' + incidentId)) + '</span>' +
+                        '</div>' +
+                        '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +
+                            '<div><span style="color:var(--fwmon-text-faint);">Started:</span> ' + (inc.started_at ? formatDate(inc.started_at) : '—') + '</div>' +
+                            '<div><span style="color:var(--fwmon-text-faint);">Resolved:</span> ' + (inc.resolved_at ? formatDate(inc.resolved_at) : 'still open') + '</div>' +
+                            '<div><span style="color:var(--fwmon-text-faint);">Device:</span> ' + (inc.device_id ? AC.deviceLink(inc.device_id, getDeviceName(inc.device_id)) : '—') + '</div>' +
+                            '<div><span style="color:var(--fwmon-text-faint);">Grouped alerts:</span> ' + (inc.alert_count || alerts.length) + '</div>' +
+                        '</div>' +
+                    '</div>';
+            } else {
+                headerHtml =
+                    '<div style="margin-bottom:16px;color:var(--fwmon-text-faint);font-size:0.82rem;">' +
+                        'Incident metadata not available (older than the 500 most recent incidents) — showing member alerts.' +
+                    '</div>';
+            }
+
+            var rowsHtml = alerts.map(function(al) {
+                return '<tr>' +
+                    '<td style="white-space:nowrap;">' + formatDate(al.timestamp) + '</td>' +
+                    '<td><span class="badge ' + escapeHtml(al.severity) + '">' + escapeHtml(al.alert_type) + '</span></td>' +
+                    '<td>' + escapeHtml(al.message || '') + '</td>' +
+                '</tr>';
+            }).join('') || '<tr><td colspan="3" class="empty-state">No member alerts</td></tr>';
+
+            body.innerHTML = headerHtml +
+                '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Member alerts (notifications muted while grouped)</div>' +
+                '<div class="table-wrap" style="max-height:45vh;">' +
+                    '<table>' +
+                        '<thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead>' +
+                        '<tbody>' + rowsHtml + '</tbody>' +
+                    '</table>' +
+                '</div>';
+
+            AC.openModal('incident-detail-modal');
+        }).catch(function(e) {
+            console.error('Failed to load incident detail:', e);
+            AC.showError('Failed to load incident #' + incidentId);
+        });
+    }
+
+    function closeIncidentDetail() { AC.closeModal('incident-detail-modal'); }
 
     function showAckModal(id) {
         document.getElementById('ack-alert-id').value = id;
@@ -2897,7 +2797,11 @@
             settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'alerts', type: input.type === 'checkbox' ? 'bool' : 'string' });
         });
         document.querySelectorAll('#settings-notifications input').forEach(function(input) {
-            settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'notifications', type: input.type === 'checkbox' ? 'bool' : 'string' });
+            // Mirror the #settings-smtp guard: never send the redaction mask back
+            // as a value — the server also skips masked secrets (LC-37), this keeps
+            // the payload honest and the two collectors consistent.
+            if (input.type === 'password' && input.value === '********') return;
+            settings.push({ key: input.name, value: input.type === 'checkbox' ? String(input.checked) : input.value, category: 'notifications', type: input.type === 'checkbox' ? 'bool' : 'string', is_secret: input.type === 'password' });
         });
         document.querySelectorAll('#settings-smtp input').forEach(function(input) {
             if (input.type === 'password' && input.value === '********') return;
@@ -3129,7 +3033,42 @@
 
     // ---- Alert Policies ----
     var currentPolicies = [];
-    var ALERT_TYPES = ['CPU_HIGH','MEMORY_HIGH','DISK_HIGH','SESSIONS_HIGH','INTERFACE_DOWN','INTERFACE_ERRORS','VPN_TUNNEL_DOWN','DEVICE_OFFLINE','TRAFFIC_SPIKE','SYSLOG_EMERGENCY','SYSLOG_ALERT','SYSLOG_CRITICAL'];
+    // ALERT_TYPES drives the per-type rules table in the policy modal.
+    //
+    // SOURCE OF TRUTH: internal/models/models.go — the AlertType consts
+    // (AlertTypeCPUHigh … AlertTypeTestAlert). There is no API endpoint that
+    // exposes the registry, so this list MUST be kept in lockstep with the Go
+    // enum: PUT /alert-policies/:id/rules is a full REPLACE server-side
+    // (internal/database/alerts.go BatchUpsertAlertRules deletes all rules
+    // for the policy, then inserts the payload), so any type missing here
+    // would be un-tunable from the UI. As a second line of defense,
+    // collectRules() also carries through any existing rule whose type is
+    // not rendered (see policyUnrenderedRules) so unknown/future types are
+    // never silently destroyed by a UI save (LC-31).
+    var ALERT_TYPES = [
+        // Poller metric thresholds
+        'CPU_HIGH','MEMORY_HIGH','DISK_HIGH','SESSIONS_HIGH','TRAFFIC_SPIKE',
+        // Availability / interfaces / VPN
+        'DEVICE_OFFLINE','INTERFACE_DOWN','INTERFACE_ERRORS','VPN_TUNNEL_DOWN',
+        // Config & SSH integrity
+        'CONFIG_CHANGE','SSH_HOST_KEY_CHANGED',
+        // Probe pipeline health
+        'PROBE_DATA_LAG','PROBE_DATA_TRUNCATED',
+        // HA cluster events
+        'HA_HEARTBEAT_FAIL','HA_MEMBER_DOWN','HA_MEMBER_UP','HA_STATE_CHANGE','HA_SWITCH',
+        // Syslog severity escalations
+        'SYSLOG_EMERGENCY','SYSLOG_ALERT','SYSLOG_CRITICAL',
+        // sFlow detection engine
+        'SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
+        // Test fire
+        'TEST_ALERT'
+    ];
+
+    // Rules on the policy being edited whose alert_type is NOT in
+    // ALERT_TYPES (created via the API, or a type added server-side before
+    // this list caught up). They are invisible in the modal but must survive
+    // the save — the server's rules PUT is delete-all-then-insert.
+    var policyUnrenderedRules = [];
 
     function loadAlertPolicies() {
         apiFetch(API_BASE + '/alert-policies').then(function(result) {
@@ -3195,6 +3134,7 @@
         document.getElementById('policy-modal-title').textContent = id ? 'Edit Alert Policy' : 'Create Alert Policy';
         document.getElementById('policy-form').reset();
         document.getElementById('policy-id').value = '';
+        policyUnrenderedRules = [];
 
         if (id) {
             var p = currentPolicies.find(function(x) { return x.id === id; });
@@ -3219,6 +3159,11 @@
             document.getElementById('policy-escalation-enabled').checked = p.escalation_enabled;
             document.getElementById('policy-escalation-minutes').value = p.escalation_minutes;
             document.getElementById('policy-escalation-repeat').value = p.escalation_repeat;
+            // LC-31: preserve rules for alert types the table doesn't render
+            // so saving the modal can't destroy them (server PUT = replace).
+            policyUnrenderedRules = (p.rules || []).filter(function(r) {
+                return ALERT_TYPES.indexOf(r.alert_type) === -1;
+            });
             populateRulesTable(p.rules || []);
         } else {
             populateRulesTable([]);
@@ -3348,7 +3293,10 @@
                 cooldown_minutes: cooldown
             });
         });
-        return rules;
+        // LC-31: the server replaces the policy's ENTIRE rule set with this
+        // payload, so append any existing rules whose alert_type isn't
+        // rendered in the table — otherwise a UI save would delete them.
+        return rules.concat(policyUnrenderedRules);
     }
 
     function closePolicyModal() {
@@ -3552,6 +3500,19 @@
         });
     }
 
+    // toDatetimeLocal converts a Date or an ISO timestamp string (the server
+    // marshals StartTime/EndTime as RFC3339 UTC, e.g. "2026-07-04T20:00:00Z")
+    // to the local wall-clock "YYYY-MM-DDTHH:MM" format that
+    // <input type="datetime-local"> expects. BOTH the create-defaults and the
+    // edit-prefill paths must use this helper: the edit path used to slice
+    // the UTC ISO string straight into the input, which the browser then
+    // re-interpreted as LOCAL time on save (new Date(value).toISOString()),
+    // shifting the window by the timezone offset on every edit (LC-34).
+    function toDatetimeLocal(d) {
+        var dt = (d instanceof Date) ? d : new Date(d);
+        return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+
     function showMaintModal(id) {
         AC.openModal('maint-modal');
         document.getElementById('maint-modal-title').textContent = id ? 'Edit Maintenance Window' : 'Create Maintenance Window';
@@ -3565,9 +3526,8 @@
         // Pre-fill datetime defaults: start=now, end=now+2h
         var now = new Date();
         var end = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-        function toLocal(d) { return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
-        document.getElementById('maint-start').value = toLocal(now);
-        document.getElementById('maint-end').value = toLocal(end);
+        document.getElementById('maint-start').value = toDatetimeLocal(now);
+        document.getElementById('maint-end').value = toDatetimeLocal(end);
 
         // Populate device select from API (not currentDevices which may be empty)
         var devSelect = document.getElementById('maint-device-id');
@@ -3612,8 +3572,10 @@
                 document.getElementById('maint-alert-types').value = w.alert_types || '';
             }
             document.getElementById('maint-notes').value = w.notes || '';
-            if (w.start_time) document.getElementById('maint-start').value = w.start_time.slice(0, 16);
-            if (w.end_time) document.getElementById('maint-end').value = w.end_time.slice(0, 16);
+            // LC-34: convert the UTC ISO string to local wall time — slicing
+            // it raw shifted the window by the TZ offset on every edit+save.
+            if (w.start_time) document.getElementById('maint-start').value = toDatetimeLocal(w.start_time);
+            if (w.end_time) document.getElementById('maint-end').value = toDatetimeLocal(w.end_time);
             var scopeVal = 'all';
             if (w.device_id) {
                 scopeVal = 'device';
@@ -3827,28 +3789,10 @@
         'edit-connection': function(el) { showConnectionModal(parseInt(el.dataset.id)); },
         'load-syslog': function() { loadSyslog(); },
         'load-more-syslog': function() { loadMoreSyslog(); },
-        'set-flow-range': function(el) {
-            var hours = parseInt(el.dataset.hours);
-            // v0.10.211: range is now driven by FwmonFlows.setFilter('hours',...).
-            // The legacy data-action handler stays for any external deep-link.
-            if (window.FwmonFlows && window.FwmonFlows.setFilter) {
-                window.FwmonFlows.setFilter('hours', hours);
-            } else {
-                setFlowRange(hours);
-            }
-        },
-        'load-flows': function() {
-            if (window.FwmonFlows && window.FwmonFlows.refresh) {
-                window.FwmonFlows.refresh();
-            } else {
-                loadFlows();
-            }
-        },
-        'load-more-flows': function() {
-            // FwmonFlows binds its own "load more" button directly; this
-            // handler stays for the legacy fallback path.
-            if (!window.FwmonFlows) loadMoreFlows();
-        },
+        // LC-49: the legacy 'set-flow-range' / 'load-flows' / 'load-more-flows'
+        // handlers were removed with the dead pre-v0.10.211 flows fallback.
+        // Nothing in admin.html emits the first two, and FwmonFlows
+        // (admin-flows.js) binds the #flows-load-more button directly.
         'load-alerts': function() { loadAlerts(); },
         'load-more-alerts': function() { loadMoreAlerts(); },
         'prev-alerts': function() { prevAlerts(); },
@@ -3908,6 +3852,9 @@
         'toggle-expand': function(el) { el.classList.toggle('expanded'); },
         'close-syslog-detail': function() { closeSyslogDetail(); },
         'close-alert-detail': function() { closeAlertDetail(); },
+        // Incident chip → detail modal (LC-35).
+        'show-incident': function(el) { showIncidentDetail(parseInt(el.dataset.id)); },
+        'close-incident-detail': function() { closeIncidentDetail(); },
         'toggle-alert-selection': function(el) {
             var id = el.dataset.id;
             if (el.checked) alertSelection[id] = true;
@@ -3958,16 +3905,9 @@
         if (cell) { cell.classList.add('expanded'); }
     });
 
-    // Click-to-filter: clicking a conversation row populates src/dst filters and reloads flow table
-    document.addEventListener('click', function(e) {
-        var row = e.target.closest('.conv-row');
-        if (!row) return;
-        var srcInput = document.getElementById('flows-filter-src');
-        var dstInput = document.getElementById('flows-filter-dst');
-        if (srcInput) srcInput.value = row.dataset.src || '';
-        if (dstInput) dstInput.value = row.dataset.dst || '';
-        loadFlows();
-    });
+    // (LC-49: the legacy '.conv-row' click-to-filter handler was removed —
+    // admin-flows.js renders conversation rows as '.fwmon-clickable' and binds
+    // its own delegation on #flows-conversations-table.)
 
     // ---- Init ----
     // v0.10.212 (bundle A2) — wire range pills + auto-apply + URL state for

@@ -255,7 +255,18 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		// Ingest-time classification: stamp the app/L7 category and direction
 		// (internal/classify) so the Flows page can GROUP BY them. Pure
 		// (proto, ports, flags / addr-scope) functions — cheap per sample.
-		samples[i].AppCategory = uint8(classify.Classify(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort, samples[i].TCPFlags))
+		// Exporter app identification (PAN App-ID PEN 25461 / FortiGate app
+		// options, decoded by the collector into AppName) outranks the port
+		// heuristic — the firewall did real L7 inspection, so "ssl" on a
+		// non-standard port classifies as Web instead of Unknown. Unknown app
+		// names fall through to the port heuristic (conservative mapping).
+		// app_category is a rollup group key, so this is also how vendor app
+		// analytics survive past the raw retention window.
+		if cat, ok := classify.FromAppName(samples[i].AppName); ok {
+			samples[i].AppCategory = uint8(cat)
+		} else {
+			samples[i].AppCategory = uint8(classify.Classify(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort, samples[i].TCPFlags))
+		}
 		samples[i].Direction = classify.Direction(samples[i].SrcAddr, samples[i].DstAddr, samples[i].InputIfIndex, samples[i].OutputIfIndex)
 		// Geo/ASN enrichment (GEOIP_ENABLED). Nil-safe: when geo is off these are
 		// no-ops returning empty/0. GeoLite2 maps only public IPs, so internal

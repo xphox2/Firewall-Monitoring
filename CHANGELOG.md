@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.26] - 2026-07-04
+
+### Fixed — flow analytics correctness (audit LC-03, LC-05, LC-25, LC-36, LC-50, LC-52 + LC-00 server side)
+- **7d/30d/90d flow analytics no longer silently drop whole age bands** (LC-25, HIGH): the stats queries picked ONE rollup `interval_type` while the rollup ladder keeps each age band in exactly one tier — 7d/30d omitted the (1h,48h] band, 90d omitted (1h,30d]. A shared `rollupIntervalsForWindow` helper now selects every tier intersecting the window (tiers are disjoint by construction — no double-count), applied to both diverged call sites, with boundary tests at 48h/49h/720h/721h.
+- **Denied-flow visibility survives rollups** (LC-03): migration v30 adds `firewall_event` to `flow_rollups` as a schema column and group key, so the Tranche 3 headline (denied flows) is queryable past the ~1h raw window through the whole 5m→1h→1d ladder. Vendor app analytics survive via `app_category` (see LC-05); per-flow forensics (post-NAT tuple, flow_start/end) remain a raw-window property pending the planned `RETENTION_FLOW_RAW` knob.
+- **Detection engine stops flagging blocked traffic as forwarded** (LC-50, HIGH): cleartext/egress/exfil/threat-intel/c2-beacon detectors now exclude `firewall_event = denied` rows — blocked internet background radiation no longer produces perpetual false warnings. port_scan/super_spreader deliberately keep denied rows (a blocked probe is still scan evidence). Denied-flow detector classes deferred to the Tranche 4 backlog.
+- **Exporter-provided app names are finally consulted** (LC-05): new conservative `classify.FromAppName` mapping outranks the port heuristic at ingest, as `models.go` always documented; unknown names fall through unchanged.
+- **Flows samples list + CSV export honor the page time range** (LC-36): `GET /admin/api/flows` gains a validated `hours` param (1..8760; absent = legacy unbounded), the JS sends the range-pill value, and the "hours in filename" claim is now truthful.
+- **`firewall_event` gets a read path** (LC-52): validated filter on flows + stats endpoints, Event column/select/chip/URL-param/CSV column mirroring the v0.11.20 `flow_source` pattern.
+- **Dual-export advisory catches unattributed exporters** (LC-00 server side): `GetMixedFlowSourceDevices` also groups `device_id = 0` rows by sampler address, so a device whose second flow family fails device-resolution still trips the banner (labeled by address).
+
+### Fixed — admin SPA (audit LC-31, LC-32, LC-34, LC-35, LC-49)
+- **Policy editor no longer deletes rules for alert types it doesn't render** (LC-31): `ALERT_TYPES` now covers all 26 server types (pinned to the Go enum), and unrendered existing rules are carried through the save payload untouched — the PUT is a full replace server-side, so every UI save was silently destroying rules for 14 types.
+- **Snoozed alerts are reachable again** (LC-32): "Show snoozed" toggle sends `include_snoozed=true` (consistently across paging, counts, and bulk-ack), snoozed rows render muted with their snoozed-until time and an inline Unsnooze button (endpoint existed, UI never called it).
+- **Maintenance-window edits no longer shift times by the browser's UTC offset** (LC-34): create and edit paths share one iso→`datetime-local` helper; previously each edit round-trip skewed start/end by the timezone offset.
+- **Incidents are visible in the SPA** (LC-35): the INC#id chip is clickable → incident detail modal (status/severity/started/resolved/device + member alerts) via the previously consumer-less incident endpoints; the alert-detail header's dead incident chip variable is actually rendered now.
+- **Dead legacy Flows fallback removed** (LC-49): ~200 lines referencing removed DOM ids (instant crash) and an 8-column renderer for a 10-column table; the router now surfaces a clear error if the modern flows module fails to load instead of falling back to broken code.
+- Client-side hardening from LC-37: the notifications settings collector mirrors the SMTP collector's redaction-mask skip, so `********` is never sent as a value.
+
 ## [0.11.25] - 2026-07-04
 
 ### Fixed — settings secrets (audit LC-37..39)

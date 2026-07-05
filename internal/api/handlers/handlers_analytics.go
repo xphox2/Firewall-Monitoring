@@ -257,6 +257,17 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 
 	query := db.Gorm().Order("timestamp DESC").Limit(limit).Offset(offset)
 
+	// Optional time window (LC-36): the Flows page range pills and the CSV
+	// export label an hours-bounded slice, so the list must actually honor it —
+	// pre-fix an "last 1h" export could span days of newest-first rows. Same
+	// validation shape as httputil.ParseHours (1..8760), but absent means "no
+	// time filter" for back-compat with existing API consumers.
+	if hq := c.Query("hours"); hq != "" {
+		if v, err := strconv.Atoi(hq); err == nil && v > 0 && v <= 8760 {
+			query = query.Where("timestamp > ?", time.Now().Add(-time.Duration(v)*time.Hour))
+		}
+	}
+
 	// L24 of the 2026-07-01 audit: parse every numeric-column filter with
 	// strconv and only apply on success. Binding a raw non-numeric query string
 	// against an integer column throws 22P02 on PostgreSQL (a 500), while SQLite
@@ -323,6 +334,14 @@ func (h *Handler) GetFlowSamples(c *gin.Context) {
 	if fs := c.Query("flow_source"); fs != "" {
 		if v, err := strconv.ParseUint(fs, 10, 8); err == nil {
 			query = query.Where("flow_source = ?", v)
+		}
+	}
+	// IE 233 event filter (LC-52) — the denied-flow drill-down. Mirrors the
+	// flow_source pattern: 0 (none) is a real value, param sent only when an
+	// event is explicitly selected.
+	if fe := c.Query("firewall_event"); fe != "" {
+		if v, err := strconv.ParseUint(fe, 10, 8); err == nil {
+			query = query.Where("firewall_event = ?", v)
 		}
 	}
 
@@ -398,6 +417,12 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 		if v, err := strconv.ParseUint(fs, 10, 8); err == nil {
 			p := uint8(v)
 			filter.FlowSource = &p
+		}
+	}
+	if fe := c.Query("firewall_event"); fe != "" {
+		if v, err := strconv.ParseUint(fe, 10, 8); err == nil {
+			p := uint8(v)
+			filter.FirewallEvent = &p
 		}
 	}
 	filter.SrcAddr = c.Query("src_addr")

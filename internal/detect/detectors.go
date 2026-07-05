@@ -5,12 +5,29 @@ import (
 
 	"firewall-mon/internal/classify"
 	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
 )
 
 // minFlows is the floor on flow count before a policy detector fires, so a
 // single stray sampled packet doesn't generate a finding. sFlow is sampled, so
 // any persisted flow already represents ~sampling_rate real packets.
 const minFlows = 3
+
+// forwardedOnly excludes DENIED firewall-event rows (NSEL/FortiGate IE 233 = 3)
+// from detectors that assert traffic actually crossed the network. Tranche 3
+// deliberately stores zero-byte denied records in flow_samples; without this
+// predicate, blocked internet background radiation (three denied Telnet probes
+// in a window) produced perpetual false "cleartext traffic" / "leaving the
+// network" / "known-bad traffic" findings for connections the firewall
+// stopped. port_scan/super_spreader intentionally KEEP denied rows — a blocked
+// probe is still scan evidence. Detectors FOR denied traffic (deny storms,
+// denied-then-allowed) are a separate class deferred to the Tranche 4
+// detection backlog (docs/flow-protocol-research-2026-07-03.md §4 item 3) —
+// do not bolt them onto the forwarded-traffic detectors here.
+func forwardedOnly(q *gorm.DB) *gorm.DB {
+	return q.Where("firewall_event <> ?", models.FirewallEventDenied)
+}
 
 // portLabels names the ports the policy detectors care about, for readable
 // messages without pulling in a full service registry.
@@ -49,8 +66,8 @@ func (cleartextDetector) Category() Category { return CategoryPolicy }
 func (d cleartextDetector) Detect(w Window) ([]Detection, error) {
 	cleartextPorts := []uint16{20, 21, 23, 69, 110, 143}
 	var rows []portGroupRow
-	if err := w.DB.Model(&models.FlowSample{}).
-		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
+		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("dst_port IN ?", cleartextPorts).
 		Select("device_id, dst_port, protocol, SUM(bytes) as bytes, COUNT(*) as flows").
 		Group("device_id, dst_port, protocol").
@@ -86,8 +103,8 @@ func (unexpectedEgressDetector) Category() Category { return CategoryPolicy }
 func (d unexpectedEgressDetector) Detect(w Window) ([]Detection, error) {
 	egressPorts := []uint16{139, 445, 3389, 1433, 3306, 5432, 6379, 27017}
 	var rows []portGroupRow
-	if err := w.DB.Model(&models.FlowSample{}).
-		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
+		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("direction = ?", classify.DirOutbound).
 		Where("dst_port IN ?", egressPorts).
 		Select("device_id, dst_port, protocol, SUM(bytes) as bytes, COUNT(*) as flows").

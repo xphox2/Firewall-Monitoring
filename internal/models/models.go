@@ -1106,6 +1106,16 @@ type FlowRollup struct {
 	// conversation (realistically 1, hard-capped at 4 by the ingest clamp).
 	// Migration v29 adds the column.
 	FlowSource uint8 `json:"flow_source,omitempty" gorm:"column:flow_source;default:0;not null"`
+	// FirewallEvent carries the IE 233 event label (0 none, 3 denied, …)
+	// through the rollup so denied-flow visibility — the headline NetFlow win —
+	// survives the 1h raw collapse instead of being erased into an anonymous
+	// flow_count. Group-key treatment mirrors flow_source: a conversation
+	// realistically produces 1-2 distinct event values (hard-capped at 6), so
+	// cardinality stays bounded. Per-flow forensics (post-NAT tuple, app_name,
+	// flow_start/flow_end) intentionally do NOT join the rollup — the raw
+	// window is the forensic window; longer raw retention is the planned
+	// RETENTION_FLOW_RAW env (design record §6, Tranche 12 F79). Migration v30.
+	FirewallEvent uint8 `json:"firewall_event,omitempty" gorm:"column:firewall_event;default:0;not null"`
 }
 
 func (FlowRollup) TableName() string { return "flow_rollups" }

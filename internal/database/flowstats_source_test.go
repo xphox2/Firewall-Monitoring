@@ -132,3 +132,43 @@ func TestGetMixedFlowSourceDevices(t *testing.T) {
 		t.Errorf("GetMixedFlowSourceDevices = %v, want [fw-dual]", got)
 	}
 }
+
+// TestGetMixedFlowSourceDevices_UnattributedSampler pins the LC-00 follow-up:
+// dual-export detection must not depend on device resolution. Covers the two
+// pre-fix blind spots — a fully unattributed exporter (labeled by sampler
+// address) and a device whose second flow family failed device resolution
+// (device_id split across 5 and 0 for the same sampler IP).
+func TestGetMixedFlowSourceDevices_UnattributedSampler(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	dev := models.Device{Name: "fw-split", IPAddress: "192.0.2.10"}
+	if err := db.Gorm().Create(&dev).Error; err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	now := time.Now().Add(-5 * time.Minute)
+	mk := func(devID uint, sampler string, src uint8) models.FlowSample {
+		return models.FlowSample{
+			Timestamp: now, DeviceID: devID, SamplerAddress: sampler, Protocol: 6,
+			SrcAddr: "10.0.0.5", DstAddr: "8.8.8.8", Bytes: 100, Packets: 1, FlowSource: src,
+		}
+	}
+	samples := []models.FlowSample{
+		// Fully unattributed dual exporter — both families failed resolution.
+		mk(0, "203.0.113.7", models.FlowSourceSFlow),
+		mk(0, "203.0.113.7", models.FlowSourceNetFlowV9),
+		// Split-attribution dual exporter: sFlow resolved, NetFlow didn't.
+		// Neither the device_id group nor the device_id=0 rows alone see two
+		// sources — only the sampler_address grouping catches it.
+		mk(dev.ID, "192.0.2.10", models.FlowSourceSFlow),
+		mk(0, "192.0.2.10", models.FlowSourceNetFlowV9),
+		// Single-source unattributed exporter — must NOT be flagged.
+		mk(0, "203.0.113.99", models.FlowSourceIPFIX),
+	}
+	if err := db.Gorm().Create(&samples).Error; err != nil {
+		t.Fatalf("seed flows: %v", err)
+	}
+
+	got := db.GetMixedFlowSourceDevices()
+	if len(got) != 2 || got[0] != "203.0.113.7" || got[1] != "fw-split" {
+		t.Errorf("GetMixedFlowSourceDevices = %v, want [203.0.113.7 fw-split]", got)
+	}
+}

@@ -27,7 +27,9 @@ const (
 // --- port scan (security) ---------------------------------------------------
 
 // portScanDetector flags a source touching many distinct destination ports —
-// the classic horizontal/vertical scan signature.
+// the classic horizontal/vertical scan signature. Denied firewall-event rows
+// are intentionally INCLUDED (no forwardedOnly): a blocked probe is still scan
+// evidence — the source really touched that port, the firewall just said no.
 type portScanDetector struct{}
 
 func (portScanDetector) Name() string       { return "port_scan" }
@@ -76,6 +78,7 @@ func (d portScanDetector) Detect(w Window) ([]Detection, error) {
 
 // superSpreaderDetector flags a source talking to an unusually large number of
 // distinct destinations — worm/scan propagation or misconfigured discovery.
+// Like port_scan it keeps denied rows: blocked fan-out is still fan-out.
 type superSpreaderDetector struct{}
 
 func (superSpreaderDetector) Name() string       { return "super_spreader" }
@@ -127,8 +130,8 @@ func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
 		Bytes      int64
 	}
 	var rows []row
-	if err := w.DB.Model(&models.FlowSample{}).
-		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
+		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("direction = ?", classify.DirOutbound).
 		Select("src_addr, dst_addr, dst_country, SUM(bytes) as bytes").
 		Group("src_addr, dst_addr, dst_country").
@@ -171,9 +174,13 @@ func (d threatIntelDetector) Detect(w Window) ([]Detection, error) {
 		Flows   int64
 		Flag    int
 	}
+	// forwardedOnly: a denied flow to a known-bad destination means the
+	// firewall WORKED — reporting it as "Traffic with known-bad destination"
+	// was indistinguishable from real compromise traffic. The Tranche 4
+	// denied-flow detector class will surface blocked-threat activity properly.
 	var rows []row
-	if err := w.DB.Model(&models.FlowSample{}).
-		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
+		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("threat_flag <> 0").
 		Select("src_addr, dst_addr, SUM(bytes) as bytes, COUNT(*) as flows, MAX(threat_flag) as flag").
 		Group("src_addr, dst_addr").
@@ -226,8 +233,8 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 		Cnt     int64
 	}
 	var cands []cand
-	if err := w.DB.Model(&models.FlowSample{}).
-		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
+		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("direction IN ?", []int{int(classify.DirOutbound), int(classify.DirExternal)}).
 		Select("src_addr, dst_addr, dst_port, COUNT(*) as cnt").
 		Group("src_addr, dst_addr, dst_port").
@@ -239,8 +246,8 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 	out := make([]Detection, 0)
 	for _, c := range cands {
 		var ts []time.Time
-		if err := w.DB.Model(&models.FlowSample{}).
-			Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
+		if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
+			Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 			Where("src_addr = ? AND dst_addr = ? AND dst_port = ?", c.SrcAddr, c.DstAddr, c.DstPort).
 			Order("timestamp ASC").Limit(1000).Pluck("timestamp", &ts).Error; err != nil {
 			continue

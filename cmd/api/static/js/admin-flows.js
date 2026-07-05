@@ -41,13 +41,14 @@
         country: '',    // dst ISO country code, drives Top Countries filter
         asn: '',        // dst ASN number, drives Top ASNs filter
         source: '',     // flow_source id (0=sFlow..3=IPFIX); '' = all — NOTE '0' is a real filter
+        event: '',      // firewall_event id (IE 233; 3=Denied); '' = all — '0' (None) is a real filter
         // Which view of the combined data card is active: 'conversations' | 'samples'.
         tab: 'conversations'
     };
 
     // URL params <-> state. URL is the source of truth on page load so
     // refresh / back / share preserves the view.
-    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'source', 'tab'];
+    var URL_KEYS = ['hours', 'site_id', 'device_id', 'probe_id', 'protocol', 'src', 'dst', 'dport', 'category', 'direction', 'country', 'asn', 'source', 'event', 'tab'];
 
     // Label <-> id maps for the classification breakdowns. These MIRROR
     // internal/classify (Category / Dir* — documented as stable). The widgets
@@ -61,6 +62,10 @@
     var DIRECTION_LABELS = { 0: 'Unknown', 1: 'Inbound', 2: 'Outbound', 3: 'Internal', 4: 'External' };
     // Exporting protocol (FlowSample.flow_source; absent on the wire = 0 = sFlow).
     var SOURCE_LABELS = { 0: 'sFlow', 1: 'NetFlow v5', 2: 'NetFlow v9', 3: 'IPFIX' };
+    // Firewall event (FlowSample.firewall_event, IE 233 — NSEL/FortiGate).
+    // MIRRORS models.FirewallEvent* (documented stable). 3 (Denied) is the one
+    // operators hunt; 0 means an ordinary forwarded-traffic record.
+    var EVENT_LABELS = { 0: 'None', 1: 'Created', 2: 'Deleted', 3: 'Denied', 4: 'Alert', 5: 'Update' };
     var CATEGORY_IDS = invertLabels(CATEGORY_LABELS);
     var DIRECTION_IDS = invertLabels(DIRECTION_LABELS);
 
@@ -197,6 +202,7 @@
         bindSelectAuto('flows-filter-device', 'device_id');
         bindSelectAuto('flows-filter-probe',  'probe_id');
         bindSelectAuto('flows-filter-source', 'source');
+        bindSelectAuto('flows-filter-event',  'event');
 
         // IP / port inputs — debounced auto-apply on input, immediate on Enter/blur
         bindInputAuto('flows-filter-src',   'src',   400);
@@ -219,6 +225,7 @@
                 state.country = '';
                 state.asn = '';
                 state.source = '';
+                state.event = '';
                 applyStateToControls();
                 syncURL();
                 reload();
@@ -353,6 +360,7 @@
         setVal('flows-filter-device', state.device_id);
         setVal('flows-filter-probe',  state.probe_id);
         setVal('flows-filter-source', state.source);
+        setVal('flows-filter-event',  state.event);
         setVal('flows-filter-src',    state.src);
         setVal('flows-filter-dst',    state.dst);
         setVal('flows-filter-dport',  state.dport);
@@ -409,6 +417,7 @@
         if (state.country)   chips.push({ key: 'country', val: state.country,         stateKey: 'country' });
         if (state.asn)       chips.push({ key: 'asn',     val: 'AS' + state.asn,       stateKey: 'asn' });
         if (state.source !== '') chips.push({ key: 'source', val: SOURCE_LABELS[state.source] || state.source, stateKey: 'source' });
+        if (state.event !== '')  chips.push({ key: 'event',  val: EVENT_LABELS[state.event]   || state.event,  stateKey: 'event' });
         if (state.site_id)   chips.push({ key: 'site',   val: siteLabel(state.site_id),     stateKey: 'site_id' });
         if (state.device_id) chips.push({ key: 'device', val: deviceLabel(state.device_id), stateKey: 'device_id' });
         if (state.probe_id)  chips.push({ key: 'probe',  val: probeLabel(state.probe_id),   stateKey: 'probe_id' });
@@ -476,12 +485,17 @@
         if (state.country)   params.push('dst_country=' + encodeURIComponent(state.country));
         if (state.asn)       params.push('dst_asn='     + encodeURIComponent(state.asn));
         if (state.source !== '') params.push('flow_source=' + encodeURIComponent(state.source));
+        if (state.event !== '')  params.push('firewall_event=' + encodeURIComponent(state.event));
         return '/admin/api/flows/stats?' + params.join('&');
     }
 
     function samplesURL(limit, offset) {
         var p = ['limit=' + limit];
         if (offset > 0) p.push('offset=' + offset);
+        // hours bounds the samples list (and the CSV export) to the page's
+        // range pills — without it the "24h" label lied and the list was just
+        // "newest N rows regardless of range" (LC-36).
+        if (state.hours) p.push('hours=' + encodeURIComponent(state.hours));
         if (state.site_id)   p.push('site_id='   + encodeURIComponent(state.site_id));
         if (state.device_id) p.push('device_id=' + encodeURIComponent(state.device_id));
         if (state.probe_id)  p.push('probe_id='  + encodeURIComponent(state.probe_id));
@@ -494,6 +508,7 @@
         if (state.country)   p.push('dst_country=' + encodeURIComponent(state.country));
         if (state.asn)       p.push('dst_asn='     + encodeURIComponent(state.asn));
         if (state.source !== '') p.push('flow_source=' + encodeURIComponent(state.source));
+        if (state.event !== '')  p.push('firewall_event=' + encodeURIComponent(state.event));
         return '/admin/api/flows?' + p.join('&');
     }
 
@@ -996,7 +1011,8 @@
     /* ------------------------------------------------------------------
      * CSV export (v0.10.216, bundle F4).
      *
-     * Pulls every flow row that matches the current filter state — up to
+     * Pulls every flow row that matches the current filter state INCLUDING
+     * the selected time range (samplesURL sends hours, LC-36) — up to
      * a hard cap of EXPORT_MAX rows — and triggers a browser download
      * with the operator's filter signature in the filename so successive
      * exports don't overwrite each other in the Downloads folder.
@@ -1021,7 +1037,7 @@
                 return;
             }
             var headers = ['timestamp', 'src_addr', 'src_port', 'dst_addr', 'dst_port',
-                           'protocol', 'protocol_name', 'flow_source', 'bytes', 'packets', 'sampling_rate',
+                           'protocol', 'protocol_name', 'flow_source', 'firewall_event', 'bytes', 'packets', 'sampling_rate',
                            'device_id', 'probe_id', 'sampler_address'];
             var lines = [headers.join(',')];
             for (var i = 0; i < samples.length; i++) {
@@ -1035,6 +1051,7 @@
                     f.protocol == null ? '' : f.protocol,
                     csvField(protocolName(f.protocol)),
                     csvField(SOURCE_LABELS[f.flow_source || 0] || ''),
+                    csvField(EVENT_LABELS[f.firewall_event || 0] || ''),
                     f.bytes == null ? '' : f.bytes,
                     f.packets == null ? '' : f.packets,
                     f.sampling_rate == null ? '' : f.sampling_rate,
@@ -1087,6 +1104,7 @@
         if (state.dst)       bits.push('dst-' + state.dst.replace(/[^a-z0-9._-]/gi, ''));
         if (state.dport)     bits.push('port' + state.dport);
         if (state.source !== '') bits.push('src' + state.source);
+        if (state.event !== '')  bits.push('evt' + state.event);
         return bits.join('-');
     }
 
@@ -1115,13 +1133,16 @@
                 '<td>' + esc(f.dst_addr) + ':' + f.dst_port + '</td>' +
                 '<td>' + esc(protocolName(f.protocol)) + '</td>' +
                 '<td>' + esc(SOURCE_LABELS[f.flow_source || 0] || '—') + '</td>' +
+                // Event column: only NSEL/FortiGate event records carry IE 233;
+                // plain forwarded-traffic rows (0) render as an em dash.
+                '<td>' + (f.firewall_event ? esc(EVENT_LABELS[f.firewall_event] || f.firewall_event) : '—') + '</td>' +
                 '<td class="num">' + formatBytes(f.bytes) + '</td>' +
                 '<td class="num">' + (f.packets || 0).toLocaleString() + '</td>' +
                 '<td class="num">' + (f.sampling_rate ? '1:' + f.sampling_rate : '—') + '</td>' +
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="9" class="empty-state">No flow samples match these filters</td></tr>';
+        else tbody.innerHTML = html || '<tr><td colspan="10" class="empty-state">No flow samples match these filters</td></tr>';
     }
 
     function updateLoadedCount() {

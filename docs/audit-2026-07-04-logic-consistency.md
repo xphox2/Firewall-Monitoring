@@ -34,7 +34,7 @@ CleanupOldData's entries list is the only generic retention mechanism, and it co
 
 ### LC-25 [HIGH] (server) — Flow analytics 7d/30d/90d windows query a single rollup interval_type while the rollup lifecycle keeps each age band in exactly one tier — 7d/30d views silently omit the (1h,48h] band and 90d omits (1h,30d]
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `internal/database/flows.go:227` · Dimension: time-units-math
 
@@ -70,7 +70,7 @@ T2-5 (v0.11.7) designed PagerDuty/Opsgenie as STATEFUL: incident_channels.go:13-
 
 ### LC-50 [HIGH] (server) — Flow detection engine treats Tranche 3 DENIED firewall-event rows as forwarded traffic — blocked internet background radiation produces perpetual false 'cleartext traffic' / 'egress' / 'known-bad traffic' warnings
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `internal/detect/security.go:45` · Dimension: gap-sweep
 
@@ -118,7 +118,7 @@ sendHeartbeatWithStatus checks only `resp.StatusCode == 401 || resp.StatusCode =
 
 ### LC-03 [MEDIUM] (server) — Tranche 3 forensic columns (firewall_event/denied flows, post-NAT, app_name, flow_start/end) are destroyed after ~1 hour by the rollup cycle
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `internal/database/flows.go:677` · Dimension: netflow-ipfix
 
@@ -130,7 +130,7 @@ Migration v29 added flow_source to both flow_samples and flow_rollups, but NONE 
 
 ### LC-05 [MEDIUM] (server) — models.go documents AppName as 'outranking the port heuristic in app_category' but ingest never consults it — PAN App-ID is stored dead
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `internal/models/models.go:964` · Dimension: netflow-ipfix
 
@@ -298,7 +298,7 @@ GetAlertResponseStats (F05, v0.11.10) excludes synthetic companion rows only via
 
 ### LC-31 [MEDIUM] (server) — Policy editor's hard-coded 12-type ALERT_TYPES list silently deletes rules for the ~14 server alert types it doesn't render on every UI save
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `cmd/api/static/js/admin-main.js:3132` · Dimension: frontend-backend
 
@@ -310,7 +310,7 @@ The alert-policy modal renders and collects rules only for a fixed 12-entry list
 
 ### LC-32 [MEDIUM] (server) — Snoozed alerts are unreachable and un-unsnoozeable in the UI: server hides them by default and no JS ever sends include_snoozed (the 'Show snoozed' toggle referenced in comments doesn't exist)
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `cmd/api/static/js/admin-main.js:1881` · Dimension: frontend-backend
 
@@ -322,7 +322,7 @@ GET /admin/api/alerts filters out snoozed rows unless `include_snoozed=true` (ha
 
 ### LC-34 [MEDIUM] (server) — Maintenance-window Edit round-trip shifts start/end by the browser's UTC offset: create path converts to local time, edit path slices the UTC ISO string into a datetime-local input
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `cmd/api/static/js/admin-main.js:3615` · Dimension: frontend-backend
 
@@ -334,7 +334,7 @@ showMaintModal's create path correctly converts now/now+2h to local wall time be
 
 ### LC-36 [MEDIUM] (server) — Flows raw-samples list and CSV export ignore the page's time-range filter: JS claims and labels an hours-bounded export, but GET /admin/api/flows has no hours/time parameter at all
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `cmd/api/static/js/admin-flows.js:482` · Dimension: frontend-backend
 
@@ -562,7 +562,7 @@ Disable2FA increments the admin's token version after clearing TOTP (handlers_to
 
 ### LC-35 [LOW] (server) — Incident endpoints (T2/F12) have zero frontend consumers: the INC#id chip advertises grouping but /admin/api/incidents and /incidents/:id/alerts are never called, so incident state is invisible in the SPA
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `cmd/api/main.go:761` · Dimension: frontend-backend
 
@@ -610,7 +610,7 @@ The repo-comparison table in the collector README lists the server's binaries as
 
 ### LC-49 [LOW] (server) — admin-main.js legacy Flows fallback is advertised as a working safety net but crashes on removed DOM ids and renders 8-column rows into the 9-column table added in v0.11.20
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `cmd/api/static/js/admin-main.js:115` · Dimension: dead-stale
 
@@ -622,7 +622,7 @@ The flows page router keeps the pre-v0.10.211 loadFlows()/loadFlowCharts() path 
 
 ### LC-52 [LOW] (server) — Denied-flow visibility — 'the headline NetFlow feature' — is write-only: firewall_event has zero read consumers (no API filter, no UI column, no detector, no alert) even inside the ~1h raw retention window
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.26)
 
 **Location:** `internal/database/flows.go:128` · Dimension: gap-sweep
 
