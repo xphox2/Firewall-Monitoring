@@ -29,6 +29,14 @@ func TestSettingsSecretKeys_AUDIT026(t *testing.T) {
 	// regression on either side surfaces as a test failure.
 	expectedSecrets := []string{
 		"smtp_password",
+		// T2 incident channels (v0.11.x). LC-38 (2026-07-04 audit): these
+		// were in the map but never actually encrypted because EncryptField
+		// was only reachable from the smtp_password case — membership alone
+		// now drives encryption; behavior is pinned by the tests in
+		// handlers_settings_secrets_test.go.
+		"webhook_secret",
+		"pagerduty_routing_key",
+		"opsgenie_api_key",
 	}
 
 	// Sample of currently-allowed non-secret keys. AUDIT-026: none
@@ -47,6 +55,7 @@ func TestSettingsSecretKeys_AUDIT026(t *testing.T) {
 		"slack_webhook", // webhook URLs are flagged in the audit for separate reasons
 		"discord_webhook",
 		"webhook_url",
+		"teams_webhook", // URL like slack/discord — not a secret; webhook_secret is
 		"public_refresh_interval",
 		"public_show_vpn",
 		"public_show_connections",
@@ -83,6 +92,9 @@ func TestSettingsSecretKeys_NoOverlapWithNonSecrets_AUDIT026(t *testing.T) {
 	known := map[string]bool{}
 	for _, k := range []string{
 		"smtp_password",
+		"webhook_secret",
+		"pagerduty_routing_key",
+		"opsgenie_api_key",
 	} {
 		known[k] = true
 	}

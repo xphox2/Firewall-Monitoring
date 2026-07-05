@@ -238,6 +238,22 @@ func (d *Database) DecryptIRCChannelSecrets(ch *models.IRCChannel) {
 	ch.ChannelKey = decryptFieldWithChain(ch.ChannelKey, d.encKeys)
 }
 
+// SecretSettingKeys is the source of truth for which system_settings rows
+// hold secret values that must be encrypted at rest and masked in API
+// responses. It lives here (rather than in the API handlers, which alias it
+// as settingsSecretKeys) so the startup plaintext-encryption backfill in
+// migrateEncryptSecrets genuinely shares one list with the handlers' three
+// consumers: masking on read, the masked-write skip, and encrypt-on-write.
+// v0.10.226 introduced the list; the 2026-07-04 audit (LC-37/LC-38)
+// centralized it after the handler-local copy let encrypt-on-write drift
+// out of sync with it.
+var SecretSettingKeys = map[string]bool{
+	"smtp_password":         true,
+	"webhook_secret":        true,
+	"pagerduty_routing_key": true,
+	"opsgenie_api_key":      true,
+}
+
 // migrateEncryptSecrets encrypts any plaintext SNMP credentials in the database.
 // This is idempotent — already encrypted values (with {enc} prefix) are skipped.
 func (d *Database) migrateEncryptSecrets() {
@@ -321,5 +337,35 @@ func (d *Database) migrateEncryptSecrets() {
 				"channel_key":       ch.ChannelKey,
 			})
 		}
+	}
+
+	// Encrypt secret system_settings rows. LC-38 (2026-07-04 audit): the
+	// incident-channel secrets added in v0.11.x (webhook_secret,
+	// pagerduty_routing_key, opsgenie_api_key) were persisted plaintext
+	// because UpdateSettings only encrypted inside its smtp_password case.
+	// The write path is fixed; this backfill upgrades rows that predate the
+	// fix. Idempotent via the {enc}-prefix skip, like the loops above.
+	keys := make([]string, 0, len(SecretSettingKeys))
+	for k := range SecretSettingKeys {
+		keys = append(keys, k)
+	}
+	var secretSettings []models.SystemSetting
+	d.db.Where("key IN ?", keys).Find(&secretSettings)
+	for _, s := range secretSettings {
+		if s.Value == "" || strings.HasPrefix(s.Value, encPrefix) {
+			continue
+		}
+		// Rows corrupted by the pre-fix mask writeback (LC-37) hold the
+		// literal redaction mask (httputil.RedactedMask), not a real secret.
+		// Encrypting the mask would only disguise the corruption — leave it
+		// plaintext so the operator can spot it and re-enter the credential.
+		if s.Value == "********" {
+			continue
+		}
+		d.db.Model(&models.SystemSetting{}).Where("key = ?", s.Key).
+			Updates(map[string]interface{}{
+				"value":     encryptField(s.Value, d.encKeys.current),
+				"is_secret": true,
+			})
 	}
 }

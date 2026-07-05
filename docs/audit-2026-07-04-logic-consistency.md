@@ -46,7 +46,7 @@ GetFlowStats picks ONE rollup interval per query window: `rollupInterval := "5m"
 
 ### LC-37 [HIGH] (server) — Settings save writes the '********' redaction mask over pagerduty_routing_key / opsgenie_api_key / webhook_secret — mask-skip exists only for smtp_password
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.25)
 
 **Location:** `internal/api/handlers/handlers_settings.go:261` · Dimension: config-settings
 
@@ -346,7 +346,7 @@ The Flows page has one shared filter row whose range pills set state.hours; the 
 
 ### LC-38 [MEDIUM] (server) — webhook_secret / pagerduty_routing_key / opsgenie_api_key are stored plaintext, contradicting the code's own encrypted-at-rest contract
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.25)
 
 **Location:** `internal/api/handlers/handlers_settings.go:297` · Dimension: config-settings
 
@@ -358,7 +358,7 @@ settingsSecretKeys is documented as 'the source of truth for which system_settin
 
 ### LC-39 [MEDIUM] (server) — Env-configured T2 incident channels (PAGERDUTY_ROUTING_KEY / OPSGENIE_API_KEY / TEAMS_WEBHOOK_URL / WEBHOOK_SECRET) deliver real alerts but the Test buttons report 'not configured' — getNotificationSetting fallback never extended
 
-**Status:** OPEN
+**Status:** RESOLVED (server v0.11.25)
 
 **Location:** `internal/api/handlers/handlers_settings.go:368` · Dimension: config-settings
 

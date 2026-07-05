@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.25] - 2026-07-04
+
+### Fixed — settings secrets (audit LC-37..39)
+- **Saving settings no longer overwrites T2 channel secrets with the redaction mask** (LC-37, HIGH — same class as the v0.10.324 SNMP-community incident): the `********` skip existed only for `smtp_password`; `pagerduty_routing_key`, `opsgenie_api_key`, and `webhook_secret` were silently corrupted on every settings save. One canonical secret-key set (`database.SecretSettingKeys`) now drives redaction-on-read, masked-write skip, and encryption — a future secret added to the set is covered everywhere automatically.
+- **T2 channel secrets are encrypted at rest** (LC-38): the `{enc}` encryption applied only to `smtp_password` despite the code's own encrypted-at-rest contract; encryption is now driven by secret-set membership, and the existing startup self-heal lazily upgrades legacy plaintext rows (idempotent, advisory-lock-gated; rows already corrupted to `********` by the LC-37 bug are deliberately left visible for re-entry rather than encrypted into a plausible blob).
+- **Test buttons agree with delivery for env-configured channels** (LC-39): `PAGERDUTY_ROUTING_KEY` / `OPSGENIE_API_KEY` / `TEAMS_WEBHOOK_URL` / `WEBHOOK_SECRET` delivered real alerts but the admin Test buttons said "not configured" — `getNotificationSetting`'s DB→env fallback now covers all four, so test and delivery resolve identically.
+- Regression tests: masked-write skip for every secret key (with a fixture-completeness guard), at-rest `{enc}` assertions, legacy-plaintext backfill, env-fallback + DB-wins precedence.
+
 ## [0.11.24] - 2026-07-04
 
 ### Fixed — retention & schema consistency (audit LC-19..23)

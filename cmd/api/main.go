@@ -36,7 +36,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.24"
+const ServerVersion = "0.11.25"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -688,6 +688,17 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/tokens":                    true,
 			"/admin/api/tokens/:id":                true,
 			"/admin/api/probes/:id/regenerate-key": true,
+			// LC-17: IRC server/channel config carries credential material
+			// (server/NickServ/SASL passwords, channel keys) and the test
+			// endpoint dials an arbitrary request-supplied host with request-
+			// supplied credentials — same class as settings/test-email and
+			// settings/test-webhook above. Connect/disconnect/send/commands
+			// stay operator-level (day-to-day ops, no credential exposure).
+			"/admin/api/irc/servers":      true,
+			"/admin/api/irc/servers/:id":  true,
+			"/admin/api/irc/servers/test": true,
+			"/admin/api/irc/channels":     true,
+			"/admin/api/irc/channels/:id": true,
 		},
 	))
 	{

@@ -89,3 +89,12 @@ func NewDatabaseForTesting(t interface {
 
 	return &Database{db: db, dialect: sqliteDialect{}}
 }
+
+// SetEncryptionKeyForTesting installs an AES key derived from secret so that
+// tests outside this package (e.g. the API handlers) can assert real
+// encrypted-at-rest behavior ({enc} prefix in stored rows) instead of the
+// plaintext passthrough a keyless test Database gives. Test-only — this file
+// is build-tagged !production alongside NewDatabaseForTesting.
+func (d *Database) SetEncryptionKeyForTesting(secret string) {
+	d.encKeys = keyChain{current: deriveKey(secret)}
+}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/notifier"
@@ -25,14 +26,14 @@ import (
 
 // settingsSecretKeys is the source of truth for which system_settings rows
 // hold secret values that must be encrypted at rest and masked in API
-// responses. Defined at package scope so GetSettings, UpdateSettings, and
-// the startup backfill share one list. v0.10.226 (see CHANGELOG).
-var settingsSecretKeys = map[string]bool{
-	"smtp_password":         true,
-	"webhook_secret":        true,
-	"pagerduty_routing_key": true,
-	"opsgenie_api_key":      true,
-}
+// responses. The canonical list lives in internal/database
+// (database.SecretSettingKeys) so GetSettings, UpdateSettings, AND the
+// startup plaintext-encryption backfill (migrateEncryptSecrets) genuinely
+// share one list. v0.10.226 introduced the list; LC-37/LC-38 (2026-07-04
+// audit) centralized it — the invariant is that every key masked on read is
+// also skipped on masked write and encrypted on real write, so the three
+// consumers must never key off different sets.
+var settingsSecretKeys = database.SecretSettingKeys
 
 func (h *Handler) GetSettings(c *gin.Context) {
 	if h.db == nil {
@@ -58,7 +59,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 	// of truth here.
 	for i := range settings {
 		if settingsSecretKeys[settings[i].Key] {
-			settings[i].Value = "********"
+			settings[i].Value = httputil.RedactedMask
 		}
 	}
 
@@ -132,6 +133,19 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	var warnings []string
 	for _, s := range settings {
 		if !allowedKeys[s.Key] {
+			continue
+		}
+		// Skip masked secrets for EVERY secret key, not just smtp_password.
+		// LC-37 (2026-07-04 audit): GetSettings masks all settingsSecretKeys
+		// as httputil.RedactedMask, and the admin UI round-trips that mask on
+		// save — persisting it would overwrite the real webhook_secret /
+		// pagerduty_routing_key / opsgenie_api_key, the same "********"
+		// writeback class that silently broke a device's SNMP polling in
+		// v0.10.324 (see internal/httputil/redact.go). The guard lives
+		// OUTSIDE the per-key switch so a future secret added to
+		// settingsSecretKeys is covered automatically instead of needing
+		// another copy-paste of the skip.
+		if secretKeys[s.Key] && s.Value == httputil.RedactedMask {
 			continue
 		}
 		// Validate values by key type
@@ -259,10 +273,6 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		case "public_interfaces":
 			// No validation needed for JSON string settings
 		case "smtp_password":
-			// Skip masked passwords
-			if s.Value == "********" {
-				continue
-			}
 			// v0.10.224: trim and SURFACE the mutation. Silently mutating
 			// a secret is a footgun — if it didn't actually fix the
 			// auth problem, the operator now also has to debug why their
@@ -275,31 +285,38 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 				warnings = append(warnings, "Trimmed leading/trailing whitespace from smtp_password before encrypting — re-run the SMTP test to confirm the trim fixed the auth failure")
 				s.Value = trimmed
 			}
-			// Encrypt secret values before storage. AUDIT-026: gate on
-			// the secretKeys membership (the same source of truth that
-			// drives `s.IsSecret = true` below) rather than running
-			// the encryption unconditionally. The pre-fix behavior
-			// encrypted EVERY system_setting row on save, including
-			// non-secret thresholds / display preferences / boolean
-			// toggles. That was:
-			//   (a) wasteful — every write paid the AES-GCM cost
-			//       (CPU on the API path), and
-			//   (b) a footgun — it invited the v0.10.226 class of bug
-			//       where a non-secret row would surface as
-			//       `{enc}<base64>` from a consumer that didn't expect
-			//       it. With this gate, a future field added to
-			//       allowedKeys but NOT to secretKeys is stored as
-			//       plaintext (the right default) and a future field
-			//       added to BOTH is encrypted.
-			// The empty-value short-circuit is preserved: encrypting ""
-			// would round-trip a fixed `{enc}...` blob for every blank
-			// input, which is noise.
-			if secretKeys[s.Key] && s.Value != "" && h.db != nil {
-				s.Value = h.db.EncryptField(s.Value)
-			}
 		}
+		// Encrypt secret values before storage. AUDIT-026: gate on
+		// the secretKeys membership (the same source of truth that
+		// drives `s.IsSecret = true`) rather than running the
+		// encryption unconditionally. The pre-fix behavior encrypted
+		// EVERY system_setting row on save, including non-secret
+		// thresholds / display preferences / boolean toggles. That was:
+		//   (a) wasteful — every write paid the AES-GCM cost
+		//       (CPU on the API path), and
+		//   (b) a footgun — it invited the v0.10.226 class of bug
+		//       where a non-secret row would surface as
+		//       `{enc}<base64>` from a consumer that didn't expect
+		//       it. With this gate, a future field added to
+		//       allowedKeys but NOT to secretKeys is stored as
+		//       plaintext (the right default) and a future field
+		//       added to BOTH is encrypted.
+		// LC-38 (2026-07-04 audit): this block used to sit INSIDE the
+		// smtp_password case, so the incident-channel secrets added in
+		// v0.11.x (webhook_secret / pagerduty_routing_key /
+		// opsgenie_api_key) never reached EncryptField and were persisted
+		// plaintext — silently, because DecryptField is idempotent for
+		// non-{enc} values on the read side. Hoisted after the switch so
+		// membership in secretKeys ALONE decides encryption, which is the
+		// behavior the comment above always promised.
+		// The empty-value short-circuit is preserved: encrypting ""
+		// would round-trip a fixed `{enc}...` blob for every blank
+		// input, which is noise.
 		if secretKeys[s.Key] {
 			s.IsSecret = true
+			if s.Value != "" && h.db != nil {
+				s.Value = h.db.EncryptField(s.Value)
+			}
 		}
 		validSettings = append(validSettings, s)
 	}
@@ -384,6 +401,24 @@ func (h *Handler) getNotificationSetting(key string) string {
 		return h.config.Alerts.DiscordWebhookURL
 	case "webhook_url":
 		return h.config.Alerts.WebHookURL
+	// LC-39 (2026-07-04 audit): the T2 incident channels are env-configurable
+	// (PAGERDUTY_ROUTING_KEY / OPSGENIE_API_KEY / TEAMS_WEBHOOK_URL /
+	// WEBHOOK_SECRET, loaded in internal/config) and real alert delivery runs
+	// off that env-seeded config, but this fallback was never extended past
+	// the pre-T2 channel set — so an env-only deployment delivered production
+	// alerts while the admin Test buttons reported "not configured" and the
+	// F18 test-signing path skipped the signature production applies. Same
+	// DB-non-empty-wins / env-fallback semantics the delivery path uses
+	// (AlertManager.RefreshThresholds overrides config only from non-empty
+	// DB rows).
+	case "webhook_secret":
+		return h.config.Alerts.WebhookSecret
+	case "pagerduty_routing_key":
+		return h.config.Alerts.PagerDutyRoutingKey
+	case "opsgenie_api_key":
+		return h.config.Alerts.OpsgenieAPIKey
+	case "teams_webhook":
+		return h.config.Alerts.TeamsWebhookURL
 	}
 	return ""
 }
