@@ -196,13 +196,44 @@ func (n *Notifier) SendAlert(alert *models.Alert, nc NotifyConfig) error {
 	return nil
 }
 
+// alertContextLines returns the "Device: <name> @ Site: <site>" and
+// "View: <url>" lines for an alert, omitting whatever isn't populated. Shared by
+// the text-oriented channels so every alert says WHERE it came from and links to
+// its detail view.
+func alertContextLines(alert *models.Alert) []string {
+	var out []string
+	switch {
+	case alert.DeviceName != "" && alert.SiteName != "":
+		out = append(out, "Device: "+alert.DeviceName+" @ Site: "+alert.SiteName)
+	case alert.DeviceName != "":
+		out = append(out, "Device: "+alert.DeviceName)
+	case alert.SiteName != "":
+		out = append(out, "Site: "+alert.SiteName)
+	}
+	if alert.DetailURL != "" {
+		out = append(out, "View: "+alert.DetailURL)
+	}
+	return out
+}
+
 // buildEmailSubjectBody renders the plain-text alert email. Header-bound values
-// (severity, alert type) are run through SanitizeHeader so a device-controlled
-// string can't fold a new header into the Subject line (AUDIT-014). Pure —
-// extracted from sendEmail for unit testing.
+// (severity, alert type, and the device/site names appended to the Subject) are
+// run through SanitizeHeader so a device-controlled string can't fold a new
+// header into the Subject line (AUDIT-014). Pure — extracted for unit testing.
 func buildEmailSubjectBody(alert *models.Alert) (subject, body string) {
 	subject = fmt.Sprintf("[%s] Firewall Alert: %s",
 		SanitizeHeader(string(alert.Severity)), SanitizeHeader(string(alert.AlertType)))
+	if alert.DeviceName != "" {
+		who := SanitizeHeader(alert.DeviceName)
+		if alert.SiteName != "" {
+			who += " @ " + SanitizeHeader(alert.SiteName)
+		}
+		subject += " — " + who
+	}
+	var ctx string
+	for _, l := range alertContextLines(alert) {
+		ctx += l + "\n"
+	}
 	body = fmt.Sprintf(`
 Firewall Monitoring Alert
 ===========================
@@ -210,7 +241,7 @@ Firewall Monitoring Alert
 Type: %s
 Severity: %s
 Time: %s
-Message: %s
+%sMessage: %s
 
 Metric: %s
 Current Value: %.2f
@@ -218,7 +249,7 @@ Threshold: %.2f
 
 This is an automated alert from your Firewall monitoring system.
 `, alert.AlertType, alert.Severity, alert.Timestamp.Format(time.RFC3339),
-		alert.Message, alert.MetricName, alert.CurrentValue, alert.Threshold)
+		ctx, alert.Message, alert.MetricName, alert.CurrentValue, alert.Threshold)
 	return subject, body
 }
 
@@ -268,18 +299,29 @@ func severityToSlackColor(sev models.Severity) string {
 // buildSlackPayload constructs the Slack incoming-webhook JSON body for an
 // alert. Pure — extracted from sendSlack so the wire shape is locked by tests.
 func buildSlackPayload(alert *models.Alert) map[string]interface{} {
+	fields := []map[string]interface{}{
+		{"title": "Severity", "value": alert.Severity, "short": true},
+		{"title": "Time", "value": alert.Timestamp.Format(time.RFC3339), "short": true},
+	}
+	if alert.DeviceName != "" {
+		fields = append(fields, map[string]interface{}{"title": "Device", "value": alert.DeviceName, "short": true})
+	}
+	if alert.SiteName != "" {
+		fields = append(fields, map[string]interface{}{"title": "Site", "value": alert.SiteName, "short": true})
+	}
+	text := alert.Message
+	if alert.DetailURL != "" {
+		text += "\n<" + alert.DetailURL + "|View alert>"
+	}
 	return map[string]interface{}{
 		"attachments": []map[string]interface{}{
 			{
 				"color":  severityToSlackColor(alert.Severity),
 				"title":  fmt.Sprintf("Firewall Alert: %s", alert.AlertType),
-				"text":   alert.Message,
+				"text":   text,
 				"footer": "Firewall Monitor",
 				"ts":     alert.Timestamp.Unix(),
-				"fields": []map[string]interface{}{
-					{"title": "Severity", "value": alert.Severity, "short": true},
-					{"title": "Time", "value": alert.Timestamp.Format(time.RFC3339), "short": true},
-				},
+				"fields": fields,
 			},
 		},
 	}
@@ -352,19 +394,30 @@ func severityToDiscordColor(sev models.Severity) int {
 // buildDiscordPayload constructs the Discord webhook JSON body for an alert.
 // Pure — extracted from sendDiscord so the wire shape is locked by tests.
 func buildDiscordPayload(alert *models.Alert) map[string]interface{} {
+	fields := []map[string]interface{}{
+		{"name": "Severity", "value": alert.Severity, "inline": true},
+	}
+	if alert.DeviceName != "" {
+		fields = append(fields, map[string]interface{}{"name": "Device", "value": alert.DeviceName, "inline": true})
+	}
+	if alert.SiteName != "" {
+		fields = append(fields, map[string]interface{}{"name": "Site", "value": alert.SiteName, "inline": true})
+	}
+	desc := alert.Message
+	if alert.DetailURL != "" {
+		desc += "\n[View alert](" + alert.DetailURL + ")"
+	}
 	return map[string]interface{}{
 		"embeds": []map[string]interface{}{
 			{
 				"title":       fmt.Sprintf("Firewall Alert: %s", alert.AlertType),
-				"description": alert.Message,
+				"description": desc,
 				"color":       severityToDiscordColor(alert.Severity),
 				"timestamp":   alert.Timestamp.Format(time.RFC3339),
 				"footer": map[string]interface{}{
 					"text": "Firewall Monitor",
 				},
-				"fields": []map[string]interface{}{
-					{"name": "Severity", "value": alert.Severity, "inline": true},
-				},
+				"fields": fields,
 			},
 		},
 	}
@@ -385,6 +438,11 @@ func buildWebhookPayload(alert *models.Alert) map[string]interface{} {
 		"metric_name":   alert.MetricName,
 		"threshold":     alert.Threshold,
 		"current_value": alert.CurrentValue,
+		// Identity + deep link so downstream automation knows WHERE and can link.
+		"device_id":   alert.DeviceID,
+		"device_name": alert.DeviceName,
+		"site_name":   alert.SiteName,
+		"url":         alert.DetailURL,
 	}
 }
 
