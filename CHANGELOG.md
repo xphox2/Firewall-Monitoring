@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.37] - 2026-07-05
+
+### Fixed
+- Tighten filesystem permissions in the new geo code to satisfy the gosec CI gate: the embedded-bundle cache dir and MaxMind live dir are created 0750 (G301), and the extracted `.mmdb` bundle files are written 0600 (G306).
+
 ## [0.11.36] - 2026-07-05
 
 ### Added

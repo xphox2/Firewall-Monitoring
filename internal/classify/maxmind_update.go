@@ -68,7 +68,7 @@ func (u *MaxMindUpdater) UpdateAll(ctx context.Context) (int, error) {
 	if u == nil {
 		return 0, nil
 	}
-	if err := os.MkdirAll(u.destDir, 0o755); err != nil {
+	if err := os.MkdirAll(u.destDir, 0o750); err != nil {
 		return 0, fmt.Errorf("geoip live dir %q: %w", u.destDir, err)
 	}
 	var firstErr error

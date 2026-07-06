@@ -33,7 +33,7 @@ func ensureBundle(cacheDir string) (string, error) {
 	if cacheDir == "" {
 		cacheDir = filepath.Join(os.TempDir(), "fwmon-geoip")
 	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return "", fmt.Errorf("geoip bundle cache dir: %w", err)
 	}
 	for _, name := range []string{bundledCountryDB, bundledASNDB} {
@@ -46,7 +46,7 @@ func ensureBundle(cacheDir string) (string, error) {
 			continue // already extracted, same size
 		}
 		tmp := dst + ".tmp"
-		if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		if err := os.WriteFile(tmp, data, 0o600); err != nil {
 			return "", fmt.Errorf("write %s: %w", name, err)
 		}
 		if err := os.Rename(tmp, dst); err != nil {
