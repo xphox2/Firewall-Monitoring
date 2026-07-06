@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.41] - 2026-07-05
+
+### Changed
+- The sFlow **Detections** card now has a **Show** button instead of inline **Ack**. "Show" opens a unified detail view that maps the detection and the raw sampled flows that triggered it into one place — detector/severity/category, the structured detection details, the src→dst route, and the actual matching flow samples (with country flag + ASN owner). If the detection was escalated to an alert, it links straight to that alert. Acknowledging now lives inside the detail modal, so dismissing a finding is a deliberate action taken after reviewing its context.
+
 ## [0.11.40] - 2026-07-05
 
 ### Changed
