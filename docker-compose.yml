@@ -39,10 +39,11 @@ services:
       # explicitly so continuity never depends on this directory. See
       # docs/OPERATIONS.md and CHANGELOG v0.10.480.
       - ${CONFIG_DIR:-./config}:/config
-      # Optional MaxMind GeoLite2 databases for sFlow geo/ASN enrichment. Only
-      # needed when GEOIP_ENABLED=true. Point GEOIP_DIR at a host dir holding
-      # GeoLite2-Country.mmdb + GeoLite2-ASN.mmdb. The .mmdb files are licensed
-      # and not shipped; default mount is a no-op empty dir when geo is disabled.
+      # Geo/ASN enrichment works out of the box from a free DB-IP Lite database
+      # embedded in the image — no mount required. This optional mount is the
+      # "live" override dir: databases here take precedence over the bundle. For
+      # the paid live-update path (MAXMIND_LICENSE_KEY), the updater WRITES here,
+      # so drop the ":ro" below (or point GEOIP_DIR at a writable host dir).
       - ${GEOIP_DIR:-./geoip}:/etc/firewall-mon/geoip:ro
     # AUDIT-096: explicit healthcheck in compose, redundant with the
     # HEALTHCHECK directive baked into the Dockerfile (v0.10.264). We

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.33] - 2026-07-05
+
+### Added
+- **MaxMind live geo updater wired up.** `internal/classify/maxmind_update.go` downloads the configured editions from MaxMind's `geoip_download` endpoint (same URL for free GeoLite2 and paid GeoIP2), verifies the `.sha256`, extracts the `.mmdb`, and writes it atomically into `GEOIP_DB_DIR`. A `geoip-update` goroutine in `cmd/api` runs an initial sync then repeats on `GEOIP_UPDATE_INTERVAL` (default weekly), reloading the resolver on success so new databases swap in without a restart. No-op when no license key is set. Note: for live updates the `GEOIP_DB_DIR` mount must be writable (drop `:ro` in docker-compose).
+
 ## [0.11.32] - 2026-07-05
 
 ### Added

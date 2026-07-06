@@ -17,6 +17,7 @@ import (
 	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/audit"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/classify"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/irc"
@@ -36,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.32"
+const ServerVersion = "0.11.33"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -333,10 +334,10 @@ func main() {
 		}
 	})
 
-	// Periodically hot-reload the GeoLite2 databases so a MaxMind update (written
-	// atomically via rename) applies to sFlow geo/ASN enrichment without a
-	// restart, and without unmapping a live reader under an in-flight lookup
-	// (audit L4). No-op when geo is disabled.
+	// Periodically hot-reload the geo databases so a freshly downloaded MaxMind
+	// update (written atomically via rename) applies to sFlow geo/ASN enrichment
+	// without a restart, and without unmapping a live reader under an in-flight
+	// lookup (audit L4). No-op when geo is disabled.
 	logging.SafeGo("geoip-reload", func() {
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
@@ -349,6 +350,37 @@ func main() {
 			}
 		}
 	})
+
+	// Optional paid live-update path: when MAXMIND_LICENSE_KEY is set, download the
+	// configured editions into GEOIP_DB_DIR on a schedule (they take precedence
+	// over the embedded free bundle). nil updater (no key) => the goroutine exits
+	// immediately. After each successful sync we reload so the new files swap in
+	// without waiting for the 6h reload tick.
+	if updater := classify.NewMaxMindUpdater(cfg.Server.MaxMindLicenseKey, cfg.Server.MaxMindAccountID, cfg.Server.MaxMindEditionIDs, cfg.Server.GeoIPDBDir); updater != nil {
+		logging.SafeGo("geoip-update", func() {
+			runUpdate := func() {
+				ctx, cancel := context.WithTimeout(bgCtx, 15*time.Minute)
+				defer cancel()
+				if n, err := updater.UpdateAll(ctx); n > 0 {
+					handler.ReloadGeoIP()
+					log.Printf("geoip-update: %d edition(s) refreshed", n)
+				} else if err != nil {
+					log.Printf("geoip-update: no editions refreshed: %v", err)
+				}
+			}
+			runUpdate() // initial sync shortly after startup
+			ticker := time.NewTicker(cfg.Server.GeoIPUpdateInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					runUpdate()
+				case <-bgCtx.Done():
+					return
+				}
+			}
+		})
+	}
 
 	// Real-time NOC dashboard broadcaster: one goroutine recomputes the snapshot
 	// on a ticker and fans it out to all connected SSE clients (handler.nocHub).
