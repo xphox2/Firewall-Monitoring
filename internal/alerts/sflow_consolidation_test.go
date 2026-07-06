@@ -108,6 +108,28 @@ func TestConsolidation_OneAlertPerSource_AcrossWinnerChange(t *testing.T) {
 	}
 }
 
+// TestConsolidation_PolicyRuleSeverityOverridesDetector: an explicit severity on
+// a matching policy rule wins over the detector's own severity — so an operator
+// can down/up-grade SFLOW_SECURITY from the Alert Policies editor.
+func TestConsolidation_PolicyRuleSeverityOverridesDetector(t *testing.T) {
+	am, db := newTestManager(t)
+	policy := models.AlertPolicy{
+		ID: 1, Name: "p", IsDefault: true,
+		Rules: []models.AlertRule{{PolicyID: 1, AlertType: "SFLOW_SECURITY", Enabled: true, Severity: "info"}},
+	}
+	installPolicyCache(am, &policy, nil)
+
+	// The detector rates this "warning"; the operator's rule says "info".
+	d := saveDet(t, db, secDet("1.2.3.4", "threat_intel", "warning"))
+	id := runSecurityCycle(t, am, []*models.FlowDetection{d})
+	if id == 0 {
+		t.Fatal("expected an alert")
+	}
+	if got := getAlert(t, db, id).Severity; got != "info" {
+		t.Fatalf("alert severity = %q, want info (policy rule must override the detector's warning)", got)
+	}
+}
+
 // TestConsolidation_SeverityEscalationBreaksCooldown: a mid-event critical must
 // fire immediately and raise the open alert, never be swallowed by the warning's
 // cooldown.
