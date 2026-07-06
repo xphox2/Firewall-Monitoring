@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.39] - 2026-07-05
+
+### Fixed
+- **sFlow alerts no longer show the device as "Unknown".** The security detectors (port_scan, super_spreader, data_exfil, threat_intel, c2_beacon) now attribute the exporter device (`MAX(device_id)` across the grouped flows), so detections and the alerts they raise carry the real device.
+- **One event is no longer duplicated across pages ("single feed").** A flow detection that escalates to an alert is now linked (`flow_detections.alert_id`) and removed from the sFlow detections card / NOC snapshot — it appears only on the Alerts page. Add `?all=true` to the detections endpoint to include alerted rows.
+- **Multiple detectors on the same source no longer spawn multiple alerts.** Security detections are consolidated per source into a single `SFLOW_SECURITY` alert (highest-severity/priority detector wins; all contributing detectors are linked and shown in the alert detail). Consolidation uses an event-level cooldown key so overlapping detection cycles don't re-fire; a strictly-higher severity mid-event escalates the open alert immediately (a critical is never swallowed by a warning's cooldown); and the open-alert lookup goes through the detection→alert link so a poller restart can't double-fire.
+
+### Added
+- **Alerts now say what and where.** Every notification channel (email, Slack, Discord, Teams, generic webhook, PagerDuty, Opsgenie) carries the device **name @ site** and a clickable **View alert** deep-link. New `PUBLIC_BASE_URL` setting builds the link (`<base>/admin/#alert/<id>`); the admin UI resolves `#alert/<id>` to open the alert detail. Email Subject includes the device name (header-sanitized). PagerDuty/Opsgenie dedup is keyed off the consolidated event so one event opens one incident.
+- Alerts list gains a **Site** column; the alert detail shows the site plus the flows/detectors behind the alert (src→dst) with a Threat-Intel cross-link.
+- sFlow flow samples now show a **country flag** + ISO code next to each address and an **ASN chip** whose tooltip reveals the owner company (captured at ingest via `ASNInfo`, only when the ASN came from the geo DB). CSV export gains country/ASN/org columns.
+
+### Migration
+- v32 `alert_flow_enrichment`: adds `flow_detections.alert_id` (+ partial index) and `flow_samples.src_asn_org` / `dst_asn_org`.
+
 ## [0.11.38] - 2026-07-05
 
 ### Fixed

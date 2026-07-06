@@ -58,18 +58,21 @@ func (d *Database) LinkFlowDetectionsToAlert(detectionIDs []uint, alertID uint) 
 // src-discriminating (won't cross-link two sources behind one device) and
 // detector-agnostic (survives a change in which detector "wins" the event).
 func (d *Database) FindOpenAlertForSource(srcAddr string, since time.Time) (*models.Alert, error) {
-	var ids []uint
-	if err := d.db.Model(&models.FlowDetection{}).
+	var det models.FlowDetection
+	err := d.db.
 		Where("src_addr = ? AND alert_id IS NOT NULL AND detected_at >= ?", srcAddr, since.UTC()).
-		Order("detected_at DESC").Limit(1).
-		Pluck("alert_id", &ids).Error; err != nil {
+		Order("detected_at DESC").First(&det).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 || ids[0] == 0 {
+	if det.AlertID == nil {
 		return nil, nil
 	}
 	var a models.Alert
-	err := d.db.Where("id = ? AND resolved_at IS NULL AND acknowledged = ?", ids[0], false).First(&a).Error
+	err = d.db.Where("id = ? AND resolved_at IS NULL AND acknowledged = ?", *det.AlertID, false).First(&a).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
