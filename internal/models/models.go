@@ -46,7 +46,12 @@ const (
 	// c2_beacon) collapse per-source into this single type so one event is one
 	// alert. Tunable in alert policies like any other type.
 	AlertTypeSFlowSecurity AlertType = "SFLOW_SECURITY"
-	AlertTypeTestAlert     AlertType = "TEST_ALERT"
+	// AlertTypeSFlowSecurityDigest is the cross-source STORM rollup (v0.11.46):
+	// when a detector flags >= the storm threshold distinct sources in one cycle
+	// (botnet scan / known-bad ASN) they collapse into ONE digest per (site,
+	// detector) instead of N per-source alerts.
+	AlertTypeSFlowSecurityDigest AlertType = "SFLOW_SECURITY_DIGEST"
+	AlertTypeTestAlert           AlertType = "TEST_ALERT"
 )
 
 // Severity is the typed enum of alert severities. Underlying values match the
@@ -305,6 +310,12 @@ type Alert struct {
 	SnoozedBy     string     `json:"snoozed_by,omitempty"`
 	SnoozedReason string     `json:"snoozed_reason,omitempty"`
 
+	// SourceAddr is the attacking source IP for SFLOW_SECURITY alerts (persisted,
+	// set at creation/escalation from the winner detection), so the "silence
+	// source" action and the UI/notifications don't depend on a fragile detection
+	// JOIN. NULL for non-flow alerts and for digests (many sources). Migration v33.
+	SourceAddr string `json:"source_addr,omitempty" gorm:"column:source_addr;size:45"`
+
 	// Transient (non-persisted) presentation fields, populated at read/notify
 	// time so alerts identify themselves clearly (device NAME + site) and link to
 	// a detail view. DeviceName/SiteName are resolved from DeviceID; DetailURL is
@@ -374,7 +385,13 @@ type AlertRule struct {
 	// flat baseline can't make trivial values alert.
 	Mode string `json:"mode" gorm:"default:static"`
 	// ZScoreK is the deviation multiplier for zscore mode (0 = default 3.0).
-	ZScoreK         float64   `json:"zscore_k"`
+	ZScoreK float64 `json:"zscore_k"`
+	// StormSources is the per-policy cross-source digest threshold override for
+	// the SFLOW_SECURITY_DIGEST rule (v0.11.46). NULLABLE *int on purpose (unlike
+	// CooldownMinutes' plain int) because the semantics differ: nil = inherit the
+	// global setting; a non-nil 0 = DISABLE the digest for this policy. A >0 guard
+	// (as CooldownMinutes uses) would wrongly make 0 mean inherit.
+	StormSources    *int      `json:"storm_sources" gorm:"column:storm_sources"`
 	NotifyEmail     *bool     `json:"notify_email"`
 	NotifySlack     *bool     `json:"notify_slack"`
 	NotifyDiscord   *bool     `json:"notify_discord"`
@@ -421,16 +438,21 @@ type DeviceAlertConfig struct {
 func (DeviceAlertConfig) TableName() string { return "device_alert_configs" }
 
 type SiteAlertConfig struct {
-	ID               uint      `json:"id" gorm:"primaryKey"`
-	SiteID           uint      `json:"site_id" gorm:"uniqueIndex;not null"`
-	PolicyID         *uint     `json:"policy_id" gorm:"index"`
-	CPUThreshold     float64   `json:"cpu_threshold"`
-	MemoryThreshold  float64   `json:"memory_threshold"`
-	DiskThreshold    float64   `json:"disk_threshold"`
-	SessionThreshold int       `json:"session_threshold"`
-	CooldownMinutes  int       `json:"cooldown_minutes"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               uint    `json:"id" gorm:"primaryKey"`
+	SiteID           uint    `json:"site_id" gorm:"uniqueIndex;not null"`
+	PolicyID         *uint   `json:"policy_id" gorm:"index"`
+	CPUThreshold     float64 `json:"cpu_threshold"`
+	MemoryThreshold  float64 `json:"memory_threshold"`
+	DiskThreshold    float64 `json:"disk_threshold"`
+	SessionThreshold int     `json:"session_threshold"`
+	CooldownMinutes  int     `json:"cooldown_minutes"`
+	// StormSources is the per-site cross-source digest threshold override
+	// (v0.11.46). Nullable *int: nil = inherit; non-nil 0 = disable the digest for
+	// this site (see AlertRule.StormSources for why it's a pointer, unlike the
+	// plain-int CooldownMinutes above).
+	StormSources *int      `json:"storm_sources" gorm:"column:storm_sources"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (SiteAlertConfig) TableName() string { return "site_alert_configs" }
@@ -1056,9 +1078,29 @@ type ThreatFeedStatus struct {
 	LastError    string    `json:"last_error" gorm:"size:512"`
 	LastSyncAt   time.Time `json:"last_sync_at"`
 	LastDuration int       `json:"last_duration_ms" gorm:"column:last_duration_ms"`
+	// Enabled is the admin toggle (v0.11.46). Disabling a feed purges its
+	// indicators and stops it syncing. Kept OUT of UpsertThreatFeedStatus's update
+	// set so periodic status syncs never clobber the operator's choice.
+	Enabled bool `json:"enabled" gorm:"default:true"`
 }
 
 func (ThreatFeedStatus) TableName() string { return "threat_feed_status" }
+
+// FlowSourceSuppression silences a specific attacking source IP for a window
+// (v0.11.46): while `SuppressedUntil` is in the future, that source raises no new
+// SFLOW_SECURITY / SFLOW_SECURITY_DIGEST alerts (its detections are acked so they
+// don't flood the NOC card). One active row per source (unique src_addr, upsert
+// extends the window).
+type FlowSourceSuppression struct {
+	ID               uint      `json:"id" gorm:"primaryKey"`
+	SrcAddr          string    `json:"src_addr" gorm:"column:src_addr;size:45;uniqueIndex"`
+	SuppressedUntil  time.Time `json:"suppressed_until" gorm:"index"`
+	SuppressedBy     string    `json:"suppressed_by" gorm:"size:255"`
+	SuppressedReason string    `json:"suppressed_reason" gorm:"type:text"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+func (FlowSourceSuppression) TableName() string { return "flow_source_suppressions" }
 
 // FlowInterfaceCounter is one sFlow interface counter sample (counters_sample /
 // if_counters) pushed by the collector — the agent-reported equivalent of the

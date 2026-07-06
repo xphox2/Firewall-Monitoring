@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.46] - 2026-07-06
+
+### Added
+- **Silence a specific attacker.** sFlow security alerts and the new storm digest now carry a **Silence** action (per source, default 24h, 1–720h) so a noisy scanner stops raising new alerts without acking it repeatedly. A per-source alert is acked when silenced; a digest offers **Silence all sources**. A **Silenced sources** panel on the Alerts page lists active silences with one-click un-silence. Silenced sources are dropped from the next detection cycle (their detections are acked so they don't flood the NOC card) and excluded from the storm count.
+- **Cross-source storm digest (`SFLOW_SECURITY_DIGEST`).** When a detector flags many distinct sources in one cycle (a botnet scan or a known-bad ASN sweep), they now collapse into ONE digest alert per (site, detector) instead of one alert per source. The digest names the top offenders (and the shared ASN/feed for a `threat_intel` storm), links every offending flow, and shows the distinct-source count. Sub-threshold sources still get individual alerts. The threshold is an admin-UI setting (**Security storm digest threshold**, default 25 distinct sources; 0 disables), overridable per policy and per site.
+- **Admin threat-feed controls (no redeploy).** The Threat Intelligence page gets a **master switch** to turn all feeds on/off and a **per-feed enable/disable** toggle. Disabling a feed immediately purges its indicators from matching (manual entries are kept); the master switch stops all matching while retaining rows for instant re-enable. Re-enabling repopulates within a few minutes on the poller's next sync. These are UI-managed settings, not environment variables.
+
+### Changed
+- **Longer default cadence for the noisy security alerts.** `SFLOW_SECURITY` and `SFLOW_SECURITY_DIGEST` now default to a **6-hour** re-fire cooldown (was 15 min) so a persistent or re-acked event reminds once per window instead of every cycle. Seeded as an editable Default-policy rule (migration v33 for existing installs) so it isn't shadowed by the policy-level cooldown; still overridable per policy/site/device. A strictly-higher severity (e.g. a warning escalating to critical) still bypasses the cooldown and pages immediately, and the open-alert lookback was widened to at least the cooldown so a source that goes quiet then resumes still folds into its existing alert.
+- Threat-feed status now reports the resolved master switch (admin-UI setting, env default) instead of the raw env value, and per-feed enabled state.
+
+### Migration
+- **v33 `feed_toggle_and_flow_suppress`** (idempotent): adds `flow_source_suppressions`, `threat_feed_status.enabled`, `alerts.source_addr`, and nullable `storm_sources` on `alert_rules`/`site_alert_configs`; seeds the Default policy's `SFLOW_SECURITY`/`SFLOW_SECURITY_DIGEST` 6h cadence rules.
+
 ## [0.11.45] - 2026-07-06
 
 ### Fixed

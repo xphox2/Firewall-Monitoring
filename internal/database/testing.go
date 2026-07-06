@@ -80,6 +80,8 @@ func NewDatabaseForTesting(t interface {
 		&models.ApiToken{},
 		&models.AdminRecoveryCode{},
 		&models.Incident{},
+		// v0.11.46: flow-source silencing table.
+		&models.FlowSourceSuppression{},
 	}
 
 	for _, m := range testModels {
