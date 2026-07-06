@@ -1756,6 +1756,22 @@
         </div>
     </div>
 
+    <!-- Flow Detection Detail Modal: opened from the "Show" button on the sFlow
+         detections card. Maps the detection + its underlying sampled flows (and a
+         link to the escalated alert, if any) into one view. -->
+    <div class="modal" id="flow-detection-modal" role="dialog" aria-modal="true" aria-labelledby="flow-detection-modal-title">
+        <div class="modal-content" style="width:820px;">
+            <div class="modal-header">
+                <h2 id="flow-detection-modal-title">Detection Detail</h2>
+                <button class="modal-close" data-action="close-flow-detection" aria-label="Close dialog">&times;</button>
+            </div>
+            <div id="flow-detection-body" style="color:var(--fwmon-text-dim);font-size:0.9rem;line-height:1.6;"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn secondary" data-action="close-flow-detection">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Incident Detail Modal (LC-35): opened from the INC#id chip on grouped
          alerts. Read-only view over GET /admin/api/incidents +
          /admin/api/incidents/:id/alerts. -->

@@ -265,9 +265,11 @@
         var convTable = document.getElementById('flows-conversations-table');
         if (convTable) convTable.addEventListener('click', onConversationClick);
 
-        // Detections panel — Ack buttons (event delegation)
+        // Detections panel — "Show" opens the detail modal (event delegation).
         var detBody = document.getElementById('flows-detections-body');
-        if (detBody) detBody.addEventListener('click', onDetectionAck);
+        if (detBody) detBody.addEventListener('click', onDetectionsShow);
+        var detModal = document.getElementById('flow-detection-modal');
+        if (detModal) detModal.addEventListener('click', onDetectionModalClick);
 
         // Threat Intelligence — add form + delete buttons (event delegation)
         var tiForm = document.getElementById('flows-ti-form');
@@ -602,6 +604,9 @@
     }
 
     var SEV_RANK = { critical: 0, warning: 1, info: 2 };
+    // Full detection rows keyed by id, so the "Show" detail view has everything
+    // without a re-fetch.
+    var detById = {};
 
     function renderDetections(rows) {
         var card = document.getElementById('flows-detections-card');
@@ -615,9 +620,11 @@
             if (ra !== rb) return ra - rb;
             return new Date(b.detected_at) - new Date(a.detected_at);
         });
+        detById = {};
         var html = '';
         for (var i = 0; i < rows.length; i++) {
             var r = rows[i];
+            detById[r.id] = r;
             var sev = r.severity || 'info';
             html += '<tr>' +
                 '<td><span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span></td>' +
@@ -625,7 +632,7 @@
                 '<td><code>' + esc(r.detector || '') + '</code></td>' +
                 '<td>' + esc(r.message || '') + '</td>' +
                 '<td title="' + esc(r.detected_at || '') + '">' + esc(detAgo(r.detected_at)) + '</td>' +
-                '<td><button type="button" class="fwmon-det-ack" data-det-id="' + esc(r.id) + '">Ack</button></td>' +
+                '<td><button type="button" class="fwmon-det-show" data-det-id="' + esc(r.id) + '">Show</button></td>' +
             '</tr>';
         }
         body.innerHTML = html;
@@ -644,20 +651,113 @@
         return Math.floor(s / 86400) + 'd ago';
     }
 
-    function onDetectionAck(ev) {
-        var btn = ev.target && ev.target.closest && ev.target.closest('.fwmon-det-ack');
+    // onDetectionsShow opens the unified detail view for a detection (the "Show"
+    // button replaced the old inline Ack — acknowledging now lives inside the
+    // detail modal, alongside the sampled-flow context).
+    function onDetectionsShow(ev) {
+        var btn = ev.target && ev.target.closest && ev.target.closest('.fwmon-det-show');
         if (!btn) return;
-        var id = btn.getAttribute('data-det-id');
-        if (!id) return;
+        showDetectionDetail(btn.getAttribute('data-det-id'));
+    }
+
+    // showDetectionDetail maps a detection + the sampled flows that triggered it
+    // (and a link to the escalated alert, if any) into one modal.
+    function showDetectionDetail(id) {
         var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        btn.disabled = true;
-        AC.apiFetch('/admin/api/flows/detections/' + encodeURIComponent(id) + '/ack', { method: 'POST' })
-            .then(function() { loadDetections(); })
-            .catch(function(e) {
-                console.error('FwmonFlows: ack failed', e);
-                btn.disabled = false;
-            });
+        var r = detById[id];
+        var body = document.getElementById('flow-detection-body');
+        if (!r || !AC || !body) return;
+
+        var sev = r.severity || 'info';
+        var route = esc(r.src_addr || '?') +
+            (r.dst_addr ? ' → ' + esc(r.dst_addr) : '') +
+            (r.dst_port ? ':' + esc(String(r.dst_port)) : '');
+        var detailsHtml = '';
+        try {
+            if (r.details) {
+                var d = JSON.parse(r.details);
+                detailsHtml = Object.keys(d).map(function(k) {
+                    return '<div><span style="color:var(--fwmon-text-faint);">' + esc(k) + ':</span> ' + esc(String(d[k])) + '</div>';
+                }).join('');
+            }
+        } catch (e) { /* details is best-effort */ }
+        var alertHtml = r.alert_id
+            ? '<a href="#alert/' + esc(String(r.alert_id)) + '" data-action="close-flow-detection" style="color:#58a6ff;">View alert #' + esc(String(r.alert_id)) + ' ↗</a>'
+            : '<span style="color:var(--fwmon-text-faint);">not escalated to an alert</span>';
+
+        body.innerHTML =
+            '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;margin-bottom:12px;">' +
+                '<div><span style="color:var(--fwmon-text-faint);">Severity:</span> <span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span></div>' +
+                '<div><span style="color:var(--fwmon-text-faint);">Detector:</span> <code>' + esc(r.detector || '') + '</code></div>' +
+                '<div><span style="color:var(--fwmon-text-faint);">Category:</span> ' + esc(r.category || '') + '</div>' +
+                '<div><span style="color:var(--fwmon-text-faint);">When:</span> ' + esc(formatDate(r.detected_at)) + '</div>' +
+                '<div><span style="color:var(--fwmon-text-faint);">Flow:</span> <span style="font-family:monospace;">' + route + '</span></div>' +
+                '<div><span style="color:var(--fwmon-text-faint);">Alert:</span> ' + alertHtml + '</div>' +
+            '</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);">Message:</span> ' + esc(r.message || '') + '</div>' +
+            (detailsHtml ? '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:10px;margin-bottom:12px;font-family:monospace;font-size:0.82rem;">' + detailsHtml + '</div>' : '') +
+            '<div style="color:var(--fwmon-text-faint);text-transform:uppercase;font-size:0.72rem;letter-spacing:0.04em;margin-bottom:6px;">Sampled flows</div>' +
+            '<div id="flow-detection-samples" style="max-height:40vh;overflow:auto;">Loading…</div>' +
+            '<div style="margin-top:14px;"><button type="button" class="btn sm" data-det-ack="' + esc(String(r.id)) + '">Acknowledge &amp; dismiss</button></div>';
+
+        AC.openModal('flow-detection-modal');
+        loadDetectionSamples(r);
+    }
+
+    // loadDetectionSamples fetches the raw sFlow samples behind a detection and
+    // renders them with country flag + ASN owner, inside the detail modal.
+    function loadDetectionSamples(r) {
+        var AC = window.AdminCommon;
+        var hours = Math.max(1, state.hours || 24);
+        var q = '/admin/api/flows/samples?limit=50&hours=' + encodeURIComponent(hours);
+        if (r.src_addr) q += '&src_addr=' + encodeURIComponent(r.src_addr);
+        if (r.dst_addr) q += '&dst_addr=' + encodeURIComponent(r.dst_addr);
+        if (r.dst_port) q += '&dst_port=' + encodeURIComponent(r.dst_port);
+        AC.apiFetch(q).then(function(res) {
+            var samples = (res && res.data) || [];
+            var el = document.getElementById('flow-detection-samples');
+            if (!el) return;
+            if (!samples.length) {
+                el.innerHTML = '<div style="color:var(--fwmon-text-faint);">No matching samples in the last ' + hours + 'h.</div>';
+                return;
+            }
+            var rowsHtml = samples.map(function(f) {
+                return '<tr>' +
+                    '<td>' + esc(formatDate(f.timestamp)) + '</td>' +
+                    '<td style="white-space:nowrap;">' + flagEmoji(f.src_country) + esc(f.src_addr) + ':' + esc(String(f.src_port)) + asnChip(f.src_asn, f.src_asn_org) + '</td>' +
+                    '<td style="white-space:nowrap;">' + flagEmoji(f.dst_country) + esc(f.dst_addr) + ':' + esc(String(f.dst_port)) + asnChip(f.dst_asn, f.dst_asn_org) + '</td>' +
+                    '<td>' + esc(protocolName(f.protocol)) + '</td>' +
+                    '<td class="num">' + formatBytes(f.bytes) + '</td>' +
+                    '<td class="num">' + (f.packets || 0).toLocaleString() + '</td>' +
+                '</tr>';
+            }).join('');
+            el.innerHTML = '<table class="fwmon-table"><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Proto</th><th>Bytes</th><th>Pkts</th></tr></thead><tbody>' + rowsHtml + '</tbody></table>';
+        }).catch(function(e) {
+            console.error('FwmonFlows: detection samples fetch failed', e);
+            var el = document.getElementById('flow-detection-samples');
+            if (el) el.innerHTML = '<div style="color:var(--fwmon-text-faint);">Failed to load samples.</div>';
+        });
+    }
+
+    // onDetectionModalClick handles the in-modal Close and Acknowledge actions.
+    function onDetectionModalClick(ev) {
+        var AC = window.AdminCommon;
+        if (!AC) return;
+        if (ev.target.closest('[data-action="close-flow-detection"]')) {
+            AC.closeModal('flow-detection-modal');
+            return;
+        }
+        var ackBtn = ev.target.closest('[data-det-ack]');
+        if (ackBtn) {
+            var id = ackBtn.getAttribute('data-det-ack');
+            ackBtn.disabled = true;
+            AC.apiFetch('/admin/api/flows/detections/' + encodeURIComponent(id) + '/ack', { method: 'POST' })
+                .then(function() { AC.closeModal('flow-detection-modal'); loadDetections(); })
+                .catch(function(e) {
+                    console.error('FwmonFlows: ack failed', e);
+                    ackBtn.disabled = false;
+                });
+        }
     }
 
     // ----------------------------------------------------------------------
