@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.48"
+const ServerVersion = "0.11.49"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -736,6 +736,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/threat-intel/feeds/:source": true,
 			"/admin/api/threat-intel/global":        true,
 			"/admin/api/threat-intel/storm-tuning":  true,
+			// v35: event-rule CRUD + tester. A suppress rule can silence security
+			// alerting, and the tester reads raw syslog content — admin-only.
+			"/admin/api/event-rules":      true,
+			"/admin/api/event-rules/:id":  true,
+			"/admin/api/event-rules/test": true,
 		},
 	))
 	{
@@ -945,6 +950,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.DELETE("/api/alert-policies/:id", handler.DeleteAlertPolicy)
 		admin.POST("/api/alert-policies/:id/clone", handler.CloneAlertPolicy)
 		admin.PUT("/api/alert-policies/:id/rules", handler.BatchUpsertAlertRules)
+
+		// Event rules (v35): unified vendor-aware alert/suppress rule engine.
+		admin.GET("/api/event-rules", handler.ListEventRules)
+		admin.POST("/api/event-rules", handler.CreateEventRule)
+		admin.POST("/api/event-rules/test", handler.TestEventRule)
+		admin.PUT("/api/event-rules/:id", handler.UpdateEventRule)
+		admin.DELETE("/api/event-rules/:id", handler.DeleteEventRule)
 
 		// Device/Site alert configs
 		admin.GET("/api/devices/:id/alert-config", handler.GetDeviceAlertConfig)

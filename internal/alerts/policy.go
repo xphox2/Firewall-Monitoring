@@ -134,6 +134,10 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 	am.mu.Lock()
 	am.policyCache = cache
 	am.mu.Unlock()
+
+	// Reload the event-rule engine on the same cadence (v35). Kept after the
+	// policy swap so a rule's resolveAlertConfig sees the fresh policy cache.
+	am.RefreshEventRules(db)
 }
 
 // resolveAlertConfig computes the effective alert configuration for a given device and alert type.

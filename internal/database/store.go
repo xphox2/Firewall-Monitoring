@@ -138,6 +138,13 @@ type AlertPolicyStore interface {
 	GetSiteAlertConfig(siteID uint) (*models.SiteAlertConfig, error)
 	UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error
 	DeleteSiteAlertConfig(siteID uint) error
+	// Event rules (v35): unified vendor-aware alert/suppress rule engine.
+	ListEventRules() ([]models.EventRule, error)
+	GetEventRule(id uint) (*models.EventRule, error)
+	CreateEventRule(r *models.EventRule) error
+	UpdateEventRule(r *models.EventRule) error
+	DeleteEventRule(id uint) error
+	RecentSyslogForTest(limit int) ([]models.SyslogMessage, error)
 }
 
 // MaintenanceWindowStore covers scheduled maintenance windows.

@@ -141,13 +141,14 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save syslog messages", err)
 		return
 	}
-	// Fire alerts for critical syslog messages (severity 0-2)
+	// Evaluate every message against the event-rule engine (v35). The old outer
+	// `severity <= 2` gate is gone — content-matching rules must see all
+	// severities (e.g. sev-3/4 FortiGate VPN errors). The engine fast-paths when
+	// no rules are loaded, so this stays cheap on the syslog hot path.
 	if h.alertManager != nil {
 		for i := range filtered {
-			if filtered[i].Severity <= 2 {
-				if err := h.alertManager.ProcessSyslog(&filtered[i], nil); err != nil {
-					log.Printf("Failed to process syslog alert: %v", err)
-				}
+			if err := h.alertManager.ProcessSyslog(&filtered[i], nil); err != nil {
+				log.Printf("Failed to process syslog alert: %v", err)
 			}
 		}
 	}
