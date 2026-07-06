@@ -271,12 +271,6 @@
         var detModal = document.getElementById('flow-detection-modal');
         if (detModal) detModal.addEventListener('click', onDetectionModalClick);
 
-        // Threat Intelligence — add form + delete buttons (event delegation)
-        var tiForm = document.getElementById('flows-ti-form');
-        if (tiForm) tiForm.addEventListener('submit', onThreatIntelSubmit);
-        var tiBody = document.getElementById('flows-ti-body');
-        if (tiBody) tiBody.addEventListener('click', onThreatIntelDelete);
-
         // View tabs (Conversations / Flow Samples) — switching is pure show/hide;
         // both data sources are already fetched on every reload, so no re-fetch.
         var viewTabs = document.getElementById('flows-view-tabs');
@@ -456,7 +450,6 @@
         scheduleStats();
         scheduleSamples();
         loadDetections();
-        loadThreatIntel();
     }
 
     function refresh() { reload(); }
@@ -744,123 +737,6 @@
                     ackBtn.disabled = false;
                 });
         }
-    }
-
-    // ----------------------------------------------------------------------
-    // Threat Intelligence — manage the known-bad address feed (CIDR/IP)
-    // ----------------------------------------------------------------------
-    function loadThreatIntel() {
-        var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        AC.apiFetch('/admin/api/flows/threat-intel?limit=500').then(function(result) {
-            renderThreatIntel((result && result.data) || {});
-        }).catch(function(e) {
-            window.fwmonLog.error('FwmonFlows: threat-intel fetch failed', e);
-        });
-    }
-
-    function renderThreatIntel(d) {
-        var statusEl = document.getElementById('flows-ti-status');
-        var body = document.getElementById('flows-ti-body');
-        var rows = (d && d.entries) || [];
-        if (statusEl) {
-            var active = (d && d.active_count) || 0;
-            var loaded = (d && d.loaded_count) || 0;
-            if (d && d.feeds_enabled === false && active === 0) {
-                statusEl.textContent = 'online feeds disabled — set THREAT_FEEDS_ENABLED=true (manual entries still work)';
-            } else {
-                statusEl.textContent = active + ' active · ' + loaded + ' loaded in matcher';
-            }
-        }
-        if (!body) return;
-        if (!rows.length) {
-            body.innerHTML = '<tr><td colspan="6" class="fwmon-ti-empty">No entries. Add a CIDR/IP above to start flagging known-bad traffic.</td></tr>';
-            return;
-        }
-        var html = '';
-        for (var i = 0; i < rows.length; i++) {
-            var r = rows[i];
-            var sev = r.severity || 'warning';
-            html += '<tr>' +
-                '<td><code>' + esc(r.cidr || '') + '</code></td>' +
-                '<td>' + esc(r.category || '') + '</td>' +
-                '<td>' + esc(r.source || '') + '</td>' +
-                '<td><span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span></td>' +
-                '<td title="' + esc(r.expires_at || '') + '">' + esc(tiExpiry(r.expires_at)) + '</td>' +
-                '<td><button type="button" class="fwmon-det-ack fwmon-ti-del" data-ti-id="' + esc(r.id) + '">Delete</button></td>' +
-            '</tr>';
-        }
-        body.innerHTML = html;
-    }
-
-    // tiExpiry formats the expiry as a short date, or "never" when unset.
-    function tiExpiry(iso) {
-        if (!iso) return 'never';
-        var t = new Date(iso);
-        if (isNaN(t.getTime())) return 'never';
-        return t.toISOString().slice(0, 10);
-    }
-
-    function onThreatIntelSubmit(ev) {
-        ev.preventDefault();
-        var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        var errEl = document.getElementById('flows-ti-error');
-        var btn = document.getElementById('ti-add-btn');
-        var cidr = (val('ti-cidr') || '').trim();
-        if (!cidr) return;
-        var body = {
-            cidr: cidr,
-            category: val('ti-category'),
-            severity: val('ti-severity'),
-            source: (val('ti-source') || '').trim() || 'manual'
-        };
-        var exp = val('ti-expires');
-        if (exp) {
-            var d = new Date(exp + 'T00:00:00Z');
-            if (!isNaN(d.getTime())) body.expires_at = d.toISOString();
-        }
-        if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
-        if (btn) btn.disabled = true;
-        AC.apiFetch('/admin/api/flows/threat-intel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        }).then(function() {
-            var f = document.getElementById('ti-cidr'); if (f) f.value = '';
-            var s = document.getElementById('ti-source'); if (s) s.value = '';
-            var e = document.getElementById('ti-expires'); if (e) e.value = '';
-            loadThreatIntel();
-        }).catch(function(err) {
-            if (errEl) {
-                errEl.textContent = (err && err.message) ? err.message : 'Failed to add entry — check the CIDR/IP.';
-                errEl.hidden = false;
-            }
-        }).then(function() {
-            if (btn) btn.disabled = false;
-        });
-    }
-
-    // val reads an input/select value by element id.
-    function val(id) {
-        var el = document.getElementById(id);
-        return el ? el.value : '';
-    }
-
-    function onThreatIntelDelete(ev) {
-        var btn = ev.target && ev.target.closest && ev.target.closest('.fwmon-ti-del');
-        if (!btn) return;
-        var id = btn.getAttribute('data-ti-id');
-        if (!id) return;
-        var AC = window.AdminCommon;
-        if (!AC || !AC.apiFetch) return;
-        btn.disabled = true;
-        AC.apiFetch('/admin/api/flows/threat-intel/' + encodeURIComponent(id), { method: 'DELETE' })
-            .then(function() { loadThreatIntel(); })
-            .catch(function(e) {
-                window.fwmonLog.error('FwmonFlows: threat-intel delete failed', e);
-                btn.disabled = false;
-            });
     }
 
     // ----------------------------------------------------------------------

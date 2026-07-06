@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.47"
+const ServerVersion = "0.11.48"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -893,7 +893,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)
 		admin.GET("/api/noc/snapshot", handler.GetNOCSnapshot)
-		admin.GET("/api/flows/threat-intel", handler.GetThreatIntel)
+		// Manual threat-intel add/delete are shared with the dedicated Threat
+		// Intelligence page (/admin/threat-intel); listing lives there via
+		// /api/threat-intel/search. The Flows page no longer has feed UI, so the
+		// old GET /api/flows/threat-intel listing endpoint was removed.
 		admin.POST("/api/flows/threat-intel", handler.AddThreatIntel)
 		admin.DELETE("/api/flows/threat-intel/:id", handler.DeleteThreatIntel)
 		admin.GET("/api/threat-intel/search", handler.SearchThreatIntel)
