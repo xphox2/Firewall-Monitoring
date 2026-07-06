@@ -68,6 +68,12 @@ type FlowStatsResult struct {
 	// double-counts every byte, so the UI warns (Tranche 3 dual-export
 	// visibility; the collector-side dedup policy normally prevents this).
 	MixedSourceDevices []string `json:"mixed_source_devices,omitempty"`
+	// GeoEnabled / GeoSource describe whether geo/ASN enrichment is active and
+	// where the database comes from, so the UI can show the Top Countries / ASNs
+	// cards with a meaningful state instead of hiding them silently. Set by the
+	// handler (the DB layer doesn't know the runtime geo config).
+	GeoEnabled bool   `json:"geo_enabled"`
+	GeoSource  string `json:"geo_source,omitempty"`
 }
 
 // GetMixedFlowSourceDevices returns the names of devices whose last hour of

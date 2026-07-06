@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.35] - 2026-07-05
+
+### Added
+- **Threat-intel API surface for the new admin page.** `GET /admin/api/threat-intel/lookup?q=<ip|AS####>` returns geo (country + ASN/org for an IP) plus the threat verdict (known-bad by IP prefix and/or ASN reputation, with source metadata) — the first HTTP surface for the resolver + matcher. `GET /admin/api/threat-intel/search` returns filtered, paginated entries (q/source/category/severity/active + offset/limit + total). `GET /admin/api/threat-intel/feeds` returns per-source feed status + interval/TTL/loaded counts.
+- Manual threat-intel entries (`POST /admin/api/flows/threat-intel`) now also accept an AS number (`AS64496`) for ad-hoc ASN blocking.
+
+### Changed
+- `GET /admin/api/flows/threat-intel` now includes `feeds_enabled`; `GET /admin/api/flows/stats` now includes `geo_enabled` + `geo_source` so the UI can render the geo cards with a meaningful disabled/source state instead of hiding them.
+
 ## [0.11.34] - 2026-07-05
 
 ### Added

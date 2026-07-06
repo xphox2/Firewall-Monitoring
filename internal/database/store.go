@@ -196,9 +196,13 @@ type EventStatsStore interface {
 	GetDeviceAlertSeverities() (map[uint]string, error)
 	GetActiveThreatIntel() ([]models.ThreatIntel, error)
 	ListThreatIntel(limit int) ([]models.ThreatIntel, error)
+	SearchThreatIntel(f ThreatIntelFilter, offset, limit int) ([]models.ThreatIntel, int64, error)
 	CountActiveThreatIntel() (int64, error)
+	CountThreatIntelBySource() ([]ThreatIntelSourceCount, error)
 	UpsertThreatIntel(e *models.ThreatIntel) error
 	DeleteThreatIntel(id uint) error
+	ListThreatFeedStatus() ([]models.ThreatFeedStatus, error)
+	UpsertThreatFeedStatus(s *models.ThreatFeedStatus) error
 }
 
 // IngestStore covers the probe-ingestion write path and batch idempotency.

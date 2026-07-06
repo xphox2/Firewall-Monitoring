@@ -440,6 +440,11 @@ func (h *Handler) GetFlowStats(c *gin.Context) {
 	// on the indexed (device_id, timestamp) prefix; failure is non-fatal.
 	stats.MixedSourceDevices = db.GetMixedFlowSourceDevices()
 
+	// Surface geo enrichment state so the UI renders the Top Countries / ASNs
+	// cards with a "disabled" / source hint instead of hiding them silently.
+	stats.GeoEnabled = h.config.Server.GeoIPEnabled
+	stats.GeoSource = h.geoResolver.Source()
+
 	c.JSON(http.StatusOK, response.Success(stats))
 }
 
@@ -513,10 +518,130 @@ func (h *Handler) GetThreatIntel(c *gin.Context) {
 	}
 	active, _ := db.CountActiveThreatIntel()
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"entries":      rows,
-		"active_count": active,
-		"loaded_count": h.threatMatch.Len(),
+		"entries":       rows,
+		"active_count":  active,
+		"loaded_count":  h.threatMatch.Len(),
+		"feeds_enabled": h.config.ThreatFeed.Enabled,
 	}))
+}
+
+// SearchThreatIntel returns a filtered, paginated page of threat-intel entries
+// for the admin Threat Intelligence page (manual search). Query params: q
+// (substring on cidr/AS), source, category, severity, active (bool),
+// offset, limit.
+func (h *Handler) SearchThreatIntel(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	f := database.ThreatIntelFilter{
+		Query:      strings.TrimSpace(c.Query("q")),
+		Source:     strings.TrimSpace(c.Query("source")),
+		Category:   strings.TrimSpace(c.Query("category")),
+		Severity:   strings.TrimSpace(c.Query("severity")),
+		ActiveOnly: c.Query("active") == "true" || c.Query("active") == "1",
+	}
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	limit := 100
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 {
+		limit = l
+	}
+	rows, total, err := db.SearchThreatIntel(f, offset, limit)
+	if err != nil {
+		httputil.InternalError(c, "Failed to search threat intel", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"entries": rows, "total": total, "offset": offset, "limit": limit,
+	}))
+}
+
+// LookupThreatIntel resolves a single IP or ASN (?q=) into geo + threat context
+// for the admin lookup tool: country, ASN + org (for an IP), and whether it is
+// known-bad (by IP prefix and/or ASN reputation) with the matching source
+// metadata. This is the first HTTP surface for the resolver + matcher.
+func (h *Handler) LookupThreatIntel(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		c.JSON(http.StatusBadRequest, response.Error("q (an IP or AS number) is required"))
+		return
+	}
+	out := gin.H{"query": q, "geo_enabled": h.config.Server.GeoIPEnabled}
+
+	if asn, ok := parseASNQuery(q); ok {
+		// ASN lookup: reputation only (no geo for a bare ASN).
+		out["kind"] = "asn"
+		out["asn"] = asn
+		if hit, bad := h.threatMatch.MatchASN(asn); bad {
+			out["known_bad"] = true
+			out["threat"] = gin.H{"scope": "asn", "category": hit.Category, "severity": hit.Severity}
+		} else {
+			out["known_bad"] = false
+		}
+		c.JSON(http.StatusOK, response.Success(out))
+		return
+	}
+
+	if _, err := netip.ParseAddr(q); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("q must be a valid IP address or AS number"))
+		return
+	}
+	out["kind"] = "ip"
+	out["country"] = h.geoResolver.Country(q)
+	asn, org := h.geoResolver.ASNInfo(q)
+	out["asn"] = asn
+	out["asn_org"] = org
+	scopes := []gin.H{}
+	if hit, bad := h.threatMatch.Match(q); bad {
+		scopes = append(scopes, gin.H{"scope": "ip", "category": hit.Category, "severity": hit.Severity})
+	}
+	if asn != 0 {
+		if hit, bad := h.threatMatch.MatchASN(asn); bad {
+			scopes = append(scopes, gin.H{"scope": "asn", "category": hit.Category, "severity": hit.Severity})
+		}
+	}
+	out["known_bad"] = len(scopes) > 0
+	out["threats"] = scopes
+	c.JSON(http.StatusOK, response.Success(out))
+}
+
+// GetThreatFeeds returns the per-source feed status (last sync, counts, errors)
+// joined with runtime config (enabled, interval, TTL) and the active by-source
+// indicator counts, for the admin feeds panel.
+func (h *Handler) GetThreatFeeds(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	status, err := db.ListThreatFeedStatus()
+	if err != nil {
+		httputil.InternalError(c, "Failed to list feed status", err)
+		return
+	}
+	bySource, _ := db.CountThreatIntelBySource()
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"feeds_enabled": h.config.ThreatFeed.Enabled,
+		"interval":      h.config.ThreatFeed.Interval.String(),
+		"ttl_days":      h.config.ThreatFeed.TTLDays,
+		"loaded_count":  h.threatMatch.Len(),
+		"status":        status,
+		"by_source":     bySource,
+	}))
+}
+
+// parseASNQuery accepts "AS64496"/"as64496" (not a bare number, which is
+// ambiguous with other inputs) and returns the numeric ASN.
+func parseASNQuery(s string) (uint32, bool) {
+	if len(s) < 3 || (s[0] != 'A' && s[0] != 'a') || (s[1] != 'S' && s[1] != 's') {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(s[2:]), 10, 32)
+	if err != nil || n == 0 {
+		return 0, false
+	}
+	return uint32(n), true
 }
 
 // AddThreatIntel upserts one threat-intel feed entry (keyed by cidr+source) and
@@ -595,9 +720,12 @@ func (h *Handler) DeleteThreatIntel(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(gin.H{"deleted": true}))
 }
 
-// validThreatCIDR accepts a CIDR ("10.0.0.0/8") or a bare IP ("10.0.0.1"),
-// matching what threatintel.New parses.
+// validThreatCIDR accepts a CIDR ("10.0.0.0/8"), a bare IP ("10.0.0.1"), or an
+// AS number ("AS64496") — matching what threatintel.New parses.
 func validThreatCIDR(s string) bool {
+	if _, ok := parseASNQuery(s); ok {
+		return true
+	}
 	if _, err := netip.ParsePrefix(s); err == nil {
 		return true
 	}
@@ -605,10 +733,14 @@ func validThreatCIDR(s string) bool {
 	return err == nil
 }
 
-// canonicalThreatCIDR returns the masked, canonical form of a validated CIDR/IP
-// so it matches exactly what the matcher enforces (L22). A bare IP becomes a
-// host prefix (/32 or /128). Assumes the input already passed validThreatCIDR.
+// canonicalThreatCIDR returns the canonical form of a validated CIDR/IP/AS so it
+// matches exactly what the matcher enforces (L22). A bare IP becomes a host
+// prefix (/32 or /128); an AS number is upper-cased to "AS<n>". Assumes the
+// input already passed validThreatCIDR.
 func canonicalThreatCIDR(s string) string {
+	if asn, ok := parseASNQuery(s); ok {
+		return "AS" + strconv.FormatUint(uint64(asn), 10)
+	}
 	if p, err := netip.ParsePrefix(s); err == nil {
 		return p.Masked().String()
 	}
