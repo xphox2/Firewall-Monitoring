@@ -73,6 +73,9 @@ type NotifyConfig struct {
 	// PolicyActive indicates whether these flags came from a resolved policy.
 	// When false, SendAlert uses the legacy global-config behaviour.
 	PolicyActive bool
+	// BaseURL is the externally-reachable base URL (PUBLIC_BASE_URL) used to build
+	// clickable "view alert" deep-links in notifications. Empty = omit the link.
+	BaseURL string
 }
 
 type Notifier struct {
@@ -114,6 +117,7 @@ func SnapshotConfig(cfg *config.AlertsConfig) NotifyConfig {
 		PagerDutyRoutingKey: cfg.PagerDutyRoutingKey,
 		OpsgenieAPIKey:      cfg.OpsgenieAPIKey,
 		TeamsWebhookURL:     cfg.TeamsWebhookURL,
+		BaseURL:             cfg.PublicBaseURL,
 	}
 }
 

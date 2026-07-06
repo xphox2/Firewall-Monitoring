@@ -349,7 +349,7 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	am.saveAlert(&alert)
 	if !alert.Suppressed {
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-		if err := am.notifier.SendAlert(&alert, nc); err != nil {
+		if err := am.notify(&alert, nc); err != nil {
 			return fmt.Errorf("failed to send trap alert: %w", err)
 		}
 	}
@@ -464,25 +464,54 @@ func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) e
 	am.saveAlert(&alert)
 	if !alert.Suppressed {
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-		if err := am.notifier.SendAlert(&alert, nc); err != nil {
+		if err := am.notify(&alert, nc); err != nil {
 			return fmt.Errorf("failed to send syslog alert: %w", err)
 		}
 	}
 	return nil
 }
 
-// ProcessFlowDetection turns a persisted sFlow detection-engine finding into an
-// alert, reusing the same cooldown / policy-resolution / notify machinery as
-// ProcessSyslog and ProcessTrap. The AlertType is "SFLOW_" + the uppercased
-// detector name (e.g. SFLOW_CLEARTEXT), so operators can tune these in alert
-// policies like any other type. Observe-mode: the detector's own severity is
-// honored (detectors ship at info/warning to avoid fatigue) rather than forcing
-// the policy default. The detection is already persisted by the caller; this
-// only handles alerting, so a suppressed/cooled-down finding still shows in the
-// NOC's detections list.
-func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *uint) error {
+// securityEventLinkLookback bounds how far back FindOpenAlertForSource scans for
+// a source's most-recent linked detection. Detection cycles run every few
+// minutes while an event persists, so a recent linked detection always exists
+// inside this window; the open+unacked filter on the alert bounds the rest.
+const securityEventLinkLookback = 2 * time.Hour
+
+// securityDetectorPriority ranks the security detectors so ProcessSecurityEvent
+// can pick a single "winner" when several fire on the same source with equal
+// severity. Higher = more authoritative / higher-confidence.
+var securityDetectorPriority = map[string]int{
+	"threat_intel":   5,
+	"port_scan":      4,
+	"data_exfil":     3,
+	"super_spreader": 2,
+	"c2_beacon":      1,
+}
+
+// severityRank maps a severity to an ordinal so escalation can compare them.
+func severityRank(s models.Severity) int {
+	switch s {
+	case "critical":
+		return 2
+	case "warning":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// ProcessFlowDetection fires an alert for a single, non-consolidated flow
+// detection (the operational/policy detectors: cleartext, egress, capacity, …).
+// Security detections are consolidated per-source by ProcessSecurityEvent
+// instead. It returns the id of the alert that now represents this detection —
+// freshly created, or the still-open one it folded into by cooldown — so the
+// caller can stamp flow_detections.alert_id ("single feed"). Returns 0 when
+// nothing represents it (alerting disabled, or cooldown-suppressed with no open
+// alert to link to).
+func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *uint) (uint, error) {
 	alertType := models.AlertType("SFLOW_" + strings.ToUpper(det.Detector))
 	key := "flowdet_" + det.DedupKey
+	metric := "sflow_" + det.Detector
 
 	am.mu.Lock()
 	now := time.Now()
@@ -496,8 +525,13 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	}
 	am.mu.Unlock()
 
+	if !resolved.AlertEnabled {
+		return 0, nil
+	}
 	if !canSend {
-		return nil
+		// Cooldown-suppressed: link to the still-open alert for this
+		// (device, type, metric) so the detection stays off the sFlow card.
+		return am.openAlertID(det.DeviceID, alertType, metric, now, cooldown), nil
 	}
 
 	sev := models.Severity(det.Severity)
@@ -511,7 +545,7 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 		AlertType:    alertType,
 		Severity:     sev,
 		Message:      det.Message,
-		MetricName:   "sflow_" + det.Detector,
+		MetricName:   metric,
 		CurrentValue: det.Score,
 		PolicyID:     resolved.PolicyID,
 		Suppressed:   resolved.InMaintenance,
@@ -520,11 +554,186 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 	am.saveAlert(&alert)
 	if !alert.Suppressed {
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-		if err := am.notifier.SendAlert(&alert, nc); err != nil {
-			return fmt.Errorf("failed to send flow detection alert: %w", err)
+		if err := am.notify(&alert, nc); err != nil {
+			return alert.ID, fmt.Errorf("failed to send flow detection alert: %w", err)
 		}
 	}
-	return nil
+	return alert.ID, nil
+}
+
+// ProcessSecurityEvent consolidates all security detections for one source in a
+// detection cycle into a SINGLE alert (the "single feed"). group must be
+// non-empty and every member shares the same SrcAddr. It returns the id of the
+// alert representing the event so the caller can link every detection to it.
+//
+// Correctness (see the alerts-overhaul plan):
+//   - event-level cooldown key `flowsec_<src>`, independent of which detector won
+//     (so the 15-min/5-min overlapping cycles don't re-fire when the winner changes);
+//   - the open-alert lookup goes through the detection→alert LINK (src-discriminating,
+//     detector-agnostic) and is therefore also the restart-proof DB gate;
+//   - a strictly-higher severity BREAKS the cooldown and escalates immediately, so a
+//     mid-event critical is never swallowed.
+func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, siteID *uint) (uint, error) {
+	if len(group) == 0 {
+		return 0, nil
+	}
+	winner := group[0]
+	deviceID := winner.DeviceID
+	for _, d := range group {
+		if d.DeviceID != 0 {
+			deviceID = d.DeviceID // informational attribution; NOT part of the key
+		}
+		if betterSecurityWinner(d, winner) {
+			winner = d
+		}
+	}
+	src := winner.SrcAddr
+	eventKey := "flowsec_" + src
+	alertType := models.AlertType("SFLOW_SECURITY")
+	metric := "sflow_" + winner.Detector
+
+	now := time.Now()
+	resolved := am.resolveAlertConfig(deviceID, siteID, alertType)
+	if !resolved.AlertEnabled {
+		return 0, nil
+	}
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	newSev := models.Severity(winner.Severity)
+	if newSev == "" {
+		newSev = resolved.Severity
+	}
+
+	// Find this event's still-open alert via the detection→alert link.
+	existing, _ := am.db.FindOpenAlertForSource(src, now.Add(-securityEventLinkLookback))
+	if existing != nil {
+		if severityRank(newSev) > severityRank(existing.Severity) {
+			// Escalation: raise severity and re-notify immediately (break cooldown)
+			// so a mid-event critical is never lost inside a warning's window.
+			existing.Severity = newSev
+			existing.Message = winner.Message
+			existing.MetricName = metric
+			existing.EventKey = eventKey
+			if am.db != nil {
+				am.db.Gorm().Model(&models.Alert{}).Where("id = ?", existing.ID).Updates(map[string]any{
+					"severity":         newSev,
+					"message":          winner.Message,
+					"metric_name":      metric,
+					"timestamp":        winner.DetectedAt,
+					"escalation_count": existing.EscalationCount + 1,
+				})
+			}
+			am.mu.Lock()
+			am.recordCooldownLocked(eventKey, now, cooldown)
+			am.mu.Unlock()
+			if !existing.Suppressed {
+				nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+				if err := am.notify(existing, nc); err != nil {
+					return existing.ID, fmt.Errorf("failed to send escalated sflow alert: %w", err)
+				}
+			}
+		} else {
+			// Same-or-lower recurrence of an open event: fold in silently.
+			am.mu.Lock()
+			am.recordCooldownLocked(eventKey, now, cooldown)
+			am.mu.Unlock()
+		}
+		return existing.ID, nil
+	}
+
+	// No open alert for this source. Gate on the event cooldown (the link lookup
+	// above already covered the DB/restart case).
+	am.mu.Lock()
+	canSend := am.canAlertWithCooldown(eventKey, now, cooldown)
+	if canSend {
+		am.recordCooldownLocked(eventKey, now, cooldown)
+	}
+	am.mu.Unlock()
+	if !canSend {
+		return 0, nil
+	}
+
+	alert := models.Alert{
+		Timestamp:    winner.DetectedAt,
+		DeviceID:     deviceID,
+		AlertType:    alertType,
+		Severity:     newSev,
+		Message:      winner.Message,
+		MetricName:   metric,
+		CurrentValue: winner.Score,
+		PolicyID:     resolved.PolicyID,
+		Suppressed:   resolved.InMaintenance,
+		EventKey:     eventKey,
+	}
+	am.saveAlert(&alert)
+	if !alert.Suppressed {
+		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+		if err := am.notify(&alert, nc); err != nil {
+			return alert.ID, fmt.Errorf("failed to send sflow security alert: %w", err)
+		}
+	}
+	return alert.ID, nil
+}
+
+// betterSecurityWinner reports whether cand should replace cur as the event's
+// representative detection: higher severity, else higher detector priority.
+func betterSecurityWinner(cand, cur *models.FlowDetection) bool {
+	cr, ur := severityRank(models.Severity(cand.Severity)), severityRank(models.Severity(cur.Severity))
+	if cr != ur {
+		return cr > ur
+	}
+	return securityDetectorPriority[cand.Detector] > securityDetectorPriority[cur.Detector]
+}
+
+// openAlertID returns the id of the still-open alert matching
+// (device, type, metric) within the cooldown window, or 0. Used to link a
+// cooldown-suppressed detection to the alert already representing it.
+func (am *AlertManager) openAlertID(deviceID uint, alertType models.AlertType, metricName string, ref time.Time, cooldown time.Duration) uint {
+	if am.db == nil || cooldown <= 0 {
+		return 0
+	}
+	var a models.Alert
+	if err := am.db.Gorm().
+		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND timestamp > ?",
+			deviceID, alertType, metricName, ref.Add(-cooldown)).
+		Order("timestamp DESC").First(&a).Error; err != nil {
+		return 0
+	}
+	return a.ID
+}
+
+// notify enriches an alert with presentation fields (device name, site, detail
+// URL) and sends it. EVERY alert notification funnels through here so all
+// channels — including the escalation/recovery paths that build alerts from DB
+// rows with empty transient fields — carry identity + a deep link.
+func (am *AlertManager) notify(alert *models.Alert, nc notifier.NotifyConfig) error {
+	am.enrichAlert(alert, nc.BaseURL)
+	return am.notifier.SendAlert(alert, nc)
+}
+
+// enrichAlert populates the transient DeviceName/SiteName/DetailURL fields so an
+// alert clearly identifies where it came from and links to its detail view.
+func (am *AlertManager) enrichAlert(alert *models.Alert, baseURL string) {
+	if alert == nil || am.db == nil {
+		return
+	}
+	if alert.DeviceName == "" && alert.DeviceID != 0 {
+		if dev, err := am.db.GetDevice(alert.DeviceID); err == nil && dev != nil {
+			alert.DeviceName = dev.Name
+			if dev.Site != nil {
+				alert.SiteName = dev.Site.Name
+			}
+		}
+	}
+	// Probe-sourced alert with no device: fall back to the probe name.
+	if alert.DeviceName == "" && alert.ProbeID != nil {
+		if p, err := am.db.GetProbe(*alert.ProbeID); err == nil && p != nil {
+			alert.DeviceName = p.Name
+		}
+	}
+	if alert.DetailURL == "" && baseURL != "" && alert.ID != 0 {
+		alert.DetailURL = baseURL + "/admin/#alert/" + strconv.FormatUint(uint64(alert.ID), 10)
+	}
 }
 
 // canAlertWithCooldown reports whether the per-key cooldown has elapsed.
@@ -887,7 +1096,7 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 	// response stats and companion queries rely on.
 	notifyAlert := alert
 	notifyAlert.MetricName = metricName
-	if err := am.notifier.SendAlert(&notifyAlert, nc); err != nil {
+	if err := am.notify(&notifyAlert, nc); err != nil {
 		log.Printf("Failed to send recovery notification: %v", err)
 	}
 }
@@ -937,7 +1146,7 @@ func (am *AlertManager) dispatchFired(fired []firedEntry, globalNC notifier.Noti
 		am.saveAlert(&fired[i].alert)
 		if !fired[i].alert.Suppressed && !incidentMuted {
 			nc := BuildNotifyConfigFromResolved(fired[i].resolved, globalNC)
-			if err := am.notifier.SendAlert(&fired[i].alert, nc); err != nil {
+			if err := am.notify(&fired[i].alert, nc); err != nil {
 				log.Printf("Failed to send %s alert %s: %v", label, fired[i].alert.AlertType, err)
 			}
 		}
@@ -1044,7 +1253,7 @@ func (am *AlertManager) CheckDeviceOffline(device *models.Device) error {
 	am.saveAlert(&alert)
 	if !alert.Suppressed {
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-		if err := am.notifier.SendAlert(&alert, nc); err != nil {
+		if err := am.notify(&alert, nc); err != nil {
 			log.Printf("Failed to send device offline alert: %v", err)
 		}
 	}
@@ -1108,7 +1317,7 @@ func (am *AlertManager) CheckSSHHostKeyChanged(device *models.Device, newFP stri
 	am.saveAlert(&alert)
 	if !alert.Suppressed {
 		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-		if err := am.notifier.SendAlert(&alert, nc); err != nil {
+		if err := am.notify(&alert, nc); err != nil {
 			log.Printf("Failed to send SSH host-key change alert: %v", err)
 		}
 	}
@@ -1291,7 +1500,7 @@ func (am *AlertManager) CheckProbeDataFlow() error {
 		am.saveAlert(&alert)
 		if !alert.Suppressed {
 			nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-			if err := am.notifier.SendAlert(&alert, nc); err != nil {
+			if err := am.notify(&alert, nc); err != nil {
 				log.Printf("Failed to send probe data lag alert: %v", err)
 			}
 		}
@@ -1333,7 +1542,7 @@ func (am *AlertManager) RecordProbeDataTruncation(probeID uint, probeName string
 	}
 
 	am.saveAlert(&alert)
-	if err := am.notifier.SendAlert(&alert, nc); err != nil {
+	if err := am.notify(&alert, nc); err != nil {
 		log.Printf("Failed to send probe truncation alert: %v", err)
 	}
 }
@@ -1433,7 +1642,7 @@ func (am *AlertManager) CheckEscalations() {
 				nc := stepNotifyConfig(steps[i], resolvedShape, globalNC)
 				escalatedAlert := alert
 				escalatedAlert.Message = fmt.Sprintf("[ESCALATION step %d/%d] %s", i+1, len(steps), alert.Message)
-				if err := am.notifier.SendAlert(&escalatedAlert, nc); err != nil {
+				if err := am.notify(&escalatedAlert, nc); err != nil {
 					log.Printf("CheckEscalations: step %d send failed for alert %d: %v", i+1, alert.ID, err)
 					break // retry this step next cycle; don't skip ahead
 				}
@@ -1459,7 +1668,7 @@ func (am *AlertManager) CheckEscalations() {
 		escalatedAlert := alert
 		escalatedAlert.Message = fmt.Sprintf("[ESCALATION %d/%d] %s", alert.EscalationCount+1, policy.EscalationRepeat, alert.Message)
 
-		if err := am.notifier.SendAlert(&escalatedAlert, nc); err != nil {
+		if err := am.notify(&escalatedAlert, nc); err != nil {
 			log.Printf("CheckEscalations: failed to send escalation for alert %d: %v", alert.ID, err)
 			continue
 		}

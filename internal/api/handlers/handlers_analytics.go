@@ -467,7 +467,11 @@ func (h *Handler) GetFlowDetections(c *gin.Context) {
 		}
 	}
 	unacked := c.Query("unacked") == "true"
-	rows, err := db.GetRecentDetections(since, limit, unacked)
+	// Single feed: by default the detections card shows only detections that did
+	// NOT escalate to an alert (those live on the Alerts page). ?all=true includes
+	// alerted detections for debugging.
+	includeAlerted := c.Query("all") == "true"
+	rows, err := db.GetRecentDetections(since, limit, unacked, includeAlerted)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get flow detections", err)
 		return

@@ -198,7 +198,7 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 	// Fleet-only signals: detections, probe counts, threat-intel, and the site
 	// breakdown. Omitted on a filtered drill-down.
 	if !filtered {
-		if dets, err := d.GetRecentDetections(time.Now().Add(-15*time.Minute), 15, false); err == nil {
+		if dets, err := d.GetRecentDetections(time.Now().Add(-15*time.Minute), 15, false, false); err == nil {
 			snap.Detections = dets
 		}
 		if probes, err := d.GetAllProbes(); err == nil {

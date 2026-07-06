@@ -412,20 +412,63 @@ func (p *Poller) runFlowDetectionCycle() {
 	if len(detections) == 0 {
 		return
 	}
-	fired := 0
+	// Persist every finding first (the NOC keeps sub-threshold signal).
+	saved := make([]*models.FlowDetection, 0, len(detections))
 	for i := range detections {
 		if err := p.db.SaveFlowDetection(&detections[i]); err != nil {
 			log.Printf("flow-detect: save %s: %v", detections[i].Detector, err)
 			continue
 		}
-		if p.alertManager != nil {
-			if err := p.alertManager.ProcessFlowDetection(&detections[i], nil); err != nil {
-				log.Printf("flow-detect: alert %s: %v", detections[i].Detector, err)
-			}
-		}
-		fired++
+		saved = append(saved, &detections[i])
 	}
-	log.Printf("flow-detect: %d detection(s) persisted", fired)
+	if p.alertManager == nil {
+		log.Printf("flow-detect: %d detection(s) persisted", len(saved))
+		return
+	}
+
+	// Single feed: split into security detections (consolidated to ONE alert per
+	// source) and the rest (one alert per detection). Any detection that maps to
+	// an alert is linked (flow_detections.alert_id) so it drops off the sFlow
+	// detections card and appears only on the Alerts page.
+	securityBySrc := map[string][]*models.FlowDetection{}
+	var others []*models.FlowDetection
+	for _, d := range saved {
+		if d.Category == string(detect.CategorySecurity) {
+			securityBySrc[d.SrcAddr] = append(securityBySrc[d.SrcAddr], d)
+		} else {
+			others = append(others, d)
+		}
+	}
+
+	link := func(ids []uint, alertID uint, what string) {
+		if alertID == 0 {
+			return
+		}
+		if err := p.db.LinkFlowDetectionsToAlert(ids, alertID); err != nil {
+			log.Printf("flow-detect: link %s: %v", what, err)
+		}
+	}
+
+	for _, d := range others {
+		alertID, err := p.alertManager.ProcessFlowDetection(d, nil)
+		if err != nil {
+			log.Printf("flow-detect: alert %s: %v", d.Detector, err)
+		}
+		link([]uint{d.ID}, alertID, d.Detector)
+	}
+
+	for src, group := range securityBySrc {
+		alertID, err := p.alertManager.ProcessSecurityEvent(group, nil)
+		if err != nil {
+			log.Printf("flow-detect: security event %s: %v", src, err)
+		}
+		ids := make([]uint, 0, len(group))
+		for _, d := range group {
+			ids = append(ids, d.ID)
+		}
+		link(ids, alertID, "security "+src)
+	}
+	log.Printf("flow-detect: %d detection(s) persisted", len(saved))
 }
 
 // runThreatFeedSync fetches the configured free open-source bad-IP lists and
