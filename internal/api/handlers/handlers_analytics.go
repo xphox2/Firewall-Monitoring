@@ -567,36 +567,6 @@ func (h *Handler) AckFlowDetection(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(gin.H{"acknowledged": true}))
 }
 
-// GetThreatIntel returns the threat-intel feed (known-bad CIDRs) for the admin
-// view, plus the active (non-expired) count and the in-memory matcher's live
-// prefix count — a quick way to confirm the ingest path is actually using the
-// feed. Newest-first, capped at ?limit (default 500).
-func (h *Handler) GetThreatIntel(c *gin.Context) {
-	db := h.reqDB(c)
-	if db == nil {
-		c.JSON(http.StatusOK, response.Success(nil))
-		return
-	}
-	limit := 500
-	if l := c.Query("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 5000 {
-			limit = v
-		}
-	}
-	rows, err := db.ListThreatIntel(limit)
-	if err != nil {
-		httputil.InternalError(c, "Failed to list threat intel", err)
-		return
-	}
-	active, _ := db.CountActiveThreatIntel()
-	c.JSON(http.StatusOK, response.Success(gin.H{
-		"entries":       rows,
-		"active_count":  active,
-		"loaded_count":  h.threatMatch.Len(),
-		"feeds_enabled": db.GetBoolSetting("threat_feeds_enabled", h.config.ThreatFeed.Enabled),
-	}))
-}
-
 // SearchThreatIntel returns a filtered, paginated page of threat-intel entries
 // for the admin Threat Intelligence page (manual search). Query params: q
 // (substring on cidr/AS), source, category, severity, active (bool),

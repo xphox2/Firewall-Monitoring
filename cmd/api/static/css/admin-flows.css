@@ -605,33 +605,8 @@
 .fwmon-noc-det-summary { cursor: pointer; list-style: none; padding: 4px 0; }
 .fwmon-noc-det-summary::-webkit-details-marker { display: none; }
 
-/* Threat Intelligence management card (v0.10.511) — collapsible feed editor. */
-.fwmon-ti-card {
-    margin-top: 16px;
-}
-.fwmon-ti-summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    cursor: pointer;
-    list-style: none;
-}
-.fwmon-ti-summary::-webkit-details-marker { display: none; }
-.fwmon-ti-summary::before {
-    content: "▸";
-    color: var(--fwmon-text-faint);
-    font-size: 0.8rem;
-    margin-right: 6px;
-}
-.fwmon-ti-card[open] .fwmon-ti-summary::before { content: "▾"; }
-.fwmon-ti-status {
-    margin-left: auto;
-    color: var(--fwmon-text-muted, #9ca3af);
-    font-size: 0.74rem;
-    font-family: var(--fwmon-font-mono);
-}
-.fwmon-ti-body { margin-top: 14px; }
+/* Threat-intel form bits — now used ONLY by the dedicated Threat Intelligence
+   page (/admin/threat-intel); the Flows page's feed card was removed. */
 .fwmon-ti-form {
     display: flex;
     flex-wrap: wrap;
@@ -640,7 +615,6 @@
     margin-bottom: 12px;
 }
 .fwmon-ti-form .fwmon-flows-input { min-width: 0; }
-.fwmon-ti-form #ti-cidr { flex: 1 1 220px; }
 .fwmon-ti-date { flex: 0 0 auto; }
 .fwmon-ti-error {
     color: #fb7185;

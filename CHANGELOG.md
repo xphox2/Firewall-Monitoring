@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.48] - 2026-07-06
+
+### Changed
+- **Threat-feed curation lives in exactly one place now — the dedicated Threat Intelligence page (`/admin/threat-intel`).** The Flows page carried a duplicate "Threat Intelligence" card (feed status, manual add form, indicator table with delete) that overlapped the dedicated page created in v0.11.36. Removed that card and its JS from the Flows page. The Flows page keeps what is genuinely flow analytics: per-flow threat **flagging** (`threat_flag`) and the **Detections** card.
+
+### Removed
+- Dead `GET /admin/api/flows/threat-intel` listing endpoint and its `GetThreatIntel` handler — it was only ever called by the removed Flows-page card. The dedicated page lists indicators via `GET /admin/api/threat-intel/search`. The shared `POST`/`DELETE /admin/api/flows/threat-intel` manual add/delete endpoints remain (used by the dedicated page).
+
 ## [0.11.47] - 2026-07-06
 
 ### Fixed
