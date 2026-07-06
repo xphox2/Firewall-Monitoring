@@ -67,6 +67,7 @@ func (d *Database) migrateBaseline() error {
 		&models.ProcessedBatch{},
 		&models.FlowDetection{},
 		&models.ThreatIntel{},
+		&models.ThreatFeedStatus{},
 		&models.FlowInterfaceCounter{},
 	}
 
@@ -1135,6 +1136,14 @@ func (d *Database) migrateFlowGeoIPColumns() error {
 // not partitioned — its row volume is bounded (detectors × targets × cycles).
 func (d *Database) migrateFlowDetectionsTable() error {
 	return d.db.AutoMigrate(&models.FlowDetection{})
+}
+
+// migrateThreatFeedStatusTable (v31) creates the threat_feed_status table that
+// records per-source feed outcomes for the admin Threat Intelligence page.
+// AutoMigrate is idempotent and cross-dialect; the table is tiny (one row per
+// feed source).
+func (d *Database) migrateThreatFeedStatusTable() error {
+	return d.db.AutoMigrate(&models.ThreatFeedStatus{})
 }
 
 // migrateThreatIntelAndFlowThreatFlag (v14) creates the threat_intel feed table

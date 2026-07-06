@@ -44,11 +44,16 @@ type DetectConfig struct {
 // from free open-source bad-IP lists (THREAT_FEEDS_* env). Opt-in: the server
 // makes no outbound feed requests unless Enabled is set.
 type ThreatFeedConfig struct {
-	Enabled       bool          // THREAT_FEEDS_ENABLED (default false — opt-in external egress)
+	Enabled       bool          // THREAT_FEEDS_ENABLED (default true — curated free public feeds)
 	Interval      time.Duration // THREAT_FEEDS_INTERVAL (default 12h)
 	TTLDays       int           // THREAT_FEEDS_TTL_DAYS — entries expire if not re-fed (default 14)
 	ExtraURLs     string        // THREAT_FEEDS_EXTRA_URLS — CSV of name|url|category|severity to add to the defaults
 	DisableBundle bool          // THREAT_FEEDS_DISABLE_BUNDLE — if true, use ONLY ExtraURLs (skip the built-in list)
+	// AuthHeader is an optional HTTP header applied to EVERY feed fetch (built-in
+	// and extra), formatted "Name: value" — e.g. "Authorization: Bearer <token>"
+	// — so a user can plug in a paid/commercial subscription endpoint that
+	// requires an API key. Empty = no header (the default free feeds need none).
+	AuthHeader string // THREAT_FEEDS_AUTH_HEADER
 }
 
 type ServerConfig struct {
@@ -83,16 +88,33 @@ type ServerConfig struct {
 	// advisory lock before giving up, so a graceful predecessor mid-shutdown
 	// doesn't trigger a false refuse (AUDIT-040).
 	APISingletonLockWait time.Duration
-	// GeoIPEnabled turns on MaxMind GeoLite2 enrichment of sFlow flows
-	// (src/dst country + ASN), looked up at ingest. Default false: the .mmdb
-	// files are licensed and not shipped, so geo enrichment is opt-in. When
-	// off, the country/asn columns stay empty and the Flows page hides the
-	// geo widgets.
+	// GeoIPEnabled turns on geo/ASN enrichment of sFlow flows (src/dst country
+	// + ASN), looked up at ingest. Default TRUE: a free DB-IP Lite database is
+	// embedded in the binary, so enrichment works out of the box. Set false to
+	// disable entirely (columns stay empty, Flows geo widgets hide).
 	GeoIPEnabled bool
-	// GeoIPDBDir is the directory holding GeoLite2-Country.mmdb and
-	// GeoLite2-ASN.mmdb. In Docker this is a volume mount. Only consulted when
-	// GeoIPEnabled is true.
+	// GeoIPDBDir is the "live" directory the optional paid MaxMind updater
+	// writes into (GeoIP2/GeoLite2 .mmdb). Files here take precedence over the
+	// embedded bundle. In Docker this is a volume mount.
 	GeoIPDBDir string
+	// GeoIPCacheDir is a writable directory the embedded DB-IP Lite bundle is
+	// extracted to (geoip2 memory-maps real files). Empty = a per-OS temp
+	// subdir. Distinct from GeoIPDBDir, which may be a read-only mount.
+	GeoIPCacheDir string
+	// MaxMindLicenseKey enables the paid live-update path: when set, the server
+	// downloads the configured editions from MaxMind and writes them into
+	// GeoIPDBDir (which then wins over the bundle). Empty = stay on the bundle.
+	MaxMindLicenseKey string
+	// MaxMindAccountID accompanies the license key for the Basic-auth form of
+	// the download endpoint (optional for the query-param form).
+	MaxMindAccountID string
+	// MaxMindEditionIDs is the comma-separated edition list to download
+	// (e.g. "GeoLite2-Country,GeoLite2-ASN" for a free key, or
+	// "GeoIP2-City,GeoIP2-ISP" for a paid key).
+	MaxMindEditionIDs string
+	// GeoIPUpdateInterval is how often the live updater re-downloads. MaxMind
+	// refreshes ~twice weekly, so weekly is a sensible default.
+	GeoIPUpdateInterval time.Duration
 }
 
 type SNMPConfig struct {
@@ -330,8 +352,13 @@ func Load() *Config {
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
 			CookieSameSite:       getEnv("COOKIE_SAMESITE", "Strict"),
 			AllowMultiAPI:        getBoolEnv("ALLOW_MULTI_API", false),
-			GeoIPEnabled:         getBoolEnv("GEOIP_ENABLED", false),
+			GeoIPEnabled:         getBoolEnv("GEOIP_ENABLED", true),
 			GeoIPDBDir:           getEnv("GEOIP_DB_DIR", "/etc/firewall-mon/geoip"),
+			GeoIPCacheDir:        getEnv("GEOIP_CACHE_DIR", ""),
+			MaxMindLicenseKey:    getEnv("MAXMIND_LICENSE_KEY", ""),
+			MaxMindAccountID:     getEnv("MAXMIND_ACCOUNT_ID", ""),
+			MaxMindEditionIDs:    getEnv("MAXMIND_EDITION_IDS", "GeoLite2-Country,GeoLite2-ASN"),
+			GeoIPUpdateInterval:  getDurationEnv("GEOIP_UPDATE_INTERVAL", 7*24*time.Hour),
 			APISingletonLockWait: getDurationEnv("API_SINGLETON_LOCK_WAIT", 10*time.Second),
 		},
 		SNMP: SNMPConfig{
@@ -413,11 +440,12 @@ func Load() *Config {
 			CapacityThreshold:  getFloatEnv("DETECT_CAPACITY_THRESHOLD", 0),
 		},
 		ThreatFeed: ThreatFeedConfig{
-			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", false),
+			Enabled:       getBoolEnv("THREAT_FEEDS_ENABLED", true),
 			Interval:      getDurationEnv("THREAT_FEEDS_INTERVAL", 12*time.Hour),
 			TTLDays:       getIntEnv("THREAT_FEEDS_TTL_DAYS", 14),
 			ExtraURLs:     getEnv("THREAT_FEEDS_EXTRA_URLS", ""),
 			DisableBundle: getBoolEnv("THREAT_FEEDS_DISABLE_BUNDLE", false),
+			AuthHeader:    getEnv("THREAT_FEEDS_AUTH_HEADER", ""),
 		},
 		Auth: AuthConfig{
 			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),

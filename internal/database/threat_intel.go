@@ -120,3 +120,81 @@ func (d *Database) CountActiveThreatIntel() (int64, error) {
 func (d *Database) DeleteThreatIntel(id uint) error {
 	return d.db.Where("id = ?", id).Delete(&models.ThreatIntel{}).Error
 }
+
+// ThreatIntelFilter constrains a SearchThreatIntel query. Empty fields are
+// ignored. ActiveOnly restricts to non-expired rows.
+type ThreatIntelFilter struct {
+	Query      string // substring match on cidr (IP/CIDR/AS number)
+	Source     string
+	Category   string
+	Severity   string
+	ActiveOnly bool
+}
+
+// SearchThreatIntel returns a filtered, paginated page of threat-intel rows
+// (newest-first) plus the total number of rows matching the filter (for
+// pagination). limit is clamped to [1,5000]; offset is clamped to >= 0.
+func (d *Database) SearchThreatIntel(f ThreatIntelFilter, offset, limit int) ([]models.ThreatIntel, int64, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := d.db.Model(&models.ThreatIntel{})
+	if f.Query != "" {
+		q = q.Where("cidr LIKE ?", "%"+f.Query+"%")
+	}
+	if f.Source != "" {
+		q = q.Where("source = ?", f.Source)
+	}
+	if f.Category != "" {
+		q = q.Where("category = ?", f.Category)
+	}
+	if f.Severity != "" {
+		q = q.Where("severity = ?", f.Severity)
+	}
+	if f.ActiveOnly {
+		q = q.Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC())
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []models.ThreatIntel
+	err := q.Order("created_at DESC").Offset(offset).Limit(limit).Find(&rows).Error
+	return rows, total, err
+}
+
+// ThreatIntelSourceCount is one row of the by-source active-count aggregation.
+type ThreatIntelSourceCount struct {
+	Source string `json:"source"`
+	Count  int64  `json:"count"`
+}
+
+// CountThreatIntelBySource returns the active (non-expired) indicator count per
+// source, for the admin feeds summary.
+func (d *Database) CountThreatIntelBySource() ([]ThreatIntelSourceCount, error) {
+	var out []ThreatIntelSourceCount
+	err := d.db.Model(&models.ThreatIntel{}).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
+		Select("source, COUNT(*) as count").
+		Group("source").Order("count DESC").Scan(&out).Error
+	return out, err
+}
+
+// UpsertThreatFeedStatus records the outcome of one feed's most recent fetch,
+// keyed by source (one row per feed). Used by the poller after each sync.
+func (d *Database) UpsertThreatFeedStatus(s *models.ThreatFeedStatus) error {
+	return d.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "source"}},
+		DoUpdates: clause.AssignmentColumns([]string{"url", "category", "severity", "kind", "entry_count", "last_error", "last_sync_at", "last_duration_ms"}),
+	}).Create(s).Error
+}
+
+// ListThreatFeedStatus returns all per-source feed status rows for the admin UI.
+func (d *Database) ListThreatFeedStatus() ([]models.ThreatFeedStatus, error) {
+	var rows []models.ThreatFeedStatus
+	err := d.db.Order("source ASC").Find(&rows).Error
+	return rows, err
+}

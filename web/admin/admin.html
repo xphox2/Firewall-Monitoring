@@ -240,6 +240,7 @@
     <script defer src="/static/js/admin-settings.js"></script>
     <script defer src="/static/js/admin-profile.js"></script>
     <script defer src="/static/js/admin-reports.js"></script>
+    <script defer src="/static/js/admin-threatintel.js"></script>
     <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
@@ -1287,6 +1288,91 @@
         </div>
 
         <!-- Audit Logs Page -->
+        <!-- Threat Intelligence — dedicated page: IP/ASN lookup, feed status,
+             searchable indicator table, manual entry. Backed by
+             /admin/api/threat-intel/{lookup,search,feeds} + /flows/threat-intel. -->
+        <div class="page" id="page-threat-intel">
+            <div class="fwmon-flows-header">
+                <div class="fwmon-flows-header-left">
+                    <h2 class="fwmon-flows-title">Threat Intelligence</h2>
+                    <div class="fwmon-toptalk-hint" id="ti-summary">--</div>
+                </div>
+            </div>
+
+            <!-- Lookup tool -->
+            <div class="card">
+                <h3 class="fwmon-toptalk-title">Lookup<span class="fwmon-toptalk-hint">IP or AS number → geo + threat verdict</span></h3>
+                <form class="fwmon-ti-form" id="ti-lookup-form" style="margin-top:10px;">
+                    <input type="text" id="ti-lookup-q" class="fwmon-flows-input" placeholder="8.8.8.8 or AS15169" autocomplete="one-time-code" spellcheck="false" required>
+                    <button type="submit" class="btn primary sm" id="ti-lookup-btn">Look up</button>
+                </form>
+                <div class="fwmon-ti-error" id="ti-lookup-error" hidden></div>
+                <div id="ti-lookup-result" style="margin-top:12px;"></div>
+            </div>
+
+            <!-- Feed sources status -->
+            <div class="card" style="margin-top:16px;">
+                <h3 class="fwmon-toptalk-title">Feed Sources<span class="fwmon-toptalk-hint" id="ti-feeds-hint">last sync per source</span></h3>
+                <div class="table-wrap" style="max-height:320px; margin-top:10px;">
+                    <table class="fwmon-flows-detections-table" id="ti-feeds-table">
+                        <thead><tr><th>Source</th><th>Kind</th><th>Category</th><th>Indicators</th><th>Last sync</th><th>Status</th></tr></thead>
+                        <tbody id="ti-feeds-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Searchable indicator table + manual add -->
+            <div class="card" style="margin-top:16px;">
+                <h3 class="fwmon-toptalk-title">Indicators<span class="fwmon-toptalk-hint">search the known-bad feed</span></h3>
+                <div class="fwmon-ti-form" style="margin-top:10px;">
+                    <input type="text" id="ti-search-q" class="fwmon-flows-input" placeholder="search CIDR / IP / AS…" autocomplete="one-time-code" spellcheck="false">
+                    <input type="text" id="ti-search-source" class="fwmon-flows-input" placeholder="source" autocomplete="one-time-code" spellcheck="false">
+                    <input type="text" id="ti-search-category" class="fwmon-flows-input" placeholder="category" autocomplete="one-time-code" spellcheck="false">
+                    <select id="ti-search-severity" class="fwmon-flows-select" title="severity">
+                        <option value="">any severity</option>
+                        <option value="critical">critical</option>
+                        <option value="warning">warning</option>
+                        <option value="info">info</option>
+                    </select>
+                    <button type="button" class="btn sm" id="ti-search-btn">Search</button>
+                </div>
+                <div class="table-wrap" style="max-height:420px; margin-top:10px;">
+                    <table class="fwmon-flows-detections-table" id="ti-search-table">
+                        <thead><tr><th>CIDR / IP / AS</th><th>Category</th><th>Source</th><th>Severity</th><th>Expires</th><th></th></tr></thead>
+                        <tbody id="ti-search-body"></tbody>
+                    </table>
+                </div>
+                <div class="fwmon-flows-data-header" style="margin-top:8px; display:flex; align-items:center; gap:12px;">
+                    <button type="button" class="btn sm" id="ti-search-prev">Prev</button>
+                    <span class="fwmon-toptalk-hint" id="ti-search-page">--</span>
+                    <button type="button" class="btn sm" id="ti-search-next">Next</button>
+                </div>
+
+                <!-- Manual add (accepts IP, CIDR, or AS number) -->
+                <form class="fwmon-ti-form" id="ti-add-form" style="margin-top:14px;">
+                    <input type="text" id="ti-add-cidr" class="fwmon-flows-input" placeholder="IP / CIDR / AS64496" autocomplete="one-time-code" spellcheck="false" required>
+                    <select id="ti-add-category" class="fwmon-flows-select" title="category">
+                        <option value="malware">malware</option>
+                        <option value="c2">c2</option>
+                        <option value="scanner">scanner</option>
+                        <option value="botnet">botnet</option>
+                        <option value="asn-reputation">asn-reputation</option>
+                        <option value="other">other</option>
+                    </select>
+                    <select id="ti-add-severity" class="fwmon-flows-select" title="severity">
+                        <option value="warning">warning</option>
+                        <option value="critical">critical</option>
+                        <option value="info">info</option>
+                    </select>
+                    <input type="text" id="ti-add-source" class="fwmon-flows-input" placeholder="source (manual)" autocomplete="one-time-code" spellcheck="false">
+                    <input type="date" id="ti-add-expires" class="fwmon-flows-input fwmon-ti-date" title="optional expiry (blank = never)">
+                    <button type="submit" class="btn primary sm" id="ti-add-btn2">Add</button>
+                </form>
+                <div class="fwmon-ti-error" id="ti-add-error" hidden></div>
+                <p class="fwmon-toptalk-hint" style="margin-top:12px;">IP geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a> (CC BY 4.0). Threat data from Spamhaus, abuse.ch, blocklist.de, CINS, Emerging Threats, Tor Project — fetched per deployment.</p>
+            </div>
+        </div>
+
         <div class="page" id="page-audit">
             <div class="fwmon-flows-header">
                 <div class="fwmon-flows-header-left">

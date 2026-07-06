@@ -52,17 +52,18 @@ type Handler struct {
 }
 
 func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.Database) *Handler {
-	// MaxMind GeoLite2 resolver for sFlow geo/ASN enrichment. Opt-in
-	// (GEOIP_ENABLED): a nil resolver is nil-safe, so when geo is off or the
-	// .mmdb files are absent the ingest path simply leaves the columns empty.
-	geo, err := classify.NewGeoResolver(cfg.Server.GeoIPEnabled, cfg.Server.GeoIPDBDir)
+	// Geo/ASN resolver for sFlow enrichment. Enabled by default with an embedded
+	// free DB-IP Lite bundle; the optional paid MaxMind updater writes newer
+	// databases into GeoIPDBDir which take precedence. A nil resolver is nil-safe,
+	// so when geo is disabled the ingest path simply leaves the columns empty.
+	geo, err := classify.NewGeoResolver(cfg.Server.GeoIPEnabled, cfg.Server.GeoIPDBDir, cfg.Server.GeoIPCacheDir)
 	switch {
 	case geo.Enabled() && err != nil:
 		// One database opened, the other didn't: enrichment IS running, just with
 		// reduced coverage. Don't report it as disabled (audit L4).
-		log.Printf("geoip: partial load (%v) — enrichment enabled from %s with reduced coverage", err, cfg.Server.GeoIPDBDir)
+		log.Printf("geoip: partial load (%v) — enrichment enabled [%s] with reduced coverage", err, geo.Source())
 	case geo.Enabled():
-		log.Printf("geoip: GeoLite2 enrichment enabled from %s", cfg.Server.GeoIPDBDir)
+		log.Printf("geoip: geo/ASN enrichment enabled [%s]", geo.Source())
 	case err != nil:
 		log.Printf("geoip: %v — geo/ASN enrichment disabled", err)
 	}

@@ -10,6 +10,8 @@ package threatintel
 import (
 	"net/netip"
 	"sort"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +43,7 @@ type Matcher struct {
 	lens4 []int                        // distinct IPv4 lengths, descending
 	by6   map[int]map[netip.Prefix]Hit
 	lens6 []int
+	asns  map[uint32]Hit // bad-ASN reputation set (Spamhaus ASN-DROP etc.)
 	count int
 }
 
@@ -50,12 +53,22 @@ type Matcher struct {
 // Duplicate prefixes keep the first occurrence's metadata.
 func New(rows []models.ThreatIntel, now time.Time) *Matcher {
 	m := &Matcher{
-		by4: make(map[int]map[netip.Prefix]Hit),
-		by6: make(map[int]map[netip.Prefix]Hit),
+		by4:  make(map[int]map[netip.Prefix]Hit),
+		by6:  make(map[int]map[netip.Prefix]Hit),
+		asns: make(map[uint32]Hit),
 	}
 	for _, r := range rows {
 		if r.ExpiresAt != nil && !r.ExpiresAt.After(now) {
 			continue // expired
+		}
+		// ASN-reputation entries are stored as "AS<number>" and matched against a
+		// flow's autonomous system rather than its address.
+		if asn, ok := parseASN(r.CIDR); ok {
+			if _, dup := m.asns[asn]; !dup {
+				m.asns[asn] = Hit{Category: r.Category, Severity: r.Severity}
+				m.count++
+			}
+			continue
 		}
 		p, ok := parsePrefix(r.CIDR)
 		if !ok {
@@ -91,6 +104,19 @@ func sortedLensDesc(buckets map[int]map[netip.Prefix]Hit) []int {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(lens)))
 	return lens
+}
+
+// parseASN accepts "AS64496"/"as64496" and returns the numeric ASN. Returns
+// ok=false for anything that isn't an AS-prefixed number (e.g. a real CIDR).
+func parseASN(s string) (uint32, bool) {
+	if len(s) < 3 || (s[0] != 'A' && s[0] != 'a') || (s[1] != 'S' && s[1] != 's') {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(s[2:]), 10, 32)
+	if err != nil || n == 0 {
+		return 0, false
+	}
+	return uint32(n), true
 }
 
 // parsePrefix accepts "10.0.0.0/8" or a bare "10.0.0.1" (treated as a host
@@ -133,7 +159,17 @@ func (m *Matcher) Match(ip string) (Hit, bool) {
 	return Hit{}, false
 }
 
-// Len returns the number of active prefixes (for status reporting).
+// MatchASN reports whether asn is on the bad-ASN reputation set. Nil-safe.
+func (m *Matcher) MatchASN(asn uint32) (Hit, bool) {
+	if m == nil || asn == 0 || len(m.asns) == 0 {
+		return Hit{}, false
+	}
+	hit, ok := m.asns[asn]
+	return hit, ok
+}
+
+// Len returns the number of active indicators — prefixes plus ASNs — for status
+// reporting.
 func (m *Matcher) Len() int {
 	if m == nil {
 		return 0
@@ -155,6 +191,9 @@ func (h *Holder) Load() *Matcher { return h.ptr.Load() }
 
 // Match is a convenience that loads the current matcher and matches against it.
 func (h *Holder) Match(ip string) (Hit, bool) { return h.Load().Match(ip) }
+
+// MatchASN is a convenience that loads the current matcher and matches an ASN.
+func (h *Holder) MatchASN(asn uint32) (Hit, bool) { return h.Load().MatchASN(asn) }
 
 // Len returns the active prefix count of the current matcher.
 func (h *Holder) Len() int { return h.Load().Len() }

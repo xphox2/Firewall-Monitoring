@@ -70,3 +70,28 @@ func TestHolder(t *testing.T) {
 		t.Errorf("holder Len = %d, want 1", h.Len())
 	}
 }
+
+func TestMatchASN(t *testing.T) {
+	now := time.Now()
+	rows := []models.ThreatIntel{
+		{CIDR: "AS64496", Category: "asn-reputation", Severity: "warning"},
+		{CIDR: "203.0.113.0/24", Category: "attacker", Severity: "warning"},
+	}
+	m := New(rows, now)
+	if _, ok := m.MatchASN(64496); !ok {
+		t.Error("MatchASN(64496) = false, want true")
+	}
+	if _, ok := m.MatchASN(64497); ok {
+		t.Error("MatchASN(64497) = true, want false")
+	}
+	if _, ok := m.MatchASN(0); ok {
+		t.Error("MatchASN(0) = true, want false")
+	}
+	// The ASN entry must NOT leak into the IP prefix buckets.
+	if _, ok := m.Match("203.0.113.5"); !ok {
+		t.Error("IP match broken by ASN entry")
+	}
+	if m.Len() != 2 {
+		t.Errorf("Len = %d, want 2", m.Len())
+	}
+}

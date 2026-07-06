@@ -1017,6 +1017,25 @@ type ThreatIntel struct {
 
 func (ThreatIntel) TableName() string { return "threat_intel" }
 
+// ThreatFeedStatus records the outcome of the most recent fetch of one threat
+// feed source, so the admin UI can show which feeds ran, when, how many
+// indicators each contributed, and any error — the poller (writer) and API
+// (reader) are separate processes, so this must be persisted, not in-memory.
+// Keyed by Source (one row per feed name). Added in migration v31.
+type ThreatFeedStatus struct {
+	Source       string    `json:"source" gorm:"primaryKey;size:64"`
+	URL          string    `json:"url" gorm:"size:512"`
+	Category     string    `json:"category" gorm:"size:32"`
+	Severity     string    `json:"severity" gorm:"size:8"`
+	Kind         string    `json:"kind" gorm:"size:8"` // "ip" | "asn"
+	EntryCount   int       `json:"entry_count"`
+	LastError    string    `json:"last_error" gorm:"size:512"`
+	LastSyncAt   time.Time `json:"last_sync_at"`
+	LastDuration int       `json:"last_duration_ms" gorm:"column:last_duration_ms"`
+}
+
+func (ThreatFeedStatus) TableName() string { return "threat_feed_status" }
+
 // FlowInterfaceCounter is one sFlow interface counter sample (counters_sample /
 // if_counters) pushed by the collector — the agent-reported equivalent of the
 // SNMP interface_stats poll: ifSpeed plus cumulative in/out octets, errors, and

@@ -453,11 +453,26 @@ func (p *Poller) runThreatFeedSync() {
 	client := &http.Client{Timeout: 60 * time.Second}
 	total := 0
 	for _, feed := range feeds {
+		started := time.Now()
+		// recordStatus persists this feed's outcome (count or error) so the admin
+		// Threat Intelligence page can show which feeds ran and when.
+		recordStatus := func(count int, feedErr string) {
+			st := &models.ThreatFeedStatus{
+				Source: feed.Name, URL: feed.URL, Category: feed.Category,
+				Severity: feed.Severity, Kind: feed.Kind, EntryCount: count,
+				LastError: feedErr, LastSyncAt: started,
+				LastDuration: int(time.Since(started).Milliseconds()),
+			}
+			if err := p.db.UpsertThreatFeedStatus(st); err != nil {
+				log.Printf("threat-feeds: status %s: %v", feed.Name, err)
+			}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		entries, err := threatfeed.Fetch(ctx, client, feed)
+		entries, err := threatfeed.Fetch(ctx, client, feed, p.cfg.ThreatFeed.AuthHeader)
 		cancel()
 		if err != nil {
 			log.Printf("threat-feeds: fetch %s: %v", feed.Name, err)
+			recordStatus(0, err.Error())
 			continue
 		}
 		batch := make([]models.ThreatIntel, 0, len(entries))
@@ -470,9 +485,11 @@ func (p *Poller) runThreatFeedSync() {
 		}
 		if err := p.db.UpsertThreatIntelBatch(batch); err != nil {
 			log.Printf("threat-feeds: upsert %s: %v", feed.Name, err)
+			recordStatus(0, err.Error())
 			continue
 		}
 		total += len(batch)
+		recordStatus(len(batch), "")
 		log.Printf("threat-feeds: %s → %d indicators", feed.Name, len(batch))
 	}
 	if pruned, err := p.db.PruneExpiredThreatIntel(); err != nil {

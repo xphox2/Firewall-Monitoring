@@ -680,7 +680,11 @@
         if (statusEl) {
             var active = (d && d.active_count) || 0;
             var loaded = (d && d.loaded_count) || 0;
-            statusEl.textContent = active + ' active · ' + loaded + ' loaded in matcher';
+            if (d && d.feeds_enabled === false && active === 0) {
+                statusEl.textContent = 'online feeds disabled — set THREAT_FEEDS_ENABLED=true (manual entries still work)';
+            } else {
+                statusEl.textContent = active + ' active · ' + loaded + ' loaded in matcher';
+            }
         }
         if (!body) return;
         if (!rows.length) {
@@ -867,18 +871,27 @@
         // unless GeoIP enrichment produced data, so deployments without GeoLite2
         // don't see empty widgets.
         // Country rows display the ISO code, which is also the filter value.
-        renderGeoCard('flows-card-countries', 'flows-top-countries', d.top_countries || [], 'countries', 'country', function(label) { return label; });
+        renderGeoCard('flows-card-countries', 'flows-top-countries', d.top_countries || [], 'countries', 'country', function(label) { return label; }, d.geo_enabled, d.geo_source);
         // ASN rows display "AS15169"; the filter value is the bare number.
-        renderGeoCard('flows-card-asns', 'flows-top-asns', d.top_asns || [], 'asns', 'asn', function(label) { return String(label).replace(/^AS/i, ''); });
+        renderGeoCard('flows-card-asns', 'flows-top-asns', d.top_asns || [], 'asns', 'asn', function(label) { return String(label).replace(/^AS/i, ''); }, d.geo_enabled, d.geo_source);
     }
 
-    // renderGeoCard shows the card only when there's geo data, then renders a
-    // clickable byte-valued bar list (default formatBytes for the value).
-    function renderGeoCard(cardId, listId, rows, colorTag, stateKey, toFilterValue) {
+    // renderGeoCard renders the clickable byte-valued bar list. Instead of hiding
+    // silently when empty (which made geo look "not built"), it always shows the
+    // card and explains WHY it's empty: geo disabled, or enabled-but-no-data-yet.
+    function renderGeoCard(cardId, listId, rows, colorTag, stateKey, toFilterValue, geoEnabled, geoSource) {
         var card = document.getElementById(cardId);
+        var list = document.getElementById(listId);
         var has = rows && rows.length > 0;
-        if (card) card.hidden = !has;
-        if (has) renderList(listId, rows, colorTag, stateKey, toFilterValue);
+        if (card) card.hidden = false;
+        if (has) {
+            renderList(listId, rows, colorTag, stateKey, toFilterValue);
+        } else if (list) {
+            var msg = geoEnabled === false
+                ? 'GeoIP disabled — set GEOIP_ENABLED=true'
+                : ('no geo data yet' + (geoSource ? ' · ' + geoSource : ''));
+            list.innerHTML = '<li class="fwmon-toptalk-empty">' + msg + '</li>';
+        }
     }
 
     function clearTopTalkers() {
@@ -888,10 +901,11 @@
             var el = document.getElementById(id);
             if (el) el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
         });
-        // Geo cards are hidden unless they have data — keep them hidden on clear.
-        ['flows-card-countries', 'flows-card-asns'].forEach(function(id) {
-            var card = document.getElementById(id);
-            if (card) card.hidden = true;
+        // Geo cards stay visible with a placeholder (they're no longer hidden on
+        // empty — see renderGeoCard); reset their lists to "No data" on clear.
+        ['flows-top-countries', 'flows-top-asns'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
         });
     }
 

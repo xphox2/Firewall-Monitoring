@@ -4,6 +4,55 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.37] - 2026-07-05
+
+### Fixed
+- Tighten filesystem permissions in the new geo code to satisfy the gosec CI gate: the embedded-bundle cache dir and MaxMind live dir are created 0750 (G301), and the extracted `.mmdb` bundle files are written 0600 (G306).
+
+## [0.11.36] - 2026-07-05
+
+### Added
+- **Dedicated Threat Intelligence admin page** (`/admin/threat-intel`, sidebar link under Data). Three tools: (1) an **IP/ASN lookup** box that returns country + ASN/org and the known-bad verdict (by IP prefix and/or ASN reputation, with source metadata); (2) a **feed sources** table showing each feed's kind, category, indicator count, last sync, and error state; (3) a **searchable, paginated indicators** table (filter by text/source/category/severity) with manual add (IP, CIDR, or `AS####`) and delete. New JS module `admin-threatintel.js` (`FwmonThreatIntel`).
+
+### Changed
+- **Discoverability: geo/threat cards no longer hide silently.** The Flows page Top Countries / Top ASNs cards now always render, showing "GeoIP disabled — set GEOIP_ENABLED=true" or "no geo data yet · <source>" instead of vanishing; the Threat Intelligence card status shows "online feeds disabled — set THREAT_FEEDS_ENABLED=true" when feeds are off. This fixes the long-standing "looks like it doesn't exist" confusion.
+- DB-IP attribution (CC BY 4.0) surfaced on the Threat Intelligence page.
+
+## [0.11.35] - 2026-07-05
+
+### Added
+- **Threat-intel API surface for the new admin page.** `GET /admin/api/threat-intel/lookup?q=<ip|AS####>` returns geo (country + ASN/org for an IP) plus the threat verdict (known-bad by IP prefix and/or ASN reputation, with source metadata) — the first HTTP surface for the resolver + matcher. `GET /admin/api/threat-intel/search` returns filtered, paginated entries (q/source/category/severity/active + offset/limit + total). `GET /admin/api/threat-intel/feeds` returns per-source feed status + interval/TTL/loaded counts.
+- Manual threat-intel entries (`POST /admin/api/flows/threat-intel`) now also accept an AS number (`AS64496`) for ad-hoc ASN blocking.
+
+### Changed
+- `GET /admin/api/flows/threat-intel` now includes `feeds_enabled`; `GET /admin/api/flows/stats` now includes `geo_enabled` + `geo_source` so the UI can render the geo cards with a meaningful disabled/source state instead of hiding them.
+
+## [0.11.34] - 2026-07-05
+
+### Added
+- **Threat feeds enabled by default** (`THREAT_FEEDS_ENABLED` now defaults true) with two new curated free sources: **abuse.ch Feodo Tracker** (active botnet C2 IPs, CC0) and **Spamhaus ASN-DROP** (worst-reputation autonomous systems).
+- **ASN-reputation detection.** ASN-DROP indicators are stored as `AS<number>` and matched against each flow's source/destination ASN (resolved from BGP or GeoIP) at ingest. `flow_samples.threat_flag` gains bit 2 (src ASN bad) and bit 3 (dst ASN bad); the port-scan and threat-intel detectors now escalate/label on ASN hits too, covering whole malicious networks rather than single IPs.
+- **Authenticated feed support** (`THREAT_FEEDS_AUTH_HEADER`) so a paid/commercial feed endpoint requiring an API key/token can be plugged in via `THREAT_FEEDS_EXTRA_URLS`.
+- **Per-source feed status persistence.** New `threat_feed_status` table (migration **v31**) records each feed's last sync time, indicator count, duration, and last error — written by the poller each cycle for the admin UI. New DB queries `SearchThreatIntel` (filter + pagination + total), `CountThreatIntelBySource`, and feed-status read/write.
+
+## [0.11.33] - 2026-07-05
+
+### Added
+- **MaxMind live geo updater wired up.** `internal/classify/maxmind_update.go` downloads the configured editions from MaxMind's `geoip_download` endpoint (same URL for free GeoLite2 and paid GeoIP2), verifies the `.sha256`, extracts the `.mmdb`, and writes it atomically into `GEOIP_DB_DIR`. A `geoip-update` goroutine in `cmd/api` runs an initial sync then repeats on `GEOIP_UPDATE_INTERVAL` (default weekly), reloading the resolver on success so new databases swap in without a restart. No-op when no license key is set. Note: for live updates the `GEOIP_DB_DIR` mount must be writable (drop `:ro` in docker-compose).
+
+## [0.11.32] - 2026-07-05
+
+### Added
+- **GeoIP/ASN enrichment now works out of the box (free, bundled).** A free DB-IP Lite database (IP-to-Country + IP-to-ASN, licensed CC BY 4.0) is embedded in the binary via `go:embed` and extracted to a writable cache dir at startup, so sFlow flows get country + ASN enrichment with no license key and no mounted files. `GEOIP_ENABLED` now defaults to **true**.
+- **Optional paid live-update path (config only).** New `MAXMIND_LICENSE_KEY` / `MAXMIND_ACCOUNT_ID` / `MAXMIND_EDITION_IDS` / `GEOIP_UPDATE_INTERVAL` env vars; when a key is set the server will keep newer MaxMind databases in `GEOIP_DB_DIR`, which take precedence over the embedded bundle. (Downloader wiring lands in a follow-up patch; config + resolver precedence are in place now.)
+
+### Changed
+- The geo resolver (`internal/classify/geo.go`) is now source-layered: a "live" directory (`GEOIP_DB_DIR`, written by the paid updater) wins over the embedded bundle, re-evaluated on the existing hot-reload ticker. Added `ASNInfo` (number + org) and `Source()` for the upcoming lookup UI, and support for GeoIP2-ISP/City-shaped databases alongside GeoLite2-ASN/Country.
+- `GEOIP_DB_DIR` is now the live/override dir only; the new `GEOIP_CACHE_DIR` is where the bundle extracts (distinct so a read-only Docker mount for the former still works).
+
+### Attribution
+- IP geolocation by DB-IP (https://db-ip.com), DB-IP Lite databases, CC BY 4.0.
+
 ## [0.11.31] - 2026-07-04
 
 ### Docs
