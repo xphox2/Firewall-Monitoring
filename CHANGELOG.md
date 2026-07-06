@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.40] - 2026-07-05
+
+### Changed
+- Updated Go module dependencies (applied directly rather than via bot PRs, to keep automation out of the repo's contributor list): `gin` 1.10.1→1.12.0, `golang-jwt/v5` 5.2.2→5.3.1, `golang.org/x/crypto` 0.51.0→0.53.0, `golang.org/x/net` 0.55.0→0.56.0, `golang.org/x/time` 0.5.0→0.15.0, `gorm` 1.31.1→1.31.2. Full `go test ./...` and `govulncheck` are clean.
+- Removed `.github/dependabot.yml` (scheduled version-update PRs). Merging a Dependabot PR keeps `dependabot[bot]` as the commit author, which adds it to the repo's Contributors — dependency currency is now handled by applying updates directly, with `govulncheck` in CI as the security backstop.
+
+### Rejected (deliberately not applied)
+- **Alpine 3.21 → 3.24** (bot PR): Alpine 3.24 main dropped the `postgresql16` package (ships 17/18 only). The runtime image pins `postgresql16` so the bind-mounted prod PGDATA stays PostgreSQL-major-16 compatible; bumping would break the image build or require a risky `pg_upgrade` of production data. Held at 3.21.
+- **Tailwind CSS 3.4 → 4.x** (bot PR): a major engine rewrite that would break the `styles.css`→`tailwind.css` generation and the CI freshness gate; deferred to a dedicated migration.
+
 ## [0.11.39] - 2026-07-05
 
 ### Fixed
