@@ -54,9 +54,9 @@ func (d portScanDetector) Detect(w Window) ([]Detection, error) {
 	}
 	out := make([]Detection, 0, len(rows))
 	for _, r := range rows {
-		// A scan from a known-bad source (on the threat-intel feed) is a
-		// high-confidence finding — escalate to critical and say so.
-		knownBad := r.Threat&1 != 0
+		// A scan from a known-bad source (on the threat-intel feed by IP or by
+		// ASN reputation) is a high-confidence finding — escalate to critical.
+		knownBad := r.Threat&1 != 0 || r.Threat&4 != 0
 		sev := "warning"
 		msg := fmt.Sprintf("Possible port scan from %s: %d distinct ports across %d hosts", r.SrcAddr, r.Ports, r.Hosts)
 		if knownBad {
@@ -189,10 +189,13 @@ func (d threatIntelDetector) Detect(w Window) ([]Detection, error) {
 	}
 	out := make([]Detection, 0, len(rows))
 	for _, r := range rows {
+		// bit 0/2 = src bad (IP/ASN), bit 1/3 = dst bad (IP/ASN).
+		srcBad := r.Flag&1 != 0 || r.Flag&4 != 0
+		dstBad := r.Flag&2 != 0 || r.Flag&8 != 0
 		who := "destination"
-		if r.Flag&1 != 0 && r.Flag&2 != 0 {
+		if srcBad && dstBad {
 			who = "source and destination"
-		} else if r.Flag&1 != 0 {
+		} else if srcBad {
 			who = "source"
 		}
 		out = append(out, Detection{

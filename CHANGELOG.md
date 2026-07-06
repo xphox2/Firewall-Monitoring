@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.34] - 2026-07-05
+
+### Added
+- **Threat feeds enabled by default** (`THREAT_FEEDS_ENABLED` now defaults true) with two new curated free sources: **abuse.ch Feodo Tracker** (active botnet C2 IPs, CC0) and **Spamhaus ASN-DROP** (worst-reputation autonomous systems).
+- **ASN-reputation detection.** ASN-DROP indicators are stored as `AS<number>` and matched against each flow's source/destination ASN (resolved from BGP or GeoIP) at ingest. `flow_samples.threat_flag` gains bit 2 (src ASN bad) and bit 3 (dst ASN bad); the port-scan and threat-intel detectors now escalate/label on ASN hits too, covering whole malicious networks rather than single IPs.
+- **Authenticated feed support** (`THREAT_FEEDS_AUTH_HEADER`) so a paid/commercial feed endpoint requiring an API key/token can be plugged in via `THREAT_FEEDS_EXTRA_URLS`.
+- **Per-source feed status persistence.** New `threat_feed_status` table (migration **v31**) records each feed's last sync time, indicator count, duration, and last error — written by the poller each cycle for the admin UI. New DB queries `SearchThreatIntel` (filter + pagination + total), `CountThreatIntelBySource`, and feed-status read/write.
+
 ## [0.11.33] - 2026-07-05
 
 ### Added

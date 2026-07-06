@@ -50,6 +50,7 @@ func NewDatabaseForTesting(t interface {
 		&models.AgentDrops{},
 		&models.FlowDetection{},
 		&models.ThreatIntel{},
+		&models.ThreatFeedStatus{},
 		&models.FlowInterfaceCounter{},
 		&models.Alert{},
 		&models.AlertPolicy{},

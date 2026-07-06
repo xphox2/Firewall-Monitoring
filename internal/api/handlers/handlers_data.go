@@ -290,14 +290,22 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 				samples[i].DstASN = h.geoResolver.ASN(samples[i].DstAddr)
 			}
 		}
-		// Threat-intel bitfield: bit 0 = src known-bad, bit 1 = dst known-bad.
-		// Nil-safe + in-memory CIDR match — no-op when no feed is loaded.
+		// Threat-intel bitfield: bit 0 = src known-bad IP, bit 1 = dst known-bad
+		// IP, bit 2 = src ASN on the bad-ASN reputation set, bit 3 = dst ASN bad.
+		// Nil-safe + in-memory lookups — no-op when no feed is loaded. ASN checks
+		// use the AS numbers resolved just above (BGP or GeoIP).
 		var tf uint8
 		if _, ok := h.threatMatch.Match(samples[i].SrcAddr); ok {
 			tf |= 1
 		}
 		if _, ok := h.threatMatch.Match(samples[i].DstAddr); ok {
 			tf |= 2
+		}
+		if _, ok := h.threatMatch.MatchASN(samples[i].SrcASN); ok {
+			tf |= 4
+		}
+		if _, ok := h.threatMatch.MatchASN(samples[i].DstASN); ok {
+			tf |= 8
 		}
 		samples[i].ThreatFlag = tf
 		filtered = append(filtered, samples[i])

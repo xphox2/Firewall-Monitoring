@@ -12,20 +12,31 @@ package threatfeed
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 )
 
+// Feed kinds. IP feeds are plain-text IP/CIDR lists; ASN feeds are ASN-reputation
+// lists (currently Spamhaus ASN-DROP JSON) whose indicators are stored as
+// "AS<number>" so the matcher can flag flows by autonomous system.
+const (
+	FeedKindIP  = "ip"
+	FeedKindASN = "asn"
+)
+
 // Feed is one source list: a name (used as the threat_intel `source`), a URL,
-// and the category/severity to tag its entries with.
+// the category/severity to tag its entries with, and a kind (IP vs ASN).
 type Feed struct {
 	Name     string
 	URL      string
 	Category string
 	Severity string
+	Kind     string // FeedKindIP (default) or FeedKindASN
 }
 
 // Entry is one parsed indicator: a CIDR or bare IP plus its feed's metadata.
@@ -50,11 +61,18 @@ const (
 // (presence on Tor is not inherently malicious). All are fetched over HTTPS.
 func DefaultFeeds() []Feed {
 	return []Feed{
-		{Name: "blocklist.de", URL: "https://lists.blocklist.de/lists/all.txt", Category: "attacker", Severity: "warning"},
-		{Name: "cins-army", URL: "https://cinsscore.com/list/ci-badguys.txt", Category: "attacker", Severity: "warning"},
-		{Name: "spamhaus-drop", URL: "https://www.spamhaus.org/drop/drop.txt", Category: "hijacked", Severity: "warning"},
-		{Name: "et-compromised", URL: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt", Category: "compromised", Severity: "warning"},
-		{Name: "tor-exits", URL: "https://check.torproject.org/torbulkexitlist", Category: "tor", Severity: "info"},
+		{Name: "blocklist.de", URL: "https://lists.blocklist.de/lists/all.txt", Category: "attacker", Severity: "warning", Kind: FeedKindIP},
+		{Name: "cins-army", URL: "https://cinsscore.com/list/ci-badguys.txt", Category: "attacker", Severity: "warning", Kind: FeedKindIP},
+		{Name: "spamhaus-drop", URL: "https://www.spamhaus.org/drop/drop.txt", Category: "hijacked", Severity: "warning", Kind: FeedKindIP},
+		{Name: "et-compromised", URL: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt", Category: "compromised", Severity: "warning", Kind: FeedKindIP},
+		{Name: "tor-exits", URL: "https://check.torproject.org/torbulkexitlist", Category: "tor", Severity: "info", Kind: FeedKindIP},
+		// abuse.ch Feodo Tracker — active botnet C2 IPs (Dridex/Emotet/TrickBot/
+		// QakBot). CC0, no license friction. Recommended (active-only) list.
+		{Name: "feodo-c2", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist_recommended.txt", Category: "c2", Severity: "critical", Kind: FeedKindIP},
+		// Spamhaus ASN-DROP — worst-reputation autonomous systems (JSON). Flags
+		// flows whose src/dst ASN is on the list. Do not fetch more than 1×/hr
+		// (our default interval is 12h). Attribution: The Spamhaus Project.
+		{Name: "spamhaus-asndrop", URL: "https://www.spamhaus.org/drop/asndrop.json", Category: "asn-reputation", Severity: "warning", Kind: FeedKindASN},
 	}
 }
 
@@ -80,12 +98,16 @@ func ParseExtraFeeds(spec string) []Feed {
 		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 			continue
 		}
-		f := Feed{Name: parts[0], URL: parts[1], Category: "custom", Severity: "warning"}
+		f := Feed{Name: parts[0], URL: parts[1], Category: "custom", Severity: "warning", Kind: FeedKindIP}
 		if len(parts) >= 3 && parts[2] != "" {
 			f.Category = parts[2]
 		}
 		if len(parts) >= 4 && parts[3] != "" {
 			f.Severity = parts[3]
+		}
+		// An "asn"/"asn-reputation" category signals an ASN-reputation list.
+		if strings.HasPrefix(f.Category, "asn") {
+			f.Kind = FeedKindASN
 		}
 		feeds = append(feeds, f)
 	}
@@ -94,12 +116,20 @@ func ParseExtraFeeds(spec string) []Feed {
 
 // Fetch downloads and parses one feed. The body is bounded by maxFeedBytes and
 // the request honors the context deadline. A non-2xx status is an error.
-func Fetch(ctx context.Context, client *http.Client, feed Feed) ([]Entry, error) {
+// authHeader, when non-empty, is applied as an extra request header formatted
+// "Name: value" (e.g. "Authorization: Bearer <token>") so authenticated
+// commercial feeds work.
+func Fetch(ctx context.Context, client *http.Client, feed Feed, authHeader string) ([]Entry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feed.URL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "firewall-mon-threatfeed/1")
+	if authHeader != "" {
+		if name, value, ok := strings.Cut(authHeader, ":"); ok {
+			req.Header.Set(strings.TrimSpace(name), strings.TrimSpace(value))
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -108,11 +138,66 @@ func Fetch(ctx context.Context, client *http.Client, feed Feed) ([]Entry, error)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("feed %s: HTTP %d", feed.Name, resp.StatusCode)
 	}
-	entries, err := Parse(io.LimitReader(resp.Body, maxFeedBytes), feed)
+	body := io.LimitReader(resp.Body, maxFeedBytes)
+	if feed.Kind == FeedKindASN {
+		entries, err := ParseASN(body, feed)
+		if err != nil {
+			return nil, fmt.Errorf("feed %s: parse asn: %w", feed.Name, err)
+		}
+		return entries, nil
+	}
+	entries, err := Parse(body, feed)
 	if err != nil {
 		return nil, fmt.Errorf("feed %s: parse: %w", feed.Name, err)
 	}
 	return entries, nil
+}
+
+// ParseASN reads an ASN-reputation feed and returns one Entry per autonomous
+// system, with CIDR set to "AS<number>" (the form the matcher's ASN bucket
+// expects). It accepts two shapes: Spamhaus ASN-DROP JSON (one JSON object per
+// line, e.g. {"asn":64496,...}, with a leading {"type":"metadata"} line) and a
+// plain-text list of "AS64496" / "64496" tokens. Comment lines (#, ;) are
+// skipped; the result is capped at maxEntriesPerFeed.
+func ParseASN(r io.Reader, feed Feed) ([]Entry, error) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	out := make([]Entry, 0, 1024)
+	seen := make(map[uint32]struct{})
+	for sc.Scan() && len(out) < maxEntriesPerFeed {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || line[0] == '#' || line[0] == ';' {
+			continue
+		}
+		var asn uint32
+		if line[0] == '{' {
+			var rec struct {
+				ASN  uint32 `json:"asn"`
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.Type == "metadata" || rec.ASN == 0 {
+				continue
+			}
+			asn = rec.ASN
+		} else {
+			tok := line
+			if i := strings.IndexAny(tok, " \t;,"); i >= 0 {
+				tok = tok[:i]
+			}
+			tok = strings.TrimPrefix(strings.TrimPrefix(tok, "AS"), "as")
+			n, err := strconv.ParseUint(tok, 10, 32)
+			if err != nil || n == 0 {
+				continue
+			}
+			asn = uint32(n)
+		}
+		if _, dup := seen[asn]; dup {
+			continue
+		}
+		seen[asn] = struct{}{}
+		out = append(out, Entry{CIDR: "AS" + strconv.FormatUint(uint64(asn), 10), Category: feed.Category, Severity: feed.Severity, Source: feed.Name})
+	}
+	return out, sc.Err()
 }
 
 // Parse reads a plain-text feed body and returns the valid IP/CIDR indicators.

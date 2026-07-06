@@ -42,15 +42,52 @@ func TestParseExtraFeeds(t *testing.T) {
 	if len(feeds) != 2 {
 		t.Fatalf("got %d feeds, want 2: %+v", len(feeds), feeds)
 	}
-	if feeds[0] != (Feed{Name: "my-list", URL: "https://example.com/bad.txt", Category: "malware", Severity: "critical"}) {
+	if feeds[0] != (Feed{Name: "my-list", URL: "https://example.com/bad.txt", Category: "malware", Severity: "critical", Kind: FeedKindIP}) {
 		t.Errorf("feed[0] = %+v", feeds[0])
 	}
-	// Minimal record defaults category=custom, severity=warning.
-	if feeds[1] != (Feed{Name: "minimal", URL: "https://e.com/m.txt", Category: "custom", Severity: "warning"}) {
+	// Minimal record defaults category=custom, severity=warning, kind=ip.
+	if feeds[1] != (Feed{Name: "minimal", URL: "https://e.com/m.txt", Category: "custom", Severity: "warning", Kind: FeedKindIP}) {
 		t.Errorf("feed[1] = %+v", feeds[1])
 	}
 	if ParseExtraFeeds("") != nil {
 		t.Error("empty spec should return nil")
+	}
+}
+
+func TestParseExtraFeedsASNKind(t *testing.T) {
+	feeds := ParseExtraFeeds("mybad|https://x/asn.json|asn|warning")
+	if len(feeds) != 1 || feeds[0].Kind != FeedKindASN {
+		t.Fatalf("asn-category feed should be Kind=asn: %+v", feeds)
+	}
+}
+
+func TestParseASN(t *testing.T) {
+	feed := Feed{Name: "asndrop", Category: "asn-reputation", Severity: "warning", Kind: FeedKindASN}
+	body := strings.Join([]string{
+		`{"type":"metadata","timestamp":"2026-01-01"}`,
+		`{"asn":64496,"rir":"ripencc","cc":"US"}`,
+		`{"asn":64497,"domain":"bad.example"}`,
+		`{"asn":64496,"note":"dup ignored"}`,
+		`# comment`,
+		`AS64498`,
+		`64499`,
+		`not-an-asn`,
+	}, "\n")
+	got, err := ParseASN(strings.NewReader(body), feed)
+	if err != nil {
+		t.Fatalf("ParseASN: %v", err)
+	}
+	want := []string{"AS64496", "AS64497", "AS64498", "AS64499"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].CIDR != w {
+			t.Errorf("entry[%d].CIDR = %q, want %q", i, got[i].CIDR, w)
+		}
+		if got[i].Category != "asn-reputation" || got[i].Source != "asndrop" {
+			t.Errorf("entry[%d] metadata = %+v", i, got[i])
+		}
 	}
 }
 
