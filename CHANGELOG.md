@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.44] - 2026-07-06
+
+### Removed
+- The `fwmon-api backfill-geo` subcommand and its batched DB routine (added in v0.11.42). Geo/ASN enrichment continues on **new** flows at ingest, and every IP in the UI is enriched on demand via the geo lookup — so backfilling the stored columns on historical rows wasn't worth carrying. No schema change (the columns remain and stay populated going forward).
+
 ## [0.11.43] - 2026-07-06
 
 ### Fixed
