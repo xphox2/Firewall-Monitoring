@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.45] - 2026-07-06
+
+### Fixed
+- **sFlow alert severity set in an Alert Policy rule is now honored.** The sFlow detection alerts (`SFLOW_SECURITY` and the per-detector operational ones) always used the detector's own severity and ignored an explicit severity on a matching policy rule — so lowering `SFLOW_SECURITY` from `warning` to `informational` had no effect (it still showed warning on the alerts page and in Discord/other notifications). They now follow the same precedence as trap alerts (LC-14): an explicit policy-rule severity wins over the detector's, which wins over the type default. (Already-fired alerts keep their original severity; new events after the redeploy use the rule's severity.)
+
 ## [0.11.44] - 2026-07-06
 
 ### Removed

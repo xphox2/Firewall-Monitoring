@@ -534,9 +534,13 @@ func (am *AlertManager) ProcessFlowDetection(det *models.FlowDetection, siteID *
 		return am.openAlertID(det.DeviceID, alertType, metric, now, cooldown), nil
 	}
 
+	// Explicit policy-rule severity overrides the detector's own (trap-path rule).
 	sev := models.Severity(det.Severity)
 	if sev == "" {
 		sev = resolved.Severity
+	}
+	if resolved.RuleSeverity != "" {
+		sev = resolved.RuleSeverity
 	}
 
 	alert := models.Alert{
@@ -599,9 +603,15 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 	}
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	// Precedence: an explicit severity on a matching policy rule wins (the
+	// operator deliberately re-graded this type — same rule as the trap path,
+	// LC-14), else the detector's own severity, else the type default.
 	newSev := models.Severity(winner.Severity)
 	if newSev == "" {
 		newSev = resolved.Severity
+	}
+	if resolved.RuleSeverity != "" {
+		newSev = resolved.RuleSeverity
 	}
 
 	// Find this event's still-open alert via the detection→alert link.
