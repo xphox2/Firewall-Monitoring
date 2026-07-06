@@ -51,6 +51,20 @@ type Normalizer interface {
 	VolatilePatterns() []VolatilePattern
 }
 
+// LineMasker is an optional capability a Normalizer may implement to support the
+// line diff. MaskVolatileLines returns a masked copy of the config whose volatile
+// content is neutralized (mirroring Normalize's replacements) but whose LINE COUNT
+// is identical to the raw input — masked line i corresponds to raw line i. That
+// 1:1 correspondence is what lets the line diff align on masked lines while
+// displaying the original text, so volatile churn (random IVs, re-encrypted PEM
+// bodies, GUI-dashboard timestamps) never surfaces as a red/green delta.
+//
+// Unlike Normalize (which may collapse multi-line blocks to a single marker for
+// hashing), MaskVolatileLines must never add or remove newlines.
+type LineMasker interface {
+	MaskVolatileLines(raw []byte) []byte
+}
+
 var registry = map[string]Normalizer{}
 
 // Register installs a Normalizer for a given vendor key. Called from

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"firewall-mon/internal/models"
@@ -81,7 +82,6 @@ func TestGetDeviceConfigDiff_ResponseShape_MatchesJSExpectations(t *testing.T) {
 				NormalizedChecksum string `json:"normalized_checksum"`
 				TriggerSource      string `json:"trigger_source"`
 				BackupQuality      string `json:"backup_quality"`
-				ConfigText         string `json:"config_text"`
 			} `json:"from"`
 			To struct {
 				ID                 uint   `json:"id"`
@@ -90,10 +90,12 @@ func TestGetDeviceConfigDiff_ResponseShape_MatchesJSExpectations(t *testing.T) {
 				NormalizedChecksum string `json:"normalized_checksum"`
 				TriggerSource      string `json:"trigger_source"`
 				BackupQuality      string `json:"backup_quality"`
-				ConfigText         string `json:"config_text"`
 			} `json:"to"`
 			Vendor           string                   `json:"vendor"`
 			VolatilePatterns []map[string]interface{} `json:"volatile_patterns"`
+			LineDiff         struct {
+				Rows []map[string]interface{} `json:"rows"`
+			} `json:"line_diff"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -111,13 +113,14 @@ func TestGetDeviceConfigDiff_ResponseShape_MatchesJSExpectations(t *testing.T) {
 	if resp.Data.To.ID != rev2.ID {
 		t.Errorf("to.id = %d, want %d", resp.Data.To.ID, rev2.ID)
 	}
-	if resp.Data.From.ConfigText != fortigateRawA {
-		t.Errorf("from.config_text mismatch (got %d bytes, want %d)",
-			len(resp.Data.From.ConfigText), len(fortigateRawA))
+	// The raw diff is now server-computed and delivered as line_diff; the full
+	// config_text is intentionally NOT echoed back (the view/download endpoints
+	// serve it) to avoid tripling the payload.
+	if len(resp.Data.LineDiff.Rows) == 0 {
+		t.Error("line_diff.rows is empty — the raw diff view has nothing to render")
 	}
-	if resp.Data.To.ConfigText != fortigateRawB {
-		t.Errorf("to.config_text mismatch (got %d bytes, want %d)",
-			len(resp.Data.To.ConfigText), len(fortigateRawB))
+	if strings.Contains(w.Body.String(), "config_text") {
+		t.Error("config_text should no longer be present in the diff response")
 	}
 	if resp.Data.From.NormalizedChecksum != "norm-md5-A" {
 		t.Errorf("from.normalized_checksum = %q, want %q", resp.Data.From.NormalizedChecksum, "norm-md5-A")
@@ -132,7 +135,8 @@ func TestGetDeviceConfigDiff_ResponseShape_MatchesJSExpectations(t *testing.T) {
 		t.Errorf("from.backup_quality = %q, want %q", resp.Data.From.BackupQuality, "full")
 	}
 
-	// Vendor + volatile_patterns power the masking in the JS renderer.
+	// Vendor is echoed back; volatile_patterns remain as reference metadata
+	// (masking itself is now applied server-side inside line_diff).
 	if resp.Data.Vendor != "fortigate" {
 		t.Errorf("vendor = %q, want %q", resp.Data.Vendor, "fortigate")
 	}

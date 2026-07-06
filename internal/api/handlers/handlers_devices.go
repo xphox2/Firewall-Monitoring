@@ -827,9 +827,13 @@ func (h *Handler) GetDeviceConfigHistory(c *gin.Context) {
 	}))
 }
 
-// GetDeviceConfigDiff returns the raw config text for two revisions plus the
-// list of volatile-line patterns the UI should mask. Diff is computed
-// client-side (jsdiff in admin-device-detail.js) so the server stays simple.
+// GetDeviceConfigDiff returns an aligned line diff of two config revisions plus
+// the per-object semantic diff. The line diff is computed server-side with a
+// Myers O(ND) algorithm (configdiff.DiffLines) so an inserted/removed line no
+// longer drifts every subsequent line into a false delta, and volatile masking
+// participates in the alignment. The raw config text is intentionally NOT
+// returned here — the line diff already carries the display text, and the
+// view/download endpoints serve the full text when needed.
 func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
@@ -875,6 +879,9 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 	// without an object parser — the UI then falls back to the line diff.
 	rep := configdiff.Analyze(vendor, []byte(fromRev.ConfigText), []byte(toRev.ConfigText))
 
+	// Aligned, volatile-aware line diff (Myers O(ND)), computed server-side.
+	lineDiff := configdiff.DiffLines(vendor, []byte(fromRev.ConfigText), []byte(toRev.ConfigText))
+
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"from": gin.H{
 			"id":                  fromRev.ID,
@@ -887,7 +894,6 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 			"change_method":       fromRev.ChangeMethod,
 			"attributed":          fromRev.Attributed,
 			"attribution_checked": fromRev.AttributionChecked,
-			"config_text":         fromRev.ConfigText,
 		},
 		"to": gin.H{
 			"id":                  toRev.ID,
@@ -900,12 +906,12 @@ func (h *Handler) GetDeviceConfigDiff(c *gin.Context) {
 			"change_method":       toRev.ChangeMethod,
 			"attributed":          toRev.Attributed,
 			"attribution_checked": toRev.AttributionChecked,
-			"config_text":         toRev.ConfigText,
 		},
 		"vendor":            vendor,
 		"volatile_patterns": patterns,
 		"object_changes":    rep.ObjectChanges,
 		"summary":           rep.Summary,
+		"line_diff":         lineDiff,
 	}))
 }
 
