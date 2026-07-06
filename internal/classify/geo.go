@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,91 +13,133 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
-// Standard MaxMind GeoLite2 filenames, looked up under the configured DB dir.
-const (
-	geoCountryDB = "GeoLite2-Country.mmdb"
-	geoASNDB     = "GeoLite2-ASN.mmdb"
+// Candidate database filenames looked up in the live (downloaded) directory, in
+// precedence order. The paid MaxMind updater writes these; whichever exists wins
+// over the embedded DB-IP Lite bundle. City is a superset of Country for our
+// purposes (we only read the country subfield), and ISP is a superset of ASN.
+var (
+	liveCountryCandidates = []string{"GeoIP2-City.mmdb", "GeoLite2-City.mmdb", "GeoIP2-Country.mmdb", "GeoLite2-Country.mmdb"}
+	liveASNCandidates     = []string{"GeoIP2-ISP.mmdb", "GeoLite2-ASN.mmdb"}
 )
 
-// geoDB holds one memory-mapped GeoLite2 reader together with the mtime it was
-// opened at, so a reload can cheaply detect that the file on disk changed.
+// geoDB holds one memory-mapped reader together with the stat it was opened at
+// (so a reload can cheaply detect a changed file) and the resolved path it came
+// from (so a reload can also detect that a higher-precedence file appeared).
 type geoDB struct {
 	reader *geoip2.Reader
+	path   string
 	mtime  time.Time
 	size   int64
+	// isISP marks an ASN-slot database whose records are GeoIP2-ISP shaped
+	// (read via reader.ISP) rather than GeoLite2-ASN shaped (reader.ASN).
+	isISP bool
 }
 
 // GeoResolver enriches a flow's addresses with an ISO country code and an
-// autonomous-system number from MaxMind GeoLite2 databases. The .mmdb files are
-// memory-mapped and the underlying reader is goroutine-safe, so a single
-// resolver is shared across the ingest path with no per-lookup allocation.
+// autonomous-system number/organization. Databases are memory-mapped and the
+// readers are goroutine-safe, so a single resolver is shared across the ingest
+// path with no per-lookup allocation.
+//
+// Two sources are layered: a live directory (GEOIP_DB_DIR) that the optional
+// paid MaxMind updater writes into, and an embedded DB-IP Lite bundle extracted
+// to a cache dir. For each slot the live file wins when present, else the bundle
+// is used — so geo works out of the box (bundle) and transparently upgrades when
+// a key is configured (live).
 //
 // Each reader is held behind an atomic pointer so Reload can swap in a freshly
-// opened database without locking the hot lookup path. Because closing a reader
-// unmaps its backing memory — and an in-flight lookup on the old reader would
-// then SIGBUS — a swapped-out reader is not closed immediately; it is retired to
-// a grace list and closed on the *next* reload cycle, by which point all
-// microsecond-scale lookups that could have observed it have long returned.
+// resolved database without locking the hot lookup path. A swapped-out reader is
+// retired and closed on the *next* reload cycle, by which point every
+// microsecond-scale lookup that could have observed it has returned (closing
+// unmaps its backing memory and an in-flight lookup would SIGBUS).
 //
-// Every method is nil-safe: a nil *GeoResolver (geo disabled, or the DB files
-// were absent at startup) returns empty results rather than panicking, so
-// callers never need to branch on whether geo is configured.
+// Every method is nil-safe: a nil *GeoResolver (geo disabled) returns empty
+// results rather than panicking.
 type GeoResolver struct {
-	dir     string
-	country atomic.Pointer[geoDB]
-	asn     atomic.Pointer[geoDB]
+	liveDir   string
+	bundleDir string
+	country   atomic.Pointer[geoDB]
+	asn       atomic.Pointer[geoDB]
 
-	// retireMu guards readers swapped out by Reload but not yet closed. They are
-	// closed at the start of the following Reload, after any in-flight lookup on
-	// them has completed.
 	retireMu sync.Mutex
 	retired  []*geoip2.Reader
 }
 
-// NewGeoResolver opens the GeoLite2 Country and ASN databases under dir. When
-// enabled is false it returns (nil, nil) — a disabled, nil-safe resolver. When
-// enabled but a file can't be opened it returns a resolver holding whatever did
-// open plus an error describing what didn't, so the caller can log the partial
-// state and continue (the missing dimension's columns simply stay empty).
-//
-// Country and ASN are opened independently: a deployment may ship only one. If
-// at least one opens, a usable resolver is returned; if neither opens, the error
-// is returned with a nil resolver.
-func NewGeoResolver(enabled bool, dir string) (*GeoResolver, error) {
+// NewGeoResolver builds a resolver. When enabled is false it returns (nil, nil)
+// — a disabled, nil-safe resolver. Otherwise it extracts the embedded bundle to
+// cacheDir (empty = per-OS temp) and opens the highest-precedence country and
+// ASN databases. If at least one slot opens, a usable resolver is returned; a
+// non-fatal extraction/open error is surfaced for logging alongside it.
+func NewGeoResolver(enabled bool, liveDir, cacheDir string) (*GeoResolver, error) {
 	if !enabled {
 		return nil, nil
 	}
-	if dir == "" {
-		return nil, fmt.Errorf("geoip enabled but GEOIP_DB_DIR is empty")
-	}
-	g := &GeoResolver{dir: dir}
+	g := &GeoResolver{liveDir: liveDir}
 	var firstErr error
-	if db, err := openGeoDB(filepath.Join(dir, geoCountryDB)); err == nil {
-		g.country.Store(db)
+	if dir, err := ensureBundle(cacheDir); err == nil {
+		g.bundleDir = dir
 	} else {
-		firstErr = fmt.Errorf("open %s: %w", geoCountryDB, err)
+		firstErr = err // no bundle; may still open live files if present
 	}
-	if db, err := openGeoDB(filepath.Join(dir, geoASNDB)); err == nil {
+	if db := g.openSlot(false); db != nil {
+		g.country.Store(db)
+	}
+	if db := g.openSlot(true); db != nil {
 		g.asn.Store(db)
-	} else if firstErr == nil {
-		firstErr = fmt.Errorf("open %s: %w", geoASNDB, err)
 	}
 	if g.country.Load() == nil && g.asn.Load() == nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("no geoip databases could be opened (live=%q bundle=%q)", liveDir, g.bundleDir)
+		}
 		return nil, firstErr
 	}
-	// At least one DB opened; surface any partial-open error for logging but
-	// still return the usable resolver.
 	return g, firstErr
 }
 
-// openGeoDB opens a single .mmdb and records its stat so a later reload can
-// detect a changed file without re-parsing it.
-func openGeoDB(path string) (*geoDB, error) {
+// resolvePath returns the highest-precedence path for a slot plus whether it is
+// an ISP-shaped ASN database. Live-dir candidates win over the bundle.
+func (g *GeoResolver) resolvePath(asn bool) (path string, isISP bool) {
+	candidates := liveCountryCandidates
+	if asn {
+		candidates = liveASNCandidates
+	}
+	if g.liveDir != "" {
+		for _, name := range candidates {
+			p := filepath.Join(g.liveDir, name)
+			if _, err := os.Stat(p); err == nil {
+				return p, asn && strings.Contains(name, "ISP")
+			}
+		}
+	}
+	if g.bundleDir != "" {
+		name := bundledCountryDB
+		if asn {
+			name = bundledASNDB
+		}
+		return filepath.Join(g.bundleDir, name), false
+	}
+	return "", false
+}
+
+// openSlot resolves and opens the current best database for a slot, or nil.
+func (g *GeoResolver) openSlot(asn bool) *geoDB {
+	path, isISP := g.resolvePath(asn)
+	if path == "" {
+		return nil
+	}
+	db, err := openGeoDB(path, isISP)
+	if err != nil {
+		return nil
+	}
+	return db
+}
+
+// openGeoDB opens a single .mmdb and records its stat + provenance.
+func openGeoDB(path string, isISP bool) (*geoDB, error) {
 	r, err := geoip2.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	db := &geoDB{reader: r}
+	db := &geoDB{reader: r, path: path, isISP: isISP}
 	if fi, err := os.Stat(path); err == nil {
 		db.mtime = fi.ModTime()
 		db.size = fi.Size()
@@ -104,23 +147,17 @@ func openGeoDB(path string) (*geoDB, error) {
 	return db, nil
 }
 
-// Reload re-stats the two database files and, for any whose mtime or size
-// changed since it was opened, opens the new copy and atomically swaps it in.
-// The previous reader is retired and closed on the following Reload, never
-// while a lookup could still be dereferencing its mmap.
+// Reload re-resolves both slots and, when the winning path changed or the file's
+// mtime/size changed, opens the new copy and atomically swaps it in. This is how
+// a freshly downloaded live database (paid tier) takes over from the bundle
+// without a restart. The previous reader is retired and closed on the following
+// Reload, never while a lookup could still dereference its mmap.
 //
-// MaxMind's own updater writes to a temp file and renames it into place, so the
-// swap observes a complete database; operators updating by hand MUST rename, not
-// overwrite in place (an in-place write mutates the live mmap and can SIGBUS a
-// running lookup regardless of this reload path — see docs/ENV-VARS.md).
-//
-// Reload is nil-safe and is intended to be called on a periodic ticker.
+// Reload is nil-safe and intended for a periodic ticker.
 func (g *GeoResolver) Reload() {
 	if g == nil {
 		return
 	}
-	// Close anything retired by the previous Reload — in-flight lookups on it
-	// have finished by now (a full ticker interval ago).
 	g.retireMu.Lock()
 	toClose := g.retired
 	g.retired = nil
@@ -128,22 +165,26 @@ func (g *GeoResolver) Reload() {
 	for _, r := range toClose {
 		_ = r.Close()
 	}
-
-	g.reloadOne(&g.country, geoCountryDB)
-	g.reloadOne(&g.asn, geoASNDB)
+	g.reloadSlot(&g.country, false)
+	g.reloadSlot(&g.asn, true)
 }
 
-func (g *GeoResolver) reloadOne(slot *atomic.Pointer[geoDB], name string) {
-	path := filepath.Join(g.dir, name)
-	fi, err := os.Stat(path)
-	if err != nil {
-		return // file went away or unreadable; keep serving the current mmap
+func (g *GeoResolver) reloadSlot(slot *atomic.Pointer[geoDB], asn bool) {
+	path, isISP := g.resolvePath(asn)
+	if path == "" {
+		return
 	}
 	cur := slot.Load()
-	if cur != nil && fi.ModTime().Equal(cur.mtime) && fi.Size() == cur.size {
-		return // unchanged
+	if cur != nil && cur.path == path {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return // unreadable; keep serving the current mmap
+		}
+		if fi.ModTime().Equal(cur.mtime) && fi.Size() == cur.size {
+			return // unchanged
+		}
 	}
-	db, err := openGeoDB(path)
+	db, err := openGeoDB(path, isISP)
 	if err != nil {
 		return // partial/corrupt new file; keep the current one
 	}
@@ -160,9 +201,28 @@ func (g *GeoResolver) Enabled() bool {
 	return g != nil && (g.country.Load() != nil || g.asn.Load() != nil)
 }
 
+// Source returns a short human label of where the active country database comes
+// from, for logging and the admin UI ("bundled (DB-IP Lite)" or "live: <file>").
+func (g *GeoResolver) Source() string {
+	if g == nil {
+		return "disabled"
+	}
+	db := g.country.Load()
+	if db == nil {
+		db = g.asn.Load()
+	}
+	if db == nil {
+		return "disabled"
+	}
+	if g.bundleDir != "" && strings.HasPrefix(db.path, g.bundleDir) {
+		return "bundled (DB-IP Lite)"
+	}
+	return "live: " + filepath.Base(db.path)
+}
+
 // Country returns the ISO 3166-1 alpha-2 country code for ip, or "" when the
 // resolver/DB is absent, the address is unparseable, or the IP isn't found
-// (e.g. private/RFC1918 ranges, which GeoLite2 does not map).
+// (e.g. private/RFC1918 ranges, which the databases do not map).
 func (g *GeoResolver) Country(ip string) string {
 	if g == nil {
 		return ""
@@ -182,25 +242,39 @@ func (g *GeoResolver) Country(ip string) string {
 	return rec.Country.IsoCode
 }
 
-// ASN returns the autonomous-system number for ip, or 0 when the resolver/DB is
-// absent, the address is unparseable, or the IP isn't found.
+// ASN returns the autonomous-system number for ip, or 0 when unavailable.
 func (g *GeoResolver) ASN(ip string) uint32 {
+	n, _ := g.ASNInfo(ip)
+	return n
+}
+
+// ASNInfo returns the autonomous-system number and organization for ip, or
+// (0, "") when the resolver/DB is absent, the address is unparseable, or the IP
+// isn't found. Handles both GeoLite2-ASN and GeoIP2-ISP shaped databases.
+func (g *GeoResolver) ASNInfo(ip string) (uint32, string) {
 	if g == nil {
-		return 0
+		return 0, ""
 	}
 	db := g.asn.Load()
 	if db == nil {
-		return 0
+		return 0, ""
 	}
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
-		return 0
+		return 0, ""
+	}
+	if db.isISP {
+		rec, err := db.reader.ISP(parsed)
+		if err != nil || rec == nil {
+			return 0, ""
+		}
+		return uint32(rec.AutonomousSystemNumber), rec.AutonomousSystemOrganization
 	}
 	rec, err := db.reader.ASN(parsed)
 	if err != nil || rec == nil {
-		return 0
+		return 0, ""
 	}
-	return uint32(rec.AutonomousSystemNumber)
+	return uint32(rec.AutonomousSystemNumber), rec.AutonomousSystemOrganization
 }
 
 // Close releases the memory-mapped databases, including any retired but not yet

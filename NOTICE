@@ -1,0 +1,18 @@
+Firewall-Mon
+Copyright (c) Firewall-Mon contributors
+
+This product includes third-party data:
+
+IP Geolocation by DB-IP (https://db-ip.com)
+  DB-IP Lite databases (IP-to-Country Lite, IP-to-ASN Lite) are bundled for the
+  default free geo/ASN enrichment tier and are licensed under the Creative
+  Commons Attribution 4.0 International License (CC BY 4.0):
+  https://creativecommons.org/licenses/by/4.0/
+  Files: internal/classify/geoipdata/dbip-country-lite.mmdb,
+         internal/classify/geoipdata/dbip-asn-lite.mmdb
+
+Threat-intelligence feeds (fetched at runtime, per deployment; not redistributed):
+  Spamhaus DROP and ASN-DROP (© The Spamhaus Project), abuse.ch Feodo Tracker
+  (CC0), blocklist.de, CINS Army, Emerging Threats open rules, and the Tor
+  Project exit list. Each is fetched directly from its source by the operator's
+  own server subject to that source's terms.

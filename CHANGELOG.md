@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.32] - 2026-07-05
+
+### Added
+- **GeoIP/ASN enrichment now works out of the box (free, bundled).** A free DB-IP Lite database (IP-to-Country + IP-to-ASN, licensed CC BY 4.0) is embedded in the binary via `go:embed` and extracted to a writable cache dir at startup, so sFlow flows get country + ASN enrichment with no license key and no mounted files. `GEOIP_ENABLED` now defaults to **true**.
+- **Optional paid live-update path (config only).** New `MAXMIND_LICENSE_KEY` / `MAXMIND_ACCOUNT_ID` / `MAXMIND_EDITION_IDS` / `GEOIP_UPDATE_INTERVAL` env vars; when a key is set the server will keep newer MaxMind databases in `GEOIP_DB_DIR`, which take precedence over the embedded bundle. (Downloader wiring lands in a follow-up patch; config + resolver precedence are in place now.)
+
+### Changed
+- The geo resolver (`internal/classify/geo.go`) is now source-layered: a "live" directory (`GEOIP_DB_DIR`, written by the paid updater) wins over the embedded bundle, re-evaluated on the existing hot-reload ticker. Added `ASNInfo` (number + org) and `Source()` for the upcoming lookup UI, and support for GeoIP2-ISP/City-shaped databases alongside GeoLite2-ASN/Country.
+- `GEOIP_DB_DIR` is now the live/override dir only; the new `GEOIP_CACHE_DIR` is where the bundle extracts (distinct so a read-only Docker mount for the former still works).
+
+### Attribution
+- IP geolocation by DB-IP (https://db-ip.com), DB-IP Lite databases, CC BY 4.0.
+
 ## [0.11.31] - 2026-07-04
 
 ### Docs
