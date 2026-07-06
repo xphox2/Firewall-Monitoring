@@ -1181,7 +1181,9 @@
         opts = opts || {};
         ip = ip == null ? '' : String(ip);
         var base = ip.indexOf('/') !== -1 ? ip.split('/')[0] : ip;
-        var label = escapeHtml(ip) + (opts.port != null && opts.port !== '' ? ':' + escapeHtml(String(opts.port)) : '');
+        // Omit the port suffix for port 0 — portless protocols (ICMP/ESP/GRE/OSPF)
+        // carry no port, and ":0" is noise (previously rendered "10.0.0.7:0").
+        var label = escapeHtml(ip) + (opts.port != null && opts.port !== '' && Number(opts.port) !== 0 ? ':' + escapeHtml(String(opts.port)) : '');
         var a = ' data-ip="' + escapeHtml(base) + '"';
         if (opts.country) a += ' data-cc="' + escapeHtml(opts.country) + '"';
         if (opts.asn) a += ' data-asn="' + escapeHtml(String(opts.asn)) + '"';

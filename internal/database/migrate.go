@@ -1224,6 +1224,131 @@ func (d *Database) seedSFlowSecurityRules() {
 	}
 }
 
+// migrateFlowScopeLocal (v34) adds the scope_local boolean to flow_samples and
+// flow_rollups and backfills it for existing history. scope_local flags
+// link-local / multicast / broadcast / loopback / unspecified noise (see
+// classify.ScopeLocal) so the Flows page can exclude it from top-talker charts
+// WITHOUT hiding portless routed protocols (ESP/GRE/ICMP/OSPF) — the defect of
+// the old `src_port = 0 AND dst_port = 0` filter this replaces.
+//
+// DDL: PG16 ADD COLUMN ... NOT NULL DEFAULT false is metadata-only (non-volatile
+// default), instant even on the monthly-partitioned flow_samples; routed through
+// execMaintenanceDDL so the 30s statement_timeout can't abort it (AUDIT-037).
+// SQLite (dev/test) uses AutoMigrate.
+//
+// Backfill runs on canonical net.IP.String() output (lowercase, zero-compressed),
+// so the prefix predicate is EXACT — unlike a naive LIKE, `^fe[89ab][0-9a-f]:`
+// matches fe80–febf (link-local) but not the 3-hex-group global "fe8::1". It is
+// batched by id-window and idempotent (guarded on `scope_local = <false>`), so a
+// mid-pass crash simply resumes; the migration advisory lock serializes
+// concurrent binaries. flow_samples is backfilled before flow_rollups.
+//
+// Bounded residue: during a rolling deploy an old binary can insert scope-local
+// rows (default false) AFTER the backfill passed their id range — those stay
+// visible as noise until the next deploy, acceptable for a cosmetic chart filter.
+func (d *Database) migrateFlowScopeLocal() error {
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.FlowSample{}, &models.FlowRollup{}); err != nil {
+			return fmt.Errorf("migrate v34 scope_local (sqlite): %w", err)
+		}
+	} else {
+		for _, s := range []string{
+			`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS scope_local boolean NOT NULL DEFAULT false`,
+			`ALTER TABLE flow_rollups ADD COLUMN IF NOT EXISTS scope_local boolean NOT NULL DEFAULT false`,
+		} {
+			if err := d.execMaintenanceDDL(s); err != nil {
+				return fmt.Errorf("migrate v34 add scope_local column: %w", err)
+			}
+		}
+	}
+	predicate := fmt.Sprintf("(%s) OR (%s)",
+		d.scopeLocalColumnPredicate("src_addr"), d.scopeLocalColumnPredicate("dst_addr"))
+	if err := d.backfillScopeLocalTable("flow_samples", predicate); err != nil {
+		return err
+	}
+	if err := d.backfillScopeLocalTable("flow_rollups", predicate); err != nil {
+		return err
+	}
+	log.Printf("migrate v34 flow_scope_local: columns ensured + backfilled")
+	return nil
+}
+
+// scopeLocalColumnPredicate returns a dialect-specific SQL boolean expression
+// that is TRUE when the address in `col` is scope-local. It mirrors
+// classify.isScopeLocal exactly for canonical net.IP.String() values:
+//   - fe80::/10 link-local  → first group fe80–febf
+//   - ff00::/8 multicast     → IPv6 first byte 0xff (4-hex first group ffxx:)
+//   - 224.0.0.0/4 multicast  → 224.–239.
+//   - 169.254.0.0/16, 127.0.0.0/8, 255.255.255.255, 0.0.0.0, ::, ::1
+//
+// `col` is always a compile-time literal ("src_addr"/"dst_addr"), never user
+// input. Postgres uses POSIX `~`; SQLite (dev/test) uses GLOB char classes.
+func (d *Database) scopeLocalColumnPredicate(col string) string {
+	if d.dialect.IsPostgres() {
+		return fmt.Sprintf(
+			"%[1]s ~ '^fe[89ab][0-9a-f]:' OR %[1]s ~ '^ff[0-9a-f][0-9a-f]:' OR "+
+				"%[1]s ~ '^2(2[4-9]|3[0-9])\\.' OR %[1]s LIKE '169.254.%%' OR "+
+				"%[1]s LIKE '127.%%' OR %[1]s IN ('255.255.255.255','0.0.0.0','::','::1')",
+			col)
+	}
+	return fmt.Sprintf(
+		"%[1]s GLOB 'fe[89ab][0-9a-f]:*' OR %[1]s GLOB 'ff[0-9a-f][0-9a-f]:*' OR "+
+			"%[1]s GLOB '22[4-9].*' OR %[1]s GLOB '23[0-9].*' OR %[1]s LIKE '169.254.%%' OR "+
+			"%[1]s LIKE '127.%%' OR %[1]s IN ('255.255.255.255','0.0.0.0','::','::1')",
+		col)
+}
+
+// backfillScopeLocalTable sets scope_local = true for every already-stored row
+// matching `predicate`, in id-windows so no single statement locks the whole
+// table. Each window lifts statement_timeout (PG) inside its own short
+// transaction, matching execMaintenanceDDL's posture while still exposing
+// RowsAffected for progress logging.
+func (d *Database) backfillScopeLocalTable(table, predicate string) error {
+	var bounds struct {
+		MinID int64
+		MaxID int64
+	}
+	if err := d.db.Raw(
+		fmt.Sprintf("SELECT COALESCE(MIN(id),0) AS min_id, COALESCE(MAX(id),0) AS max_id FROM %s", table),
+	).Scan(&bounds).Error; err != nil {
+		return fmt.Errorf("scope_local backfill bounds for %s: %w", table, err)
+	}
+	if bounds.MaxID == 0 {
+		return nil
+	}
+	falseLit := "false"
+	if !d.dialect.IsPostgres() {
+		falseLit = "0"
+	}
+	const window = 100000
+	updateSQL := fmt.Sprintf(
+		"UPDATE %s SET scope_local = true WHERE id >= ? AND id < ? AND scope_local = %s AND (%s)",
+		table, falseLit, predicate)
+	var total int64
+	for start := bounds.MinID; start <= bounds.MaxID; start += window {
+		end := start + window
+		var affected int64
+		err := d.db.Transaction(func(tx *gorm.DB) error {
+			if d.dialect.IsPostgres() {
+				if e := tx.Exec("SET LOCAL statement_timeout = 0").Error; e != nil {
+					return e
+				}
+			}
+			res := tx.Exec(updateSQL, start, end)
+			affected = res.RowsAffected
+			return res.Error
+		})
+		if err != nil {
+			return fmt.Errorf("scope_local backfill %s [%d,%d): %w", table, start, end, err)
+		}
+		total += affected
+	}
+	if total > 0 {
+		log.Printf("migrate v34: backfilled scope_local on %d %s rows", total, table)
+	}
+	return nil
+}
+
 // migrateThreatIntelAndFlowThreatFlag (v14) creates the threat_intel feed table
 // and adds the threat_flag bitfield column to flow_samples. The table is created
 // via AutoMigrate (idempotent, cross-dialect, also in the baseline allModels

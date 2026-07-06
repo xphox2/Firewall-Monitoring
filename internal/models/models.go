@@ -941,6 +941,12 @@ type FlowSample struct {
 	// doesn't send them remain valid. Migration v11 adds the columns.
 	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
 	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
+	// ScopeLocal marks a flow as link-local/multicast/broadcast/loopback noise
+	// (classify.ScopeLocal, true when either endpoint is scope-local). The Flows
+	// page excludes it from top-talker charts. Computed server-side at ingest;
+	// collectors never send it, so old rows and pre-adopting collectors default
+	// false (visible). Migration v34 adds the column.
+	ScopeLocal bool `json:"scope_local" gorm:"column:scope_local;default:false;not null"`
 	// SrcCountry/DstCountry (ISO 3166-1 alpha-2) and SrcASN/DstASN are MaxMind
 	// GeoLite2 enrichment stamped at ingest when GEOIP_ENABLED. Empty/0 when geo
 	// is disabled, the DB lacks the IP, or the address is private (GeoLite2 maps
@@ -1177,6 +1183,12 @@ type FlowRollup struct {
 	// not increase rollup cardinality. Migration v11 adds the columns.
 	AppCategory uint8 `json:"app_category" gorm:"column:app_category;default:0;not null"`
 	Direction   uint8 `json:"direction" gorm:"column:direction;default:0;not null"`
+	// ScopeLocal carries the ingest-time scope-local flag through the rollup so
+	// the Flows page's scope-local exclusion survives after raw samples age out.
+	// Part of the rollup GROUP BY; functionally determined by (src_addr, dst_addr)
+	// so it adds no rollup cardinality (same argument as direction). Migration v34
+	// adds the column.
+	ScopeLocal bool `json:"scope_local" gorm:"column:scope_local;default:false;not null"`
 	// DstCountry/DstASN carry the destination geo enrichment through the rollup
 	// so the Top Countries / Top ASNs views survive after raw samples age out.
 	// Destination only: those views are about where traffic is going. Both are

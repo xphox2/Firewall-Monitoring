@@ -82,6 +82,7 @@ var registeredMigrations = []migration{
 	{version: 31, name: "threat_feed_status_table", run: (*Database).migrateThreatFeedStatusTable},
 	{version: 32, name: "alert_flow_enrichment", run: (*Database).migrateAlertFlowEnrichment},
 	{version: 33, name: "feed_toggle_and_flow_suppress", run: (*Database).migrateFeedToggleAndFlowSuppress},
+	{version: 34, name: "flow_scope_local", run: (*Database).migrateFlowScopeLocal},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

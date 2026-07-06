@@ -248,3 +248,37 @@ func Direction(srcAddr, dstAddr string, inIf, outIf uint32) uint8 {
 		return DirExternal
 	}
 }
+
+// isScopeLocal reports whether ip is scope-local noise: link-local unicast
+// (fe80::/10 and 169.254.0.0/16, both covered by IsLinkLocalUnicast), multicast
+// (IPv4 224.0.0.0/4, IPv6 ff00::/8), loopback, the unspecified address, and the
+// limited broadcast 255.255.255.255.
+//
+// This is deliberately NARROWER than isInternal: it excludes RFC1918, ULA
+// (fc00::/7), and CGNAT (100.64.0.0/10). Routed LAN traffic between real hosts
+// is genuine traffic that belongs in the top-talker charts — only truly
+// non-routed link/broadcast noise is "scope-local". fec0::/10 (deprecated
+// site-local) is intentionally NOT matched by IsLinkLocalUnicast, so it stays
+// visible.
+func isScopeLocal(ip net.IP) bool {
+	return ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLoopback() ||
+		ip.IsUnspecified() || ip.Equal(net.IPv4bcast)
+}
+
+// ScopeLocal reports whether a flow is scope-local noise, true when EITHER
+// endpoint is scope-local. Either-endpoint semantics catch fe80→ff02 (both
+// scope-local), DHCP DISCOVER 0.0.0.0→255.255.255.255 (both), and the common
+// unicast→multicast case of SSDP/mDNS (only the destination is multicast).
+//
+// The Flows page uses this to exclude link-local/multicast/broadcast chatter
+// from its top-talker charts without hiding portless routed protocols (ESP,
+// GRE, ICMP, OSPF) the way the old port-0 filter did. Unparseable addresses
+// return false — don't hide unknowns (mirrors Direction's DirUnknown posture).
+func ScopeLocal(srcAddr, dstAddr string) bool {
+	src := net.ParseIP(srcAddr)
+	dst := net.ParseIP(dstAddr)
+	if src == nil || dst == nil {
+		return false
+	}
+	return isScopeLocal(src) || isScopeLocal(dst)
+}

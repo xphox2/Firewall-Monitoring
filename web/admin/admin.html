@@ -570,14 +570,14 @@
                 <div class="fwmon-stat accent-gray"><div class="fwmon-stat-label">Protocols</div><div class="fwmon-stat-value" id="flows-protocols">--</div></div>
             </div>
 
-            <!-- Local traffic notice — only shown when port-0 traffic > 0 -->
+            <!-- Scope-local (link-local/multicast/broadcast) notice — shown when > 0 -->
             <div class="fwmon-flows-local-notice" id="flows-local-traffic-bar" hidden>
                 <span class="fwmon-flows-local-icon">&#9888;</span>
-                <strong>Internal traffic (port 0):</strong>
+                <strong>Link-local &amp; multicast traffic:</strong>
                 <span id="flows-local-bytes">--</span> bytes ·
                 <span id="flows-local-flows">--</span> flows ·
                 <span id="flows-local-packets">--</span> packets
-                <span class="fwmon-flows-local-aside">(filtered from charts below)</span>
+                <span class="fwmon-flows-local-aside">(excluded from the top-talker cards; totals and the bandwidth chart include it)</span>
             </div>
 
             <!-- Bandwidth-over-time chart (3-mode, matches public dashboard) -->
