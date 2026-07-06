@@ -1052,7 +1052,8 @@
             }
             var headers = ['timestamp', 'src_addr', 'src_port', 'dst_addr', 'dst_port',
                            'protocol', 'protocol_name', 'flow_source', 'firewall_event', 'bytes', 'packets', 'sampling_rate',
-                           'device_id', 'probe_id', 'sampler_address'];
+                           'device_id', 'probe_id', 'sampler_address',
+                           'src_country', 'dst_country', 'src_asn', 'src_asn_org', 'dst_asn', 'dst_asn_org'];
             var lines = [headers.join(',')];
             for (var i = 0; i < samples.length; i++) {
                 var f = samples[i];
@@ -1071,7 +1072,13 @@
                     f.sampling_rate == null ? '' : f.sampling_rate,
                     f.device_id == null ? '' : f.device_id,
                     f.probe_id == null ? '' : f.probe_id,
-                    csvField(f.sampler_address)
+                    csvField(f.sampler_address),
+                    csvField(f.src_country),
+                    csvField(f.dst_country),
+                    f.src_asn == null ? '' : f.src_asn,
+                    csvField(f.src_asn_org),
+                    f.dst_asn == null ? '' : f.dst_asn,
+                    csvField(f.dst_asn_org)
                 ];
                 lines.push(row.join(','));
             }
@@ -1136,15 +1143,35 @@
         setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
     }
 
+    // flagEmoji renders the regional-indicator flag for a 2-letter ISO country
+    // code plus the code itself. Empty for missing/private (no geo) addresses.
+    function flagEmoji(cc) {
+        if (!cc || cc.length !== 2) return '';
+        cc = cc.toUpperCase();
+        var a = cc.charCodeAt(0), b = cc.charCodeAt(1);
+        if (a < 65 || a > 90 || b < 65 || b > 90) return '';
+        return '<span title="' + esc(cc) + '" style="margin-right:4px;">' +
+            String.fromCodePoint(0x1F1E6 + (a - 65), 0x1F1E6 + (b - 65)) + '</span>' +
+            '<span style="color:var(--fwmon-text-faint);font-size:0.7rem;margin-right:4px;">' + esc(cc) + '</span>';
+    }
+
+    // asnChip renders an ASN as a small chip whose hover tooltip reveals the owner
+    // company/org name (when known from the geo DB).
+    function asnChip(asn, org) {
+        if (!asn) return '';
+        var title = org ? (org + ' (AS' + asn + ')') : ('AS' + asn);
+        return ' <span title="' + esc(title) + '" style="cursor:help;color:#58a6ff;font-size:0.7rem;border:1px solid #30363d;border-radius:6px;padding:0 4px;margin-left:4px;">AS' + esc(String(asn)) + '</span>';
+    }
+
     function renderSamples(samples, append) {
         var tbody = document.querySelector('#flows-table tbody');
         if (!tbody) return;
         var html = samples.map(function(f) {
             return '<tr>' +
                 '<td>' + esc(formatDate(f.timestamp)) + '</td>' +
-                '<td>' + esc(f.src_addr) + ':' + f.src_port + '</td>' +
+                '<td style="white-space:nowrap;">' + flagEmoji(f.src_country) + esc(f.src_addr) + ':' + f.src_port + asnChip(f.src_asn, f.src_asn_org) + '</td>' +
                 '<td>→</td>' +
-                '<td>' + esc(f.dst_addr) + ':' + f.dst_port + '</td>' +
+                '<td style="white-space:nowrap;">' + flagEmoji(f.dst_country) + esc(f.dst_addr) + ':' + f.dst_port + asnChip(f.dst_asn, f.dst_asn_org) + '</td>' +
                 '<td>' + esc(protocolName(f.protocol)) + '</td>' +
                 '<td>' + esc(SOURCE_LABELS[f.flow_source || 0] || '—') + '</td>' +
                 // Event column: only NSEL/FortiGate event records carry IE 233;

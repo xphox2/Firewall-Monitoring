@@ -19,10 +19,28 @@ const (
 	opsgenieAlertsURL  = "https://api.opsgenie.com/v2/alerts"
 )
 
-// alertDedupKey identifies one alert condition across fire and resolve.
+// alertDedupKey identifies one alert condition across fire and resolve. For a
+// consolidated event (EventKey set — e.g. an sFlow security event) the key is
+// derived from the event itself so a change in the winning detector/metric can't
+// open a second incident for the same event.
 func alertDedupKey(a *models.Alert) string {
+	if a.EventKey != "" {
+		return "fwmon-" + a.EventKey
+	}
 	t := strings.TrimSuffix(string(a.AlertType), "_RESOLVED")
 	return fmt.Sprintf("fwmon-%d-%s-%s", a.DeviceID, t, a.MetricName)
+}
+
+// deviceLabel is a human-readable device identifier for incident payloads:
+// "<name> @ <site>" when known, else the numeric handle.
+func deviceLabel(a *models.Alert) string {
+	if a.DeviceName != "" {
+		if a.SiteName != "" {
+			return a.DeviceName + " @ " + a.SiteName
+		}
+		return a.DeviceName
+	}
+	return fmt.Sprintf("device-%d", a.DeviceID)
 }
 
 // isRecovery reports whether this alert is the companion recovery record.
@@ -55,7 +73,7 @@ func buildPagerDutyPayload(alert *models.Alert, routingKey string) map[string]in
 	if action == "trigger" {
 		p["payload"] = map[string]interface{}{
 			"summary":  fmt.Sprintf("[%s] %s", alert.AlertType, alert.Message),
-			"source":   fmt.Sprintf("firewall-mon/device-%d", alert.DeviceID),
+			"source":   "firewall-mon/" + deviceLabel(alert),
 			"severity": pagerDutySeverity(alert.Severity),
 			"class":    string(alert.AlertType),
 			"custom_details": map[string]interface{}{
@@ -63,6 +81,9 @@ func buildPagerDutyPayload(alert *models.Alert, routingKey string) map[string]in
 				"threshold":     alert.Threshold,
 				"current_value": alert.CurrentValue,
 				"device_id":     alert.DeviceID,
+				"device_name":   alert.DeviceName,
+				"site":          alert.SiteName,
+				"url":           alert.DetailURL,
 			},
 		}
 	}
@@ -96,6 +117,9 @@ func buildOpsgeniePayload(alert *models.Alert) map[string]interface{} {
 			"threshold":     fmt.Sprintf("%.2f", alert.Threshold),
 			"current_value": fmt.Sprintf("%.2f", alert.CurrentValue),
 			"device_id":     fmt.Sprintf("%d", alert.DeviceID),
+			"device_name":   alert.DeviceName,
+			"site":          alert.SiteName,
+			"url":           alert.DetailURL,
 		},
 	}
 }
@@ -140,14 +164,24 @@ func buildTeamsPayload(alert *models.Alert) map[string]interface{} {
 		"title":      title,
 		"text":       alert.Message,
 		"sections": []map[string]interface{}{{
-			"facts": []map[string]string{
-				{"name": "Severity", "value": string(alert.Severity)},
-				{"name": "Metric", "value": alert.MetricName},
-				{"name": "Value", "value": fmt.Sprintf("%.2f (threshold %.2f)", alert.CurrentValue, alert.Threshold)},
-				{"name": "Device", "value": fmt.Sprintf("%d", alert.DeviceID)},
-			},
+			"facts": teamsFacts(alert),
 		}},
 	}
+}
+
+// teamsFacts builds the MessageCard fact list, showing the device by NAME @ site
+// and a clickable View link when available.
+func teamsFacts(alert *models.Alert) []map[string]string {
+	facts := []map[string]string{
+		{"name": "Severity", "value": string(alert.Severity)},
+		{"name": "Metric", "value": alert.MetricName},
+		{"name": "Value", "value": fmt.Sprintf("%.2f (threshold %.2f)", alert.CurrentValue, alert.Threshold)},
+		{"name": "Device", "value": deviceLabel(alert)},
+	}
+	if alert.DetailURL != "" {
+		facts = append(facts, map[string]string{"name": "View", "value": fmt.Sprintf("[Open alert](%s)", alert.DetailURL)})
+	}
+	return facts
 }
 
 func (n *Notifier) sendTeams(alert *models.Alert, nc NotifyConfig) error {

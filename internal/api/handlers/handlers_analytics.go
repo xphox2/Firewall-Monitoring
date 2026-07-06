@@ -118,11 +118,73 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 		httputil.InternalError(c, "Failed to get alerts", err)
 		return
 	}
+	enrichAlertsDeviceSite(db.Gorm(), alerts)
 
 	var total int64
 	applyAlertFilters(c, db.Gorm().Model(&models.Alert{})).Count(&total)
 
 	c.JSON(http.StatusOK, response.Success(gin.H{"alerts": alerts, "total": total}))
+}
+
+// enrichAlertsDeviceSite fills each alert's transient DeviceName/SiteName from its
+// DeviceID in two batched queries (devices, then their sites), so the alerts list
+// and detail identify the device by NAME and show its site without an N+1.
+func enrichAlertsDeviceSite(g *gorm.DB, alerts []models.Alert) {
+	if len(alerts) == 0 {
+		return
+	}
+	idset := map[uint]struct{}{}
+	for _, a := range alerts {
+		if a.DeviceID != 0 {
+			idset[a.DeviceID] = struct{}{}
+		}
+	}
+	if len(idset) == 0 {
+		return
+	}
+	ids := make([]uint, 0, len(idset))
+	for id := range idset {
+		ids = append(ids, id)
+	}
+	type devRow struct {
+		ID     uint
+		Name   string
+		SiteID *uint
+	}
+	var devs []devRow
+	g.Model(&models.Device{}).Where("id IN ?", ids).Select("id, name, site_id").Scan(&devs)
+	devByID := make(map[uint]devRow, len(devs))
+	siteIDset := map[uint]struct{}{}
+	for _, d := range devs {
+		devByID[d.ID] = d
+		if d.SiteID != nil {
+			siteIDset[*d.SiteID] = struct{}{}
+		}
+	}
+	siteName := map[uint]string{}
+	if len(siteIDset) > 0 {
+		sids := make([]uint, 0, len(siteIDset))
+		for id := range siteIDset {
+			sids = append(sids, id)
+		}
+		type siteRow struct {
+			ID   uint
+			Name string
+		}
+		var sites []siteRow
+		g.Model(&models.Site{}).Where("id IN ?", sids).Select("id, name").Scan(&sites)
+		for _, s := range sites {
+			siteName[s.ID] = s.Name
+		}
+	}
+	for i := range alerts {
+		if d, ok := devByID[alerts[i].DeviceID]; ok {
+			alerts[i].DeviceName = d.Name
+			if d.SiteID != nil {
+				alerts[i].SiteName = siteName[*d.SiteID]
+			}
+		}
+	}
 }
 
 func (h *Handler) GetAlert(c *gin.Context) {
@@ -140,7 +202,13 @@ func (h *Handler) GetAlert(c *gin.Context) {
 		c.JSON(http.StatusNotFound, response.Error("Alert not found"))
 		return
 	}
-	c.JSON(http.StatusOK, response.Success(alert))
+	alerts := []models.Alert{alert}
+	enrichAlertsDeviceSite(db.Gorm(), alerts)
+	alert = alerts[0]
+	// The linked flow detections are the flows/detectors behind this alert — the
+	// detail view renders src→dst (with country/ASN) and which detectors fired.
+	detections, _ := db.GetDetectionsByAlert(alert.ID)
+	c.JSON(http.StatusOK, response.Success(gin.H{"alert": alert, "detections": detections}))
 }
 
 func (h *Handler) GetTraps(c *gin.Context) {
@@ -467,7 +535,11 @@ func (h *Handler) GetFlowDetections(c *gin.Context) {
 		}
 	}
 	unacked := c.Query("unacked") == "true"
-	rows, err := db.GetRecentDetections(since, limit, unacked)
+	// Single feed: by default the detections card shows only detections that did
+	// NOT escalate to an alert (those live on the Alerts page). ?all=true includes
+	// alerted detections for debugging.
+	includeAlerted := c.Query("all") == "true"
+	rows, err := db.GetRecentDetections(since, limit, unacked, includeAlerted)
 	if err != nil {
 		httputil.InternalError(c, "Failed to get flow detections", err)
 		return

@@ -401,6 +401,8 @@ func BuildNotifyConfigFromResolved(resolved ResolvedAlertConfig, globalNC notifi
 		SMTPUsername: globalNC.SMTPUsername,
 		SMTPPassword: globalNC.SMTPPassword,
 		SMTPFrom:     globalNC.SMTPFrom,
+		// Public base URL for alert deep-links is global-only.
+		BaseURL: globalNC.BaseURL,
 	}
 
 	// Recipients: policy override or global

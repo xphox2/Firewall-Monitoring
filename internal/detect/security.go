@@ -38,15 +38,16 @@ func (portScanDetector) Category() Category { return CategorySecurity }
 func (d portScanDetector) Detect(w Window) ([]Detection, error) {
 	cfg := w.Config.withDefaults()
 	type row struct {
-		SrcAddr string
-		Ports   int64
-		Hosts   int64
-		Threat  int // MAX(threat_flag): bit 0 set => source matched the threat feed
+		SrcAddr  string
+		DeviceID uint
+		Ports    int64
+		Hosts    int64
+		Threat   int // MAX(threat_flag): bit 0 set => source matched the threat feed
 	}
 	var rows []row
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Select("src_addr, COUNT(DISTINCT dst_port) as ports, COUNT(DISTINCT dst_addr) as hosts, MAX(threat_flag) as threat").
+		Select("src_addr, MAX(device_id) as device_id, COUNT(DISTINCT dst_port) as ports, COUNT(DISTINCT dst_addr) as hosts, MAX(threat_flag) as threat").
 		Group("src_addr").
 		Having("COUNT(DISTINCT dst_port) >= ?", cfg.PortScanPorts).
 		Order("ports DESC").Limit(100).Scan(&rows).Error; err != nil {
@@ -65,7 +66,8 @@ func (d portScanDetector) Detect(w Window) ([]Detection, error) {
 		}
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: sev,
-			SrcAddr: r.SrcAddr, Score: float64(r.Ports),
+			DeviceID: r.DeviceID,
+			SrcAddr:  r.SrcAddr, Score: float64(r.Ports),
 			Message:  msg,
 			DedupKey: "portscan_" + r.SrcAddr,
 			Details:  map[string]any{"distinct_ports": r.Ports, "distinct_hosts": r.Hosts, "known_bad": knownBad},
@@ -87,13 +89,14 @@ func (superSpreaderDetector) Category() Category { return CategorySecurity }
 func (d superSpreaderDetector) Detect(w Window) ([]Detection, error) {
 	cfg := w.Config.withDefaults()
 	type row struct {
-		SrcAddr string
-		Hosts   int64
+		SrcAddr  string
+		DeviceID uint
+		Hosts    int64
 	}
 	var rows []row
 	if err := w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End).
-		Select("src_addr, COUNT(DISTINCT dst_addr) as hosts").
+		Select("src_addr, MAX(device_id) as device_id, COUNT(DISTINCT dst_addr) as hosts").
 		Group("src_addr").
 		Having("COUNT(DISTINCT dst_addr) >= ?", cfg.SuperSpreaderHosts).
 		Order("hosts DESC").Limit(100).Scan(&rows).Error; err != nil {
@@ -103,7 +106,8 @@ func (d superSpreaderDetector) Detect(w Window) ([]Detection, error) {
 	for _, r := range rows {
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: "warning",
-			SrcAddr: r.SrcAddr, Score: float64(r.Hosts),
+			DeviceID: r.DeviceID,
+			SrcAddr:  r.SrcAddr, Score: float64(r.Hosts),
 			Message:  fmt.Sprintf("Super-spreader %s: %d distinct destinations in the window", r.SrcAddr, r.Hosts),
 			DedupKey: "spreader_" + r.SrcAddr,
 			Details:  map[string]any{"distinct_hosts": r.Hosts},
@@ -126,6 +130,7 @@ func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
 	type row struct {
 		SrcAddr    string
 		DstAddr    string
+		DeviceID   uint
 		DstCountry string
 		Bytes      int64
 	}
@@ -133,7 +138,7 @@ func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
 	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("direction = ?", classify.DirOutbound).
-		Select("src_addr, dst_addr, dst_country, SUM(bytes) as bytes").
+		Select("src_addr, dst_addr, MAX(device_id) as device_id, dst_country, SUM(bytes) as bytes").
 		Group("src_addr, dst_addr, dst_country").
 		Having("SUM(bytes) >= ?", cfg.DataExfilBytes).
 		Order("bytes DESC").Limit(100).Scan(&rows).Error; err != nil {
@@ -147,7 +152,8 @@ func (d dataExfilDetector) Detect(w Window) ([]Detection, error) {
 		}
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: "warning",
-			SrcAddr: r.SrcAddr, DstAddr: r.DstAddr, Score: float64(r.Bytes),
+			DeviceID: r.DeviceID,
+			SrcAddr:  r.SrcAddr, DstAddr: r.DstAddr, Score: float64(r.Bytes),
 			Message:  fmt.Sprintf("Large outbound transfer: %s → %s, %.2f GB (estimated)", r.SrcAddr, dest, float64(r.Bytes)/float64(int64(1)<<30)),
 			DedupKey: "exfil_" + r.SrcAddr + "_" + r.DstAddr,
 			Details:  map[string]any{"bytes": r.Bytes, "dst_country": r.DstCountry},
@@ -168,11 +174,12 @@ func (threatIntelDetector) Category() Category { return CategorySecurity }
 
 func (d threatIntelDetector) Detect(w Window) ([]Detection, error) {
 	type row struct {
-		SrcAddr string
-		DstAddr string
-		Bytes   int64
-		Flows   int64
-		Flag    int
+		SrcAddr  string
+		DstAddr  string
+		DeviceID uint
+		Bytes    int64
+		Flows    int64
+		Flag     int
 	}
 	// forwardedOnly: a denied flow to a known-bad destination means the
 	// firewall WORKED — reporting it as "Traffic with known-bad destination"
@@ -182,7 +189,7 @@ func (d threatIntelDetector) Detect(w Window) ([]Detection, error) {
 	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("threat_flag <> 0").
-		Select("src_addr, dst_addr, SUM(bytes) as bytes, COUNT(*) as flows, MAX(threat_flag) as flag").
+		Select("src_addr, dst_addr, MAX(device_id) as device_id, SUM(bytes) as bytes, COUNT(*) as flows, MAX(threat_flag) as flag").
 		Group("src_addr, dst_addr").
 		Order("bytes DESC").Limit(100).Scan(&rows).Error; err != nil {
 		return nil, err
@@ -200,7 +207,8 @@ func (d threatIntelDetector) Detect(w Window) ([]Detection, error) {
 		}
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: "warning",
-			SrcAddr: r.SrcAddr, DstAddr: r.DstAddr, Score: float64(r.Bytes),
+			DeviceID: r.DeviceID,
+			SrcAddr:  r.SrcAddr, DstAddr: r.DstAddr, Score: float64(r.Bytes),
 			Message:  fmt.Sprintf("Traffic with known-bad %s: %s → %s (%d flows, %d bytes sampled)", who, r.SrcAddr, r.DstAddr, r.Flows, r.Bytes),
 			DedupKey: "threat_" + r.SrcAddr + "_" + r.DstAddr,
 			Details:  map[string]any{"flows": r.Flows, "bytes": r.Bytes, "threat_flag": r.Flag},
@@ -230,16 +238,17 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 	// Candidate (src,dst,port) groups: enough small-payload outbound/external
 	// flows to judge periodicity.
 	type cand struct {
-		SrcAddr string
-		DstAddr string
-		DstPort uint16
-		Cnt     int64
+		SrcAddr  string
+		DstAddr  string
+		DeviceID uint
+		DstPort  uint16
+		Cnt      int64
 	}
 	var cands []cand
 	if err := forwardedOnly(w.DB.Model(&models.FlowSample{}).
 		Where("timestamp >= ? AND timestamp < ?", w.Start, w.End)).
 		Where("direction IN ?", []int{int(classify.DirOutbound), int(classify.DirExternal)}).
-		Select("src_addr, dst_addr, dst_port, COUNT(*) as cnt").
+		Select("src_addr, dst_addr, MAX(device_id) as device_id, dst_port, COUNT(*) as cnt").
 		Group("src_addr, dst_addr, dst_port").
 		Having("COUNT(*) >= ? AND AVG(bytes) <= ?", cfg.BeaconMinSamples, cfg.BeaconMaxAvgBytes).
 		Order("cnt DESC").Limit(50).Scan(&cands).Error; err != nil {
@@ -261,7 +270,8 @@ func (d c2BeaconDetector) Detect(w Window) ([]Detection, error) {
 		}
 		out = append(out, Detection{
 			Detector: d.Name(), Category: d.Category(), Severity: "info",
-			SrcAddr: c.SrcAddr, DstAddr: c.DstAddr, DstPort: c.DstPort, Score: float64(c.Cnt),
+			DeviceID: c.DeviceID,
+			SrcAddr:  c.SrcAddr, DstAddr: c.DstAddr, DstPort: c.DstPort, Score: float64(c.Cnt),
 			Message:  fmt.Sprintf("Possible C2 beacon: %s → %s:%d, %d regular small callouts (CV %.2f)", c.SrcAddr, c.DstAddr, c.DstPort, c.Cnt, cv),
 			DedupKey: fmt.Sprintf("beacon_%s_%s_%d", c.SrcAddr, c.DstAddr, c.DstPort),
 			Details:  map[string]any{"count": c.Cnt, "cv": cv, "dst_port": c.DstPort},

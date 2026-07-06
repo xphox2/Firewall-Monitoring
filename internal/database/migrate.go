@@ -1138,6 +1138,36 @@ func (d *Database) migrateFlowDetectionsTable() error {
 	return d.db.AutoMigrate(&models.FlowDetection{})
 }
 
+// migrateAlertFlowEnrichment (v32) supports the alerts overhaul: it links flow
+// detections to the alert that represents them (single-feed de-dup) and stores
+// ASN organization names on flow samples.
+//   - flow_detections.alert_id (+ partial index WHERE alert_id IS NULL, matching
+//     the hot "show only non-alerting detections" filter). flow_detections is not
+//     partitioned, so a plain ALTER + CREATE INDEX suffices.
+//   - flow_samples.src_asn_org / dst_asn_org. flow_samples is monthly RANGE-
+//     partitioned; Postgres propagates ADD COLUMN to every partition automatically,
+//     so execMaintenanceDDL on the parent is enough.
+//
+// AutoMigrate covers the SQLite (test) path; both are idempotent.
+func (d *Database) migrateAlertFlowEnrichment() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.FlowDetection{}, &models.FlowSample{})
+	}
+	stmts := []string{
+		`ALTER TABLE flow_detections ADD COLUMN IF NOT EXISTS alert_id bigint`,
+		`CREATE INDEX IF NOT EXISTS idx_flowdet_alert ON flow_detections (alert_id) WHERE alert_id IS NULL`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS src_asn_org text`,
+		`ALTER TABLE flow_samples ADD COLUMN IF NOT EXISTS dst_asn_org text`,
+	}
+	for _, s := range stmts {
+		if err := d.execMaintenanceDDL(s); err != nil {
+			return fmt.Errorf("migrate v32 alert_flow_enrichment: %w", err)
+		}
+	}
+	log.Printf("migrate v32: ensured flow_detections.alert_id (+partial idx) and flow_samples.src/dst_asn_org")
+	return nil
+}
+
 // migrateThreatFeedStatusTable (v31) creates the threat_feed_status table that
 // records per-source feed outcomes for the admin Threat Intelligence page.
 // AutoMigrate is idempotent and cross-dialect; the table is tiny (one row per

@@ -283,11 +283,14 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 		if h.geoResolver.Enabled() {
 			samples[i].SrcCountry = h.geoResolver.Country(samples[i].SrcAddr)
 			samples[i].DstCountry = h.geoResolver.Country(samples[i].DstAddr)
+			// ASN + org together, but ONLY when the number itself comes from the
+			// geo DB. When a BGP AS won above we leave the org empty rather than
+			// risk pairing the geo DB's org with a different BGP AS number.
 			if samples[i].SrcASN == 0 {
-				samples[i].SrcASN = h.geoResolver.ASN(samples[i].SrcAddr)
+				samples[i].SrcASN, samples[i].SrcASNOrg = h.geoResolver.ASNInfo(samples[i].SrcAddr)
 			}
 			if samples[i].DstASN == 0 {
-				samples[i].DstASN = h.geoResolver.ASN(samples[i].DstAddr)
+				samples[i].DstASN, samples[i].DstASNOrg = h.geoResolver.ASNInfo(samples[i].DstAddr)
 			}
 		}
 		// Threat-intel bitfield: bit 0 = src known-bad IP, bit 1 = dst known-bad

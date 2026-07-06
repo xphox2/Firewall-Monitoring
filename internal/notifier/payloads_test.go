@@ -25,6 +25,79 @@ func sampleAlert() *models.Alert {
 	}
 }
 
+// enrichedAlert is a sampleAlert with the transient identity/link fields the
+// AlertManager populates before sending.
+func enrichedAlert() *models.Alert {
+	a := sampleAlert()
+	a.ID = 42
+	a.DeviceID = 7
+	a.DeviceName = "FW-EDGE-01"
+	a.SiteName = "HQ"
+	a.DetailURL = "https://fwmon.example.net/admin/#alert/42"
+	a.EventKey = "flowsec_1.2.3.4"
+	return a
+}
+
+func jsonStr(t *testing.T, v interface{}) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(b)
+}
+
+// TestPayloads_CarryDeviceSiteAndLink verifies every channel surfaces the device
+// name, site, and clickable link so an alert says WHERE it came from.
+func TestPayloads_CarryDeviceSiteAndLink(t *testing.T) {
+	a := enrichedAlert()
+
+	subj, body := buildEmailSubjectBody(a)
+	if !strings.Contains(subj, "FW-EDGE-01") {
+		t.Errorf("email subject missing device name: %q", subj)
+	}
+	for _, want := range []string{"FW-EDGE-01", "HQ", a.DetailURL} {
+		if !strings.Contains(body, want) {
+			t.Errorf("email body missing %q:\n%s", want, body)
+		}
+	}
+
+	wp := buildWebhookPayload(a)
+	if wp["device_name"] != "FW-EDGE-01" || wp["site_name"] != "HQ" || wp["url"] != a.DetailURL {
+		t.Errorf("webhook payload missing identity/url: %+v", wp)
+	}
+
+	for name, payload := range map[string]interface{}{
+		"slack":   buildSlackPayload(a),
+		"discord": buildDiscordPayload(a),
+		"teams":   buildTeamsPayload(a),
+	} {
+		if !strings.Contains(jsonStr(t, payload), a.DetailURL) {
+			t.Errorf("%s payload missing detail URL", name)
+		}
+	}
+
+	// PagerDuty/Opsgenie dedup must key off the consolidated event, not the
+	// per-detector type/metric (which can change mid-event).
+	if got := alertDedupKey(a); got != "fwmon-flowsec_1.2.3.4" {
+		t.Errorf("dedup key = %q, want fwmon-flowsec_1.2.3.4", got)
+	}
+	if pd := buildPagerDutyPayload(a, "rk"); pd["dedup_key"] != "fwmon-flowsec_1.2.3.4" {
+		t.Errorf("PagerDuty dedup_key = %v", pd["dedup_key"])
+	}
+}
+
+// TestEmailSubject_SanitizesDeviceName ensures a device-controlled name can't fold
+// a header into the Subject line.
+func TestEmailSubject_SanitizesDeviceName(t *testing.T) {
+	a := sampleAlert()
+	a.DeviceName = "evil\r\nBcc: attacker@example.com"
+	subj, _ := buildEmailSubjectBody(a)
+	if strings.ContainsAny(subj, "\r\n") {
+		t.Errorf("email subject not header-sanitized: %q", subj)
+	}
+}
+
 func TestSeverityToSlackColor(t *testing.T) {
 	cases := map[models.Severity]string{
 		"info":     "#36a64f",

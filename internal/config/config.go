@@ -288,6 +288,10 @@ type AlertsConfig struct {
 	PagerDutyRoutingKey string
 	OpsgenieAPIKey      string
 	TeamsWebhookURL     string
+	// PublicBaseURL is the externally-reachable base URL of this server (e.g.
+	// https://fwmon.example.net), used to build clickable "view alert" deep-links
+	// in notifications: <PublicBaseURL>/admin/#alert/<id>. Empty = omit the link.
+	PublicBaseURL string
 	// Flap suppression (F13): when an alert fires and auto-resolves in under
 	// FlapMinActiveSeconds at least FlapMaxFires times within
 	// FlapWindowMinutes, the next fire is saved suppressed (no notification)
@@ -501,6 +505,7 @@ func Load() *Config {
 			PagerDutyRoutingKey:      getEnv("PAGERDUTY_ROUTING_KEY", ""),
 			OpsgenieAPIKey:           getEnv("OPSGENIE_API_KEY", ""),
 			TeamsWebhookURL:          getEnv("TEAMS_WEBHOOK_URL", ""),
+			PublicBaseURL:            strings.TrimRight(getEnv("PUBLIC_BASE_URL", ""), "/"),
 			ProbeDataLagAlertMinutes: getIntEnv("PROBE_DATA_LAG_ALERT_MINUTES", 60),
 		},
 		Uptime: UptimeConfig{

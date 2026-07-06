@@ -46,6 +46,10 @@ func TestPortScanDetector(t *testing.T) {
 	if got[0].Severity != "warning" {
 		t.Errorf("severity = %q, want warning (source not on threat feed)", got[0].Severity)
 	}
+	// The detection must attribute the exporter device (was 0 → "Unknown" before).
+	if got[0].DeviceID != 1 {
+		t.Errorf("device attribution = %d, want 1 (no more Unknown)", got[0].DeviceID)
+	}
 
 	// With the default (100) threshold, 25 ports must NOT fire — the false-positive fix.
 	wDefault := fullWindow(now)

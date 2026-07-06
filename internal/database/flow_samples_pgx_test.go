@@ -77,6 +77,8 @@ func TestFlowSamplesCopyColumns_OrderAndFieldTypes(t *testing.T) {
 		"dst_country",
 		"src_asn",
 		"dst_asn",
+		"src_asn_org",
+		"dst_asn_org",
 		"threat_flag",
 		"as_path",
 		"next_hop",

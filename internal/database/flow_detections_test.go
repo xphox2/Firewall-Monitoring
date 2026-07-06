@@ -31,7 +31,7 @@ func TestFlowDetectionPersistence(t *testing.T) {
 	}
 
 	// Window of 1h excludes the 3h-old row.
-	rows, err := db.GetRecentDetections(now.Add(-1*time.Hour), 100, true)
+	rows, err := db.GetRecentDetections(now.Add(-1*time.Hour), 100, true, true)
 	if err != nil {
 		t.Fatalf("get recent: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestFlowDetectionPersistence(t *testing.T) {
 	if err := db.AckFlowDetection(rows[0].ID); err != nil {
 		t.Fatalf("ack: %v", err)
 	}
-	unacked, err := db.GetRecentDetections(now.Add(-1*time.Hour), 100, true)
+	unacked, err := db.GetRecentDetections(now.Add(-1*time.Hour), 100, true, true)
 	if err != nil {
 		t.Fatalf("get unacked: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestFlowDetectionPersistence(t *testing.T) {
 		t.Errorf("after ack, unacked list = %+v, want empty", unacked)
 	}
 	// Without unackedOnly the acked row is still returned.
-	all, err := db.GetRecentDetections(now.Add(-1*time.Hour), 100, false)
+	all, err := db.GetRecentDetections(now.Add(-1*time.Hour), 100, false, true)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}

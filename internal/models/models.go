@@ -299,6 +299,17 @@ type Alert struct {
 	SnoozedUntil  *time.Time `json:"snoozed_until,omitempty" gorm:"index"`
 	SnoozedBy     string     `json:"snoozed_by,omitempty"`
 	SnoozedReason string     `json:"snoozed_reason,omitempty"`
+
+	// Transient (non-persisted) presentation fields, populated at read/notify
+	// time so alerts identify themselves clearly (device NAME + site) and link to
+	// a detail view. DeviceName/SiteName are resolved from DeviceID; DetailURL is
+	// <PUBLIC_BASE_URL>/admin/#alert/<id> (empty when no base URL is configured).
+	// EventKey is the consolidation key (e.g. "sflow_<src>") used by the
+	// PagerDuty/Opsgenie dedup so a multi-detector event opens ONE incident.
+	DeviceName string `json:"device_name,omitempty" gorm:"-"`
+	SiteName   string `json:"site_name,omitempty" gorm:"-"`
+	DetailURL  string `json:"detail_url,omitempty" gorm:"-"`
+	EventKey   string `json:"-" gorm:"-"`
 }
 
 type AlertPolicy struct {
@@ -912,6 +923,14 @@ type FlowSample struct {
 	DstCountry string `json:"dst_country,omitempty" gorm:"column:dst_country;type:varchar(2)"`
 	SrcASN     uint32 `json:"src_asn,omitempty" gorm:"column:src_asn;type:bigint;default:0;not null"`
 	DstASN     uint32 `json:"dst_asn,omitempty" gorm:"column:dst_asn;type:bigint;default:0;not null"`
+	// SrcASNOrg/DstASNOrg are the ASN organization/company names (e.g. "Google
+	// LLC") from the GeoLite2/DB-IP ASN database, stamped at ingest alongside the
+	// number — but ONLY when the number itself came from the geo DB. When a BGP AS
+	// from the sFlow extended_gateway wins, the org is left empty rather than risk
+	// pairing the geo DB's org with a different BGP AS number. Migration v32 adds
+	// the columns.
+	SrcASNOrg string `json:"src_asn_org,omitempty" gorm:"column:src_asn_org;type:text"`
+	DstASNOrg string `json:"dst_asn_org,omitempty" gorm:"column:dst_asn_org;type:text"`
 	// ThreatFlag is a bitfield set at ingest when an endpoint matches the
 	// threat-intel feed (internal/threatintel): bit 0 (1) = source is known-bad,
 	// bit 1 (2) = destination is known-bad. 0 = clean / no feed loaded. Migration
@@ -1147,22 +1166,28 @@ func (FlowRollup) TableName() string { return "flow_rollups" }
 // volume is bounded by detector count × distinct targets × cycles, far below the
 // raw-flow firehose, like flow_agent_drops. Added in migration v13.
 type FlowDetection struct {
-	ID           uint       `json:"id" gorm:"primaryKey"`
-	DetectedAt   time.Time  `json:"detected_at" gorm:"index:idx_flowdet_time;index:idx_flowdet_unack,priority:2"`
-	WindowStart  time.Time  `json:"window_start"`
-	WindowEnd    time.Time  `json:"window_end"`
-	Detector     string     `json:"detector" gorm:"size:32;index:idx_flowdet_cat,priority:2"` // e.g. "cleartext"
-	Category     string     `json:"category" gorm:"size:16;index:idx_flowdet_cat,priority:1"` // security | operational | policy
-	Severity     string     `json:"severity" gorm:"size:8"`                                   // info | warning | critical
-	DeviceID     uint       `json:"device_id" gorm:"index"`                                   // 0 when agent/cross-device
-	SrcAddr      string     `json:"src_addr"`
-	DstAddr      string     `json:"dst_addr"`
-	DstPort      uint16     `json:"dst_port" gorm:"type:integer"`
-	Protocol     uint8      `json:"protocol"`
-	Score        float64    `json:"score"` // magnitude (bytes/flows/pct) for ranking
-	Message      string     `json:"message"`
-	DedupKey     string     `json:"dedup_key" gorm:"size:128;index"` // stable key for cooldown + dedup
-	Details      string     `json:"details" gorm:"type:text"`        // JSON-encoded structured context
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	DetectedAt  time.Time `json:"detected_at" gorm:"index:idx_flowdet_time;index:idx_flowdet_unack,priority:2"`
+	WindowStart time.Time `json:"window_start"`
+	WindowEnd   time.Time `json:"window_end"`
+	Detector    string    `json:"detector" gorm:"size:32;index:idx_flowdet_cat,priority:2"` // e.g. "cleartext"
+	Category    string    `json:"category" gorm:"size:16;index:idx_flowdet_cat,priority:1"` // security | operational | policy
+	Severity    string    `json:"severity" gorm:"size:8"`                                   // info | warning | critical
+	DeviceID    uint      `json:"device_id" gorm:"index"`                                   // 0 when agent/cross-device
+	SrcAddr     string    `json:"src_addr"`
+	DstAddr     string    `json:"dst_addr"`
+	DstPort     uint16    `json:"dst_port" gorm:"type:integer"`
+	Protocol    uint8     `json:"protocol"`
+	Score       float64   `json:"score"` // magnitude (bytes/flows/pct) for ranking
+	Message     string    `json:"message"`
+	DedupKey    string    `json:"dedup_key" gorm:"size:128;index"` // stable key for cooldown + dedup
+	Details     string    `json:"details" gorm:"type:text"`        // JSON-encoded structured context
+	// AlertID links this detection to the alert that represents it ("single feed":
+	// once a detection is escalated to an alert it lives on the Alerts page, not
+	// the sFlow detections card). NULL = raw/sub-threshold detection shown as NOC
+	// context. Also the src-discriminating handle the alert engine uses to find an
+	// event's still-open alert across overlapping detection cycles. Migration v32.
+	AlertID      *uint      `json:"alert_id,omitempty" gorm:"index:idx_flowdet_alert,where:alert_id IS NULL"`
 	Acknowledged bool       `json:"acknowledged" gorm:"default:false;index:idx_flowdet_unack,priority:1"`
 	ResolvedAt   *time.Time `json:"resolved_at"`
 	CreatedAt    time.Time  `json:"created_at"`
