@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.38] - 2026-07-05
+
+### Fixed
+- **Config diff raw view no longer drifts on inserted/removed lines.** The raw line diff was computed client-side with a naive positional comparison (`line[i]` vs `line[i]`), so a single inserted or removed line shifted every line below it and flagged the entire remainder as changed. It is now computed server-side with a proper Myers O(ND) diff (`configdiff.DiffLines`): an inserted/removed line flags only that line and everything below stays aligned.
+- Volatile masking (ENC IV churn, re-encrypted PEM bodies, GUI-dashboard timestamps) now participates in the diff alignment instead of a fragile positional post-step, so volatile churn shows as a single grey "(volatile)" row rather than leaking into red/green deltas. Masking is line-count-preserving and reuses the FortiGate normalizer's existing patterns/templates via a new `LineMasker` interface, so a real field change on a volatile line is never swallowed.
+- CRLF-vs-LF and trailing-newline differences between two captures no longer turn the whole diff red/green.
+
+### Added
+- Raw config diff gains intra-line **word-level highlighting** of changed tokens, **collapsing of long unchanged runs** (expandable context), and a **Unified/Split** view toggle. Both diff entry points (compare button and revision-list diff) now share the one server-driven renderer.
+- Line diffs degrade gracefully on a capture-mode mismatch (`show` vs `show full-configuration`): the changed region renders as a block replace with an operator banner instead of an O(N·D) blowup.
+
+### Changed
+- `GET /admin/api/devices/:id/config-history/diff` now returns a `line_diff` object (aligned rows) and no longer echoes the full `config_text` for each revision (the view/download endpoints still serve it), avoiding a ~3× response-size increase.
+
 ## [0.11.37] - 2026-07-05
 
 ### Fixed

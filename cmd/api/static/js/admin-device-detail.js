@@ -1766,34 +1766,10 @@
                 return;
             }
 
-            // Compile vendor-aware volatile-line patterns (server sends them
-            // as RE2 strings; we translate to JS RegExp). Crucially we add
-            // the `g` flag so .replace() catches every match, not just the
-            // first — without it only one ENC line per pattern got masked
-            // and the rest leaked into the diff as "changes".
-            var patterns = (data && data.volatile_patterns || []).map(function(p) {
-                try {
-                    var src = p.regex || '';
-                    var jsFlags = 'g';
-                    var flagMatch = src.match(/^\(\?([a-z]+)\)/);
-                    if (flagMatch) {
-                        if (flagMatch[1].indexOf('m') !== -1) jsFlags += 'm';
-                        if (flagMatch[1].indexOf('s') !== -1) jsFlags += 's';
-                        src = src.substring(flagMatch[0].length);
-                    }
-                    return { name: p.name || '?', regex: new RegExp(src, jsFlags) };
-                } catch (e) {
-                    console.warn('skipping invalid volatile pattern', p, e);
-                    return null;
-                }
-            }).filter(function(x) { return x; });
-
-            var fromText = fromRev.config_text || '';
-            var toText   = toRev.config_text   || '';
-
-            var maskedFrom = maskVolatile(fromText, patterns);
-            var maskedTo   = maskVolatile(toText,   patterns);
-            var rawHTML    = computeMaskedDiff(maskedFrom, maskedTo);
+            // The raw line diff is computed server-side (configdiff.DiffLines,
+            // a Myers O(ND) diff with volatile masking baked into the alignment)
+            // and delivered as data.line_diff. The browser only renders it.
+            var rawHTML = renderLineDiff(data && data.line_diff);
 
             // Preferred view: the per-object semantic diff (parsed + classified
             // server-side). Falls back to the raw line diff for vendors without an
@@ -1826,68 +1802,179 @@
         }
     }
 
-    function maskVolatile(text, patterns) {
-        var masked = text;
-        patterns.forEach(function(p) {
-            // p.regex carries the `g` flag so replace() catches every match.
-            masked = masked.replace(p.regex, function(m) {
-                return '__VOLATILE__' + p.name + '__' + Math.floor(m.length) + '__';
-            });
-        });
-        return masked;
+    // Row styles for the unified line diff. Kept as constants so the split view
+    // and the unchanged-run collapse reuse the exact same look.
+    var CD_ROW = 'padding:1px 8px;white-space:pre-wrap;word-break:break-all';
+
+    // renderLineDiff renders the server-computed, aligned line diff (data.line_diff
+    // from configdiff.DiffLines). The server already did the Myers alignment and
+    // volatile masking; this only turns rows into HTML, collapses long unchanged
+    // runs, highlights intra-line word changes, and supports a split view.
+    function renderLineDiff(ld) {
+        if (!ld || !ld.rows || !ld.rows.length) {
+            return '<div style="color:#8b949e;padding:20px">No differences found</div>';
+        }
+        var rows = ld.rows;
+        var out = [];
+
+        if (ld.truncated) {
+            out.push('<div style="background:#21262d;color:#d2992a;padding:8px;text-align:center;font-family:sans-serif">' +
+                esc(ld.note || 'Diff truncated for size. Download both revisions to compare offline.') + '</div>');
+        }
+
+        // A view toggle for unified vs split. State lives on the container so
+        // __ldView can flip it without re-fetching.
+        out.push('<div style="display:flex;gap:8px;padding:8px 10px;font-family:sans-serif">' +
+            '<button type="button" id="ld-btn-unified" data-action="ld-view" data-view="unified" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:4px 10px;background:#1f6feb;color:#fff;font-size:0.8rem">Unified</button>' +
+            '<button type="button" id="ld-btn-split" data-action="ld-view" data-view="split" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:4px 10px;background:#21262d;color:#c9d1d9;font-size:0.8rem">Split</button>' +
+            '</div>');
+
+        out.push('<div id="ld-unified">' + renderUnified(rows) + '</div>');
+        out.push('<div id="ld-split" style="display:none">' + renderSplit(rows) + '</div>');
+        return out.join('');
     }
 
-    function computeMaskedDiff(from, to) {
-        var fromLines = from.split('\n');
-        var toLines   = to.split('\n');
-        var maxLen = Math.max(fromLines.length, toLines.length);
-
-        // Hard cap to avoid hanging the browser on pathologically large
-        // configs. 10 000 lines = ~50–80 KB rendered HTML, plenty for any
-        // real FortiGate config.
-        var MAX_LINES = 10000;
-        var truncated = maxLen > MAX_LINES;
-        if (truncated) maxLen = MAX_LINES;
-
-        // Build via an array + join (O(n)) rather than `+=` (O(n²) on some
-        // engines). Matters for 5 000+ line diffs.
+    // renderUnified builds the classic one-column diff, collapsing runs of >3
+    // consecutive equal/volatile-equal lines into an expandable context divider.
+    function renderUnified(rows) {
         var parts = [];
-
-        for (var i = 0; i < maxLen; i++) {
-            var l1 = i < fromLines.length ? fromLines[i] : null;
-            var l2 = i < toLines.length   ? toLines[i]   : null;
-
-            var l1Volatile = l1 !== null && l1.indexOf('__VOLATILE__') !== -1;
-            var l2Volatile = l2 !== null && l2.indexOf('__VOLATILE__') !== -1;
-
-            // If either side has a volatile marker on this line, render one
-            // grey "(volatile: name)" row and skip the red/green emit. The
-            // two sides should be aligned because we masked both texts with
-            // the same patterns.
-            if (l1Volatile || l2Volatile) {
-                var marker = l1Volatile ? l1 : l2;
-                var nm = marker.match(/__VOLATILE__([^_]+)__/);
-                var name = nm ? nm[1] : '?';
-                parts.push('<div style="background:#21262d;color:#8b949e;padding:1px 8px"> &nbsp; <em>(volatile: ' + esc(name) + ')</em></div>');
+        var i = 0;
+        var groupId = 0;
+        while (i < rows.length) {
+            // Gather a run of unchanged (equal or volatile) rows.
+            if (rows[i].op === 'equal' || rows[i].op === 'volatile') {
+                var j = i;
+                while (j < rows.length && (rows[j].op === 'equal' || rows[j].op === 'volatile')) j++;
+                var run = rows.slice(i, j);
+                if (run.length > 4) {
+                    // Keep 2 lines of leading/trailing context; collapse the middle.
+                    run.slice(0, 2).forEach(function(r) { parts.push(unifiedRow(r)); });
+                    var hidden = run.slice(2, run.length - 2);
+                    var gid = 'ld-ctx-' + (groupId++);
+                    parts.push('<button type="button" data-action="ld-expand" data-target="' + gid + '" ' +
+                        'style="display:block;width:100%;text-align:center;cursor:pointer;border:0;border-top:1px solid #30363d;border-bottom:1px solid #30363d;background:#161b22;color:#58a6ff;padding:3px 8px;font-family:sans-serif;font-size:0.78rem">' +
+                        '⋯ ' + hidden.length + ' unchanged line' + (hidden.length === 1 ? '' : 's') + ' — click to expand</button>');
+                    parts.push('<div id="' + gid + '" style="display:none">' +
+                        hidden.map(unifiedRow).join('') + '</div>');
+                    run.slice(run.length - 2).forEach(function(r) { parts.push(unifiedRow(r)); });
+                } else {
+                    run.forEach(function(r) { parts.push(unifiedRow(r)); });
+                }
+                i = j;
                 continue;
             }
-            if (l1 === l2) {
-                parts.push('<div style="padding:1px 8px;color:#c9d1d9">' + esc(l1 || '') + '</div>');
-            } else {
-                if (l1 !== null) {
-                    parts.push('<div style="background:rgba(248,81,73,0.15);color:#ff7b72;padding:1px 8px">- ' + esc(l1) + '</div>');
-                }
-                if (l2 !== null) {
-                    parts.push('<div style="background:rgba(63,185,80,0.15);color:#3fb950;padding:1px 8px">+ ' + esc(l2) + '</div>');
-                }
+            // A changed region: pair adjacent delete+insert for word-level highlight.
+            if (rows[i].op === 'delete' && i + 1 < rows.length && rows[i + 1].op === 'insert') {
+                var pair = wordDiffPair(rows[i].text, rows[i + 1].text);
+                parts.push(diffLine('-', 'rgba(248,81,73,0.15)', '#ff7b72', pair[0]));
+                parts.push(diffLine('+', 'rgba(63,185,80,0.15)', '#3fb950', pair[1]));
+                i += 2;
+                continue;
+            }
+            parts.push(unifiedRow(rows[i]));
+            i++;
+        }
+        return parts.join('');
+    }
+
+    // unifiedRow renders a single non-paired row.
+    function unifiedRow(r) {
+        if (r.op === 'volatile') {
+            return '<div style="background:#21262d;color:#8b949e;' + CD_ROW + '"> &nbsp; <em>(volatile' +
+                (r.vname ? ': ' + esc(r.vname) : '') + ')</em></div>';
+        }
+        if (r.op === 'delete') return diffLine('-', 'rgba(248,81,73,0.15)', '#ff7b72', esc(r.text));
+        if (r.op === 'insert') return diffLine('+', 'rgba(63,185,80,0.15)', '#3fb950', esc(r.text));
+        return '<div style="color:#c9d1d9;' + CD_ROW + '">  ' + esc(r.text) + '</div>';
+    }
+
+    // diffLine wraps a prefixed diff line. `inner` is ALREADY-ESCAPED HTML.
+    function diffLine(prefix, bg, color, innerHTML) {
+        return '<div style="background:' + bg + ';color:' + color + ';' + CD_ROW + '">' + prefix + ' ' + innerHTML + '</div>';
+    }
+
+    // renderSplit builds a two-column (old | new) view driven by the same op list.
+    function renderSplit(rows) {
+        var left = [], right = [];
+        var cell = function(bg, color, txt) {
+            return '<div style="background:' + bg + ';color:' + color + ';' + CD_ROW + ';min-height:1.2em">' + txt + '</div>';
+        };
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (r.op === 'equal') {
+                left.push(cell('transparent', '#c9d1d9', esc(r.text)));
+                right.push(cell('transparent', '#c9d1d9', esc(r.text)));
+            } else if (r.op === 'volatile') {
+                var v = '<em>(volatile' + (r.vname ? ': ' + esc(r.vname) : '') + ')</em>';
+                left.push(cell('#21262d', '#8b949e', v));
+                right.push(cell('#21262d', '#8b949e', v));
+            } else if (r.op === 'delete' && i + 1 < rows.length && rows[i + 1].op === 'insert') {
+                var pair = wordDiffPair(r.text, rows[i + 1].text);
+                left.push(cell('rgba(248,81,73,0.15)', '#ff7b72', pair[0]));
+                right.push(cell('rgba(63,185,80,0.15)', '#3fb950', pair[1]));
+                i++;
+            } else if (r.op === 'delete') {
+                left.push(cell('rgba(248,81,73,0.15)', '#ff7b72', esc(r.text)));
+                right.push(cell('transparent', '#c9d1d9', ''));
+            } else if (r.op === 'insert') {
+                left.push(cell('transparent', '#c9d1d9', ''));
+                right.push(cell('rgba(63,185,80,0.15)', '#3fb950', esc(r.text)));
             }
         }
-        if (truncated) {
-            parts.push('<div style="background:#21262d;color:#d2992a;padding:8px;text-align:center">' +
-                '… diff truncated at ' + MAX_LINES + ' lines for browser performance. Download both revisions to compare offline.</div>');
+        return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">' +
+            '<div style="border-right:1px solid #30363d">' + left.join('') + '</div>' +
+            '<div>' + right.join('') + '</div></div>';
+    }
+
+    // wordDiffPair returns [oldHTML, newHTML] with changed tokens highlighted, but
+    // only when the two lines are similar enough to make token alignment
+    // meaningful (else it degrades to plain escaped text). Tokens are ESCAPED
+    // FIRST, then wrapped — wrapping already-escaped text can split HTML entities.
+    function wordDiffPair(oldText, newText) {
+        oldText = oldText || '';
+        newText = newText || '';
+        if (oldText.length > 500 || newText.length > 500) {
+            return [esc(oldText), esc(newText)];
         }
-        if (parts.length === 0) return '<div style="color:#8b949e;padding:20px">No differences found</div>';
-        return parts.join('');
+        var a = oldText.split(/(\s+|")/).filter(function(s) { return s !== ''; });
+        var b = newText.split(/(\s+|")/).filter(function(s) { return s !== ''; });
+        var common = wordLCS(a, b);
+        var denom = Math.max(a.length, b.length) || 1;
+        if (common.count / denom < 0.5) {
+            return [esc(oldText), esc(newText)];
+        }
+        return [markTokens(a, common.a, '#f85149'), markTokens(b, common.b, '#3fb950')];
+    }
+
+    // wordLCS returns the length of the longest common token subsequence plus the
+    // set of matched indices on each side.
+    function wordLCS(a, b) {
+        var n = a.length, m = b.length;
+        var dp = [];
+        for (var i = 0; i <= n; i++) dp.push(new Array(m + 1).fill(0));
+        for (i = n - 1; i >= 0; i--) {
+            for (var j = m - 1; j >= 0; j--) {
+                dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
+        }
+        var aMatch = {}, bMatch = {}, count = 0;
+        i = 0; j = 0;
+        while (i < n && j < m) {
+            if (a[i] === b[j]) { aMatch[i] = true; bMatch[j] = true; count++; i++; j++; }
+            else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+            else j++;
+        }
+        return { a: aMatch, b: bMatch, count: count };
+    }
+
+    // markTokens escapes each token, then wraps non-matched (changed) tokens in a
+    // highlight span. Escape-then-wrap order is deliberate (see wordDiffPair).
+    function markTokens(tokens, matched, color) {
+        return tokens.map(function(tok, idx) {
+            var e = esc(tok);
+            if (matched[idx]) return e;
+            return '<span style="background:' + color + '33;color:' + color + ';border-radius:2px">' + e + '</span>';
+        }).join('');
     }
 
     // sevColor maps a configdiff severity to a display color.
@@ -1978,6 +2065,20 @@
         if (br) br.style.background = raw ? '#1f6feb' : '#21262d';
     };
 
+    // __ldView switches the line diff between unified and split layouts.
+    window.__ldView = function(which) {
+        var u = document.getElementById('ld-unified');
+        var s = document.getElementById('ld-split');
+        var bu = document.getElementById('ld-btn-unified');
+        var bs = document.getElementById('ld-btn-split');
+        if (!u || !s) return;
+        var split = which === 'split';
+        u.style.display = split ? 'none' : 'block';
+        s.style.display = split ? 'block' : 'none';
+        if (bu) { bu.style.background = split ? '#21262d' : '#1f6feb'; bu.style.color = split ? '#c9d1d9' : '#fff'; }
+        if (bs) { bs.style.background = split ? '#1f6feb' : '#21262d'; bs.style.color = split ? '#fff' : '#c9d1d9'; }
+    };
+
     window.viewConfigRevision = function(revId) {
         fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId + '/view', { credentials: 'same-origin' })
             .then(function(resp) { return resp.json(); })
@@ -1988,16 +2089,10 @@
             }).catch(function(e) { console.error('Failed to view config:', e); });
     };
 
+    // diffConfigRevisions routes through the same server-side diff endpoint as the
+    // compare button so both entry points share one correct (Myers) renderer.
     window.diffConfigRevisions = function(revId1, revId2) {
-        Promise.all([
-            fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId1 + '/view', { credentials: 'same-origin' }).then(function(r) { return r.json(); }),
-            fetch('/admin/api/devices/' + deviceId + '/config-history/' + revId2 + '/view', { credentials: 'same-origin' }).then(function(r) { return r.json(); })
-        ]).then(function(results) {
-            if (!results[0].success || !results[0].data || !results[1].success || !results[1].data) return;
-            var rev1 = results[0].data.revision;
-            var rev2 = results[1].data.revision;
-            showDiffModal('Configuration Diff', rev1.config_text, rev2.config_text, rev1.timestamp, rev2.timestamp);
-        }).catch(function(e) { console.error('Failed to load diff:', e); });
+        openConfigDiff(revId1, revId2);
     };
 
     function showConfigModal(title, configText, timestamp, checksum) {
@@ -2009,44 +2104,6 @@
             '<span class="ml-4">Checksum: ' + esc(checksum || '-') + '</span></div>' +
             '<pre class="config-text bg-[#0d1117] border border-[#30363d] rounded p-4 overflow-auto" style="max-height:60vh;white-space:pre-wrap;font-size:0.8rem">' + esc(configText || '') + '</pre>';
         AC.openModal(modal);
-    }
-
-    function showDiffModal(title, text1, text2, ts1, ts2) {
-        var modal = document.getElementById('config-modal') || createConfigModal();
-        modal.querySelector('.modal-header h2').textContent = title;
-        var content = modal.querySelector('.config-modal-body');
-        var diffHtml = computeDiff(text1 || '', text2 || '');
-        content.innerHTML = '<div class="config-meta mb-3 text-[0.82rem] text-[#8b949e] flex justify-between">' +
-            '<div><span class="text-[#f85149]">Older:</span> ' + formatTime(ts1) + '</div>' +
-            '<div><span class="text-[#3fb950]">Newer:</span> ' + formatTime(ts2) + '</div></div>' +
-            '<div class="diff-container bg-[#0d1117] border border-[#30363d] rounded p-4 overflow-auto" style="max-height:60vh;white-space:pre-wrap;font-size:0.8rem">' + diffHtml + '</div>';
-        AC.openModal(modal);
-    }
-
-    function computeDiff(text1, text2) {
-        var lines1 = text1.split('\n');
-        var lines2 = text2.split('\n');
-        var result = [];
-        var maxLen = Math.max(lines1.length, lines2.length);
-        for (var i = 0; i < maxLen; i++) {
-            var l1 = lines1[i] || '';
-            var l2 = lines2[i] || '';
-            if (l1 === l2) {
-                result.push({ type: 'unchanged', text: l1 });
-            } else {
-                result.push({ type: 'removed', text: l1 });
-                result.push({ type: 'added', text: l2 });
-            }
-        }
-        var html = '';
-        result.forEach(function(line) {
-            var cls = '';
-            var prefix = ' ';
-            if (line.type === 'removed') { cls = 'diff-removed'; prefix = '-'; }
-            else if (line.type === 'added') { cls = 'diff-added'; prefix = '+'; }
-            html += '<div class="' + cls + '" style="padding:2px 8px;">' + prefix + ' ' + esc(line.text) + '</div>';
-        });
-        return html || '<div class="text-[#8b949e] p-4">No differences found</div>';
     }
 
     function createConfigModal() {
@@ -2063,9 +2120,6 @@
             '<button type="button" class="btn secondary" data-action="close-config-modal">Close</button>' +
             '</div></div>';
         document.body.appendChild(modal);
-        var style = document.createElement('style');
-        style.textContent = '.diff-removed{background:rgba(248,81,73,0.15);color:#ff7b72;}.diff-added{background:rgba(63,185,80,0.15);color:#3fb950;}';
-        document.head.appendChild(style);
         return modal;
     }
 
@@ -2283,6 +2337,15 @@
         },
         'cd-toggle': function(el) {
             window.__cdToggle(parseInt(el.dataset.idx, 10));
+        },
+        // Line diff: unified/split toggle + expand a collapsed unchanged run.
+        'ld-view': function(el) {
+            window.__ldView(el.dataset.view);
+        },
+        'ld-expand': function(el) {
+            var box = document.getElementById(el.dataset.target);
+            if (box) box.style.display = 'block';
+            el.style.display = 'none';
         }
     });
 

@@ -135,6 +135,85 @@ func (fortigateNormalizer) Normalize(raw []byte) ([]byte, string) {
 	return out, quality
 }
 
+// MaskVolatileLines implements LineMasker for the line diff. It mirrors
+// Normalize's replacements — reusing the same compiled regexes and `${1}<token>`
+// templates so a real field change (e.g. `set adminpass ENC …` vs
+// `set wifipass ENC …`) is never swallowed — but preserves the line count so the
+// diff stays aligned. The two multi-line patterns (gui-dashboard block and PEM
+// bodies) are masked per-line rather than collapsed.
+func (fortigateNormalizer) MaskVolatileLines(raw []byte) []byte {
+	// Prompt echoes and the single-line patterns are line-anchored and already
+	// newline-preserving, so they can be applied to the whole text unchanged.
+	out := fortiPromptPrefixRegex.ReplaceAll(raw, nil)
+	out = maskFortiConfigBlockLines(out, "gui-dashboard")
+	out = fortiEncLineRegex.ReplaceAll(out, []byte(`${1}<volatile-enc>`))
+	out = fortiConfigVersionRegex.ReplaceAll(out, []byte(`${1}<volatile-config-version>`))
+	out = fortiConfFileVerRegex.ReplaceAll(out, []byte(`${1}<volatile-conf-file-ver>`))
+	out = fortiPrivateEncKeyRegex.ReplaceAll(out, []byte(`${1}<volatile-private-encryption-key>`))
+	out = fortiLastLoginRegex.ReplaceAll(out, []byte(`${1}<volatile-last-login>`))
+	out = fortiLastUpdatedRegex.ReplaceAll(out, []byte(`${1}<volatile-last-updated>`))
+	out = fortiSystemTimeRegex.ReplaceAll(out, []byte(`${1}<volatile-system-time>`))
+	out = maskFortiPemLines(out)
+	return out
+}
+
+// maskFortiConfigBlockLines is the line-count-preserving sibling of
+// stripFortiConfigBlock: instead of collapsing a `config <name> … end` block to a
+// single marker (which changes the line count and would misalign the diff), it
+// replaces every line inside the block with a `<volatile-<name>>` token, keeping
+// each line's original indentation. Depth counting matches stripFortiConfigBlock.
+func maskFortiConfigBlockLines(in []byte, name string) []byte {
+	open := "config " + name
+	token := "<volatile-" + name + ">"
+	lines := strings.Split(string(in), "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != open {
+			continue
+		}
+		lines[i] = leadingWhitespace(lines[i]) + token
+		depth := 1
+		for i++; i < len(lines) && depth > 0; i++ {
+			switch t := strings.TrimSpace(lines[i]); {
+			case strings.HasPrefix(t, "config "):
+				depth++
+			case t == "end":
+				depth--
+			}
+			lines[i] = leadingWhitespace(lines[i]) + token
+		}
+		i-- // for-loop's i++ re-advances past the consumed `end`
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+// maskFortiPemLines masks multi-line PEM-bearing fields while preserving the line
+// count. The field name + BEGIN marker (capture group 1) is kept so a real field
+// change stays visible; the body and END marker become `<volatile-pem>`, one
+// token per original line, so newline count is unchanged.
+func maskFortiPemLines(in []byte) []byte {
+	return fortiPemBlockRegex.ReplaceAllFunc(in, func(m []byte) []byte {
+		loc := fortiPemBlockRegex.FindSubmatchIndex(m)
+		var g1 []byte
+		if loc != nil && loc[2] >= 0 {
+			g1 = m[loc[2]:loc[3]] // group 1: `[ws]set <field> "-----BEGIN…-----`
+		}
+		var b strings.Builder
+		b.Write(g1)
+		b.WriteString("<volatile-pem>")
+		// Preserve total newline count. Group 1's leading `\s*` may itself have
+		// eaten the preceding line break, so subtract any newlines it carries.
+		for n := bytes.Count(m, []byte("\n")) - bytes.Count(g1, []byte("\n")); n > 0; n-- {
+			b.WriteString("\n<volatile-pem>")
+		}
+		return []byte(b.String())
+	})
+}
+
+// leadingWhitespace returns the run of leading spaces/tabs in s.
+func leadingWhitespace(s string) string {
+	return s[:len(s)-len(strings.TrimLeft(s, " \t"))]
+}
+
 func (fortigateNormalizer) VolatilePatterns() []VolatilePattern {
 	return []VolatilePattern{
 		{Name: "enc", Description: "AES-encrypted secret with random IV", Regex: fortiEncBody},
