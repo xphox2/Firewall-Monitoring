@@ -73,6 +73,7 @@ func TestFlowSamplesCopyColumns_OrderAndFieldTypes(t *testing.T) {
 		"drops",
 		"app_category",
 		"direction",
+		"scope_local",
 		"src_country",
 		"dst_country",
 		"src_asn",

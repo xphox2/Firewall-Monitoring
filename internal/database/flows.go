@@ -58,7 +58,10 @@ type FlowStatsResult struct {
 	TopConversations []FlowConversation `json:"top_conversations"`
 	BytesOverTime    []TimeBucket       `json:"bytes_over_time"`
 	TopPorts         []KeyCount         `json:"top_ports"`
-	LocalTraffic     struct {
+	// LocalTraffic is the scope-local noise (link-local / multicast / broadcast /
+	// loopback) excluded from the top-N charts above. JSON name kept as
+	// `local_traffic` for API stability; the Flows notice bar surfaces it.
+	LocalTraffic struct {
 		Bytes   uint64 `json:"bytes"`
 		Packets uint64 `json:"packets"`
 		Flows   int64  `json:"flows"`
@@ -365,13 +368,17 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		result.BitsPerSecond = float64(result.TotalBytes) * 8 / (float64(hours) * 3600)
 	}
 
-	// Local traffic stats (port-0 internal traffic, e.g. IPv6 link-local)
+	// Scope-local traffic stats (link-local / multicast / broadcast / loopback
+	// noise, flagged at ingest by classify.ScopeLocal). Raw and rollup bases use
+	// the SAME predicate now, so the two tiers agree across the raw/rollup window
+	// boundary (the old port-0 filter was asymmetric: NOT(src=0 AND dst=0) vs
+	// dst_port != 0).
 	var localRaw struct {
 		Bytes   uint64
 		Packets uint64
 		Flows   int64
 	}
-	newRawBase().Where("src_port = 0 AND dst_port = 0").
+	newRawBase().Where("scope_local = ?", true).
 		Select("COALESCE(SUM(bytes),0) as bytes, COALESCE(SUM(packets),0) as packets, COUNT(*) as flows").
 		Scan(&localRaw)
 	result.LocalTraffic.Bytes = localRaw.Bytes
@@ -384,7 +391,7 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 			Packets uint64
 			Flows   int64
 		}
-		newRollupBase().Where("dst_port = 0").
+		newRollupBase().Where("scope_local = ?", true).
 			Select("COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets, COALESCE(SUM(flow_count),0) as flows").
 			Scan(&localRollup)
 		result.LocalTraffic.Bytes += localRollup.Bytes
@@ -392,12 +399,14 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 		result.LocalTraffic.Flows += localRollup.Flows
 	}
 
-	// Filtered bases that exclude port-0 local traffic for top-N charts
+	// Filtered bases that exclude scope-local noise for top-N charts. Portless
+	// routed protocols (ESP/GRE/ICMP/OSPF) are NOT scope-local, so they now
+	// appear in the top-talker cards (the old port-0 filter hid them).
 	newFilteredRawBase := func() *gorm.DB {
-		return newRawBase().Where("NOT (src_port = 0 AND dst_port = 0)")
+		return newRawBase().Where("scope_local = ?", false)
 	}
 	newFilteredRollupBase := func() *gorm.DB {
-		return newRollupBase().Where("dst_port != 0")
+		return newRollupBase().Where("scope_local = ?", false)
 	}
 
 	// Protocol distribution (from raw; supplement with rollups).
@@ -684,6 +693,7 @@ type rollupRow struct {
 	Protocol        uint8
 	AppCategory     uint8
 	Direction       uint8
+	ScopeLocal      bool
 	DstCountry      string
 	DstASN          uint32
 	FlowSource      uint8
@@ -715,6 +725,7 @@ func batchInsertRollups(tx *gorm.DB, rows []rollupRow, intervalType, bucketFmt s
 				Protocol:        r.Protocol,
 				AppCategory:     r.AppCategory,
 				Direction:       r.Direction,
+				ScopeLocal:      r.ScopeLocal,
 				DstCountry:      r.DstCountry,
 				DstASN:          r.DstASN,
 				FlowSource:      r.FlowSource,
@@ -778,7 +789,7 @@ var flowRollupPageSize = 50000
 // erased one hour after ingest. Like flow_source it is near-functionally
 // determined per conversation (1-2 values in practice, 6 possible), so the
 // cardinality cost is bounded.
-const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, firewall_event"
+const flowRollupGroupKey = "bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event"
 
 // aggregateFlowsToRollup groups raw FlowSamples older than cutoff into 5-minute rollups.
 // Returns true if work was done.
@@ -817,7 +828,7 @@ func (d *Database) aggregateFlowsToRollup(cutoff time.Time, intervalType string)
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowSample{}).
 				Where("timestamp < ? AND id <= ?", cutoff, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, firewall_event, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
 					"SUM(bytes) as bytes_sum, SUM(packets) as packets_sum, COUNT(*) as flow_count, " +
 					"AVG(sampling_rate) as sampling_rate_avg").
 				Group(flowRollupGroupKey).
@@ -903,7 +914,7 @@ func (d *Database) aggregateRollupsUp(srcInterval, dstInterval string, cutoff ti
 			var rows []rollupRow
 			if err := tx.Model(&models.FlowRollup{}).
 				Where("interval_type = ? AND timestamp < ? AND id <= ?", srcInterval, cutoff, watermark).
-				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, dst_country, dst_asn, flow_source, firewall_event, " +
+				Select(bucketExpr + " as bucket, device_id, src_addr, dst_addr, dst_port, protocol, app_category, direction, scope_local, dst_country, dst_asn, flow_source, firewall_event, " +
 					"SUM(bytes_sum) as bytes_sum, SUM(packets_sum) as packets_sum, SUM(flow_count) as flow_count, " +
 					"CASE WHEN SUM(flow_count) > 0 THEN SUM(sampling_rate_avg * flow_count) / SUM(flow_count) ELSE 0 END as sampling_rate_avg").
 				Group(flowRollupGroupKey).
@@ -961,9 +972,10 @@ type FlowConversation struct {
 // GetInterfaceFlowConversations returns the top sFlow conversations seen on a
 // device's interface (matched on input OR output ifIndex) within [from, to],
 // ranked by bytes. It gives the report per-spike "what was the traffic" context
-// so an operator can triage without logging into the firewall. Port-0/0
-// (portless/local) flows are excluded. Returns an empty slice when there is no
-// flow data (e.g. sFlow not enabled for the device) — never an error for that.
+// so an operator can triage without logging into the firewall. Scope-local
+// noise (link-local / multicast / broadcast / loopback) is excluded; portless
+// routed protocols (ESP/GRE/ICMP) are kept. Returns an empty slice when there
+// is no flow data (e.g. sFlow not enabled for the device) — never an error.
 func (d *Database) GetInterfaceFlowConversations(deviceID uint, ifIndex int, from, to time.Time, limit int) ([]FlowConversation, error) {
 	if limit <= 0 {
 		limit = 5
@@ -977,8 +989,8 @@ func (d *Database) GetInterfaceFlowConversations(deviceID uint, ifIndex int, fro
 		Packets  uint64
 	}
 	if err := d.db.Model(&models.FlowSample{}).
-		Where("device_id = ? AND (input_if_index = ? OR output_if_index = ?) AND timestamp BETWEEN ? AND ? AND NOT (src_port = 0 AND dst_port = 0)",
-			deviceID, ifIndex, ifIndex, from, to).
+		Where("device_id = ? AND (input_if_index = ? OR output_if_index = ?) AND timestamp BETWEEN ? AND ? AND scope_local = ?",
+			deviceID, ifIndex, ifIndex, from, to, false).
 		Select("src_addr, dst_addr, dst_port, protocol, SUM(bytes) as bytes, SUM(packets) as packets").
 		Group("src_addr, dst_addr, dst_port, protocol").
 		Order("bytes DESC").

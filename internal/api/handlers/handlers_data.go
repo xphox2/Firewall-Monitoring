@@ -268,6 +268,7 @@ func (h *Handler) ReceiveFlowSamples(c *gin.Context) {
 			samples[i].AppCategory = uint8(classify.Classify(samples[i].Protocol, samples[i].SrcPort, samples[i].DstPort, samples[i].TCPFlags))
 		}
 		samples[i].Direction = classify.Direction(samples[i].SrcAddr, samples[i].DstAddr, samples[i].InputIfIndex, samples[i].OutputIfIndex)
+		samples[i].ScopeLocal = classify.ScopeLocal(samples[i].SrcAddr, samples[i].DstAddr)
 		// Geo/ASN enrichment (GEOIP_ENABLED). Nil-safe: when geo is off these are
 		// no-ops returning empty/0. GeoLite2 maps only public IPs, so internal
 		// src/dst simply stay empty.

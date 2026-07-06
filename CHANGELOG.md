@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.47] - 2026-07-06
+
+### Fixed
+- **Portless routed protocols are visible in the Flows top-talker charts again.** The Flows page filtered out `port 0` traffic (`src_port = 0 AND dst_port = 0`), which hid every protocol that has no ports — ESP (IPSec), GRE, ICMP/ICMPv6, OSPF, VRRP — from Top Sources/Destinations/Conversations/Countries/ASNs, even though the Protocols card still showed them. The filter is now **scope-based**: it excludes only genuine link-local / multicast / broadcast / loopback / unspecified noise (classified at ingest by either endpoint), so routed portless traffic surfaces normally while LAN chatter stays out.
+- **Raw and rollup tiers now filter identically.** The old filter used `NOT (src_port = 0 AND dst_port = 0)` on raw samples but `dst_port != 0` on rollups, so top-talker totals could shift when a window crossed the raw/rollup retention boundary. Both tiers now share the single `scope_local` predicate.
+- **Portless flows no longer render a bogus `:0` port** (e.g. `10.0.0.7:0`) in the samples and conversations tables.
+
+### Changed
+- **Top Ports** now excludes multicast-destined mDNS (5353) / SSDP (1900) chatter, matching the other five top-talker cards under one uniform scope-local exclusion.
+- The Flows notice bar is relabeled from "Internal traffic (port 0)" to **"Link-local & multicast traffic"** with accurate wording ("excluded from the top-talker cards; totals and the bandwidth chart include it").
+
+### Database
+- **Migration v34** (`flow_scope_local`) adds a `scope_local` boolean to `flow_samples` and `flow_rollups` (carried through the rollup aggregation like `direction`/`app_category`, zero added cardinality) and backfills existing history. The column add is metadata-only on PostgreSQL 16; the backfill is batched by id-window, idempotent, and exact against canonical address strings (link-local `fe80::/10`, IPv6/IPv4 multicast, `169.254/16`, loopback, broadcast, unspecified).
+
 ## [0.11.46] - 2026-07-06
 
 ### Added
