@@ -1777,14 +1777,17 @@
             // straight to that device's detail page so an alerts triage
             // session is one click to context.
             var dev = currentDevices.find(function(d) { return d.id === a.device_id; });
+            var devName = a.device_name || (dev ? dev.name : ('DEV-' + a.device_id));
             var deviceCell = a.device_id
-                ? AC.deviceLink(a.device_id, dev ? dev.name : ('DEV-' + a.device_id))
-                : '';
+                ? AC.deviceLink(a.device_id, devName)
+                : (a.device_name ? escapeHtml(a.device_name) : '');
+            var siteCell = a.site_name ? escapeHtml(a.site_name) : '<span style="color:var(--fwmon-text-faint);">—</span>';
             // Muted opacity marks snoozed rows apart from live ones (LC-32).
             return '<tr class="alert-row" data-id="' + a.id + '"' + (snoozedActive ? ' style="opacity:0.55;"' : '') + '>' +
                 checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + deviceCell + '</td>' +
+                '<td>' + siteCell + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + incidentChip + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td class="expandable-msg">' + escapeHtml(a.message) + '</td>' +
@@ -1792,13 +1795,15 @@
             '</tr>';
         }).join('');
         if (append) tbody.innerHTML += html;
-        else tbody.innerHTML = html || '<tr><td colspan="6" class="empty-state">No alerts</td></tr>';
+        else tbody.innerHTML = html || '<tr><td colspan="7" class="empty-state">No alerts</td></tr>';
     }
 
     function showAlertDetail(id) {
         apiFetch(API_BASE + '/alerts/' + id).then(function(result) {
             if (!result || !result.data) return;
-            var a = result.data;
+            // GetAlert now returns {alert, detections}; tolerate the older bare shape.
+            var a = (result.data && result.data.alert) ? result.data.alert : result.data;
+            var linkedDetections = (result.data && result.data.detections) || [];
             var body = document.getElementById('alert-detail-body');
             var sevClass = (a.severity || 'info').toLowerCase();
             var statusHtml = '';
@@ -1861,9 +1866,12 @@
             // an alert can pivot to "all alerts for this device" or "all
             // syslog around this time" in one click.
             var devForAlert = currentDevices.find(function(d) { return d.id === a.device_id; });
+            // Prefer the server-resolved device NAME (works even for devices not in
+            // the currently-loaded list); fall back to the local list, then a stub.
+            var devName = a.device_name || (devForAlert ? devForAlert.name : ('DEV-' + a.device_id));
             var devLinkHtml = a.device_id
-                ? AC.deviceLink(a.device_id, devForAlert ? devForAlert.name : ('DEV-' + a.device_id))
-                : 'Unknown';
+                ? AC.deviceLink(a.device_id, devName)
+                : (a.device_name || 'Unknown');
             // The analytics pages use device_id (not device) as their state
             // key — see FwmonControls.attachAnalyticsPage descriptors below.
             var deviceAlertsLink = a.device_id
@@ -1884,6 +1892,7 @@
                     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +
                         '<div><span style="color:#8b949e;">Time:</span> ' + formatDate(a.timestamp) + '</div>' +
                         '<div><span style="color:#8b949e;">Device:</span> ' + devLinkHtml + '</div>' +
+                        '<div><span style="color:#8b949e;">Site:</span> ' + escapeHtml(a.site_name || '—') + '</div>' +
                         '<div><span style="color:#8b949e;">Policy:</span> ' + (a.policy_id ? 'ID ' + a.policy_id : 'N/A') + '</div>' +
                     '</div>' +
                     (deviceAlertsLink || deviceSyslogLink ?
@@ -1952,7 +1961,29 @@
                     '</div>';
             }
 
-            body.innerHTML = headerHtml + metricHtml + msgHtml +
+            // Linked flows/detectors (sFlow single-feed): the flows and detectors
+            // behind a consolidated security alert, so the operator sees exactly
+            // what and where without hunting the sFlow page.
+            var flowsHtml = '';
+            if (linkedDetections.length) {
+                flowsHtml = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Flows &amp; detectors behind this alert</div>';
+                linkedDetections.forEach(function(d) {
+                    var route = escapeHtml(d.src_addr || '?') + ' → ' + escapeHtml(d.dst_addr || 'many');
+                    var threatLink = d.src_addr
+                        ? ' <a href="/admin/threat-intel?q=' + encodeURIComponent(d.src_addr) + '" style="color:#58a6ff;font-size:0.75rem;" title="Look this source up in Threat Intelligence">threat intel ↗</a>'
+                        : '';
+                    flowsHtml +=
+                        '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-family:monospace;font-size:0.85rem;flex-wrap:wrap;">' +
+                            '<span class="badge ' + escapeHtml((d.severity || 'info')) + '">' + escapeHtml(d.detector || '') + '</span>' +
+                            '<span style="color:#c9d1d9;">' + route + '</span>' +
+                            threatLink +
+                        '</div>';
+                });
+                flowsHtml += '</div>';
+            }
+
+            body.innerHTML = headerHtml + metricHtml + flowsHtml + msgHtml +
                 '<div style="margin-top:12px;">' + statusHtml + '</div>';
             AC.openModal('alert-detail-modal');
         }).catch(function(err) {
@@ -3905,6 +3936,18 @@
         if (cell && cell.classList.contains('expanded')) { cell.classList.remove('expanded'); return; }
         if (cell) { cell.classList.add('expanded'); }
     });
+
+    // Deep-link support: /admin/#alert/<id> opens that alert's detail modal. This
+    // is the target of the "View alert" links embedded in notifications
+    // (PUBLIC_BASE_URL/admin/#alert/<id>). The app doesn't use the hash for tab
+    // routing, so this can't collide.
+    function handleAlertHashRoute() {
+        var m = (window.location.hash || '').match(/^#alert\/(\d+)$/);
+        if (m) { showAlertDetail(parseInt(m[1], 10)); }
+    }
+    window.addEventListener('hashchange', handleAlertHashRoute);
+    // Defer the initial check so the app (and CSRF token) has settled.
+    setTimeout(handleAlertHashRoute, 400);
 
     // (LC-49: the legacy '.conv-row' click-to-filter handler was removed —
     // admin-flows.js renders conversation rows as '.fwmon-clickable' and binds
