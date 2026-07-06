@@ -1192,7 +1192,7 @@
             var pageMap = { 'dashboard':'', 'devices':'devices', 'connections':'connections',
                 'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
                 'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
-                'irc':'irc', 'audit':'audit', 'profile':'profile' };
+                'irc':'irc', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel' };
             currentPage = pageMap[lastSegment] || 'dashboard';
         }
 
@@ -1200,7 +1200,8 @@
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'noc': '&#9788;', 'alerts': '&#9888;', 'traps': '&#9889;',
             'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
-            'probes': '&#9678;', 'sites': '&#9962;', 'irc': '&#128172;', 'audit': '&#128203;'
+            'probes': '&#9678;', 'sites': '&#9962;', 'irc': '&#128172;', 'audit': '&#128203;',
+            'threat-intel': '&#128737;'
         };
         // AUDIT-057: the active link gets aria-current="page" (so screen readers
         // announce the current page) and every nav icon gets aria-hidden="true"
@@ -1214,6 +1215,7 @@
             '<a class="nav-item' + (currentPage === 'syslog' ? ' active" aria-current="page' : '') + '" href="/admin/syslog"><span class="nav-icon" aria-hidden="true">' + pageIcons['syslog'] + '</span> Syslog</a>' +
             '<a class="nav-item' + (currentPage === 'flows' ? ' active" aria-current="page' : '') + '" href="/admin/flows"><span class="nav-icon" aria-hidden="true">' + pageIcons['flows'] + '</span> Flows</a>' +
             '<a class="nav-item' + (currentPage === 'alerts' ? ' active" aria-current="page' : '') + '" href="/admin/alerts"><span class="nav-icon" aria-hidden="true">' + pageIcons['alerts'] + '</span> Alerts</a>' +
+            '<a class="nav-item' + (currentPage === 'threat-intel' ? ' active" aria-current="page' : '') + '" href="/admin/threat-intel"><span class="nav-icon" aria-hidden="true">' + pageIcons['threat-intel'] + '</span> Threat Intel</a>' +
             '<a class="nav-item' + (currentPage === 'traps' ? ' active" aria-current="page' : '') + '" href="/admin/traps"><span class="nav-icon" aria-hidden="true">' + pageIcons['traps'] + '</span> Traps</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">Infrastructure</div>' +
             '<a class="nav-item' + (currentPage === 'probes' ? ' active" aria-current="page' : '') + '" href="/admin/probes"><span class="nav-icon" aria-hidden="true">' + pageIcons['probes'] + '</span> Probes</a>' +

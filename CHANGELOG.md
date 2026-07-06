@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.36] - 2026-07-05
+
+### Added
+- **Dedicated Threat Intelligence admin page** (`/admin/threat-intel`, sidebar link under Data). Three tools: (1) an **IP/ASN lookup** box that returns country + ASN/org and the known-bad verdict (by IP prefix and/or ASN reputation, with source metadata); (2) a **feed sources** table showing each feed's kind, category, indicator count, last sync, and error state; (3) a **searchable, paginated indicators** table (filter by text/source/category/severity) with manual add (IP, CIDR, or `AS####`) and delete. New JS module `admin-threatintel.js` (`FwmonThreatIntel`).
+
+### Changed
+- **Discoverability: geo/threat cards no longer hide silently.** The Flows page Top Countries / Top ASNs cards now always render, showing "GeoIP disabled — set GEOIP_ENABLED=true" or "no geo data yet · <source>" instead of vanishing; the Threat Intelligence card status shows "online feeds disabled — set THREAT_FEEDS_ENABLED=true" when feeds are off. This fixes the long-standing "looks like it doesn't exist" confusion.
+- DB-IP attribution (CC BY 4.0) surfaced on the Threat Intelligence page.
+
 ## [0.11.35] - 2026-07-05
 
 ### Added

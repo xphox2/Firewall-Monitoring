@@ -127,6 +127,7 @@
                 });
                 break;
             case 'noc': if (window.FwmonNOC && window.FwmonNOC.init) window.FwmonNOC.init(); break;
+            case 'threat-intel': if (window.FwmonThreatIntel && window.FwmonThreatIntel.init) window.FwmonThreatIntel.init(); break;
             case 'settings':
                 // v0.11.14: section nav / hash routing / dirty tracking. The
                 // reload hook makes Discard = re-run loadSettings().
@@ -3016,7 +3017,7 @@
         // this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
-            'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile' };
+            'alert-policies':'alert-policies', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel' };
         var page = pageMap[lastSegment];
         if (page) {
             document.querySelectorAll('.nav-item').forEach(function(i) { i.classList.remove('active'); });
@@ -4024,7 +4025,7 @@
     // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, noc:1, alerts:1, traps:1,
-        'alert-policies':1, maintenance:1, audit:1 };
+        'alert-policies':1, maintenance:1, audit:1, 'threat-intel':1 };
 
     document.addEventListener('click', function(ev) {
         if (ev.button !== 0) return;                        // not a primary click
