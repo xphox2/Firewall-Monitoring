@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -37,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.41"
+const ServerVersion = "0.11.42"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -75,6 +76,54 @@ func runMigrateStatusCmd() {
 	db.PrintMigrationStatus()
 }
 
+// runBackfillGeoCmd implements `fwmon-api backfill-geo`: re-resolve country/ASN/
+// org for historical flow_samples rows that were ingested before geo enrichment
+// (or before the asn_org column). Batched, resumable, and prod-safe (a short
+// pause between batches; only changed rows are written). Display already shows
+// geo on old rows via the on-demand lookup — this fills the stored columns so
+// server-side country/ASN FILTERING, aggregation, and CSV export cover old data.
+func runBackfillGeoCmd(args []string) {
+	fs := flag.NewFlagSet("backfill-geo", flag.ExitOnError)
+	fromID := fs.Uint64("from-id", 0, "resume: only process flow_samples with id greater than this")
+	batch := fs.Int("batch", 5000, "rows per batch")
+	sleepMs := fs.Int("sleep", 200, "milliseconds to pause between batches (spares a busy DB)")
+	_ = fs.Parse(args)
+
+	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+	database.AppVersion = ServerVersion
+	db, err := database.Connect(cfg)
+	if err != nil {
+		log.Fatalf("backfill-geo: connect: %v", err)
+	}
+	defer db.Close()
+
+	geo, err := classify.NewGeoResolver(cfg.Server.GeoIPEnabled, cfg.Server.GeoIPDBDir, cfg.Server.GeoIPCacheDir)
+	if err != nil {
+		log.Printf("backfill-geo: geo init warning: %v", err)
+	}
+	if geo == nil || !geo.Enabled() {
+		log.Fatalf("backfill-geo: geo/ASN databases are not loaded (set GEOIP_ENABLED=true); nothing to backfill")
+	}
+	defer geo.Close()
+
+	resolve := func(ip string) (string, uint32, string) {
+		asn, org := geo.ASNInfo(ip)
+		return geo.Country(ip), asn, org
+	}
+	log.Printf("backfill-geo: starting (from-id=%d batch=%d sleep=%dms)", *fromID, *batch, *sleepMs)
+	res, err := db.BackfillFlowGeo(resolve, *fromID, *batch, time.Duration(*sleepMs)*time.Millisecond,
+		func(p database.GeoBackfillResult) {
+			log.Printf("backfill-geo: scanned=%d updated=%d last_id=%d", p.Scanned, p.Updated, p.LastID)
+		})
+	if err != nil {
+		log.Fatalf("backfill-geo: FAILED after scanning %d (updated %d, last id=%d): %v", res.Scanned, res.Updated, res.LastID, err)
+	}
+	log.Printf("backfill-geo: done — scanned %d rows, updated %d, last id=%d", res.Scanned, res.Updated, res.LastID)
+}
+
 func main() {
 	// AUDIT-076: install the structured (slog) logger first, before any other
 	// package logs. This also routes the legacy `log` package through slog, so
@@ -95,6 +144,9 @@ func main() {
 			return
 		case "migrate-status":
 			runMigrateStatusCmd()
+			return
+		case "backfill-geo":
+			runBackfillGeoCmd(os.Args[2:])
 			return
 		}
 	}
@@ -888,6 +940,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.DELETE("/api/flows/threat-intel/:id", handler.DeleteThreatIntel)
 		admin.GET("/api/threat-intel/search", handler.SearchThreatIntel)
 		admin.GET("/api/threat-intel/lookup", handler.LookupThreatIntel)
+		admin.GET("/api/geo/lookup", handler.LookupGeoBatch)
 		admin.GET("/api/threat-intel/feeds", handler.GetThreatFeeds)
 		admin.GET("/api/alerts/stats", handler.GetAlertStats)
 		admin.GET("/api/traps/stats", handler.GetTrapStats)

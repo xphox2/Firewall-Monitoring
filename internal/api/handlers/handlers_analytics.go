@@ -661,9 +661,10 @@ func (h *Handler) LookupThreatIntel(c *gin.Context) {
 	}
 	out["kind"] = "ip"
 	out["country"] = h.geoResolver.Country(q)
-	asn, org := h.geoResolver.ASNInfo(q)
+	asn, org, prefix := h.geoResolver.ASNInfoNet(q)
 	out["asn"] = asn
 	out["asn_org"] = org
+	out["asn_prefix"] = prefix
 	scopes := []gin.H{}
 	if hit, bad := h.threatMatch.Match(q); bad {
 		scopes = append(scopes, gin.H{"scope": "ip", "category": hit.Category, "severity": hit.Severity})
@@ -675,6 +676,45 @@ func (h *Handler) LookupThreatIntel(c *gin.Context) {
 	}
 	out["known_bad"] = len(scopes) > 0
 	out["threats"] = scopes
+	c.JSON(http.StatusOK, response.Success(out))
+}
+
+// LookupGeoBatch resolves many IPs at once to {country, asn, asn_org, asn_prefix}
+// for the client-side IP enrichment that shows a country flag + ASN chip wherever
+// an IP appears in the admin UI. Private/loopback/link-local and unparseable
+// addresses are skipped, and IPs with no data are omitted, so the response only
+// carries what the UI can render. Bounded to 256 IPs per request (one call
+// enriches a whole table).
+func (h *Handler) LookupGeoBatch(c *gin.Context) {
+	raw := strings.TrimSpace(c.Query("ips"))
+	out := gin.H{}
+	if raw == "" {
+		c.JSON(http.StatusOK, response.Success(out))
+		return
+	}
+	seen := make(map[string]bool)
+	n := 0
+	for _, part := range strings.Split(raw, ",") {
+		ip := strings.TrimSpace(part)
+		if ip == "" || seen[ip] {
+			continue
+		}
+		seen[ip] = true
+		if n++; n > 256 {
+			break
+		}
+		addr, err := netip.ParseAddr(ip)
+		if err != nil || !addr.IsValid() || addr.IsPrivate() || addr.IsLoopback() ||
+			addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsUnspecified() {
+			continue
+		}
+		country := h.geoResolver.Country(ip)
+		asn, org, prefix := h.geoResolver.ASNInfoNet(ip)
+		if country == "" && asn == 0 {
+			continue // nothing to render for this IP
+		}
+		out[ip] = gin.H{"country": country, "asn": asn, "asn_org": org, "asn_prefix": prefix}
+	}
 	c.JSON(http.StatusOK, response.Success(out))
 }
 

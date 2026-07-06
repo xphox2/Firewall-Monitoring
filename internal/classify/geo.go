@@ -2,6 +2,7 @@ package classify
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/oschwald/geoip2-golang"
+	"github.com/oschwald/maxminddb-golang"
 )
 
 // Candidate database filenames looked up in the live (downloaded) directory, in
@@ -27,12 +29,31 @@ var (
 // from (so a reload can also detect that a higher-precedence file appeared).
 type geoDB struct {
 	reader *geoip2.Reader
-	path   string
-	mtime  time.Time
-	size   int64
+	// mmdb is the raw maxminddb reader over the SAME file, opened only for the
+	// ASN slot. geoip2-golang doesn't expose the matched network, so ASNInfoNet
+	// uses mmdb.LookupNetwork to also return the ASN's CIDR prefix. nil for the
+	// country slot or when the raw open failed (prefix is then just omitted).
+	mmdb  *maxminddb.Reader
+	path  string
+	mtime time.Time
+	size  int64
 	// isISP marks an ASN-slot database whose records are GeoIP2-ISP shaped
 	// (read via reader.ISP) rather than GeoLite2-ASN shaped (reader.ASN).
 	isISP bool
+}
+
+// closeAll closes the geoip2 reader and, when present, the raw mmdb reader.
+func (d *geoDB) closeAll() error {
+	var err error
+	if d.reader != nil {
+		err = d.reader.Close()
+	}
+	if d.mmdb != nil {
+		if e := d.mmdb.Close(); e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
 }
 
 // GeoResolver enriches a flow's addresses with an ISO country code and an
@@ -61,7 +82,7 @@ type GeoResolver struct {
 	asn       atomic.Pointer[geoDB]
 
 	retireMu sync.Mutex
-	retired  []*geoip2.Reader
+	retired  []io.Closer
 }
 
 // NewGeoResolver builds a resolver. When enabled is false it returns (nil, nil)
@@ -126,20 +147,28 @@ func (g *GeoResolver) openSlot(asn bool) *geoDB {
 	if path == "" {
 		return nil
 	}
-	db, err := openGeoDB(path, isISP)
+	db, err := openGeoDB(path, isISP, asn)
 	if err != nil {
 		return nil
 	}
 	return db
 }
 
-// openGeoDB opens a single .mmdb and records its stat + provenance.
-func openGeoDB(path string, isISP bool) (*geoDB, error) {
+// openGeoDB opens a single .mmdb and records its stat + provenance. When wantNet
+// is true (the ASN slot), it also opens a raw maxminddb reader over the same file
+// so ASNInfoNet can return the matched network prefix; a failure there is
+// non-fatal (geoip2 lookups still work, the prefix is just omitted).
+func openGeoDB(path string, isISP, wantNet bool) (*geoDB, error) {
 	r, err := geoip2.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	db := &geoDB{reader: r, path: path, isISP: isISP}
+	if wantNet {
+		if mr, err := maxminddb.Open(path); err == nil {
+			db.mmdb = mr
+		}
+	}
 	if fi, err := os.Stat(path); err == nil {
 		db.mtime = fi.ModTime()
 		db.size = fi.Size()
@@ -184,17 +213,25 @@ func (g *GeoResolver) reloadSlot(slot *atomic.Pointer[geoDB], asn bool) {
 			return // unchanged
 		}
 	}
-	db, err := openGeoDB(path, isISP)
+	db, err := openGeoDB(path, isISP, asn)
 	if err != nil {
 		return // partial/corrupt new file; keep the current one
 	}
 	slot.Store(db)
 	if cur != nil {
 		g.retireMu.Lock()
-		g.retired = append(g.retired, cur.reader)
+		g.retired = append(g.retired, ioCloser(cur))
 		g.retireMu.Unlock()
 	}
 }
+
+// ioCloser adapts a *geoDB to io.Closer for the retire list (closes both the
+// geoip2 and raw mmdb readers).
+func ioCloser(d *geoDB) io.Closer { return closerFunc(d.closeAll) }
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }
 
 // Enabled reports whether any database is loaded (i.e. lookups can return data).
 func (g *GeoResolver) Enabled() bool {
@@ -277,6 +314,42 @@ func (g *GeoResolver) ASNInfo(ip string) (uint32, string) {
 	return uint32(rec.AutonomousSystemNumber), rec.AutonomousSystemOrganization
 }
 
+// ASNInfoNet returns the autonomous-system number, organization, AND the network
+// prefix (CIDR, e.g. "8.8.8.0/24") that the ASN database matched the IP to. The
+// prefix comes from the raw maxminddb reader's LookupNetwork (geoip2-golang
+// doesn't expose it); when the raw reader is unavailable it falls back to
+// ASNInfo with an empty prefix. Used by the on-demand admin lookup endpoints, not
+// the ingest hot path. Nil-safe.
+func (g *GeoResolver) ASNInfoNet(ip string) (asn uint32, org string, prefix string) {
+	if g == nil {
+		return 0, "", ""
+	}
+	db := g.asn.Load()
+	if db == nil {
+		return 0, "", ""
+	}
+	if db.mmdb == nil {
+		asn, org = g.ASNInfo(ip)
+		return asn, org, ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return 0, "", ""
+	}
+	var rec struct {
+		Number uint   `maxminddb:"autonomous_system_number"`
+		Org    string `maxminddb:"autonomous_system_organization"`
+	}
+	network, ok, err := db.mmdb.LookupNetwork(parsed, &rec)
+	if err != nil || !ok {
+		return 0, "", ""
+	}
+	if network != nil {
+		prefix = network.String()
+	}
+	return uint32(rec.Number), rec.Org, prefix
+}
+
 // Close releases the memory-mapped databases, including any retired but not yet
 // closed by a pending reload. Nil-safe.
 func (g *GeoResolver) Close() error {
@@ -285,12 +358,12 @@ func (g *GeoResolver) Close() error {
 	}
 	var err error
 	if db := g.country.Swap(nil); db != nil {
-		if e := db.reader.Close(); e != nil {
+		if e := db.closeAll(); e != nil {
 			err = e
 		}
 	}
 	if db := g.asn.Swap(nil); db != nil {
-		if e := db.reader.Close(); e != nil && err == nil {
+		if e := db.closeAll(); e != nil && err == nil {
 			err = e
 		}
 	}

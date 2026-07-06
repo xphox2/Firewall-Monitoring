@@ -418,7 +418,9 @@
 
             const convos = data.top_conversations || [];
             const ctbody = document.querySelector('#panel-convos-table tbody');
-            ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(c.src_addr)}:${c.src_port}</td><td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(c.dst_addr)}:${c.dst_port}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#768390;">No conversations</td></tr>';
+            const AC = window.AdminCommon;
+            ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.src_addr, { port: c.src_port })}</td><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.dst_addr, { port: c.dst_port })}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#768390;">No conversations</td></tr>';
+            AC.enrichIps(ctbody);
         } catch (e) { console.error('Panel flow stats failed:', e); }
     }
 

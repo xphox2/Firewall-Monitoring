@@ -669,9 +669,8 @@
         if (!r || !AC || !body) return;
 
         var sev = r.severity || 'info';
-        var route = esc(r.src_addr || '?') +
-            (r.dst_addr ? ' → ' + esc(r.dst_addr) : '') +
-            (r.dst_port ? ':' + esc(String(r.dst_port)) : '');
+        var route = AC.ipRef(r.src_addr || '?') +
+            (r.dst_addr ? ' → ' + AC.ipRef(r.dst_addr, { port: r.dst_port }) : '');
         var detailsHtml = '';
         try {
             if (r.details) {
@@ -701,11 +700,12 @@
             '<div style="margin-top:14px;"><button type="button" class="btn sm" data-det-ack="' + esc(String(r.id)) + '">Acknowledge &amp; dismiss</button></div>';
 
         AC.openModal('flow-detection-modal');
+        AC.enrichIps(body);
         loadDetectionSamples(r);
     }
 
     // loadDetectionSamples fetches the raw sFlow samples behind a detection and
-    // renders them with country flag + ASN owner, inside the detail modal.
+    // renders them (shared AC.flowSamplesTable → flag + ASN owner + prefix).
     function loadDetectionSamples(r) {
         var AC = window.AdminCommon;
         var hours = Math.max(1, state.hours || 24);
@@ -714,24 +714,10 @@
         if (r.dst_addr) q += '&dst_addr=' + encodeURIComponent(r.dst_addr);
         if (r.dst_port) q += '&dst_port=' + encodeURIComponent(r.dst_port);
         AC.apiFetch(q).then(function(res) {
-            var samples = (res && res.data) || [];
             var el = document.getElementById('flow-detection-samples');
             if (!el) return;
-            if (!samples.length) {
-                el.innerHTML = '<div style="color:var(--fwmon-text-faint);">No matching samples in the last ' + hours + 'h.</div>';
-                return;
-            }
-            var rowsHtml = samples.map(function(f) {
-                return '<tr>' +
-                    '<td>' + esc(formatDate(f.timestamp)) + '</td>' +
-                    '<td style="white-space:nowrap;">' + flagEmoji(f.src_country) + esc(f.src_addr) + ':' + esc(String(f.src_port)) + asnChip(f.src_asn, f.src_asn_org) + '</td>' +
-                    '<td style="white-space:nowrap;">' + flagEmoji(f.dst_country) + esc(f.dst_addr) + ':' + esc(String(f.dst_port)) + asnChip(f.dst_asn, f.dst_asn_org) + '</td>' +
-                    '<td>' + esc(protocolName(f.protocol)) + '</td>' +
-                    '<td class="num">' + formatBytes(f.bytes) + '</td>' +
-                    '<td class="num">' + (f.packets || 0).toLocaleString() + '</td>' +
-                '</tr>';
-            }).join('');
-            el.innerHTML = '<table class="fwmon-table"><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Proto</th><th>Bytes</th><th>Pkts</th></tr></thead><tbody>' + rowsHtml + '</tbody></table>';
+            el.innerHTML = AC.flowSamplesTable((res && res.data) || []);
+            AC.enrichIps(el);
         }).catch(function(e) {
             console.error('FwmonFlows: detection samples fetch failed', e);
             var el = document.getElementById('flow-detection-samples');
@@ -1024,8 +1010,11 @@
     function renderList(elId, rows, colorTag, stateKey, toFilterValue, valueFmt) {
         var el = document.getElementById(elId);
         if (!el) return;
+        var AC = window.AdminCommon;
         var fmt = valueFmt || formatBytes;
         var clickable = !!stateKey;
+        // Top-sources/-destinations rows are IPs → enrich them with flag + ASN.
+        var isIp = stateKey === 'src' || stateKey === 'dst';
         el.setAttribute('data-color', colorTag);
         if (!rows.length) {
             el.innerHTML = '<li class="fwmon-toptalk-empty">No data</li>';
@@ -1046,14 +1035,16 @@
                 attrs = ' data-filter-key="' + esc(stateKey) +
                         '" data-filter-value="' + esc(filterVal) + '"';
             }
+            var labelHtml = isIp ? AC.ipRef(r.key) : esc(r.key);
             html += '<li class="fwmon-toptalk-row' + activeCls + '"' + attrs +
                 ' style="--bar-pct:' + pct.toFixed(1) + '%">' +
-                '<span class="fwmon-toptalk-row-label" title="' + esc(r.key) + '">' + esc(r.key) + '</span>' +
+                '<span class="fwmon-toptalk-row-label" title="' + esc(r.key) + '">' + labelHtml + '</span>' +
                 '<span class="fwmon-toptalk-row-value">' + fmt(r.count) + '</span>' +
                 '<span class="fwmon-toptalk-row-bar"></span>' +
             '</li>';
         }
         el.innerHTML = html;
+        if (isIp) AC.enrichIps(el);
     }
 
     function onTopTalkerClick(ev) {
@@ -1243,35 +1234,16 @@
         setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
     }
 
-    // flagEmoji renders the regional-indicator flag for a 2-letter ISO country
-    // code plus the code itself. Empty for missing/private (no geo) addresses.
-    function flagEmoji(cc) {
-        if (!cc || cc.length !== 2) return '';
-        cc = cc.toUpperCase();
-        var a = cc.charCodeAt(0), b = cc.charCodeAt(1);
-        if (a < 65 || a > 90 || b < 65 || b > 90) return '';
-        return '<span title="' + esc(cc) + '" style="margin-right:4px;">' +
-            String.fromCodePoint(0x1F1E6 + (a - 65), 0x1F1E6 + (b - 65)) + '</span>' +
-            '<span style="color:var(--fwmon-text-faint);font-size:0.7rem;margin-right:4px;">' + esc(cc) + '</span>';
-    }
-
-    // asnChip renders an ASN as a small chip whose hover tooltip reveals the owner
-    // company/org name (when known from the geo DB).
-    function asnChip(asn, org) {
-        if (!asn) return '';
-        var title = org ? (org + ' (AS' + asn + ')') : ('AS' + asn);
-        return ' <span title="' + esc(title) + '" style="cursor:help;color:#58a6ff;font-size:0.7rem;border:1px solid #30363d;border-radius:6px;padding:0 4px;margin-left:4px;">AS' + esc(String(asn)) + '</span>';
-    }
-
     function renderSamples(samples, append) {
+        var AC = window.AdminCommon;
         var tbody = document.querySelector('#flows-table tbody');
         if (!tbody) return;
         var html = samples.map(function(f) {
             return '<tr>' +
                 '<td>' + esc(formatDate(f.timestamp)) + '</td>' +
-                '<td style="white-space:nowrap;">' + flagEmoji(f.src_country) + esc(f.src_addr) + ':' + f.src_port + asnChip(f.src_asn, f.src_asn_org) + '</td>' +
+                '<td style="white-space:nowrap;">' + AC.ipRef(f.src_addr, { port: f.src_port, country: f.src_country, asn: f.src_asn, asn_org: f.src_asn_org }) + '</td>' +
                 '<td>→</td>' +
-                '<td style="white-space:nowrap;">' + flagEmoji(f.dst_country) + esc(f.dst_addr) + ':' + f.dst_port + asnChip(f.dst_asn, f.dst_asn_org) + '</td>' +
+                '<td style="white-space:nowrap;">' + AC.ipRef(f.dst_addr, { port: f.dst_port, country: f.dst_country, asn: f.dst_asn, asn_org: f.dst_asn_org }) + '</td>' +
                 '<td>' + esc(protocolName(f.protocol)) + '</td>' +
                 '<td>' + esc(SOURCE_LABELS[f.flow_source || 0] || '—') + '</td>' +
                 // Event column: only NSEL/FortiGate event records carry IE 233;
@@ -1284,6 +1256,7 @@
         }).join('');
         if (append) tbody.innerHTML += html;
         else tbody.innerHTML = html || '<tr><td colspan="10" class="empty-state">No flow samples match these filters</td></tr>';
+        AC.enrichIps(tbody);
     }
 
     function updateLoadedCount() {
@@ -1312,20 +1285,22 @@
             tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No conversations</td></tr>';
             return;
         }
+        var AC = window.AdminCommon;
         tbody.innerHTML = convos.map(function(c) {
             var pct = ((c.bytes / total) * 100).toFixed(1);
             return '<tr class="fwmon-clickable" data-src="' + esc(c.src_addr) +
                 '" data-dst="' + esc(c.dst_addr) +
                 '" data-dport="' + esc(String(c.dst_port || '')) + '">' +
-                '<td>' + esc(c.src_addr) + '</td>' +
+                '<td>' + AC.ipRef(c.src_addr) + '</td>' +
                 '<td>→</td>' +
-                '<td>' + esc(c.dst_addr) + ':' + (c.dst_port || '0') + '</td>' +
+                '<td>' + AC.ipRef(c.dst_addr, { port: c.dst_port }) + '</td>' +
                 '<td>' + esc(c.protocol) + '</td>' +
                 '<td class="num">' + formatBytes(c.bytes) + '</td>' +
                 '<td class="num">' + (c.packets || 0).toLocaleString() + '</td>' +
                 '<td class="num">' + pct + '%</td>' +
             '</tr>';
         }).join('');
+        AC.enrichIps(tbody);
     };
 
     // ----------------------------------------------------------------------

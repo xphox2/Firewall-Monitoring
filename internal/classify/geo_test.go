@@ -1,6 +1,9 @@
 package classify
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestGeoResolver_DisabledIsNilSafe verifies the disabled path: NewGeoResolver
 // returns (nil, nil) and every method on the nil resolver is safe and empty.
@@ -70,6 +73,33 @@ func TestGeoResolver_BundleEnabled(t *testing.T) {
 	// Private ranges are unmapped.
 	if cc := g.Country("10.0.0.1"); cc != "" {
 		t.Errorf("Country(private) = %q, want empty", cc)
+	}
+}
+
+// TestGeoResolver_ASNInfoNet_Prefix verifies the ASN network prefix comes back
+// (via the raw maxminddb LookupNetwork) alongside the number + org.
+func TestGeoResolver_ASNInfoNet_Prefix(t *testing.T) {
+	g, err := NewGeoResolver(true, "", t.TempDir())
+	if err != nil || g == nil || !g.Enabled() {
+		t.Skip("geo bundle unavailable")
+	}
+	defer g.Close()
+
+	asn, org, prefix := g.ASNInfoNet("8.8.8.8")
+	if asn != 15169 || org == "" {
+		t.Errorf("ASNInfoNet(8.8.8.8) = (%d,%q,%q), want AS15169 + non-empty org", asn, org, prefix)
+	}
+	if !strings.Contains(prefix, "/") {
+		t.Errorf("ASNInfoNet(8.8.8.8) prefix = %q, want a CIDR (e.g. 8.8.8.0/24)", prefix)
+	}
+	// Private addresses have no ASN/prefix.
+	if a, o, p := g.ASNInfoNet("10.0.0.1"); a != 0 || o != "" || p != "" {
+		t.Errorf("ASNInfoNet(private) = (%d,%q,%q), want all zero", a, o, p)
+	}
+	// A nil resolver is safe.
+	var nilG *GeoResolver
+	if a, o, p := nilG.ASNInfoNet("8.8.8.8"); a != 0 || o != "" || p != "" {
+		t.Errorf("nil ASNInfoNet = (%d,%q,%q), want all zero", a, o, p)
 	}
 }
 
