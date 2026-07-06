@@ -1139,8 +1139,137 @@
     }
 
     // Export to window for use by other scripts and diagram modules
+    // ------------------------------------------------------------------
+    // IP / ASN enrichment — one uniform way to show a country flag + ASN
+    // (number, owner, and network prefix) wherever an IP appears. Render an IP
+    // via ipRef(ip, opts), then call enrichIps(container) once after inserting
+    // the HTML: it batch-resolves any unknown IPs via /geo/lookup (cached) and
+    // injects the flag + AS chip. Private/internal IPs stay bare.
+    // ------------------------------------------------------------------
+    var geoCache = {}; // baseIP -> {country, asn, asn_org, asn_prefix} | null (resolved, no data)
+
+    function flagEmoji(cc) {
+        if (!cc || cc.length !== 2) return '';
+        cc = cc.toUpperCase();
+        var a = cc.charCodeAt(0), b = cc.charCodeAt(1);
+        if (a < 65 || a > 90 || b < 65 || b > 90) return '';
+        return '<span class="fwmon-flag" title="' + escapeHtml(cc) + '" style="margin-right:4px;">' +
+            String.fromCodePoint(0x1F1E6 + (a - 65), 0x1F1E6 + (b - 65)) + '</span>' +
+            '<span style="color:var(--fwmon-text-faint,#8b949e);font-size:0.7rem;margin-right:4px;">' + escapeHtml(cc) + '</span>';
+    }
+
+    function asnTitle(asn, org, prefix) {
+        var parts = [];
+        if (org) parts.push(org);
+        parts.push('AS' + asn);
+        if (prefix) parts.push(prefix);
+        return parts.join(' · ');
+    }
+
+    function asnChip(asn, org, prefix) {
+        if (!asn) return '';
+        return ' <span class="fwmon-asn" title="' + escapeHtml(asnTitle(asn, org, prefix)) +
+            '" style="cursor:help;color:#58a6ff;font-size:0.7rem;border:1px solid var(--fwmon-border,#30363d);border-radius:6px;padding:0 4px;margin-left:4px;">AS' +
+            escapeHtml(String(asn)) + '</span>';
+    }
+
+    // ipRef renders an IP (optionally :port) as an enrichable span. opts may carry
+    // already-known geo (country/asn/asn_org) so a table with stored geo shows the
+    // flag instantly; enrichIps still fills the ASN prefix. For a CIDR the data-ip
+    // is the network base while the label keeps the CIDR.
+    function ipRef(ip, opts) {
+        opts = opts || {};
+        ip = ip == null ? '' : String(ip);
+        var base = ip.indexOf('/') !== -1 ? ip.split('/')[0] : ip;
+        var label = escapeHtml(ip) + (opts.port != null && opts.port !== '' ? ':' + escapeHtml(String(opts.port)) : '');
+        var a = ' data-ip="' + escapeHtml(base) + '"';
+        if (opts.country) a += ' data-cc="' + escapeHtml(opts.country) + '"';
+        if (opts.asn) a += ' data-asn="' + escapeHtml(String(opts.asn)) + '"';
+        if (opts.asn_org) a += ' data-org="' + escapeHtml(opts.asn_org) + '"';
+        return '<span class="fwmon-ip"' + a + '>' + label + '</span>';
+    }
+
+    function decorateIp(el, geo) {
+        if (!geo) return;
+        if (geo.country) el.insertAdjacentHTML('afterbegin', flagEmoji(geo.country));
+        if (geo.asn) el.insertAdjacentHTML('beforeend', asnChip(geo.asn, geo.asn_org, geo.asn_prefix));
+    }
+
+    function enrichIps(root) {
+        if (!root || !root.querySelectorAll) return;
+        var els = root.querySelectorAll('.fwmon-ip:not([data-geo])');
+        if (!els.length) return;
+        var list = [], queued = {};
+        els.forEach(function(el) {
+            el.setAttribute('data-geo', '1');
+            var ip = el.getAttribute('data-ip');
+            if (!ip) return;
+            // Instant render from any stored geo (no flag flash on flows tables).
+            var cc = el.getAttribute('data-cc'), asn = el.getAttribute('data-asn');
+            if (cc || asn) {
+                decorateIp(el, { country: cc, asn: asn ? parseInt(asn, 10) : 0, asn_org: el.getAttribute('data-org') || '', asn_prefix: '' });
+            }
+            // Queue a lookup to fill unknowns + the prefix.
+            el.setAttribute('data-ip-pending', ip);
+            if (!(ip in geoCache) && !queued[ip]) { queued[ip] = true; list.push(ip); }
+        });
+        var apply = function() {
+            els.forEach(function(el) {
+                var ip = el.getAttribute('data-ip-pending');
+                if (!ip) return;
+                el.removeAttribute('data-ip-pending');
+                var geo = geoCache[ip];
+                if (!geo) return;
+                var chip = el.querySelector('.fwmon-asn');
+                var flag = el.querySelector('.fwmon-flag');
+                if (!chip && !flag) {
+                    decorateIp(el, geo); // wasn't rendered from attrs
+                } else if (chip && geo.asn && geo.asn_prefix) {
+                    chip.title = asnTitle(geo.asn, geo.asn_org, geo.asn_prefix); // patch in the prefix
+                } else if (!chip && geo.asn) {
+                    el.insertAdjacentHTML('beforeend', asnChip(geo.asn, geo.asn_org, geo.asn_prefix));
+                }
+            });
+        };
+        if (!list.length) { apply(); return; }
+        apiFetch(API_BASE + '/geo/lookup?ips=' + encodeURIComponent(list.join(','))).then(function(res) {
+            var data = (res && res.data) || {};
+            list.forEach(function(ip) { geoCache[ip] = data[ip] || null; });
+            apply();
+        }).catch(function() { /* leave IPs bare on lookup failure */ });
+    }
+
+    function protoName(p) {
+        return p === 6 ? 'TCP' : p === 17 ? 'UDP' : p === 1 ? 'ICMP' : (p == null ? '' : String(p));
+    }
+
+    // flowSamplesTable renders a compact sampled-flow table (src/dst enriched via
+    // ipRef). Shared by the flows detection modal and the alert-detail drill-down.
+    // Call enrichIps() on the container afterwards.
+    function flowSamplesTable(samples) {
+        if (!samples || !samples.length) {
+            return '<div style="color:var(--fwmon-text-faint,#8b949e);padding:8px;">No matching samples.</div>';
+        }
+        var rows = samples.map(function(f) {
+            return '<tr>' +
+                '<td>' + escapeHtml(formatDate(f.timestamp)) + '</td>' +
+                '<td style="white-space:nowrap;">' + ipRef(f.src_addr, { port: f.src_port, country: f.src_country, asn: f.src_asn, asn_org: f.src_asn_org }) + '</td>' +
+                '<td style="white-space:nowrap;">' + ipRef(f.dst_addr, { port: f.dst_port, country: f.dst_country, asn: f.dst_asn, asn_org: f.dst_asn_org }) + '</td>' +
+                '<td>' + escapeHtml(protoName(f.protocol)) + '</td>' +
+                '<td class="num">' + formatBytes(f.bytes) + '</td>' +
+                '<td class="num">' + ((f.packets || 0).toLocaleString()) + '</td>' +
+            '</tr>';
+        }).join('');
+        return '<table class="fwmon-table"><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Proto</th><th>Bytes</th><th>Pkts</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
     window.AdminCommon = {
         API_BASE: API_BASE,
+        flagEmoji: flagEmoji,
+        asnChip: asnChip,
+        ipRef: ipRef,
+        enrichIps: enrichIps,
+        flowSamplesTable: flowSamplesTable,
         sessionRole: null,
         sessionMe: null,
         whenMe: whenMe,

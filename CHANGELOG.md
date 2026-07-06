@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.42] - 2026-07-06
+
+### Added
+- **Country flag + ASN everywhere an IP appears.** IPs across the admin UI (flows samples/conversations/top-talkers, alert detail syslog fields + linked flows, threat-intel search, connection detail, and the connections-diagram panel) now render with a country flag + ISO code and an AS chip whose tooltip shows **owner · AS number · network prefix**. Backed by a new batched `GET /admin/api/geo/lookup?ips=…` and a shared, cached client enricher (one request per table; internal/RFC1918 IPs stay bare).
+- **ASN network prefix.** The resolver now returns the CIDR the IP falls in (via `maxminddb.LookupNetwork`), surfaced in the AS chip tooltips and the threat-intel lookup tool.
+- **"Show sampled packets" on findings.** A threat/security alert's detection now has a drill-down that loads the actual sampled flow rows behind the "N bytes sampled" figure — with full geo/ASN — so the data behind the number is one click away.
+- **`fwmon-api backfill-geo`** CLI subcommand to populate country/ASN/org on historical `flow_samples` rows ingested before enrichment. Batched, resumable (`--from-id`/`--batch`/`--sleep`), public-IPs-only, and idempotent (a re-run is a fast no-op), so server-side country/ASN filtering, aggregation, and CSV export cover old data.
+
+### Changed
+- The `flagEmoji`/`asnChip` helpers moved into the shared `admin-common.js` (`AC.flagEmoji`/`AC.asnChip`/`AC.ipRef`/`AC.enrichIps`/`AC.flowSamplesTable`); promoted `maxminddb-golang` to a direct dependency.
+
 ## [0.11.41] - 2026-07-05
 
 ### Changed

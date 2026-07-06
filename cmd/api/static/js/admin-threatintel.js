@@ -77,6 +77,7 @@
         } else {
             rows.push(kv('Country', d.country || '—'));
             rows.push(kv('ASN', d.asn ? ('AS' + esc(d.asn) + (d.asn_org ? ' · ' + esc(d.asn_org) : '')) : '—'));
+            if (d.asn_prefix) rows.push(kv('Network', esc(d.asn_prefix)));
             if (d.geo_enabled === false) rows.push(kv('Geo', 'disabled'));
         }
         var verdict;
@@ -165,11 +166,12 @@
             if (!rows.length) {
                 body.innerHTML = '<tr><td colspan="6" class="fwmon-ti-empty">No matching indicators.</td></tr>';
             } else {
+                var AC = window.AdminCommon;
                 var html = '';
                 for (var i = 0; i < rows.length; i++) {
                     var r = rows[i];
                     html += '<tr>' +
-                        '<td><code>' + esc(r.cidr) + '</code></td>' +
+                        '<td><code>' + AC.ipRef(r.cidr) + '</code></td>' +
                         '<td>' + esc(r.category || '') + '</td>' +
                         '<td>' + esc(r.source || '') + '</td>' +
                         '<td><span class="fwmon-det-sev fwmon-det-sev-' + esc(r.severity || 'warning') + '">' + esc(r.severity || 'warning') + '</span></td>' +
@@ -178,6 +180,7 @@
                     '</tr>';
                 }
                 body.innerHTML = html;
+                AC.enrichIps(body);
             }
         }
         var pageEl = el('ti-search-page');

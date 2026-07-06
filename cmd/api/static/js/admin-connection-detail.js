@@ -487,14 +487,15 @@
                 var c = convos[ci];
                 convHtml +=
                     '<tr>' +
-                        '<td>' + AC.escapeHtml(c.src_addr) + ':' + c.src_port + '</td>' +
-                        '<td>' + AC.escapeHtml(c.dst_addr) + ':' + c.dst_port + '</td>' +
+                        '<td>' + AC.ipRef(c.src_addr, { port: c.src_port }) + '</td>' +
+                        '<td>' + AC.ipRef(c.dst_addr, { port: c.dst_port }) + '</td>' +
                         '<td>' + AC.escapeHtml(c.protocol) + '</td>' +
                         '<td>' + formatBytes(c.bytes) + '</td>' +
                         '<td>' + formatNum(c.packets) + '</td>' +
                     '</tr>';
             }
             ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:#768390;padding:20px;">No conversations found</td></tr>';
+            if (ctbody) AC.enrichIps(ctbody);
         }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading flow stats:', err);
             AC.showError('Failed to load flow statistics');

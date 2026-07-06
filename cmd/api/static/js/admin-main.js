@@ -1934,7 +1934,7 @@
                         var val = f[key];
                         var valHtml = '';
                         if (key === 'srcip' || key === 'dstip') {
-                            valHtml = '<span style="font-family:monospace;color:#58a6ff;">' + escapeHtml(val) + '</span>';
+                            valHtml = '<span style="font-family:monospace;">' + AC.ipRef(val) + '</span>';
                         } else if (key === 'action') {
                             var actClass = val === 'accept' || val === 'pass' || val === 'detected' ? 'up' : (val === 'deny' || val === 'drop' || val === 'blocked' ? 'down' : 'warning');
                             valHtml = '<span class="badge ' + actClass + '">' + escapeHtml(val.toUpperCase()) + '</span>';
@@ -1968,24 +1968,60 @@
             if (linkedDetections.length) {
                 flowsHtml = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
                     '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Flows &amp; detectors behind this alert</div>';
-                linkedDetections.forEach(function(d) {
-                    var route = escapeHtml(d.src_addr || '?') + ' → ' + escapeHtml(d.dst_addr || 'many');
+                linkedDetections.forEach(function(d, idx) {
+                    var route = AC.ipRef(d.src_addr || '?') + ' → ' + (d.dst_addr ? AC.ipRef(d.dst_addr, { port: d.dst_port }) : 'many');
                     var threatLink = d.src_addr
                         ? ' <a href="/admin/threat-intel?q=' + encodeURIComponent(d.src_addr) + '" style="color:#58a6ff;font-size:0.75rem;" title="Look this source up in Threat Intelligence">threat intel ↗</a>'
+                        : '';
+                    // "Show sampled packets" surfaces the actual flow rows behind the
+                    // "N bytes sampled" figure (lazy — one fetch per detection).
+                    var pktBtn = d.src_addr
+                        ? ' <button type="button" class="btn secondary sm" data-alert-flows="' + idx + '"' +
+                          ' data-src="' + escapeHtml(d.src_addr) + '" data-dst="' + escapeHtml(d.dst_addr || '') + '"' +
+                          ' data-dport="' + escapeHtml(String(d.dst_port || '')) + '" style="font-size:0.72rem;">Show sampled packets</button>'
                         : '';
                     flowsHtml +=
                         '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-family:monospace;font-size:0.85rem;flex-wrap:wrap;">' +
                             '<span class="badge ' + escapeHtml((d.severity || 'info')) + '">' + escapeHtml(d.detector || '') + '</span>' +
                             '<span style="color:#c9d1d9;">' + route + '</span>' +
-                            threatLink +
-                        '</div>';
+                            threatLink + pktBtn +
+                        '</div>' +
+                        '<div id="alert-flows-' + idx + '" style="display:none;margin:2px 0 6px;overflow:auto;"></div>';
                 });
                 flowsHtml += '</div>';
             }
 
             body.innerHTML = headerHtml + metricHtml + flowsHtml + msgHtml +
                 '<div style="margin-top:12px;">' + statusHtml + '</div>';
+            AC.enrichIps(body);
             AC.openModal('alert-detail-modal');
+
+            // Lazy "Show sampled packets" — bound once on the persistent body
+            // element (innerHTML is replaced each open, but this listener survives).
+            if (body && !body.__alertFlowsBound) {
+                body.__alertFlowsBound = true;
+                body.addEventListener('click', function(ev) {
+                    var btn = ev.target.closest && ev.target.closest('[data-alert-flows]');
+                    if (!btn) return;
+                    var box = document.getElementById('alert-flows-' + btn.getAttribute('data-alert-flows'));
+                    if (!box) return;
+                    if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+                    box.style.display = 'block';
+                    if (box.getAttribute('data-loaded')) return;
+                    box.setAttribute('data-loaded', '1');
+                    box.innerHTML = '<div style="color:#8b949e;padding:6px;">Loading…</div>';
+                    var q = API_BASE + '/flows?limit=25&hours=168&src_addr=' + encodeURIComponent(btn.getAttribute('data-src') || '');
+                    var dst = btn.getAttribute('data-dst'); if (dst) q += '&dst_addr=' + encodeURIComponent(dst);
+                    var dport = btn.getAttribute('data-dport'); if (dport) q += '&dst_port=' + encodeURIComponent(dport);
+                    apiFetch(q).then(function(res) {
+                        box.innerHTML = AC.flowSamplesTable((res && res.data) || []);
+                        AC.enrichIps(box);
+                    }).catch(function() {
+                        box.innerHTML = '<div style="color:#f85149;padding:6px;">Failed to load samples.</div>';
+                        box.removeAttribute('data-loaded');
+                    });
+                });
+            }
         }).catch(function(err) {
             console.error('Failed to load alert detail:', err);
             AC.showError('Failed to load alert detail');
