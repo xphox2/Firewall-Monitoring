@@ -73,6 +73,15 @@ type Poller struct {
 	// an interval fires while the previous one is still running.
 	feedSyncRunning atomic.Bool
 
+	// feedEnabledSeen tracks the last-observed master + per-feed enable flags so a
+	// detection cycle can notice a false→true flip (an admin re-enabling feeds in
+	// the UI) and trigger an immediate resync — the API can't reach into the
+	// poller's process to sync, so repopulation rides this cheap per-cycle recheck
+	// (v0.11.46). nil until the first check. Accessed only from the single detect
+	// goroutine (leader-locked), so it needs no mutex.
+	feedMasterSeen  *bool
+	feedEnabledSeen map[string]bool
+
 	// Injectable seam so pollDevice can be tested without a live SNMP
 	// connection. Wired to snmp.NewSNMPClient in NewPoller; overridden in tests.
 	newSNMP snmpDialer
@@ -229,19 +238,23 @@ func (p *Poller) Start() error {
 	detectTicker := time.NewTicker(5 * time.Minute)
 	defer detectTicker.Stop()
 
-	// Threat-intel feed sync (opt-in). When disabled the channels stay nil and
-	// never fire in the select. When enabled, do an initial sync ~1 min after
-	// startup, then on the configured interval.
-	var feedTickC, feedInitC <-chan time.Time
-	if p.cfg.ThreatFeed.Enabled {
-		ft := time.NewTicker(p.cfg.ThreatFeed.Interval)
-		defer ft.Stop()
-		feedTickC = ft.C
-		init := time.NewTimer(1 * time.Minute)
-		defer init.Stop()
-		feedInitC = init.C
-		log.Printf("threat-feeds: enabled (interval %s, ttl %dd)", p.cfg.ThreatFeed.Interval, p.cfg.ThreatFeed.TTLDays)
+	// Threat-intel feed sync. v0.11.46: the ticker is created UNCONDITIONALLY so
+	// the admin-UI master switch can turn feeds ON at runtime (the old
+	// `if cfg.ThreatFeed.Enabled` guard made an env-off install unable to ever
+	// sync). runThreatFeedSync itself gates on the master setting each run, so an
+	// env-off + setting-unset install still does nothing. The initial sync fires
+	// ~1 min after startup, then on the configured interval (default 12h).
+	feedInterval := p.cfg.ThreatFeed.Interval
+	if feedInterval <= 0 {
+		feedInterval = 12 * time.Hour
 	}
+	feedTicker := time.NewTicker(feedInterval)
+	defer feedTicker.Stop()
+	feedTickC := feedTicker.C
+	feedInit := time.NewTimer(1 * time.Minute)
+	defer feedInit.Stop()
+	feedInitC := feedInit.C
+	log.Printf("threat-feeds: sync ticker armed (interval %s, ttl %dd); master switch resolved per-run from the admin UI", feedInterval, p.cfg.ThreatFeed.TTLDays)
 
 	for {
 		p.markLoopAlive() // M30: previous case completed / loop is waiting for work
@@ -401,6 +414,12 @@ func (p *Poller) runFlowDetectionCycle() {
 	if p.db == nil {
 		return
 	}
+	// v0.11.46: repopulate feeds an admin re-enabled in the UI. The API can't
+	// sync across the process boundary, so the poller detects a false→true flip on
+	// its per-cycle setting read and fires an immediate resync (≤ one detect cycle
+	// of latency instead of waiting for the 12h feed ticker).
+	p.maybeResyncReenabledFeeds()
+
 	end := time.Now()
 	start := end.Add(-15 * time.Minute)
 	detections := detect.RunAll(detect.Window{
@@ -457,18 +476,204 @@ func (p *Poller) runFlowDetectionCycle() {
 		link([]uint{d.ID}, alertID, d.Detector)
 	}
 
+	// v0.11.46 — silence + cross-source storm digest, applied to the security
+	// groups BEFORE the per-source loop:
+	//   1. silenced sources: ack their detections (off the NOC card) and drop them
+	//      so they neither alert nor count toward a storm;
+	//   2. storms: bucket surviving security detections by (site, detector); any
+	//      bucket over its resolved threshold collapses into ONE digest alert, and
+	//      those detections are removed from the per-source groups.
+	p.silenceSuppressedSources(securityBySrc)
+	p.alertManager.SetStormSourcesDefault(p.db.GetIntSetting("detect_security_storm_sources", 25))
+	p.rollUpSecurityStorms(securityBySrc, link)
+
 	for src, group := range securityBySrc {
 		alertID, err := p.alertManager.ProcessSecurityEvent(group, nil)
 		if err != nil {
 			log.Printf("flow-detect: security event %s: %v", src, err)
 		}
-		ids := make([]uint, 0, len(group))
-		for _, d := range group {
-			ids = append(ids, d.ID)
-		}
-		link(ids, alertID, "security "+src)
+		link(detectionIDs(group), alertID, "security "+src)
 	}
 	log.Printf("flow-detect: %d detection(s) persisted", len(saved))
+}
+
+// detectionIDs collects the IDs of a detection group.
+func detectionIDs(group []*models.FlowDetection) []uint {
+	ids := make([]uint, 0, len(group))
+	for _, d := range group {
+		ids = append(ids, d.ID)
+	}
+	return ids
+}
+
+// canonIP canonicalizes a source address for matching against the (normalized)
+// suppression set, so IPv6 case/zero-compression differences don't cause a miss.
+func canonIP(s string) string {
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.String()
+	}
+	return s
+}
+
+// silenceSuppressedSources drops every currently-silenced source from the
+// security groups: it acks that source's detections (so a suppressed attacker
+// doesn't flood the NOC card) and removes it from securityBySrc so it neither
+// fires an alert nor counts toward a storm. Fails OPEN — a load error is logged
+// and treated as "none suppressed" so a transient DB blip can't silence the whole
+// security pipeline. The active set is loaded ONCE (a storm has hundreds of
+// distinct sources; per-source point queries would be a per-cycle read storm).
+func (p *Poller) silenceSuppressedSources(securityBySrc map[string][]*models.FlowDetection) {
+	sups, err := p.db.ListActiveFlowSuppressions()
+	if err != nil {
+		log.Printf("flow-detect: load suppressions (fail-open, none applied): %v", err)
+		return
+	}
+	if len(sups) == 0 {
+		return
+	}
+	set := make(map[string]struct{}, len(sups))
+	for _, s := range sups {
+		set[s.SrcAddr] = struct{}{}
+	}
+	for src, group := range securityBySrc {
+		if _, ok := set[canonIP(src)]; !ok {
+			continue
+		}
+		if err := p.db.AckFlowDetections(detectionIDs(group)); err != nil {
+			log.Printf("flow-detect: ack suppressed source %s: %v", src, err)
+		}
+		delete(securityBySrc, src)
+	}
+}
+
+// rollUpSecurityStorms detects per-(site, detector) storms in the surviving
+// security groups and collapses each into ONE SFLOW_SECURITY_DIGEST alert,
+// removing the consumed detections from securityBySrc so the per-source loop skips
+// them. Below-threshold buckets are untouched (full backward compat when there's
+// no storm).
+func (p *Poller) rollUpSecurityStorms(securityBySrc map[string][]*models.FlowDetection, link func([]uint, uint, string)) {
+	if len(securityBySrc) == 0 {
+		return
+	}
+	// deviceID → siteID (0 = no site), built once per cycle.
+	devSite := map[uint]uint{}
+	if devs, err := p.db.GetAllDevices(); err == nil {
+		for i := range devs {
+			if devs[i].SiteID != nil {
+				devSite[devs[i].ID] = *devs[i].SiteID
+			}
+		}
+	} else {
+		log.Printf("flow-detect: load devices for storm bucketing: %v", err)
+	}
+
+	type bucketKey struct {
+		site     uint
+		detector string
+	}
+	distinct := map[bucketKey]map[string]struct{}{}
+	dets := map[bucketKey][]*models.FlowDetection{}
+	for src, group := range securityBySrc {
+		for _, d := range group {
+			bk := bucketKey{devSite[d.DeviceID], d.Detector}
+			if distinct[bk] == nil {
+				distinct[bk] = map[string]struct{}{}
+			}
+			distinct[bk][src] = struct{}{}
+			dets[bk] = append(dets[bk], d)
+		}
+	}
+
+	stormDets := map[uint]struct{}{}
+	for bk, srcset := range distinct {
+		var siteID *uint
+		if bk.site != 0 {
+			s := bk.site
+			siteID = &s
+		}
+		threshold := p.alertManager.StormThreshold(siteID)
+		if threshold <= 0 || len(srcset) < threshold {
+			continue // digest disabled, or below threshold → per-source path handles it
+		}
+		group := dets[bk]
+		alertID, err := p.alertManager.ProcessSecurityDigest(siteID, bk.detector, group)
+		if err != nil {
+			log.Printf("flow-detect: digest %s s%d: %v", bk.detector, bk.site, err)
+		}
+		ids := detectionIDs(group)
+		link(ids, alertID, fmt.Sprintf("digest %s s%d (%d sources)", bk.detector, bk.site, len(srcset)))
+		for _, id := range ids {
+			stormDets[id] = struct{}{}
+		}
+	}
+	if len(stormDets) == 0 {
+		return
+	}
+	// Partition: remove only the storm-consumed detections from each source group
+	// (a source keeps its non-storm-detector detections), dropping now-empty groups.
+	for src, group := range securityBySrc {
+		kept := group[:0]
+		for _, d := range group {
+			if _, isStorm := stormDets[d.ID]; !isStorm {
+				kept = append(kept, d)
+			}
+		}
+		if len(kept) == 0 {
+			delete(securityBySrc, src)
+		} else {
+			securityBySrc[src] = kept
+		}
+	}
+}
+
+// maybeResyncReenabledFeeds notices when the master switch or any per-feed flag
+// has flipped false→true since the last detection cycle and triggers an immediate
+// resync so an admin re-enabling feeds in the UI sees indicators repopulate within
+// ~one cycle rather than at the next 12h ticker (v0.11.46). It only ACTS on a
+// re-enable; disables are handled by runThreatFeedSync skipping them and the API
+// purging rows. First call just seeds the baseline (no resync).
+func (p *Poller) maybeResyncReenabledFeeds() {
+	if p.db == nil {
+		return
+	}
+	master := p.db.GetBoolSetting("threat_feeds_enabled", p.cfg.ThreatFeed.Enabled)
+	perFeed := map[string]bool{}
+	if statuses, err := p.db.ListThreatFeedStatus(); err == nil {
+		for _, st := range statuses {
+			perFeed[st.Source] = st.Enabled
+		}
+	}
+
+	if p.feedMasterSeen == nil {
+		// First cycle: seed the baseline without resyncing (startup already runs
+		// the ~1-min initial sync).
+		m := master
+		p.feedMasterSeen = &m
+		p.feedEnabledSeen = perFeed
+		return
+	}
+
+	reenabled := false
+	if master && !*p.feedMasterSeen {
+		reenabled = true // master flipped off→on
+	}
+	if master {
+		for src, en := range perFeed {
+			if en && !p.feedEnabledSeen[src] {
+				reenabled = true // a specific feed flipped off→on
+				break
+			}
+		}
+	}
+
+	m := master
+	p.feedMasterSeen = &m
+	p.feedEnabledSeen = perFeed
+
+	if reenabled {
+		log.Printf("threat-feeds: re-enable detected in settings; triggering resync")
+		p.startThreatFeedSyncAsync()
+	}
 }
 
 // runThreatFeedSync fetches the configured free open-source bad-IP lists and
@@ -477,7 +682,12 @@ func (p *Poller) runFlowDetectionCycle() {
 // new indicators on its next matcher refresh (~15 min). Each feed failure is
 // logged and skipped so one dead source doesn't abort the sync.
 func (p *Poller) runThreatFeedSync() {
-	if p.db == nil || !p.cfg.ThreatFeed.Enabled {
+	if p.db == nil {
+		return
+	}
+	// v0.11.46: the master switch is an admin-UI setting; the env value is only
+	// the default until an operator flips it. Absent setting → follow env.
+	if !p.db.GetBoolSetting("threat_feeds_enabled", p.cfg.ThreatFeed.Enabled) {
 		return
 	}
 	var feeds []threatfeed.Feed
@@ -488,6 +698,17 @@ func (p *Poller) runThreatFeedSync() {
 	if len(feeds) == 0 {
 		return
 	}
+	// v0.11.46: skip feeds an admin has disabled, so their purged indicators
+	// don't come back until re-enabled. Feeds with no status row yet are enabled
+	// by default (first sync creates the row).
+	disabled := map[string]struct{}{}
+	if statuses, err := p.db.ListThreatFeedStatus(); err == nil {
+		for _, st := range statuses {
+			if !st.Enabled {
+				disabled[st.Source] = struct{}{}
+			}
+		}
+	}
 	ttl := p.cfg.ThreatFeed.TTLDays
 	if ttl <= 0 {
 		ttl = 14
@@ -496,6 +717,9 @@ func (p *Poller) runThreatFeedSync() {
 	client := &http.Client{Timeout: 60 * time.Second}
 	total := 0
 	for _, feed := range feeds {
+		if _, off := disabled[feed.Name]; off {
+			continue // admin-disabled: don't refetch (rows were purged on disable)
+		}
 		started := time.Now()
 		// recordStatus persists this feed's outcome (count or error) so the admin
 		// Threat Intelligence page can show which feeds ran and when.

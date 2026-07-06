@@ -593,7 +593,7 @@ func (h *Handler) GetThreatIntel(c *gin.Context) {
 		"entries":       rows,
 		"active_count":  active,
 		"loaded_count":  h.threatMatch.Len(),
-		"feeds_enabled": h.config.ThreatFeed.Enabled,
+		"feeds_enabled": db.GetBoolSetting("threat_feeds_enabled", h.config.ThreatFeed.Enabled),
 	}))
 }
 
@@ -733,8 +733,10 @@ func (h *Handler) GetThreatFeeds(c *gin.Context) {
 		return
 	}
 	bySource, _ := db.CountThreatIntelBySource()
+	// v0.11.46: report the RESOLVED master switch (admin-UI setting, env default),
+	// not the raw env. The per-feed `enabled` flag rides on each status row.
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"feeds_enabled": h.config.ThreatFeed.Enabled,
+		"feeds_enabled": db.GetBoolSetting("threat_feeds_enabled", h.config.ThreatFeed.Enabled),
 		"interval":      h.config.ThreatFeed.Interval.String(),
 		"ttl_days":      h.config.ThreatFeed.TTLDays,
 		"loaded_count":  h.threatMatch.Len(),

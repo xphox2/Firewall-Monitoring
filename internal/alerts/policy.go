@@ -28,9 +28,15 @@ type ResolvedAlertConfig struct {
 	// keep the trap parser's own severity unless a rule overrides it (LC-14),
 	// so the defaulted Severity below can't distinguish "rule said warning"
 	// from "no rule matched".
-	RuleMatched       bool
-	RuleSeverity      models.Severity
-	Severity          models.Severity
+	RuleMatched  bool
+	RuleSeverity models.Severity
+	Severity     models.Severity
+	// StormSources is the resolved cross-source digest threshold for
+	// SFLOW_SECURITY_DIGEST (v0.11.46). Starts from the global SystemSetting
+	// default (am.stormSourcesDefault) and is overridden per-policy-rule / per-site
+	// with `!= nil` semantics (NOT the CooldownMinutes `> 0` guard): a non-nil 0
+	// disables the digest at that scope. A resolved value <= 0 means "digest off".
+	StormSources      int
 	CooldownMinutes   int
 	NotifyEmail       bool
 	NotifySlack       bool
@@ -137,6 +143,7 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		AlertEnabled:    true,
 		CooldownMinutes: defaultCooldownForType(alertType),
 		Severity:        defaultSeverityForType(alertType),
+		StormSources:    am.stormSourcesDefault, // global SystemSetting default (0 = off)
 	}
 
 	if !am.policyCache.loaded {
@@ -231,6 +238,12 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		if rule.CooldownMinutes != nil && *rule.CooldownMinutes > 0 {
 			resolved.CooldownMinutes = *rule.CooldownMinutes
 		}
+		// StormSources uses `!= nil`, NOT `> 0` (v0.11.46): a non-nil 0 must
+		// DISABLE the digest for this policy, whereas 0 means "inherit" for
+		// CooldownMinutes. Copying the `> 0` guard here would silently invert it.
+		if rule.StormSources != nil {
+			resolved.StormSources = *rule.StormSources
+		}
 		// Per-rule channel overrides (non-nil = override)
 		if rule.NotifyEmail != nil {
 			resolved.NotifyEmail = *rule.NotifyEmail
@@ -253,6 +266,11 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 				siteCfg.CPUThreshold, siteCfg.MemoryThreshold, siteCfg.DiskThreshold, siteCfg.SessionThreshold)
 			if siteCfg.CooldownMinutes > 0 {
 				resolved.CooldownMinutes = siteCfg.CooldownMinutes
+			}
+			// Per-site storm-threshold override — `!= nil` semantics (see the
+			// rule-level override above): non-nil 0 disables the digest for this site.
+			if siteCfg.StormSources != nil {
+				resolved.StormSources = *siteCfg.StormSources
 			}
 		}
 	}
@@ -336,6 +354,15 @@ func (am *AlertManager) globalThresholdForType(alertType models.AlertType) float
 // window collapses the duplicates and paces a persistent condition to once per
 // window. Operators can still override lower per policy/rule/site/device.
 func defaultCooldownForType(alertType models.AlertType) int {
+	switch alertType {
+	case models.AlertTypeSFlowSecurity, models.AlertTypeSFlowSecurityDigest:
+		// v0.11.46: the consolidated security alert and its storm digest are the
+		// noisiest types (one per attacking source / per storm). A 6h re-fire
+		// cadence tames the post-ack churn while still reminding once per window.
+		// A seeded Default-policy rule carries this explicitly so it isn't
+		// shadowed by the policy-level CooldownMinutes:5 (see EnsureDefaultPolicy).
+		return 360
+	}
 	if strings.HasPrefix(string(alertType), "SFLOW_") {
 		return 15 // >= runFlowDetectionCycle's 15-minute window
 	}

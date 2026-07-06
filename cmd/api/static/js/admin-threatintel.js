@@ -30,6 +30,7 @@
     function init() {
         wire();
         loadFeeds();
+        loadStormTuning();
         runSearch(0);
         var r = el('ti-lookup-result'); if (r) r.innerHTML = '';
     }
@@ -51,6 +52,13 @@
         if (addForm) addForm.addEventListener('submit', onAdd);
         var body = el('ti-search-body');
         if (body) body.addEventListener('click', onDelete);
+        // v0.11.46: feed controls.
+        var master = el('ti-master-toggle');
+        if (master) master.addEventListener('change', onMasterToggle);
+        var feedsBody = el('ti-feeds-body');
+        if (feedsBody) feedsBody.addEventListener('click', onFeedToggle);
+        var stormSave = el('ti-storm-save');
+        if (stormSave) stormSave.addEventListener('click', onStormSave);
     }
 
     // ---- Lookup ------------------------------------------------------------
@@ -109,30 +117,40 @@
     }
 
     function renderFeeds(d) {
+        var masterOn = d.feeds_enabled !== false;
         var hint = el('ti-feeds-hint');
         if (hint) {
-            hint.textContent = d.feeds_enabled === false
-                ? 'online feeds DISABLED — set THREAT_FEEDS_ENABLED=true'
+            hint.textContent = !masterOn
+                ? 'online feeds DISABLED via master switch'
                 : 'every ' + esc(d.interval || '?') + ' · TTL ' + esc(d.ttl_days) + 'd · ' + esc(d.loaded_count || 0) + ' loaded';
         }
         var summary = el('ti-summary');
         if (summary) {
-            summary.textContent = (d.feeds_enabled === false ? 'Feeds disabled · ' : 'Feeds enabled · ') +
+            summary.textContent = (!masterOn ? 'Feeds disabled · ' : 'Feeds enabled · ') +
                 (d.loaded_count || 0) + ' indicators loaded in matcher';
         }
+        var master = el('ti-master-toggle');
+        if (master) master.checked = masterOn;
+        var mnote = el('ti-master-note');
+        if (mnote) mnote.textContent = masterOn ? '' : 'matching is off — indicators retained for instant re-enable';
+
         var body = el('ti-feeds-body');
         if (!body) return;
         var rows = (d.status) || [];
         if (!rows.length) {
-            body.innerHTML = '<tr><td colspan="6" class="fwmon-ti-empty">No feed syncs recorded yet. The poller fetches ~1 min after startup, then every ' + esc(d.interval || 'interval') + '.</td></tr>';
+            body.innerHTML = '<tr><td colspan="7" class="fwmon-ti-empty">No feed syncs recorded yet. The poller fetches ~1 min after startup, then every ' + esc(d.interval || 'interval') + '.</td></tr>';
             return;
         }
         var html = '';
         for (var i = 0; i < rows.length; i++) {
             var r = rows[i];
+            var feedOn = r.enabled !== false;
             var status = r.last_error
                 ? '<span class="fwmon-det-sev fwmon-det-sev-critical" title="' + esc(r.last_error) + '">error</span>'
-                : '<span class="fwmon-det-sev fwmon-det-sev-info">ok</span>';
+                : (feedOn ? '<span class="fwmon-det-sev fwmon-det-sev-info">ok</span>'
+                          : '<span class="fwmon-det-sev fwmon-det-sev-warning" title="disabled — excluded from matching">disabled</span>');
+            var toggle = '<button type="button" class="btn sm ti-feed-toggle" data-source="' + esc(r.source) +
+                '" data-enabled="' + (feedOn ? '1' : '0') + '">' + (feedOn ? 'Disable' : 'Enable') + '</button>';
             html += '<tr>' +
                 '<td>' + esc(r.source) + '</td>' +
                 '<td>' + esc(r.kind || 'ip') + '</td>' +
@@ -140,9 +158,74 @@
                 '<td>' + esc(r.entry_count || 0) + '</td>' +
                 '<td>' + fmtTime(r.last_sync_at) + '</td>' +
                 '<td>' + status + '</td>' +
+                '<td>' + toggle + '</td>' +
             '</tr>';
         }
         body.innerHTML = html;
+    }
+
+    // ---- Feed controls (v0.11.46) -----------------------------------------
+    function onMasterToggle(ev) {
+        var enabled = !!(ev.target && ev.target.checked);
+        api('/admin/api/threat-intel/global', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled })
+        }).then(function(res) {
+            var note = res && res.data && res.data.note;
+            if (note && AC && AC.showToast) AC.showToast(note);
+            loadFeeds();
+        }).catch(function(e) {
+            window.fwmonLog && window.fwmonLog.error('master toggle failed', e);
+            loadFeeds(); // revert the checkbox to server truth
+        });
+    }
+
+    function onFeedToggle(ev) {
+        var btn = ev.target && ev.target.closest ? ev.target.closest('.ti-feed-toggle') : null;
+        if (!btn) return;
+        var source = btn.getAttribute('data-source');
+        var enable = btn.getAttribute('data-enabled') === '0'; // currently off → enable
+        if (!enable && !window.confirm('Disable feed "' + source + '"? Its indicators will be purged from matching immediately.')) return;
+        btn.disabled = true;
+        api('/admin/api/threat-intel/feeds/' + encodeURIComponent(source), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enable })
+        }).then(function(res) {
+            var note = res && res.data && res.data.note;
+            if (note && AC && AC.showToast) AC.showToast(note);
+            loadFeeds();
+        }).catch(function(e) {
+            window.fwmonLog && window.fwmonLog.error('feed toggle failed', e);
+            btn.disabled = false;
+        });
+    }
+
+    function loadStormTuning() {
+        api('/admin/api/threat-intel/storm-tuning')
+            .then(function(res) {
+                var v = res && res.data && res.data.storm_sources;
+                var input = el('ti-storm-input');
+                if (input && v != null) input.value = v;
+            })
+            .catch(function(e) { window.fwmonLog && window.fwmonLog.error('storm tuning fetch failed', e); });
+    }
+
+    function onStormSave() {
+        var input = el('ti-storm-input');
+        if (!input) return;
+        var n = parseInt(input.value, 10);
+        if (isNaN(n) || n < 0) { if (AC && AC.showToast) AC.showToast('Enter a number ≥ 0 (0 disables the digest)'); return; }
+        api('/admin/api/threat-intel/storm-tuning', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ storm_sources: n })
+        }).then(function(res) {
+            var v = res && res.data && res.data.storm_sources;
+            if (v != null) input.value = v;
+            if (AC && AC.showToast) AC.showToast(n === 0 ? 'Storm digest disabled globally' : 'Storm threshold saved: ' + v + ' sources');
+        }).catch(function(e) { window.fwmonLog && window.fwmonLog.error('storm tuning save failed', e); });
     }
 
     // ---- Search ------------------------------------------------------------

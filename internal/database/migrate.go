@@ -1176,6 +1176,54 @@ func (d *Database) migrateThreatFeedStatusTable() error {
 	return d.db.AutoMigrate(&models.ThreatFeedStatus{})
 }
 
+// migrateFeedToggleAndFlowSuppress (v33) backs the alert-taming + feed-control
+// feature: a per-source suppression table, a per-feed enable flag, a persisted
+// alert source, per-policy/per-site storm-threshold overrides, and seeds the
+// Default policy's SFLOW_SECURITY / SFLOW_SECURITY_DIGEST cadence rules (needed
+// because the seeded policy CooldownMinutes:5 otherwise shadows the type default).
+func (d *Database) migrateFeedToggleAndFlowSuppress() error {
+	if err := d.db.AutoMigrate(&models.FlowSourceSuppression{}); err != nil {
+		return fmt.Errorf("migrate v33 flow_source_suppressions: %w", err)
+	}
+	if !d.dialect.IsPostgres() {
+		if err := d.db.AutoMigrate(&models.ThreatFeedStatus{}, &models.Alert{}, &models.AlertRule{}, &models.SiteAlertConfig{}); err != nil {
+			return fmt.Errorf("migrate v33 columns (sqlite): %w", err)
+		}
+	} else {
+		for _, s := range []string{
+			`ALTER TABLE threat_feed_status ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true`,
+			`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS source_addr varchar(45)`,
+			`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS storm_sources integer`,
+			`ALTER TABLE site_alert_configs ADD COLUMN IF NOT EXISTS storm_sources integer`,
+		} {
+			if err := d.execMaintenanceDDL(s); err != nil {
+				return fmt.Errorf("migrate v33 columns: %w", err)
+			}
+		}
+	}
+	d.seedSFlowSecurityRules()
+	log.Printf("migrate v33: flow_source_suppressions + threat_feed_status.enabled + alerts.source_addr + storm_sources overrides + seeded SFLOW security cadence rules")
+	return nil
+}
+
+// seedSFlowSecurityRules ensures the Default policy carries the two 6h-cadence
+// security rules. Idempotent (FirstOrCreate on the unique (policy_id, alert_type)
+// index); safe to call from the v33 migration and EnsureDefaultPolicy. No-op if
+// there is no Default policy yet.
+func (d *Database) seedSFlowSecurityRules() {
+	var policy models.AlertPolicy
+	if err := d.db.Where("is_default = ?", true).First(&policy).Error; err != nil {
+		return
+	}
+	cd := 360
+	for _, at := range []models.AlertType{models.AlertTypeSFlowSecurity, models.AlertTypeSFlowSecurityDigest} {
+		rule := models.AlertRule{PolicyID: policy.ID, AlertType: at}
+		d.db.Where(models.AlertRule{PolicyID: policy.ID, AlertType: at}).
+			Attrs(models.AlertRule{Enabled: true, CooldownMinutes: &cd}).
+			FirstOrCreate(&rule)
+	}
+}
+
 // migrateThreatIntelAndFlowThreatFlag (v14) creates the threat_intel feed table
 // and adds the threat_flag bitfield column to flow_samples. The table is created
 // via AutoMigrate (idempotent, cross-dialect, also in the baseline allModels

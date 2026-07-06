@@ -192,6 +192,15 @@ type EventStatsStore interface {
 	GetRecentDetections(since time.Time, limit int, unackedOnly, includeAlerted bool) ([]models.FlowDetection, error)
 	GetDetectionsByAlert(alertID uint) ([]models.FlowDetection, error)
 	AckFlowDetection(id uint) error
+	AckFlowDetections(ids []uint) error
+	// Flow-source suppression (silence-a-source, v0.11.46).
+	SuppressFlowSource(src string, until time.Time, by, reason string) error
+	IsFlowSourceSuppressed(src string, ref time.Time) (bool, error)
+	ListActiveFlowSuppressions() ([]models.FlowSourceSuppression, error)
+	DeleteFlowSuppression(id uint) error
+	// UI-managed settings read-through (v0.11.46 — no new env vars).
+	GetBoolSetting(key string, def bool) bool
+	GetIntSetting(key string, def int) int
 	GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error)
 	GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter) (*NOCSnapshot, error)
 	GetDeviceAlertSeverities() (map[uint]string, error)
@@ -202,8 +211,10 @@ type EventStatsStore interface {
 	CountThreatIntelBySource() ([]ThreatIntelSourceCount, error)
 	UpsertThreatIntel(e *models.ThreatIntel) error
 	DeleteThreatIntel(id uint) error
+	DeleteThreatIntelBySource(source string) (int64, error)
 	ListThreatFeedStatus() ([]models.ThreatFeedStatus, error)
 	UpsertThreatFeedStatus(s *models.ThreatFeedStatus) error
+	SetThreatFeedEnabled(source string, enabled bool) error
 }
 
 // IngestStore covers the probe-ingestion write path and batch idempotency.

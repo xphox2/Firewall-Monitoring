@@ -97,3 +97,37 @@ func (d *Database) AckFlowDetection(id uint) error {
 		Where("id = ?", id).
 		Update("acknowledged", true).Error
 }
+
+// AckFlowDetections bulk-acknowledges detections (v0.11.46). Used by the poller
+// to clear a silenced source's detections from the NOC card so a suppressed
+// attacker doesn't flood the 200-row list, and by the suppress-source API. No-op
+// on an empty list.
+func (d *Database) AckFlowDetections(ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return d.db.Model(&models.FlowDetection{}).
+		Where("id IN ?", ids).
+		Update("acknowledged", true).Error
+}
+
+// FindOpenDigestAlert returns the still-open, unacknowledged SFLOW_SECURITY_DIGEST
+// alert for a per-(site,detector) metric name, or nil (v0.11.46). Unlike
+// FindOpenAlertForSource it keys directly on the persisted alert_type+metric_name
+// (the digest's cross-cycle identity) rather than a source link, since a digest
+// spans many sources. `since` bounds it to the current window (max(lookback,
+// cooldown)).
+func (d *Database) FindOpenDigestAlert(metricName string, since time.Time) (*models.Alert, error) {
+	var a models.Alert
+	err := d.db.
+		Where("alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND acknowledged = ? AND timestamp >= ?",
+			models.AlertTypeSFlowSecurityDigest, metricName, false, since.UTC()).
+		Order("timestamp DESC").First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}

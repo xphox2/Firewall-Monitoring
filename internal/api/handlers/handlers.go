@@ -101,6 +101,15 @@ func (h *Handler) RefreshThreatMatcher() {
 	if h.db == nil {
 		return
 	}
+	// v0.11.46: the master switch is admin-UI-managed (env is only the default).
+	// When feeds are off, the matcher is EMPTY — ingest stops threat-flagging
+	// immediately — while the per-feed rows are kept in the DB so flipping the
+	// master back on is instant (no re-fetch). Per-feed disable is enforced inside
+	// GetActiveThreatIntel (and by purging that feed's rows).
+	if !h.db.GetBoolSetting("threat_feeds_enabled", h.config.ThreatFeed.Enabled) {
+		h.threatMatch.Store(threatintel.New(nil, time.Now()))
+		return
+	}
 	rows, err := h.db.GetActiveThreatIntel()
 	if err != nil {
 		log.Printf("threat-intel: refresh failed: %v", err)

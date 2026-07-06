@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/auth"
@@ -16,6 +18,52 @@ func (d *Database) GetAllSettings() ([]models.SystemSetting, error) {
 	var settings []models.SystemSetting
 	err := d.db.Find(&settings).Error
 	return settings, err
+}
+
+// GetSettingValue returns the raw string value of one system_settings key, or
+// ("", false) if the key is absent. The building block for the typed read-through
+// helpers below (v0.11.46 — admin-UI-managed settings; see the "no new env vars"
+// configuration principle).
+func (d *Database) GetSettingValue(key string) (string, bool) {
+	var s models.SystemSetting
+	if err := d.db.Where("\"key\" = ?", key).First(&s).Error; err != nil {
+		return "", false
+	}
+	return s.Value, true
+}
+
+// GetBoolSetting reads a boolean setting, returning def when the key is absent or
+// unparseable. "true"/"1"/"yes"/"on" (case-insensitive) are true; the mirror set
+// is false. Used for the threat-feed master switch, where def follows the env
+// config until an operator flips it in the UI.
+func (d *Database) GetBoolSetting(key string, def bool) bool {
+	v, ok := d.GetSettingValue(key)
+	if !ok || v == "" {
+		return def
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return def
+	}
+}
+
+// GetIntSetting reads an integer setting, returning def when the key is absent or
+// unparseable. Used for the cross-source storm threshold
+// (detect_security_storm_sources, default 25).
+func (d *Database) GetIntSetting(key string, def int) int {
+	v, ok := d.GetSettingValue(key)
+	if !ok || v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 // UpsertSetting persists a system_settings row, creating it if absent.

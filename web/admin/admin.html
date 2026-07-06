@@ -846,6 +846,17 @@
                     <canvas id="alerts-type-chart"></canvas>
                 </div>
             </div>
+            <!-- Silenced sources (v0.11.46): sources muted via "Silence" on an
+                 sFlow security alert/digest; un-silence restores alerting. -->
+            <div class="card" id="alerts-silenced-card" style="display:none;">
+                <div class="card-header"><h2>Silenced sources</h2></div>
+                <div class="table-wrap" style="max-height:220px;">
+                    <table>
+                        <thead><tr><th>Source</th><th>Until</th><th>By</th><th>Reason</th><th></th></tr></thead>
+                        <tbody id="alerts-silenced-body"></tbody>
+                    </table>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header"><h2>Alert History</h2></div>
                 <div class="filter-bar">
@@ -1310,12 +1321,30 @@
                 <div id="ti-lookup-result" style="margin-top:12px;"></div>
             </div>
 
+            <!-- Feed controls: master switch + storm-digest threshold (v0.11.46) -->
+            <div class="card" style="margin-top:16px;">
+                <h3 class="fwmon-toptalk-title">Feed Controls<span class="fwmon-toptalk-hint">admin-only — no restart needed</span></h3>
+                <div style="display:flex; flex-wrap:wrap; gap:20px; align-items:center; margin-top:12px;">
+                    <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="ti-master-toggle">
+                        <span>Threat feeds enabled (master)</span>
+                    </label>
+                    <span id="ti-master-note" class="fwmon-toptalk-hint"></span>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:14px;">
+                    <label for="ti-storm-input">Security storm digest threshold</label>
+                    <input type="number" id="ti-storm-input" class="fwmon-flows-input" min="0" max="100000" style="width:90px;">
+                    <button type="button" class="btn sm" id="ti-storm-save">Save</button>
+                    <span class="fwmon-toptalk-hint">distinct sources per site/detector before a storm collapses into one digest alert (0 = off)</span>
+                </div>
+            </div>
+
             <!-- Feed sources status -->
             <div class="card" style="margin-top:16px;">
                 <h3 class="fwmon-toptalk-title">Feed Sources<span class="fwmon-toptalk-hint" id="ti-feeds-hint">last sync per source</span></h3>
                 <div class="table-wrap" style="max-height:320px; margin-top:10px;">
                     <table class="fwmon-flows-detections-table" id="ti-feeds-table">
-                        <thead><tr><th>Source</th><th>Kind</th><th>Category</th><th>Indicators</th><th>Last sync</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Source</th><th>Kind</th><th>Category</th><th>Indicators</th><th>Last sync</th><th>Status</th><th>Enabled</th></tr></thead>
                         <tbody id="ti-feeds-body"></tbody>
                     </table>
                 </div>

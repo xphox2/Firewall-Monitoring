@@ -1,8 +1,10 @@
 package alerts
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,9 +40,19 @@ type AlertManager struct {
 	baselineMu sync.Mutex
 	// F12: open incidents by device (mu-guarded; reloaded each poll cycle).
 	openIncidents map[uint]uint
-	mu            sync.RWMutex
-	alertCooldown time.Duration
-	policyCache   PolicyCache
+	// lastSeverity records the last-FIRED severity rank per security event key
+	// (flowsec_/flowsec_digest_), so a strictly-higher severity can bypass the
+	// (now 6h) cooldown on the post-ack fresh-fire path — where no open alert
+	// exists to escalate (A2, v0.11.46). mu-guarded, pruned with lastAlert.
+	lastSeverity map[string]int
+	// stormSourcesDefault is the global cross-source digest threshold from the
+	// `detect_security_storm_sources` SystemSetting (default 25; <=0 disables the
+	// digest globally). Set each cycle by the poller via SetStormSourcesDefault so
+	// resolveAlertConfig can seed ResolvedAlertConfig.StormSources without a DB read.
+	stormSourcesDefault int
+	mu                  sync.RWMutex
+	alertCooldown       time.Duration
+	policyCache         PolicyCache
 }
 
 // firedEntry pairs an alert with its resolved policy config for deferred
@@ -54,18 +66,40 @@ type firedEntry struct {
 
 func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.Database) *AlertManager {
 	return &AlertManager{
-		config:            cfg,
-		notifier:          notif,
-		db:                db,
-		lastAlert:         make(map[string]time.Time),
-		cooldownFor:       make(map[string]time.Duration),
-		activeAlerts:      make(map[string]bool),
-		fireStart:         make(map[string]time.Time),
-		flapShortResolves: make(map[string][]time.Time),
-		baselines:         make(map[uint]deviceBaselines),
-		openIncidents:     make(map[uint]uint),
-		alertCooldown:     5 * time.Minute,
+		config:              cfg,
+		notifier:            notif,
+		db:                  db,
+		lastAlert:           make(map[string]time.Time),
+		cooldownFor:         make(map[string]time.Duration),
+		activeAlerts:        make(map[string]bool),
+		fireStart:           make(map[string]time.Time),
+		flapShortResolves:   make(map[string][]time.Time),
+		baselines:           make(map[uint]deviceBaselines),
+		openIncidents:       make(map[uint]uint),
+		lastSeverity:        make(map[string]int),
+		stormSourcesDefault: 25, // matches the detect_security_storm_sources code default
+		alertCooldown:       5 * time.Minute,
 	}
+}
+
+// SetStormSourcesDefault updates the global cross-source digest threshold (from
+// the `detect_security_storm_sources` SystemSetting). Called by the poller each
+// detection cycle so an admin-UI change takes effect without a restart.
+func (am *AlertManager) SetStormSourcesDefault(n int) {
+	am.mu.Lock()
+	am.stormSourcesDefault = n
+	am.mu.Unlock()
+}
+
+// StormThreshold resolves the effective cross-source digest threshold for a site
+// (v0.11.46): the global default, overridden by the site's DIGEST policy-rule /
+// per-site config. Resolved with deviceID 0 (site-scoped, no per-device leak). A
+// return <= 0 means the digest is disabled for that scope. Pass nil for the
+// "no site" bucket.
+func (am *AlertManager) StormThreshold(siteID *uint) int {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.resolveAlertConfig(0, siteID, models.AlertTypeSFlowSecurityDigest).StormSources
 }
 
 // markActiveLocked flips a state-alert key to active and stamps when it fired
@@ -614,8 +648,16 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 		newSev = resolved.RuleSeverity
 	}
 
-	// Find this event's still-open alert via the detection→alert link.
-	existing, _ := am.db.FindOpenAlertForSource(src, now.Add(-securityEventLinkLookback))
+	// Find this event's still-open alert via the detection→alert link. Look back
+	// at least the cooldown (A2, v0.11.46): with a 6h cadence, a source quiet
+	// 2–6h then resuming would otherwise miss its open alert AND be cooldown-
+	// blocked, so it would silently drop. max(lookback, cooldown) keeps the fold-in
+	// working across the whole window.
+	lookback := securityEventLinkLookback
+	if cooldown > lookback {
+		lookback = cooldown
+	}
+	existing, _ := am.db.FindOpenAlertForSource(src, now.Add(-lookback))
 	if existing != nil {
 		if severityRank(newSev) > severityRank(existing.Severity) {
 			// Escalation: raise severity and re-notify immediately (break cooldown)
@@ -623,18 +665,21 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 			existing.Severity = newSev
 			existing.Message = winner.Message
 			existing.MetricName = metric
+			existing.SourceAddr = src
 			existing.EventKey = eventKey
 			if am.db != nil {
 				am.db.Gorm().Model(&models.Alert{}).Where("id = ?", existing.ID).Updates(map[string]any{
 					"severity":         newSev,
 					"message":          winner.Message,
 					"metric_name":      metric,
+					"source_addr":      src,
 					"timestamp":        winner.DetectedAt,
 					"escalation_count": existing.EscalationCount + 1,
 				})
 			}
 			am.mu.Lock()
 			am.recordCooldownLocked(eventKey, now, cooldown)
+			am.lastSeverity[eventKey] = severityRank(newSev)
 			am.mu.Unlock()
 			if !existing.Suppressed {
 				nc := BuildNotifyConfigFromResolved(resolved, globalNC)
@@ -651,12 +696,18 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 		return existing.ID, nil
 	}
 
-	// No open alert for this source. Gate on the event cooldown (the link lookup
-	// above already covered the DB/restart case).
+	// No open alert for this source (e.g. the operator acked the last one). Gate
+	// on the event cooldown — but a strictly-higher severity than the last fire
+	// BYPASSES it (A2, v0.11.46), so a critical arriving inside the 6h window
+	// after an acked warning still pages immediately.
 	am.mu.Lock()
 	canSend := am.canAlertWithCooldown(eventKey, now, cooldown)
+	if !canSend && severityRank(newSev) > am.lastSeverity[eventKey] {
+		canSend = true
+	}
 	if canSend {
 		am.recordCooldownLocked(eventKey, now, cooldown)
+		am.lastSeverity[eventKey] = severityRank(newSev)
 	}
 	am.mu.Unlock()
 	if !canSend {
@@ -670,6 +721,7 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 		Severity:     newSev,
 		Message:      winner.Message,
 		MetricName:   metric,
+		SourceAddr:   src,
 		CurrentValue: winner.Score,
 		PolicyID:     resolved.PolicyID,
 		Suppressed:   resolved.InMaintenance,
@@ -693,6 +745,226 @@ func betterSecurityWinner(cand, cur *models.FlowDetection) bool {
 		return cr > ur
 	}
 	return securityDetectorPriority[cand.Detector] > securityDetectorPriority[cur.Detector]
+}
+
+// ProcessSecurityDigest collapses a STORM of distinct sources for one
+// (site, detector) into a SINGLE SFLOW_SECURITY_DIGEST alert (v0.11.46), instead
+// of N per-source SFLOW_SECURITY alerts (a botnet scan or known-bad ASN can flag
+// hundreds of sources in one cycle). group is every storm detection for that
+// (site, detector). siteID is nil for the "no site" bucket; the metric name still
+// encodes s0 so the digest is stable per bucket. Returns the digest alert id so
+// the caller links all storm detections to it. Mirrors ProcessSecurityEvent's
+// escalate/fold/cooldown structure but is keyed on the persisted metric_name (a
+// digest spans many sources, so there's no single src link to key on).
+func (am *AlertManager) ProcessSecurityDigest(siteID *uint, detector string, group []*models.FlowDetection) (uint, error) {
+	if len(group) == 0 {
+		return 0, nil
+	}
+	winner := group[0]
+	srcSet := make(map[string]struct{}, len(group))
+	for _, d := range group {
+		srcSet[d.SrcAddr] = struct{}{}
+		if betterSecurityWinner(d, winner) {
+			winner = d
+		}
+	}
+	distinct := len(srcSet)
+
+	var sid uint
+	if siteID != nil {
+		sid = *siteID
+	}
+	metric := fmt.Sprintf("sflow_digest_%s_s%d", detector, sid)
+	eventKey := fmt.Sprintf("flowsec_digest_%s_s%d", detector, sid)
+	alertType := models.AlertTypeSFlowSecurityDigest
+
+	now := time.Now()
+	// deviceID 0: resolve the digest from the SITE policy only — passing a
+	// "representative device" would leak that device's per-device override onto
+	// the whole-site rollup (see the plan C3/C4).
+	resolved := am.resolveAlertConfig(0, siteID, alertType)
+	if !resolved.AlertEnabled {
+		return 0, nil
+	}
+	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
+	newSev := models.Severity(winner.Severity)
+	if newSev == "" {
+		newSev = resolved.Severity
+	}
+	if resolved.RuleSeverity != "" {
+		newSev = resolved.RuleSeverity
+	}
+	msg := buildDigestMessage(detector, distinct, group)
+
+	lookback := securityEventLinkLookback
+	if cooldown > lookback {
+		lookback = cooldown
+	}
+	existing, _ := am.db.FindOpenDigestAlert(metric, now.Add(-lookback))
+	if existing != nil {
+		// Fold the new sources into the open digest: refresh count + message, and
+		// escalate (re-notify) only on a strictly-higher severity.
+		higher := severityRank(newSev) > severityRank(existing.Severity)
+		updates := map[string]any{"message": msg, "current_value": float64(distinct), "timestamp": now}
+		if higher {
+			updates["severity"] = newSev
+			updates["escalation_count"] = existing.EscalationCount + 1
+			existing.Severity = newSev
+		}
+		existing.Message = msg
+		existing.CurrentValue = float64(distinct)
+		existing.MetricName = metric
+		existing.EventKey = eventKey
+		if am.db != nil {
+			am.db.Gorm().Model(&models.Alert{}).Where("id = ?", existing.ID).Updates(updates)
+		}
+		am.mu.Lock()
+		am.recordCooldownLocked(eventKey, now, cooldown)
+		if higher {
+			am.lastSeverity[eventKey] = severityRank(newSev)
+		}
+		am.mu.Unlock()
+		if higher && !existing.Suppressed {
+			nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+			if err := am.notify(existing, nc); err != nil {
+				return existing.ID, fmt.Errorf("failed to send escalated sflow digest: %w", err)
+			}
+		}
+		return existing.ID, nil
+	}
+
+	// No open digest for this bucket. Same cooldown gate + higher-severity bypass
+	// as ProcessSecurityEvent (A2).
+	am.mu.Lock()
+	canSend := am.canAlertWithCooldown(eventKey, now, cooldown)
+	if !canSend && severityRank(newSev) > am.lastSeverity[eventKey] {
+		canSend = true
+	}
+	if canSend {
+		am.recordCooldownLocked(eventKey, now, cooldown)
+		am.lastSeverity[eventKey] = severityRank(newSev)
+	}
+	am.mu.Unlock()
+	if !canSend {
+		return 0, nil
+	}
+
+	alert := models.Alert{
+		Timestamp:    now,
+		DeviceID:     0, // site-scoped rollup; attribution-only, not used for resolution
+		AlertType:    alertType,
+		Severity:     newSev,
+		Message:      msg,
+		MetricName:   metric,
+		CurrentValue: float64(distinct),
+		PolicyID:     resolved.PolicyID,
+		Suppressed:   resolved.InMaintenance,
+		EventKey:     eventKey,
+	}
+	am.saveAlert(&alert)
+	if !alert.Suppressed {
+		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
+		if err := am.notify(&alert, nc); err != nil {
+			return alert.ID, fmt.Errorf("failed to send sflow security digest: %w", err)
+		}
+	}
+	return alert.ID, nil
+}
+
+// buildDigestMessage summarizes a storm: distinct-source count + the top-3
+// sources by score, and for a threat_intel storm the shared ASN/feed when every
+// source shares one (e.g. a Spamhaus ASN-DROP sweep). The full offender list
+// lives in the linked detections.
+func buildDigestMessage(detector string, distinct int, group []*models.FlowDetection) string {
+	if detector == "threat_intel" {
+		if asn := sharedASN(group); asn != "" {
+			return fmt.Sprintf("%s storm: %d sources from %s", detector, distinct, asn)
+		}
+	}
+	best := make(map[string]float64, len(group))
+	for _, d := range group {
+		if d.Score >= best[d.SrcAddr] {
+			best[d.SrcAddr] = d.Score
+		}
+	}
+	type ss struct {
+		src   string
+		score float64
+	}
+	arr := make([]ss, 0, len(best))
+	for s, sc := range best {
+		arr = append(arr, ss{s, sc})
+	}
+	sort.Slice(arr, func(i, j int) bool {
+		if arr[i].score != arr[j].score {
+			return arr[i].score > arr[j].score
+		}
+		return arr[i].src < arr[j].src // stable order for equal scores
+	})
+	top := make([]string, 0, 3)
+	for i := 0; i < len(arr) && i < 3; i++ {
+		top = append(top, arr[i].src)
+	}
+	return fmt.Sprintf("%s storm: %d sources flagged in 15m (top: %s)", detector, distinct, strings.Join(top, ", "))
+}
+
+// sharedASN returns a "AS<n> (<name>)" label when EVERY detection in the group
+// carries the same ASN in its Details JSON, else "". Best-effort: detections
+// without an "asn" field (or a mixed set) yield "" and the caller falls back to
+// the top-sources form.
+func sharedASN(group []*models.FlowDetection) string {
+	var asn, name string
+	for i, d := range group {
+		if d.Details == "" {
+			return ""
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(d.Details), &m); err != nil {
+			return ""
+		}
+		a := asnField(m["asn"])
+		if a == "" {
+			return ""
+		}
+		if i == 0 {
+			asn = a
+			name = strFromAny(m["asn_name"])
+		} else if a != asn {
+			return ""
+		}
+	}
+	if asn == "" {
+		return ""
+	}
+	label := "AS" + asn
+	if name != "" {
+		label += " (" + name + ")"
+	}
+	return label
+}
+
+// asnField normalizes an ASN pulled from JSON (it may decode as a float64 number
+// or a string) to a bare digit string, else "".
+func asnField(v any) string {
+	switch t := v.(type) {
+	case float64:
+		if t <= 0 {
+			return ""
+		}
+		return strconv.FormatInt(int64(t), 10)
+	case string:
+		return strings.TrimPrefix(strings.TrimPrefix(t, "AS"), "as")
+	default:
+		return ""
+	}
+}
+
+func strFromAny(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // openAlertID returns the id of the still-open alert matching

@@ -21,6 +21,12 @@ func (d *Database) EnsureDefaultPolicy() {
 		IsDefault:       true,
 		CooldownMinutes: 5,
 	}).FirstOrCreate(&policy)
+	// The policy-level CooldownMinutes:5 above shadows the per-type default, so
+	// without an explicit rule the noisy SFLOW_SECURITY / _DIGEST types would
+	// re-fire every 5 min. Seed both with a 6h cadence rule (rule-level wins,
+	// editable in the policy UI). Idempotent; also run by migration v33 for
+	// existing installs. Does not re-add after an operator deletes the rule.
+	d.seedSFlowSecurityRules()
 }
 
 func (d *Database) GetAlertPolicies() ([]models.AlertPolicy, error) {

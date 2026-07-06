@@ -89,11 +89,43 @@ func (d *Database) PruneExpiredThreatIntel() (int64, error) {
 
 // GetActiveThreatIntel returns all non-expired threat-intel rows, for building
 // the in-memory matcher. "Active" means expires_at is NULL or in the future.
+// v0.11.46: rows whose source is a DISABLED feed are excluded (defensive — a
+// per-feed disable also purges its rows via DeleteThreatIntelBySource, so this
+// just closes the tiny window where the poller re-adds a row mid-sync before it
+// observes the flag). Manual entries use a source not present in
+// threat_feed_status, so they're never excluded here.
 func (d *Database) GetActiveThreatIntel() ([]models.ThreatIntel, error) {
+	var disabled []string
+	if err := d.db.Model(&models.ThreatFeedStatus{}).
+		Where("enabled = ?", false).Pluck("source", &disabled).Error; err != nil {
+		return nil, err
+	}
+	q := d.db.Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC())
+	if len(disabled) > 0 {
+		q = q.Where("source NOT IN ?", disabled)
+	}
 	var rows []models.ThreatIntel
-	err := d.db.Where("expires_at IS NULL OR expires_at > ?", time.Now().UTC()).
-		Find(&rows).Error
+	err := q.Find(&rows).Error
 	return rows, err
+}
+
+// DeleteThreatIntelBySource removes every indicator sourced from one feed
+// (v0.11.46) — used when an admin disables that feed, so its rows stop matching
+// immediately rather than lingering until their TTL. Manual entries use a
+// distinct source string and are untouched. Returns the number deleted.
+func (d *Database) DeleteThreatIntelBySource(source string) (int64, error) {
+	res := d.db.Where("source = ?", source).Delete(&models.ThreatIntel{})
+	return res.RowsAffected, res.Error
+}
+
+// SetThreatFeedEnabled flips a feed's admin enable flag (v0.11.46). The row is
+// created by the poller's first sync; if it doesn't exist yet this is a no-op
+// update (the feed is enabled by default until it syncs), which is fine — the
+// operator can toggle it once it appears.
+func (d *Database) SetThreatFeedEnabled(source string, enabled bool) error {
+	return d.db.Model(&models.ThreatFeedStatus{}).
+		Where("source = ?", source).
+		Update("enabled", enabled).Error
 }
 
 // ListThreatIntel returns recent threat-intel rows for the admin UI/API,

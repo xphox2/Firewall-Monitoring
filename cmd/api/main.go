@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.45"
+const ServerVersion = "0.11.46"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -731,6 +731,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/irc/servers/test": true,
 			"/admin/api/irc/channels":     true,
 			"/admin/api/irc/channels/:id": true,
+			// v0.11.46: threat-feed control (per-feed disable purges indicators;
+			// master switch; storm-digest threshold) is destructive admin config.
+			"/admin/api/threat-intel/feeds/:source": true,
+			"/admin/api/threat-intel/global":        true,
+			"/admin/api/threat-intel/storm-tuning":  true,
 		},
 	))
 	{
@@ -877,6 +882,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/alerts/bulk-snooze", handler.BulkSnoozeAlerts)
 		admin.POST("/api/alerts/bulk-snooze-filter", handler.BulkSnoozeAlertsByFilter)
 		admin.POST("/api/alerts/:id/notes", handler.UpdateAlertNotes)
+		// v0.11.46: silence-a-source (operator parity with ack/snooze).
+		admin.POST("/api/alerts/:id/suppress-source", handler.SuppressAlertSource)
+		admin.POST("/api/alerts/:id/suppress-all", handler.SuppressAlertAllSources)
+		admin.GET("/api/sources/suppressions", handler.ListFlowSuppressions)
+		admin.DELETE("/api/sources/suppressions/:id", handler.DeleteFlowSuppression)
 		admin.GET("/api/alerts/:id", handler.GetAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
@@ -890,6 +900,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/threat-intel/lookup", handler.LookupThreatIntel)
 		admin.GET("/api/geo/lookup", handler.LookupGeoBatch)
 		admin.GET("/api/threat-intel/feeds", handler.GetThreatFeeds)
+		// v0.11.46: admin-only feed control + storm-digest tuning (admin-gated via
+		// adminOnlyRoutes below).
+		admin.PATCH("/api/threat-intel/feeds/:source", handler.PatchThreatFeed)
+		admin.PATCH("/api/threat-intel/global", handler.PatchThreatFeedsGlobal)
+		admin.GET("/api/threat-intel/storm-tuning", handler.GetStormTuning)
+		admin.PATCH("/api/threat-intel/storm-tuning", handler.PatchStormTuning)
 		admin.GET("/api/alerts/stats", handler.GetAlertStats)
 		admin.GET("/api/traps/stats", handler.GetTrapStats)
 		admin.GET("/api/syslog/stats", handler.GetSyslogStats)

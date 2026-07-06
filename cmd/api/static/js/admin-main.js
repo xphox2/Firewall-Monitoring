@@ -1465,8 +1465,45 @@
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
+            loadSilencedSources();
         }).catch(function(e) {
             console.error('Failed to load alerts:', e);
+        });
+    }
+
+    // loadSilencedSources renders the "Silenced sources" panel (v0.11.46): the
+    // sources currently muted via an sFlow security alert's Silence action, each
+    // un-silenceable. The card hides itself when nothing is silenced.
+    function loadSilencedSources() {
+        var card = document.getElementById('alerts-silenced-card');
+        var body = document.getElementById('alerts-silenced-body');
+        if (!card || !body) return;
+        apiFetch(API_BASE + '/sources/suppressions').then(function(res) {
+            var rows = (res && res.data) || [];
+            if (!rows.length) { card.style.display = 'none'; body.innerHTML = ''; return; }
+            card.style.display = '';
+            body.innerHTML = rows.map(function(s) {
+                return '<tr>' +
+                    '<td style="font-family:var(--fwmon-font-mono);">' + AC.ipRef(s.src_addr) + '</td>' +
+                    '<td>' + formatDate(s.suppressed_until) + '</td>' +
+                    '<td>' + escapeHtml(s.suppressed_by || '—') + '</td>' +
+                    '<td>' + escapeHtml(s.suppressed_reason || '') + '</td>' +
+                    '<td><button class="btn secondary sm" data-action="unsilence-source" data-min-role="operator" data-id="' + s.id + '">Un-silence</button></td>' +
+                '</tr>';
+            }).join('');
+            AC.enrichIps(body);
+        }).catch(function(e) {
+            window.fwmonLog && window.fwmonLog.error && window.fwmonLog.error('load silenced sources failed', e);
+        });
+    }
+
+    function unsilenceSource(id) {
+        apiFetch(API_BASE + '/sources/suppressions/' + id, { method: 'DELETE' }).then(function() {
+            AC.showSuccess('Source un-silenced');
+            loadSilencedSources();
+        }).catch(function(e) {
+            AC.showError('Failed to un-silence source');
+            console.error('unsilence failed', e);
         });
     }
 
@@ -1782,13 +1819,18 @@
                 ? AC.deviceLink(a.device_id, devName)
                 : (a.device_name ? escapeHtml(a.device_name) : '');
             var siteCell = a.site_name ? escapeHtml(a.site_name) : '<span style="color:var(--fwmon-text-faint);">—</span>';
+            // v0.11.46: a storm digest is one row collapsing many sources; a DIGEST
+            // chip flags it (the count lives in the message).
+            var digestChip = a.alert_type === 'SFLOW_SECURITY_DIGEST'
+                ? ' <span class="badge critical" style="opacity:0.85;" title="Cross-source storm rollup — many sources collapsed into one alert">DIGEST</span>'
+                : '';
             // Muted opacity marks snoozed rows apart from live ones (LC-32).
             return '<tr class="alert-row" data-id="' + a.id + '"' + (snoozedActive ? ' style="opacity:0.55;"' : '') + '>' +
                 checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + deviceCell + '</td>' +
                 '<td>' + siteCell + '</td>' +
-                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + incidentChip + '</span></td>' +
+                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + incidentChip + digestChip + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td class="expandable-msg">' + escapeHtml(a.message) + '</td>' +
                 '<td>' + statusCol + '</td>' +
@@ -1964,10 +2006,19 @@
             // Linked flows/detectors (sFlow single-feed): the flows and detectors
             // behind a consolidated security alert, so the operator sees exactly
             // what and where without hunting the sFlow page.
+            // v0.11.46: source silencing is offered on the consolidated security
+            // alert and its storm digest. For a digest the linked detections are the
+            // storm's OFFENDER list, each row silenceable, plus a "Silence all".
+            var suppressible = a.alert_type === 'SFLOW_SECURITY' || a.alert_type === 'SFLOW_SECURITY_DIGEST';
+            var isDigest = a.alert_type === 'SFLOW_SECURITY_DIGEST';
             var flowsHtml = '';
             if (linkedDetections.length) {
+                var flowsTitle = isDigest ? 'Offenders in this storm (' + linkedDetections.length + ' flagged)' : 'Flows &amp; detectors behind this alert';
+                var silenceAllBtn = (isDigest && !a.acknowledged && !a.resolved_at)
+                    ? ' <button type="button" class="btn sm" data-action="silence-all-sources" data-min-role="operator" data-id="' + a.id + '" style="font-size:0.72rem;float:right;">Silence all sources</button>'
+                    : '';
                 flowsHtml = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Flows &amp; detectors behind this alert</div>';
+                    '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">' + flowsTitle + silenceAllBtn + '</div>';
                 linkedDetections.forEach(function(d, idx) {
                     var route = AC.ipRef(d.src_addr || '?') + ' → ' + (d.dst_addr ? AC.ipRef(d.dst_addr, { port: d.dst_port }) : 'many');
                     var threatLink = d.src_addr
@@ -1980,11 +2031,14 @@
                           ' data-src="' + escapeHtml(d.src_addr) + '" data-dst="' + escapeHtml(d.dst_addr || '') + '"' +
                           ' data-dport="' + escapeHtml(String(d.dst_port || '')) + '" style="font-size:0.72rem;">Show sampled packets</button>'
                         : '';
+                    var silenceBtn = (suppressible && d.src_addr && !a.resolved_at)
+                        ? ' <button type="button" class="btn secondary sm" data-action="silence-source" data-min-role="operator" data-id="' + a.id + '" data-src="' + escapeHtml(d.src_addr) + '" style="font-size:0.72rem;" title="Suppress new alerts from this source">Silence</button>'
+                        : '';
                     flowsHtml +=
                         '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-family:monospace;font-size:0.85rem;flex-wrap:wrap;">' +
                             '<span class="badge ' + escapeHtml((d.severity || 'info')) + '">' + escapeHtml(d.detector || '') + '</span>' +
                             '<span style="color:#c9d1d9;">' + route + '</span>' +
-                            threatLink + pktBtn +
+                            threatLink + pktBtn + silenceBtn +
                         '</div>' +
                         '<div id="alert-flows-' + idx + '" style="display:none;margin:2px 0 6px;overflow:auto;"></div>';
                 });
@@ -2158,6 +2212,50 @@
         }).catch(function(e) {
             console.error('Failed to unsnooze alert:', e);
             AC.showError('Failed to unsnooze alert');
+        });
+    }
+
+    // Silence a specific attacking source behind an sFlow security alert (v0.11.46).
+    // src optional (defaults server-side to the alert's source). Alerting resumes
+    // once the window elapses (or within the alert's cooldown for a still-active
+    // attacker).
+    function silenceSource(id, src) {
+        var hoursStr = window.prompt('Silence ' + (src ? 'source ' + src : 'this source') +
+            ' for how many hours?\n(1–720; new alerts for it are suppressed until then)', '24');
+        if (hoursStr == null) return;
+        var hours = parseInt(hoursStr, 10);
+        if (!isFinite(hours) || hours < 1) { AC.showError('Enter a positive number of hours'); return; }
+        apiFetch(API_BASE + '/alerts/' + id + '/suppress-source', {
+            method: 'POST',
+            body: src ? { hours: hours, src: src } : { hours: hours }
+        }).then(function(res) {
+            closeAlertDetail();
+            refreshAlertsAtCurrentPage();
+            var s = res && res.data && res.data.src;
+            AC.showSuccess('Silenced ' + (s || 'source') + ' for ' + hours + 'h');
+        }).catch(function(e) {
+            console.error('Failed to silence source:', e);
+            AC.showError('Failed to silence source: ' + (e.message || ''));
+        });
+    }
+
+    // Silence EVERY source behind a storm digest and ack it (v0.11.46).
+    function silenceAllSources(id) {
+        var hoursStr = window.prompt('Silence ALL sources in this storm for how many hours?\n(1–720; the digest will be acknowledged)', '24');
+        if (hoursStr == null) return;
+        var hours = parseInt(hoursStr, 10);
+        if (!isFinite(hours) || hours < 1) { AC.showError('Enter a positive number of hours'); return; }
+        apiFetch(API_BASE + '/alerts/' + id + '/suppress-all', {
+            method: 'POST',
+            body: { hours: hours }
+        }).then(function(res) {
+            closeAlertDetail();
+            refreshAlertsAtCurrentPage();
+            var n = res && res.data && res.data.count;
+            AC.showSuccess('Silenced ' + (n || 'all') + ' sources for ' + hours + 'h');
+        }).catch(function(e) {
+            console.error('Failed to silence all sources:', e);
+            AC.showError('Failed to silence sources: ' + (e.message || ''));
         });
     }
 
@@ -3127,9 +3225,10 @@
         // Syslog severity escalations
         'SYSLOG_EMERGENCY','SYSLOG_ALERT','SYSLOG_CRITICAL',
         // sFlow detection engine — SFLOW_SECURITY is the consolidated security
-        // alert (port scan / threat-intel / data-exfil / super-spreader / C2); the
-        // rest are the operational detectors.
-        'SFLOW_SECURITY','SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
+        // alert (port scan / threat-intel / data-exfil / super-spreader / C2);
+        // SFLOW_SECURITY_DIGEST is the cross-source storm rollup (v0.11.46; carries
+        // the per-policy storm_sources threshold); the rest are operational detectors.
+        'SFLOW_SECURITY','SFLOW_SECURITY_DIGEST','SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
         // Test fire
         'TEST_ALERT'
     ];
@@ -3302,6 +3401,13 @@
             var mode = r.mode || 'static';
             var zscoreK = r.zscore_k || '';
             var cooldown = (r.cooldown_minutes != null) ? r.cooldown_minutes : '';
+            var storm = (r.storm_sources != null) ? r.storm_sources : '';
+            // Only the storm-digest type carries a storm_sources threshold; it
+            // rides in the cooldown cell (blank = inherit global, 0 = disable).
+            var cooldownCell = '<input type="number" data-field="cooldown_minutes" value="' + cooldown + '" class="sm" style="width:60px" min="1">';
+            if (type === 'SFLOW_SECURITY_DIGEST') {
+                cooldownCell += ' <input type="number" data-field="storm_sources" value="' + storm + '" class="sm" style="width:58px" min="0" placeholder="storm" title="Storm digest threshold: distinct sources per site/detector before alerts collapse into one digest (blank = inherit global, 0 = disable)">';
+            }
 
             function triState(field, val) {
                 if (val === true) return '<select data-field="' + field + '" class="sm"><option value="">Inherit</option><option value="true" selected>On</option><option value="false">Off</option></select>';
@@ -3321,7 +3427,7 @@
                 '<td>' + triState('notify_slack', r.notify_slack) + '</td>' +
                 '<td>' + triState('notify_discord', r.notify_discord) + '</td>' +
                 '<td>' + triState('notify_webhook', r.notify_webhook) + '</td>' +
-                '<td><input type="number" data-field="cooldown_minutes" value="' + cooldown + '" class="sm" style="width:60px" min="1"></td>' +
+                '<td>' + cooldownCell + '</td>' +
             '</tr>';
         }).join('');
         tbody.innerHTML = html;
@@ -3340,6 +3446,15 @@
             var zscoreK = parseFloat(row.querySelector('[data-field="zscore_k"]').value) || 0;
             var cooldownVal = row.querySelector('[data-field="cooldown_minutes"]').value;
             var cooldown = cooldownVal ? parseInt(cooldownVal) : null;
+            // storm_sources only exists on the digest row (v0.11.46): blank =
+            // inherit global (null), 0 = disable, N = per-policy override. Emitting
+            // it keeps BatchUpsertAlertRules' full-replace from wiping the column.
+            var stormEl = row.querySelector('[data-field="storm_sources"]');
+            var stormSources = null;
+            if (stormEl) {
+                var sv = stormEl.value;
+                stormSources = (sv === '' || sv == null) ? null : (parseInt(sv, 10) || 0);
+            }
 
             function triVal(field) {
                 var v = row.querySelector('[data-field="' + field + '"]').value;
@@ -3360,7 +3475,8 @@
                 notify_slack: triVal('notify_slack'),
                 notify_discord: triVal('notify_discord'),
                 notify_webhook: triVal('notify_webhook'),
-                cooldown_minutes: cooldown
+                cooldown_minutes: cooldown,
+                storm_sources: stormSources
             });
         });
         // LC-31: the server replaces the policy's ENTIRE rule set with this
@@ -3909,6 +4025,10 @@
         // Snooze handlers (v0.10.218, bundle G2).
         'snooze-alert':    function(el) { showSnoozePrompt(parseInt(el.dataset.id)); },
         'unsnooze-alert':  function(el) { unsnoozeAlert(parseInt(el.dataset.id)); },
+        // Silence-a-source (v0.11.46).
+        'silence-source':      function(el) { silenceSource(parseInt(el.dataset.id), el.dataset.src || ''); },
+        'silence-all-sources': function(el) { silenceAllSources(parseInt(el.dataset.id)); },
+        'unsilence-source':    function(el) { unsilenceSource(parseInt(el.dataset.id)); },
         'show-policy-modal': function() { showPolicyModal(); },
         'close-policy-modal': function() { closePolicyModal(); },
         'edit-policy': function(el) { showPolicyModal(parseInt(el.dataset.id)); },
