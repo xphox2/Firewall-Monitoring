@@ -3126,8 +3126,10 @@
         'HA_HEARTBEAT_FAIL','HA_MEMBER_DOWN','HA_MEMBER_UP','HA_STATE_CHANGE','HA_SWITCH',
         // Syslog severity escalations
         'SYSLOG_EMERGENCY','SYSLOG_ALERT','SYSLOG_CRITICAL',
-        // sFlow detection engine
-        'SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
+        // sFlow detection engine — SFLOW_SECURITY is the consolidated security
+        // alert (port scan / threat-intel / data-exfil / super-spreader / C2); the
+        // rest are the operational detectors.
+        'SFLOW_SECURITY','SFLOW_AGENT_DROPS','SFLOW_CLEARTEXT','SFLOW_UNEXPECTED_EGRESS','SFLOW_SAMPLING_BACKOFF','SFLOW_CAPACITY',
         // Test fire
         'TEST_ALERT'
     ];

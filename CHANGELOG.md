@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.43] - 2026-07-06
+
+### Fixed
+- The consolidated **`SFLOW_SECURITY`** alert type (the single alert that port-scan / threat-intel / data-exfil / super-spreader / C2-beacon detections collapse into, since v0.11.39) is now selectable in the **Alert Policies** editor, so the sFlow security traffic alerts' severity, cooldown, enable/disable, and notification channels can be tuned from the UI. It was previously firing but missing from the policy editor's alert-type list. Added the matching `AlertTypeSFlowSecurity` constant. (Backend cooldown/severity defaults already handled any `SFLOW_*` type.)
+
 ## [0.11.42] - 2026-07-06
 
 ### Added

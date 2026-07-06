@@ -41,7 +41,12 @@ const (
 	AlertTypeSFlowUnexpectedEgress AlertType = "SFLOW_UNEXPECTED_EGRESS"
 	AlertTypeSFlowSamplingBackoff  AlertType = "SFLOW_SAMPLING_BACKOFF"
 	AlertTypeSFlowCapacity         AlertType = "SFLOW_CAPACITY"
-	AlertTypeTestAlert             AlertType = "TEST_ALERT"
+	// AlertTypeSFlowSecurity is the CONSOLIDATED security sFlow alert (v0.11.39):
+	// the security detectors (port_scan, threat_intel, data_exfil, super_spreader,
+	// c2_beacon) collapse per-source into this single type so one event is one
+	// alert. Tunable in alert policies like any other type.
+	AlertTypeSFlowSecurity AlertType = "SFLOW_SECURITY"
+	AlertTypeTestAlert     AlertType = "TEST_ALERT"
 )
 
 // Severity is the typed enum of alert severities. Underlying values match the
