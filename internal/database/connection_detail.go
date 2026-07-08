@@ -333,6 +333,45 @@ func interfacesForDevice(refs []ConnInterfaceRef, deviceID uint) []ConnInterface
 	return out
 }
 
+// dropOverlappingParents removes refs that are the parent of another ref on the
+// SAME device, so a bridge/parent and its VLAN child aren't both summed (their
+// SNMP octet counters overlap — the parent aggregates the child). Refs with no
+// parent/child relationship to any sibling are all kept (a real LAG bond). Scoped
+// per-device (key deviceID:normalizedName) so identically-named interfaces on the
+// two endpoints never cross-cancel. Where the parent name is unknown (masked
+// config), the ref is kept — we can't prove overlap, so we don't drop.
+func dropOverlappingParents(refs []ConnInterfaceRef) []ConnInterfaceRef {
+	if len(refs) <= 1 {
+		return refs
+	}
+	key := func(devID uint, name string) string {
+		return fmt.Sprintf("%d:%s", devID, normalizeIfName(name))
+	}
+	parents := make(map[string]bool)
+	for _, r := range refs {
+		if r.Parent != "" {
+			parents[key(r.DeviceID, r.Parent)] = true
+		}
+	}
+	if len(parents) == 0 {
+		return refs
+	}
+	out := refs[:0:0]
+	for _, r := range refs {
+		if parents[key(r.DeviceID, r.IfName)] {
+			continue // this ref is a parent of another resolved ref → skip to avoid overlap
+		}
+		out = append(out, r)
+	}
+	// Never let de-overlap zero out a connection: if every ref normalized to a
+	// parent (a pathological name collision where parent and child share a
+	// normalized token), fall back to the original set rather than dropping all.
+	if len(out) == 0 {
+		return refs
+	}
+	return out
+}
+
 // collectDeviceIPs returns all known IPs for a device (management + interface addresses).
 func (d *Database) collectDeviceIPs(deviceID uint, device *models.Device) map[string]bool {
 	ips := make(map[string]bool)
@@ -675,6 +714,12 @@ func (d *Database) interfaceTrafficWindow(refs []ConnInterfaceRef, rangeStr stri
 	if len(refs) == 0 {
 		return []VPNChartBucket{}, nil
 	}
+	// Drop parent interfaces whose child (a VLAN sub-interface / bridge member) is
+	// also in the set: on FortiGate the parent bridge counter aggregates its
+	// children, so summing both double-counts the same octets. Genuine LAG members
+	// (distinct physical ports with no parent/child link between them) survive and
+	// still sum — that IS the bond's aggregate throughput.
+	refs = dropOverlappingParents(refs)
 	to := time.Now()
 	from := to.Add(-time.Duration(rangeToHours(rangeStr)) * time.Hour)
 
@@ -757,16 +802,20 @@ func (d *Database) GetConnectionTraffic(connID uint, rangeStr string) ([]VPNChar
 	}
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	// Collect all tunnel conditions
+	// Aggregate ONE endpoint only. A VPN tunnel is reported at BOTH ends (each
+	// device counts the same bytes on its own tunnel interface), so summing
+	// src+dst doubles the throughput — the ~2x inflation the direct path already
+	// guards against (see interfacesForDevice's comment). Prefer the source
+	// endpoint; fall back to the destination when the source has no matching
+	// tunnels.
 	var allNames []string
 	var deviceIDs []uint
-	allNames = append(allNames, srcTunnelNames...)
-	allNames = append(allNames, dstTunnelNames...)
 	if len(srcTunnelNames) > 0 {
-		deviceIDs = append(deviceIDs, srcDeviceID)
-	}
-	if len(dstTunnelNames) > 0 {
-		deviceIDs = append(deviceIDs, dstDeviceID)
+		allNames = srcTunnelNames
+		deviceIDs = []uint{srcDeviceID}
+	} else if len(dstTunnelNames) > 0 {
+		allNames = dstTunnelNames
+		deviceIDs = []uint{dstDeviceID}
 	}
 
 	if len(allNames) == 0 {

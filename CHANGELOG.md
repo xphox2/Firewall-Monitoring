@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.57] - 2026-07-08
+
+### Fixed
+- **Alerts page: connection graphs no longer over-count throughput.** Connection-detail bandwidth charts read ~2× too high vs the matching device-interface charts. Two aggregation bugs, both a "count the same traffic twice":
+  - *VPN/tunnel connections* summed tunnel deltas across **both** endpoint devices, but a VPN tunnel is reported at each end (each device counts the same bytes on its own tunnel interface). `GetConnectionTraffic` now aggregates a single endpoint (source preferred, dest fallback) — mirroring the direct path's existing single-endpoint rule.
+  - *Direct links* summed **every** resolved interface, so a FortiGate bridge/parent and its VLAN child were both counted even though the parent's SNMP octet counter already aggregates the child. `interfaceTrafficWindow` now drops a parent when its child is present (`dropOverlappingParents`), while genuine LAG members (no parent/child link) still sum. A safety net prevents de-overlap from ever zeroing a connection.
+  - Regression tests: `connection_traffic_dedup_test.go` (VPN single-endpoint + direct parent de-overlap).
+- **Alerts list: storm digests now show the site and a sensible device, and drop the redundant type bubble.** `SFLOW_SECURITY_DIGEST` rows rendered the type as two overlapping badges ("SFLOW_SECURITY_DIGEST" + "DIGEST") and left Device/Site blank (the rollup carries `DeviceID 0`, so the device→site name lookup found nothing).
+  - The type badge now reads `SFLOW_SECURITY` + a `DIGEST` chip (no more doubled suffix), in both the list and the detail modal.
+  - Alerts persist a nullable `SiteID` (migration v36 `alert_site_scope`); the digest sets it at creation, and `enrichAlertsDeviceSite` resolves the site name from it when there's no device. The Device column shows a muted "Site-wide" for these site-scoped rollups instead of blank.
+  - Test: `digest_test.go` asserts the digest persists its `SiteID`.
+
 ## [0.11.56] - 2026-07-07
 
 ### Added

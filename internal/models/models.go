@@ -287,7 +287,14 @@ type Alert struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	Timestamp time.Time `json:"timestamp" gorm:"index:idx_alert_device_ts,priority:2;index:idx_alert_unack,priority:3"`
 	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_alert_device_ts,priority:1"`
-	ProbeID   *uint     `json:"probe_id" gorm:"index"`
+	// SiteID scopes an alert to a site WITHOUT a single device (v0.11.57): the
+	// SFLOW_SECURITY_DIGEST storm rollup collapses many sources across a site and
+	// carries DeviceID 0, so the transient SiteName can't be resolved via
+	// DeviceID→site. Persisted here at creation so the alerts list/detail can name
+	// the site. NULL for device-scoped alerts (their site comes from the device).
+	// Migration v36.
+	SiteID  *uint `json:"site_id,omitempty" gorm:"index"`
+	ProbeID *uint `json:"probe_id" gorm:"index"`
 	// IncidentID groups this alert under an open incident (F12): alerts fired
 	// for a device while its DEVICE_OFFLINE incident is open attach here and
 	// their individual notifications are muted — the incident is the story.

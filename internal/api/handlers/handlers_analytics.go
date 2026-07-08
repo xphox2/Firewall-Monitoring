@@ -134,31 +134,35 @@ func enrichAlertsDeviceSite(g *gorm.DB, alerts []models.Alert) {
 		return
 	}
 	idset := map[uint]struct{}{}
+	siteIDset := map[uint]struct{}{}
 	for _, a := range alerts {
 		if a.DeviceID != 0 {
 			idset[a.DeviceID] = struct{}{}
 		}
-	}
-	if len(idset) == 0 {
-		return
-	}
-	ids := make([]uint, 0, len(idset))
-	for id := range idset {
-		ids = append(ids, id)
+		// Site-scoped alerts (e.g. the SFLOW_SECURITY_DIGEST storm rollup) carry no
+		// device but persist their own SiteID — resolve those site names too.
+		if a.SiteID != nil {
+			siteIDset[*a.SiteID] = struct{}{}
+		}
 	}
 	type devRow struct {
 		ID     uint
 		Name   string
 		SiteID *uint
 	}
-	var devs []devRow
-	g.Model(&models.Device{}).Where("id IN ?", ids).Select("id, name, site_id").Scan(&devs)
-	devByID := make(map[uint]devRow, len(devs))
-	siteIDset := map[uint]struct{}{}
-	for _, d := range devs {
-		devByID[d.ID] = d
-		if d.SiteID != nil {
-			siteIDset[*d.SiteID] = struct{}{}
+	devByID := make(map[uint]devRow)
+	if len(idset) > 0 {
+		ids := make([]uint, 0, len(idset))
+		for id := range idset {
+			ids = append(ids, id)
+		}
+		var devs []devRow
+		g.Model(&models.Device{}).Where("id IN ?", ids).Select("id, name, site_id").Scan(&devs)
+		for _, d := range devs {
+			devByID[d.ID] = d
+			if d.SiteID != nil {
+				siteIDset[*d.SiteID] = struct{}{}
+			}
 		}
 	}
 	siteName := map[uint]string{}
@@ -183,6 +187,11 @@ func enrichAlertsDeviceSite(g *gorm.DB, alerts []models.Alert) {
 			if d.SiteID != nil {
 				alerts[i].SiteName = siteName[*d.SiteID]
 			}
+		}
+		// Fall back to the alert's own persisted SiteID (site-scoped, device-less
+		// alerts) when the device→site path didn't set a name.
+		if alerts[i].SiteName == "" && alerts[i].SiteID != nil {
+			alerts[i].SiteName = siteName[*alerts[i].SiteID]
 		}
 	}
 }

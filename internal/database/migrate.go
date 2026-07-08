@@ -1185,6 +1185,26 @@ func (d *Database) migrateEventRules() error {
 	return d.db.AutoMigrate(&models.EventRule{})
 }
 
+// migrateAlertSiteScope (v36) adds alerts.site_id so a site-scoped, device-less
+// alert (the SFLOW_SECURITY_DIGEST storm rollup, DeviceID 0) can name its site in
+// the UI. Nullable column + index; PG uses ADD COLUMN IF NOT EXISTS routed through
+// execMaintenanceDDL (statement_timeout safety), sqlite uses AutoMigrate.
+func (d *Database) migrateAlertSiteScope() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.Alert{})
+	}
+	for _, s := range []string{
+		`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS site_id bigint`,
+		`CREATE INDEX IF NOT EXISTS idx_alerts_site_id ON alerts (site_id)`,
+	} {
+		if err := d.execMaintenanceDDL(s); err != nil {
+			return fmt.Errorf("migrate v36 alert_site_scope: %w", err)
+		}
+	}
+	log.Printf("migrate v36: ensured alerts.site_id (+idx)")
+	return nil
+}
+
 // migrateFeedToggleAndFlowSuppress (v33) backs the alert-taming + feed-control
 // feature: a per-source suppression table, a per-feed enable flag, a persisted
 // alert source, per-policy/per-site storm-threshold overrides, and seeds the

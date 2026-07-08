@@ -113,6 +113,31 @@ func TestProcessSecurityDigest_OneAlertForManySources(t *testing.T) {
 	}
 }
 
+// TestProcessSecurityDigest_PersistsSiteID: a site-scoped digest persists its
+// SiteID so the alerts UI can name the site (DeviceID is 0 for the rollup, so the
+// device→site path can't resolve it). Guards v0.11.57.
+func TestProcessSecurityDigest_PersistsSiteID(t *testing.T) {
+	am, db := newTestManager(t)
+	am.SetStormSourcesDefault(5)
+
+	var siteID uint = 7
+	var group []*models.FlowDetection
+	for i := 0; i < 10; i++ {
+		group = append(group, saveDet(t, db, secDet("192.0.2."+itoaTest(i), "port_scan", "warning")))
+	}
+	id, err := am.ProcessSecurityDigest(&siteID, "port_scan", group)
+	if err != nil || id == 0 {
+		t.Fatalf("ProcessSecurityDigest id=%d err=%v", id, err)
+	}
+	a := getAlert(t, db, id)
+	if a.DeviceID != 0 {
+		t.Errorf("digest DeviceID = %d, want 0 (site-scoped rollup)", a.DeviceID)
+	}
+	if a.SiteID == nil || *a.SiteID != siteID {
+		t.Errorf("digest SiteID = %v, want %d", a.SiteID, siteID)
+	}
+}
+
 // TestProcessSecurityDigest_FoldsAcrossCycles: a second cycle for the same
 // (site, detector) reuses the open digest (same id) and grows the count, without
 // creating a new alert. Guards (p).

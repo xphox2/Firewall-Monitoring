@@ -1822,11 +1822,19 @@
             var devName = a.device_name || (dev ? dev.name : ('DEV-' + a.device_id));
             var deviceCell = a.device_id
                 ? AC.deviceLink(a.device_id, devName)
-                : (a.device_name ? escapeHtml(a.device_name) : '');
+                : (a.device_name ? escapeHtml(a.device_name)
+                    : (a.alert_type === 'SFLOW_SECURITY_DIGEST'
+                        ? '<span style="color:var(--fwmon-text-faint);" title="Site-wide storm rollup — many sources, no single device">Site-wide</span>'
+                        : ''));
             var siteCell = a.site_name ? escapeHtml(a.site_name) : '<span style="color:var(--fwmon-text-faint);">—</span>';
             // v0.11.46: a storm digest is one row collapsing many sources; a DIGEST
-            // chip flags it (the count lives in the message).
-            var digestChip = a.alert_type === 'SFLOW_SECURITY_DIGEST'
+            // chip flags it (the count lives in the message). The chip already says
+            // "DIGEST", so the base badge drops the redundant _DIGEST suffix — the
+            // Type cell reads "SFLOW_SECURITY" + [DIGEST] instead of the doubled
+            // "SFLOW_SECURITY_DIGEST DIGEST".
+            var isDigestType = a.alert_type === 'SFLOW_SECURITY_DIGEST';
+            var typeLabel = isDigestType ? 'SFLOW_SECURITY' : a.alert_type;
+            var digestChip = isDigestType
                 ? ' <span class="badge critical" style="opacity:0.85;" title="Cross-source storm rollup — many sources collapsed into one alert">DIGEST</span>'
                 : '';
             // Muted opacity marks snoozed rows apart from live ones (LC-32).
@@ -1835,7 +1843,7 @@
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + deviceCell + '</td>' +
                 '<td>' + siteCell + '</td>' +
-                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + incidentChip + digestChip + '</span></td>' +
+                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(typeLabel) + incidentChip + digestChip + '</span></td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td class="expandable-msg">' + escapeHtml(a.message) + '</td>' +
                 '<td>' + statusCol + '</td>' +
@@ -1918,7 +1926,7 @@
             var devName = a.device_name || (devForAlert ? devForAlert.name : ('DEV-' + a.device_id));
             var devLinkHtml = a.device_id
                 ? AC.deviceLink(a.device_id, devName)
-                : (a.device_name || 'Unknown');
+                : (a.device_name || (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'Site-wide' : 'Unknown'));
             // The analytics pages use device_id (not device) as their state
             // key — see FwmonControls.attachAnalyticsPage descriptors below.
             var deviceAlertsLink = a.device_id
@@ -1933,7 +1941,8 @@
                 '<div style="margin-bottom:16px;">' +
                     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
                         '<span class="badge ' + sevClass + '" style="font-size:0.9rem;padding:4px 12px;">' + (a.severity || 'UNKNOWN').toUpperCase() + '</span>' +
-                        '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml(a.alert_type || 'ALERT') + '</span>' +
+                        '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml((a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'SFLOW_SECURITY' : a.alert_type) || 'ALERT') + '</span>' +
+                        (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? ' <span class="badge critical" style="opacity:0.85;" title="Cross-source storm rollup — many sources collapsed into one alert">DIGEST</span>' : '') +
                         incidentChip +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +

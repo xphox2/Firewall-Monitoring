@@ -821,7 +821,8 @@ func (am *AlertManager) ProcessSecurityDigest(siteID *uint, detector string, gro
 
 	alert := models.Alert{
 		Timestamp:    now,
-		DeviceID:     0, // site-scoped rollup; attribution-only, not used for resolution
+		DeviceID:     0,      // site-scoped rollup; attribution-only, not used for resolution
+		SiteID:       siteID, // persist the site so the UI names it (DeviceID 0 → no device→site)
 		AlertType:    alertType,
 		Severity:     newSev,
 		Message:      msg,
