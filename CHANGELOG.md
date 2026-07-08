@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.52] - 2026-07-07
+
+### Security
+- **Bump `github.com/quic-go/quic-go` v0.59.0 → v0.59.1** to resolve **GO-2026-5676** (HTTP/3 QPACK trailer expansion memory exhaustion). The dependency is transitive (pulled by `gin` v1.12.0's HTTP/3 support); govulncheck flagged reachable traces through `runSMTPDiagnostic`, `TestIRCServer`, and `threatfeed.Parse`. Patch-only bump; no code changes. Clears the CI govulncheck gate.
+
 ## [0.11.51] - 2026-07-07
 
 ### Added
