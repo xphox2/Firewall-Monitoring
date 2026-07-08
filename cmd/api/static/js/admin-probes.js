@@ -510,8 +510,11 @@
     document.getElementById('probe-form').addEventListener('submit', saveProbe);
     document.getElementById('reject-form').addEventListener('submit', submitReject); // AUDIT-051
 
-    // Init
-    AC.fetchCsrfToken().then(function() {
-        loadProbes();
-    });
+    // Init — the SPA calls this when the Probes page is shown (admin-main.js
+    // loadPageData). The event-delegation and form-submit wiring above runs
+    // once at module load; only the data fetch is deferred so we don't hit
+    // /api/probes while the operator is on another page.
+    window.FwmonProbes = { init: function () {
+        AC.fetchCsrfToken().then(function () { loadProbes(); });
+    } };
 })();

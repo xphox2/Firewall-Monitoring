@@ -156,8 +156,10 @@
     // Form submit
     document.getElementById('site-form').addEventListener('submit', saveSite);
 
-    // Init
-    AC.fetchCsrfToken().then(function() {
-        loadSites();
-    });
+    // Init — the SPA calls this when the Sites page is shown (admin-main.js
+    // loadPageData). Event/form wiring above runs once at module load; only
+    // the data fetch is deferred.
+    window.FwmonSites = { init: function () {
+        AC.fetchCsrfToken().then(function () { loadSites(); });
+    } };
 })();

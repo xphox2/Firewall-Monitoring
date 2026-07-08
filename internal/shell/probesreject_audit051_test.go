@@ -34,10 +34,12 @@ func TestProbesReject_UsesModal_AUDIT051(t *testing.T) {
 		}
 	}
 
-	htmlPath := "../../web/admin/probes.html"
+	// The reject-modal markup was folded from probes.html into the admin.html
+	// SPA when the Probes page was consolidated.
+	htmlPath := "../../web/admin/admin.html"
 	html, err := os.ReadFile(htmlPath)
 	if err != nil {
-		t.Skipf("probes.html not found at %s; err: %v", htmlPath, err)
+		t.Skipf("admin.html not found at %s; err: %v", htmlPath, err)
 	}
 	htmlBody := string(html)
 	for _, sig := range []string{
@@ -48,7 +50,7 @@ func TestProbesReject_UsesModal_AUDIT051(t *testing.T) {
 		`data-action="close-reject-modal"`,
 	} {
 		if !strings.Contains(htmlBody, sig) {
-			t.Errorf("probes.html missing the %q signal (AUDIT-051): the reject modal markup must be present.", sig)
+			t.Errorf("admin.html missing the %q signal (AUDIT-051): the reject modal markup must be present.", sig)
 		}
 	}
 }

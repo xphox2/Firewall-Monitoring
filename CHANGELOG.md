@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.55] - 2026-07-07
+
+### Changed
+- **Folded the Probes, Sites and IRC pages into the admin SPA (one nav bar).** These were standalone server-rendered HTML documents, each duplicating the `<head>` stylesheet chain and the sidebar shell — the duplication that caused the recent nav-font drift. Their markup now lives in `admin.html` as `page-probes` / `page-sites` / `page-irc` divs, switched client-side like every other tab; `admin-{probes,sites,irc}.js` were refactored from self-running IIFEs to expose an `init()` the SPA calls on page-show (data no longer fetched while you're on another page). Routes `/admin/probes`, `/admin/sites`, `/admin/irc` now render the SPA shell. The IRC `.tab-btn` active-highlight CSS (AUDIT-049) moved into the shared `admin-design-system.css`. Deleted `web/admin/{probes,sites,irc}.html`.
+- Verified end-to-end in a headless browser: deep-links and in-app nav to all three pages, nav highlighting, Inter/Archivo fonts at Console sizes, per-page data load, the Add-Site modal, and IRC tab switching all work with zero JS console errors. Guardrail tests (`internal/shell`) repointed to the new locations.
+
 ## [0.11.54] - 2026-07-07
 
 ### Changed

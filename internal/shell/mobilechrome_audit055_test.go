@@ -43,9 +43,10 @@ func TestMobileChrome_OnAllPages_AUDIT055(t *testing.T) {
 	}
 
 	// 3) Every admin page must call renderMobileChrome().
+	// probes/sites/irc were folded into the admin.html SPA, so they no longer
+	// exist as standalone pages; admin.html renders their chrome.
 	pages := []string{
 		"admin.html", "connection-detail.html", "device-detail.html",
-		"irc.html", "probes.html", "sites.html",
 	}
 	for _, page := range pages {
 		data, err := os.ReadFile("../../web/admin/" + page)
