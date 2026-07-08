@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.52] - 2026-07-07
+
+### Security
+- **Bump `github.com/quic-go/quic-go` v0.59.0 → v0.59.1** to resolve **GO-2026-5676** (HTTP/3 QPACK trailer expansion memory exhaustion). The dependency is transitive (pulled by `gin` v1.12.0's HTTP/3 support); govulncheck flagged reachable traces through `runSMTPDiagnostic`, `TestIRCServer`, and `threatfeed.Parse`. Patch-only bump; no code changes. Clears the CI govulncheck gate.
+
+## [0.11.51] - 2026-07-07
+
+### Added
+- **Event-rule builder UI (admin console; Phase 2 of the event-rule engine).** New **Event Rules** page and sidebar entry under Configuration, backed by `admin-event-rules.js` (`FwmonEventRules`). Operators can now create, edit, enable/disable and delete rules from the browser against the server engine shipped in v0.11.49: a condition builder over extracted event fields (FortiGate `subtype`/`level`/`logid`/`logdesc`/`action`/`srcintf`/… surfaced via an autocomplete field-hint datalist), alert-vs-suppress action, vendor/device/site scope, dedup/cooldown, and notify-policy routing. Summary stat cards show total/enabled/suppress rule counts and total hits. New admin route `GET /admin/event-rules` (SPA shell) wired into the sidebar, SPA page map, and page-data loader.
+
+## [0.11.50] - 2026-07-07
+
+### Fixed
+- **Probes, Sites, Connection-detail and IRC pages now load the design-system fonts.** These four standalone admin pages linked `admin-design-system.css` (which references `Inter`/`Archivo`/`JetBrains Mono` via `var(--fwmon-font-*)`) but never loaded `admin-fonts.css`, where those `@font-face` rules live. The browser silently fell back to system fonts, whose different metrics made identically `rem`-sized elements render at a visibly wrong apparent size. Added the `admin-fonts.css` stylesheet plus the Inter/JetBrains/Archivo `woff2` preloads (ordered before `admin-design-system.css`, matching `admin.html`/`device-detail.html`). `login.html` is intentionally excluded — it is a pre-auth page with its own self-contained typography.
+
+## [0.11.49] - 2026-07-06
+
+### Added
+- **Unified, vendor-aware event-rule engine (server core; migration v35).** New `event_rules` table + engine (`internal/alerts/rules.go`) lets operators match on extracted event **fields** — for FortiGate, the `key="value"` log fields (`subtype`, `level`, `logid`, `logdesc`, `action`, `srcintf`, …) — instead of only syslog facility/severity. Rules carry an AND/OR condition tree (`eq/neq/contains/not_contains/regex/gt/lt/in/exists`), an **alert** or **suppress** action, vendor/device/site scope, per-field dedup (`group_by`), cooldown, and notify-policy routing. This makes "alert on *this* message but not that one at the same severity" possible — e.g. FortiGate `subtype=vpn AND level=error` (IPsec failures, severity 3) which the old `severity ≤ 2` gate never saw.
+- **Vendor field-extractor registry (`internal/logfields`).** Same `init()`→`Register`→`Lookup` idiom as `internal/configdiff`/`internal/snmp`: a FortiGate extractor (reconstructs the full `key=value` stream from the collector's split fields so `logid`/`type` tokens split *outside* `message` are still matchable), a generic fallback, and registered OPNsense/pfSense stubs ready for those devices. Includes a message `Normalize` used by the tester and the summary fix.
+- **Event-rule CRUD + live tester API (admin-only).** `GET/POST/PUT/DELETE /admin/api/event-rules` and `POST /admin/api/event-rules/test` — the tester previews what a candidate rule would match against recent syslog (bounded to the last 24h / 5000 rows) so a rule can be validated before saving. Admin-only: a suppress rule can silence security alerting and the tester reads raw syslog.
+- **Default seed rules (`EnsureDefaultRules`, idempotent).** Ships the legacy syslog severity-0/1/2 behavior as three rules emitting the **original** `SYSLOG_EMERGENCY/ALERT/CRITICAL` types (so existing per-type policy config keeps applying), a FortiGate VPN/IPsec-error alert, and a **disabled** forward-traffic suppress example. A one-time seed marker means an operator-deleted seed is never resurrected.
+
+### Changed
+- **Syslog alerting is now the event-rule engine.** `ProcessSyslog` delegates to the engine and the ingest handler's outer `severity ≤ 2` gate is removed, so content-matching rules see every severity. The engine fast-paths when no rules are loaded and extracts fields once per message, keeping the syslog hot path cheap; per-rule hit counts are in-memory and flushed in batches (never a per-match write). Rules refresh on the existing `RefreshPolicyCache` cadence.
+
+### Fixed
+- **`syslog_summaries.message_pattern` is populated again.** It was always empty (never selected in aggregation); it is now derived from the group's sample message via `logfields.Normalize`.
+
 ## [0.11.48] - 2026-07-06
 
 ### Changed

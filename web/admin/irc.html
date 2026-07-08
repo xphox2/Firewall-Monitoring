@@ -14,6 +14,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IRC Management - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
+    <!-- Self-hosted design-system fonts (Inter/Archivo/JetBrains Mono). Must load
+         before admin-design-system.css or the browser falls back to system fonts
+         and every rem-sized element renders at the wrong apparent size. -->
+    <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/static/css/admin-fonts.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
     <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">

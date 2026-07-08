@@ -356,6 +356,10 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	// Ensure a default alert policy exists
 	d.EnsureDefaultPolicy()
 
+	// Seed the default event rules once (v35): the legacy syslog sev0-2 behavior
+	// now ships as rules, so this must run before syslog ingestion serves.
+	d.EnsureDefaultRules()
+
 	// Backfill empty vendor → fortigate (the in-code default per
 	// internal/models/models.go) and audit the fleet's vendor distribution.
 	// Any device whose vendor lacks a rich normalizer in internal/configdiff

@@ -1176,6 +1176,15 @@ func (d *Database) migrateThreatFeedStatusTable() error {
 	return d.db.AutoMigrate(&models.ThreatFeedStatus{})
 }
 
+// migrateEventRules (v35) creates the event_rules table backing the unified,
+// vendor-aware alert/suppress rule engine. New table → plain AutoMigrate is
+// sufficient and idempotent on both dialects. Seed defaults are inserted at
+// runtime by EnsureDefaultRules (idempotent via SeedVersion), NOT here, so an
+// operator who deletes a seed doesn't have it resurrected by a re-run.
+func (d *Database) migrateEventRules() error {
+	return d.db.AutoMigrate(&models.EventRule{})
+}
+
 // migrateFeedToggleAndFlowSuppress (v33) backs the alert-taming + feed-control
 // feature: a per-source suppression table, a per-feed enable flag, a persisted
 // alert source, per-policy/per-site storm-threshold overrides, and seeds the

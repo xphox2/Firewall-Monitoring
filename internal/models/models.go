@@ -52,6 +52,13 @@ const (
 	// detector) instead of N per-source alerts.
 	AlertTypeSFlowSecurityDigest AlertType = "SFLOW_SECURITY_DIGEST"
 	AlertTypeTestAlert           AlertType = "TEST_ALERT"
+	// Default alert types emitted by custom EventRules (migration v35). A rule
+	// may override alert_type to any value; these are the defaults so an operator
+	// rule that doesn't reuse an existing type still folds/filters coherently.
+	// The legacy-replacement seed rules instead emit the ORIGINAL SYSLOG_* types
+	// so existing per-type policy config keeps applying (see EnsureDefaultRules).
+	AlertTypeLogRuleMatch  AlertType = "LOG_RULE_MATCH"
+	AlertTypeFlowRuleMatch AlertType = "FLOW_RULE_MATCH"
 )
 
 // Severity is the typed enum of alert severities. Underlying values match the
@@ -402,6 +409,55 @@ type AlertRule struct {
 }
 
 func (AlertRule) TableName() string { return "alert_rules" }
+
+// EventRule is a user-defined, vendor-aware alert/suppress rule that matches
+// against extracted event fields (migration v35). Unlike AlertRule (per-policy,
+// per-AlertType metric config), an EventRule matches structured content —
+// FortiGate subtype/level/logid/action/…, or sFlow detection fields — so the
+// NOC can alert on "this message but not that one" at the same severity, or
+// suppress known noise. Evaluated by internal/alerts (the rule engine).
+type EventRule struct {
+	ID          uint   `json:"id" gorm:"primaryKey"`
+	Name        string `json:"name" gorm:"not null"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled" gorm:"default:true;index"`
+	// Priority orders evaluation (lower first); ties break by ID. First matching
+	// suppress rule drops the event; first matching alert rule fires and stops.
+	Priority int `json:"priority" gorm:"default:100;index"`
+	// Source scopes the rule to an event stream: "syslog", "flow", or "any".
+	Source string `json:"source" gorm:"default:syslog;index"`
+	// VendorScope limits a rule to one device vendor ("" = any). Lets FortiGate
+	// field rules coexist with future OPNsense/pfSense rules.
+	VendorScope string `json:"vendor_scope"`
+	DeviceID    *uint  `json:"device_id" gorm:"index"`
+	SiteID      *uint  `json:"site_id" gorm:"index"`
+	// MatchJSON is the serialized condition tree (AND/OR of field/op/value
+	// predicates). Compiled + prefilter-derived once on cache load.
+	MatchJSON string `json:"match_json" gorm:"type:text"`
+	// Action is "alert" (fire) or "suppress" (mute, short-circuit lower rules).
+	Action string `json:"action" gorm:"default:alert"`
+	// AlertType is the type emitted on an alert action (default LOG_RULE_MATCH /
+	// FLOW_RULE_MATCH). Seed rules set this to an existing SYSLOG_* type for
+	// back-compat with per-type policy config.
+	AlertType AlertType `json:"alert_type"`
+	Severity  Severity  `json:"severity"`
+	// GroupBy names a field whose value enters the dedup/cooldown key
+	// (rule_<id>_<groupval>), e.g. "srcip" to rate-limit per source. "" = per-rule.
+	GroupBy         string `json:"group_by"`
+	CooldownMinutes *int   `json:"cooldown_minutes"`
+	// PolicyID routes notifications (nil = the device's resolved policy).
+	PolicyID *uint `json:"policy_id"`
+	// SeedVersion marks a shipped default (0 = operator-created). EnsureDefaultRules
+	// keys idempotency off (Name, SeedVersion) so a deleted/edited seed is not
+	// resurrected on restart.
+	SeedVersion int        `json:"seed_version"`
+	HitCount    int64      `json:"hit_count"`
+	LastHitAt   *time.Time `json:"last_hit_at"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (EventRule) TableName() string { return "event_rules" }
 
 // Incident (F12) groups the alert storm around a device outage: opened when
 // DEVICE_OFFLINE fires, it absorbs every subsequent alert for that device

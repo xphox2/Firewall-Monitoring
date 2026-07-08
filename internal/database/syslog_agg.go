@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/logfields"
 	"firewall-mon/internal/models"
 
 	"gorm.io/gorm"
@@ -166,13 +167,16 @@ func batchInsertSyslogSummaries(tx *gorm.DB, rows []syslogSummaryRow, intervalTy
 		for _, r := range rows[i:end] {
 			ts, _ := time.Parse(bucketFmt, r.Bucket)
 			batch = append(batch, models.SyslogSummary{
-				Timestamp:      ts,
-				DeviceID:       r.DeviceID,
-				IntervalType:   intervalType,
-				Severity:       r.Severity,
-				Facility:       r.Facility,
-				AppName:        r.AppName,
-				MessagePattern: r.MessagePattern,
+				Timestamp:    ts,
+				DeviceID:     r.DeviceID,
+				IntervalType: intervalType,
+				Severity:     r.Severity,
+				Facility:     r.Facility,
+				AppName:      r.AppName,
+				// M2 fix: message_pattern was never populated (always empty). SQL
+				// GROUP BY can't run the Go normalizer, so derive one approximate
+				// template per group from the sample (MIN(message)) at insert time.
+				MessagePattern: logfields.Normalize(r.SampleMessage),
 				Count:          r.Count,
 				SampleMessage:  r.SampleMessage,
 			})

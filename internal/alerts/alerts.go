@@ -53,6 +53,15 @@ type AlertManager struct {
 	mu                  sync.RWMutex
 	alertCooldown       time.Duration
 	policyCache         PolicyCache
+	// Event-rule engine (migration v35): compiled enabled rules + the
+	// device→(vendor,site) map, both refreshed alongside policyCache under am.mu.
+	eventRules []compiledRule
+	deviceMeta map[uint]database.DeviceRuleMeta
+	// ruleHits accumulates per-rule match counts in memory (H2: flushed in
+	// batches by RefreshEventRules, never a per-match UPDATE). Own mutex so the
+	// hot path never contends with am.mu.
+	ruleHits map[uint]*ruleHit
+	hitMu    sync.Mutex
 }
 
 // firedEntry pairs an alert with its resolved policy config for deferred
@@ -455,54 +464,14 @@ func (am *AlertManager) CheckInterfaceErrors(interfaces []models.InterfaceStats,
 	return nil
 }
 
-// ProcessSyslog creates an alert from critical syslog messages (severity 0-2: Emergency/Alert/Critical).
+// ProcessSyslog evaluates a syslog message against the unified event-rule engine
+// (migration v35). The legacy "alert on severity 0-2" behavior now ships as seed
+// EventRules (EnsureDefaultRules) emitting the original SYSLOG_EMERGENCY/ALERT/
+// CRITICAL types, so operators can additionally build content-matching rules on
+// any severity. The caller no longer pre-gates on severity — the engine's
+// fast-path handles the no-rules case.
 func (am *AlertManager) ProcessSyslog(msg *models.SyslogMessage, siteID *uint) error {
-	if msg.Severity > 2 {
-		return nil
-	}
-
-	severityNames := map[int]string{0: "EMERGENCY", 1: "ALERT", 2: "CRITICAL"}
-	sevName := severityNames[msg.Severity]
-	alertType := models.AlertType("SYSLOG_" + sevName)
-
-	key := fmt.Sprintf("syslog_%d_%s_%d", msg.DeviceID, msg.AppName, msg.Severity)
-
-	am.mu.Lock()
-	now := time.Now()
-	resolved := am.resolveAlertConfig(msg.DeviceID, siteID, alertType)
-	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
-	cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
-	// LC-12 sibling: gate on AlertEnabled BEFORE recording cooldown state, so a
-	// disabled rule leaves no stale in-memory cooldown behind.
-	canSend := resolved.AlertEnabled && am.canAlertWithCooldown(key, now, cooldown)
-	if canSend {
-		am.recordCooldownLocked(key, now, cooldown)
-	}
-	am.mu.Unlock()
-
-	if !canSend {
-		return nil
-	}
-
-	alert := models.Alert{
-		Timestamp:  msg.Timestamp,
-		DeviceID:   msg.DeviceID,
-		AlertType:  alertType,
-		Severity:   resolved.Severity,
-		Message:    fmt.Sprintf("[%s] %s: %s", sevName, msg.Hostname, msg.Message),
-		MetricName: "syslog",
-		PolicyID:   resolved.PolicyID,
-		Suppressed: resolved.InMaintenance,
-	}
-
-	am.saveAlert(&alert)
-	if !alert.Suppressed {
-		nc := BuildNotifyConfigFromResolved(resolved, globalNC)
-		if err := am.notify(&alert, nc); err != nil {
-			return fmt.Errorf("failed to send syslog alert: %w", err)
-		}
-	}
-	return nil
+	return am.EvaluateSyslog(msg, siteID)
 }
 
 // securityEventLinkLookback bounds how far back FindOpenAlertForSource scans for
