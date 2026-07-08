@@ -1455,11 +1455,17 @@
     function loadAlerts() {
         alertsOffset = 0;
         clearAlertSelection();
-        var p = Promise.resolve();
+        // Ensure the device + site lists are loaded so the filter dropdowns can be
+        // populated (they back manual filtering and the deep-link chip labels).
+        var needs = [];
         if (currentDevices.length === 0) {
-            p = apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; });
+            needs.push(apiFetch(API_BASE + '/devices').then(function(dr) { currentDevices = dr && dr.data ? dr.data : []; }));
         }
-        p.then(function() {
+        if (currentSites.length === 0) {
+            needs.push(apiFetch(API_BASE + '/sites').then(function(sr) { currentSites = sr && sr.data ? sr.data : []; }).catch(function() {}));
+        }
+        Promise.all(needs).then(function() {
+            populateAlertFilterOptions();
             var params = buildAlertParams(ALERTS_PAGE_SIZE);
             return apiFetch(API_BASE + '/alerts?' + params);
         }).then(function(result) {
@@ -1739,22 +1745,38 @@
 
     function buildAlertParams(limit) {
         var parts = ['limit=' + limit];
-        var s = analyticsPages.alerts && analyticsPages.alerts.getState();
-        var dev = document.getElementById('alerts-filter-device');
-        var type = document.getElementById('alerts-filter-type');
-        var sev = document.getElementById('alerts-filter-severity');
-        var ack = document.getElementById('alerts-filter-ack');
-        if (s && s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
-        if (dev && dev.value) parts.push('device_id=' + dev.value);
-        if (type && type.value) parts.push('alert_type=' + encodeURIComponent(type.value));
-        if (sev && sev.value) parts.push('severity=' + sev.value);
-        if (ack && ack.value) parts.push('acknowledged=' + ack.value);
+        // Source filters from page state (getState), NOT the DOM selects: the
+        // device/site dropdowns are populated asynchronously, so a deep-link like
+        // /admin/alerts?device_id=42 must apply from URL state even before (or
+        // without) the matching <option> existing. State is kept correct by
+        // stateFromURL + bindAutoApply.
+        var s = (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};
+        if (s.hours && Number(s.hours) !== 24) parts.push('hours=' + s.hours);
+        if (s.device_id) parts.push('device_id=' + encodeURIComponent(s.device_id));
+        if (s.site_id) parts.push('site_id=' + encodeURIComponent(s.site_id));
+        if (s.alert_type) parts.push('alert_type=' + encodeURIComponent(s.alert_type));
+        if (s.severity) parts.push('severity=' + encodeURIComponent(s.severity));
+        if (s.acknowledged) parts.push('acknowledged=' + encodeURIComponent(s.acknowledged));
         // LC-32: the server filters out snoozed alerts unless
         // include_snoozed=true (handlers_analytics.go applyAlertFilters).
         // The "Show snoozed" toggle is the only path to view/unsnooze them.
         var snoozed = document.getElementById('alerts-show-snoozed');
         if (snoozed && snoozed.checked) parts.push('include_snoozed=true');
         return parts.join('&');
+    }
+
+    // populateAlertFilterOptions fills the device + site filter dropdowns from the
+    // loaded lists and re-syncs each select's value to the current page state, so a
+    // deep-link (?device_id / ?site_id) shows the matching option as selected even
+    // though the options are populated after the analytics-page first paint.
+    function populateAlertFilterOptions() {
+        populateFilterDevices('alerts-filter-device');
+        populateFilterSites('alerts-filter-site');
+        var s = (analyticsPages.alerts && analyticsPages.alerts.getState()) || {};
+        var dev = document.getElementById('alerts-filter-device');
+        if (dev && s.device_id != null) dev.value = s.device_id;
+        var site = document.getElementById('alerts-filter-site');
+        if (site && s.site_id != null) site.value = s.site_id;
     }
 
     function getDeviceName(deviceId) {
@@ -4167,11 +4189,13 @@
             page: 'alerts',
             rangePillsId: 'alerts-range-pills',
             chipsId: 'alerts-active-chips',
-            defaults: { hours: 24, device_id: '', alert_type: '', severity: '', acknowledged: '' },
+            defaults: { hours: 24, device_id: '', site_id: '', alert_type: '', severity: '', acknowledged: '' },
             inputs: [],
             selects: [
                 { id: 'alerts-filter-device',   stateKey: 'device_id',    chipKey: 'device',
                   chipLabel: function(v) { return deviceLabel(v); } },
+                { id: 'alerts-filter-site',     stateKey: 'site_id',      chipKey: 'site',
+                  chipLabel: function(v) { return siteLabel(v); } },
                 { id: 'alerts-filter-type',     stateKey: 'alert_type',   chipKey: 'type' },
                 { id: 'alerts-filter-severity', stateKey: 'severity',     chipKey: 'sev' },
                 { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack' }
@@ -4207,6 +4231,13 @@
             if (String(currentDevices[i].id) === String(id)) return currentDevices[i].name || ('dev:' + id);
         }
         return 'dev:' + id;
+    }
+    function siteLabel(id) {
+        if (String(id) === 'unassigned') return 'Unassigned';
+        for (var i = 0; i < currentSites.length; i++) {
+            if (String(currentSites[i].id) === String(id)) return currentSites[i].name || ('site:' + id);
+        }
+        return 'site:' + id;
     }
     function probeLabel(id) {
         for (var i = 0; i < currentProbes.length; i++) {
@@ -4310,7 +4341,15 @@
         var titleEl = document.getElementById('page-title');
         if (titleEl) titleEl.textContent = navItem ? navItem.textContent.trim() : page;
         if (page !== 'connections') stopConnRefresh();
-        loadPageData(page);
+        // Mirror the popstate handler: for an already-initialized analytics page
+        // (alerts/syslog/traps), re-seed its filters from the new URL query so a
+        // cross-page deep-link like /admin/alerts?device_id=42 actually applies on
+        // a repeat visit (loadPageData's refresh() would reuse stale state).
+        if (analyticsPages[page] && analyticsPages[page].reseedFromURL) {
+            analyticsPages[page].reseedFromURL();
+        } else {
+            loadPageData(page);
+        }
     });
 
     var initialPage = activateTabFromUrl();

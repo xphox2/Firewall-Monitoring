@@ -591,11 +591,12 @@
                 var relY = pos.y - (nodePos.y - h / 2);
                 if (relY > h * 0.6 && onVPNClick) { onVPNClick(data.deviceId, false); return; }
             }
-            // Tapping a device opens its NOC detail (the synced Monitoring tab).
-            // Uses SPA navigation (not a full reload) so the transition is seamless;
+            // Tapping a device opens its Alert History (filtered to that device) —
+            // the same destination as a NOC card click, so "click a device" means
+            // the same thing everywhere. Uses SPA navigation (not a full reload);
             // a canvas tap isn't an <a>, so we route through a hidden anchor click
             // that the admin router's click-interceptor picks up.
-            spaNavigate('/admin/noc?focus=device:' + data.deviceId);
+            spaNavigate('/admin/alerts?device_id=' + data.deviceId);
         });
 
         cy.on('tap', 'node[nodeType="cloud"]', function() {

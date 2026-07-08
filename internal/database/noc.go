@@ -84,6 +84,16 @@ type SiteBreakdown struct {
 	Devices        []DeviceRow `json:"devices"`
 }
 
+// NOC "Live Detections" feed window/limit. A 15-minute window left the feed almost
+// always empty: ~90% of detections escalate to alerts (excluded here by design) and
+// the un-alerted remainder averages only a few per hour, so nearly every 15-minute
+// window had zero rows. A 6h window keeps the feed live and populated without
+// overwhelming it (the Flows-page detections card uses the same 24h-class lookback).
+const (
+	nocDetectionsWindow = 6 * time.Hour
+	nocDetectionsLimit  = 30
+)
+
 // GetNOCSnapshot computes the fleet-wide NOCSnapshot over the trailing window
 // (what the hub broadcasts to every viewer). It includes the per-site breakdown.
 func (d *Database) GetNOCSnapshot(window time.Duration) (*NOCSnapshot, error) {
@@ -198,7 +208,7 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 	// Fleet-only signals: detections, probe counts, threat-intel, and the site
 	// breakdown. Omitted on a filtered drill-down.
 	if !filtered {
-		if dets, err := d.GetRecentDetections(time.Now().Add(-15*time.Minute), 15, false, false); err == nil {
+		if dets, err := d.GetRecentDetections(time.Now().Add(-nocDetectionsWindow), nocDetectionsLimit, false, false); err == nil {
 			snap.Detections = dets
 		}
 		if probes, err := d.GetAllProbes(); err == nil {

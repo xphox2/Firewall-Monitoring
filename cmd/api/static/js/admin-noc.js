@@ -6,14 +6,11 @@
  * vitals, a live per-site/device health breakdown (snapshot.sites) and a recent
  * detections feed — the whole page renders from that ONE stream (no extra poll).
  *
- * The same alert/issue state shown here colours the Connections-map nodes, so the
- * two Monitoring tabs stay in sync. Every card/row is clickable:
- *   - site card  → opens an in-page drill-down (device rows + site actions)
- *   - device row → /admin/connections?focus=device:ID  (focus that node on the map)
- *   - "View on map"  → /admin/connections?focus=site:ID
- *   - "View flows"   → /admin/flows?site_id=ID | ?device_id=ID
- * All navigation reuses the SPA click-interceptor (plain <a href> links), so no
- * custom router code lives here.
+ * Every site/device card is a link into Alert History, filtered to that entity:
+ *   - site card    → /admin/alerts?site_id=ID   (or ?site_id=unassigned)
+ *   - device card  → /admin/alerts?device_id=ID
+ * so a click lands on the live alerts for that site/device. Navigation is plain
+ * <a href>, handled by the SPA click-interceptor (no router code here).
  *
  * Public API (window.FwmonNOC):
  *   init()  — open the stream and start rendering (called when the NOC page opens)
@@ -26,8 +23,6 @@
     var es = null;
     var latest = null;               // most recent snapshot object
     var mode = 'site';               // 'site' | 'device'
-    var selected = null;             // { kind:'site'|'device', id:<num|'unassigned'> }
-    var pendingFocus = null;         // parsed from ?focus= on init, applied after first frame
     var wired = false;
 
     var SEV_RANK = { critical: 0, warning: 1, info: 2 };
@@ -75,8 +70,9 @@
     function sevClass(sev) {
         return sev ? ('sev-' + sev) : '';
     }
-    // siteKey maps a SiteBreakdown to the token used in ?focus=site:KEY and as the
-    // selection id: the numeric site id, or 'unassigned' for the null bucket.
+    // siteKey maps a SiteBreakdown to the token used in ?site_id=KEY: the numeric
+    // site id, or 'unassigned' for the null bucket (the alerts filter understands
+    // both — see applyAlertFilters).
     function siteKey(s) {
         return (s && s.site_id != null) ? String(s.site_id) : 'unassigned';
     }
@@ -87,14 +83,8 @@
         if (!d) return;
         latest = d;
         renderVitals(d);
-        renderDetections(d.detections || []);
+        renderDetections(d);
         renderBreakdown(d);
-        // Apply a pending deep-link focus once the first frame with data lands.
-        if (pendingFocus) {
-            var pf = pendingFocus;
-            pendingFocus = null;
-            applyFocus(pf.kind, pf.id);
-        }
     }
 
     function renderVitals(d) {
@@ -102,7 +92,6 @@
         setText('noc-flows', fmtCount(d.total_flows) + ' / ' + fmtBytes(d.total_bytes));
         setText('noc-srcs', fmtCount(d.unique_sources) + ' → ' + fmtCount(d.unique_dests));
         setText('noc-threat-flows', fmtCount(d.threat_flows));
-        setText('noc-probes', (d.probes_online || 0) + ' up / ' + (d.probes_offline || 0) + ' down');
         setText('noc-ti', fmtCount(d.active_threat_intel));
         var winHint = document.getElementById('noc-window-hint');
         if (winHint) winHint.textContent = 'last ' + Math.round((d.window_seconds || 300) / 60) + ' min · live';
@@ -116,10 +105,9 @@
         if (devGrid) devGrid.hidden = mode !== 'device';
         if (mode === 'site') renderSiteCards(sites);
         else renderDeviceCards(sites);
-        renderDrill(d);
     }
 
-    // ── By Site: one card per site ──────────────────────────────────────────
+    // ── By Site: one card per site (links to Alert History for that site) ────
 
     function sevBadges(critical, warning) {
         var out = '';
@@ -143,8 +131,8 @@
             var sc = sevClass(s.worst_severity);
             var total = (s.devices_online || 0) + (s.devices_offline || 0);
             var probeWarn = s.probe_offline ? '<span class="fwmon-noc-badge crit">probe down</span>' : '';
-            var isSel = selected && selected.kind === 'site' && String(selected.id) === key;
-            html += '<button type="button" class="fwmon-noc-card ' + sc + (isSel ? ' selected' : '') + '" data-noc-site="' + esc(key) + '">' +
+            html += '<a class="fwmon-noc-card ' + sc + '" href="/admin/alerts?site_id=' + encodeURIComponent(key) + '"' +
+                ' title="View alerts for ' + esc(s.site_name || 'this site') + '">' +
                 '<div class="fwmon-noc-card-head">' +
                     '<span class="fwmon-noc-dot ' + sc + '"></span>' +
                     '<span class="fwmon-noc-card-title">' + esc(s.site_name || 'Site') + '</span>' +
@@ -154,12 +142,12 @@
                     '<span>' + (s.devices_online || 0) + '/' + total + ' up</span>' +
                     '<span class="bps">' + fmtBps(s.bits_per_second) + '</span>' +
                 '</div>' +
-            '</button>';
+            '</a>';
         }
         el.innerHTML = html;
     }
 
-    // ── By Device: flat device grid across all sites ────────────────────────
+    // ── By Device: flat device grid, each card links to that device's alerts ─
 
     function flattenDevices(sites) {
         var out = [];
@@ -193,8 +181,8 @@
             var dev = rows[i].dev;
             var sc = sevClass(dev.worst_severity);
             var online = dev.status === 'online' || dev.status === 'up';
-            var isSel = selected && selected.kind === 'device' && String(selected.id) === String(dev.id);
-            html += '<button type="button" class="fwmon-noc-card ' + sc + (isSel ? ' selected' : '') + '" data-noc-device="' + dev.id + '">' +
+            html += '<a class="fwmon-noc-card ' + sc + '" href="/admin/alerts?device_id=' + encodeURIComponent(dev.id) + '"' +
+                ' title="View alerts for ' + esc(dev.name || ('DEV-' + dev.id)) + '">' +
                 '<div class="fwmon-noc-card-head">' +
                     '<span class="fwmon-noc-dot ' + sc + '"></span>' +
                     '<span class="fwmon-noc-card-title">' + esc(dev.name || ('DEV-' + dev.id)) + '</span>' +
@@ -207,128 +195,42 @@
                     '<span class="ip">' + esc(dev.ip || '') + '</span>' +
                     '<span class="bps">' + fmtBps(dev.bits_per_second) + '</span>' +
                 '</div>' +
-            '</button>';
+            '</a>';
         }
         el.innerHTML = html;
     }
 
-    // ── Drill-down (live: re-rendered from every frame while open) ───────────
+    // ── Detections feed ─────────────────────────────────────────────────────
 
-    function renderDrill(d) {
-        var el = document.getElementById('noc-drill');
-        if (!el) return;
-        if (!selected) { el.hidden = true; el.innerHTML = ''; return; }
-        if (selected.kind === 'site') renderSiteDrill(el, d);
-        else renderDeviceDrill(el, d);
-    }
-
-    function findSite(d, key) {
-        var sites = d.sites || [];
-        for (var i = 0; i < sites.length; i++) {
-            if (siteKey(sites[i]) === String(key)) return sites[i];
-        }
-        return null;
-    }
-    function findDevice(d, id) {
-        var sites = d.sites || [];
+    // deviceNameMap builds an id→name lookup from the snapshot's site breakdown so
+    // a detection's device_id can be shown as a name (no extra fetch).
+    function deviceNameMap(d) {
+        var map = {};
+        var sites = (d && d.sites) || [];
         for (var i = 0; i < sites.length; i++) {
             var devs = sites[i].devices || [];
-            for (var j = 0; j < devs.length; j++) {
-                if (String(devs[j].id) === String(id)) return { dev: devs[j], site: sites[i] };
-            }
+            for (var j = 0; j < devs.length; j++) map[String(devs[j].id)] = devs[j].name;
         }
-        return null;
+        return map;
     }
 
-    function miniStat(label, value) {
-        return '<span class="m"><b>' + esc(value) + '</b>' + esc(label) + '</span>';
+    // ipRef renders an IP as a threat-intel-enrichable reference (populated by
+    // AdminCommon.enrichIps after paint), falling back to plain text.
+    function ipRef(addr) {
+        if (!addr) return '';
+        var AC = window.AdminCommon;
+        return (AC && AC.ipRef) ? AC.ipRef(addr) : esc(addr);
     }
 
-    function renderSiteDrill(el, d) {
-        var s = findSite(d, selected.id);
-        if (!s) { el.hidden = true; el.innerHTML = ''; selected = null; return; }
-        var key = siteKey(s);
-        var total = (s.devices_online || 0) + (s.devices_offline || 0);
-        var mapLink = '/admin/connections?focus=site:' + encodeURIComponent(key);
-        var flowsLink = (s.site_id != null) ? ('/admin/flows?site_id=' + s.site_id) : '';
-
-        var rows = '';
-        var devs = s.devices || [];
-        if (!devs.length) {
-            rows = '<div class="fwmon-noc-empty">No devices in this site.</div>';
-        }
-        for (var i = 0; i < devs.length; i++) {
-            var dev = devs[i];
-            var sc = sevClass(dev.worst_severity);
-            var online = dev.status === 'online' || dev.status === 'up';
-            // Whole row is a link that focuses this device on the connection map.
-            rows += '<a class="fwmon-noc-devrow" href="/admin/connections?focus=device:' + dev.id + '">' +
-                '<span class="fwmon-noc-dot ' + sc + '"></span>' +
-                '<span class="dname">' + esc(dev.name || ('DEV-' + dev.id)) + '</span>' +
-                '<span class="ip">' + esc(dev.ip || '') + '</span>' +
-                '<span class="bps">' + fmtBps(dev.bits_per_second) + '</span>' +
-                '<span>' + (online ? 'online' : esc(dev.status || 'offline')) + '</span>' +
-            '</a>';
-        }
-
-        el.hidden = false;
-        el.innerHTML = '<div class="fwmon-noc-drill">' +
-            '<div class="fwmon-noc-drill-head">' +
-                '<span class="fwmon-noc-dot ' + sevClass(s.worst_severity) + '"></span>' +
-                '<span class="fwmon-noc-drill-title">' + esc(s.site_name || 'Site') + '</span>' +
-                '<div class="fwmon-noc-drill-actions">' +
-                    '<a class="btn secondary sm" href="' + mapLink + '">View on map</a>' +
-                    (flowsLink ? '<a class="btn secondary sm" href="' + flowsLink + '">View flows</a>' : '') +
-                    '<button type="button" class="btn secondary sm" data-noc-close>Close</button>' +
-                '</div>' +
-            '</div>' +
-            '<div class="fwmon-noc-drill-mini">' +
-                miniStat(' devices up', (s.devices_online || 0) + '/' + total) +
-                miniStat(' throughput', fmtBps(s.bits_per_second)) +
-                miniStat(' bytes (5m)', fmtBytes(s.total_bytes)) +
-                miniStat(' threat flows', fmtCount(s.threat_flows)) +
-                miniStat(' open alerts', (s.alerts_critical || 0) + ' crit / ' + (s.alerts_warning || 0) + ' warn') +
-            '</div>' +
-            rows +
-        '</div>';
-    }
-
-    function renderDeviceDrill(el, d) {
-        var found = findDevice(d, selected.id);
-        if (!found) { el.hidden = true; el.innerHTML = ''; selected = null; return; }
-        var dev = found.dev;
-        var online = dev.status === 'online' || dev.status === 'up';
-        el.hidden = false;
-        el.innerHTML = '<div class="fwmon-noc-drill">' +
-            '<div class="fwmon-noc-drill-head">' +
-                '<span class="fwmon-noc-dot ' + sevClass(dev.worst_severity) + '"></span>' +
-                '<span class="fwmon-noc-drill-title">' + esc(dev.name || ('DEV-' + dev.id)) + '</span>' +
-                '<div class="fwmon-noc-drill-actions">' +
-                    '<a class="btn secondary sm" href="/admin/connections?focus=device:' + dev.id + '">View on map</a>' +
-                    '<a class="btn secondary sm" href="/admin/flows?device_id=' + dev.id + '">View flows</a>' +
-                    '<a class="btn secondary sm" href="/admin/devices/' + dev.id + '">Device detail</a>' +
-                    '<button type="button" class="btn secondary sm" data-noc-close>Close</button>' +
-                '</div>' +
-            '</div>' +
-            '<div class="fwmon-noc-drill-mini">' +
-                miniStat(' site', found.site.site_name || 'Unassigned') +
-                miniStat(' status', online ? 'online' : (dev.status || 'offline')) +
-                miniStat(' address', dev.ip || '—') +
-                miniStat(' throughput', fmtBps(dev.bits_per_second)) +
-                miniStat(' last polled', dev.last_polled ? (ago(dev.last_polled) + ' ago') : '—') +
-            '</div>' +
-        '</div>';
-    }
-
-    // ── Detections feed (kept from the previous NOC) ────────────────────────
-
-    function renderDetections(rows) {
+    function renderDetections(d) {
         var body = document.getElementById('noc-detections-body');
         if (!body) return;
+        var rows = (d && d.detections) || [];
         if (!rows.length) {
-            body.innerHTML = '<tr><td colspan="5" class="fwmon-ti-empty">No detections in the last 15 minutes.</td></tr>';
+            body.innerHTML = '<tr><td colspan="7" class="fwmon-ti-empty">No detections in the last 6 hours.</td></tr>';
             return;
         }
+        var devNames = deviceNameMap(d);
         rows = rows.slice().sort(function (a, b) {
             var ra = SEV_RANK[a.severity] != null ? SEV_RANK[a.severity] : 9;
             var rb = SEV_RANK[b.severity] != null ? SEV_RANK[b.severity] : 9;
@@ -339,23 +241,28 @@
         for (var i = 0; i < rows.length; i++) {
             var r = rows[i];
             var sev = r.severity || 'info';
+            var dst = r.dst_addr ? (ipRef(r.dst_addr) + (r.dst_port ? ':' + esc(r.dst_port) : '')) : '—';
+            var route = r.src_addr ? (ipRef(r.src_addr) + ' → ' + dst) : (r.dst_addr ? dst : '—');
+            var devName = (r.device_id && devNames[String(r.device_id)]) || (r.device_id ? ('DEV-' + r.device_id) : '—');
             html += '<tr>' +
                 '<td><span class="fwmon-det-sev fwmon-det-sev-' + esc(sev) + '">' + esc(sev) + '</span></td>' +
                 '<td>' + esc(r.category || '') + '</td>' +
                 '<td><code>' + esc(r.detector || '') + '</code></td>' +
+                '<td style="font-family:var(--fwmon-font-mono,monospace);white-space:nowrap;">' + route + '</td>' +
+                '<td>' + esc(devName) + '</td>' +
                 '<td>' + esc(r.message || '') + '</td>' +
                 '<td title="' + esc(r.detected_at || '') + '">' + esc(ago(r.detected_at)) + ' ago</td>' +
             '</tr>';
         }
         body.innerHTML = html;
+        if (window.AdminCommon && window.AdminCommon.enrichIps) window.AdminCommon.enrichIps(body);
     }
 
-    // ── selection / mode / interaction ──────────────────────────────────────
+    // ── mode toggle / interaction ───────────────────────────────────────────
 
     function setMode(m) {
         if (m !== 'site' && m !== 'device') return;
         mode = m;
-        selected = null; // clear drill when switching lens
         var btns = document.querySelectorAll('.fwmon-noc-mode');
         for (var i = 0; i < btns.length; i++) {
             var on = btns[i].getAttribute('data-noc-mode') === m;
@@ -363,73 +270,14 @@
             btns[i].setAttribute('aria-selected', on ? 'true' : 'false');
         }
         if (latest) renderBreakdown(latest);
-        syncFocusURL();
-    }
-
-    function selectSite(key) {
-        selected = { kind: 'site', id: key };
-        if (latest) { renderSiteCards(latest.sites || []); renderDrill(latest); }
-        syncFocusURL();
-        scrollDrillIntoView();
-    }
-    function selectDevice(id) {
-        selected = { kind: 'device', id: id };
-        if (latest) { renderDeviceCards(latest.sites || []); renderDrill(latest); }
-        syncFocusURL();
-        scrollDrillIntoView();
-    }
-    function closeDrill() {
-        selected = null;
-        if (latest) renderBreakdown(latest);
-        syncFocusURL();
-    }
-    function scrollDrillIntoView() {
-        var el = document.getElementById('noc-drill');
-        if (el && !el.hidden && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    // applyFocus is used by deep-links (?focus=) — switch to the right lens and
-    // open the drill for that entity.
-    function applyFocus(kind, id) {
-        if (kind === 'device') { setMode('device'); selectDevice(id); }
-        else { setMode('site'); selectSite(id); }
-    }
-
-    // Keep the URL in step so refresh / back re-opens the same drill.
-    function syncFocusURL() {
-        if (!window.history || !window.history.replaceState) return;
-        var base = '/admin/noc';
-        var q = '';
-        if (selected) q = '?focus=' + selected.kind + ':' + encodeURIComponent(selected.id);
-        try { window.history.replaceState(null, '', base + q); } catch (e) { /* ignore */ }
-    }
-
-    function parseFocus() {
-        var m = /[?&]focus=(site|device):([^&]+)/.exec(window.location.search || '');
-        if (!m) return null;
-        // A malformed percent-escape (e.g. ?focus=device:%ZZ) makes
-        // decodeURIComponent throw a URIError; catching it keeps a hand-edited or
-        // truncated URL from aborting NOC init entirely (audit L6).
-        var id;
-        try { id = decodeURIComponent(m[2]); } catch (e) { return null; }
-        return { kind: m[1], id: id };
     }
 
     function onClick(ev) {
         var t = ev.target;
-        // Mode toggle.
+        // Mode toggle (By Site / By Device). Cards are plain <a> links and fall
+        // through to the SPA click-interceptor, so no card handling is needed here.
         var modeBtn = t.closest && t.closest('.fwmon-noc-mode');
         if (modeBtn) { setMode(modeBtn.getAttribute('data-noc-mode')); return; }
-        // Close drill.
-        if (t.closest && t.closest('[data-noc-close]')) { closeDrill(); return; }
-        // Let real <a> links fall through to the SPA click-interceptor.
-        if (t.closest && t.closest('a[href]')) return;
-        // Site card.
-        var siteCard = t.closest && t.closest('[data-noc-site]');
-        if (siteCard) { selectSite(siteCard.getAttribute('data-noc-site')); return; }
-        // Device card.
-        var devCard = t.closest && t.closest('[data-noc-device]');
-        if (devCard) { selectDevice(devCard.getAttribute('data-noc-device')); return; }
     }
 
     function setStatus(txt, cls) {
@@ -449,10 +297,6 @@
     function init() {
         stop(); // never stack streams on re-entry
         wire();
-        pendingFocus = parseFocus();
-        // If a device deep-link is present, pre-select the device lens so the grid
-        // paints in the right mode even before the first frame lands.
-        if (pendingFocus && pendingFocus.kind === 'device') mode = 'device';
 
         if (typeof EventSource === 'undefined') {
             setStatus('live updates unsupported', 'bad');
