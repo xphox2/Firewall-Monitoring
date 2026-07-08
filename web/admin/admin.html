@@ -34,25 +34,10 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fwmon-sig-ok) 40%, transparent); } 50% { box-shadow: 0 0 0 4px transparent; } }
-        /* Sidebar — instrument channel-strip */
-        .sidebar { position: fixed; left: 0; top: 0; width: 240px; height: 100vh; background: var(--fwmon-card-bg); border-right: 1px solid var(--fwmon-border); display: flex; flex-direction: column; z-index: 100; }
-        .sidebar-header { padding: 18px 18px 16px; border-bottom: 1px solid var(--fwmon-border); }
-        .sidebar-header h2 { display: flex; align-items: center; gap: 8px; color: var(--fwmon-text); font-family: var(--fwmon-font-heading); font-size: 0.95rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
-        .sidebar-header h2::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--fwmon-sig-ok); box-shadow: 0 0 8px var(--fwmon-sig-ok); flex-shrink: 0; animation: pulse 2.4s infinite; }
-        .sidebar-header .subtitle { color: var(--fwmon-text-faint); font-family: var(--fwmon-font-mono); font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; margin-top: 6px; }
-        .sidebar-nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
-        .nav-section { margin-bottom: 16px; }
-        .nav-section-title { font-size: var(--fwmon-t-label); font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; color: var(--fwmon-text-mute); padding: 6px 12px 8px; }
-        .nav-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 14px; color: var(--fwmon-text-faint); text-decoration: none; border-radius: 6px; margin-bottom: 2px; transition: background 0.15s, color 0.15s; cursor: pointer; font-size: 0.84rem; }
-        /* Signal tick — lights volt when active */
-        .nav-item::before { content: ""; position: absolute; left: 3px; top: 50%; transform: translateY(-50%); width: 2px; height: 0; border-radius: 2px; background: var(--fwmon-accent); transition: height 0.15s ease; }
-        .nav-item:hover { background: var(--fwmon-hover); color: var(--fwmon-text); }
-        .nav-item.active { background: var(--fwmon-accent-bg); color: var(--fwmon-accent); }
-        .nav-item.active::before { height: 18px; box-shadow: 0 0 8px var(--fwmon-accent); }
-        .nav-item .nav-icon { width: 18px; text-align: center; font-size: 0.9rem; }
-        .nav-item.danger { color: var(--fwmon-sig-crit); }
-        .nav-item.danger:hover { background: color-mix(in srgb, var(--fwmon-sig-crit) 12%, transparent); }
-        .sidebar-footer { padding: 10px; border-top: 1px solid var(--fwmon-border); display: flex; flex-direction: column; gap: 4px; }
+        /* Sidebar / nav — the Console channel-strip rules now live in
+           admin-tw-bridge.css (linked last on every page) so the server-rendered
+           pages share the exact same nav. Kept out of here to avoid the
+           inline-vs-shared drift that made those pages render the stale look. */
         /* Day / Night instrument switch — styles now shared in admin-design-system.css. */
         .main { margin-left: 240px; padding: 22px 28px 32px; min-height: 100vh; }
         .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }

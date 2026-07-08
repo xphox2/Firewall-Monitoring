@@ -14,15 +14,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Connection Detail - Firewall Monitor</title>
     <link rel="stylesheet" href="/static/css/admin-shared.css">
-    <!-- Self-hosted design-system fonts (Inter/Archivo/JetBrains Mono). Must load
-         before admin-design-system.css or the browser falls back to system fonts
-         and every rem-sized element renders at the wrong apparent size. -->
+    <!-- Order matters (matches admin.html): tailwind.css carries a body{font-family}
+         reset + stale component rules, so it MUST load BEFORE admin-design-system.css
+         — otherwise tailwind's reset overrides the Console body font (Inter) and the
+         nav renders in the system font. Self-hosted @font-face come next so Inter/
+         Archivo/JetBrains are available; admin-tw-bridge.css stays last. -->
+    <link rel="stylesheet" href="/static/css/tailwind.css">
     <link rel="preload" href="/static/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/static/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/static/css/admin-fonts.css">
     <link rel="stylesheet" href="/static/css/admin-design-system.css">
-    <link rel="stylesheet" href="/static/css/tailwind.css">
     <link rel="stylesheet" href="/static/css/admin-tw-bridge.css">
     <style nonce="{{ .Nonce }}">
         .gauge-bg { fill: none; stroke: var(--fwmon-panel-bg); stroke-width: 6; }
