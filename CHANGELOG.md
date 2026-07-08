@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.50] - 2026-07-07
+
+### Fixed
+- **Probes, Sites, Connection-detail and IRC pages now load the design-system fonts.** These four standalone admin pages linked `admin-design-system.css` (which references `Inter`/`Archivo`/`JetBrains Mono` via `var(--fwmon-font-*)`) but never loaded `admin-fonts.css`, where those `@font-face` rules live. The browser silently fell back to system fonts, whose different metrics made identically `rem`-sized elements render at a visibly wrong apparent size. Added the `admin-fonts.css` stylesheet plus the Inter/JetBrains/Archivo `woff2` preloads (ordered before `admin-design-system.css`, matching `admin.html`/`device-detail.html`). `login.html` is intentionally excluded — it is a pre-auth page with its own self-contained typography.
+
 ## [0.11.49] - 2026-07-06
 
 ### Added
