@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.56] - 2026-07-07
+
+### Added
+- **Guardrail test pinning the admin stylesheet order (`internal/shell`).** Locks in the font-drift fix for the remaining standalone pages (device-detail, connection-detail) without folding them into the SPA. The test scans every page that loads `admin-design-system.css` and asserts: `admin-fonts.css` is linked, `tailwind.css` loads *before* `admin-design-system.css` (so tailwind's `body{font-family}` reset can't override the Console font), and `admin-tw-bridge.css` loads last (so the single-sourced nav CSS wins). Self-maintaining — any future admin page is covered automatically. This makes the nav-font regression that started this work structurally impossible to reintroduce.
+
 ## [0.11.55] - 2026-07-07
 
 ### Changed
