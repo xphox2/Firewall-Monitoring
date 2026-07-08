@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.54] - 2026-07-07
+
+### Changed
+- **Unified the sidebar header branding across all admin pages.** The server-rendered pages (probes, sites, connection-detail, device-detail, irc) showed `Firewall Monitor` / `Admin Panel` in the sidebar header, while the main SPA (`admin.html`) shows `Firewall·Mon` / `Operations Console`. Aligned all five to match the SPA so the header name and format are consistent everywhere.
+
 ## [0.11.53] - 2026-07-07
 
 ### Fixed
