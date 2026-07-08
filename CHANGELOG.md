@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.53] - 2026-07-07
+
+### Fixed
+- **Navigation bar now renders in the correct Console fonts on the server-rendered pages (probes, sites, connection-detail, irc).** The v0.11.50 fix loaded `admin-fonts.css` but a second, deeper bug remained: on these pages `admin-design-system.css` (which sets `body{font-family: Inter …}`) was linked **before** `tailwind.css`, whose reset ships its own `body{font-family: -apple-system … Roboto}`. Later-loaded wins, so the sidebar text fell back to the system font and never used Inter — regardless of the font preloads. Reordered the stylesheet chain to match `admin.html` (tailwind → fonts → design-system → tw-bridge). Verified with a headless browser: `body`/`.nav-item` now compute to Inter, `.sidebar-header h2` to Archivo, at the correct Console sizes.
+- **Single-sourced the Console sidebar/nav CSS.** The redesigned sidebar rules lived only as an inline `<style>` block in `admin.html`, so the server-rendered pages fell back to the stale copy compiled into `tailwind.css`. Moved the canonical rules into `admin-tw-bridge.css` (linked last on every page) and removed the inline duplicate from `admin.html`, so every page shares one definition and can no longer drift.
+
 ## [0.11.52] - 2026-07-07
 
 ### Security
