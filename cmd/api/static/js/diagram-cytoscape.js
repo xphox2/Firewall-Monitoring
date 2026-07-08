@@ -266,38 +266,80 @@
         return elements;
     }
 
+    function cssVar(name, fallback) {
+        try {
+            if (window.AdminCommon && window.AdminCommon.cssVar) {
+                return window.AdminCommon.cssVar(name, fallback);
+            }
+            var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return v || fallback;
+        } catch (e) { return fallback; }
+    }
+
+    function updateTypeColorsForTheme() {
+        var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+        if (isLight) {
+            TYPE_COLORS.ipsec = '#1d4fc4';
+            TYPE_COLORS.ssl = '#c24a1a';
+            TYPE_COLORS.gre = '#6d28d9';
+            TYPE_COLORS.tunnel = '#475569';
+            TYPE_COLORS.vxlan = '#b5179e';
+            TYPE_COLORS.l2vlan = '#0f766e';
+            TYPE_COLORS.l3ipvlan = '#be185d';
+            TYPE_COLORS.bridge = '#0f766e';
+            TYPE_COLORS.wan = '#c24a1a';
+            TYPE_COLORS.lag = '#0f766e';
+            TYPE_COLORS.ethernet = '#0f766e';
+            TYPE_COLORS.offnet = '#15803d';
+        } else {
+            TYPE_COLORS.ipsec = '#7dd3fc';
+            TYPE_COLORS.ssl = '#fdba74';
+            TYPE_COLORS.gre = '#c4b5fd';
+            TYPE_COLORS.tunnel = '#94a3b8';
+            TYPE_COLORS.vxlan = '#f0abfc';
+            TYPE_COLORS.l2vlan = '#2dd4bf';
+            TYPE_COLORS.l3ipvlan = '#f472b6';
+            TYPE_COLORS.bridge = '#2dd4bf';
+            TYPE_COLORS.wan = '#fb923c';
+            TYPE_COLORS.lag = '#2dd4bf';
+            TYPE_COLORS.ethernet = '#2dd4bf';
+            TYPE_COLORS.offnet = '#4ade80';
+        }
+    }
+
     // ---- 1b. Stylesheet ----
     function buildStylesheet() {
+        updateTypeColorsForTheme();
         return [
             // Site compound nodes — label above with dark background for visibility
             { selector: 'node[nodeType="site"]', style: {
                 'background-opacity': 0, 'border-width': 1.5, 'border-style': 'dashed',
-                'border-color': 'rgba(255, 255, 255, 0.15)', 'border-opacity': 0.7, 'label': 'data(label)',
+                'border-color': cssVar('--fwmon-border-strong', 'rgba(255, 255, 255, 0.15)'), 'border-opacity': 0.7, 'label': 'data(label)',
                 'text-valign': 'top', 'text-halign': 'center', 'font-size': '13px',
                 'font-family': 'Outfit, "Inter", sans-serif', 'font-weight': '600',
-                'color': '#7dd3fc', 'text-margin-y': -12,
-                'text-background-color': '#0d1117', 'text-background-opacity': 0.9,
+                'color': cssVar('--fwmon-accent', '#7dd3fc'), 'text-margin-y': -12,
+                'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.9,
                 'text-background-padding': '6px', 'text-background-shape': 'roundrectangle',
                 'padding': '40px', 'shape': 'roundrectangle', 'corner-radius': 12,
                 'min-width': '200px', 'min-height': '90px', 'z-index': 1
             }},
             // Device nodes
             { selector: 'node[nodeType="device"]', style: {
-                'width': 150, 'height': 64, 'shape': 'roundrectangle', 'background-color': '#12161f',
-                'border-width': 2, 'border-color': '#30363d', 'label': 'data(label)',
+                'width': 150, 'height': 64, 'shape': 'roundrectangle', 'background-color': cssVar('--fwmon-card-bg', '#12161f'),
+                'border-width': 2, 'border-color': cssVar('--fwmon-border', '#30363d'), 'label': 'data(label)',
                 'text-valign': 'center', 'text-halign': 'center', 'font-size': '11px',
                 'font-family': 'Outfit, "Inter", "Segoe UI", sans-serif', 'font-weight': '500',
-                'color': '#e6edf3', 'text-wrap': 'wrap', 'text-max-width': '140px', 'corner-radius': 8,
+                'color': cssVar('--fwmon-text', '#e6edf3'), 'text-wrap': 'wrap', 'text-max-width': '140px', 'corner-radius': 8,
                 'ghost': 'yes', 'ghost-opacity': 0.15, 'ghost-offset-x': 0, 'ghost-offset-y': 4
             }},
-            { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': '#4ade80' } },
-            { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': '#f87171' } },
+            { selector: 'node[nodeType="device"][status="online"]', style: { 'border-color': cssVar('--fwmon-sig-ok', '#4ade80') } },
+            { selector: 'node[nodeType="device"][status="offline"]', style: { 'border-color': cssVar('--fwmon-sig-crit', '#f87171') } },
             // Open-alert overlay (v0.10.523) — declared AFTER status so an alerting
             // device's border colour wins over online/offline. The pulse (border
             // width) is driven by cy.animate (canvas nodes ignore CSS keyframes),
             // see pulseNode(). Colours match the NOC severity ramp.
-            { selector: 'node[nodeType="device"][alert="warning"]', style: { 'border-color': '#e7b53c' } },
-            { selector: 'node[nodeType="device"][alert="critical"]', style: { 'border-color': '#f2555a' } },
+            { selector: 'node[nodeType="device"][alert="warning"]', style: { 'border-color': cssVar('--fwmon-sig-warn', '#e7b53c') } },
+            { selector: 'node[nodeType="device"][alert="critical"]', style: { 'border-color': cssVar('--fwmon-sig-crit', '#f2555a') } },
             // Cloud node — large cloud icon centered
             { selector: 'node[nodeType="cloud"]', style: {
                 'width': 10, 'height': 10, 'shape': 'ellipse',
@@ -310,10 +352,10 @@
             // Default edge — all straight lines
             { selector: 'edge', style: {
                 'curve-style': 'straight',
-                'width': 3, 'line-color': '#8b949e', 'target-arrow-shape': 'none', 'opacity': 1
+                'width': 3, 'line-color': cssVar('--fwmon-text-mute', '#8b949e'), 'target-arrow-shape': 'none', 'opacity': 1
             }},
             // Tunnel bundle edges — thicker pipe
-            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': '#8b949e', 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
             // Direct connection edges — bezier so parallel same-pair direct links stack/offset instead of overlapping into one line
             { selector: 'edge[edgeType="connection"]', style: { 'curve-style': 'bezier', 'control-point-step-size': 18 } },
             // Connection type colors
@@ -332,16 +374,16 @@
             // Sub-lane edges (expansion) — offset bezier for visual separation
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
-                'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': '#c9d1d9',
+                'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-dim', '#c9d1d9'),
                 'text-rotation': 'autorotate', 'text-margin-y': -10,
-                'text-background-color': '#0d1117', 'text-background-opacity': 0.8,
+                'text-background-color': cssVar('--fwmon-bg', '#0d1117'), 'text-background-opacity': 0.8,
                 'text-background-padding': '2px'
             }},
             // Pipe background (expansion)
-            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': '#7dd3fc' } },
+            { selector: 'edge[edgeType="pipe-bg"]', style: { 'width': 20, 'opacity': 0.08, 'line-color': cssVar('--fwmon-accent', '#7dd3fc') } },
             // Off-net edges — gentle curve to separate from tunnel edges
             { selector: 'edge[edgeType="offnet"]', style: {
-                'line-color': '#4ade80', 'width': 1.5, 'opacity': 0.6,
+                'line-color': cssVar('--fwmon-sig-ok', '#4ade80'), 'width': 1.5, 'opacity': 0.6,
                 'line-style': 'dashed', 'line-dash-pattern': [3, 6],
                 'curve-style': 'unbundled-bezier',
                 'control-point-distances': [40], 'control-point-weights': [0.5]
@@ -350,14 +392,14 @@
             { selector: 'edge[status="down"]', style: {
                 'line-style': 'dashed', 'line-dash-pattern': [6, 4], 'opacity': 0.6,
                 'label': '\u2716', 'text-rotation': 'autorotate', 'font-size': '18px',
-                'color': '#f87171', 'text-background-color': '#0d1117',
+                'color': cssVar('--fwmon-sig-crit', '#f87171'), 'text-background-color': cssVar('--fwmon-bg', '#0d1117'),
                 'text-background-opacity': 0.9, 'text-background-padding': '4px',
-                'text-background-shape': 'roundrectangle', 'text-border-color': '#f87171',
+                'text-background-shape': 'roundrectangle', 'text-border-color': cssVar('--fwmon-sig-crit', '#f87171'),
                 'text-border-width': 1.5, 'text-border-opacity': 0.8,
                 'text-halign': 'center', 'text-valign': 'center'
             }},
             // Selected states
-            { selector: 'node:selected', style: { 'border-color': '#7dd3fc', 'border-width': 3 } },
+            { selector: 'node:selected', style: { 'border-color': cssVar('--fwmon-accent', '#7dd3fc'), 'border-width': 3 } },
             { selector: 'edge:selected', style: { 'width': 5, 'opacity': 1 } },
             // Focus/dim (v0.10.523) — driven by the NOC "focus this node on the map"
             // sync. .focused uses an overlay ring (not the border) so it never
@@ -1216,6 +1258,12 @@
         else if (action === 'dg-reset-layout') resetLayout();
         else if (action === 'dg-fullscreen') toggleFullscreen();
         else if (action === 'dg-clear-focus') clearFocus();
+    });
+
+    window.addEventListener('fwmon:themechange', function() {
+        if (cy) {
+            cy.style(buildStylesheet()).update();
+        }
     });
 
     // ---- Public API ----
