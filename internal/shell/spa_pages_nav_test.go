@@ -7,15 +7,14 @@ import (
 	"testing"
 )
 
-// TestSPAPagesMatchPageDivs guards the navigation regression where the
-// standalone admin pages (Probes, Sites, IRC) were listed in
-// admin-main.js's SPA_PAGES. The single-page click interceptor then
-// preventDefault()'d the real navigation and called loadPageData() with no
-// matching case, so those pages loaded blank until a manual refresh forced a
-// true full-page navigation.
+// TestSPAPagesMatchPageDivs guards the navigation contract for the SPA. Probes,
+// Sites and IRC were originally standalone HTML documents that must NOT appear
+// in SPA_PAGES (listing them made the click interceptor preventDefault() the
+// real navigation and load blank). They have since been folded into admin.html
+// as real SPA pages, so the modern invariant is simply structural.
 //
 // Invariant: every key in SPA_PAGES MUST correspond to a `page-<name>` div in
-// admin.html (i.e. it is genuinely an in-page SPA tab), and the known
+// admin.html (i.e. it is genuinely an in-page SPA tab), and any remaining
 // standalone pages must NOT appear in SPA_PAGES.
 func TestSPAPagesMatchPageDivs(t *testing.T) {
 	js, err := os.ReadFile("../../cmd/api/static/js/admin-main.js")
@@ -38,7 +37,9 @@ func TestSPAPagesMatchPageDivs(t *testing.T) {
 	}
 
 	htmlStr := string(html)
-	standalone := map[string]bool{"probes": true, "sites": true, "irc": true, "network": true}
+	// probes/sites/irc are now folded-in SPA pages with their own page-<name>
+	// divs; only genuinely-separate documents remain standalone.
+	standalone := map[string]bool{"network": true}
 	for _, m := range matches {
 		page := m[1]
 		if standalone[page] {

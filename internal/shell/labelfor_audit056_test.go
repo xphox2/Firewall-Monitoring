@@ -24,10 +24,9 @@ func TestLabelFor_AUDIT056(t *testing.T) {
 		file   string
 		minFor int
 	}{
-		{"../../web/admin/probes.html", 4},
-		{"../../web/admin/sites.html", 6},
-		{"../../web/admin/irc.html", 20},
-		{"../../web/admin/admin.html", 50},
+		// probes/sites/irc forms were folded into admin.html (SPA), so their
+		// labels now live here too — the combined floor rises accordingly.
+		{"../../web/admin/admin.html", 90},
 	}
 	for _, tc := range cases {
 		data, err := os.ReadFile(tc.file)

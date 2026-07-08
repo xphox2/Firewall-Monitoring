@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.54"
+const ServerVersion = "0.11.55"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -776,12 +776,14 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
+		// Probes and Sites are SPA pages (folded into admin.html); the shell
+		// reads the trailing path segment and shows page-probes / page-sites.
 		admin.GET("/probes", func(c *gin.Context) {
-			middleware.RenderHTML(c, http.StatusOK, "probes.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/sites", func(c *gin.Context) {
-			middleware.RenderHTML(c, http.StatusOK, "sites.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/syslog", func(c *gin.Context) {
@@ -1011,8 +1013,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.GET("/api/reports/preview", handler.PreviewReport)
 		admin.POST("/api/reports/send", handler.SendReportNow)
 
+		// IRC is an SPA page (folded into admin.html).
 		admin.GET("/irc", func(c *gin.Context) {
-			middleware.RenderHTML(c, http.StatusOK, "irc.html", nil)
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
 		admin.GET("/api/irc/servers", handler.GetIRCServer)

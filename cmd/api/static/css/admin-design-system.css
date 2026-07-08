@@ -926,6 +926,14 @@
     border-radius: 4px;
 }
 
+/* Tab-button highlight (AUDIT-049). switchTab() toggles `.active`; these drive
+   the visual. Base layout (padding, transparent bottom border) comes from the
+   utility classes on the buttons. Moved here from the former irc.html <head>
+   when that page was folded into the admin.html SPA so the shared stylesheet is
+   the single source. */
+.tab-btn:hover { color: var(--fwmon-text); }
+.tab-btn.active { color: var(--fwmon-accent); border-bottom-color: var(--fwmon-accent); }
+
 /* Form inputs: upgrade existing `:focus` to `:focus-visible` where
  * relevant. `:focus` is kept for click-into-input behaviour because
  * users expect the cursor to land somewhere visible regardless of

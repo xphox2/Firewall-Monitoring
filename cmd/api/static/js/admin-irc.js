@@ -636,6 +636,9 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-loadServers();
+// Init — the SPA calls this when the IRC page is shown (admin-main.js
+// loadPageData). The click delegation + change-listeners above run once at
+// module load; only the data fetch is deferred.
+window.FwmonIrc = { init: function () { loadServers(); } };
 
 })(); // AUDIT-050: end IIFE

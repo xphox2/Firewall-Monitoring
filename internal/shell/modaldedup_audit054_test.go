@@ -23,8 +23,10 @@ func TestModalDedup_SingleSource_AUDIT054(t *testing.T) {
 	}
 
 	// Each page must no longer carry the inline `.modal.active { display: flex; }`
-	// duplicate, and must reference the audit for traceability.
-	for _, page := range []string{"admin.html", "sites.html", "probes.html"} {
+	// duplicate, and must reference the audit for traceability. The former
+	// sites.html / probes.html modals were folded into admin.html (SPA), so
+	// admin.html is now the single page to check.
+	for _, page := range []string{"admin.html"} {
 		path := "../../web/admin/" + page
 		data, err := os.ReadFile(path)
 		if err != nil {
