@@ -1322,7 +1322,7 @@
             var lastSegment = segments[segments.length - 1];
             var pageMap = { 'dashboard':'', 'devices':'devices', 'connections':'connections',
                 'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
-                'alert-policies':'alert-policies', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
+                'alert-policies':'alert-policies', 'event-rules':'event-rules', 'maintenance':'maintenance', 'probes':'probes', 'sites':'sites',
                 'irc':'irc', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel' };
             currentPage = pageMap[lastSegment] || 'dashboard';
         }
@@ -1330,7 +1330,7 @@
         var pageIcons = {
             'dashboard': '&#9632;', 'devices': '&#9881;', 'connections': '&#8644;',
             'syslog': '&#9993;', 'flows': '&#8674;', 'noc': '&#9788;', 'alerts': '&#9888;', 'traps': '&#9889;',
-            'alert-policies': '&#9881;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
+            'alert-policies': '&#9881;', 'event-rules': '&#9873;', 'maintenance': '&#128295;', 'settings': '&#9881;', 'reports': '&#128202;',
             'probes': '&#9678;', 'sites': '&#9962;', 'irc': '&#128172;', 'audit': '&#128203;',
             'threat-intel': '&#128737;'
         };
@@ -1356,6 +1356,7 @@
             // "Pending" filter tab, making a separate page redundant.
             '</div><div class="nav-section"><div class="nav-section-title">Configuration</div>' +
             '<a class="nav-item' + (currentPage === 'alert-policies' ? ' active" aria-current="page' : '') + '" href="/admin/alert-policies"><span class="nav-icon" aria-hidden="true">' + pageIcons['alert-policies'] + '</span> Alert Policies</a>' +
+            '<a class="nav-item' + (currentPage === 'event-rules' ? ' active" aria-current="page' : '') + '" href="/admin/event-rules"><span class="nav-icon" aria-hidden="true">' + pageIcons['event-rules'] + '</span> Event Rules</a>' +
             '<a class="nav-item' + (currentPage === 'maintenance' ? ' active" aria-current="page' : '') + '" href="/admin/maintenance"><span class="nav-icon" aria-hidden="true">' + pageIcons['maintenance'] + '</span> Maintenance</a>' +
             '</div><div class="nav-section"><div class="nav-section-title">System</div>' +
             '<a class="nav-item' + (currentPage === 'reports' ? ' active" aria-current="page' : '') + '" href="/admin/reports"><span class="nav-icon" aria-hidden="true">' + pageIcons['reports'] + '</span> Reports</a>' +

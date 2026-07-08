@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.51] - 2026-07-07
+
+### Added
+- **Event-rule builder UI (admin console; Phase 2 of the event-rule engine).** New **Event Rules** page and sidebar entry under Configuration, backed by `admin-event-rules.js` (`FwmonEventRules`). Operators can now create, edit, enable/disable and delete rules from the browser against the server engine shipped in v0.11.49: a condition builder over extracted event fields (FortiGate `subtype`/`level`/`logid`/`logdesc`/`action`/`srcintf`/… surfaced via an autocomplete field-hint datalist), alert-vs-suppress action, vendor/device/site scope, dedup/cooldown, and notify-policy routing. Summary stat cards show total/enabled/suppress rule counts and total hits. New admin route `GET /admin/event-rules` (SPA shell) wired into the sidebar, SPA page map, and page-data loader.
+
 ## [0.11.50] - 2026-07-07
 
 ### Fixed
