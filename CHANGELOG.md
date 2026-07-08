@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.11.58] - 2026-07-08
 
+### Security
+- Bumped the Go toolchain floor to **1.25.12** to pick up the `crypto/tls` fix for **GO-2026-5856** (flagged by the CI govulncheck gate; unrelated to the NOC work).
+
 ### Changed
 - **NOC dashboard: clicking a Site or Device now opens its live alerts.** Previously a card opened an in-page drill that only showed alert *counts*, and device rows/links jumped to the connection map. Site and device cards are now links straight to **Alert History**, pre-filtered to that entity (`/admin/alerts?site_id=…` / `?device_id=…`), so a click shows the actual open alerts. The old drill panel was removed, and the connection-map node tap now also opens the device's Alert History (consistent "click a device → its alerts" everywhere).
 - **Removed the "Probes" status card** from the top of the NOC vitals rail (the per-site "probe down" badge is kept).
