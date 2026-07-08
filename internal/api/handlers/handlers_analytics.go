@@ -87,6 +87,16 @@ func applyAlertFilters(c *gin.Context, q *gorm.DB) *gorm.DB {
 	if deviceID := c.Query("device_id"); deviceID != "" {
 		q = q.Where("device_id = ?", deviceID)
 	}
+	// site_id scopes to a site: device-scoped alerts via device→site, plus
+	// site-scoped alerts (e.g. SFLOW_SECURITY_DIGEST) via the alerts.site_id column
+	// (v0.11.57). "unassigned" = the null-site bucket the NOC dashboard surfaces.
+	if siteID := c.Query("site_id"); siteID != "" {
+		if siteID == "unassigned" {
+			q = q.Where("device_id IN (SELECT id FROM devices WHERE site_id IS NULL)")
+		} else {
+			q = q.Where("device_id IN (SELECT id FROM devices WHERE site_id = ?) OR site_id = ?", siteID, siteID)
+		}
+	}
 	if severity := c.Query("severity"); severity != "" {
 		q = q.Where("severity = ?", severity)
 	}

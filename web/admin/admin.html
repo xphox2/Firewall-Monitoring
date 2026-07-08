@@ -740,15 +740,11 @@
                 <div class="stat-card"><div class="stat-label">Flows (window)</div><div class="stat-value" id="noc-flows">--</div></div>
                 <div class="stat-card"><div class="stat-label">Unique Sources</div><div class="stat-value" id="noc-srcs">--</div></div>
                 <div class="stat-card"><div class="stat-label">Threat Flows</div><div class="stat-value bad" id="noc-threat-flows">--</div></div>
-                <div class="stat-card"><div class="stat-label">Probes</div><div class="stat-value" id="noc-probes">--</div></div>
                 <div class="stat-card"><div class="stat-label">Threat-Intel IPs</div><div class="stat-value" id="noc-ti">--</div></div>
             </div>
 
-            <!-- Drill-down detail panel (a site or device is selected). Rendered by
-                 admin-noc.js; hidden until a card/row is opened. -->
-            <div id="noc-drill" hidden></div>
-
-            <!-- By Site: one card per site (+ Unassigned bucket). -->
+            <!-- By Site: one card per site (+ Unassigned bucket). Each card links to
+                 Alert History filtered to that site / device. -->
             <div class="fwmon-noc-grid" id="noc-sites-grid" aria-live="polite">
                 <div class="fwmon-noc-empty">Connecting to the live stream…</div>
             </div>
@@ -759,9 +755,9 @@
             <!-- Live Detections — collapsible; a genuine NOC signal kept from the
                  previous NOC (flow src/dst analytics now live on the Flows page). -->
             <details class="card fwmon-flows-detections-card fwmon-noc-detections" id="noc-detections" open>
-                <summary class="fwmon-noc-det-summary"><span class="fwmon-toptalk-title">Live Detections<span class="fwmon-toptalk-hint">last 15 min</span></span></summary>
+                <summary class="fwmon-noc-det-summary"><span class="fwmon-toptalk-title">Live Detections<span class="fwmon-toptalk-hint">last 6h</span></span></summary>
                 <table class="fwmon-flows-detections-table">
-                    <thead><tr><th>Severity</th><th>Category</th><th>Detector</th><th>Finding</th><th>When</th></tr></thead>
+                    <thead><tr><th>Severity</th><th>Category</th><th>Detector</th><th>Source → Dest</th><th>Device</th><th>Finding</th><th>When</th></tr></thead>
                     <tbody id="noc-detections-body"></tbody>
                 </table>
             </details>
@@ -816,6 +812,7 @@
                 <div class="card-header"><h2>Alert History</h2></div>
                 <div class="filter-bar">
                     <select id="alerts-filter-device"><option value="">All Devices</option></select>
+                    <select id="alerts-filter-site"><option value="">All Sites</option></select>
                     <select id="alerts-filter-type"><option value="">All Types</option></select>
                     <select id="alerts-filter-severity">
                         <option value="">All Severities</option>
