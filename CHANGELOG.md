@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.67] - 2026-07-09
+
+### Fixed
+- **Night mode: line-chart point markers now show the same "line break" as Day mode.** Dark mode painted each point's border in the line's own color, merging the marker into the line; both themes now paint the point border in the card-surface color, so the line visibly breaks around each colored dot (alert trend and every other Chart.js line chart). Applied at chart build and in the Day/Night recolor pass so it holds through toggles and auto-refreshes.
+- **Dashboard modules line up and text stays inside its box.** Modules in the same grid row now stretch to a shared height (previously each card took its natural height — 338/289/286/184px in one row — making alignment impossible). Metric-tile values were also overflowing their tiles (1.35rem mono values in 88px-min tiles bled past the border): tile values are sized to fit (1.1rem), tiles/labels/values gained overflow guards, row metas ellipsize, and the freshness formatter now rolls hours into days (no more "2562048h ago"). Verified zero text overflow at 1680/1280/390px widths.
+
 ## [0.11.66] - 2026-07-09
 
 ### Changed
