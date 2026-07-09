@@ -1798,12 +1798,23 @@
                 var ctx2d = ch.ctx;
                 var areaH = (ch.chartArea && ch.chartArea.bottom) || 250;
                 (ch.data && ch.data.datasets ? ch.data.datasets : []).forEach(function(ds) {
-                    var isLine = (ds.type || ch.config.type) === 'line';
+                    var dsType = ds.type || ch.config.type;
+                    var isLine = dsType === 'line';
                     if (isLine && ds.fill && ds.backgroundColor && ds.borderColor && ctx2d) {
                         ds.backgroundColor = fillGradient(ctx2d, ds.borderColor, areaH);
                         if (ds.pointBorderColor) {
                             ds.pointBorderColor = isLight ? cardBg : ds.borderColor;
                         }
+                    }
+                    // Doughnut/pie segment separators are painted in the card-
+                    // surface color (createChart bakes cssVar at build time).
+                    // Repaint them here too, or a Day/Night flip leaves the old
+                    // surface color as a visible ring until the next auto-refresh
+                    // rebuilds the chart — the look would change 30s after the
+                    // toggle instead of at the toggle.
+                    if ((dsType === 'doughnut' || dsType === 'pie') &&
+                        ds.borderWidth && typeof ds.borderColor === 'string') {
+                        ds.borderColor = cardBg;
                     }
                 });
             } catch (e) { /* dataset shape varies; skip fill rebuild */ }

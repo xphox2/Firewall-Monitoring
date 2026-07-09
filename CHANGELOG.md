@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.64] - 2026-07-09
+
+### Fixed
+- **Day/Night toggle: doughnut-chart segment borders no longer revert on auto-refresh.** The circle charts (syslog severity, alert types, trap severity, device status) paint their segment separators in the card-surface color, which was baked in when the chart was built. Flipping the theme left the old surface color in place as a visible ring (e.g. a dark outline on the white Day-mode card), and the next auto-refresh rebuilt the chart with the new surface color — so the look silently changed ~30s after the toggle. The Day/Night recolor pass now repaints doughnut/pie segment borders along with the axes, legends, and line fills, so what you see at the moment of the toggle is exactly what every subsequent refresh renders.
+
 ## [0.11.63] - 2026-07-08
 
 ### Added
