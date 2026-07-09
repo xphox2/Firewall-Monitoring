@@ -588,7 +588,6 @@
         // markers read on either theme.
         if (type === 'line' && ctx2d) {
             var ac = window.AdminCommon || {};
-            var isLight = document.documentElement.getAttribute('data-theme') === 'light';
             var pointBorder = ac.cssVar ? ac.cssVar('--fwmon-card-bg', '#161b22') : '#161b22';
             datasets.forEach(function(ds) {
                 var color = ds.borderColor || '#4c8dff';
@@ -607,7 +606,11 @@
                 }
                 ds.fill = true;
                 ds.pointBackgroundColor = color;
-                ds.pointBorderColor = isLight ? pointBorder : color;
+                // Card-surface point border in BOTH themes: it cuts a visible
+                // break in the line around each marker (the Day-mode look).
+                // Painting the border in the line's own color (the old dark-
+                // mode behavior) merged the point into the line instead.
+                ds.pointBorderColor = pointBorder;
                 ds.pointBorderWidth = 2;
                 ds.pointRadius = 4;
                 ds.pointHoverRadius = 6;

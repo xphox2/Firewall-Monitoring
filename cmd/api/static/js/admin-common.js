@@ -1765,7 +1765,6 @@
     function recolorChartsForTheme() {
         if (!window.Chart || typeof Chart.getChart !== 'function') return;
         setupChartDefaults();
-        var isLight = document.documentElement.getAttribute('data-theme') === 'light';
         var grid = cssVar('--fwmon-grid-stroke', 'rgba(48, 54, 61, 0.2)');
         var faint = cssVar('--fwmon-text-faint', '#8b949e');
         var dim = cssVar('--fwmon-text-dim', '#c9d1d9');
@@ -1803,7 +1802,9 @@
                     if (isLine && ds.fill && ds.backgroundColor && ds.borderColor && ctx2d) {
                         ds.backgroundColor = fillGradient(ctx2d, ds.borderColor, areaH);
                         if (ds.pointBorderColor) {
-                            ds.pointBorderColor = isLight ? cardBg : ds.borderColor;
+                            // Card-surface in BOTH themes — matches createChart,
+                            // so markers keep their line-break halo on night too.
+                            ds.pointBorderColor = cardBg;
                         }
                     }
                     // Doughnut/pie segment borders use the themed arc-border

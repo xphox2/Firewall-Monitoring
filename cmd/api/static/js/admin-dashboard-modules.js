@@ -41,7 +41,8 @@
         if (sec == null) return 'n/a';
         if (sec < 90) return Math.max(0, Math.round(sec)) + 's ago';
         if (sec < 5400) return Math.round(sec / 60) + 'm ago';
-        return Math.round(sec / 3600) + 'h ago';
+        if (sec < 172800) return Math.round(sec / 3600) + 'h ago';
+        return Math.round(sec / 86400) + 'd ago';
     }
     // Inline sparkline from an array of {count} or numbers.
     function spark(series, sev) {

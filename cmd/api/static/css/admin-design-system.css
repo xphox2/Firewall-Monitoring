@@ -1130,12 +1130,16 @@ html[data-role="operator"] [data-min-role="admin"] {
     border: 1px solid var(--fwmon-border);
 }
 
-/* Server Platform card metric tiles (dashboard system-health highlight). */
+/* Dashboard-module metric tiles. min-width:0 + overflow-wrap keep long
+ * values ("2,562,048h ago", "GOROUTINES") inside the tile instead of
+ * bleeding past its border; the value size is set so a 7-digit
+ * locale-formatted count fits the minimum tile width. */
 .sys-metric {
     background: var(--fwmon-panel-bg);
     border: 1px solid var(--fwmon-border);
     border-radius: 8px;
-    padding: 12px 14px;
+    padding: 10px 12px;
+    min-width: 0;
 }
 .sys-metric-lbl {
     font-size: 0.7rem;
@@ -1143,13 +1147,15 @@ html[data-role="operator"] [data-min-role="admin"] {
     letter-spacing: 0.06em;
     color: var(--fwmon-text-mute);
     margin-bottom: 6px;
+    overflow-wrap: anywhere;
 }
 .sys-metric-val {
-    font-size: 1.35rem;
+    font-size: 1.1rem;
     font-weight: 600;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     color: var(--fwmon-text);
-    line-height: 1.1;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
 }
 
 /* ========================================================================
@@ -1176,7 +1182,8 @@ html[data-role="operator"] [data-min-role="admin"] {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 16px;
-    align-items: start;
+    /* No align-items:start — modules stretch to the tallest card in their
+     * row so each row presents one clean shared edge. */
 }
 
 .dash-module {
@@ -1185,6 +1192,7 @@ html[data-role="operator"] [data-min-role="admin"] {
     border-radius: var(--fwmon-radius);
     box-shadow: var(--fwmon-elev-1);
     padding: 14px 16px 16px;
+    min-width: 0;
 }
 .dash-module.editing { cursor: move; border-style: dashed; border-color: var(--fwmon-border-strong); }
 .dash-module.dragging { opacity: 0.45; }
@@ -1218,7 +1226,7 @@ html[data-role="operator"] [data-min-role="admin"] {
 
 .dash-tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
     gap: 10px;
 }
 .dash-rate { display: block; font-size: 0.68rem; color: var(--fwmon-text-mute); font-weight: 400; margin-top: 2px; }
@@ -1226,7 +1234,7 @@ html[data-role="operator"] [data-min-role="admin"] {
 .dash-list { display: flex; flex-direction: column; gap: 6px; }
 .dash-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
 .dash-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fwmon-text-dim); }
-.dash-row-meta { color: var(--fwmon-text-mute); font-size: 0.74rem; flex: 0 0 auto; }
+.dash-row-meta { color: var(--fwmon-text-mute); font-size: 0.74rem; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-row-meta.mono, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 .dash-minibar { flex: 0 0 64px; height: 6px; border-radius: 3px; background: var(--fwmon-panel-bg); overflow: hidden; }
 .dash-minibar > span { display: block; height: 100%; background: var(--fwmon-accent); }
@@ -1243,4 +1251,8 @@ html[data-role="operator"] [data-min-role="admin"] {
 
 @media (max-width: 640px) {
     .dash-modules { grid-template-columns: 1fr; }
+    /* The shell sidebar stays expanded on narrow screens, so the content
+     * column can get very tight — drop the tile floor so the metric grid
+     * packs down instead of overflowing the module edge. */
+    .dash-tiles { grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
 }
