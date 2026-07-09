@@ -112,6 +112,12 @@
     --fwmon-border:        #2a313b; /* steel hairline — card edges read */
     --fwmon-border-strong: #3b4654;
 
+    /* Doughnut/pie segment border (Chart.js arc separators). Dark ink in BOTH
+     * themes: on night it matches the card surface (classic gap look); on day
+     * it reads as a deliberate dark ring outlining the segments. Consumed by
+     * createChart + recolorChartsForTheme — keep those in sync with this. */
+    --fwmon-chart-arc-border: #161b22;
+
     /* Text — cool off-white ramp; faint/mute use the AA-verified values from
      * AUDIT-066/067 so small labels stay legible (not washed). */
     --fwmon-text:       #e6edf3;
@@ -169,6 +175,10 @@
     --fwmon-hover:         #e4e9f0;
     --fwmon-border:        #d3dae3;
     --fwmon-border-strong: #b9c4d0;
+
+    /* Day mode keeps the dark segment ring — a white (card-bg) border here
+     * makes the doughnut borders invisible against the card. */
+    --fwmon-chart-arc-border: #161b22;
 
     --fwmon-text:       #16242c;
     --fwmon-text-dim:   #2d3d45;
