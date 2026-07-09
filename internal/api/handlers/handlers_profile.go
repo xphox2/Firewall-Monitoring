@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -82,6 +83,55 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		"full_name": fullName,
 		"message":   "Profile updated",
 	}))
+}
+
+// maxDashboardPrefsBytes bounds the saved layout JSON. The layout is a small
+// list of module ids + visibility flags; a few KB is generous headroom and stops
+// a client from stashing arbitrary blobs on the account row.
+const maxDashboardPrefsBytes = 8 * 1024
+
+// GetMyDashboardPrefs — GET /admin/api/me/dashboard. Returns the calling
+// account's saved system-health dashboard layout (empty when never customized,
+// so the SPA falls back to its default module layout).
+func (h *Handler) GetMyDashboardPrefs(c *gin.Context) {
+	admin := h.loadOwnAccount(c)
+	if admin == nil {
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"prefs": admin.DashboardPrefs}))
+}
+
+type dashboardPrefsRequest struct {
+	Prefs string `json:"prefs"`
+}
+
+// SetMyDashboardPrefs — PUT /admin/api/me/dashboard. Persists the calling
+// account's dashboard layout JSON. The body must be a JSON object with a "prefs"
+// string that is itself valid JSON (the module layout) within the size cap.
+func (h *Handler) SetMyDashboardPrefs(c *gin.Context) {
+	admin := h.loadOwnAccount(c)
+	if admin == nil {
+		return
+	}
+	var req dashboardPrefsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+	if len(req.Prefs) > maxDashboardPrefsBytes {
+		c.JSON(http.StatusBadRequest, response.Error("Dashboard layout is too large"))
+		return
+	}
+	// Guard against storing non-JSON so a later read can't feed the SPA garbage.
+	if req.Prefs != "" && !json.Valid([]byte(req.Prefs)) {
+		c.JSON(http.StatusBadRequest, response.Error("Dashboard layout must be valid JSON"))
+		return
+	}
+	if err := h.reqDB(c).SetAdminDashboardPrefs(admin.ID, req.Prefs); err != nil {
+		httputil.InternalError(c, "Failed to save dashboard layout", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"message": "Dashboard layout saved"}))
 }
 
 type mfaDeclineRequest struct {

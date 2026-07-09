@@ -380,10 +380,11 @@
     }
 
     function loadDashboard() {
-        // The landing page fills from the cheap /dashboard/summary (coalesced with
-        // the vitals rail's call) plus a single /probes fetch for the health cards.
-        // The heavy /api/dashboard (device enrichment + connections) is NOT called
-        // here anymore — it only serves the Devices page and the connection map.
+        // The dashboard is now the customizable system-health console rendered by
+        // FwmonDashboard (admin-dashboard-modules.js), fed by the cached
+        // /api/dashboard/health composite. Delegate to it. The legacy stat-grid /
+        // probe-card path below is unreachable (kept until a follow-up removes it).
+        if (window.FwmonDashboard) { window.FwmonDashboard.load(); return; }
         Promise.all([
             AC.fetchDashboardSummary(),
             apiFetch(API_BASE + '/probes').catch(function() { return null; })

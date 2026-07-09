@@ -243,6 +243,22 @@ func (d *Database) UpdateAdminProfile(id uint, email, fullName string) error {
 		}).Error
 }
 
+// GetAdminDashboardPrefs returns the account's saved system-health dashboard
+// layout JSON ("" when never customized).
+func (d *Database) GetAdminDashboardPrefs(id uint) (string, error) {
+	var prefs string
+	err := d.db.Model(&models.Admin{}).Where("id = ?", id).
+		Select("dashboard_prefs").Scan(&prefs).Error
+	return prefs, err
+}
+
+// SetAdminDashboardPrefs persists the account's system-health dashboard layout
+// JSON (self-service; writes only this one column).
+func (d *Database) SetAdminDashboardPrefs(id uint, prefs string) error {
+	return d.db.Model(&models.Admin{}).Where("id = ?", id).
+		UpdateColumn("dashboard_prefs", prefs).Error
+}
+
 // SetAdminMFAPromptDismissed records the user's explicit decline of the MFA
 // onboarding wizard. The WHERE guard keeps the FIRST decline timestamp — the
 // audit-relevant moment the risk was accepted — across repeat calls.

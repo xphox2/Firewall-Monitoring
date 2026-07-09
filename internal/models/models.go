@@ -727,6 +727,12 @@ type Admin struct {
 	// mailboxes — uniqueness would add a failure mode with no security value.
 	Email    string `json:"email"`
 	FullName string `json:"full_name"`
+	// DashboardPrefs is this user's saved system-health dashboard layout — a JSON
+	// blob of {"modules":[{"id","visible"}...]} (order = display order). Empty =
+	// never customized (the UI falls back to the default module layout). Never
+	// exposed on the generic Admin JSON (json:"-"); served only via the dedicated
+	// GET /api/me/dashboard endpoint.
+	DashboardPrefs string `json:"-"`
 	// MFAPromptDismissedAt records the user's explicit "I accept the risk"
 	// decline of the login-time MFA onboarding wizard. NULL = never declined
 	// (keep offering). Set once; enabling 2FA supersedes it. Never exposed

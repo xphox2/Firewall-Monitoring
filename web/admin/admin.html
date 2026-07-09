@@ -230,6 +230,7 @@
     <script defer src="/static/js/admin-probes.js"></script>
     <script defer src="/static/js/admin-sites.js"></script>
     <script defer src="/static/js/admin-irc.js"></script>
+    <script defer src="/static/js/admin-dashboard-modules.js"></script>
     <script nonce="{{ .Nonce }}">
     document.addEventListener('DOMContentLoaded', function() {
         AdminCommon.renderSidebar();
@@ -297,121 +298,24 @@
             </div>
         </div>
 
-        <!-- Dashboard Page -->
+        <!-- Dashboard Page — customizable system-health console. Modules are
+             rendered by FwmonDashboard (admin-dashboard-modules.js) from the
+             cached /api/dashboard/health composite; layout (show/hide + order)
+             is saved per user via /api/me/dashboard. This is NOT the NOC — it
+             summarizes platform + pipeline health, not the real-time site view. -->
         <div class="page active" id="page-dashboard">
-            <div class="stat-grid">
-                <div class="stat-card accent-blue">
-                    <div class="stat-label">Total Devices</div>
-                    <div class="stat-value accent" id="total-devices">--</div>
-                </div>
-                <div class="stat-card accent-green">
-                    <div class="stat-label">Online</div>
-                    <div class="stat-value good" id="online-devices">--</div>
-                </div>
-                <div class="stat-card accent-red">
-                    <div class="stat-label">Offline</div>
-                    <div class="stat-value bad" id="offline-devices">--</div>
-                </div>
-                <div class="stat-card accent-blue">
-                    <div class="stat-label">Active Probes</div>
-                    <div class="stat-value accent" id="active-probes">--</div>
-                </div>
-                <div class="stat-card accent-gray">
-                    <div class="stat-label">Syslog Messages</div>
-                    <div class="stat-value" id="syslog-count">--</div>
-                </div>
-                <div class="stat-card accent-gray">
-                    <div class="stat-label">Trap Events</div>
-                    <div class="stat-value" id="trap-count">--</div>
+            <div class="dash-toolbar">
+                <div class="dash-toolbar-title">System Health</div>
+                <div class="dash-toolbar-actions">
+                    <span class="dash-hint" id="dash-customize-hint" style="display:none;">Drag to reorder &middot; toggle the eye to show/hide</span>
+                    <button class="btn secondary" id="dash-customize-btn" type="button">Customize</button>
+                    <button class="btn secondary" id="dash-reset-btn" type="button" style="display:none;">Reset to default</button>
+                    <button class="btn secondary" id="dash-cancel-btn" type="button" style="display:none;">Cancel</button>
+                    <button class="btn" id="dash-save-btn" type="button" style="display:none;">Save layout</button>
                 </div>
             </div>
-            <!-- Server Platform card: live host + process health for the box
-                 running Firewall-Mon. Fed by GET /api/system (Go runtime, DB
-                 pool, host CPU/mem/disk/load), polled every 30s by
-                 AdminCommon.refreshSystemHealth. Values are theme-token styled;
-                 CPU/mem/disk color by threshold in JS. -->
-            <div class="card" id="sys-platform-card">
-                <div class="card-header">
-                    <h2><span class="pulse-dot online" id="sys-health-dot" style="margin-right:8px;"></span>Server Platform</h2>
-                    <span style="font-size:0.78rem;color:var(--fwmon-text-mute,#8b949e);">host &amp; process health &middot; refreshes every 30s</span>
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;padding:4px 2px 2px;">
-                    <div class="sys-metric"><div class="sys-metric-lbl">CPU</div><div class="sys-metric-val" id="sys-cpu">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">Memory</div><div class="sys-metric-val" id="sys-mem">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">Disk</div><div class="sys-metric-val" id="sys-disk">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">Load (1m)</div><div class="sys-metric-val" id="sys-load">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">DB Pool</div><div class="sys-metric-val" id="sys-dbpool">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">DB Size</div><div class="sys-metric-val" id="sys-dbsize">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">Uptime</div><div class="sys-metric-val" id="sys-uptime">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">Goroutines</div><div class="sys-metric-val" id="sys-goroutines">--</div></div>
-                    <div class="sys-metric"><div class="sys-metric-lbl">Heap</div><div class="sys-metric-val" id="sys-heap">--</div></div>
-                </div>
-            </div>
-            <div class="chart-row">
-                <div class="chart-card">
-                    <h3>Activity Trend (24h)</h3>
-                    <canvas id="dashboard-activity-chart"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h3>Device Status</h3>
-                    <canvas id="dashboard-device-chart"></canvas>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header">
-                    <h2>Probe Health</h2>
-                </div>
-                <div class="probe-cards" id="probe-health-cards">
-                    <div class="loading">Loading probes...</div>
-                </div>
-            </div>
-            <!-- Stale-Data Card (v0.10.216, bundle F3): surfaces devices
-                 whose last successful poll is older than the configured
-                 threshold. Surfaces silent poller failures that the
-                 status badge alone won't catch (a device flipping to
-                 'unknown' rather than 'offline'). -->
-            <div class="card" id="stale-devices-card" style="display:none;">
-                <div class="card-header">
-                    <h2>Stale Devices
-                        <span class="fwmon-chip subdued" id="stale-devices-count"
-                              style="margin-left:8px;font-size:0.7rem;"></span>
-                    </h2>
-                    <span class="text-[#8b949e]" style="font-size:0.78rem;">
-                        No poll data in the last
-                        <select id="stale-threshold-select" class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1 ml-2" style="font-size:0.78rem;">
-                            <option value="15">15 minutes</option>
-                            <option value="30">30 minutes</option>
-                            <option value="60" selected>1 hour</option>
-                            <option value="180">3 hours</option>
-                            <option value="720">12 hours</option>
-                            <option value="1440">24 hours</option>
-                        </select>
-                    </span>
-                </div>
-                <div id="stale-devices-list"></div>
-            </div>
-            <!-- Noisy-Device Leaderboard (v0.10.218, bundle G1): ranks
-                 devices by recent alert + syslog volume so an operator
-                 can spot misconfigured / flapping devices that are
-                 drowning out everything else in the queue. Uses the
-                 device_id filter on /stats endpoints added in D4. -->
-            <div class="card" id="noisy-devices-card" style="display:none;">
-                <div class="card-header">
-                    <h2>Noisy Devices
-                        <span class="fwmon-chip subdued" id="noisy-devices-count"
-                              style="margin-left:8px;font-size:0.7rem;"></span>
-                    </h2>
-                    <span class="text-[#8b949e]" style="font-size:0.78rem;">
-                        Top message producers in the last
-                        <select id="noisy-window-select" class="bg-[#0d1117] border border-[#30363d] text-[#c9d1d9] rounded px-2 py-1 ml-2" style="font-size:0.78rem;">
-                            <option value="1">1 hour</option>
-                            <option value="6">6 hours</option>
-                            <option value="24" selected>24 hours</option>
-                            <option value="168">7 days</option>
-                        </select>
-                    </span>
-                </div>
-                <div id="noisy-devices-list"></div>
+            <div id="dashboard-modules" class="dash-modules">
+                <div class="loading" style="padding:32px;">Loading system health…</div>
             </div>
         </div>
 

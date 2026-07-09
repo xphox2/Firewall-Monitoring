@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -19,11 +20,11 @@ import (
 // database can't make the dashboard's health poll hang.
 const systemHealthDBTimeout = 1 * time.Second
 
-// GetSystemHealth backs the dashboard's "Server Platform" card. It reports the
-// server process (uptime, version, Go runtime), the database (pool utilization,
-// reachability, size), and the host (CPU / memory / disk / load average). Every
-// probe here is cheap and non-blocking so the 30s poll never stalls a request.
-func (h *Handler) GetSystemHealth(c *gin.Context) {
+// buildSystemHealth collects the server-platform health snapshot (process +
+// Go runtime + database pool/size/reachability + host CPU/mem/disk/load). Every
+// probe is cheap and non-blocking. Shared by GET /api/system and the cached
+// dashboard health composite. ctx bounds the DB ping.
+func (h *Handler) buildSystemHealth(ctx context.Context, db database.Store) gin.H {
 	out := gin.H{}
 
 	// --- App / process ---
@@ -45,7 +46,7 @@ func (h *Handler) GetSystemHealth(c *gin.Context) {
 
 	// --- Database: pool stats, reachability, size ---
 	dbInfo := gin.H{"reachable": false}
-	if db := h.reqDB(c); db != nil {
+	if db != nil {
 		g := db.Gorm()
 		if sqlDB, err := g.DB(); err == nil && sqlDB != nil {
 			st := sqlDB.Stats()
@@ -56,8 +57,8 @@ func (h *Handler) GetSystemHealth(c *gin.Context) {
 				"max_open":   st.MaxOpenConnections,
 				"wait_count": st.WaitCount,
 			}
-			ctx, cancel := context.WithTimeout(c.Request.Context(), systemHealthDBTimeout)
-			dbInfo["reachable"] = sqlDB.PingContext(ctx) == nil
+			pingCtx, cancel := context.WithTimeout(ctx, systemHealthDBTimeout)
+			dbInfo["reachable"] = sqlDB.PingContext(pingCtx) == nil
 			cancel()
 		}
 		// pg_database_size is a cheap catalog lookup; Postgres-only.
@@ -94,5 +95,11 @@ func (h *Handler) GetSystemHealth(c *gin.Context) {
 	}
 	out["host"] = host
 
-	c.JSON(http.StatusOK, response.Success(out))
+	return out
+}
+
+// GetSystemHealth backs the standalone /api/system endpoint (also reused inside
+// the cached dashboard health composite). See buildSystemHealth.
+func (h *Handler) GetSystemHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, response.Success(h.buildSystemHealth(c.Request.Context(), h.reqDB(c))))
 }

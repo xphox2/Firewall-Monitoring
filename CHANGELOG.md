@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.63] - 2026-07-08
+
+### Added
+- **The dashboard is now a customizable, per-user system-health console.** The landing page was rebuilt from a fixed stat grid into a modular dashboard summarizing the health of the **platform and monitoring pipeline** (server box, database, ingestion, collectors, background services, plus high-level fleet/alert rollups). It is deliberately distinct from the NOC — the NOC stays the real-time site/device/alert view; the dashboard does not duplicate it. Eight modules ship: **Platform** (host CPU/mem/disk/load, uptime, runtime), **Database** (size, pool, reachability), **Ingestion Rates** (syslog/traps/flows/pings totals + per-hour rates + data freshness), **Collector Health** (probe up/down/pending), **Fleet Summary**, **Alerts Summary** (open by severity + 24h trend sparkline), **Data Quality** (stale + noisiest devices), and **Services & Feeds** (component status + threat-feed status). Each module carries a thermal status dot so the page reads as one health readout at a glance.
+- **Per-user layout: show/hide + drag-reorder, saved to your account.** A "Customize" mode toggles each module on/off and lets you drag to reorder; "Save layout" persists to the account (new `admins.dashboard_prefs` column, migration v37) so it follows you across workstations. "Reset to default" restores the standard layout. New self-service `GET`/`PUT /api/me/dashboard` endpoints.
+
+### Changed
+- **Fixed the real cause of the slow/overloading dashboard: no server-side caching.** The previous client-side coalescing only deduped within a single page load — rapid refreshes and multiple workstations each re-ran the expensive aggregations. All dashboard data now comes from one composite `GET /api/dashboard/health` wrapped in a **~10s TTL + singleflight cache** (`internal/api/handlers/cache.go`), so no matter how many browser tabs / workstations connect or how fast anyone refreshes, the underlying DB work runs **at most once per ~10s total**; warm reads return an in-memory snapshot. Covered by `cache_test.go` (50 concurrent callers → exactly one computation).
+- **Made the vitals-rail summary genuinely cheap.** `GET /api/dashboard/summary` no longer calls `GetSyslogStats`/`GetTrapStats` (which each ran 6 and 4 aggregation queries over the 50M-row `syslog_messages` table just to read a single total) — it now uses bare window-bounded `COUNT`s.
+
 ## [0.11.62] - 2026-07-08
 
 ### Changed

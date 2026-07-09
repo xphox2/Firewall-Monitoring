@@ -880,13 +880,22 @@ func (h *Handler) GetDashboardSummary(c *gin.Context) {
 	probePending := probeCount("approval_status = ?", "pending")
 	probeStale := probeCount("approval_status = ? AND status <> ?", "approved", "online")
 
-	// Syslog + trap 24h totals (same aggregates the vitals rail used, deviceID=0).
-	var syslog24, trap24 int64
-	if s, err := db.GetSyslogStats(24, 0); err == nil && s != nil {
-		syslog24 = s.Total
+	// Syslog + trap 24h totals via bare bounded COUNTs. GetSyslogStats/GetTrapStats
+	// also compute severity + hourly-bucket breakdowns (6 and 4 queries over the
+	// partitioned tables) that the rail/stat-card never use — here we only need the
+	// total, so we count directly (2 + 1 queries, window-pruned).
+	cutoff24 := time.Now().Add(-24 * time.Hour)
+	var syslog24, syslogSummary24, trap24 int64
+	if err := g.Model(&models.SyslogMessage{}).Where("timestamp > ?", cutoff24).Count(&syslog24).Error; err != nil {
+		log.Printf("dashboard summary: syslog count: %v", err)
 	}
-	if t, err := db.GetTrapStats(24, 0); err == nil && t != nil {
-		trap24 = t.Total
+	if err := g.Model(&models.SyslogSummary{}).Where("timestamp > ?", cutoff24).
+		Select("COALESCE(SUM(count),0)").Scan(&syslogSummary24).Error; err != nil {
+		log.Printf("dashboard summary: syslog summary count: %v", err)
+	}
+	syslog24 += syslogSummary24
+	if err := g.Model(&models.TrapEvent{}).Where("timestamp > ?", cutoff24).Count(&trap24).Error; err != nil {
+		log.Printf("dashboard summary: trap count: %v", err)
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
@@ -911,15 +920,29 @@ func (h *Handler) GetNoisyDevices(c *gin.Context) {
 		c.JSON(http.StatusOK, response.Success([]gin.H{}))
 		return
 	}
-	g := db.Gorm()
-
-	hours := httputil.ParseHours(c)
 	limit := 10
 	if lq := c.Query("limit"); lq != "" {
 		if n, err := strconv.Atoi(lq); err == nil && n > 0 && n <= 100 {
 			limit = n
 		}
 	}
+	c.JSON(http.StatusOK, response.Success(noisyDevices(db.Gorm(), httputil.ParseHours(c), limit)))
+}
+
+// noisyRow is one entry in the noisy-device leaderboard.
+type noisyRow struct {
+	DeviceID uint   `json:"device_id"`
+	Name     string `json:"name"`
+	Alerts   int64  `json:"alerts"`
+	Syslog   int64  `json:"syslog"`
+	Total    int64  `json:"total"`
+}
+
+// noisyDevices computes the top-`limit` devices by alert + syslog volume over the
+// last `hours`, with a fixed set of GROUP BY device_id queries (bounded window →
+// partition pruning). Shared by GET /api/dashboard/noisy and the cached health
+// composite. Errors are logged and degrade to partial results, never fatal.
+func noisyDevices(g *gorm.DB, hours, limit int) []noisyRow {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
 	type devCount struct {
@@ -984,13 +1007,6 @@ func (h *Handler) GetNoisyDevices(c *gin.Context) {
 		}
 	}
 
-	type noisyRow struct {
-		DeviceID uint   `json:"device_id"`
-		Name     string `json:"name"`
-		Alerts   int64  `json:"alerts"`
-		Syslog   int64  `json:"syslog"`
-		Total    int64  `json:"total"`
-	}
 	rows := make([]noisyRow, 0, len(idSet))
 	for id := range idSet {
 		// Skip devices that were deleted but still have telemetry rows.
@@ -1006,8 +1022,7 @@ func (h *Handler) GetNoisyDevices(c *gin.Context) {
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
-
-	c.JSON(http.StatusOK, response.Success(rows))
+	return rows
 }
 
 // GetDeviceDataDiag returns per-device system_status record counts and latest values.
