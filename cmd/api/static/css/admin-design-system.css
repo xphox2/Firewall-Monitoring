@@ -1140,3 +1140,96 @@ html[data-role="operator"] [data-min-role="admin"] {
     color: var(--fwmon-text);
     line-height: 1.1;
 }
+
+/* ========================================================================
+ * System-health dashboard — modular, customizable console.
+ * ===================================================================== */
+.dash-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.dash-toolbar-title {
+    font-family: 'Archivo', 'Inter', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--fwmon-text);
+}
+.dash-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dash-hint { font-size: 0.72rem; color: var(--fwmon-text-mute); margin-right: 4px; }
+
+.dash-modules {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    align-items: start;
+}
+
+.dash-module {
+    background: var(--fwmon-card-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: var(--fwmon-radius);
+    box-shadow: var(--fwmon-elev-1);
+    padding: 14px 16px 16px;
+}
+.dash-module.editing { cursor: move; border-style: dashed; border-color: var(--fwmon-border-strong); }
+.dash-module.dragging { opacity: 0.45; }
+.dash-module.hidden-mod { opacity: 0.5; }
+
+.dash-module-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--fwmon-border);
+}
+.dash-module-header h3 {
+    font-family: 'Archivo', 'Inter', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--fwmon-text-dim);
+    margin: 0;
+    text-transform: none;
+}
+.dash-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.dash-mod-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.dash-eye {
+    background: none; border: none; cursor: pointer; font-size: 0.9rem;
+    padding: 2px 4px; line-height: 1; border-radius: var(--fwmon-radius-sm);
+}
+.dash-eye:hover { background: var(--fwmon-hover); }
+.dash-grip { cursor: grab; color: var(--fwmon-text-mute); font-size: 1rem; }
+
+.dash-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+    gap: 10px;
+}
+.dash-rate { display: block; font-size: 0.68rem; color: var(--fwmon-text-mute); font-weight: 400; margin-top: 2px; }
+
+.dash-list { display: flex; flex-direction: column; gap: 6px; }
+.dash-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; }
+.dash-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fwmon-text-dim); }
+.dash-row-meta { color: var(--fwmon-text-mute); font-size: 0.74rem; flex: 0 0 auto; }
+.dash-row-meta.mono, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.dash-minibar { flex: 0 0 64px; height: 6px; border-radius: 3px; background: var(--fwmon-panel-bg); overflow: hidden; }
+.dash-minibar > span { display: block; height: 100%; background: var(--fwmon-accent); }
+
+.dash-barwrap { height: 8px; border-radius: 4px; background: var(--fwmon-panel-bg); overflow: hidden; margin: 12px 0 6px; }
+.dash-bar { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.dash-caption { font-size: 0.72rem; color: var(--fwmon-text-mute); }
+.dash-subhead { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fwmon-text-mute); margin-bottom: 6px; }
+.dash-count { color: var(--fwmon-text-faint); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.dash-empty { color: var(--fwmon-text-mute); font-size: 0.8rem; padding: 8px 0; }
+
+.dash-spark { width: 100%; height: 30px; margin-top: 8px; display: block; }
+.dash-spark-empty { font-size: 0.72rem; color: var(--fwmon-text-mute); margin-top: 8px; }
+
+@media (max-width: 640px) {
+    .dash-modules { grid-template-columns: 1fr; }
+}

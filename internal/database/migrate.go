@@ -1660,6 +1660,20 @@ func (d *Database) migrateAdminProfile() error {
 	return nil
 }
 
+// migrateAdminDashboardPrefs (v37) adds the admins.dashboard_prefs column that
+// stores each user's customizable system-health dashboard layout (JSON). Additive
+// with an empty default so existing accounts fall back to the default layout.
+func (d *Database) migrateAdminDashboardPrefs() error {
+	if !d.dialect.IsPostgres() {
+		return d.db.AutoMigrate(&models.Admin{})
+	}
+	if err := d.execMaintenanceDDL(`ALTER TABLE admins ADD COLUMN IF NOT EXISTS dashboard_prefs text NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate v37 add admins.dashboard_prefs: %w", err)
+	}
+	log.Printf("migrate v37 admin_dashboard_prefs: ensured admins.dashboard_prefs column")
+	return nil
+}
+
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
 // column the multi-protocol flow ingest needs in ONE migration — flow_samples
 // is monthly RANGE-partitioned on prod-shaped installs, so column adds are a

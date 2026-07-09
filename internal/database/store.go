@@ -278,6 +278,10 @@ type UserStore interface {
 	// SetAdminMFAPromptDismissed records the explicit MFA-wizard decline;
 	// idempotent, first timestamp wins.
 	SetAdminMFAPromptDismissed(id uint) error
+	// GetAdminDashboardPrefs / SetAdminDashboardPrefs persist the self-service
+	// system-health dashboard layout JSON for one account.
+	GetAdminDashboardPrefs(id uint) (string, error)
+	SetAdminDashboardPrefs(id uint, prefs string) error
 }
 
 // TOTPStore covers two-factor enrollment state (P0-3). Secrets arrive already
