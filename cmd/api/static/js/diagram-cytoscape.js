@@ -39,6 +39,7 @@
         wan: '#fb923c',    // orange-400
         lag: '#2dd4bf',    // teal-400 (direct — physical, distinguished by width)
         ethernet: '#2dd4bf', // teal-400 (direct — physical, distinguished by width)
+        direct: '#2dd4bf', // teal-400 (synthetic group color for the same-site direct-bundle)
         offnet: '#4ade80'  // green-400
     };
 
@@ -251,16 +252,32 @@
                 });
             }
 
-            // Direct connections (same-site) — standalone edges
-            p.directs.forEach(function(c) {
+            // Direct connections (same-site) — collapsed into ONE click-to-expand
+            // bundle per device pair, mirroring the tunnel-bundle model. Individual
+            // links are revealed as sublanes on click (expandTunnel handles the
+            // carrier-less case). A pair with a single direct link is still a bundle
+            // for visual consistency.
+            if (p.directs.length > 0) {
+                var seenTypes = {}, typeLabels = [];
+                p.directs.forEach(function(c) {
+                    if (!seenTypes[c.connection_type]) {
+                        seenTypes[c.connection_type] = true;
+                        typeLabels.push(getTypeLabel(c.connection_type));
+                    }
+                });
+                var anyUp = p.directs.some(function(c) { return c.status === 'up'; });
+                var anyDown = p.directs.some(function(c) { return c.status === 'down'; });
+                var bundleStatus = anyUp ? 'up' : (anyDown ? 'down' : 'unknown');
                 elements.push({ group: 'edges', data: {
-                    id: 'conn-' + c.id,
-                    source: 'dev-' + c.source_device_id, target: 'dev-' + c.dest_device_id,
-                    edgeType: 'connection', connType: c.connection_type,
-                    status: c.status || 'unknown', connObj: c,
-                    label: getTypeLabel(c.connection_type)
+                    id: 'direct-' + key,
+                    source: 'dev-' + p.srcId, target: 'dev-' + p.dstId,
+                    edgeType: 'direct-bundle', connType: 'direct',
+                    status: bundleStatus,
+                    childConns: p.directs.slice(),
+                    expanded: false,
+                    label: typeLabels.join(', ')
                 }});
-            });
+            }
         });
 
         return elements;
@@ -356,6 +373,9 @@
             }},
             // Tunnel bundle edges — thicker pipe
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            // Direct bundle — one collapsed teal link per same-site pair; straight (not
+            // parallel bezier) since it is now a single edge. Expands into sublanes on click.
+            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
             // Direct connection edges — bezier so parallel same-pair direct links stack/offset instead of overlapping into one line
             { selector: 'edge[edgeType="connection"]', style: { 'curve-style': 'bezier', 'control-point-step-size': 18 } },
             // Connection type colors
@@ -535,8 +555,8 @@
             var edge = evt.target;
             var data = edge.data();
 
-            // Tunnel bundle: toggle expand/collapse
-            if (data.edgeType === 'tunnel-bundle') {
+            // Tunnel or direct bundle: toggle expand/collapse
+            if (data.edgeType === 'tunnel-bundle' || data.edgeType === 'direct-bundle') {
                 // Resolve to the -src half (which holds childConns) for cross-site pairs
                 var srcEdge = edge;
                 if (data.tunnelHalf === 'dst' && data.tunnelPeerId) {
@@ -653,8 +673,13 @@
             }
         }
 
+        // Tunnel bundles have a carrier lane (the tunnel itself) at index 0;
+        // direct bundles are carrier-less (all links are equal children).
+        var hasCarrier = data.edgeType === 'tunnel-bundle';
+        var carrierCount = hasCarrier ? 1 : 0;
+
         // Calculate offsets for visual separation
-        var totalLanes = children.length + 1;
+        var totalLanes = children.length + carrierCount;
         var spacing = 25;
         var baseOffset = -(totalLanes - 1) * spacing / 2;
 
@@ -708,12 +733,14 @@
             cy.add({ group: 'edges', data: { id: tunnelId + '-pipe', source: laneSrc, target: laneDst, edgeType: 'pipe-bg', status: data.status, parentTunnel: tunnelId }});
         }
 
-        // Carrier sublane (index 0)
-        addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, getTypeLabel(data.connType), TYPE_COLORS[data.connType] || '#8b949e', 0);
+        // Carrier sublane (index 0) — tunnel bundles only
+        if (hasCarrier) {
+            addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, getTypeLabel(data.connType), TYPE_COLORS[data.connType] || '#8b949e', 0);
+        }
 
-        // Child overlay sublanes (index 1, 2, ...)
+        // Child sublanes (overlays inside a tunnel, or each same-site direct link)
         children.forEach(function(child, idx) {
-            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, getTypeLabel(child.connection_type), TYPE_COLORS[child.connection_type] || '#8b949e', idx + 1);
+            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, getTypeLabel(child.connection_type), TYPE_COLORS[child.connection_type] || '#8b949e', idx + carrierCount);
         });
 
         // Restart particles to include new sublanes
@@ -763,9 +790,12 @@
             if (data.edgeType === 'sublane' || data.edgeType === 'pipe-bg') return; // handled below
             var hide = false;
             if ((data.edgeType === 'connection' || data.edgeType === 'tunnel-bundle' || data.edgeType === 'offnet') && hiddenTypes[data.connType]) hide = true;
+            // The direct-bundle maps to the "Direct" legend group (all DIRECT_TYPES
+            // toggle together), so it hides only when the whole group is off.
+            if (data.edgeType === 'direct-bundle' && Object.keys(DIRECT_TYPES).every(function(t) { return hiddenTypes[t]; })) hide = true;
             if (!showDown && data.status === 'down') hide = true;
             if (expandedTunnels[data.id]) hide = true;
-            if (hide && data.edgeType === 'tunnel-bundle') hiddenTunnelIds[data.id] = true;
+            if (hide && (data.edgeType === 'tunnel-bundle' || data.edgeType === 'direct-bundle')) hiddenTunnelIds[data.id] = true;
             edge.style('display', hide ? 'none' : 'element');
         });
         // Hide sublanes/pipe-bg of hidden or DOWN tunnels
@@ -1059,13 +1089,41 @@
                 var edge = cy.getElementById('conn-' + ch.id);
                 if (!edge || edge.empty()) edge = cy.getElementById('conn-' + ch.id + '-src');
 
-                // If still not found, it may be an overlay bundled inside a tunnel
+                // If still not found, it may be a child bundled inside a tunnel
+                // (overlay) or a same-site direct bundle. Update the child status in
+                // place; for a direct bundle the edge is not itself a connection, so
+                // recompute its aggregate status (down only when every link is down).
                 if (!edge || edge.empty()) {
                     cy.edges('[edgeType="tunnel-bundle"]').forEach(function(tunnelEdge) {
                         var children = tunnelEdge.data('childConns') || [];
                         children.forEach(function(child) {
                             if (child.id === ch.id) child.status = ch.status;
                         });
+                    });
+                    cy.edges('[edgeType="direct-bundle"]').forEach(function(bundleEdge) {
+                        var children = bundleEdge.data('childConns') || [];
+                        var matched = false;
+                        children.forEach(function(child) {
+                            if (child.id === ch.id) { child.status = ch.status; matched = true; }
+                        });
+                        if (!matched) return;
+                        var anyUp = children.some(function(c) { return c.status === 'up'; });
+                        var anyDown = children.some(function(c) { return c.status === 'down'; });
+                        var newStatus = anyUp ? 'up' : (anyDown ? 'down' : 'unknown');
+                        if (bundleEdge.data('status') === newStatus) return;
+                        if (newStatus === 'down') {
+                            animateFlash(bundleEdge, '#f85149', function() {
+                                bundleEdge.data('status', 'down');
+                                particleEls = particleEls.filter(function(p) { return p.edge !== bundleEdge; });
+                            });
+                        } else if (newStatus === 'up') {
+                            animateFlash(bundleEdge, '#3fb950', function() {
+                                bundleEdge.data('status', 'up');
+                                addParticlePair(bundleEdge, TYPE_COLORS[bundleEdge.data('connType')] || '#8b949e');
+                            });
+                        } else {
+                            bundleEdge.data('status', newStatus);
+                        }
                     });
                     return;
                 }
