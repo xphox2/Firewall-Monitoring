@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.61] - 2026-07-08
+
+### Changed
+- **Connection map: same-site links between two firewalls now collapse into one click-to-expand "Direct" bundle.** Previously every inner-site connection (Ethernet, LAG, L2VLAN, Software Switch/bridge) between a device pair drew its own parallel line, so a pair could show a stack of overlapping links. The overlay now shows a **single** teal link per same-site pair, labeled with the distinct link types it carries (e.g. `Ethernet, LAG`). Clicking it fans the bundle out into one sublane per individual link — exactly like clicking an IPSec tunnel to reveal the tunnels inside — and clicking again, pressing Escape, or tapping the background collapses it. A pair with a single link is still rendered as a bundle for consistency. The bundle honors the "Direct" legend filter, shows the DOWN state (red ✕) only when every inner link is down, and its status refreshes on the 15s status poll. Reuses the existing tunnel expand/collapse machinery (`expandTunnel`/`collapseTunnel`), generalized to a carrier-less bundle. Client-side only (`diagram-cytoscape.js`).
+
 ## [0.11.60] - 2026-07-08
 
 ### Changed
