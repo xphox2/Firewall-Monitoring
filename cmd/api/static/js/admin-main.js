@@ -615,7 +615,7 @@
             });
         } else if (isDoughnut) {
             var ac = window.AdminCommon || {};
-            var borderCol = ac.cssVar ? ac.cssVar('--fwmon-card-bg', '#161b22') : '#161b22';
+            var borderCol = ac.cssVar ? ac.cssVar('--fwmon-chart-arc-border', '#161b22') : '#161b22';
             datasets.forEach(function(ds) {
                 ds.borderWidth = 3;
                 ds.borderColor = borderCol;

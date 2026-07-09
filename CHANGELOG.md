@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.65] - 2026-07-09
+
+### Changed
+- **Day mode: doughnut charts keep their dark segment ring.** v0.11.64 made the doughnut segment borders consistent across theme toggles and auto-refreshes, but standardized on the wrong look — the border was painted in the card-surface color, which is invisible against the white Day-mode card. The border is now a dedicated design token (`--fwmon-chart-arc-border`, dark ink in both themes): Night mode is pixel-identical to before, and Day mode permanently shows the dark ring outlining the segments — through toggles, auto-refresh rebuilds, and full page reloads.
+
 ## [0.11.64] - 2026-07-09
 
 ### Fixed

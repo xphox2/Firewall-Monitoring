@@ -1806,15 +1806,14 @@
                             ds.pointBorderColor = isLight ? cardBg : ds.borderColor;
                         }
                     }
-                    // Doughnut/pie segment separators are painted in the card-
-                    // surface color (createChart bakes cssVar at build time).
-                    // Repaint them here too, or a Day/Night flip leaves the old
-                    // surface color as a visible ring until the next auto-refresh
-                    // rebuilds the chart — the look would change 30s after the
-                    // toggle instead of at the toggle.
+                    // Doughnut/pie segment borders use the themed arc-border
+                    // token (createChart bakes cssVar at build time). Repaint
+                    // here too so a Day/Night flip and the next auto-refresh
+                    // rebuild render the same border — otherwise the look
+                    // changes 30s after the toggle.
                     if ((dsType === 'doughnut' || dsType === 'pie') &&
                         ds.borderWidth && typeof ds.borderColor === 'string') {
-                        ds.borderColor = cardBg;
+                        ds.borderColor = cssVar('--fwmon-chart-arc-border', '#161b22');
                     }
                 });
             } catch (e) { /* dataset shape varies; skip fill rebuild */ }
