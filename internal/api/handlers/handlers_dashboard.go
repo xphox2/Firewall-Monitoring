@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -810,6 +811,203 @@ func (h *Handler) GetDashboardAll(c *gin.Context) {
 		"dashboard":   dashboard,
 		"enrichments": enrichments,
 	}))
+}
+
+// dashboardSummaryDevice is the minimal device shape the landing dashboard needs
+// for its count cards, stale-device card, and noisy-device leaderboard seed. It
+// deliberately omits the heavy enrichment (CPU/mem/iface/VPN) and connection
+// payload that GetDashboardAll computes — those are only used by the Devices page
+// and the connection map, so pulling them on the landing page was pure waste.
+type dashboardSummaryDevice struct {
+	ID         uint      `json:"id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	LastPolled time.Time `json:"last_polled"`
+}
+
+// GetDashboardSummary is the fast landing-dashboard endpoint. It returns only
+// what the first paint needs, using cheap COUNT/GROUP BY queries instead of the
+// 1000-device + 1000-connection + 6-aggregate enrichment load in GetDashboardAll.
+// Both the vitals rail and the stat grid consume this (coalesced client-side), so
+// the heavy /api/dashboard endpoint no longer runs on login.
+func (h *Handler) GetDashboardSummary(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success(nil))
+		return
+	}
+	g := db.Gorm()
+
+	// Device counts by status — a single GROUP BY over the small config table.
+	var statusCounts []struct {
+		Status string
+		C      int64
+	}
+	if err := g.Model(&models.Device{}).Select("status, COUNT(*) AS c").Group("status").Scan(&statusCounts).Error; err != nil {
+		log.Printf("dashboard summary: status counts: %v", err)
+	}
+	var total, online, offline int64
+	for _, r := range statusCounts {
+		total += r.C
+		switch r.Status {
+		case "online":
+			online = r.C
+		case "offline":
+			offline = r.C
+		}
+	}
+
+	// Minimal device list (id/name/status/last_polled) for the stale + noisy cards.
+	devices := make([]dashboardSummaryDevice, 0)
+	if err := g.Model(&models.Device{}).Select("id, name, status, last_polled").Limit(1000).Scan(&devices).Error; err != nil {
+		log.Printf("dashboard summary: device list: %v", err)
+	}
+
+	// Probe counts (excluding decommissioned): active drives the stat card,
+	// pending + stale drive the vitals-rail severity readout.
+	probeCount := func(where string, args ...interface{}) int64 {
+		var n int64
+		q := g.Model(&models.Probe{}).Where("decommissioned_at IS NULL")
+		if where != "" {
+			q = q.Where(where, args...)
+		}
+		if err := q.Count(&n).Error; err != nil {
+			log.Printf("dashboard summary: probe count (%s): %v", where, err)
+		}
+		return n
+	}
+	probeActive := probeCount("approval_status = ? AND status = ?", "approved", "online")
+	probePending := probeCount("approval_status = ?", "pending")
+	probeStale := probeCount("approval_status = ? AND status <> ?", "approved", "online")
+
+	// Syslog + trap 24h totals (same aggregates the vitals rail used, deviceID=0).
+	var syslog24, trap24 int64
+	if s, err := db.GetSyslogStats(24, 0); err == nil && s != nil {
+		syslog24 = s.Total
+	}
+	if t, err := db.GetTrapStats(24, 0); err == nil && t != nil {
+		trap24 = t.Total
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"device_counts":       gin.H{"total": total, "online": online, "offline": offline},
+		"devices":             devices,
+		"probe_count_active":  probeActive,
+		"probe_count_pending": probePending,
+		"probe_count_stale":   probeStale,
+		"syslog_24h":          syslog24,
+		"trap_24h":            trap24,
+	}))
+}
+
+// GetNoisyDevices returns the top-N devices ranked by recent alert + syslog
+// volume, computed with a fixed set of GROUP BY device_id queries (bounded by the
+// hours window → partition pruning on syslog_messages). This replaces the old
+// dashboard behavior of firing /alerts/stats + /syslog/stats per device (2N
+// round-trips) with a single request.
+func (h *Handler) GetNoisyDevices(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusOK, response.Success([]gin.H{}))
+		return
+	}
+	g := db.Gorm()
+
+	hours := httputil.ParseHours(c)
+	limit := 10
+	if lq := c.Query("limit"); lq != "" {
+		if n, err := strconv.Atoi(lq); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	type devCount struct {
+		DeviceID uint
+		C        int64
+	}
+
+	alertByDev := map[uint]int64{}
+	syslogByDev := map[uint]int64{}
+
+	var alertRows []devCount
+	if err := g.Model(&models.Alert{}).Select("device_id, COUNT(*) AS c").
+		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&alertRows).Error; err != nil {
+		log.Printf("noisy: alert counts: %v", err)
+	}
+	for _, r := range alertRows {
+		alertByDev[r.DeviceID] = r.C
+	}
+
+	var sysRows []devCount
+	if err := g.Model(&models.SyslogMessage{}).Select("device_id, COUNT(*) AS c").
+		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&sysRows).Error; err != nil {
+		log.Printf("noisy: syslog counts: %v", err)
+	}
+	for _, r := range sysRows {
+		syslogByDev[r.DeviceID] = r.C
+	}
+
+	// Syslog summaries (rolled-up) carry a count column, folded in like GetSyslogStats.
+	var sumRows []devCount
+	if err := g.Model(&models.SyslogSummary{}).Select("device_id, COALESCE(SUM(count),0) AS c").
+		Where("timestamp > ? AND device_id <> 0", cutoff).Group("device_id").Scan(&sumRows).Error; err != nil {
+		log.Printf("noisy: syslog summary counts: %v", err)
+	}
+	for _, r := range sumRows {
+		syslogByDev[r.DeviceID] += r.C
+	}
+
+	// Union device ids, look up names in one query.
+	idSet := map[uint]bool{}
+	for id := range alertByDev {
+		idSet[id] = true
+	}
+	for id := range syslogByDev {
+		idSet[id] = true
+	}
+	names := map[uint]string{}
+	if len(idSet) > 0 {
+		ids := make([]uint, 0, len(idSet))
+		for id := range idSet {
+			ids = append(ids, id)
+		}
+		var devs []struct {
+			ID   uint
+			Name string
+		}
+		if err := g.Model(&models.Device{}).Select("id, name").Where("id IN ?", ids).Scan(&devs).Error; err != nil {
+			log.Printf("noisy: device names: %v", err)
+		}
+		for _, d := range devs {
+			names[d.ID] = d.Name
+		}
+	}
+
+	type noisyRow struct {
+		DeviceID uint   `json:"device_id"`
+		Name     string `json:"name"`
+		Alerts   int64  `json:"alerts"`
+		Syslog   int64  `json:"syslog"`
+		Total    int64  `json:"total"`
+	}
+	rows := make([]noisyRow, 0, len(idSet))
+	for id := range idSet {
+		// Skip devices that were deleted but still have telemetry rows.
+		name, ok := names[id]
+		if !ok {
+			continue
+		}
+		a := alertByDev[id]
+		s := syslogByDev[id]
+		rows = append(rows, noisyRow{DeviceID: id, Name: name, Alerts: a, Syslog: s, Total: a + s})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Total > rows[j].Total })
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+
+	c.JSON(http.StatusOK, response.Success(rows))
 }
 
 // GetDeviceDataDiag returns per-device system_status record counts and latest values.

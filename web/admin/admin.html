@@ -325,6 +325,28 @@
                     <div class="stat-value" id="trap-count">--</div>
                 </div>
             </div>
+            <!-- Server Platform card: live host + process health for the box
+                 running Firewall-Mon. Fed by GET /api/system (Go runtime, DB
+                 pool, host CPU/mem/disk/load), polled every 30s by
+                 AdminCommon.refreshSystemHealth. Values are theme-token styled;
+                 CPU/mem/disk color by threshold in JS. -->
+            <div class="card" id="sys-platform-card">
+                <div class="card-header">
+                    <h2><span class="pulse-dot online" id="sys-health-dot" style="margin-right:8px;"></span>Server Platform</h2>
+                    <span style="font-size:0.78rem;color:var(--fwmon-text-mute,#8b949e);">host &amp; process health &middot; refreshes every 30s</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;padding:4px 2px 2px;">
+                    <div class="sys-metric"><div class="sys-metric-lbl">CPU</div><div class="sys-metric-val" id="sys-cpu">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">Memory</div><div class="sys-metric-val" id="sys-mem">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">Disk</div><div class="sys-metric-val" id="sys-disk">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">Load (1m)</div><div class="sys-metric-val" id="sys-load">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">DB Pool</div><div class="sys-metric-val" id="sys-dbpool">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">DB Size</div><div class="sys-metric-val" id="sys-dbsize">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">Uptime</div><div class="sys-metric-val" id="sys-uptime">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">Goroutines</div><div class="sys-metric-val" id="sys-goroutines">--</div></div>
+                    <div class="sys-metric"><div class="sys-metric-lbl">Heap</div><div class="sys-metric-val" id="sys-heap">--</div></div>
+                </div>
+            </div>
             <div class="chart-row">
                 <div class="chart-card">
                     <h3>Activity Trend (24h)</h3>

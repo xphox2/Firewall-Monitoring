@@ -1118,3 +1118,25 @@ html[data-role="operator"] [data-min-role="admin"] {
     color: var(--fwmon-text-faint);
     border: 1px solid var(--fwmon-border);
 }
+
+/* Server Platform card metric tiles (dashboard system-health highlight). */
+.sys-metric {
+    background: var(--fwmon-panel-bg);
+    border: 1px solid var(--fwmon-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.sys-metric-lbl {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fwmon-text-mute);
+    margin-bottom: 6px;
+}
+.sys-metric-val {
+    font-size: 1.35rem;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: var(--fwmon-text);
+    line-height: 1.1;
+}

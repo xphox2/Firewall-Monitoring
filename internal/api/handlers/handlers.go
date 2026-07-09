@@ -36,6 +36,9 @@ type Handler struct {
 	threatMatch  threatintel.Holder
 	nocHub       *nocHub
 	version      string
+	// startTime is the process boot time, used by GetSystemHealth to report
+	// server uptime on the dashboard's Server Platform card.
+	startTime time.Time
 	// db is the repository interface (database.Store), not the concrete
 	// *database.Database god-object — handlers depend on the narrow method set
 	// and can be unit-tested with a fake store. The runtime value is still the
@@ -73,6 +76,7 @@ func NewHandler(cfg *config.Config, authManager *auth.AuthManager, db *database.
 		uptimeTrack: uptime.NewUptimeTracker(cfg),
 		geoResolver: geo,
 		db:          db,
+		startTime:   time.Now(),
 	}
 	// Load the initial threat-intel matcher from the DB. A background refresh
 	// goroutine (cmd/api) reloads it periodically so feed edits + expiries apply.

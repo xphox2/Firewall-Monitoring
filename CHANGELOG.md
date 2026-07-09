@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.62] - 2026-07-08
+
+### Changed
+- **Admin dashboard (login landing page) now paints in well under a second instead of 2–4 s.** The slowdown was self-inflicted: the heavy `GET /api/dashboard` endpoint (1000 devices + `Site`/`Probe` preloads, 1000 connections + preloads, and 6 batched enrichment aggregates over the partitioned telemetry tables) was fetched **2–3× on every login** — once by the vitals rail and once by the stat grid — even though the landing page only needs device counts, a stale-device list, and a noisy-device leaderboard. It never used the enrichment/connection payload (that belongs to the Devices page). The landing page now loads from a new lightweight `GET /api/dashboard/summary` (device counts via `GROUP BY status`, a minimal id/name/status/last_polled device list, active/pending/stale probe counts, and 24 h syslog/trap totals), and the vitals rail + stat grid **share one coalesced request** (`AdminCommon.fetchDashboardSummary`) instead of each hitting the heavy endpoint. The heavy `/api/dashboard` is unchanged and still serves the Devices page and connection map.
+- **Noisy-device leaderboard is one query instead of 2×N round-trips.** It previously fired `/alerts/stats` + `/syslog/stats` per device (100 requests at 50 devices) after paint. New `GET /api/dashboard/noisy?hours=&limit=` computes the top-N by alert + syslog volume server-side with a fixed set of `GROUP BY device_id` queries (bounded by the window → partition pruning), returning the ranked rows directly.
+
+### Added
+- **"Server Platform" health card on the dashboard.** A new highlight surfacing live health of the box running Firewall-Mon: host **CPU / memory / disk / load average** (via `gopsutil`), Go runtime (goroutines, heap), database connection-pool utilization, database size, process uptime, and a DB-reachable indicator. Backed by a new admin-only `GET /api/system` endpoint; the card polls every 30 s and colors CPU/mem/disk by threshold. Adds the `github.com/shirou/gopsutil/v4` dependency.
+
 ## [0.11.61] - 2026-07-08
 
 ### Changed
