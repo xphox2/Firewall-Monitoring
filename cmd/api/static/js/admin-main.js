@@ -644,6 +644,19 @@
         var mergedOpts = Object.assign({}, defaults, opts || {});
         if (isDoughnut) {
             mergedOpts.cutout = '75%';
+            // Chart.js copies each arc's borderColor/borderWidth onto its
+            // legend marker, so the segment ring would also outline the
+            // legend swatches. The ring belongs on the graph only — strip
+            // it from the legend markers.
+            mergedOpts.plugins = mergedOpts.plugins || {};
+            mergedOpts.plugins.legend = mergedOpts.plugins.legend || { position: 'bottom' };
+            mergedOpts.plugins.legend.labels = mergedOpts.plugins.legend.labels || {};
+            mergedOpts.plugins.legend.labels.generateLabels = function(chart) {
+                var ov = (Chart.overrides[chart.config.type] || Chart.overrides.doughnut);
+                var items = ov.plugins.legend.labels.generateLabels(chart);
+                items.forEach(function(item) { item.lineWidth = 0; });
+                return items;
+            };
         }
 
         chartInstances[canvasId] = new Chart(canvas, { type: type, data: { labels: labels, datasets: datasets }, options: mergedOpts });

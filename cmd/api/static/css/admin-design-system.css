@@ -112,11 +112,12 @@
     --fwmon-border:        #2a313b; /* steel hairline — card edges read */
     --fwmon-border-strong: #3b4654;
 
-    /* Doughnut/pie segment border (Chart.js arc separators). Dark ink in BOTH
-     * themes: on night it matches the card surface (classic gap look); on day
-     * it reads as a deliberate dark ring outlining the segments. Consumed by
-     * createChart + recolorChartsForTheme — keep those in sync with this. */
-    --fwmon-chart-arc-border: #161b22;
+    /* Doughnut/pie segment ring (Chart.js arc borders). Contrast-mirrored
+     * across themes: night gets a white ring, day gets a dark-ink ring — the
+     * same visible-outline format either way. Applies to the arcs only (the
+     * legend swatches are excluded in createChart). Consumed by createChart +
+     * recolorChartsForTheme — keep those in sync with this. */
+    --fwmon-chart-arc-border: #ffffff;
 
     /* Text — cool off-white ramp; faint/mute use the AA-verified values from
      * AUDIT-066/067 so small labels stay legible (not washed). */
@@ -176,8 +177,8 @@
     --fwmon-border:        #d3dae3;
     --fwmon-border-strong: #b9c4d0;
 
-    /* Day mode keeps the dark segment ring — a white (card-bg) border here
-     * makes the doughnut borders invisible against the card. */
+    /* Day mode's doughnut ring is dark ink (night's is white) — mirrored
+     * contrast so both themes show the same visible-outline format. */
     --fwmon-chart-arc-border: #161b22;
 
     --fwmon-text:       #16242c;

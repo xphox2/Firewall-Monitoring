@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.66] - 2026-07-09
+
+### Changed
+- **Doughnut chart ring: mirrored contrast across themes, and arcs only.** Night mode now gets a white segment ring (`--fwmon-chart-arc-border` = white in dark theme), mirroring Day mode's dark-ink ring — both themes present the same visible-outline format instead of Night keeping the old surface-colored (invisible) border. The ring is also confined to the graph itself: Chart.js copies each arc's border onto its legend marker by default, so the legend swatches were being outlined too — legend markers are now rendered borderless on all doughnut/pie charts.
+
 ## [0.11.65] - 2026-07-09
 
 ### Changed
