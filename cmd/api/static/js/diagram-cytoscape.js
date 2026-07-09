@@ -596,7 +596,7 @@
             // the same thing everywhere. Uses SPA navigation (not a full reload);
             // a canvas tap isn't an <a>, so we route through a hidden anchor click
             // that the admin router's click-interceptor picks up.
-            spaNavigate('/admin/alerts?device_id=' + data.deviceId);
+            spaNavigate('/admin/alerts?device_id=' + data.deviceId + '&acknowledged=false');
         });
 
         cy.on('tap', 'node[nodeType="cloud"]', function() {

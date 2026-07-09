@@ -4198,7 +4198,8 @@
                   chipLabel: function(v) { return siteLabel(v); } },
                 { id: 'alerts-filter-type',     stateKey: 'alert_type',   chipKey: 'type' },
                 { id: 'alerts-filter-severity', stateKey: 'severity',     chipKey: 'sev' },
-                { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack' }
+                { id: 'alerts-filter-ack',      stateKey: 'acknowledged', chipKey: 'ack',
+                  chipLabel: function(v) { return v === 'false' ? 'Unacknowledged' : (v === 'true' ? 'Acknowledged' : v); } }
             ],
             onChange: function() { loadAlerts(); }
         });

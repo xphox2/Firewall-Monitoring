@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.59] - 2026-07-08
+
+### Changed
+- **NOC dashboard clicks now also pre-set the "Unacknowledged" alert filter.** Clicking a site or device card (and tapping a device on the connection map) opens Alert History filtered to that entity **and** to open (unacknowledged) alerts — so the list is immediately ready for select-all → bulk-acknowledge. The active-filter chip reads "Unacknowledged" (added a label for the ack filter).
+
 ## [0.11.58] - 2026-07-08
 
 ### Security

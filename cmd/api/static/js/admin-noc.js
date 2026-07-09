@@ -131,8 +131,8 @@
             var sc = sevClass(s.worst_severity);
             var total = (s.devices_online || 0) + (s.devices_offline || 0);
             var probeWarn = s.probe_offline ? '<span class="fwmon-noc-badge crit">probe down</span>' : '';
-            html += '<a class="fwmon-noc-card ' + sc + '" href="/admin/alerts?site_id=' + encodeURIComponent(key) + '"' +
-                ' title="View alerts for ' + esc(s.site_name || 'this site') + '">' +
+            html += '<a class="fwmon-noc-card ' + sc + '" href="/admin/alerts?site_id=' + encodeURIComponent(key) + '&acknowledged=false"' +
+                ' title="View open alerts for ' + esc(s.site_name || 'this site') + '">' +
                 '<div class="fwmon-noc-card-head">' +
                     '<span class="fwmon-noc-dot ' + sc + '"></span>' +
                     '<span class="fwmon-noc-card-title">' + esc(s.site_name || 'Site') + '</span>' +
@@ -181,8 +181,8 @@
             var dev = rows[i].dev;
             var sc = sevClass(dev.worst_severity);
             var online = dev.status === 'online' || dev.status === 'up';
-            html += '<a class="fwmon-noc-card ' + sc + '" href="/admin/alerts?device_id=' + encodeURIComponent(dev.id) + '"' +
-                ' title="View alerts for ' + esc(dev.name || ('DEV-' + dev.id)) + '">' +
+            html += '<a class="fwmon-noc-card ' + sc + '" href="/admin/alerts?device_id=' + encodeURIComponent(dev.id) + '&acknowledged=false"' +
+                ' title="View open alerts for ' + esc(dev.name || ('DEV-' + dev.id)) + '">' +
                 '<div class="fwmon-noc-card-head">' +
                     '<span class="fwmon-noc-dot ' + sc + '"></span>' +
                     '<span class="fwmon-noc-card-title">' + esc(dev.name || ('DEV-' + dev.id)) + '</span>' +
