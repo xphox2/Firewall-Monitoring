@@ -1,5 +1,11 @@
 # Lessons
 
+## When a bug report describes two visual states, the user is telling you which one they want (2026-07-09)
+
+**Mistake:** user reported "switch to day mode, you will have a border on the graphs. Once it refreshes the border on the graph is lost." I diagnosed the inconsistency correctly (doughnut borders baked at chart build time, not repainted on theme toggle) but resolved it toward the state I judged design-consistent (invisible card-bg border) — the exact opposite of what they wanted. Shipped v0.11.64, got "you made it worse," shipped v0.11.65 to invert it.
+
+**Rules:** (a) when a user describes a before/after visual change as a bug, the state they mention with detail or approval ("you will have a border") is almost always the DESIRED state, and the transition away from it is the complaint — fix toward it; (b) if both end states are plausible and the fix direction is a design judgment call, state the two options in one sentence and pick the user-described one as default, don't pick against the report; (c) "make it consistent" answers HOW but not WHICH — consistency toward the wrong state is still a regression in the user's eyes.
+
 ## A test session's deliverable includes the user's own post-publish checklist (2026-07-03)
 
 **Mistake:** ran a thorough local walkthrough of Tranche 2, reported the results, and stopped. User: "you failed to outline all the changes I need to test once I publish." The verification I can do locally (synthetic feeds, no real PD/Opsgenie/SMTP, SSRF-blocked webhooks) is not the verification that matters to the operator — the deploy-and-confirm pass on prod is theirs, and they need the list.
