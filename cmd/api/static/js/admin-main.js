@@ -1849,23 +1849,16 @@
                         ? '<span style="color:var(--fwmon-text-faint);" title="Site-wide storm rollup — many sources, no single device">Site-wide</span>'
                         : ''));
             var siteCell = a.site_name ? escapeHtml(a.site_name) : '<span style="color:var(--fwmon-text-faint);">—</span>';
-            // v0.11.46: a storm digest is one row collapsing many sources; a DIGEST
-            // chip flags it (the count lives in the message). The chip already says
-            // "DIGEST", so the base badge drops the redundant _DIGEST suffix — the
-            // Type cell reads "SFLOW_SECURITY" + [DIGEST] instead of the doubled
-            // "SFLOW_SECURITY_DIGEST DIGEST".
-            var isDigestType = a.alert_type === 'SFLOW_SECURITY_DIGEST';
-            var typeLabel = isDigestType ? 'SFLOW_SECURITY' : a.alert_type;
-            var digestChip = isDigestType
-                ? ' <span class="badge critical" style="opacity:0.85;" title="Cross-source storm rollup — many sources collapsed into one alert">DIGEST</span>'
-                : '';
+            // Type cell is a SINGLE badge with the full alert_type (e.g.
+            // SFLOW_SECURITY_DIGEST) — no nested "badge inside a badge". The
+            // incident reference (INC#N) sits BESIDE the type badge, not inside it.
             // Muted opacity marks snoozed rows apart from live ones (LC-32).
             return '<tr class="alert-row" data-id="' + a.id + '"' + (snoozedActive ? ' style="opacity:0.55;"' : '') + '>' +
                 checkboxCell +
                 '<td style="white-space:nowrap;">' + formatDate(a.timestamp) + '</td>' +
                 '<td>' + deviceCell + '</td>' +
                 '<td>' + siteCell + '</td>' +
-                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(typeLabel) + incidentChip + digestChip + '</span></td>' +
+                '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.alert_type) + '</span>' + incidentChip + '</td>' +
                 '<td><span class="badge ' + escapeHtml(a.severity) + '">' + escapeHtml(a.severity).toUpperCase() + '</span></td>' +
                 '<td class="expandable-msg">' + escapeHtml(a.message) + '</td>' +
                 '<td>' + statusCol + '</td>' +
@@ -1963,8 +1956,7 @@
                 '<div style="margin-bottom:16px;">' +
                     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
                         '<span class="badge ' + sevClass + '" style="font-size:0.9rem;padding:4px 12px;">' + (a.severity || 'UNKNOWN').toUpperCase() + '</span>' +
-                        '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml((a.alert_type === 'SFLOW_SECURITY_DIGEST' ? 'SFLOW_SECURITY' : a.alert_type) || 'ALERT') + '</span>' +
-                        (a.alert_type === 'SFLOW_SECURITY_DIGEST' ? ' <span class="badge critical" style="opacity:0.85;" title="Cross-source storm rollup — many sources collapsed into one alert">DIGEST</span>' : '') +
+                        '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml(a.alert_type || 'ALERT') + '</span>' +
                         incidentChip +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +

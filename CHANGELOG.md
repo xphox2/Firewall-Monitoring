@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.60] - 2026-07-08
+
+### Changed
+- **Alerts Type column shows a single, full type label — no more badge-inside-a-badge.** The storm digest previously rendered as an `SFLOW_SECURITY` badge with a separate `DIGEST` chip nested inside it, which read like two competing "types" and looked cluttered. The Type cell (alerts list + alert-detail header) now shows the plain full `alert_type` (e.g. `SFLOW_SECURITY_DIGEST`) as one badge. The incident reference (`INC#N`) now sits *beside* the type badge instead of nested inside it. Applies to every alert type uniformly.
+
 ## [0.11.59] - 2026-07-08
 
 ### Changed
