@@ -1020,32 +1020,46 @@
         var el = document.getElementById(id);
         if (el) el.textContent = val;
     }
+
+    /* fetchDashboardSummary coalesces the cheap /dashboard/summary call so the
+     * vitals rail (fires immediately) and the dashboard page (fires after CSRF)
+     * share ONE request instead of each hitting the heavy /dashboard endpoint.
+     * A short TTL also collapses rapid re-navigations. Returns the summary data
+     * object (or null). Pass force=true to bypass the cache. */
+    var _summaryCache = null;    // { at: ms, data: obj }
+    var _summaryInflight = null; // Promise while a fetch is in flight
+    function fetchDashboardSummary(force) {
+        if (!force && _summaryCache && (Date.now() - _summaryCache.at) < 3000) {
+            return Promise.resolve(_summaryCache.data);
+        }
+        if (_summaryInflight) return _summaryInflight;
+        _summaryInflight = apiFetch(API_BASE + '/dashboard/summary').then(function (r) {
+            var data = (r && r.data) ? r.data : null;
+            _summaryCache = { at: Date.now(), data: data };
+            _summaryInflight = null;
+            return data;
+        }).catch(function () {
+            _summaryInflight = null;
+            return null;
+        });
+        return _summaryInflight;
+    }
+
     function refreshVitals() {
         var rail = document.getElementById('vitals-rail');
         if (!rail) return;
-        Promise.all([
-            apiFetch(API_BASE + '/dashboard').catch(function () { return null; }),
-            apiFetch(API_BASE + '/probes').catch(function () { return null; }),
-            apiFetch(API_BASE + '/syslog/stats').catch(function () { return null; })
-        ]).then(function (r) {
-            var dash = (r[0] && r[0].data) ? (r[0].data.dashboard || r[0].data) : null;
-            if (!dash) return;
-            var devices = dash.devices || [];
-            var online = devices.filter(function (d) { return d.status === 'online'; }).length;
-            var offline = devices.filter(function (d) { return d.status === 'offline'; }).length;
-            var total = devices.length;
+        fetchDashboardSummary().then(function (s) {
+            if (!s) return;
+            var counts = s.device_counts || {};
+            var online = counts.online || 0;
+            var offline = counts.offline || 0;
+            var total = counts.total || 0;
 
-            var allProbes = (r[1] && r[1].data) ? r[1].data : [];
-            var probes = allProbes.filter(function (p) { return !p.decommissioned_at; });
-            var activeProbes = probes.filter(function (p) {
-                return p.approval_status === 'approved' && p.status === 'online';
-            }).length;
-            var staleProbes = probes.filter(function (p) {
-                return p.approval_status === 'approved' && p.status !== 'online';
-            }).length;
-            var pendingProbes = probes.filter(function (p) { return p.approval_status === 'pending'; }).length;
+            var activeProbes = s.probe_count_active || 0;
+            var staleProbes = s.probe_count_stale || 0;
+            var pendingProbes = s.probe_count_pending || 0;
 
-            var syslog = (r[2] && r[2].data) ? (r[2].data.total || 0) : 0;
+            var syslog = s.syslog_24h || 0;
 
             setVital('vital-online', online);
             setVital('vital-total', total);
@@ -1067,12 +1081,65 @@
         });
     }
 
+    /* refreshSystemHealth drives the dashboard's "Server Platform" card from the
+     * cheap /api/system endpoint (Go runtime, DB pool, host CPU/mem/disk/load).
+     * No-op on pages without the card. */
+    function sysMetric(id, text, pct) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        if (typeof pct === 'number') {
+            el.style.color = pct >= 80 ? cssVar('--fwmon-sig-crit', '#f85149')
+                : (pct >= 60 ? cssVar('--fwmon-sig-warn', '#d29922') : cssVar('--fwmon-sig-ok', '#3fb950'));
+        }
+    }
+    function fmtUptime(sec) {
+        sec = Math.floor(sec || 0);
+        var d = Math.floor(sec / 86400); sec -= d * 86400;
+        var h = Math.floor(sec / 3600); sec -= h * 3600;
+        var m = Math.floor(sec / 60);
+        if (d > 0) return d + 'd ' + h + 'h';
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
+    }
+    function fmtGB(bytes) {
+        if (!bytes) return '0';
+        var gb = bytes / (1024 * 1024 * 1024);
+        return gb >= 1 ? gb.toFixed(1) + ' GB' : (bytes / (1024 * 1024)).toFixed(0) + ' MB';
+    }
+    function refreshSystemHealth() {
+        if (!document.getElementById('sys-platform-card')) return;
+        apiFetch(API_BASE + '/system').then(function (r) {
+            var d = (r && r.data) ? r.data : null;
+            if (!d) return;
+            var host = d.host || {}, rt = d.runtime || {}, db = d.db || {}, pool = db.pool || {};
+
+            sysMetric('sys-cpu', host.cpu_percent != null ? host.cpu_percent.toFixed(0) + '%' : 'n/a', host.cpu_percent);
+            sysMetric('sys-mem', host.mem_percent != null ? host.mem_percent.toFixed(0) + '%' : 'n/a', host.mem_percent);
+            sysMetric('sys-disk', host.disk_percent != null ? host.disk_percent.toFixed(0) + '%' : 'n/a', host.disk_percent);
+            sysMetric('sys-load', host.load1 != null ? host.load1.toFixed(2) : 'n/a');
+
+            var poolTxt = (pool.in_use != null) ? (pool.in_use + '/' + (pool.max_open || pool.open || 0)) : 'n/a';
+            sysMetric('sys-dbpool', poolTxt);
+            sysMetric('sys-dbsize', db.size_bytes != null ? fmtGB(db.size_bytes) : 'n/a');
+            sysMetric('sys-uptime', d.uptime_seconds != null ? fmtUptime(d.uptime_seconds) : 'n/a');
+            sysMetric('sys-goroutines', rt.goroutines != null ? Number(rt.goroutines).toLocaleString() : 'n/a');
+            sysMetric('sys-heap', rt.heap_alloc_mb != null ? rt.heap_alloc_mb.toFixed(0) + ' MB' : 'n/a');
+
+            var dot = document.getElementById('sys-health-dot');
+            if (dot) dot.className = 'pulse-dot ' + (db.reachable ? 'online' : 'offline');
+        }).catch(function () {});
+    }
+
     // Apply theme on every admin page; start the vitals poller where the
     // rail exists. Mirrors the tagStaticModals auto-init above.
     function initConsoleChrome() {
         initTheme();
         if (document.getElementById('vitals-rail')) {
             pollWhenVisible(refreshVitals, 30000);
+        }
+        if (document.getElementById('sys-platform-card')) {
+            pollWhenVisible(refreshSystemHealth, 30000);
         }
     }
     if (typeof document !== 'undefined') {
@@ -1310,6 +1377,8 @@
         applyTheme: applyTheme,
         initTheme: initTheme,
         refreshVitals: refreshVitals,
+        fetchDashboardSummary: fetchDashboardSummary,
+        refreshSystemHealth: refreshSystemHealth,
         cssVar: cssVar,
         hexToRgb: hexToRgb,
         fillGradient: fillGradient

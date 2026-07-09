@@ -304,35 +304,19 @@
         card.style.display = '';
 
         var hours = getNoisyWindowHours();
-        // Concurrent fetch — one /alerts/stats and one /syslog/stats per
-        // device, parameterized by ?device_id=. Promise.all collects them.
-        var promises = noisyDeviceListCache.map(function(d) {
-            return Promise.all([
-                apiFetch(API_BASE + '/alerts/stats?hours=' + hours + '&device_id=' + d.id).catch(function() { return null; }),
-                apiFetch(API_BASE + '/syslog/stats?hours=' + hours + '&device_id=' + d.id).catch(function() { return null; })
-            ]).then(function(results) {
-                var alertTotal  = (results[0] && results[0].data && results[0].data.total) || 0;
-                var syslogTotal = (results[1] && results[1].data && results[1].data.total) || 0;
-                return {
-                    device: d,
-                    alerts: alertTotal,
-                    syslog: syslogTotal,
-                    total:  alertTotal + syslogTotal
-                };
-            });
-        });
-
-        Promise.all(promises).then(function(rows) {
-            // Drop devices with zero messages — the leaderboard is for
-            // "noisy" devices, not a sparse list of silent ones.
+        // Single batched request — the server computes the top-N devices by
+        // alert + syslog volume across the whole fleet in one grouped query
+        // (replaces the old 2N per-device /alerts/stats + /syslog/stats fan-out).
+        apiFetch(API_BASE + '/dashboard/noisy?hours=' + hours + '&limit=10').then(function(res) {
+            var rows = (res && res.data) ? res.data : [];
+            // Server already drops silent devices, sorts by volume, and caps to
+            // the limit — but guard defensively.
             rows = rows.filter(function(r) { return r.total > 0; });
             if (rows.length === 0) {
                 card.style.display = 'none';
                 return;
             }
-            // Sort descending by total volume, show top 10.
-            rows.sort(function(a, b) { return b.total - a.total; });
-            var topN = rows.slice(0, 10);
+            var topN = rows;
             if (count) count.textContent = 'top ' + topN.length;
 
             // Maximum value for bar widths (relative scale).
@@ -348,19 +332,18 @@
                     '</tr></thead>' +
                     '<tbody>' +
                     topN.map(function(r) {
-                        var d = r.device;
                         var pct = Math.max(2, Math.round((r.total / maxTotal) * 100));
                         var alertsCell = r.alerts > 0
-                            ? AC.filterLink('alerts', { device_id: d.id, hours: hours }, r.alerts.toLocaleString(),
+                            ? AC.filterLink('alerts', { device_id: r.device_id, hours: hours }, r.alerts.toLocaleString(),
                                 { title: 'Show alerts from this device' })
                             : '<span style="color:#8b949e;">0</span>';
                         var syslogCell = r.syslog > 0
-                            ? AC.filterLink('syslog', { device_id: d.id, hours: hours }, r.syslog.toLocaleString(),
+                            ? AC.filterLink('syslog', { device_id: r.device_id, hours: hours }, r.syslog.toLocaleString(),
                                 { title: 'Show syslog from this device' })
                             : '<span style="color:#8b949e;">0</span>';
                         return '<tr>' +
                             '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
-                                AC.deviceLink(d.id, d.name) +
+                                AC.deviceLink(r.device_id, r.name) +
                             '</td>' +
                             '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' + alertsCell + '</td>' +
                             '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' + syslogCell + '</td>' +
@@ -397,29 +380,28 @@
     }
 
     function loadDashboard() {
+        // The landing page fills from the cheap /dashboard/summary (coalesced with
+        // the vitals rail's call) plus a single /probes fetch for the health cards.
+        // The heavy /api/dashboard (device enrichment + connections) is NOT called
+        // here anymore — it only serves the Devices page and the connection map.
         Promise.all([
-            apiFetch(API_BASE + '/dashboard'),
-            apiFetch(API_BASE + '/probes'),
-            apiFetch(API_BASE + '/syslog/stats'),
-            apiFetch(API_BASE + '/traps/stats')
+            AC.fetchDashboardSummary(),
+            apiFetch(API_BASE + '/probes').catch(function() { return null; })
         ]).then(function(results) {
-            var dashResult = results[0];
+            var summary = results[0];
             var probesResult = results[1];
-            var syslogStatsResult = results[2];
-            var trapStatsResult = results[3];
-            if (!dashResult) return;
-            var raw = dashResult.data;
-            var data = raw.dashboard || raw;
+            if (!summary) return;
+            var counts = summary.device_counts || {};
+            var deviceList = summary.devices || [];
             var allProbes = probesResult && probesResult.data ? probesResult.data : [];
             // Decommissioned probes are retired: excluded from the dashboard's
             // active probe count and health cards. Their telemetry is preserved
             // and still counts in the global Syslog/Trap totals below.
             var probes = allProbes.filter(function(p) { return !p.decommissioned_at; });
 
-            var deviceList = data.devices || [];
-            document.getElementById('total-devices').textContent = deviceList.length || 0;
-            document.getElementById('online-devices').textContent = deviceList.filter(function(f) { return f.status === 'online'; }).length || 0;
-            document.getElementById('offline-devices').textContent = deviceList.filter(function(f) { return f.status === 'offline'; }).length || 0;
+            document.getElementById('total-devices').textContent = counts.total || 0;
+            document.getElementById('online-devices').textContent = counts.online || 0;
+            document.getElementById('offline-devices').textContent = counts.offline || 0;
 
             // Stale-device card (v0.10.216, bundle F3). Compares each
             // device's last_polled to the operator-chosen threshold and
@@ -433,10 +415,9 @@
             // don't block the initial paint.
             renderNoisyDevices(deviceList);
 
-            var activeProbes = probes.filter(function(p) { return p.approval_status === 'approved' && p.status === 'online'; });
-            document.getElementById('active-probes').textContent = activeProbes.length;
-            document.getElementById('syslog-count').textContent = (syslogStatsResult && syslogStatsResult.data ? syslogStatsResult.data.total || 0 : 0).toLocaleString();
-            document.getElementById('trap-count').textContent = (trapStatsResult && trapStatsResult.data ? trapStatsResult.data.total || 0 : 0).toLocaleString();
+            document.getElementById('active-probes').textContent = summary.probe_count_active || 0;
+            document.getElementById('syslog-count').textContent = (summary.syslog_24h || 0).toLocaleString();
+            document.getElementById('trap-count').textContent = (summary.trap_24h || 0).toLocaleString();
 
             // Probe health cards
             var probeContainer = document.getElementById('probe-health-cards');
