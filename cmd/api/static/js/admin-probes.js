@@ -31,7 +31,7 @@
                     '<div class="stat-content">' +
                         '<div class="stat-label">' + label + '</div>' +
                         '<div class="stat-value">' + (total || 0).toLocaleString() + '</div>' +
-                        '<div style="font-size:0.72rem;color:#8b949e;margin-top:4px;">+' + (lastHr || 0).toLocaleString() + ' last hr</div>' +
+                        '<div style="font-size:0.72rem;color:var(--fwmon-text-faint);margin-top:4px;">+' + (lastHr || 0).toLocaleString() + ' last hr</div>' +
                     '</div>' +
                 '</div>';
             }

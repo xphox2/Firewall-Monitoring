@@ -105,7 +105,7 @@
 
     function kv(k, v) {
         return '<div style="display:flex; gap:10px; padding:3px 0;">' +
-            '<div style="min-width:110px; color:var(--fwmon-text-muted,#8a94a6);">' + esc(k) + '</div>' +
+            '<div style="min-width:110px; color:var(--fwmon-text-faint);">' + esc(k) + '</div>' +
             '<div>' + v + '</div></div>';
     }
 

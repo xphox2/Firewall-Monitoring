@@ -269,6 +269,10 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.3px;
+    /* Safety net: without this, a badge with an inline solid fill and no
+     * modifier class inherits the surrounding text color (often the faint
+     * grey of a table cell) and disappears into the fill. */
+    color: var(--fwmon-text);
 }
 
 .badge.online, .badge.up, .badge.approved, .badge.connected, .badge.enabled {
@@ -1462,6 +1466,14 @@ tr:hover {
     background: rgba(56,139,253,0.15);
     color: var(--fwmon-accent);
 }
+
+/* Day-mode inks for the tinted type badges above — the pastel dark-theme
+ * text colors (#b392f0 etc.) wash out on the light surfaces (< 3:1). */
+[data-theme="light"] .badge.vxlan, [data-theme="light"] .badge.l3ipvlan { color: #6d28d9; }
+[data-theme="light"] .badge.tunnel, [data-theme="light"] .badge.ipsec,
+[data-theme="light"] .badge.gre, [data-theme="light"] .badge.sslvpn { color: #a21caf; }
+[data-theme="light"] .badge.lag, [data-theme="light"] .badge.bond { color: #b45309; }
+[data-theme="light"] .badge.l2vlan, [data-theme="light"] .badge.vlan { color: #0f766e; }
 
 /* --- IRC management cards (admin-irc.js) ---
  * The entire IRC server card UI on /admin/irc relied on these classes,

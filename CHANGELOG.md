@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.70] - 2026-07-09
+
+### Fixed
+- **Day/Night contrast audit — unreadable grey text eliminated site-wide.** JS-built HTML across the admin UI baked ~340 GitHub-dark palette colors as inline styles (`color:#8b949e` and friends), so day mode rendered light grey text on white surfaces — the Connections table's Discovery column ("Manual") and the Alert Policies cards were the reported cases, but the same defect existed on Devices, Syslog, Flows, NOC, Alerts, Threat Intel, Probes, Sites, Event Rules, Maintenance, Reports, Settings, Audit, IRC, Profile and both detail pages. Every inline text/background/border color in generated markup now uses the `var(--fwmon-*)` theme tokens (night appearance unchanged — the dark token values are the same hexes; day now resolves its proper dark ink).
+- **Solid-fill badges (AUTO / Direct / Indirect / Current) were nearly invisible** — they set a background but no text color, so the label inherited the surrounding table-cell grey (down to 1.1:1 contrast on the blue AUTO fill). Badges now carry an explicit ink chosen by fill luminance (white on dark fills, dark ink on bright fills like the orange "Indirect"), and the base `.badge` class gained a theme-ink fallback so the failure mode can't recur.
+- **Connection-detail page was hardcoded to the dark palette** — the bridge diagram, Phase 2 selector SVGs and gauge now use theme tokens via inline `style` (SVG re-resolves them instantly on a theme flip), and its five Chart.js charts dropped their baked dark tick/legend/grid colors in favor of the token-driven chart defaults, which the Day/Night recolor pass already repaints. Same fix for the Connections-map side panels and the device-detail canvas "no data" message.
+- **NOC live-status pill, flow-detection severity chips, threat-intel error text and link hover color** were hardcoded pastels that washed out on day surfaces; all retargeted to signal/accent tokens. Tinted connection-type badges (VXLAN/IPSec/LAG/VLAN) gained darker day-mode inks.
+- **`--fwmon-text-mute` failed WCAG AA on some surfaces in both themes** (3.9:1 on the night panel, 4.0:1 on the day base). Nudged to `#828d99` (night) / `#5f6e79` (day) — now ≥4.5:1 on the base, card and panel surfaces; `--fwmon-axis-stroke` follows. Input placeholders no longer use Tailwind's fixed `#9ca3af` grey (now the theme's faint ink). Chart series tokens 5/6/8 (violet/fuchsia/teal) gained darkened day-mode values.
+- **Three flows-page styles referenced an undefined `--fwmon-text-muted` token** and silently fell back to a hardcoded grey; repointed to the real `--fwmon-text-faint`.
+
+### Added
+- **Contrast regression guardrails** (`internal/shell/colorcontrast_daynight_test.go`): the swept palette hexes are banned as inline text colors in admin markup/JS, and every `--fwmon-text*` tier is verified ≥4.5:1 against all three surfaces in both themes. Verified end-to-end with a WCAG contrast scan of all 19 admin SPA sections plus both standalone detail pages in both themes against a live instance.
+
 ## [0.11.69] - 2026-07-09
 
 ### Changed

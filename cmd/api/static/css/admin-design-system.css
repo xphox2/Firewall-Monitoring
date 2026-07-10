@@ -124,7 +124,7 @@
     --fwmon-text:       #e6edf3;
     --fwmon-text-dim:   #c9d1d9;
     --fwmon-text-faint: #8b949e;
-    --fwmon-text-mute:  #768390;
+    --fwmon-text-mute:  #828d99; /* AA ≥4.5:1 on bg/card/panel (was #768390, 3.9:1 on panel) */
 
     /* Border Radii — instrument-bezel, not zero-radius broadsheet nor pill. */
     --fwmon-radius:        8px;
@@ -137,7 +137,7 @@
     --fwmon-elev-2: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 12px 34px rgba(0, 0, 0, 0.6);
 
     /* Axes / grids (chart use) — theme-aware so Day/Night re-reads them. */
-    --fwmon-axis-stroke: #768390;
+    --fwmon-axis-stroke: #828d99;
     --fwmon-grid-stroke: #1c222b;
     --fwmon-tick-stroke: #2a313b;
 
@@ -152,7 +152,10 @@
     --fwmon-series-2: #c8323a;
     --fwmon-series-3: #9a6b0e;
     --fwmon-series-4: #138a5e;
+    --fwmon-series-5: #6d28d9;
+    --fwmon-series-6: #a21caf;
     --fwmon-series-7: #c24a1a;
+    --fwmon-series-8: #0f766e;
 
     --fwmon-accent:        #2563eb;
     --fwmon-accent-hover:  #1d4fc4;
@@ -184,16 +187,26 @@
     --fwmon-text:       #16242c;
     --fwmon-text-dim:   #2d3d45;
     --fwmon-text-faint: #4a5c66;
-    --fwmon-text-mute:  #6b7a85;
+    --fwmon-text-mute:  #5f6e79; /* AA ≥4.5:1 on bg/card/panel (was #6b7a85, 4.0:1 on bg) */
 
     --fwmon-elev-1: 0 1px 2px rgba(22, 36, 44, 0.08), 0 2px 8px rgba(22, 36, 44, 0.06);
     --fwmon-elev-2: 0 2px 4px rgba(22, 36, 44, 0.10), 0 8px 28px rgba(22, 36, 44, 0.12);
 
-    --fwmon-axis-stroke: #6b7a85;
+    --fwmon-axis-stroke: #5f6e79;
     --fwmon-grid-stroke: #dde3ea;
     --fwmon-tick-stroke: #d3dae3;
 
     color-scheme: light;
+}
+
+/* Form placeholders — Tailwind preflight hardcodes #9ca3af, which fails AA
+ * on the day-mode surfaces; keep placeholders on the theme text ramp. This
+ * file loads after tailwind.css (stylesheet_order_test), so same-specificity
+ * wins here. */
+input::placeholder,
+textarea::placeholder {
+    color: var(--fwmon-text-faint);
+    opacity: 1;
 }
 
 /* ============================================================
@@ -867,13 +880,13 @@
 }
 
 .fwmon-link:hover {
-    color: #a5dcff;
+    color: var(--fwmon-accent-hover);
     border-bottom-color: currentColor;
 }
 
 .fwmon-link:focus-visible {
     outline: none;
-    color: #a5dcff;
+    color: var(--fwmon-accent-hover);
     box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.45);
     border-radius: 2px;
 }
