@@ -1843,9 +1843,11 @@
                     if (isLine && ds.fill && ds.backgroundColor && ds.borderColor && ctx2d) {
                         ds.backgroundColor = fillGradient(ctx2d, ds.borderColor, areaH);
                         if (ds.pointBorderColor) {
-                            // Card-surface in BOTH themes — matches createChart,
-                            // so markers keep their line-break halo on night too.
-                            ds.pointBorderColor = cardBg;
+                            // Hollow markers, matching createChart: fill =
+                            // card surface (center looks transparent on the
+                            // card), ring = the line's own color.
+                            ds.pointBackgroundColor = cardBg;
+                            ds.pointBorderColor = ds.borderColor;
                         }
                     }
                     // Doughnut/pie segment borders use the themed arc-border

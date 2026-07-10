@@ -588,7 +588,7 @@
         // markers read on either theme.
         if (type === 'line' && ctx2d) {
             var ac = window.AdminCommon || {};
-            var pointBorder = ac.cssVar ? ac.cssVar('--fwmon-card-bg', '#161b22') : '#161b22';
+            var cardSurface = ac.cssVar ? ac.cssVar('--fwmon-card-bg', '#161b22') : '#161b22';
             datasets.forEach(function(ds) {
                 var color = ds.borderColor || '#4c8dff';
                 // Shared theme-aware fill (AdminCommon.fillGradient) so the Day/
@@ -605,12 +605,12 @@
                     ds.backgroundColor = gradient;
                 }
                 ds.fill = true;
-                ds.pointBackgroundColor = color;
-                // Card-surface point border in BOTH themes: it cuts a visible
-                // break in the line around each marker (the Day-mode look).
-                // Painting the border in the line's own color (the old dark-
-                // mode behavior) merged the point into the line instead.
-                ds.pointBorderColor = pointBorder;
+                // Hollow "transparent" markers (user-specified): the point's
+                // FILL matches the card surface (white on day, dark ink on
+                // night) so the center looks see-through, and the RING is the
+                // line's own color. Don't swap these back to solid dots.
+                ds.pointBackgroundColor = cardSurface;
+                ds.pointBorderColor = color;
                 ds.pointBorderWidth = 2;
                 ds.pointRadius = 4;
                 ds.pointHoverRadius = 6;

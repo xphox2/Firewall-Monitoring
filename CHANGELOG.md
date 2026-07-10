@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.69] - 2026-07-09
+
+### Changed
+- **Line-chart point markers are now hollow ("transparent") rings in both themes.** Each point's center is filled with the card-surface color — white in Day mode, dark ink in Night mode — so it looks see-through against the card, with the ring drawn in the line's own color. Replaces the solid colored dots; applied at chart build and in the Day/Night recolor pass so the fill always matches the background the chart sits on.
+
 ## [0.11.68] - 2026-07-09
 
 ### Changed
