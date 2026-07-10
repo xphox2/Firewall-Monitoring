@@ -159,25 +159,33 @@
         return styles[type] || styles.tunnel;
     }
 
+    // Ink for solid-fill badges: white or near-black by fill luminance (YIQ,
+    // ITU-R 601). Solid-color chips MUST carry an explicit ink — base .badge
+    // sets no color, so the text would inherit the surrounding (often faint
+    // grey) text color and become unreadable on the fill.
+    function badgeInk(hex) {
+        var h = String(hex).replace('#', '');
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        var n = parseInt(h, 16);
+        if (isNaN(n) || h.length !== 6) return '#ffffff';
+        var yiq = (((n >> 16) & 255) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000;
+        return yiq >= 150 ? '#0d1117' : '#ffffff';
+    }
+
+    function solidBadge(fill, label) {
+        return '<span class="badge" style="background:' + fill + ';color:' + badgeInk(fill) + ';font-size:0.65rem;padding:1px 5px;">' + label + '</span>';
+    }
+
     function matchMethodBadge(method, autoDetected) {
-        if (!autoDetected) return '<span style="color:#8b949e;font-size:0.75rem;">Manual</span>';
-        var badges = {
-            'ip_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'interface_ip': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'bidirectional': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'subnet_match': '<span class="badge" style="background:#238636;font-size:0.65rem;padding:1px 5px;">Direct</span>',
-            'tunnel_indirect': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'wan_inferred': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'name_match': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>',
-            'overlay_name': '<span class="badge" style="background:#f0883e;font-size:0.65rem;padding:1px 5px;">Indirect</span>'
-        };
-        return badges[method] || badges['ip_match'];
+        if (!autoDetected) return '<span style="color:var(--fwmon-text-faint);font-size:0.75rem;">Manual</span>';
+        var indirect = { tunnel_indirect: 1, wan_inferred: 1, name_match: 1, overlay_name: 1 };
+        return indirect[method] ? solidBadge('#f0883e', 'Indirect') : solidBadge('#238636', 'Direct');
     }
 
     function typeBadgeHtml(type) {
         var labels = {ipsec:'IPSec',vxlan:'VXLAN',ssl:'SSL VPN',wan:'WAN',l2vlan:'L2VLAN',l3ipvlan:'L3IPVLAN',gre:'GRE',lag:'LAG',ethernet:'Ethernet',tunnel:'Tunnel'};
         var cs = connStyle(type);
-        return '<span class="badge" style="background:' + cs.color + ';font-size:0.65rem;padding:1px 5px;">' + (labels[type] || type || 'Unknown') + '</span>';
+        return solidBadge(cs.color, labels[type] || type || 'Unknown');
     }
 
     function showError(msg, duration) {
@@ -252,7 +260,7 @@
 
         var intro = document.createElement('p');
         intro.textContent = 'This account was created with an auto-generated password (written to the server log). Set your own password to continue.';
-        intro.style.cssText = 'margin:0 0 16px;font-size:13px;color:var(--fwmon-text-muted,#8b949e);line-height:1.5;';
+        intro.style.cssText = 'margin:0 0 16px;font-size:13px;color:var(--fwmon-text-faint);line-height:1.5;';
 
         function field(labelText, id, placeholder) {
             var wrap = document.createElement('div');
@@ -695,6 +703,7 @@
     // not rebuilt after the source pull.
     fetch('/api/version').then(function(r) { return r.json(); }).then(function(v) {
         if (v && v.version) {
+            // DevTools console %c styling can't resolve CSS vars — literal hex on purpose.
             fwmonLog.info('%cFirewall-Mon v' + v.version, 'color:#58a6ff;font-weight:bold');
         }
     }).catch(function() { /* version endpoint not exposed — old build */ });
@@ -1275,7 +1284,7 @@
     function asnChip(asn, org, prefix) {
         if (!asn) return '';
         return ' <span class="fwmon-asn" title="' + escapeHtml(asnTitle(asn, org, prefix)) +
-            '" style="cursor:help;color:#58a6ff;font-size:0.7rem;border:1px solid var(--fwmon-border,#30363d);border-radius:6px;padding:0 4px;margin-left:4px;">AS' +
+            '" style="cursor:help;color:var(--fwmon-accent);font-size:0.7rem;border:1px solid var(--fwmon-border,#30363d);border-radius:6px;padding:0 4px;margin-left:4px;">AS' +
             escapeHtml(String(asn)) + '</span>';
     }
 
@@ -1576,8 +1585,8 @@
         var html = '<div style="margin-bottom:16px;">';
         html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">';
         html += '<span class="badge ' + sevLabel + '" style="font-size:0.9rem;padding:4px 12px;">' + escapeHtml(severity.toUpperCase()) + '</span>';
-        html += '<span style="color:#58a6ff;font-weight:600;font-size:1rem;">' + escapeHtml(type) + '</span>';
-        if (subtype) html += '<span style="color:#8b949e;">/ ' + escapeHtml(subtype) + '</span>';
+        html += '<span style="color:var(--fwmon-accent);font-weight:600;font-size:1rem;">' + escapeHtml(type) + '</span>';
+        if (subtype) html += '<span style="color:var(--fwmon-text-faint);">/ ' + escapeHtml(subtype) + '</span>';
         html += '</div>';
 
         var fields = [];
@@ -1604,7 +1613,7 @@
                 var val = f[key];
                 var valHtml = '';
                 if (key === 'srcip' || key === 'dstip') {
-                    valHtml = '<span style="font-family:monospace;color:#58a6ff;">' + escapeHtml(val) + '</span>';
+                    valHtml = '<span style="font-family:monospace;color:var(--fwmon-accent);">' + escapeHtml(val) + '</span>';
                 } else if (key === 'action') {
                     var actClass = val === 'accept' || val === 'pass' || val === 'detected' ? 'up' : (val === 'deny' || val === 'drop' || val === 'blocked' ? 'down' : 'warning');
                     valHtml = '<span class="badge ' + actClass + '">' + escapeHtml(val.toUpperCase()) + '</span>';
@@ -1614,7 +1623,7 @@
                 } else {
                     valHtml = escapeHtml(val);
                 }
-                fields.push('<div style="display:flex;gap:8px;min-height:24px;"><span style="color:#8b949e;min-width:120px;">' + escapeHtml(label) + ':</span><span>' + valHtml + '</span></div>');
+                fields.push('<div style="display:flex;gap:8px;min-height:24px;"><span style="color:var(--fwmon-text-faint);min-width:120px;">' + escapeHtml(label) + ':</span><span>' + valHtml + '</span></div>');
             }
         });
 
@@ -1630,9 +1639,9 @@
             rawMsg = rawMsg.replace(/^msg=/, '');
         }
 
-        html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:8px;">';
-        html += '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Raw Message</div>';
-        html += '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(msg) + '</div>';
+        html += '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-top:8px;">';
+        html += '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Raw Message</div>';
+        html += '<div style="font-family:monospace;font-size:0.85rem;color:var(--fwmon-text-dim);white-space:pre-wrap;word-break:break-all;">' + escapeHtml(msg) + '</div>';
         html += '</div>';
 
         return html;

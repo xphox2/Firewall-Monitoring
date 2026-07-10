@@ -221,10 +221,10 @@
         host.innerHTML =
             '<table style="width:100%;border-collapse:collapse;">' +
                 '<thead><tr>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Device</th>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">IP</th>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Last polled</th>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Status</th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Device</th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">IP</th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Last polled</th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Status</th>' +
                     '<th></th>' +
                 '</tr></thead>' +
                 '<tbody>' +
@@ -233,13 +233,13 @@
                     var statusBadge = '<span class="badge ' + escapeHtml(d.status || 'unknown') + '">' +
                         escapeHtml((d.status || 'unknown').toUpperCase()) + '</span>';
                     return '<tr>' +
-                        '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
+                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' +
                             AC.deviceLink(d.id, d.name) +
                         '</td>' +
-                        '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;color:#8b949e;">' + escapeHtml(d.ip_address || '-') + '</td>' +
-                        '<td style="padding:8px;border-bottom:1px solid #21262d;color:#8b949e;">' + lastSeen + '</td>' +
-                        '<td style="padding:8px;border-bottom:1px solid #21262d;">' + statusBadge + '</td>' +
-                        '<td style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' +
+                        '<td class="mono" style="padding:8px;border-bottom:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);">' + escapeHtml(d.ip_address || '-') + '</td>' +
+                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);">' + lastSeen + '</td>' +
+                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' + statusBadge + '</td>' +
+                        '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);text-align:right;">' +
                             AC.sshLaunchButton(d) +
                         '</td>' +
                     '</tr>';
@@ -300,7 +300,7 @@
             return;
         }
 
-        host.innerHTML = '<div class="loading" style="padding:24px;color:#8b949e;">Loading top message producers…</div>';
+        host.innerHTML = '<div class="loading" style="padding:24px;color:var(--fwmon-text-faint);">Loading top message producers…</div>';
         card.style.display = '';
 
         var hours = getNoisyWindowHours();
@@ -325,10 +325,10 @@
             host.innerHTML =
                 '<table style="width:100%;border-collapse:collapse;">' +
                     '<thead><tr>' +
-                        '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Device</th>' +
-                        '<th style="text-align:right;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Alerts</th>' +
-                        '<th style="text-align:right;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;">Syslog</th>' +
-                        '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d;width:40%;">Volume</th>' +
+                        '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Device</th>' +
+                        '<th style="text-align:right;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Alerts</th>' +
+                        '<th style="text-align:right;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);">Syslog</th>' +
+                        '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid var(--fwmon-border);width:40%;">Volume</th>' +
                     '</tr></thead>' +
                     '<tbody>' +
                     topN.map(function(r) {
@@ -336,18 +336,18 @@
                         var alertsCell = r.alerts > 0
                             ? AC.filterLink('alerts', { device_id: r.device_id, hours: hours }, r.alerts.toLocaleString(),
                                 { title: 'Show alerts from this device' })
-                            : '<span style="color:#8b949e;">0</span>';
+                            : '<span style="color:var(--fwmon-text-faint);">0</span>';
                         var syslogCell = r.syslog > 0
                             ? AC.filterLink('syslog', { device_id: r.device_id, hours: hours }, r.syslog.toLocaleString(),
                                 { title: 'Show syslog from this device' })
-                            : '<span style="color:#8b949e;">0</span>';
+                            : '<span style="color:var(--fwmon-text-faint);">0</span>';
                         return '<tr>' +
-                            '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
+                            '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' +
                                 AC.deviceLink(r.device_id, r.name) +
                             '</td>' +
-                            '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' + alertsCell + '</td>' +
-                            '<td class="mono" style="padding:8px;border-bottom:1px solid #21262d;text-align:right;">' + syslogCell + '</td>' +
-                            '<td style="padding:8px;border-bottom:1px solid #21262d;">' +
+                            '<td class="mono" style="padding:8px;border-bottom:1px solid var(--fwmon-border);text-align:right;">' + alertsCell + '</td>' +
+                            '<td class="mono" style="padding:8px;border-bottom:1px solid var(--fwmon-border);text-align:right;">' + syslogCell + '</td>' +
+                            '<td style="padding:8px;border-bottom:1px solid var(--fwmon-border);">' +
                                 '<div style="background:rgba(125,211,252,0.15);height:10px;border-radius:5px;width:' + pct + '%;min-width:20px;"' +
                                 ' title="' + r.total.toLocaleString() + ' total"></div>' +
                             '</td>' +
@@ -357,7 +357,7 @@
                 '</table>';
         }).catch(function(err) {
             console.error('Noisy-device leaderboard failed:', err);
-            host.innerHTML = '<div class="error" style="padding:16px;color:#f85149;">Failed to load leaderboard</div>';
+            host.innerHTML = '<div class="error" style="padding:16px;color:var(--fwmon-sig-crit);">Failed to load leaderboard</div>';
         });
     }
 
@@ -687,13 +687,13 @@
             var tbody = document.querySelector('#devices-table tbody');
             tbody.innerHTML = currentDevices.map(function(d) {
                 return '<tr>' +
-                    '<td><a href="/admin/devices/' + d.id + '" style="color:#58a6ff;text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:#768390;font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
+                    '<td><a href="/admin/devices/' + d.id + '" style="color:var(--fwmon-accent);text-decoration:none;font-weight:600">' + escapeHtml(d.name) + '</a>' + (d.description ? '<br><span style="color:var(--fwmon-text-mute);font-size:0.78rem;">' + escapeHtml(d.description) + '</span>' : '') + '</td>' +
                     '<td class="mono">' + escapeHtml(d.ip_address) + '</td>' +
-                    '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:#768390">-</span>') + '</td>' +
-                    '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:#768390">-</span>') + '</td>' +
-                    '<td id="dev-cpu-' + d.id + '" style="color:#768390">-</td>' +
-                    '<td id="dev-mem-' + d.id + '" style="color:#768390">-</td>' +
-                    '<td id="dev-sess-' + d.id + '" style="color:#768390">-</td>' +
+                    '<td>' + (d.probe ? escapeHtml(d.probe.name) : '<span style="color:var(--fwmon-text-mute)">-</span>') + '</td>' +
+                    '<td>' + (d.site ? escapeHtml(d.site.name) : '<span style="color:var(--fwmon-text-mute)">-</span>') + '</td>' +
+                    '<td id="dev-cpu-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
+                    '<td id="dev-mem-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
+                    '<td id="dev-sess-' + d.id + '" style="color:var(--fwmon-text-mute)">-</td>' +
                     '<td class="td-nowrap"><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
                     '<td><div class="row-actions">' +
@@ -826,13 +826,13 @@
                 : AC.iconButton({ action: 'delete-connection', id: c.id, icon: 'trash', title: 'Delete connection', danger: true, minRole: 'operator' })) +
             '</div>';
         return '<tr>' +
-            '<td class="td-ellipsis" title="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
+            '<td class="td-ellipsis" title="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;color:#fff;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
             '<td class="td-ellipsis" title="' + escapeHtml(srcName) + '">' + AC.deviceLink(c.source_device_id, srcName) + '</td>' +
             '<td class="td-ellipsis" title="' + escapeHtml(dstName) + '">' + AC.deviceLink(c.dest_device_id, dstName) + '</td>' +
             '<td class="td-nowrap">' + escapeHtml(c.connection_type ? c.connection_type.toUpperCase() : 'IPSEC') + '</td>' +
             '<td class="td-nowrap"><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
             '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
-            '<td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
+            '<td style="font-size:0.8rem;color:var(--fwmon-text-faint);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
             '<td>' + actions + '</td>' +
         '</tr>';
     }
@@ -1003,9 +1003,9 @@
         var totalPages = Math.ceil(total / 10);
         var currentPage = Math.ceil(syslogOffset / 10);
         container.innerHTML =
-            '<span style="color:#8b949e;">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
+            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
             '<button class="btn secondary sm" data-action="prev-syslog"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
-            '<span style="color:#8b949e;">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
+            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
             '<button class="btn secondary sm" data-action="next-syslog"' + (syslogOffset >= total ? ' disabled' : '') + '>Next</button>';
     }
 
@@ -1141,13 +1141,13 @@
             } else {
                 parsedHtml =
                     '<div style="margin-bottom:16px;">' +
-                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Time:</span> ' + formatDate(m.timestamp) + '</div>' +
-                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Severity:</span> <span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></div>' +
-                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Source IP:</span> <span style="font-family:monospace;color:#58a6ff;">' + escapeHtml(m.source_ip) + '</span></div>' +
-                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">Hostname:</span> ' + escapeHtml(m.hostname) + '</div>' +
-                        '<div style="margin-bottom:8px;"><span style="color:#8b949e;">App Name:</span> ' + escapeHtml(m.app_name) + '</div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:var(--fwmon-text-faint);">Time:</span> ' + formatDate(m.timestamp) + '</div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:var(--fwmon-text-faint);">Severity:</span> <span class="badge ' + severityBadgeClass(m.severity) + '">' + (SEVERITY_NAMES[m.severity] || m.severity) + '</span></div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:var(--fwmon-text-faint);">Source IP:</span> <span style="font-family:monospace;color:var(--fwmon-accent);">' + escapeHtml(m.source_ip) + '</span></div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:var(--fwmon-text-faint);">Hostname:</span> ' + escapeHtml(m.hostname) + '</div>' +
+                        '<div style="margin-bottom:8px;"><span style="color:var(--fwmon-text-faint);">App Name:</span> ' + escapeHtml(m.app_name) + '</div>' +
                     '</div>' +
-                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(m.message) + '</div>';
+                    '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(m.message) + '</div>';
             }
             body.innerHTML = parsedHtml;
             AC.openModal('syslog-detail-modal');
@@ -1238,9 +1238,9 @@
             
             return '<tr class="audit-row" data-id="' + log.id + '">' +
                 '<td>' + formatDate(log.created_at) + '</td>' +
-                '<td><span style="font-weight:600;color:#e6edf3;">' + escapeHtml(log.actor) + '</span></td>' +
+                '<td><span style="font-weight:600;color:var(--fwmon-text);">' + escapeHtml(log.actor) + '</span></td>' +
                 '<td><span class="badge ' + (log.method === 'DELETE' ? 'error' : (log.method === 'POST' ? 'success' : 'info')) + '">' + escapeHtml(log.method) + '</span></td>' +
-                '<td style="font-family:monospace;color:#8b949e;font-size:0.82rem;">' + escapeHtml(log.action) + '</td>' +
+                '<td style="font-family:monospace;color:var(--fwmon-text-faint);font-size:0.82rem;">' + escapeHtml(log.action) + '</td>' +
                 '<td style="font-family:monospace;font-size:0.82rem;">' + escapeHtml(log.target || '—') + '</td>' +
                 '<td><span class="badge ' + statusClass + '">' + log.status + '</span></td>' +
                 '<td>' + escapeHtml(log.ip_address) + '</td>' +
@@ -1250,7 +1250,7 @@
         if (append) {
             tbody.innerHTML += html;
         } else {
-            tbody.innerHTML = html || '<tr><td colspan="7" style="text-align:center;color:#8b949e;padding:24px;">No audit records found</td></tr>';
+            tbody.innerHTML = html || '<tr><td colspan="7" style="text-align:center;color:var(--fwmon-text-faint);padding:24px;">No audit records found</td></tr>';
         }
         
         tbody.querySelectorAll('.audit-row').forEach(function(row) {
@@ -1331,13 +1331,13 @@
         if (!body) return;
         
         var parsedHtml = 
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Timestamp</span>' + formatDate(log.created_at) + '</div>' +
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Actor</span>' + escapeHtml(log.actor) + ' (ID: ' + log.actor_id + ')</div>' +
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Action Route</span><span style="font-family:monospace;font-size:0.85rem;color:#58a6ff;">' + escapeHtml(log.method) + ' ' + escapeHtml(log.action) + '</span></div>' +
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Target Parameters</span><div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + (log.target ? escapeHtml(log.target) : 'None') + '</div></div>' +
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">Status</span><span class="badge ' + (log.status >= 200 && log.status < 300 ? 'online' : 'offline') + '">' + log.status + '</span></div>' +
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">IP Address</span>' + escapeHtml(log.ip_address) + '</div>' +
-            '<div style="margin-bottom:12px;"><span style="color:#8b949e;display:block;font-size:0.75rem;text-transform:uppercase;">User Agent</span><div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:0.85rem;word-break:break-all;color:#8b949e;">' + escapeHtml(log.user_agent) + '</div></div>';
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">Timestamp</span>' + formatDate(log.created_at) + '</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">Actor</span>' + escapeHtml(log.actor) + ' (ID: ' + log.actor_id + ')</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">Action Route</span><span style="font-family:monospace;font-size:0.85rem;color:var(--fwmon-accent);">' + escapeHtml(log.method) + ' ' + escapeHtml(log.action) + '</span></div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">Target Parameters</span><div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:8px;font-family:monospace;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">' + (log.target ? escapeHtml(log.target) : 'None') + '</div></div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">Status</span><span class="badge ' + (log.status >= 200 && log.status < 300 ? 'online' : 'offline') + '">' + log.status + '</span></div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">IP Address</span>' + escapeHtml(log.ip_address) + '</div>' +
+            '<div style="margin-bottom:12px;"><span style="color:var(--fwmon-text-faint);display:block;font-size:0.75rem;text-transform:uppercase;">User Agent</span><div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:8px;font-size:0.85rem;word-break:break-all;color:var(--fwmon-text-faint);">' + escapeHtml(log.user_agent) + '</div></div>';
             
         body.innerHTML = parsedHtml;
         AC.openModal('audit-detail-modal');
@@ -1584,14 +1584,14 @@
             banner.style.display = '';
             banner.innerHTML =
                 'All <strong>' + alertTotalCount.toLocaleString() + '</strong> matching alerts are selected. ' +
-                '<a href="#" data-action="cancel-select-all-matching" style="color:#58a6ff;text-decoration:underline">Clear selection</a>';
+                '<a href="#" data-action="cancel-select-all-matching" style="color:var(--fwmon-accent);text-decoration:underline">Clear selection</a>';
             return;
         }
         if (pageFullySelected && hasMoreMatching) {
             banner.style.display = '';
             banner.innerHTML =
                 Object.keys(alertSelection).length + ' selected on this page. ' +
-                '<a href="#" data-action="select-all-matching" style="color:#58a6ff;text-decoration:underline">' +
+                '<a href="#" data-action="select-all-matching" style="color:var(--fwmon-accent);text-decoration:underline">' +
                 'Select all ' + alertTotalCount.toLocaleString() + ' matching the current filter</a>';
             return;
         }
@@ -1693,9 +1693,9 @@
         var totalPages = Math.ceil(total / 10);
         var currentPage = Math.ceil(alertsOffset / 10);
         container.innerHTML =
-            '<span style="color:#8b949e;">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
+            '<span style="color:var(--fwmon-text-faint);">Showing ' + from + '-' + to + ' of ' + total.toLocaleString() + ' &nbsp;|&nbsp; </span>' +
             '<button class="btn secondary sm" data-action="prev-alerts"' + (currentPage <= 1 ? ' disabled' : '') + '>Prev</button> ' +
-            '<span style="color:#8b949e;">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
+            '<span style="color:var(--fwmon-text-faint);">Page ' + currentPage + ' of ' + totalPages + ' &nbsp;</span>' +
             '<button class="btn secondary sm" data-action="next-alerts"' + (alertsOffset >= total ? ' disabled' : '') + '>Next</button>';
     }
 
@@ -1883,7 +1883,7 @@
                     '<span class="badge warning">SNOOZED until ' + escapeHtml(formatDate(a.snoozed_until)) + '</span>' +
                     '<button class="btn secondary sm" style="margin-left:8px;" data-action="unsnooze-alert" data-min-role="operator" data-id="' + a.id + '">Unsnooze</button>';
                 if (a.snoozed_by || a.snoozed_reason) {
-                    statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
+                    statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:var(--fwmon-text-faint);">';
                     if (a.snoozed_by) statusHtml += 'By: ' + escapeHtml(a.snoozed_by);
                     if (a.snoozed_reason) statusHtml += '<br>Reason: ' + escapeHtml(a.snoozed_reason);
                     statusHtml += '</div>';
@@ -1893,14 +1893,14 @@
                 // Precedes the acknowledged branch because auto-resolved rows are
                 // also acknowledged.
                 statusHtml = '<span class="badge online">RESOLVED (AUTO-CLEARED)</span>';
-                statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
+                statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:var(--fwmon-text-faint);">';
                 statusHtml += 'Resolved at: ' + formatDate(a.resolved_at);
                 if (a.notes) statusHtml += '<br>' + escapeHtml(a.notes);
                 statusHtml += '</div>';
             } else if (a.acknowledged) {
                 statusHtml = '<span class="badge info">ACKNOWLEDGED</span>';
                 if (a.acknowledged_at || a.notes) {
-                    statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:#8b949e;">';
+                    statusHtml += '<div style="margin-top:8px;font-size:0.8rem;color:var(--fwmon-text-faint);">';
                     if (a.acknowledged_at) statusHtml += 'At: ' + formatDate(a.acknowledged_at);
                     if (a.notes) statusHtml += '<br>Notes: ' + escapeHtml(a.notes);
                     statusHtml += '</div>';
@@ -1945,17 +1945,17 @@
                 '<div style="margin-bottom:16px;">' +
                     '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
                         '<span class="badge ' + sevClass + '" style="font-size:0.9rem;padding:4px 12px;">' + (a.severity || 'UNKNOWN').toUpperCase() + '</span>' +
-                        '<span style="color:#58a6ff;font-weight:600;">' + escapeHtml(a.alert_type || 'ALERT') + '</span>' +
+                        '<span style="color:var(--fwmon-accent);font-weight:600;">' + escapeHtml(a.alert_type || 'ALERT') + '</span>' +
                         incidentChip +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 16px;">' +
-                        '<div><span style="color:#8b949e;">Time:</span> ' + formatDate(a.timestamp) + '</div>' +
-                        '<div><span style="color:#8b949e;">Device:</span> ' + devLinkHtml + '</div>' +
-                        '<div><span style="color:#8b949e;">Site:</span> ' + escapeHtml(a.site_name || '—') + '</div>' +
-                        '<div><span style="color:#8b949e;">Policy:</span> ' + (a.policy_id ? 'ID ' + a.policy_id : 'N/A') + '</div>' +
+                        '<div><span style="color:var(--fwmon-text-faint);">Time:</span> ' + formatDate(a.timestamp) + '</div>' +
+                        '<div><span style="color:var(--fwmon-text-faint);">Device:</span> ' + devLinkHtml + '</div>' +
+                        '<div><span style="color:var(--fwmon-text-faint);">Site:</span> ' + escapeHtml(a.site_name || '—') + '</div>' +
+                        '<div><span style="color:var(--fwmon-text-faint);">Policy:</span> ' + (a.policy_id ? 'ID ' + a.policy_id : 'N/A') + '</div>' +
                     '</div>' +
                     (deviceAlertsLink || deviceSyslogLink ?
-                        '<div style="margin-top:10px;font-size:0.8rem;color:#8b949e;display:flex;gap:14px;flex-wrap:wrap;">' +
+                        '<div style="margin-top:10px;font-size:0.8rem;color:var(--fwmon-text-faint);display:flex;gap:14px;flex-wrap:wrap;">' +
                         '<span>Drill into:</span>' +
                         deviceAlertsLink + deviceSyslogLink +
                         '</div>' : '') +
@@ -1964,12 +1964,12 @@
             var metricHtml = '';
             if (a.metric_name || a.threshold || a.current_value) {
                 metricHtml =
-                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Metric Info</div>' +
+                    '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                        '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Metric Info</div>' +
                         '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 16px;">' +
-                            (a.metric_name ? '<div><span style="color:#8b949e;">Metric:</span> <span style="font-family:monospace;">' + escapeHtml(a.metric_name) + '</span></div>' : '') +
-                            (a.threshold ? '<div><span style="color:#8b949e;">Threshold:</span> ' + a.threshold + '</div>' : '') +
-                            (a.current_value ? '<div><span style="color:#8b949e;">Current:</span> <span style="color:#f85149;font-weight:600;">' + a.current_value + '</span></div>' : '') +
+                            (a.metric_name ? '<div><span style="color:var(--fwmon-text-faint);">Metric:</span> <span style="font-family:monospace;">' + escapeHtml(a.metric_name) + '</span></div>' : '') +
+                            (a.threshold ? '<div><span style="color:var(--fwmon-text-faint);">Threshold:</span> ' + a.threshold + '</div>' : '') +
+                            (a.current_value ? '<div><span style="color:var(--fwmon-text-faint);">Current:</span> <span style="color:var(--fwmon-sig-crit);font-weight:600;">' + a.current_value + '</span></div>' : '') +
                         '</div>' +
                     '</div>';
             }
@@ -1979,10 +1979,10 @@
                 var f = parsedMsg.fields;
                 var typeBadge = '<span class="badge ' + (parsedMsg.type === 'TRAFFIC' ? 'info' : (parsedMsg.type === 'IPS' ? 'error' : (parsedMsg.type === 'AV' ? 'critical' : 'warning'))) + '">' + escapeHtml(parsedMsg.type) + '</span>';
                 msgHtml =
-                    '<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Parsed Syslog Fields</div>' +
+                    '<div style="background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                        '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">Parsed Syslog Fields</div>' +
                         '<div style="margin-bottom:8px;">' + typeBadge +
-                            (parsedMsg.subtype ? ' <span style="color:#8b949e;">/ ' + escapeHtml(parsedMsg.subtype) + '</span>' : '') +
+                            (parsedMsg.subtype ? ' <span style="color:var(--fwmon-text-faint);">/ ' + escapeHtml(parsedMsg.subtype) + '</span>' : '') +
                         '</div>' +
                         '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 16px;">';
                 var keyFields = ['srcip', 'srcport', 'dstip', 'dstport', 'proto', 'action', 'sentbyte', 'rcvdbyte', 'duration', 'iface', 'policyid', 'vd', 'sessionid', 'srcintf', 'dstintf', 'hostname', 'logid', 'app', 'appid', 'apprisk', 'virus', 'file', 'sig_name', 'service', 'ha_role'];
@@ -2003,20 +2003,20 @@
                         } else {
                             valHtml = escapeHtml(val);
                         }
-                        msgHtml += '<div><span style="color:#8b949e;">' + escapeHtml(label) + ':</span> ' + valHtml + '</div>';
+                        msgHtml += '<div><span style="color:var(--fwmon-text-faint);">' + escapeHtml(label) + ':</span> ' + valHtml + '</div>';
                     }
                 });
                 msgHtml += '</div></div>';
                 msgHtml +=
-                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;">' +
-                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Raw Syslog Message</div>' +
-                        '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
+                    '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;">' +
+                        '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Raw Syslog Message</div>' +
+                        '<div style="font-family:monospace;font-size:0.85rem;color:var(--fwmon-text-dim);white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
                     '</div>';
             } else {
                 msgHtml =
-                    '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                        '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Message</div>' +
-                        '<div style="font-family:monospace;font-size:0.85rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
+                    '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                        '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:6px;">Message</div>' +
+                        '<div style="font-family:monospace;font-size:0.85rem;color:var(--fwmon-text-dim);white-space:pre-wrap;word-break:break-all;">' + escapeHtml(a.message || '') + '</div>' +
                     '</div>';
             }
 
@@ -2034,12 +2034,12 @@
                 var silenceAllBtn = (isDigest && !a.acknowledged && !a.resolved_at)
                     ? ' <button type="button" class="btn sm" data-action="silence-all-sources" data-min-role="operator" data-id="' + a.id + '" style="font-size:0.72rem;float:right;">Silence all sources</button>'
                     : '';
-                flowsHtml = '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="color:#8b949e;font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">' + flowsTitle + silenceAllBtn + '</div>';
+                flowsHtml = '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:12px;">' +
+                    '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">' + flowsTitle + silenceAllBtn + '</div>';
                 linkedDetections.forEach(function(d, idx) {
                     var route = AC.ipRef(d.src_addr || '?') + ' → ' + (d.dst_addr ? AC.ipRef(d.dst_addr, { port: d.dst_port }) : 'many');
                     var threatLink = d.src_addr
-                        ? ' <a href="/admin/threat-intel?q=' + encodeURIComponent(d.src_addr) + '" style="color:#58a6ff;font-size:0.75rem;" title="Look this source up in Threat Intelligence">threat intel ↗</a>'
+                        ? ' <a href="/admin/threat-intel?q=' + encodeURIComponent(d.src_addr) + '" style="color:var(--fwmon-accent);font-size:0.75rem;" title="Look this source up in Threat Intelligence">threat intel ↗</a>'
                         : '';
                     // "Show sampled packets" surfaces the actual flow rows behind the
                     // "N bytes sampled" figure (lazy — one fetch per detection).
@@ -2054,7 +2054,7 @@
                     flowsHtml +=
                         '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-family:monospace;font-size:0.85rem;flex-wrap:wrap;">' +
                             '<span class="badge ' + escapeHtml((d.severity || 'info')) + '">' + escapeHtml(d.detector || '') + '</span>' +
-                            '<span style="color:#c9d1d9;">' + route + '</span>' +
+                            '<span style="color:var(--fwmon-text-dim);">' + route + '</span>' +
                             threatLink + pktBtn + silenceBtn +
                         '</div>' +
                         '<div id="alert-flows-' + idx + '" style="display:none;margin:2px 0 6px;overflow:auto;"></div>';
@@ -2080,7 +2080,7 @@
                     box.style.display = 'block';
                     if (box.getAttribute('data-loaded')) return;
                     box.setAttribute('data-loaded', '1');
-                    box.innerHTML = '<div style="color:#8b949e;padding:6px;">Loading…</div>';
+                    box.innerHTML = '<div style="color:var(--fwmon-text-faint);padding:6px;">Loading…</div>';
                     var q = API_BASE + '/flows?limit=25&hours=168&src_addr=' + encodeURIComponent(btn.getAttribute('data-src') || '');
                     var dst = btn.getAttribute('data-dst'); if (dst) q += '&dst_addr=' + encodeURIComponent(dst);
                     var dport = btn.getAttribute('data-dport'); if (dport) q += '&dst_port=' + encodeURIComponent(dport);
@@ -2088,7 +2088,7 @@
                         box.innerHTML = AC.flowSamplesTable((res && res.data) || []);
                         AC.enrichIps(box);
                     }).catch(function() {
-                        box.innerHTML = '<div style="color:#f85149;padding:6px;">Failed to load samples.</div>';
+                        box.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:6px;">Failed to load samples.</div>';
                         box.removeAttribute('data-loaded');
                     });
                 });
@@ -2865,7 +2865,7 @@
             console.error('Failed to load network diagram bundle:', err);
             if (diagramHost) {
                 diagramHost.innerHTML =
-                    '<div class="error" style="padding:60px 20px;color:#f85149;">Failed to load network diagram. Try refreshing the page.</div>';
+                    '<div class="error" style="padding:60px 20px;color:var(--fwmon-sig-crit);">Failed to load network diagram. Try refreshing the page.</div>';
             }
         });
     }
@@ -3054,7 +3054,7 @@
 
     function testEmail() {
         var resultEl = document.getElementById('test-email-result');
-        resultEl.innerHTML = '<div style="color:#8b949e;font-size:0.85rem;">Running diagnostic… (this can take a few seconds)</div>';
+        resultEl.innerHTML = '<div style="color:var(--fwmon-text-faint);font-size:0.85rem;">Running diagnostic… (this can take a few seconds)</div>';
         var toOverride = document.getElementById('test-email-to-override');
         var body = toOverride && toOverride.value.trim()
             ? JSON.stringify({ to: toOverride.value.trim() })
@@ -3068,7 +3068,7 @@
             var d = (result && result.data) || {};
             renderSMTPTrace(resultEl, d);
         }).catch(function(e) {
-            resultEl.innerHTML = '<div style="color:#f85149;font-weight:500;">Request failed: ' + escapeHtml(e.message || 'unknown') + '</div>';
+            resultEl.innerHTML = '<div style="color:var(--fwmon-sig-crit);font-weight:500;">Request failed: ' + escapeHtml(e.message || 'unknown') + '</div>';
         });
     }
 
@@ -3091,12 +3091,12 @@
         // when TrimSpace actually changes the value — see
         // UpdateSettings in handlers_settings.go.
         var meta =
-            '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.78rem;color:#8b949e;margin-bottom:6px;">' +
-            '<span><strong>Host:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.host || '') + ':' + escapeHtml(String(d.port || '')) + '</span></span>' +
-            '<span><strong>From:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.from || '') + '</span></span>' +
-            '<span><strong>To:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.to || '') + '</span></span>' +
-            '<span><strong>Auth:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(d.auth_method || 'none') + '</span></span>' +
-            '<span><strong>Total:</strong> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(String(d.total_ms || 0)) + ' ms</span></span>' +
+            '<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.78rem;color:var(--fwmon-text-faint);margin-bottom:6px;">' +
+            '<span><strong>Host:</strong> <span class="mono" style="color:var(--fwmon-text-dim);">' + escapeHtml(d.host || '') + ':' + escapeHtml(String(d.port || '')) + '</span></span>' +
+            '<span><strong>From:</strong> <span class="mono" style="color:var(--fwmon-text-dim);">' + escapeHtml(d.from || '') + '</span></span>' +
+            '<span><strong>To:</strong> <span class="mono" style="color:var(--fwmon-text-dim);">' + escapeHtml(d.to || '') + '</span></span>' +
+            '<span><strong>Auth:</strong> <span class="mono" style="color:var(--fwmon-text-dim);">' + escapeHtml(d.auth_method || 'none') + '</span></span>' +
+            '<span><strong>Total:</strong> <span class="mono" style="color:var(--fwmon-text-dim);">' + escapeHtml(String(d.total_ms || 0)) + ' ms</span></span>' +
             '</div>';
 
         var summary =
@@ -3113,42 +3113,42 @@
                 statusColor = '#f85149'; statusBg = 'rgba(248,81,73,0.15)'; statusLabel = 'FAIL';
             }
             var responseRow = s.response
-                ? '<div style="color:#8b949e;font-size:0.78rem;margin-top:4px;"><span style="color:#8b949e;">response:</span> <span class="mono" style="color:#c9d1d9;">' + escapeHtml(s.response) + '</span></div>'
+                ? '<div style="color:var(--fwmon-text-faint);font-size:0.78rem;margin-top:4px;"><span style="color:var(--fwmon-text-faint);">response:</span> <span class="mono" style="color:var(--fwmon-text-dim);">' + escapeHtml(s.response) + '</span></div>'
                 : '';
             var errorRow = s.error
-                ? '<div style="color:#f85149;font-size:0.82rem;margin-top:4px;font-family:monospace;background:rgba(248,81,73,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #f85149;">' + escapeHtml(s.error) + '</div>'
+                ? '<div style="color:var(--fwmon-sig-crit);font-size:0.82rem;margin-top:4px;font-family:monospace;background:rgba(248,81,73,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #f85149;">' + escapeHtml(s.error) + '</div>'
                 : '';
             // v0.10.224: operator-facing remediation hint. Distinct
             // styling from the error row so the operator can scan past
             // the wire-protocol error and land on the actionable next
             // step (e.g. "check Dovecot auth log on the mail server").
             var hintRow = s.hint
-                ? '<div style="color:#79c0ff;font-size:0.8rem;margin-top:6px;background:rgba(56,139,253,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #1f6feb;line-height:1.5;"><strong style="color:#58a6ff;">Next step:</strong> ' + escapeHtml(s.hint) + '</div>'
+                ? '<div style="color:var(--fwmon-accent);font-size:0.8rem;margin-top:6px;background:rgba(56,139,253,0.08);padding:6px 8px;border-radius:4px;border-left:3px solid #1f6feb;line-height:1.5;"><strong style="color:var(--fwmon-accent);">Next step:</strong> ' + escapeHtml(s.hint) + '</div>'
                 : '';
             return '<tr>' +
-                '<td style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;">' +
+                '<td style="padding:6px 10px;border-bottom:1px solid var(--fwmon-border);vertical-align:top;">' +
                     '<span style="background:' + statusBg + ';color:' + statusColor + ';padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;letter-spacing:0.4px;">' + statusLabel + '</span>' +
                 '</td>' +
-                '<td class="mono" style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;font-size:0.82rem;color:#c9d1d9;font-weight:600;">' +
+                '<td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--fwmon-border);vertical-align:top;font-size:0.82rem;color:var(--fwmon-text-dim);font-weight:600;">' +
                     escapeHtml(s.step) +
                 '</td>' +
-                '<td style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;">' +
-                    '<div style="color:#c9d1d9;font-size:0.82rem;">' + escapeHtml(s.detail || '') + '</div>' +
+                '<td style="padding:6px 10px;border-bottom:1px solid var(--fwmon-border);vertical-align:top;">' +
+                    '<div style="color:var(--fwmon-text-dim);font-size:0.82rem;">' + escapeHtml(s.detail || '') + '</div>' +
                     responseRow + errorRow + hintRow +
                 '</td>' +
-                '<td class="mono" style="padding:6px 10px;border-bottom:1px solid #21262d;vertical-align:top;text-align:right;color:#8b949e;font-size:0.78rem;">' +
+                '<td class="mono" style="padding:6px 10px;border-bottom:1px solid var(--fwmon-border);vertical-align:top;text-align:right;color:var(--fwmon-text-faint);font-size:0.78rem;">' +
                     escapeHtml(String(s.duration_ms || 0)) + ' ms' +
                 '</td>' +
             '</tr>';
         }).join('');
 
         var table = trace.length === 0 ? '' :
-            '<table style="width:100%;border-collapse:collapse;background:#0d1117;border:1px solid #30363d;border-radius:6px;overflow:hidden;">' +
+            '<table style="width:100%;border-collapse:collapse;background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;overflow:hidden;">' +
                 '<thead><tr>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;width:60px;"></th>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;width:110px;">Step</th>' +
-                    '<th style="text-align:left;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;">Action / Server response</th>' +
-                    '<th style="text-align:right;color:#8b949e;font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid #30363d;background:#161b22;width:70px;">Time</th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid var(--fwmon-border);background:var(--fwmon-card-bg);width:60px;"></th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid var(--fwmon-border);background:var(--fwmon-card-bg);width:110px;">Step</th>' +
+                    '<th style="text-align:left;color:var(--fwmon-text-faint);font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid var(--fwmon-border);background:var(--fwmon-card-bg);">Action / Server response</th>' +
+                    '<th style="text-align:right;color:var(--fwmon-text-faint);font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;border-bottom:1px solid var(--fwmon-border);background:var(--fwmon-card-bg);width:70px;">Time</th>' +
                 '</tr></thead>' +
                 '<tbody>' + rows + '</tbody>' +
             '</table>';
@@ -3278,26 +3278,26 @@
             var webhookClass = p.notify_webhook ? 'active webhook' : 'inactive';
             
             var escVal = p.escalation_enabled ? p.escalation_minutes + 'm (' + p.escalation_repeat + 'x)' : 'Disabled';
-            var desc = p.description ? escapeHtml(p.description) : '<span style="color:#475569;font-style:italic">No description provided</span>';
+            var desc = p.description ? escapeHtml(p.description) : '<span style="color:var(--fwmon-text-mute);font-style:italic">No description provided</span>';
             
             return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:240px;padding:20px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">' +
-                    '<h3 style="font-size:1.1rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(p.name) + '</h3>' +
+                    '<h3 style="font-size:1.1rem;font-weight:600;color:var(--fwmon-text);margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(p.name) + '</h3>' +
                     (p.is_default ? '<span class="badge info">DEFAULT</span>' : '') +
                 '</div>' +
-                '<div style="font-size:0.82rem;color:#94a3b8;margin-bottom:16px;min-height:38px;line-height:1.4;">' + desc + '</div>' +
+                '<div style="font-size:0.82rem;color:var(--fwmon-text-faint);margin-bottom:16px;min-height:38px;line-height:1.4;">' + desc + '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:20px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
                     '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;">' +
-                        '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Rules</span>' +
-                        '<span style="font-size:0.85rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + ruleCount + '</span>' +
+                        '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Rules</span>' +
+                        '<span style="font-size:0.85rem;font-weight:600;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + ruleCount + '</span>' +
                     '</div>' +
                     '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;">' +
-                        '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Cooldown</span>' +
-                        '<span style="font-size:0.85rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + p.cooldown_minutes + 'm</span>' +
+                        '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Cooldown</span>' +
+                        '<span style="font-size:0.85rem;font-weight:600;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + p.cooldown_minutes + 'm</span>' +
                     '</div>' +
                     '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;">' +
-                        '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;margin-bottom:2px;">Escalate</span>' +
-                        '<span style="font-size:0.78rem;font-weight:600;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + escVal + '</span>' +
+                        '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;margin-bottom:2px;">Escalate</span>' +
+                        '<span style="font-size:0.78rem;font-weight:600;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + escVal + '</span>' +
                     '</div>' +
                 '</div>' +
                 '<div class="policy-card-channels" style="display:flex;gap:8px;margin-bottom:20px;align-items:center;">' +
@@ -3638,21 +3638,21 @@
 
                 return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:220px;padding:20px;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">' +
-                        '<h3 style="font-size:1.1rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(w.name) + '</h3>' +
+                        '<h3 style="font-size:1.1rem;font-weight:600;color:var(--fwmon-text);margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(w.name) + '</h3>' +
                         '<span class="badge ' + statusClass + '">' + status + '</span>' +
                     '</div>' +
-                    '<div style="font-size:0.82rem;color:#e2e8f0;margin-bottom:16px;">' +
-                        '<span style="color:#64748b;font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
+                    '<div style="font-size:0.82rem;color:var(--fwmon-text);margin-bottom:16px;">' +
+                        '<span style="color:var(--fwmon-text-mute);font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
                         '<strong>' + escapeHtml(scope) + '</strong>' +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
                         '<div>' +
-                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">Start</span>' +
-                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.start_time) + '</span>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;display:block;margin-bottom:2px;">Start</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + formatDate(w.start_time) + '</span>' +
                         '</div>' +
                         '<div>' +
-                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">End</span>' +
-                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.end_time) + '</span>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;display:block;margin-bottom:2px;">End</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + formatDate(w.end_time) + '</span>' +
                         '</div>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +
@@ -3677,21 +3677,21 @@
 
                 return '<div class="policy-card card" style="display:flex;flex-direction:column;justify-content:space-between;min-height:220px;padding:20px;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">' +
-                        '<h3 style="font-size:1.1rem;font-weight:600;color:#f8fafc;margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(w.name) + '</h3>' +
+                        '<h3 style="font-size:1.1rem;font-weight:600;color:var(--fwmon-text);margin:0;font-family:\'Outfit\',sans-serif;">' + escapeHtml(w.name) + '</h3>' +
                         '<span class="badge ' + statusClass + '">' + status + '</span>' +
                     '</div>' +
-                    '<div style="font-size:0.82rem;color:#e2e8f0;margin-bottom:16px;">' +
-                        '<span style="color:#64748b;font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
+                    '<div style="font-size:0.82rem;color:var(--fwmon-text);margin-bottom:16px;">' +
+                        '<span style="color:var(--fwmon-text-mute);font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
                         '<strong>' + escapeHtml(scope) + '</strong>' +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
                         '<div>' +
-                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">Start</span>' +
-                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.start_time) + '</span>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;display:block;margin-bottom:2px;">Start</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + formatDate(w.start_time) + '</span>' +
                         '</div>' +
                         '<div>' +
-                            '<span style="font-size:0.65rem;text-transform:uppercase;color:#64748b;letter-spacing:0.5px;display:block;margin-bottom:2px;">End</span>' +
-                            '<span style="font-size:0.78rem;font-weight:500;color:#e2e8f0;font-family:var(--fwmon-font-mono);">' + formatDate(w.end_time) + '</span>' +
+                            '<span style="font-size:0.65rem;text-transform:uppercase;color:var(--fwmon-text-mute);letter-spacing:0.5px;display:block;margin-bottom:2px;">End</span>' +
+                            '<span style="font-size:0.78rem;font-weight:500;color:var(--fwmon-text);font-family:var(--fwmon-font-mono);">' + formatDate(w.end_time) + '</span>' +
                         '</div>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid rgba(255,255,255,0.05);padding-top:14px;">' +

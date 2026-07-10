@@ -299,11 +299,12 @@
                         borderDash: [4, 2],
                         yAxisID: 'y1'
                     });
+                    var warnColor = AC ? AC.cssVar('--fwmon-sig-warn', '#d29922') : '#d29922';
                     scales.y1 = {
                         position: 'right',
                         min: 0,
-                        title: { display: true, text: 'ms', color: '#d29922', font: { size: 10 } },
-                        ticks: { color: '#d29922', font: { size: 10 } },
+                        title: { display: true, text: 'ms', color: warnColor, font: { size: 10 } },
+                        ticks: { color: warnColor, font: { size: 10 } },
                         grid: { drawOnChartArea: false }
                     };
                 }
@@ -819,7 +820,7 @@
     function drawChartMessage(canvas, msg) {
         var ctx2 = canvas.getContext('2d');
         ctx2.clearRect(0, 0, canvas.width, canvas.height);
-        ctx2.fillStyle = '#484f58';
+        ctx2.fillStyle = AC.cssVar('--fwmon-text-faint', '#8b949e');
         ctx2.font = '11px sans-serif';
         ctx2.fillText(msg, 10, 30);
     }
@@ -992,7 +993,7 @@
         if (tn === 'loopback') return '<span class="badge unknown">Loop</span>';
         if (tn === 'ethernet') return '<span class="badge online">Eth</span>';
         if (tn) return '<span class="badge unknown">' + esc(tn) + '</span>';
-        return '<span style="color:#768390">' + iface.type + '</span>';
+        return '<span style="color:var(--fwmon-text-mute)">' + iface.type + '</span>';
     }
 
     function renderVPN() {
@@ -1058,13 +1059,13 @@
                 '<td>' + esc(v.phase1_name || v.tunnel_name) + '</td>' +
                 '<td><strong>' + esc(v.tunnel_name) + '</strong></td>' +
                 '<td>' + getTunnelTypeBadge(v.tunnel_type) + '</td>' +
-                '<td style="color:#8b949e;font-size:0.8rem;">' + esc(v.interface_name || '-') + '</td>' +
+                '<td style="color:var(--fwmon-text-faint);font-size:0.8rem;">' + esc(v.interface_name || '-') + '</td>' +
                 '<td>' + remoteCell + '</td>' +
-                '<td style="color:#8b949e;font-size:0.78rem;">' + esc(v.mode || '-') + '</td>' +
+                '<td style="color:var(--fwmon-text-faint);font-size:0.78rem;">' + esc(v.mode || '-') + '</td>' +
                 '<td><span class="badge ' + esc(v.status) + '">' + esc(v.status) + '</span></td>' +
                 '<td><span class="badge ' + stateClass + '">' + esc(stateLabel) + '</span></td>' +
-                '<td><code style="color:#58a6ff;font-size:0.8rem;">' + esc(v.local_subnet || '-') + '</code></td>' +
-                '<td><code style="color:#3fb950;font-size:0.8rem;">' + esc(v.remote_subnet || '-') + '</code></td>' +
+                '<td><code style="color:var(--fwmon-accent);font-size:0.8rem;">' + esc(v.local_subnet || '-') + '</code></td>' +
+                '<td><code style="color:var(--fwmon-sig-ok);font-size:0.8rem;">' + esc(v.remote_subnet || '-') + '</code></td>' +
                 '<td>' + formatBytes(v.bytes_in) + '</td>' +
                 '<td>' + formatBytes(v.bytes_out) + '</td>' +
                 // Uptime column (v0.10.217, bundle D4): for currently-up
@@ -1077,8 +1078,8 @@
                     ? formatVpnUptime(v.tunnel_uptime)
                     : (v.last_up_at
                         ? '<span title="Last observed up: ' + esc(formatTime(v.last_up_at)) +
-                          '" style="color:#8b949e;font-size:0.85rem;">last up ' + esc(formatRelative(v.last_up_at)) + '</span>'
-                        : '<span style="color:#8b949e;">-</span>')) +
+                          '" style="color:var(--fwmon-text-faint);font-size:0.85rem;">last up ' + esc(formatRelative(v.last_up_at)) + '</span>'
+                        : '<span style="color:var(--fwmon-text-faint);">-</span>')) +
                 '</td>' +
             '</tr>';
 
@@ -1146,16 +1147,16 @@
             var borderColor = isAlarm ? '#f85149' : '#30363d';
             var icon = getSensorIcon(s.name, s.unit);
 
-            return '<div style="background:#0d1117;border:1px solid ' + borderColor + ';border-radius:8px;padding:14px;">' +
+            return '<div style="background:var(--fwmon-bg);border:1px solid ' + borderColor + ';border-radius:8px;padding:14px;">' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
-                    '<div style="width:36px;height:36px;background:#161b22;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#8b949e;font-size:1.2rem;">' + icon + '</div>' +
+                    '<div style="width:36px;height:36px;background:var(--fwmon-card-bg);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--fwmon-text-faint);font-size:1.2rem;">' + icon + '</div>' +
                     '<div style="flex:1;min-width:0;">' +
-                        '<div style="color:#e6edf3;font-size:0.85rem;font-weight:600;line-height:1.25;word-break:break-word;overflow-wrap:anywhere;" title="' + esc(s.name) + '">' + esc(s.name) + '</div>' +
-                        '<div style="color:#8b949e;font-size:0.72rem;text-transform:uppercase;">' + esc(s.unit || '') + '</div>' +
+                        '<div style="color:var(--fwmon-text);font-size:0.85rem;font-weight:600;line-height:1.25;word-break:break-word;overflow-wrap:anywhere;" title="' + esc(s.name) + '">' + esc(s.name) + '</div>' +
+                        '<div style="color:var(--fwmon-text-faint);font-size:0.72rem;text-transform:uppercase;">' + esc(s.unit || '') + '</div>' +
                     '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:flex-end;">' +
-                    '<div style="color:#e6edf3;font-size:1.4rem;font-weight:700;">' + s.value.toFixed(1) + '</div>' +
+                    '<div style="color:var(--fwmon-text);font-size:1.4rem;font-weight:700;">' + s.value.toFixed(1) + '</div>' +
                     '<div style="display:flex;align-items:center;gap:6px;">' +
                         '<span style="width:8px;height:8px;border-radius:50%;background:' + (isAlarm ? '#f85149' : '#3fb950') + ';"></span>' +
                         '<span style="color:' + (isAlarm ? '#f85149' : '#8b949e') + ';font-size:0.75rem;text-transform:uppercase;">' + esc(s.status || 'unknown') + '</span>' +
@@ -1202,11 +1203,11 @@
             var color = getGaugeColor(p.usage);
             var width = Math.min(p.usage, 100);
             return '<div class="core-bar-wrapper">' +
-                '<span style="color:#8b949e;font-size:0.78rem;min-width:60px">Core ' + p.index + '</span>' +
-                '<div style="flex:1;background:#21262d;border-radius:3px;height:16px;overflow:hidden">' +
+                '<span style="color:var(--fwmon-text-faint);font-size:0.78rem;min-width:60px">Core ' + p.index + '</span>' +
+                '<div style="flex:1;background:var(--fwmon-panel-bg);border-radius:3px;height:16px;overflow:hidden">' +
                     '<div style="width:' + width + '%;height:100%;background:' + color + ';border-radius:3px;transition:width 0.3s"></div>' +
                 '</div>' +
-                '<span style="color:#e6edf3;font-size:0.82rem;font-weight:600;min-width:45px;text-align:right">' + p.usage.toFixed(0) + '%</span>' +
+                '<span style="color:var(--fwmon-text);font-size:0.82rem;font-weight:600;min-width:45px;text-align:right">' + p.usage.toFixed(0) + '%</span>' +
             '</div>';
         }).join('');
     }
@@ -1291,7 +1292,7 @@
     }
 
     function getTunnelTypeBadge(type) {
-        if (!type) return '<span style="color:#768390">-</span>';
+        if (!type) return '<span style="color:var(--fwmon-text-mute)">-</span>';
         var colors = { 'ipsec': '#58a6ff', 'ipsec-dialup': '#d29922', 'sslvpn': '#3fb950' };
         var color = colors[type] || '#8b949e';
         return '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:' + color + '22;color:' + color + ';border:1px solid ' + color + '44">' + esc(type) + '</span>';
@@ -1353,24 +1354,24 @@
         empty.classList.add('hidden');
 
         content.innerHTML =
-            '<h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Antivirus</h3>' +
+            '<h3 style="color:var(--fwmon-text-dim);font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid var(--fwmon-border);padding-bottom:6px">Antivirus</h3>' +
             '<div class="stat-grid">' +
                 '<div class="stat-card"><div class="stat-label">Detected</div><div class="stat-value">' + (sec.av_detected || 0).toLocaleString() + '</div></div>' +
                 '<div class="stat-card"><div class="stat-label">Blocked</div><div class="stat-value">' + (sec.av_blocked || 0).toLocaleString() + '</div></div>' +
                 '<div class="stat-card"><div class="stat-label">HTTP Detected</div><div class="stat-value">' + (sec.av_http_detected || 0).toLocaleString() + '</div></div>' +
                 '<div class="stat-card"><div class="stat-label">SMTP Detected</div><div class="stat-value">' + (sec.av_smtp_detected || 0).toLocaleString() + '</div></div>' +
             '</div>' +
-            '<h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Intrusion Prevention</h3>' +
+            '<h3 style="color:var(--fwmon-text-dim);font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid var(--fwmon-border);padding-bottom:6px">Intrusion Prevention</h3>' +
             '<div class="stat-grid">' +
                 '<div class="stat-card"><div class="stat-label">Detected</div><div class="stat-value">' + (sec.ips_detected || 0).toLocaleString() + '</div></div>' +
                 '<div class="stat-card"><div class="stat-label">Blocked</div><div class="stat-value">' + (sec.ips_blocked || 0).toLocaleString() + '</div></div>' +
-                '<div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value" style="color:#f85149">' + (sec.ips_critical || 0).toLocaleString() + '</div></div>' +
-                '<div class="stat-card"><div class="stat-label">High</div><div class="stat-value" style="color:#d29922">' + (sec.ips_high || 0).toLocaleString() + '</div></div>' +
-                '<div class="stat-card"><div class="stat-label">Medium</div><div class="stat-value" style="color:#e3b341">' + (sec.ips_medium || 0).toLocaleString() + '</div></div>' +
-                '<div class="stat-card"><div class="stat-label">Low</div><div class="stat-value" style="color:#58a6ff">' + (sec.ips_low || 0).toLocaleString() + '</div></div>' +
-                '<div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" style="color:#8b949e">' + (sec.ips_info || 0).toLocaleString() + '</div></div>' +
+                '<div class="stat-card"><div class="stat-label">Critical</div><div class="stat-value" style="color:var(--fwmon-sig-crit)">' + (sec.ips_critical || 0).toLocaleString() + '</div></div>' +
+                '<div class="stat-card"><div class="stat-label">High</div><div class="stat-value" style="color:var(--fwmon-sig-warn)">' + (sec.ips_high || 0).toLocaleString() + '</div></div>' +
+                '<div class="stat-card"><div class="stat-label">Medium</div><div class="stat-value" style="color:var(--fwmon-sig-warn)">' + (sec.ips_medium || 0).toLocaleString() + '</div></div>' +
+                '<div class="stat-card"><div class="stat-label">Low</div><div class="stat-value" style="color:var(--fwmon-accent)">' + (sec.ips_low || 0).toLocaleString() + '</div></div>' +
+                '<div class="stat-card"><div class="stat-label">Info</div><div class="stat-value" style="color:var(--fwmon-text-faint)">' + (sec.ips_info || 0).toLocaleString() + '</div></div>' +
             '</div>' +
-            '<h3 style="color:#c9d1d9;font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px">Web Filter</h3>' +
+            '<h3 style="color:var(--fwmon-text-dim);font-size:0.9rem;margin:16px 0 10px;border-bottom:1px solid var(--fwmon-border);padding-bottom:6px">Web Filter</h3>' +
             '<div class="stat-grid">' +
                 '<div class="stat-card"><div class="stat-label">HTTP Blocked</div><div class="stat-value">' + (sec.wf_http_blocked || 0).toLocaleString() + '</div></div>' +
                 '<div class="stat-card"><div class="stat-label">HTTPS Blocked</div><div class="stat-value">' + (sec.wf_https_blocked || 0).toLocaleString() + '</div></div>' +
@@ -1450,22 +1451,22 @@
                     else { expiryColor = '#3fb950'; expiryInfo = 'Expires ' + l.expiry_date; }
                     expiryInfo = '<div style="color:' + expiryColor + ';font-size:0.75rem;margin-top:4px;">' + expiryInfo + '</div>';
                 } else {
-                    expiryInfo = '<div style="color:#8b949e;font-size:0.75rem;margin-top:4px;">Expires: ' + esc(l.expiry_date) + '</div>';
+                    expiryInfo = '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;margin-top:4px;">Expires: ' + esc(l.expiry_date) + '</div>';
                 }
             }
 
             var icon = getLicenseIcon(l.description);
 
-            return '<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;">' +
+            return '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:14px;">' +
                 '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">' +
                     '<div style="width:40px;height:40px;background:' + statusBg + ';border-radius:8px;display:flex;align-items:center;justify-content:center;color:' + statusColor + ';font-size:1.3rem;">' + icon + '</div>' +
                     '<div style="flex:1;min-width:0;">' +
-                        '<div style="color:#e6edf3;font-size:0.9rem;font-weight:600;margin-bottom:2px;word-break:break-word;overflow-wrap:anywhere;line-height:1.3;">' + esc(l.description || 'Unknown') + '</div>' +
+                        '<div style="color:var(--fwmon-text);font-size:0.9rem;font-weight:600;margin-bottom:2px;word-break:break-word;overflow-wrap:anywhere;line-height:1.3;">' + esc(l.description || 'Unknown') + '</div>' +
                         '<div style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;text-transform:uppercase;background:' + statusBg + ';color:' + statusColor + ';">' + esc(l.status || 'unknown') + '</div>' +
                     '</div>' +
                 '</div>' +
                 expiryInfo +
-                (l.details ? '<div style="color:#8b949e;font-size:0.72rem;margin-top:6px;line-height:1.4;">' + esc(l.details) + '</div>' : '') +
+                (l.details ? '<div style="color:var(--fwmon-text-faint);font-size:0.72rem;margin-top:6px;line-height:1.4;">' + esc(l.details) + '</div>' : '') +
             '</div>';
         }).join('');
 
@@ -1546,7 +1547,7 @@
                 }
 
                 body.innerHTML = revs.map(function(r, i) {
-                    var isCurrent = i === 0 ? ' <span class="badge" style="background:#238636;padding:2px 6px;border-radius:4px;font-size:0.7rem;margin-left:6px">Current</span>' : '';
+                    var isCurrent = i === 0 ? ' <span class="badge" style="background:#238636;color:#fff;padding:2px 6px;border-radius:4px;font-size:0.7rem;margin-left:6px">Current</span>' : '';
                     var fromChecked = configCompareSelection.from === r.id ? ' checked' : '';
                     var toChecked = configCompareSelection.to === r.id ? ' checked' : '';
                     var trigger = r.trigger_source || 'poll';
@@ -1562,19 +1563,19 @@
 
                     var changedByCell;
                     if (r.changed_by) {
-                        changedByCell = esc(r.changed_by) + (r.change_method ? ' <span style="color:#8b949e">(' + esc(r.change_method) + ')</span>' : '');
+                        changedByCell = esc(r.changed_by) + (r.change_method ? ' <span style="color:var(--fwmon-text-faint)">(' + esc(r.change_method) + ')</span>' : '');
                     } else if (r.attribution_checked && r.attributed === false) {
-                        changedByCell = '<span style="color:#a371f7" title="No authenticated admin session matched this change">⚠ out-of-band</span>';
+                        changedByCell = '<span style="color:var(--fwmon-series-5)" title="No authenticated admin session matched this change">⚠ out-of-band</span>';
                     } else {
-                        changedByCell = '<span style="color:#8b949e">—</span>';
+                        changedByCell = '<span style="color:var(--fwmon-text-faint)">—</span>';
                     }
 
                     return '<tr>' +
                         '<td><input type="radio" name="cfgFrom" value="' + r.id + '" data-action="cfg-compare-from"' + fromChecked + '></td>' +
                         '<td><input type="radio" name="cfgTo"   value="' + r.id + '" data-action="cfg-compare-to"' + toChecked + '></td>' +
                         '<td style="white-space:nowrap" title="' + esc(formatTime(firstSeen)) + '">' + formatTime(firstSeen) + isCurrent + '</td>' +
-                        '<td style="white-space:nowrap;color:#8b949e" title="' + esc(formatTime(lastVerified)) + '">' + esc(formatRelative(lastVerified)) + '</td>' +
-                        '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:#c9d1d9;padding:2px 6px;border-radius:4px;font-size:0.72rem" title="Number of polls that confirmed this state">' + verifyCount + '×</span></td>' +
+                        '<td style="white-space:nowrap;color:var(--fwmon-text-faint)" title="' + esc(formatTime(lastVerified)) + '">' + esc(formatRelative(lastVerified)) + '</td>' +
+                        '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:var(--fwmon-text-dim);padding:2px 6px;border-radius:4px;font-size:0.72rem" title="Number of polls that confirmed this state">' + verifyCount + '×</span></td>' +
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + triggerColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(trigger) + '</span></td>' +
                         '<td><span class="badge" style="background:rgba(0,0,0,0.3);color:' + qualityColor + ';padding:2px 6px;border-radius:4px;font-size:0.72rem">' + esc(quality) + '</span></td>' +
                         '<td style="white-space:nowrap;font-size:0.8rem">' + changedByCell + '</td>' +
@@ -1582,7 +1583,7 @@
                         '<td>' +
                         '<button class="btn secondary text-[0.78rem] mr-1" data-action="view-config-revision" data-id="' + r.id + '">View</button>' +
                         '<button class="btn secondary text-[0.78rem] mr-1" data-action="download-config-revision" data-id="' + r.id + '">Download</button>' +
-                        '<button class="btn secondary text-[0.78rem]" data-action="delete-config-revision" data-id="' + r.id + '" style="color:#f85149">Delete</button>' +
+                        '<button class="btn secondary text-[0.78rem]" data-action="delete-config-revision" data-id="' + r.id + '" style="color:var(--fwmon-sig-crit)">Delete</button>' +
                         '</td>' +
                     '</tr>';
                 }).join('');
@@ -1698,7 +1699,7 @@
                     var modal = document.getElementById('config-diff-modal');
                     var body  = document.getElementById('config-diff-body');
                     if (modal && body) {
-                        body.innerHTML = '<div style="color:#f85149;padding:20px">' +
+                        body.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:20px">' +
                             '<strong>Server returned an error.</strong><br>' +
                             esc(String((result && result.error) || 'unknown')) +
                             '</div>';
@@ -1713,10 +1714,10 @@
                 var modal = document.getElementById('config-diff-modal');
                 var body  = document.getElementById('config-diff-body');
                 if (modal && body) {
-                    body.innerHTML = '<div style="color:#f85149;padding:20px">' +
+                    body.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:20px">' +
                         '<strong>Failed to load diff.</strong><br>' +
                         esc(String(e && e.message || e)) + '<br><br>' +
-                        '<span style="color:#8b949e;font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
+                        '<span style="color:var(--fwmon-text-faint);font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
                         '</div>';
                     modal.classList.remove('hidden');
                     AC.openModal('config-diff-modal');
@@ -1737,15 +1738,15 @@
         // sees an error in the modal body instead of a frozen-looking page.
         modal.classList.remove('hidden');
         AC.openModal('config-diff-modal');
-        body.innerHTML = '<div style="padding:20px;color:#8b949e">Computing diff…</div>';
+        body.innerHTML = '<div style="padding:20px;color:var(--fwmon-text-faint)">Computing diff…</div>';
 
         try {
             var fromRev = data && data.from || {};
             var toRev   = data && data.to   || {};
 
-            meta.innerHTML = '<span style="color:#f85149">From #' + esc(String(fromRev.id || '?')) + '</span> ' + formatTime(fromRev.timestamp) +
+            meta.innerHTML = '<span style="color:var(--fwmon-sig-crit)">From #' + esc(String(fromRev.id || '?')) + '</span> ' + formatTime(fromRev.timestamp) +
                 ' (' + esc(fromRev.trigger_source || 'poll') + ', ' + esc(fromRev.backup_quality || 'full') + ')' +
-                ' &nbsp;→&nbsp; <span style="color:#3fb950">To #' + esc(String(toRev.id || '?')) + '</span> ' + formatTime(toRev.timestamp) +
+                ' &nbsp;→&nbsp; <span style="color:var(--fwmon-sig-ok)">To #' + esc(String(toRev.id || '?')) + '</span> ' + formatTime(toRev.timestamp) +
                 ' (' + esc(toRev.trigger_source || 'poll') + ', ' + esc(toRev.backup_quality || 'full') + ')' +
                 attributionBadge(toRev);
 
@@ -1756,10 +1757,10 @@
             if (fromRev.normalized_checksum &&
                 fromRev.normalized_checksum === toRev.normalized_checksum) {
                 body.innerHTML =
-                    '<div style="background:rgba(63,185,80,0.1);border:1px solid #3fb950;color:#3fb950;padding:16px;margin:16px;border-radius:8px;font-family:sans-serif">' +
+                    '<div style="background:rgba(63,185,80,0.1);border:1px solid #3fb950;color:var(--fwmon-sig-ok);padding:16px;margin:16px;border-radius:8px;font-family:sans-serif">' +
                         '<strong>No real configuration changes between these two backups.</strong><br>' +
-                        '<span style="color:#c9d1d9;font-size:0.88rem;">' +
-                            'Both revisions normalize to the same checksum (<code style="color:#58a6ff">' + esc(fromRev.normalized_checksum.slice(0, 12)) + '…</code>). ' +
+                        '<span style="color:var(--fwmon-text-dim);font-size:0.88rem;">' +
+                            'Both revisions normalize to the same checksum (<code style="color:var(--fwmon-accent)">' + esc(fromRev.normalized_checksum.slice(0, 12)) + '…</code>). ' +
                             'The raw bytes differ only because FortiOS regenerates a fresh AES IV salt for every <code>ENC</code> blob and rewrites a few header lines on every emission.' +
                         '</span>' +
                     '</div>';
@@ -1779,12 +1780,12 @@
             var hasObjects = changes.length > 0;
             var objectHTML = hasObjects
                 ? renderObjectDiff(changes, summary)
-                : '<div style="padding:20px;color:#8b949e;font-family:sans-serif">No object-level changes detected — the difference is volatile-only, or this vendor has no object parser yet. See the <strong>Raw diff</strong>.</div>';
+                : '<div style="padding:20px;color:var(--fwmon-text-faint);font-family:sans-serif">No object-level changes detected — the difference is volatile-only, or this vendor has no object parser yet. See the <strong>Raw diff</strong>.</div>';
 
             var toggle =
-                '<div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid #30363d;font-family:sans-serif">' +
-                    '<button id="cd-btn-obj" data-action="cd-view" data-view="obj" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:5px 12px;background:#21262d;color:#c9d1d9">Object view</button>' +
-                    '<button id="cd-btn-raw" data-action="cd-view" data-view="raw" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:5px 12px;background:#21262d;color:#c9d1d9">Raw diff</button>' +
+                '<div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--fwmon-border);font-family:sans-serif">' +
+                    '<button id="cd-btn-obj" data-action="cd-view" data-view="obj" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:5px 12px;background:var(--fwmon-panel-bg);color:var(--fwmon-text-dim)">Object view</button>' +
+                    '<button id="cd-btn-raw" data-action="cd-view" data-view="raw" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:5px 12px;background:var(--fwmon-panel-bg);color:var(--fwmon-text-dim)">Raw diff</button>' +
                 '</div>';
 
             body.innerHTML = toggle +
@@ -1794,10 +1795,10 @@
             window.__cdView(hasObjects ? 'obj' : 'raw');
         } catch (err) {
             console.error('Diff render failed:', err, 'data:', data);
-            body.innerHTML = '<div style="color:#f85149;padding:20px;font-family:sans-serif">' +
+            body.innerHTML = '<div style="color:var(--fwmon-sig-crit);padding:20px;font-family:sans-serif">' +
                 '<strong>Failed to render diff.</strong><br>' +
                 esc(String(err && err.message || err)) + '<br><br>' +
-                '<span style="color:#8b949e;font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
+                '<span style="color:var(--fwmon-text-faint);font-size:0.85rem">Open browser dev tools (F12) → Console for details.</span>' +
                 '</div>';
         }
     }
@@ -1812,21 +1813,21 @@
     // runs, highlights intra-line word changes, and supports a split view.
     function renderLineDiff(ld) {
         if (!ld || !ld.rows || !ld.rows.length) {
-            return '<div style="color:#8b949e;padding:20px">No differences found</div>';
+            return '<div style="color:var(--fwmon-text-faint);padding:20px">No differences found</div>';
         }
         var rows = ld.rows;
         var out = [];
 
         if (ld.truncated) {
-            out.push('<div style="background:#21262d;color:#d2992a;padding:8px;text-align:center;font-family:sans-serif">' +
+            out.push('<div style="background:var(--fwmon-panel-bg);color:var(--fwmon-sig-warn);padding:8px;text-align:center;font-family:sans-serif">' +
                 esc(ld.note || 'Diff truncated for size. Download both revisions to compare offline.') + '</div>');
         }
 
         // A view toggle for unified vs split. State lives on the container so
         // __ldView can flip it without re-fetching.
         out.push('<div style="display:flex;gap:8px;padding:8px 10px;font-family:sans-serif">' +
-            '<button type="button" id="ld-btn-unified" data-action="ld-view" data-view="unified" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:4px 10px;background:#1f6feb;color:#fff;font-size:0.8rem">Unified</button>' +
-            '<button type="button" id="ld-btn-split" data-action="ld-view" data-view="split" style="cursor:pointer;border:1px solid #30363d;border-radius:6px;padding:4px 10px;background:#21262d;color:#c9d1d9;font-size:0.8rem">Split</button>' +
+            '<button type="button" id="ld-btn-unified" data-action="ld-view" data-view="unified" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:4px 10px;background:#1f6feb;color:#fff;font-size:0.8rem">Unified</button>' +
+            '<button type="button" id="ld-btn-split" data-action="ld-view" data-view="split" style="cursor:pointer;border:1px solid var(--fwmon-border);border-radius:6px;padding:4px 10px;background:var(--fwmon-panel-bg);color:var(--fwmon-text-dim);font-size:0.8rem">Split</button>' +
             '</div>');
 
         out.push('<div id="ld-unified">' + renderUnified(rows) + '</div>');
@@ -1852,7 +1853,7 @@
                     var hidden = run.slice(2, run.length - 2);
                     var gid = 'ld-ctx-' + (groupId++);
                     parts.push('<button type="button" data-action="ld-expand" data-target="' + gid + '" ' +
-                        'style="display:block;width:100%;text-align:center;cursor:pointer;border:0;border-top:1px solid #30363d;border-bottom:1px solid #30363d;background:#161b22;color:#58a6ff;padding:3px 8px;font-family:sans-serif;font-size:0.78rem">' +
+                        'style="display:block;width:100%;text-align:center;cursor:pointer;border:0;border-top:1px solid var(--fwmon-border);border-bottom:1px solid var(--fwmon-border);background:var(--fwmon-card-bg);color:var(--fwmon-accent);padding:3px 8px;font-family:sans-serif;font-size:0.78rem">' +
                         '⋯ ' + hidden.length + ' unchanged line' + (hidden.length === 1 ? '' : 's') + ' — click to expand</button>');
                     parts.push('<div id="' + gid + '" style="display:none">' +
                         hidden.map(unifiedRow).join('') + '</div>');
@@ -1880,12 +1881,12 @@
     // unifiedRow renders a single non-paired row.
     function unifiedRow(r) {
         if (r.op === 'volatile') {
-            return '<div style="background:#21262d;color:#8b949e;' + CD_ROW + '"> &nbsp; <em>(volatile' +
+            return '<div style="background:var(--fwmon-panel-bg);color:var(--fwmon-text-faint);' + CD_ROW + '"> &nbsp; <em>(volatile' +
                 (r.vname ? ': ' + esc(r.vname) : '') + ')</em></div>';
         }
         if (r.op === 'delete') return diffLine('-', 'rgba(248,81,73,0.15)', '#ff7b72', esc(r.text));
         if (r.op === 'insert') return diffLine('+', 'rgba(63,185,80,0.15)', '#3fb950', esc(r.text));
-        return '<div style="color:#c9d1d9;' + CD_ROW + '">  ' + esc(r.text) + '</div>';
+        return '<div style="color:var(--fwmon-text-dim);' + CD_ROW + '">  ' + esc(r.text) + '</div>';
     }
 
     // diffLine wraps a prefixed diff line. `inner` is ALREADY-ESCAPED HTML.
@@ -1922,7 +1923,7 @@
             }
         }
         return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">' +
-            '<div style="border-right:1px solid #30363d">' + left.join('') + '</div>' +
+            '<div style="border-right:1px solid var(--fwmon-border)">' + left.join('') + '</div>' +
             '<div>' + right.join('') + '</div></div>';
     }
 
@@ -2007,36 +2008,36 @@
     function renderObjectDiff(changes, summary) {
         var out = [];
         var sev = summary.max_severity || 'info';
-        out.push('<div style="margin:12px;padding:12px;border-radius:8px;background:#161b22;border-left:4px solid ' + sevColor(sev) + ';font-family:sans-serif">' +
-            '<strong style="color:#c9d1d9">' + (summary.added || 0) + ' added · ' + (summary.removed || 0) + ' removed · ' + (summary.modified || 0) + ' modified</strong>' +
+        out.push('<div style="margin:12px;padding:12px;border-radius:8px;background:var(--fwmon-card-bg);border-left:4px solid ' + sevColor(sev) + ';font-family:sans-serif">' +
+            '<strong style="color:var(--fwmon-text-dim)">' + (summary.added || 0) + ' added · ' + (summary.removed || 0) + ' removed · ' + (summary.modified || 0) + ' modified</strong>' +
             ' &nbsp; <span style="background:' + sevColor(sev) + ';color:#fff;border-radius:10px;padding:2px 8px;font-size:0.78rem">' + esc(sev) + '</span>' +
-            (summary.impact ? '<div style="margin-top:8px;color:#8b949e;font-size:0.88rem">' + esc(summary.impact) + '</div>' : '') +
+            (summary.impact ? '<div style="margin-top:8px;color:var(--fwmon-text-faint);font-size:0.88rem">' + esc(summary.impact) + '</div>' : '') +
             '</div>');
 
         var lastKind = null;
         changes.forEach(function(ch, idx) {
             if (ch.kind !== lastKind) {
-                out.push('<div style="margin:14px 12px 4px;color:#58a6ff;font-family:monospace;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(ch.kind) + '</div>');
+                out.push('<div style="margin:14px 12px 4px;color:var(--fwmon-accent);font-family:monospace;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(ch.kind) + '</div>');
                 lastKind = ch.kind;
             }
             var opColor = ch.op === 'added' ? '#3fb950' : ch.op === 'removed' ? '#f85149' : '#58a6ff';
             var rsev = (ch.risk && ch.risk.severity) || 'info';
-            out.push('<div style="margin:0 12px 8px;border:1px solid #30363d;border-radius:8px;overflow:hidden">');
-            out.push('<div data-action="cd-toggle" data-idx="' + idx + '" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#161b22;font-family:sans-serif">' +
+            out.push('<div style="margin:0 12px 8px;border:1px solid var(--fwmon-border);border-radius:8px;overflow:hidden">');
+            out.push('<div data-action="cd-toggle" data-idx="' + idx + '" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--fwmon-card-bg);font-family:sans-serif">' +
                 '<span style="color:' + opColor + ';font-weight:600;font-size:0.78rem;min-width:74px">' + esc((ch.op || '').toUpperCase()) + '</span>' +
-                '<span style="color:#c9d1d9;font-family:monospace">' + esc(ch.name || ch.path) + '</span>' +
+                '<span style="color:var(--fwmon-text-dim);font-family:monospace">' + esc(ch.name || ch.path) + '</span>' +
                 '<span style="background:' + sevColor(rsev) + ';color:#fff;border-radius:10px;padding:1px 8px;font-size:0.74rem">' + esc(rsev) + '</span>' +
-                ((ch.risk && ch.risk.summary) ? '<span style="color:#8b949e;font-size:0.82rem;margin-left:auto;text-align:right">' + esc(ch.risk.summary) + '</span>' : '') +
+                ((ch.risk && ch.risk.summary) ? '<span style="color:var(--fwmon-text-faint);font-size:0.82rem;margin-left:auto;text-align:right">' + esc(ch.risk.summary) + '</span>' : '') +
                 '</div>');
-            out.push('<div id="cd-card-b-' + idx + '" style="display:none;padding:6px 12px;background:#0d1117">');
+            out.push('<div id="cd-card-b-' + idx + '" style="display:none;padding:6px 12px;background:var(--fwmon-bg)">');
             out.push('<table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.85rem">');
             (ch.attrs || []).forEach(function(d) {
-                var oldc = d.old ? '<span style="color:#ff7b72">' + esc(d.old) + '</span>' : '<span style="color:#8b949e">—</span>';
-                var newc = d.new ? '<span style="color:#3fb950">' + esc(d.new) + '</span>' : '<span style="color:#8b949e">—</span>';
+                var oldc = d.old ? '<span style="color:var(--fwmon-sig-crit)">' + esc(d.old) + '</span>' : '<span style="color:var(--fwmon-text-faint)">—</span>';
+                var newc = d.new ? '<span style="color:var(--fwmon-sig-ok)">' + esc(d.new) + '</span>' : '<span style="color:var(--fwmon-text-faint)">—</span>';
                 out.push('<tr>' +
-                    '<td style="color:#8b949e;padding:2px 10px 2px 0;vertical-align:top;white-space:nowrap">' + esc(d.key) + '</td>' +
+                    '<td style="color:var(--fwmon-text-faint);padding:2px 10px 2px 0;vertical-align:top;white-space:nowrap">' + esc(d.key) + '</td>' +
                     '<td style="padding:2px 6px;vertical-align:top">' + oldc + '</td>' +
-                    '<td style="color:#8b949e;padding:2px 6px">→</td>' +
+                    '<td style="color:var(--fwmon-text-faint);padding:2px 6px">→</td>' +
                     '<td style="padding:2px 6px;vertical-align:top">' + newc + '</td>' +
                     '</tr>');
             });

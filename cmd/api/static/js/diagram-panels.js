@@ -15,12 +15,12 @@
         return {
             responsive: true, maintainAspectRatio: false,
             plugins: {
-                legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10, family: 'Outfit, "Segoe UI", sans-serif' } } },
+                legend: { labels: { boxWidth: 10, padding: 8, font: { size: 10, family: 'Outfit, "Segoe UI", sans-serif' } } },
                 tooltip: { callbacks: { label: function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + window.formatBytes(v != null ? v : 0); } } }
             },
             scales: {
-                x: { ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
-                y: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: yCallback || (v => window.formatBytes(v)) }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
+                x: { ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 } },
+                y: { beginAtZero: true, ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: yCallback || (v => window.formatBytes(v)) } }
             }
         };
     }
@@ -127,7 +127,7 @@
         window.apiFetch(window.AdminCommon.API_BASE + '/connections/' + connId + '/events?hours=' + hours).then(function(res) {
             const events = res && res.data ? res.data : [];
             if (events.length === 0) {
-                container.innerHTML = '<div style="padding:20px;color:#8b949e;text-align:center;">No events in the last ' + hours + 'h</div>';
+                container.innerHTML = '<div style="padding:20px;color:var(--fwmon-text-faint);text-align:center;">No events in the last ' + hours + 'h</div>';
                 return;
             }
             const sourceIcons = { alert: '\u{1F514}', trap: '\u26A1', syslog: '\u{1F4DD}' };
@@ -151,7 +151,7 @@
                 }).join('') +
                 '</tbody></table>';
         }).catch(function() {
-            container.innerHTML = '<div style="padding:20px;color:#f85149;">Failed to load events</div>';
+            container.innerHTML = '<div style="padding:20px;color:var(--fwmon-sig-crit);">Failed to load events</div>';
         });
     }
 
@@ -172,7 +172,7 @@
                 <div class="panel-header">
                     <h4>${window.escapeHtml(conn.name)} ${typeBadge} ${statusBadge} ${methodBadge}</h4>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <a href="/admin/connections/${conn.id}" style="color:#58a6ff;font-size:0.8rem;text-decoration:none;font-weight:500;">Full Page &rarr;</a>
+                        <a href="/admin/connections/${conn.id}" style="color:var(--fwmon-accent);font-size:0.8rem;text-decoration:none;font-weight:500;">Full Page &rarr;</a>
                         <button class="btn secondary sm" data-action="dp-close-panel">Close</button>
                     </div>
                 </div>
@@ -222,8 +222,8 @@
                         </div>
                         <div id="panel-flow-content">
                             <div style="display:flex;gap:12px;margin-bottom:8px;">
-                                <span style="font-size:0.78rem;color:#8b949e;">Total bytes: <strong style="color:#e6edf3;" id="pf-total-bytes">--</strong></span>
-                                <span style="font-size:0.78rem;color:#8b949e;">Flows: <strong style="color:#e6edf3;" id="pf-total-flows">--</strong></span>
+                                <span style="font-size:0.78rem;color:var(--fwmon-text-faint);">Total bytes: <strong style="color:var(--fwmon-text);" id="pf-total-bytes">--</strong></span>
+                                <span style="font-size:0.78rem;color:var(--fwmon-text-faint);">Flows: <strong style="color:var(--fwmon-text);" id="pf-total-flows">--</strong></span>
                             </div>
                             <div class="panel-flow-grid">
                                 <div class="panel-flow-card"><h5>Protocols</h5><div class="panel-chart-container" style="height:160px;"><canvas id="panel-proto-chart"></canvas></div></div>
@@ -232,7 +232,7 @@
                                 <div class="panel-flow-card"><h5>Top Destinations</h5><div class="panel-chart-container" style="height:160px;"><canvas id="panel-top-dst-chart"></canvas></div></div>
                             </div>
                             <div style="margin-top:12px;">
-                                <h5 style="font-size:0.8rem;color:#8b949e;margin:0 0 6px 0;">Top Conversations</h5>
+                                <h5 style="font-size:0.8rem;color:var(--fwmon-text-faint);margin:0 0 6px 0;">Top Conversations</h5>
                                 <div style="max-height:200px;overflow-y:auto;">
                                     <table class="vpn-detail-table" id="panel-convos-table">
                                         <thead><tr><th>Source</th><th>Destination</th><th>Protocol</th><th>Bytes</th><th>Packets</th></tr></thead>
@@ -334,7 +334,7 @@
             let canvas = document.getElementById('panel-traffic-chart');
             if (panelChartInstances['traffic']) panelChartInstances['traffic'].destroy();
             if (!Array.isArray(data) || data.length === 0) {
-                if (host) host.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No traffic data available for this connection.</div>';
+                if (host) host.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No traffic data available for this connection.</div>';
                 return;
             }
             if (!canvas && host) {
@@ -362,7 +362,7 @@
             const hasData = data.total_flows > 0;
             const content = document.getElementById('panel-flow-content');
             if (!hasData) {
-                content.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No sFlow data available for this connection.</div>';
+                content.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No sFlow data available for this connection.</div>';
                 return;
             }
 
@@ -375,7 +375,7 @@
             panelChartInstances['proto'] = new Chart(document.getElementById('panel-proto-chart'), {
                 type: 'doughnut',
                 data: { labels: protoData.map(p => p.key), datasets: [{ data: protoData.map(p => p.count), backgroundColor: protoData.map(p => protoColors[p.key] || '#484f58'), borderWidth: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#8b949e', padding: 6, font: { size: 11 } } } } }
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { padding: 6, font: { size: 11 } } } } }
             });
 
             if (panelChartInstances['flowTime']) panelChartInstances['flowTime'].destroy();
@@ -390,12 +390,12 @@
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     plugins: {
-                        legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } },
+                        legend: { labels: { boxWidth: 10, padding: 8, font: { size: 10 } } },
                         tooltip: { callbacks: { label: function(ctx) { return 'Throughput: ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '0') + ' Mbps'; } } }
                     },
                     scales: {
-                        x: { ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
-                        y: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => v.toFixed(1) + ' Mbps' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
+                        x: { ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => v.toFixed(1) + ' Mbps' } }
                     }
                 }
             });
@@ -405,7 +405,7 @@
             panelChartInstances['topSrc'] = new Chart(document.getElementById('panel-top-src-chart'), {
                 type: 'bar',
                 data: { labels: srcData.map(s => s.key), datasets: [{ label: 'Bytes', data: srcData.map(s => s.count), backgroundColor: 'rgba(125, 211, 252, 0.45)', borderRadius: 4 }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => window.formatBytes(v) }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }, y: { ticks: { color: '#8b949e', font: { size: 10, family: 'Outfit, "Segoe UI", sans-serif' } }, grid: { display: false } } } }
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => window.formatBytes(v) } }, y: { ticks: { font: { size: 10, family: 'Outfit, "Segoe UI", sans-serif' } }, grid: { display: false } } } }
             });
 
             if (panelChartInstances['topDst']) panelChartInstances['topDst'].destroy();
@@ -413,13 +413,13 @@
             panelChartInstances['topDst'] = new Chart(document.getElementById('panel-top-dst-chart'), {
                 type: 'bar',
                 data: { labels: dstData.map(s => s.key), datasets: [{ label: 'Bytes', data: dstData.map(s => s.count), backgroundColor: 'rgba(134, 239, 172, 0.45)', borderRadius: 4 }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => window.formatBytes(v) }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }, y: { ticks: { color: '#8b949e', font: { size: 10, family: 'Outfit, "Segoe UI", sans-serif' } }, grid: { display: false } } } }
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx) { return window.formatBytes(ctx.parsed.x || 0); } } } }, scales: { x: { beginAtZero: true, ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: v => window.formatBytes(v) } }, y: { ticks: { font: { size: 10, family: 'Outfit, "Segoe UI", sans-serif' } }, grid: { display: false } } } }
             });
 
             const convos = data.top_conversations || [];
             const ctbody = document.querySelector('#panel-convos-table tbody');
             const AC = window.AdminCommon;
-            ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.src_addr, { port: c.src_port })}</td><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.dst_addr, { port: c.dst_port })}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#768390;">No conversations</td></tr>';
+            ctbody.innerHTML = convos.map(c => `<tr><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.src_addr, { port: c.src_port })}</td><td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${AC.ipRef(c.dst_addr, { port: c.dst_port })}</td><td>${window.escapeHtml(c.protocol)}</td><td>${window.formatBytes(c.bytes)}</td><td>${window.formatNum(c.packets)}</td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--fwmon-text-mute);">No conversations</td></tr>';
             AC.enrichIps(ctbody);
         } catch (e) { console.error('Panel flow stats failed:', e); }
     }
@@ -450,7 +450,7 @@
         const tbody = document.querySelector(`#${tableId} tbody`);
         const noun = family === 'overlay' ? 'carrier tunnels' : 'tunnels';
         if (!tunnels.length) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#768390;padding:16px;">No ${noun}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--fwmon-text-mute);padding:16px;">No ${noun}</td></tr>`;
             return;
         }
         let html = '';
@@ -463,7 +463,7 @@
             const sumOut = g.phase2.reduce((a, t) => a + (t.bytes_out || 0), 0);
             const remoteIP = g.phase2[0].remote_ip || '-';
             const selCount = g.phase2.length;
-            const label = window.escapeHtml(g.phase1) + (selCount > 1 ? ` <span style="color:#768390;font-size:0.72rem;">(${selCount} selectors)</span>` : '');
+            const label = window.escapeHtml(g.phase1) + (selCount > 1 ? ` <span style="color:var(--fwmon-text-mute);font-size:0.72rem;">(${selCount} selectors)</span>` : '');
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-tunnel-chart" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}" data-range="${r}">${lbl}</div>`;
             html += `
                 <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${deviceId}" data-tunnel="${window.escapeHtml(rep)}">
@@ -481,7 +481,7 @@
                 html += `
                 <tr class="panel-tunnel-p2child">
                     <td></td>
-                    <td style="font-family:monospace;font-size:0.74rem;color:#8b949e;padding-left:14px;">&#8627; ${window.escapeHtml(t.local_subnet || '?')} &rarr; ${window.escapeHtml(t.remote_subnet || '?')}</td>
+                    <td style="font-family:monospace;font-size:0.74rem;color:var(--fwmon-text-faint);padding-left:14px;">&#8627; ${window.escapeHtml(t.local_subnet || '?')} &rarr; ${window.escapeHtml(t.remote_subnet || '?')}</td>
                     <td><span class="badge ${sUp ? 'up' : 'down'}" style="font-size:0.6rem;">${sUp ? 'UP' : 'DOWN'}</span></td>
                     <td></td>
                     <td style="font-size:0.74rem;">${window.formatBytes(t.bytes_in)}</td>
@@ -514,7 +514,7 @@
         if (k) bits.push(k);
         if (f.vlan_id > 0) bits.push('VLAN ' + f.vlan_id);
         if (f.parent) bits.push('&#8627; ' + window.escapeHtml(f.parent));
-        return bits.join('<span style="color:#30363d;"> · </span>');
+        return bits.join('<span style="color:var(--fwmon-border-strong);"> · </span>');
     }
 
     // ifaceRowsHtml renders the expandable per-interface rows for one side of a
@@ -525,14 +525,14 @@
             const up = f.status === 'up';
             const statusBadge = `<span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(f.status || 'unknown').toUpperCase()}</span>`;
             const errs = (f.in_errors || 0) + (f.out_errors || 0);
-            const errCell = errs > 0 ? `<span style="color:#d29922;">${window.formatNum(errs)} err</span>` : '';
+            const errCell = errs > 0 ? `<span style="color:var(--fwmon-sig-warn);">${window.formatNum(errs)} err</span>` : '';
             const meta = ifaceMeta(f);
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-iface-chart" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}" data-range="${r}">${lbl}</div>`;
             return `
                 <tr class="panel-tunnel-row" data-action="dp-toggle-iface" data-row="${rowId}" data-device="${f.device_id}" data-ifindex="${f.if_index}">
                     <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
-                    <td><div style="font-family:monospace;">${window.escapeHtml(f.if_name)}</div>${meta ? `<div style="font-size:0.66rem;color:#768390;">${meta}</div>` : ''}</td>
-                    <td style="font-family:monospace;font-size:0.76rem;color:#58a6ff;">${window.escapeHtml(f.ip_address || '-')}</td>
+                    <td><div style="font-family:monospace;">${window.escapeHtml(f.if_name)}</div>${meta ? `<div style="font-size:0.66rem;color:var(--fwmon-text-mute);">${meta}</div>` : ''}</td>
+                    <td style="font-family:monospace;font-size:0.76rem;color:var(--fwmon-accent);">${window.escapeHtml(f.ip_address || '-')}</td>
                     <td style="font-size:0.76rem;">${formatSpeed(f.speed)}</td>
                     <td>${statusBadge}</td>
                     <td>${window.formatBytes(f.in_bytes)}</td>
@@ -551,16 +551,16 @@
     }
 
     function ifaceSideTable(title, ifaces, rowKey) {
-        const head = `<div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(title)}</div>`;
+        const head = `<div style="font-size:0.74rem;color:var(--fwmon-text-faint);margin:0 0 4px 2px;">${window.escapeHtml(title)}</div>`;
         if (!ifaces.length) {
-            return head + '<div style="color:#768390;font-size:0.76rem;padding:6px 2px;">— no interfaces reported —</div>';
+            return head + '<div style="color:var(--fwmon-text-mute);font-size:0.76rem;padding:6px 2px;">— no interfaces reported —</div>';
         }
         return head + `<table class="vpn-detail-table" style="margin:0;"><thead><tr><th></th><th>Interface</th><th>IP</th><th>Speed</th><th>Status</th><th>In</th><th>Out</th><th></th></tr></thead><tbody>${ifaceRowsHtml(ifaces, rowKey)}</tbody></table>`;
     }
 
     function ifaceSegmentCard(header, srcName, dstName, srcSide, dstSide, rowKey) {
         return `
-            <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:10px;">
+            <div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:12px;margin-bottom:10px;">
                 ${header}
                 <div class="tunnel-columns">
                     <div class="tunnel-col">${ifaceSideTable(srcName, srcSide, `${rowKey}-s`)}</div>
@@ -602,7 +602,7 @@
         const container = document.getElementById('ptab-tunnels');
         if (!container) return;
         if (!ifaces.length) {
-            container.innerHTML = '<div style="text-align:center;color:#768390;padding:16px;">No interface telemetry for this link</div>';
+            container.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:16px;">No interface telemetry for this link</div>';
             return;
         }
         const srcId = c.source_device_id, dstId = c.dest_device_id;
@@ -641,9 +641,9 @@
                 const seg = segmentLabel(members);
                 const header = `
                     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-                        <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:#e6edf3;background:#161b22;border:1px solid #30363d;border-radius:5px;padding:2px 8px;">${seg.icon} ${window.escapeHtml(seg.label)}</span>
-                        <span style="font-size:0.7rem;color:#768390;text-transform:uppercase;letter-spacing:0.3px;">${seg.sub}</span>
-                        <span style="font-size:0.78rem;color:#8b949e;">${window.escapeHtml(srcName)} <span style="color:#2dd4bf;">&harr;</span> ${window.escapeHtml(dstName)}</span>
+                        <span style="font-family:monospace;font-size:0.82rem;font-weight:600;color:var(--fwmon-text);background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:5px;padding:2px 8px;">${seg.icon} ${window.escapeHtml(seg.label)}</span>
+                        <span style="font-size:0.7rem;color:var(--fwmon-text-mute);text-transform:uppercase;letter-spacing:0.3px;">${seg.sub}</span>
+                        <span style="font-size:0.78rem;color:var(--fwmon-text-faint);">${window.escapeHtml(srcName)} <span style="color:#2dd4bf;">&harr;</span> ${window.escapeHtml(dstName)}</span>
                     </div>`;
                 html += ifaceSegmentCard(header, srcName, dstName, s, dd, `seg${gi++}`);
             } else {
@@ -654,7 +654,7 @@
         if (leftover.length) {
             const label = gi ? 'Other interfaces' : 'Interfaces on this link';
             const hint = gi ? ' (could not be paired to the other end)' : '';
-            const header = `<div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px;">${label}<span style="color:#768390;font-size:0.72rem;">${hint}</span></div>`;
+            const header = `<div style="font-size:0.8rem;color:var(--fwmon-text-faint);margin-bottom:8px;">${label}<span style="color:var(--fwmon-text-mute);font-size:0.72rem;">${hint}</span></div>`;
             html += ifaceSegmentCard(header, srcName, dstName, leftover.filter(onSrc), leftover.filter(onDst), 'rest');
         }
         container.innerHTML = html;
@@ -669,25 +669,25 @@
         if (!container) return;
         const overlays = data.overlays || [];
         const typeLabel = t => (t === 'l3ipvlan' ? 'L3VLAN' : 'VXLAN');
-        const kv = (label, val) => `<div><div style="font-size:0.66rem;color:#768390;text-transform:uppercase;letter-spacing:0.4px;">${label}</div><div style="font-size:0.82rem;color:#e6edf3;font-family:'JetBrains Mono',monospace;">${val}</div></div>`;
+        const kv = (label, val) => `<div><div style="font-size:0.66rem;color:var(--fwmon-text-mute);text-transform:uppercase;letter-spacing:0.4px;">${label}</div><div style="font-size:0.82rem;color:var(--fwmon-text);font-family:'JetBrains Mono',monospace;">${val}</div></div>`;
 
         let html = '';
         if (!overlays.length) {
-            html += '<div style="color:#768390;padding:8px 2px;font-size:0.8rem;">No overlay interface detail available — config not captured for these devices (the carrier tunnel is shown below).</div>';
+            html += '<div style="color:var(--fwmon-text-mute);padding:8px 2px;font-size:0.8rem;">No overlay interface detail available — config not captured for these devices (the carrier tunnel is shown below).</div>';
         }
         overlays.forEach((o, i) => {
             const rowId = 'ov-' + i;
             const up = o.status === 'up';
             const vteps = (o.remote_vteps || []).length
-                ? o.remote_vteps.map(ip => `<span style="font-family:monospace;font-size:0.74rem;color:#58a6ff;">${window.escapeHtml(ip)}</span>`).join('<span style="color:#30363d;"> · </span>')
-                : '<span style="color:#768390;">— not in captured config —</span>';
+                ? o.remote_vteps.map(ip => `<span style="font-family:monospace;font-size:0.74rem;color:var(--fwmon-accent);">${window.escapeHtml(ip)}</span>`).join('<span style="color:var(--fwmon-border-strong);"> · </span>')
+                : '<span style="color:var(--fwmon-text-mute);">— not in captured config —</span>';
             const pill = (r, lbl, active) => `<div class="panel-range-pill${active ? ' active' : ''}" data-action="dp-iface-chart" data-row="${rowId}" data-device="${o.device_id}" data-ifindex="${o.if_index}" data-range="${r}">${lbl}</div>`;
             html += `
-                <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:10px;">
+                <div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:12px;margin-bottom:10px;">
                     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-                        <span style="font-size:0.66rem;font-weight:700;letter-spacing:0.5px;color:#f0abfc;background:#161b22;border:1px solid #30363d;border-radius:4px;padding:2px 7px;">${typeLabel(o.type)}</span>
-                        <span style="font-family:monospace;font-size:0.85rem;font-weight:600;color:#e6edf3;">${window.escapeHtml(o.name)}</span>
-                        <span style="font-size:0.78rem;color:#8b949e;">on ${window.escapeHtml(o.device_name || '-')}</span>
+                        <span style="font-size:0.66rem;font-weight:700;letter-spacing:0.5px;color:var(--fwmon-series-6);background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:4px;padding:2px 7px;">${typeLabel(o.type)}</span>
+                        <span style="font-family:monospace;font-size:0.85rem;font-weight:600;color:var(--fwmon-text);">${window.escapeHtml(o.name)}</span>
+                        <span style="font-size:0.78rem;color:var(--fwmon-text-faint);">on ${window.escapeHtml(o.device_name || '-')}</span>
                         <span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(o.status || 'unknown').toUpperCase()}</span>
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:10px;margin-bottom:10px;">
@@ -697,7 +697,7 @@
                         ${kv('In', window.formatBytes(o.in_bytes))}
                         ${kv('Out', window.formatBytes(o.out_bytes))}
                     </div>
-                    <div style="margin-bottom:${o.if_index ? '10px' : '0'};"><span style="font-size:0.66rem;color:#768390;text-transform:uppercase;letter-spacing:0.4px;">Remote VTEPs</span>&nbsp; ${vteps}</div>
+                    <div style="margin-bottom:${o.if_index ? '10px' : '0'};"><span style="font-size:0.66rem;color:var(--fwmon-text-mute);text-transform:uppercase;letter-spacing:0.4px;">Remote VTEPs</span>&nbsp; ${vteps}</div>
                     ${o.if_index ? `
                     <div class="panel-range-pills" style="margin-bottom:6px;">${pill('1h', '1h', false)}${pill('24h', '24h', true)}${pill('7d', '7d', false)}${pill('30d', '30d', false)}</div>
                     <div class="panel-chart-container" style="height:140px;"><canvas id="pchart-${rowId}"></canvas></div>` : ''}
@@ -707,10 +707,10 @@
         const tunHead = `<thead><tr><th></th><th>Tunnel</th><th>Status</th><th>Remote IP</th><th>In</th><th>Out</th></tr></thead><tbody></tbody>`;
         html += `
             <div style="margin-top:6px;">
-                <h5 style="font-size:0.82rem;color:#8b949e;margin:0 0 6px 0;">Carrier tunnel <span style="color:#768390;font-weight:400;font-size:0.72rem;">— the encrypted path the overlay rides on</span></h5>
+                <h5 style="font-size:0.82rem;color:var(--fwmon-text-faint);margin:0 0 6px 0;">Carrier tunnel <span style="color:var(--fwmon-text-mute);font-weight:400;font-size:0.72rem;">— the encrypted path the overlay rides on</span></h5>
                 <div class="tunnel-columns">
-                    <div class="tunnel-col"><div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(srcName)}</div><table class="vpn-detail-table" id="ov-src-tunnels">${tunHead}</table></div>
-                    <div class="tunnel-col"><div style="font-size:0.74rem;color:#8b949e;margin:0 0 4px 2px;">${window.escapeHtml(dstName)}</div><table class="vpn-detail-table" id="ov-dst-tunnels">${tunHead}</table></div>
+                    <div class="tunnel-col"><div style="font-size:0.74rem;color:var(--fwmon-text-faint);margin:0 0 4px 2px;">${window.escapeHtml(srcName)}</div><table class="vpn-detail-table" id="ov-src-tunnels">${tunHead}</table></div>
+                    <div class="tunnel-col"><div style="font-size:0.74rem;color:var(--fwmon-text-faint);margin:0 0 4px 2px;">${window.escapeHtml(dstName)}</div><table class="vpn-detail-table" id="ov-dst-tunnels">${tunHead}</table></div>
                 </div>
             </div>`;
         container.innerHTML = html;
@@ -797,7 +797,7 @@
     function renderPanelPhase2(matches, srcName, dstName) {
         const container = document.getElementById('panel-phase2-container');
         if (!matches.length) {
-            container.innerHTML = '<div style="text-align:center;color:#768390;padding:20px;">No Phase 2 selector matches.</div>';
+            container.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:20px;">No Phase 2 selector matches.</div>';
             return;
         }
         let html = '';
@@ -810,15 +810,15 @@
             const fmtB = window.formatBytes || function(v) { return v + ' B'; };
             const srcTotal = (m.src_bytes_in || 0) + (m.src_bytes_out || 0);
             html += `
-            <div style="background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px;margin-bottom:8px;">
+            <div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:8px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                    <span style="font-size:0.8rem;font-weight:600;color:#e6edf3;">${window.escapeHtml(m.source_phase1 || m.source_tunnel)} &harr; ${window.escapeHtml(m.dest_phase1 || m.dest_tunnel)}</span>
+                    <span style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text);">${window.escapeHtml(m.source_phase1 || m.source_tunnel)} &harr; ${window.escapeHtml(m.dest_phase1 || m.dest_tunnel)}</span>
                     <span class="badge ${statusClass}" style="font-size:0.65rem;">${bothUp ? 'ACTIVE' : 'DOWN'}</span>
                 </div>
-                <div style="display:flex;gap:12px;margin-bottom:6px;font-size:0.72rem;color:#8b949e;">
-                    <span>&darr; In: <strong style="color:#58a6ff;">${fmtB(m.src_bytes_in || 0)}</strong></span>
-                    <span>&uarr; Out: <strong style="color:#3fb950;">${fmtB(m.src_bytes_out || 0)}</strong></span>
-                    <span>Total: <strong style="color:#e6edf3;">${fmtB(srcTotal)}</strong></span>
+                <div style="display:flex;gap:12px;margin-bottom:6px;font-size:0.72rem;color:var(--fwmon-text-faint);">
+                    <span>&darr; In: <strong style="color:var(--fwmon-accent);">${fmtB(m.src_bytes_in || 0)}</strong></span>
+                    <span>&uarr; Out: <strong style="color:var(--fwmon-sig-ok);">${fmtB(m.src_bytes_out || 0)}</strong></span>
+                    <span>Total: <strong style="color:var(--fwmon-text);">${fmtB(srcTotal)}</strong></span>
                     ${m.src_uptime ? `<span>Up: ${Math.floor(m.src_uptime / 3600)}h</span>` : ''}
                 </div>
                 <svg width="100%" height="60" viewBox="0 0 500 60" style="display:block;">
@@ -857,18 +857,18 @@
         const offnet = tunnels.filter(t => t.matched_device_id === 0);
 
         function renderVPNTunnelRows(prefix, rows, devId) {
-            if (!rows.length) return '<tr><td colspan="9" style="text-align:center;color:#768390;padding:12px;">None</td></tr>';
+            if (!rows.length) return '<tr><td colspan="9" style="text-align:center;color:var(--fwmon-text-mute);padding:12px;">None</td></tr>';
             return rows.map((t, i) => {
                 const rowId = `${prefix}-${i}`;
-                const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:#58a6ff;text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:#d29922;font-size:0.78rem;">Off-Net</span>';
+                const dest = t.matched_device_id ? `<a href="/admin/devices/${t.matched_device_id}" style="color:var(--fwmon-accent);text-decoration:none;font-size:0.78rem;">${window.escapeHtml(t.matched_name)}</a>` : '<span style="color:var(--fwmon-sig-warn);font-size:0.78rem;">Off-Net</span>';
                 const statusBadge = `<span class="badge ${t.status}">${t.status.toUpperCase()}</span>`;
                 return `
                     <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(t.tunnel_name)}">
                         <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
                         <td>${window.escapeHtml(t.tunnel_name)}</td>
                         <td>${window.escapeHtml((t.tunnel_type || 'ipsec').toUpperCase())}</td>
-                        <td style="color:#8b949e;font-size:0.78rem;">${window.escapeHtml(t.interface_name || '-')}</td>
-                        <td style="color:#8b949e;font-size:0.78rem;">${window.escapeHtml(t.mode || '-')}</td>
+                        <td style="color:var(--fwmon-text-faint);font-size:0.78rem;">${window.escapeHtml(t.interface_name || '-')}</td>
+                        <td style="color:var(--fwmon-text-faint);font-size:0.78rem;">${window.escapeHtml(t.mode || '-')}</td>
                         <td>${statusBadge}</td>
                         <td style="font-family:monospace;font-size:0.78rem;">${window.escapeHtml(t.remote_ip || '-')}</td>
                         <td>${dest}</td>
@@ -891,24 +891,24 @@
         let sectionsHtml = '';
         if (!offnetOnly && matched.length > 0) {
             sectionsHtml += `
-                <h5 style="font-size:0.82rem;color:#e6edf3;margin:12px 0 6px 0;">Matched Tunnels (${matched.length})</h5>
+                <h5 style="font-size:0.82rem;color:var(--fwmon-text);margin:12px 0 6px 0;">Matched Tunnels (${matched.length})</h5>
                 <table class="vpn-detail-table"><thead><tr><th></th><th>Tunnel</th><th>Type</th><th>Interface</th><th>Mode</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
                 <tbody>${renderVPNTunnelRows('vpn-m', matched, deviceId)}</tbody></table>`;
         }
         if (offnet.length > 0) {
             sectionsHtml += `
-                <h5 style="font-size:0.82rem;color:#d29922;margin:12px 0 6px 0;">Off-Net Tunnels (${offnet.length})</h5>
+                <h5 style="font-size:0.82rem;color:var(--fwmon-sig-warn);margin:12px 0 6px 0;">Off-Net Tunnels (${offnet.length})</h5>
                 <table class="vpn-detail-table"><thead><tr><th></th><th>Tunnel</th><th>Type</th><th>Interface</th><th>Mode</th><th>Status</th><th>Remote IP</th><th>Destination</th><th>Uptime</th></tr></thead>
                 <tbody>${renderVPNTunnelRows('vpn-o', offnet, deviceId)}</tbody></table>`;
         }
         if (!offnetOnly && matched.length === 0 && offnet.length === 0) {
-            sectionsHtml = '<div style="text-align:center;color:#768390;padding:20px;">No tunnels</div>';
+            sectionsHtml = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:20px;">No tunnels</div>';
         }
 
         panel.innerHTML = `
             <div class="rich-detail-panel">
                 <div class="panel-header">
-                    <h4>${heading} <span style="font-size:0.8rem;font-weight:400;color:#8b949e;margin-left:8px;">${vpnInfo.up} up / ${vpnInfo.down} down</span></h4>
+                    <h4>${heading} <span style="font-size:0.8rem;font-weight:400;color:var(--fwmon-text-faint);margin-left:8px;">${vpnInfo.up} up / ${vpnInfo.down} down</span></h4>
                     <button class="btn secondary sm" data-action="dp-close-panel">Close</button>
                 </div>
                 ${sectionsHtml}

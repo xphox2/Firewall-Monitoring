@@ -59,15 +59,17 @@
         var radius = 32;
         var circumference = 2 * Math.PI * radius;
         var offset = circumference - (pct / 100) * circumference;
-        var color = '#3fb950';
-        if (pct >= 90) color = '#f85149';
-        else if (pct >= 70) color = '#d29922';
+        // var() so a Day/Night flip re-resolves instantly (SVG presentation
+        // attributes can't take var(), inline style can).
+        var color = 'var(--fwmon-sig-ok)';
+        if (pct >= 90) color = 'var(--fwmon-sig-crit)';
+        else if (pct >= 70) color = 'var(--fwmon-sig-warn)';
 
         container.innerHTML =
             '<svg width="80" height="80" viewBox="0 0 80 80">' +
                 '<circle class="gauge-bg" cx="40" cy="40" r="' + radius + '" />' +
                 '<circle class="gauge-fill" cx="40" cy="40" r="' + radius + '"' +
-                    ' stroke="' + color + '"' +
+                    ' style="stroke:' + color + '"' +
                     ' stroke-dasharray="' + circumference + '"' +
                     ' stroke-dashoffset="' + offset + '" />' +
             '</svg>' +
@@ -76,7 +78,7 @@
 
     // Connection type visual style mapping
     function renderBridge(srcName, dstName, status, connType) {
-        var statusColor = status === 'up' ? '#3fb950' : (status === 'down' ? '#f85149' : '#484f58');
+        var statusColor = status === 'up' ? 'var(--fwmon-sig-ok)' : (status === 'down' ? 'var(--fwmon-sig-crit)' : 'var(--fwmon-text-mute)');
         var cs = connStyle(connType);
         var pathColor = cs.color;
         var particles = '';
@@ -106,12 +108,12 @@
                         '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>' +
                     '</filter>' +
                 '</defs>' +
-                '<rect x="20" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="' + statusColor + '" stroke-width="2"/>' +
-                '<text x="90" y="48" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">' + AC.escapeHtml(srcName || '').substring(0, 16) + '</text>' +
-                '<text x="90" y="64" text-anchor="middle" fill="#8b949e" font-size="10">Source</text>' +
-                '<rect x="540" y="25" width="140" height="50" rx="8" fill="#161b22" stroke="' + statusColor + '" stroke-width="2"/>' +
-                '<text x="610" y="48" text-anchor="middle" fill="#e6edf3" font-size="12" font-weight="600">' + AC.escapeHtml(dstName || '').substring(0, 16) + '</text>' +
-                '<text x="610" y="64" text-anchor="middle" fill="#8b949e" font-size="10">Destination</text>' +
+                '<rect x="20" y="25" width="140" height="50" rx="8" style="fill:var(--fwmon-card-bg);stroke:' + statusColor + '" stroke-width="2"/>' +
+                '<text x="90" y="48" text-anchor="middle" style="fill:var(--fwmon-text)" font-size="12" font-weight="600">' + AC.escapeHtml(srcName || '').substring(0, 16) + '</text>' +
+                '<text x="90" y="64" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">Source</text>' +
+                '<rect x="540" y="25" width="140" height="50" rx="8" style="fill:var(--fwmon-card-bg);stroke:' + statusColor + '" stroke-width="2"/>' +
+                '<text x="610" y="48" text-anchor="middle" style="fill:var(--fwmon-text)" font-size="12" font-weight="600">' + AC.escapeHtml(dstName || '').substring(0, 16) + '</text>' +
+                '<text x="610" y="64" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">Destination</text>' +
                 '<path id="bridge-path" d="M160,50 Q350,10 540,50" fill="none" stroke="' + pathColor + '" stroke-width="' + cs.width + '" ' + cs.dash + filterAttr + '>' +
                     pulseAnim +
                 '</path>' +
@@ -171,7 +173,7 @@
     function renderTunnelTable(tableId, tunnels, deviceId) {
         var tbody = document.querySelector('#' + tableId + ' tbody');
         if (!tunnels.length) {
-            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#768390;padding:30px;">No matching tunnels found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No matching tunnels found</td></tr>';
             return;
         }
         var html = '';
@@ -192,8 +194,8 @@
                     '<td>' + typeBadge + '</td>' +
                     '<td>' + statusBadge + '</td>' +
                     '<td>' + AC.escapeHtml(t.remote_ip || '-') + '</td>' +
-                    '<td><code style="color:#58a6ff;font-size:0.8rem;">' + AC.escapeHtml(t.local_subnet || '-') + '</code></td>' +
-                    '<td><code style="color:#3fb950;font-size:0.8rem;">' + AC.escapeHtml(t.remote_subnet || '-') + '</code></td>' +
+                    '<td><code style="color:var(--fwmon-accent);font-size:0.8rem;">' + AC.escapeHtml(t.local_subnet || '-') + '</code></td>' +
+                    '<td><code style="color:var(--fwmon-sig-ok);font-size:0.8rem;">' + AC.escapeHtml(t.remote_subnet || '-') + '</code></td>' +
                     '<td>' + formatBytes(t.bytes_in) + '</td>' +
                     '<td>' + formatBytes(t.bytes_out) + '</td>' +
                     '<td>' + formatUptime(t.tunnel_uptime) + '</td>' +
@@ -218,7 +220,7 @@
     function renderPhase2Matches(matches, srcName, dstName) {
         var container = document.getElementById('phase2-matches-container');
         if (!matches.length) {
-            container.innerHTML = '<div style="text-align:center;color:#768390;padding:30px;">No Phase 2 selector matches found between these devices.</div>';
+            container.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No Phase 2 selector matches found between these devices.</div>';
             return;
         }
         var html = '';
@@ -227,36 +229,36 @@
             var srcUp = m.source_status === 'up';
             var dstUp = m.dest_status === 'up';
             var bothUp = srcUp && dstUp;
-            var pathColor = bothUp ? '#3fb950' : '#f85149';
+            var pathColor = bothUp ? 'var(--fwmon-sig-ok)' : 'var(--fwmon-sig-crit)';
             var statusLabel = bothUp ? 'ACTIVE' : 'DOWN';
             var statusClass = bothUp ? 'up' : 'down';
             var filterAttr = bothUp ? ' filter="url(#p2glow-' + i + ')"' : '';
             var animCircles = bothUp
-                ? '<circle r="3" fill="' + pathColor + '" opacity="0.85">' +
+                ? '<circle r="3" style="fill:' + pathColor + '" opacity="0.85">' +
                       '<animateMotion dur="3s" begin="0s" repeatCount="indefinite" fill="freeze"><mpath href="#p2path-' + i + '"/></animateMotion>' +
                   '</circle>' +
-                  '<circle r="2.5" fill="#58a6ff" opacity="0.7">' +
+                  '<circle r="2.5" style="fill:var(--fwmon-accent)" opacity="0.7">' +
                       '<animateMotion dur="3.5s" begin="1s" repeatCount="indefinite" fill="freeze" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#p2path-' + i + '"/></animateMotion>' +
                   '</circle>'
                 : '';
             html +=
-                '<div class="phase2-match-card" style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:12px;">' +
+                '<div class="phase2-match-card" style="background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:8px;padding:16px;margin-bottom:12px;">' +
                     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">' +
-                        '<span style="font-size:0.85rem;font-weight:600;color:#e6edf3;">' + AC.escapeHtml(m.source_phase1 || m.source_tunnel) + ' &harr; ' + AC.escapeHtml(m.dest_phase1 || m.dest_tunnel) + '</span>' +
+                        '<span style="font-size:0.85rem;font-weight:600;color:var(--fwmon-text);">' + AC.escapeHtml(m.source_phase1 || m.source_tunnel) + ' &harr; ' + AC.escapeHtml(m.dest_phase1 || m.dest_tunnel) + '</span>' +
                         '<span class="badge ' + statusClass + '" style="font-size:0.7rem;">' + statusLabel + '</span>' +
                     '</div>' +
                     '<svg width="100%" height="70" viewBox="0 0 600 70" style="display:block;">' +
                         '<defs><filter id="p2glow-' + i + '" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>' +
-                        '<rect x="0" y="15" width="160" height="40" rx="6" fill="#0d1117" stroke="#30363d" stroke-width="1"/>' +
-                        '<text x="80" y="30" text-anchor="middle" fill="#8b949e" font-size="10">' + AC.escapeHtml(srcName) + '</text>' +
-                        '<text x="80" y="46" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="monospace">' + AC.escapeHtml(m.local_subnet) + '</text>' +
-                        '<rect x="440" y="15" width="160" height="40" rx="6" fill="#0d1117" stroke="#30363d" stroke-width="1"/>' +
-                        '<text x="520" y="30" text-anchor="middle" fill="#8b949e" font-size="10">' + AC.escapeHtml(dstName) + '</text>' +
-                        '<text x="520" y="46" text-anchor="middle" fill="#3fb950" font-size="11" font-family="monospace">' + AC.escapeHtml(m.remote_subnet) + '</text>' +
-                        '<path id="p2path-' + i + '" d="M160,35 Q300,10 440,35" fill="none" stroke="' + pathColor + '" stroke-width="2"' + filterAttr + '/>' +
-                        '<path d="M160,35 Q300,60 440,35" fill="none" stroke="' + pathColor + '" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.5"/>' +
+                        '<rect x="0" y="15" width="160" height="40" rx="6" style="fill:var(--fwmon-bg);stroke:var(--fwmon-border)" stroke-width="1"/>' +
+                        '<text x="80" y="30" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">' + AC.escapeHtml(srcName) + '</text>' +
+                        '<text x="80" y="46" text-anchor="middle" style="fill:var(--fwmon-accent)" font-size="11" font-family="monospace">' + AC.escapeHtml(m.local_subnet) + '</text>' +
+                        '<rect x="440" y="15" width="160" height="40" rx="6" style="fill:var(--fwmon-bg);stroke:var(--fwmon-border)" stroke-width="1"/>' +
+                        '<text x="520" y="30" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">' + AC.escapeHtml(dstName) + '</text>' +
+                        '<text x="520" y="46" text-anchor="middle" style="fill:var(--fwmon-sig-ok)" font-size="11" font-family="monospace">' + AC.escapeHtml(m.remote_subnet) + '</text>' +
+                        '<path id="p2path-' + i + '" d="M160,35 Q300,10 440,35" fill="none" style="stroke:' + pathColor + '" stroke-width="2"' + filterAttr + '/>' +
+                        '<path d="M160,35 Q300,60 440,35" fill="none" style="stroke:' + pathColor + '" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.5"/>' +
                         animCircles +
-                        '<text x="300" y="8" text-anchor="middle" fill="#484f58" font-size="9">Phase 2: ' + AC.escapeHtml(m.source_tunnel) + ' &harr; ' + AC.escapeHtml(m.dest_tunnel) + '</text>' +
+                        '<text x="300" y="8" text-anchor="middle" style="fill:var(--fwmon-text-mute)" font-size="9">Phase 2: ' + AC.escapeHtml(m.source_tunnel) + ' &harr; ' + AC.escapeHtml(m.dest_tunnel) + '</text>' +
                     '</svg>' +
                 '</div>';
         }
@@ -307,12 +309,16 @@
         return {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } },
+            // No explicit colors: legend/tick/grid colors come from the
+            // token-based Chart defaults (setupChartDefaults), which the
+            // Day/Night recolor pass re-runs — hardcoding them here would
+            // pin the dark palette (the pre-v0.11.70 bug).
+            plugins: { legend: { labels: { boxWidth: 10, padding: 8, font: { size: 10 } } },
                 tooltip: { callbacks: { label: function(ctx) { var v = ctx.chart.options.indexAxis === 'y' ? ctx.parsed.x : ctx.parsed.y; return ctx.dataset.label + ': ' + formatBytes(v != null ? v : 0); } } }
             },
             scales: {
-                x: { ticks: { color: '#484f58', font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: '#21262d' } },
-                y: { beginAtZero: true, ticks: { color: '#484f58', font: { size: 11 }, callback: yCallback || function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } }
+                x: { ticks: { font: { size: 11 }, maxRotation: 0, maxTicksLimit: 12 } },
+                y: { beginAtZero: true, ticks: { font: { size: 11 }, callback: yCallback || function(v) { return formatBytes(v); } } }
             }
         };
     }
@@ -332,7 +338,7 @@
 
             if (!Array.isArray(data) || data.length === 0) {
                 if (trafficChart) { trafficChart.destroy(); trafficChart = null; }
-                if (host) host.innerHTML = '<div style="text-align:center;color:#8b949e;padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
+                if (host) host.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-faint);padding:30px;">No traffic data available. Tunnel byte counters may not be populated yet.</div>';
                 return;
             }
 
@@ -411,7 +417,7 @@
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'right', labels: { color: '#8b949e', padding: 8, font: { size: 10 } } } }
+                    plugins: { legend: { position: 'right', labels: { padding: 8, font: { size: 10 } } } }
                 }
             });
 
@@ -431,12 +437,12 @@
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     plugins: {
-                        legend: { labels: { color: '#8b949e', boxWidth: 10, padding: 8, font: { size: 10 } } },
+                        legend: { labels: { boxWidth: 10, padding: 8, font: { size: 10 } } },
                         tooltip: { callbacks: { label: function(ctx) { return 'Throughput: ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '0') + ' Mbps'; } } }
                     },
                     scales: {
-                        x: { ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
-                        y: { beginAtZero: true, ticks: { color: '#8b949e', font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: function(v) { return v.toFixed(1) + ' Mbps'; } }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
+                        x: { ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, maxRotation: 0, maxTicksLimit: 12 } },
+                        y: { beginAtZero: true, ticks: { font: { size: 10, family: 'JetBrains Mono, monospace' }, callback: function(v) { return v.toFixed(1) + ' Mbps'; } } }
                     }
                 }
             });
@@ -454,8 +460,8 @@
                     indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
                     scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } },
-                        y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { display: false } }
+                        x: { ticks: { font: { size: 11 }, callback: function(v) { return formatBytes(v); } } },
+                        y: { ticks: { font: { size: 11 } }, grid: { display: false } }
                     }
                 }
             });
@@ -473,8 +479,8 @@
                     indexAxis: 'y', responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
                     scales: {
-                        x: { ticks: { color: '#484f58', font: { size: 11 }, callback: function(v) { return formatBytes(v); } }, grid: { color: '#21262d' } },
-                        y: { ticks: { color: '#8b949e', font: { size: 11 } }, grid: { display: false } }
+                        x: { ticks: { font: { size: 11 }, callback: function(v) { return formatBytes(v); } } },
+                        y: { ticks: { font: { size: 11 } }, grid: { display: false } }
                     }
                 }
             });
@@ -494,7 +500,7 @@
                         '<td>' + formatNum(c.packets) + '</td>' +
                     '</tr>';
             }
-            ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:#768390;padding:20px;">No conversations found</td></tr>';
+            ctbody.innerHTML = convHtml || '<tr><td colspan="5" style="text-align:center;color:var(--fwmon-text-mute);padding:20px;">No conversations found</td></tr>';
             if (ctbody) AC.enrichIps(ctbody);
         }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading flow stats:', err);

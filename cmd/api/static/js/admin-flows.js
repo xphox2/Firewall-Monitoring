@@ -674,7 +674,7 @@
             }
         } catch (e) { /* details is best-effort */ }
         var alertHtml = r.alert_id
-            ? '<a href="#alert/' + esc(String(r.alert_id)) + '" data-action="close-flow-detection" style="color:#58a6ff;">View alert #' + esc(String(r.alert_id)) + ' ↗</a>'
+            ? '<a href="#alert/' + esc(String(r.alert_id)) + '" data-action="close-flow-detection" style="color:var(--fwmon-accent);">View alert #' + esc(String(r.alert_id)) + ' ↗</a>'
             : '<span style="color:var(--fwmon-text-faint);">not escalated to an alert</span>';
 
         body.innerHTML =
