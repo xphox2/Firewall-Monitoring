@@ -911,6 +911,59 @@
     border-color: var(--fwmon-series-1);
 }
 
+/* ------------------------------------------------------------------
+ * Row-action icon buttons (Devices/Connections tables, v0.11.68).
+ * Icons stroke currentColor so one glyph set serves both themes; the
+ * .row-actions strip never wraps — it replaces the boxed text buttons
+ * that used to break onto multiple lines inside table rows.
+ * ------------------------------------------------------------------ */
+.row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    white-space: nowrap;
+}
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    border-radius: var(--fwmon-radius-sm);
+    color: var(--fwmon-text-faint);
+    cursor: pointer;
+    /* background-color ONLY — transitioning `color` here pins the var()-
+     * driven value across a Day/Night flip in Chromium (the retargeted
+     * transition never resolves the new custom-property value), leaving
+     * icons in the previous theme's color until a reload. */
+    transition: background-color 0.15s ease;
+}
+.icon-btn:hover { background: var(--fwmon-hover); color: var(--fwmon-text); }
+.icon-btn.danger:hover { background: var(--fwmon-hover); color: var(--fwmon-sig-crit); }
+.icon-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.35);
+}
+.icon-btn.danger:focus-visible { box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.35); }
+.icon-btn svg { width: 16px; height: 16px; display: block; }
+/* Non-interactive marker in an action strip (e.g. auto-managed shield). */
+.icon-btn.static { cursor: default; }
+.icon-btn.static:hover { background: none; color: var(--fwmon-text-faint); }
+
+/* Table-cell helpers: keep status dot+badge on one line; clamp long
+ * device names to an ellipsis instead of wrapping the row. */
+td.td-nowrap { white-space: nowrap; }
+td.td-ellipsis {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .btn.danger:focus-visible {
     box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.35);
     border-color: #f85149;
