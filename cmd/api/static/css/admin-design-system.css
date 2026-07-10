@@ -112,12 +112,16 @@
     --fwmon-border:        #2a313b; /* steel hairline — card edges read */
     --fwmon-border-strong: #3b4654;
 
-    /* Doughnut/pie segment ring (Chart.js arc borders). Contrast-mirrored
-     * across themes: night gets a white ring, day gets a dark-ink ring — the
-     * same visible-outline format either way. Applies to the arcs only (the
-     * legend swatches are excluded in createChart). Consumed by createChart +
-     * recolorChartsForTheme — keep those in sync with this. */
-    --fwmon-chart-arc-border: #ffffff;
+    /* Doughnut/pie segment ring (Chart.js arc borders). CLEAR in both themes
+     * (v0.11.71, user-specified): the ring matches the card surface, so the
+     * gaps between segments look transparent — night gets the dark card ink,
+     * day gets white. The earlier "contrast-mirrored" white/black rings
+     * (v0.11.65-66) made one theme or the other look wrong; do NOT bring a
+     * contrast-colored ring back. Must stay equal to --fwmon-card-bg per
+     * theme as a LITERAL hex (canvas can't resolve a var() chain through
+     * cssVar). Applies to the arcs only (legend swatches are excluded in
+     * createChart). Consumed by createChart + recolorChartsForTheme. */
+    --fwmon-chart-arc-border: #161b22;
 
     /* Text — cool off-white ramp; faint/mute use the AA-verified values from
      * AUDIT-066/067 so small labels stay legible (not washed). */
@@ -180,9 +184,9 @@
     --fwmon-border:        #d3dae3;
     --fwmon-border-strong: #b9c4d0;
 
-    /* Day mode's doughnut ring is dark ink (night's is white) — mirrored
-     * contrast so both themes show the same visible-outline format. */
-    --fwmon-chart-arc-border: #161b22;
+    /* Day mode's clear ring = the white card surface (see the dark block's
+     * comment — surface-matched in both themes, never a contrast color). */
+    --fwmon-chart-arc-border: #ffffff;
 
     --fwmon-text:       #16242c;
     --fwmon-text-dim:   #2d3d45;
