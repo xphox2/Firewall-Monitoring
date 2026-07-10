@@ -7,10 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.71] - 2026-07-09
 
 ### Fixed
-- **Chart circles: clear (surface-matched) borders in BOTH themes — the format that was actually asked for.** Previous iterations kept flipping a single contrast color (white ring ↔ black ring), which always broke one theme. The rule now applied everywhere: a chart element's border matches the card surface of the ACTIVE theme, so it reads as a transparent gap in day and night simultaneously.
-  - **Line-graph point markers** are back to a solid dot in the line's own color with a clear border (the border is the card surface — white in day, dark ink in night — cutting a clean break in the line around each point). This reverts the v0.11.69 "hollow ring" inversion, which had produced colored rings with see-through centers instead.
-  - **Doughnut/pie segment ring** no longer uses the contrast-mirrored white(night)/black(day) outline from v0.11.65-66 — `--fwmon-chart-arc-border` now equals the card surface per theme, so segments are separated by clear gaps with no white ring on night and no black ring on day.
-  - Both apply at chart build and in the Day/Night recolor pass, verified live in both themes including across theme toggles.
+- **Line-graph point markers: solid dot in the line's own color with a clear (card-surface) border, in both themes.** Reverts the v0.11.69 "hollow ring" change, which had inverted the marker into a colored ring with a see-through center. The border matches the active theme's card surface — white in day, dark ink in night — so it reads as a clean transparent break in the line around each point. Applied at chart build and in the Day/Night recolor pass, verified live in both themes including across theme toggles. Doughnut/pie charts are untouched.
 
 ## [0.11.70] - 2026-07-09
 
