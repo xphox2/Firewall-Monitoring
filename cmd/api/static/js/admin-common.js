@@ -479,7 +479,7 @@
      *   - The host segment is URI-encoded to keep names with `@` or `:`
      *     out of the wrong slot.
      * ------------------------------------------------------------------ */
-    function sshLaunchButton(device) {
+    function sshLaunchButton(device, asIcon) {
         if (!device || !device.ip_address) return '';
         var user = device.ssh_username ? String(device.ssh_username).trim() : '';
         var port = device.ssh_port && device.ssh_port !== 22 ? device.ssh_port : '';
@@ -488,9 +488,48 @@
                    (port ? ':' + port : '');
         var title = 'Launch SSH to ' + (user ? (user + '@') : '') +
                     device.ip_address + (port ? (':' + port) : '');
+        // Icon form for table rows (v0.11.68); the labeled form stays for
+        // page-level placements like device-detail's header.
+        if (asIcon) return iconButton({ href: url, icon: 'terminal', title: title });
         return '<a href="' + url + '" class="btn secondary sm" title="' +
                escapeHtml(title) + '" aria-label="' + escapeHtml(title) +
                '" style="margin-right:6px;">SSH</a>';
+    }
+
+    /* ------------------------------------------------------------------
+     * Row-action icons (v0.11.68 — Devices/Connections tables).
+     *
+     * Inline SVGs stroke `currentColor`, so they follow whatever the
+     * .icon-btn class sets via `color:` — one glyph set serves both Day
+     * and Night. Every icon button carries title + aria-label (the icon
+     * alone is not the accessible name). Add new glyphs here rather
+     * than pasting SVG into page code.
+     * ------------------------------------------------------------------ */
+    var ICON_PATHS = {
+        terminal: '<polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line>',
+        bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path>',
+        pencil: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>',
+        trash: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
+        eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>',
+        shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>'
+    };
+    function icon(name) {
+        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+               'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+               (ICON_PATHS[name] || '') + '</svg>';
+    }
+    /* iconButton({icon, title, action?, id?, minRole?, danger?, href?})
+     * — href renders an <a> (SSH launch, details links), otherwise a
+     * <button> wired for the delegateEvent data-action dispatch. */
+    function iconButton(opts) {
+        var cls = 'icon-btn' + (opts.danger ? ' danger' : '');
+        var attrs = ' class="' + cls + '" title="' + escapeHtml(opts.title) +
+                    '" aria-label="' + escapeHtml(opts.title) + '"';
+        if (opts.action) attrs += ' data-action="' + opts.action + '"';
+        if (opts.id != null) attrs += ' data-id="' + opts.id + '"';
+        if (opts.minRole) attrs += ' data-min-role="' + opts.minRole + '"';
+        if (opts.href) return '<a href="' + opts.href + '"' + attrs + '>' + icon(opts.icon) + '</a>';
+        return '<button type="button"' + attrs + '>' + icon(opts.icon) + '</button>';
     }
 
     function doLogout() {
@@ -1363,6 +1402,8 @@
         connectionLink: connectionLink,
         filterLink: filterLink,
         sshLaunchButton: sshLaunchButton,
+        icon: icon,
+        iconButton: iconButton,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

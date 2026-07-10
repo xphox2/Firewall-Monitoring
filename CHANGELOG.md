@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.68] - 2026-07-09
+
+### Changed
+- **Devices & Connections tables: icon action buttons, one-line rows.** The row actions (SSH / Alerts / Edit / Delete on Devices; Details / Edit / Delete on Connections) were boxed text buttons that wrapped onto multiple lines inside the row. They are now compact theme-aware icon buttons (terminal, bell, pencil, trash, eye; auto-managed connections show a shield marker instead of Delete) in a strip that never wraps — every button keeps a tooltip and aria-label. Icons stroke `currentColor`, so one glyph set serves Day and Night.
+- **Status column no longer wraps** — the pulse dot and ONLINE/OFFLINE badge stay on one line, and long device/connection names now ellipsize with a hover tooltip instead of breaking the row.
+
+### Fixed
+- **Connections table status-poller re-render had drifted** from the main renderer (it dropped the Edit button and the device-detail links after any status change). Both paths now share a single row renderer.
+- **Icon colors froze across a Day/Night flip** — transitioning `color` on the new icon buttons pinned the var()-driven value in Chromium until reload; the transition now covers background-color only.
+
 ## [0.11.67] - 2026-07-09
 
 ### Fixed

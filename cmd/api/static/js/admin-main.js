@@ -694,14 +694,14 @@
                     '<td id="dev-cpu-' + d.id + '" style="color:#768390">-</td>' +
                     '<td id="dev-mem-' + d.id + '" style="color:#768390">-</td>' +
                     '<td id="dev-sess-' + d.id + '" style="color:#768390">-</td>' +
-                    '<td><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
+                    '<td class="td-nowrap"><span class="pulse-dot ' + (d.status === 'online' ? 'online' : 'offline') + '"></span><span class="badge ' + escapeHtml(d.status) + '">' + escapeHtml(d.status).toUpperCase() + '</span></td>' +
                     '<td><input type="checkbox" ' + (d.public_visible ? 'checked ' : '') + 'data-action="toggle-public-visible" data-id="' + d.id + '"></td>' +
-                    '<td>' +
-                        AC.sshLaunchButton(d) +
-                        '<button class="btn secondary sm" data-action="device-alert-config" data-min-role="operator" data-id="' + d.id + '">Alerts</button> ' +
-                        '<button class="btn secondary sm" data-action="edit-device" data-min-role="operator" data-id="' + d.id + '">Edit</button> ' +
-                        '<button class="btn danger sm" data-action="delete-device" data-min-role="operator" data-id="' + d.id + '">Delete</button>' +
-                    '</td>' +
+                    '<td><div class="row-actions">' +
+                        AC.sshLaunchButton(d, true) +
+                        AC.iconButton({ action: 'device-alert-config', id: d.id, icon: 'bell', title: 'Alert settings', minRole: 'operator' }) +
+                        AC.iconButton({ action: 'edit-device', id: d.id, icon: 'pencil', title: 'Edit device', minRole: 'operator' }) +
+                        AC.iconButton({ action: 'delete-device', id: d.id, icon: 'trash', title: 'Delete device', danger: true, minRole: 'operator' }) +
+                    '</div></td>' +
                 '</tr>';
             }).join('') || '<tr><td colspan="10" class="empty-state">No devices configured</td></tr>';
 
@@ -811,6 +811,32 @@
     }
 
     // ---- Connections ----
+    // Single row renderer shared by loadConnections and the status poller's
+    // re-render (they had drifted: the poller's copy lost the Edit button
+    // and the device-detail links). Icon actions + nowrap device cells so
+    // rows stay on one line.
+    function renderConnectionRow(c) {
+        var srcName = c.source_device ? c.source_device.name : ('DEV-' + c.source_device_id);
+        var dstName = c.dest_device   ? c.dest_device.name   : ('DEV-' + c.dest_device_id);
+        var actions = '<div class="row-actions">' +
+            AC.iconButton({ href: '/admin/connections/' + c.id, icon: 'eye', title: 'Connection details' }) +
+            AC.iconButton({ action: 'edit-connection', id: c.id, icon: 'pencil', title: 'Edit connection', minRole: 'operator' }) +
+            (c.auto_detected
+                ? '<span class="icon-btn static" title="Auto-managed — created and removed by connection detection" aria-label="Auto-managed connection">' + AC.icon('shield') + '</span>'
+                : AC.iconButton({ action: 'delete-connection', id: c.id, icon: 'trash', title: 'Delete connection', danger: true, minRole: 'operator' })) +
+            '</div>';
+        return '<tr>' +
+            '<td class="td-ellipsis" title="' + escapeHtml(c.name) + '">' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
+            '<td class="td-ellipsis" title="' + escapeHtml(srcName) + '">' + AC.deviceLink(c.source_device_id, srcName) + '</td>' +
+            '<td class="td-ellipsis" title="' + escapeHtml(dstName) + '">' + AC.deviceLink(c.dest_device_id, dstName) + '</td>' +
+            '<td class="td-nowrap">' + escapeHtml(c.connection_type ? c.connection_type.toUpperCase() : 'IPSEC') + '</td>' +
+            '<td class="td-nowrap"><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
+            '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
+            '<td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
+            '<td>' + actions + '</td>' +
+        '</tr>';
+    }
+
     function loadConnections() {
         Promise.all([
             apiFetch(API_BASE + '/devices'),
@@ -833,28 +859,8 @@
             currentDevices.forEach(function(d) { deviceSiteMap[d.id] = d.site_id || null; });
 
             var tbody = document.querySelector('#connections-table tbody');
-            tbody.innerHTML = currentConnections.map(function(c) {
-                var deleteBtn = c.auto_detected
-                    ? '<span style="color:#8b949e;font-size:0.75rem;">Auto-managed</span>'
-                    : '<button class="btn danger sm" data-action="delete-connection" data-min-role="operator" data-id="' + c.id + '">Delete</button>';
-                var editBtn = '<button class="btn secondary sm" data-action="edit-connection" data-min-role="operator" data-id="' + c.id + '">Edit</button>';
-                // Cross-page nav (v0.10.215, bundle E2): source + dest
-                // device names link straight to each device's detail page.
-                var srcName = c.source_device ? c.source_device.name : ('DEV-' + c.source_device_id);
-                var dstName = c.dest_device   ? c.dest_device.name   : ('DEV-' + c.dest_device_id);
-                var srcCell = AC.deviceLink(c.source_device_id, srcName);
-                var dstCell = AC.deviceLink(c.dest_device_id,   dstName);
-                return '<tr>' +
-                    '<td>' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
-                    '<td>' + srcCell + '</td>' +
-                    '<td>' + dstCell + '</td>' +
-                    '<td>' + escapeHtml(c.connection_type ? c.connection_type.toUpperCase() : 'IPSEC') + '</td>' +
-                    '<td><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
-                    '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
-                    '<td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
-                    '<td><a href="/admin/connections/' + c.id + '" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>' + editBtn + ' ' + deleteBtn + '</td>' +
-                '</tr>';
-            }).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
+            tbody.innerHTML = currentConnections.map(renderConnectionRow).join('') ||
+                '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
 
             drawConnectionDiagram();
             populateDeviceSelects();
@@ -941,26 +947,11 @@
             });
 
             if (connChanges.length > 0) {
-                // Re-render table for simplicity
-                if (connChanges.length > 0) {
-                    var tbody = document.querySelector('#connections-table tbody');
-                    if (tbody) {
-                        tbody.innerHTML = currentConnections.map(function(c) {
-                            var deleteBtn = c.auto_detected
-                                ? '<span style="color:#8b949e;font-size:0.8rem;">Auto-managed</span>'
-                                : '<button class="btn danger sm" data-action="delete-connection" data-min-role="operator" data-id="' + c.id + '">Delete</button>';
-                            return '<tr>' +
-                                '<td>' + escapeHtml(c.name) + (c.auto_detected ? ' <span class="badge" style="background:#388bfd;font-size:0.65rem;padding:1px 5px;">AUTO</span>' : '') + '</td>' +
-                                '<td>' + (escapeHtml(c.source_device ? c.source_device.name : '') || c.source_device_id) + '</td>' +
-                                '<td>' + (escapeHtml(c.dest_device ? c.dest_device.name : '') || c.dest_device_id) + '</td>' +
-                                '<td>' + escapeHtml(c.connection_type ? c.connection_type.toUpperCase() : 'IPSEC') + '</td>' +
-                                '<td><span class="badge ' + escapeHtml(c.status) + '">' + escapeHtml(c.status).toUpperCase() + '</span></td>' +
-                                '<td>' + matchMethodBadge(c.match_method, c.auto_detected) + '</td>' +
-                                '<td style="font-size:0.8rem;color:#8b949e;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(c.tunnel_names || '') + '">' + escapeHtml(c.tunnel_names || '-') + '</td>' +
-                                '<td><a href="/admin/connections/' + c.id + '" style="color:#58a6ff;font-size:0.8rem;margin-right:8px;">Details</a>' + deleteBtn + '</td>' +
-                            '</tr>';
-                        }).join('') || '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
-                    }
+                // Re-render table for simplicity (same renderer as loadConnections).
+                var tbody = document.querySelector('#connections-table tbody');
+                if (tbody) {
+                    tbody.innerHTML = currentConnections.map(renderConnectionRow).join('') ||
+                        '<tr><td colspan="8" class="empty-state">No connections configured</td></tr>';
                 }
             }
         }).catch(function(err) {
