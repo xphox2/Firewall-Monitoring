@@ -605,12 +605,15 @@
                     ds.backgroundColor = gradient;
                 }
                 ds.fill = true;
-                // Hollow "transparent" markers (user-specified): the point's
-                // FILL matches the card surface (white on day, dark ink on
-                // night) so the center looks see-through, and the RING is the
-                // line's own color. Don't swap these back to solid dots.
-                ds.pointBackgroundColor = cardSurface;
-                ds.pointBorderColor = color;
+                // User-specified marker format (v0.11.71, reverting the
+                // v0.11.69 hollow experiment): SOLID dot in the line's own
+                // color, with a CLEAR border — the border matches the card
+                // surface, so it reads as a see-through gap cutting the line
+                // around each point. Same scheme in both themes (the surface
+                // token flips white/dark automatically). Do NOT swap these
+                // two back into hollow rings.
+                ds.pointBackgroundColor = color;
+                ds.pointBorderColor = cardSurface;
                 ds.pointBorderWidth = 2;
                 ds.pointRadius = 4;
                 ds.pointHoverRadius = 6;
