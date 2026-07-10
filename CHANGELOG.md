@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.71] - 2026-07-09
 
 ### Fixed
-- **Line-graph point markers: solid dot in the line's own color with a clear (card-surface) border, in both themes.** Reverts the v0.11.69 "hollow ring" change, which had inverted the marker into a colored ring with a see-through center. The border matches the active theme's card surface — white in day, dark ink in night — so it reads as a clean transparent break in the line around each point. Applied at chart build and in the Day/Night recolor pass, verified live in both themes including across theme toggles. Doughnut/pie charts are untouched.
+- **Line-graph point markers: solid dot in the line's own color with a clear (card-surface) border, in both themes.** Reverts the v0.11.69 "hollow ring" change, which had inverted the marker into a colored ring with a see-through center. The border matches the active theme's card surface — white in day, dark ink in night — so it reads as a clean transparent break in the line around each point. Applied at chart build and in the Day/Night recolor pass.
 
 ## [0.11.70] - 2026-07-09
 
