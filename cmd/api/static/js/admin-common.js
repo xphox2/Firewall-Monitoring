@@ -1871,6 +1871,20 @@
                     }
                 });
             } catch (e) { /* dataset shape varies; skip fill rebuild */ }
+            // Chart.js v4 shares ONE resolved options object across a
+            // dataset's point elements and only re-animates it for changed
+            // animatable transitions — a swapped pointBorderColor never
+            // reaches that shared copy, so the point ring kept the previous
+            // theme's surface color until a full page reload ("toggling
+            // Day/Night doesn't refresh the circle border"). Dropping the
+            // shared-options cache forces update() to re-resolve every
+            // element's options from the dataset values set above.
+            try {
+                ch.data.datasets.forEach(function(_, di) {
+                    var dmeta = ch.getDatasetMeta(di);
+                    if (dmeta && dmeta.controller) dmeta.controller._sharedOptions = undefined;
+                });
+            } catch (e) { /* internal API — worst case the next rebuild repaints */ }
             try { ch.update('none'); } catch (e) { /* chart mid-teardown */ }
         }
     }

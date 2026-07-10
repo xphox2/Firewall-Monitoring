@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.72] - 2026-07-09
+
+### Fixed
+- **Day/Night toggle now repaints line-graph point borders immediately.** Chart.js shares one resolved options object across a dataset's point elements and doesn't pick up a swapped `pointBorderColor` on update, so after a theme flip the point rings kept the previous theme's surface color until a page reload. The recolor pass now drops that shared-options cache before repainting, so the clear border re-resolves to the new theme's card surface on the spot.
+
 ## [0.11.71] - 2026-07-09
 
 ### Fixed
