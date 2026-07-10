@@ -182,3 +182,9 @@ When bumping a version: open a new `## [X.Y.Z] - DATE` (or `## X.Y.Z - DATE`) se
 **The reference:** Akvorado's `visualize` page (akvorado.net/docs/03-usage.md) and sFlow-RT's `browse-flows` (sflow-rt.com). Both have been used in production NOCs for years. Steal their UX.
 
 **The check:** before merging any UI PR on `/admin/noc`, verify the click-to-filter behavior end-to-end. If clicking a top-talker row doesn't filter the bandwidth chart, the UI is wrong.
+
+## 2026-07-09 — "Still broken" after a fix usually means the fix isn't DEPLOYED
+
+**The mistake:** shipped the Day/Night contrast fix in a PR, reported it as fixed — then the user re-reported the exact same bug (Discovery column) and read the earlier report as having been ignored. Their running instance was serving pre-fix code: the admin JS/HTML is `go:embed`ed, so a running binary keeps old UI until the PR merges AND the binary is rebuilt/redeployed.
+
+**The rule:** a UI fix report to the user must state the delivery status explicitly: which PR/version it's in, whether it's merged, and that they need to rebuild + redeploy (and how to verify — the console version banner from `/api/version`). Never say "fixed" bare when the fix hasn't reached the instance the user is looking at. Conversely, when a user reports a bug that the repo code demonstrably doesn't have, check version skew FIRST (banner, deployed tag) before churning code that's already correct — that's how the point-marker design got "reversed" repeatedly.
