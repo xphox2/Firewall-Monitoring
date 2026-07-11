@@ -97,6 +97,22 @@ func (d *Database) GetAllLatestInterfaces() ([]models.InterfaceStats, error) {
 	return ifaces, err
 }
 
+// GetAllLatestSystemStatuses returns the latest system_status row per device,
+// considering only rows newer than since. The bound is applied in SQL — not
+// post-filtered — so the MAX(timestamp) scan stays inside recent partitions
+// and a long-dead device's ancient rows are never fetched at all. Used by the
+// poller's checkRelayedTelemetry pass (v0.11.74) as its freshness gate.
+func (d *Database) GetAllLatestSystemStatuses(since time.Time) ([]models.SystemStatus, error) {
+	var statuses []models.SystemStatus
+	err := d.db.Raw(`
+		SELECT s.* FROM system_status s
+		INNER JOIN (SELECT device_id, MAX(timestamp) as max_ts FROM system_status WHERE timestamp > ? GROUP BY device_id) latest
+		ON s.device_id = latest.device_id AND s.timestamp = latest.max_ts
+		WHERE s.timestamp > ?
+	`, since, since).Scan(&statuses).Error
+	return statuses, err
+}
+
 func (d *Database) GetLatestSystemStatus() (*models.SystemStatus, error) {
 	var status models.SystemStatus
 	err := d.db.Order("timestamp DESC").First(&status).Error

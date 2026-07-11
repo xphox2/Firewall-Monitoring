@@ -860,6 +860,10 @@ func (p *Poller) runMonitoringCycle() {
 		}
 	}
 
+	// Telemetry alert checks over the latest collector-relayed rows — the
+	// re-home of the checks that lived inside the retired direct-poll path.
+	p.checkRelayedTelemetry(devices, staleAfter)
+
 	// Auto-detect connections — record cycle start BEFORE all detectors
 	// so the stale cleanup doesn't delete connections from the first detector.
 	connCycleStart := time.Now()
@@ -883,6 +887,195 @@ func (p *Poller) runMonitoringCycle() {
 	if p.alertManager != nil {
 		p.alertManager.CheckEscalations()
 		p.alertManager.CheckProbeDataFlow()
+	}
+}
+
+// checkRelayedTelemetry runs the telemetry alert checks that previously lived
+// inside the retired direct device-SNMP poll (v0.11.74): CPU/memory/disk/
+// session thresholds (CheckSystemStatus), interface down (CheckInterfaceStatus),
+// interface error/discard deltas (CheckInterfaceErrors), VPN tunnel down
+// (CheckVPNStatus), and sustained traffic-spike detection. It evaluates the
+// latest collector-relayed DB rows instead of live SNMP responses; the check
+// functions themselves are source-agnostic, so this is a data-plumbing change,
+// not an alert-logic change.
+//
+// Two guards protect the delta/staleness semantics:
+//   - freshness gate: rows older than staleAfter (the same 3×PollInterval /
+//     5-minute-floor value the stale-device sweep uses) are skipped, so a dead
+//     device's final sample can't keep re-alerting forever;
+//   - same-sample guard: interfaces whose latest row timestamp equals the
+//     cached prevIfaceStats entry's are excluded from the delta consumers
+//     (CheckInterfaceErrors, spike detection) — the poller ticks at roughly
+//     the collector's cadence, so re-reading an unchanged snapshot would feed
+//     a bogus 0-delta into the spike sustain window. prevIfaceStats is
+//     overwritten only AFTER processing, and spike elapsed time comes from row
+//     timestamps, never time.Now().
+func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.Duration) {
+	if p.db == nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleAfter)
+
+	// Only enabled devices are evaluated; rows from unknown/disabled devices
+	// are skipped (deleted devices keep orphaned telemetry by design).
+	devByID := make(map[uint]*models.Device, len(devices))
+	for i := range devices {
+		if devices[i].Enabled {
+			devByID[devices[i].ID] = &devices[i]
+		}
+	}
+
+	// System status: CPU / memory / disk / session thresholds. The query is
+	// bounded to fresh rows in SQL, so the freshness gate is implicit here.
+	if p.alertManager != nil {
+		statuses, err := p.db.GetAllLatestSystemStatuses(cutoff)
+		if err != nil {
+			log.Printf("Telemetry check: failed to get system statuses - %v", err)
+		} else {
+			for i := range statuses {
+				dev, ok := devByID[statuses[i].DeviceID]
+				if !ok {
+					continue
+				}
+				if err := p.alertManager.CheckSystemStatus(&statuses[i], dev.SiteID); err != nil {
+					log.Printf("Device %s: alert check error - %v", dev.Name, err)
+				}
+			}
+		}
+	}
+
+	// Interfaces: down/error/spike checks over the latest snapshot per device.
+	ifaces, err := p.db.GetAllLatestInterfaces()
+	if err != nil {
+		log.Printf("Telemetry check: failed to get interfaces - %v", err)
+		ifaces = nil
+	}
+	ifacesByDevice := make(map[uint][]models.InterfaceStats)
+	for _, iface := range ifaces {
+		if iface.Timestamp.Before(cutoff) {
+			continue // freshness gate: stale snapshot, device stopped reporting
+		}
+		if _, ok := devByID[iface.DeviceID]; !ok {
+			continue
+		}
+		ifacesByDevice[iface.DeviceID] = append(ifacesByDevice[iface.DeviceID], iface)
+	}
+	for devID, devIfaces := range ifacesByDevice {
+		device := devByID[devID]
+
+		// Same-sample guard: exclude interfaces whose snapshot was already
+		// processed (row timestamp == cached previous entry's timestamp) from
+		// the delta consumers below.
+		p.ifaceStatsMu.RLock()
+		newSamples := make([]models.InterfaceStats, 0, len(devIfaces))
+		for _, iface := range devIfaces {
+			prev := p.prevIfaceStats[fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)]
+			if prev != nil && prev.Timestamp.Equal(iface.Timestamp) {
+				continue
+			}
+			newSamples = append(newSamples, iface)
+		}
+		p.ifaceStatsMu.RUnlock()
+
+		if p.alertManager != nil {
+			// Interface down/up is level state, not a delta — evaluate the
+			// full fresh snapshot (a repeated sample can't corrupt it, and the
+			// recovery path must keep seeing "up" rows).
+			if err := p.alertManager.CheckInterfaceStatus(devIfaces, device.SiteID); err != nil {
+				log.Printf("Device %s: interface alert check error - %v", device.Name, err)
+			}
+			// Check interface error/discard rates (delta vs prevIfaceStats)
+			p.ifaceStatsMu.RLock()
+			if err := p.alertManager.CheckInterfaceErrors(newSamples, p.prevIfaceStats, device.SiteID); err != nil {
+				log.Printf("Device %s: interface error check error - %v", device.Name, err)
+			}
+			p.ifaceStatsMu.RUnlock()
+		}
+
+		// Real-time spike detection on interface traffic. Throughput is derived
+		// from counter deltas (NOT raw cumulative counters), judged against a
+		// seasonal (weekday, hour) baseline, and only alerted once it has been
+		// sustained for SpikeMinDurationMinutes — so recurring/scheduled traffic
+		// and momentary blips don't cause alert panic.
+		if p.cfg.Alerts.SpikeAlertEnabled && p.spikeDetector != nil {
+			k := p.cfg.Alerts.SpikeStdDevThreshold
+			if k <= 0 {
+				k = 3.0
+			}
+			minDur := time.Duration(p.cfg.Alerts.SpikeMinDurationMinutes) * time.Minute
+			if minDur <= 0 {
+				minDur = 15 * time.Minute
+			}
+			for i := range newSamples {
+				iface := &newSamples[i]
+				if iface.Status != "up" {
+					continue
+				}
+				p.ifaceStatsMu.RLock()
+				prev := p.prevIfaceStats[fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)]
+				var prevBytes float64
+				var prevTS time.Time
+				hasPrev := prev != nil
+				if hasPrev {
+					prevBytes = float64(prev.InBytes + prev.OutBytes)
+					prevTS = prev.Timestamp
+				}
+				p.ifaceStatsMu.RUnlock()
+				if !hasPrev {
+					continue // need a prior sample to derive throughput
+				}
+				elapsed := iface.Timestamp.Sub(prevTS).Seconds()
+				if elapsed <= 0 {
+					continue
+				}
+				delta := float64(iface.InBytes+iface.OutBytes) - prevBytes
+				if delta < 0 {
+					delta = 0 // counter reset / wrap
+				}
+				bps := delta * 8 / elapsed
+
+				dec := p.spikeDetector.Observe(fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index), iface.Timestamp, bps, k, minDur)
+				switch {
+				case dec.Fire:
+					p.emitSpikeAlert(device, iface, dec)
+				case dec.Resolve:
+					p.emitSpikeResolve(device, iface)
+				}
+			}
+		}
+
+		// Store the processed samples as previous for the next cycle — AFTER
+		// the delta consumers, and only for samples that were actually new, so
+		// a repeated snapshot never re-stamps the baseline.
+		p.ifaceStatsMu.Lock()
+		for i := range newSamples {
+			key := fmt.Sprintf("%d_%s", newSamples[i].DeviceID, newSamples[i].Name)
+			iface := newSamples[i]
+			p.prevIfaceStats[key] = &iface
+		}
+		p.ifaceStatsMu.Unlock()
+	}
+
+	// VPN tunnel status (down alerts + up recovery).
+	if p.alertManager != nil {
+		vpns, err := p.db.GetAllLatestVPNStatuses()
+		if err != nil {
+			log.Printf("Telemetry check: failed to get VPN statuses - %v", err)
+			return
+		}
+		vpnsByDevice := make(map[uint][]models.VPNStatus)
+		for _, vpn := range vpns {
+			if vpn.Timestamp.Before(cutoff) {
+				continue // freshness gate
+			}
+			if _, ok := devByID[vpn.DeviceID]; !ok {
+				continue
+			}
+			vpnsByDevice[vpn.DeviceID] = append(vpnsByDevice[vpn.DeviceID], vpn)
+		}
+		for devID, devVPNs := range vpnsByDevice {
+			p.alertManager.CheckVPNStatus(devVPNs, devByID[devID].SiteID)
+		}
 	}
 }
 

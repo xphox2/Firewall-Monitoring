@@ -4,6 +4,48 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.74] - 2026-07-11
+
+### Changed — server no longer polls devices directly; telemetry alerting re-homed to collector-relayed data
+
+> ⚠️ **Review your alert thresholds before deploying.** CPU / memory / disk /
+> session, interface-down, interface-error, and VPN-tunnel-down threshold
+> alerting now evaluates the telemetry your collectors relay — this is the
+> FIRST time these checks apply to probe-assigned devices (previously they ran
+> only for server-direct-polled devices, which probe-first deployments had
+> none of). Devices that quietly run hot will start alerting on the first
+> cycle after upgrade. Seasonal traffic-spike detection stays opt-in
+> (`SPIKE_ALERT_ENABLED`, default off).
+
+- **The server's direct device-SNMP poll loop is retired.** Collectors own all
+  device polling; `fwmon-poller` is now purely the monitoring/alert engine.
+  Deleted `pollDevice`, `updateDeviceStatus`, `pollAndSave`, and the SNMP
+  dialer test seam; `pollAllDevices` is renamed `runMonitoringCycle` and keeps
+  running every `SNMP_POLL_INTERVAL`: threshold refresh, stale-device sweep
+  (DEVICE_OFFLINE alert + email + recovery), stale-probe sweep, the three
+  connection detectors, alert escalations, and probe data-flow monitoring. No
+  env/Docker/entrypoint changes.
+- **New `checkRelayedTelemetry` cycle step** re-homes the five checks that
+  lived only inside the direct poll — `CheckSystemStatus`,
+  `CheckInterfaceStatus`, `CheckInterfaceErrors`, `CheckVPNStatus`, and
+  sustained traffic-spike detection — onto the latest relayed DB rows (new
+  `GetAllLatestSystemStatuses` helper, SQL-bounded to fresh rows). Two guards:
+  a freshness gate (rows older than 3×PollInterval / 5-min floor are ignored,
+  so a dead device's last sample can't re-alert forever) and a same-sample
+  guard (an interface snapshot already processed is skipped by the delta
+  consumers, so poller-faster-than-collector ticks can't feed 0-deltas into
+  the spike sustain window; spike elapsed time now comes from row timestamps).
+- **Unassigned devices:** an enabled device with no collector assigned is now
+  polled by nobody. It does NOT get a DEVICE_OFFLINE alert (config gap, not an
+  outage); the poller logs one summary line per cycle
+  (`N enabled device(s) have no collector assigned and are not monitored`).
+- Tests: `checkRelayedTelemetry` coverage (fresh over-threshold row fires with
+  the device's siteID, stale rows ignored, same-timestamp snapshot skipped,
+  interface-down/VPN-down alerts, prevIfaceStats lifecycle) + a
+  `runMonitoringCycle` guardrail (stale sweeps behaviorally, full
+  alert-engine call list pinned). Docs: architecture + README updated (server
+  never polls devices; poller = monitoring/alert engine).
+
 ## [0.11.73] - 2026-07-11
 
 ### Added — disk-usage & load-average telemetry (schema v3)

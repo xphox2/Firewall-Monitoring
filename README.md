@@ -86,13 +86,16 @@ runs on the collector, `[Both]` requires both sides. **Status** —
 Stable shipping, Beta shipping but with a known follow-up, Planned a
 public AUDIT-NNN row exists.
 
-### Data ingest (direct poll, no probe)
+### Data ingest
 
-- **[Server] SNMP polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256)
-  on `SNMP_POLL_INTERVAL` (default 60s). Per-device `VendorProfile`
-  registry. SNMP-pollable profiles: FortiGate, Palo Alto, SonicWall,
-  pfSense, OPNsense, Firewalla (six registered profiles). Cisco ASA is
-  supported for config-diff only (no SNMP polling profile).
+- **[Probe] SNMP device polling** (v1/v2c/v3, MD5/SHA/SHA2, DES/AES/AES192/256).
+  Per-device `VendorProfile` registry. SNMP-pollable profiles: FortiGate,
+  Palo Alto, SonicWall, pfSense, OPNsense, Firewalla (six registered
+  profiles). Cisco ASA is supported for config-diff only (no SNMP polling
+  profile). **The server never polls devices itself** (the direct poll loop
+  was retired in v0.11.74) — collectors poll at the edge and relay;
+  `fwmon-poller` is the server-side monitoring/alert engine that evaluates
+  the relayed telemetry every `SNMP_POLL_INTERVAL` (default 60s).
 - **[Server] SNMP trap receiver** (UDP/162). V1 enterprise + V2c
   specific-trap, per-source-IP rate limit, community filter (required,
   AUDIT-012).
@@ -231,7 +234,7 @@ in [docs/FEATURES.md](docs/FEATURES.md).
 firewall-mon/
 ├── cmd/
 │   ├── api/           # Main API server (Gin web server) — auth, REST, admin UI
-│   ├── poller/        # SNMP polling daemon (advisory-lock leader)
+│   ├── poller/        # Monitoring/alert engine daemon (advisory-lock leader)
 │   ├── configcheck/   # Config-backup validation CLI
 │   └── trap-receiver/ # SNMP trap listener
 ├── internal/          # 23 packages — key ones below
@@ -296,7 +299,6 @@ sudo apt install -y build-essential   # gcc — only for `make test-race`; norma
 | Port | Proto | Direction | Purpose |
 |---|---|---|---|
 | `8080` | TCP | inbound | HTTP UI + API (set by `SERVER_PORT`; put TLS or a reverse proxy in front for prod) |
-| `161` | UDP | outbound | SNMP polling to devices (`SNMP_PORT`) |
 | `162` | UDP | inbound | SNMP trap receiver (`SNMP_TRAP_LISTEN`, default `0.0.0.0:162`) |
 | `514` | UDP/TCP | inbound | syslog collector |
 | `6343` | UDP | inbound | sFlow collector |
@@ -381,8 +383,8 @@ The most important ones:
 | `JWT_SECRET_KEY` | _(auto-generated + persisted)_ | Signs login JWTs **and** derives the AES-256 key for stored secrets |
 | `ENCRYPTION_KEY` | _(derived from JWT secret)_ | Optional explicit key for encrypting device/probe secrets at rest |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / _(set me)_ | Initial admin login (a non-default username is strongly recommended) |
-| `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / `public` | Default directly-polled device |
-| `SNMP_POLL_INTERVAL` | `60s` | Poll cadence (keep ≥ 60s to avoid overloading devices) |
+| `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / `public` | Legacy global SNMP defaults (devices are polled by collectors, not the server) |
+| `SNMP_POLL_INTERVAL` | `60s` | `fwmon-poller` monitoring-cycle cadence (staleness threshold = 3× this, min 5m) |
 | `SNMP_TRAP_COMMUNITY` | _(empty — required)_ | Trap community check (AUDIT-012) |
 | `CPU_THRESHOLD` / `MEMORY_THRESHOLD` / `DISK_THRESHOLD` / `SESSION_THRESHOLD` | `80` / `80` / `90` / `100000` | Alert thresholds |
 | `EMAIL_ENABLED` + `SMTP_*` | `false` | Email alerting + scheduled reports |
