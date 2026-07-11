@@ -31,6 +31,7 @@ it when planning upgrades, since the two are deployed and upgraded
 | (future) sends `schema_version` | **0.10.382+** | A server ≥ 0.10.382 validates `schema_version` against `relay.SchemaVersionMin..Max` (currently `1-1`) and returns **HTTP 426** with `X-Probe-Schema-Version-Supported` for anything out of range. Sending the field against an older server is harmless (ignored). |
 | 1.3.0+ (NetFlow/IPFIX) | (any current 0.11.x; **0.11.20+ for labeling**) | Sends `flow_source` + the Tranche 3 flow fields (`flow_start`/`flow_end`, `firewall_event`, `flow_end_reason`, post-NAT tuple, `icmp_type_code`, `tos`, VLANs, `app_name`) on flow rows — all additive `omitempty`, **no `schema_version` change**. Servers < 0.11.20 ignore the fields (Go `encoding/json`): NetFlow data ingests with correct byte math but is labeled sFlow and the source filter is unavailable. Server 0.11.20+ (migration v29) stores and filters them. Wire-compatible both directions. |
 | 1.3.10+ (disk/load, **schema v3**) | **0.11.73+** (migration v38) | Sends `disk_usage` + `load_average` to two new endpoints. The collector gates these on the negotiated `schema_version ≥ 3`, so against a server < 0.11.73 (which advertises max v2) it simply doesn't send them — no 404 churn. `SchemaVersionMax` is now `3`. Deploy the 0.11.73 server first; the collector follows at any time. |
+| 1.3.14+ (command channel, **schema v4**) | **0.11.75+** (migration v39) | The first **server→collector** feature: the heartbeat response carries `pending_commands` and the collector reports outcomes to `POST /api/probes/:id/command-result`, idempotent by `command_id`. Double-gated: the server persists the negotiated `schema_version` on the probe row at register and only attaches `pending_commands` for probes registered at ≥ 4; the collector no-ops its result sends below a negotiated v4. A v3 collector against a 0.11.75 server (or a v4 collector against an older server) simply has no command channel — everything else works. Command payloads are encrypted at rest server-side and may later carry credentials — the relay **must** be HTTPS. PR-1 ships only the `noop` command type. Deploy the server first; the collector follows at any time. |
 
 > The collector-side version notes above describe behavior owned by the
 > `Firewall-Collector` repo; this server's only **version-gated** behavior is
@@ -39,9 +40,11 @@ it when planning upgrades, since the two are deployed and upgraded
 
 ## Server features that would require a collector change
 
-None today — the `0.10.x` server accepts all `1.2.x` collectors unchanged. Any
-future server change that *requires* collector cooperation (a new required
-field, a removed endpoint, a `schema_version` bump) will:
+The **schema v4 command channel** (server 0.11.75) is the first: receiving
+and executing heartbeat-delivered commands requires collector 1.3.14+. It is
+opt-in by negotiation — an older collector keeps working with no command
+channel. Any server change that *requires* collector cooperation (a new
+required field, a removed endpoint, a `schema_version` bump) will:
 
 1. Move `relay.SchemaVersionMax` in `internal/relay/relay.go`, and
 2. Get a row here and in `MIGRATING.md`.

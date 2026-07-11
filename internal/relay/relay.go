@@ -22,9 +22,16 @@ import "time"
 // /probes/:id/flow-counters endpoint). The collector gates counter sends on a
 // negotiated v2, so a v1-only server never receives them. v1 stays supported
 // (Min=1) for mixed-version deploys.
+// v4 adds the server→collector COMMAND CHANNEL: the heartbeat response
+// carries `pending_commands` (PendingCommand) and the collector reports
+// outcomes to POST /api/probes/:id/command-result (CommandResultRequest).
+// The server persists the negotiated version on the Probe row at register
+// and only attaches pending_commands for probes that negotiated ≥ 4, so a
+// v3 collector never sees the new field; a v4 collector against a v3 server
+// gates its result sends the same way. v1–v3 stay supported (Min=1).
 const (
 	SchemaVersionMin = 1
-	SchemaVersionMax = 3
+	SchemaVersionMax = 4
 )
 
 type TrapEvent struct {
@@ -135,6 +142,43 @@ type HeartbeatRequest struct {
 	// ObservedHostKeys maps device ID -> the SSH host-key fingerprint the probe
 	// last observed for it (SSH host-key change detection). Optional.
 	ObservedHostKeys map[uint]string `json:"observed_host_keys,omitempty"`
+}
+
+// HeartbeatResponse documents the heartbeat reply (schema v4+). Pre-v4 the
+// reply was just {"success": true}; v4 adds PendingCommands, attached ONLY
+// for probes whose registered schema_version is ≥ 4. Selecting a command for
+// delivery flips it pending→dispatched server-side; an unacknowledged
+// dispatched command is re-delivered on a later heartbeat (at-least-once —
+// the collector must dedupe by CommandID).
+type HeartbeatResponse struct {
+	Success         bool             `json:"success"`
+	PendingCommands []PendingCommand `json:"pending_commands,omitempty"`
+}
+
+// PendingCommand is one queued server→collector command as delivered on the
+// heartbeat response (schema v4). Payload is the command's type-specific JSON
+// document — it is encrypted at rest on the server and decrypted only for
+// this authenticated, HTTPS-carried delivery; it may contain credentials for
+// later command types, so the collector must never log it. The collector
+// executes the command (skipping any CommandID it has already executed) and
+// reports the outcome via CommandResultRequest.
+type PendingCommand struct {
+	CommandID string    `json:"command_id"`
+	DeviceID  uint      `json:"device_id"`
+	Type      string    `json:"type"`
+	Payload   string    `json:"payload"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// CommandResultRequest is the body of POST /api/probes/:id/command-result
+// (schema v4): the collector's outcome report for one PendingCommand. Status
+// must be "succeeded" or "failed". Idempotent by CommandID — the server keeps
+// the FIRST terminal result and no-ops replays, so collector retries and
+// heartbeat redelivery races are safe.
+type CommandResultRequest struct {
+	CommandID string `json:"command_id"`
+	Status    string `json:"status"`
+	Result    string `json:"result"`
 }
 
 type DeviceInfo struct {

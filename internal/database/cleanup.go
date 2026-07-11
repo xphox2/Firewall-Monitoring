@@ -343,6 +343,18 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		return fmt.Errorf("failed to cleanup flow_agent_drops: %w", err)
 	}
 
+	// Relay schema v4 (server→collector command channel): TERMINAL
+	// probe_commands rows (succeeded/failed/expired) are an audit trail, not
+	// live state — keep 30 days, then drop. Live rows (pending/dispatched) are
+	// never touched here; ClaimProbeCommands owns the expires_at transition.
+	// Ages on updated_at (the terminal-transition time — the table has no
+	// `timestamp` column), hence batchedDeleteOlderThanOn.
+	cmdCutoff := time.Now().AddDate(0, 0, -30)
+	if err := d.batchedDeleteOlderThanOn(&models.ProbeCommand{}, "updated_at", cmdCutoff,
+		"status IN ('succeeded','failed','expired')"); err != nil {
+		return fmt.Errorf("failed to cleanup probe_commands: %w", err)
+	}
+
 	// Syslog: handle critical (0-5) and informational (6-7) differently.
 	// infoDays is the effective informational window (default 7), shared by the
 	// info DELETE, the summaries cutoff, and the partition-drop bound below.

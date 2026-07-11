@@ -559,8 +559,20 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		return
 	}
 
-	// If already approved and online, just return success
+	// If already approved and online, just return success. Still PERSIST the
+	// negotiated schema_version when it changed — this path is exactly what a
+	// freshly-upgraded collector hits (its probe row is already
+	// approved+online), and the heartbeat handler gates schema-v4 command
+	// delivery on the stored value, so skipping the write here would leave an
+	// upgraded collector stuck without commands until a lifecycle bounce.
 	if existingProbe.ApprovalStatus == "approved" && existingProbe.Status == "online" {
+		if existingProbe.SchemaVersion != selectedVersion {
+			if err := h.db.Gorm().Model(&models.Probe{}).Where("id = ?", existingProbe.ID).
+				Update("schema_version", selectedVersion).Error; err != nil {
+				httputil.InternalError(c, "Failed to update probe schema version", err)
+				return
+			}
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success":        true,
 			"probe_id":       existingProbe.ID,
@@ -571,13 +583,17 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		return
 	}
 
-	// Link the remote probe: set online, auto-approve (admin created it explicitly)
+	// Link the remote probe: set online, auto-approve (admin created it
+	// explicitly). schema_version persists the NEGOTIATED wire version — the
+	// heartbeat handler reads it to decide whether this probe may receive
+	// schema-v4 pending_commands.
 	now := time.Now()
 	if err := h.db.Gorm().Model(existingProbe).Updates(map[string]interface{}{
 		"status":          "online",
 		"approval_status": "approved",
 		"approved_at":     now,
 		"last_seen":       now,
+		"schema_version":  selectedVersion,
 	}).Error; err != nil {
 		httputil.InternalError(c, "Failed to update probe status", err)
 		return
@@ -719,7 +735,164 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 		h.processObservedHostKeys(probe.ID, req.ObservedHostKeys)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	resp := gin.H{"success": true}
+
+	// Relay schema v4: deliver queued commands on the heartbeat response —
+	// ONLY for a probe whose NEGOTIATED schema version (persisted at register)
+	// is ≥ 4. A v3 collector ignores unknown JSON fields, but gating here
+	// keeps undelivered commands in `pending` (visible as such in the admin
+	// UI) instead of burning delivery attempts against a collector that can't
+	// execute them. Claiming flips pending→dispatched and increments Attempts;
+	// an unacknowledged dispatched command is re-delivered on a later
+	// heartbeat; anything past expires_at is terminally expired inside
+	// ClaimProbeCommands. SECURITY: payloads may carry credentials — never log
+	// them (log command_id/type only), and rely on the bearer-authed HTTPS
+	// channel for transport.
+	if probe.SchemaVersion >= 4 {
+		cmds, err := h.db.ClaimProbeCommands(probe.ID)
+		if err != nil {
+			log.Printf("ProbeHeartbeat: claim commands for probe %d: %v", probe.ID, err)
+		} else if len(cmds) > 0 {
+			out := make([]relay.PendingCommand, 0, len(cmds))
+			for i := range cmds {
+				out = append(out, relay.PendingCommand{
+					CommandID: cmds[i].CommandID,
+					DeviceID:  cmds[i].DeviceID,
+					Type:      cmds[i].Type,
+					Payload:   cmds[i].Payload,
+					ExpiresAt: cmds[i].ExpiresAt,
+				})
+			}
+			resp["pending_commands"] = out
+		}
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// ReceiveCommandResult is POST /api/probes/:id/command-result (relay schema
+// v4): the collector's outcome report for one delivered command. Probe-authed
+// (validateProbe: bearer token + lifecycle gates) and idempotent by
+// command_id — CompleteProbeCommand keeps the FIRST terminal result and
+// no-ops replays, so collector retries and heartbeat-redelivery races are
+// safe. A result for another probe's command is a 404 (the lookup is scoped
+// to the authenticated probe). SECURITY: never log req.Result — command
+// output may echo device configuration.
+func (h *Handler) ReceiveCommandResult(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	var req relay.CommandResultRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+		return
+	}
+	if req.CommandID == "" {
+		c.JSON(http.StatusBadRequest, response.Error("command_id required"))
+		return
+	}
+	if req.Status != database.ProbeCommandStatusSucceeded && req.Status != database.ProbeCommandStatusFailed {
+		c.JSON(http.StatusBadRequest, response.Error("status must be succeeded or failed"))
+		return
+	}
+
+	applied, err := h.db.CompleteProbeCommand(probe.ID, req.CommandID, req.Status, req.Result)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, response.Error("Unknown command_id for this probe"))
+			return
+		}
+		log.Printf("ReceiveCommandResult: probe %d command %s: %v", probe.ID, req.CommandID, err)
+		httputil.InternalError(c, "Failed to record command result", err)
+		return
+	}
+	log.Printf("ReceiveCommandResult: probe %d command %s -> %s (applied=%v)", probe.ID, req.CommandID, req.Status, applied)
+	c.JSON(http.StatusOK, response.Success(gin.H{"applied": applied}))
+}
+
+// CreateProbeCommand is the minimal admin enqueue endpoint
+// (POST /admin/api/probes/:id/commands) that proves the schema-v4 command
+// channel end-to-end. PR-1 deliberately supports ONLY the `noop` type — the
+// collector executes it as an immediate success — so the round-trip
+// (enqueue → heartbeat delivery → execution → result ingest) can be verified
+// before any command type that writes device configuration exists. Payload is
+// encrypted at rest by EnqueueProbeCommand and never logged or echoed back.
+func (h *Handler) CreateProbeCommand(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	probe, err := db.GetProbe(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Probe not found"))
+		return
+	}
+
+	var req struct {
+		Type       string `json:"type"`
+		DeviceID   uint   `json:"device_id"`
+		Payload    string `json:"payload"`
+		TTLSeconds int    `json:"ttl_seconds"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+		return
+	}
+	// Allow-list of enqueueable command types. Grows in later PRs
+	// (apply_ipsec/remove_ipsec/status_ipsec); rejecting everything else here
+	// keeps an unknown/mistyped command from sitting pending until expiry.
+	if req.Type != "noop" {
+		c.JSON(http.StatusBadRequest, response.Error("Unsupported command type (PR-1 supports: noop)"))
+		return
+	}
+
+	cmd := &models.ProbeCommand{
+		ProbeID:  probe.ID,
+		DeviceID: req.DeviceID,
+		Type:     req.Type,
+		Payload:  req.Payload,
+	}
+	if req.TTLSeconds > 0 {
+		cmd.ExpiresAt = time.Now().Add(time.Duration(req.TTLSeconds) * time.Second)
+	}
+	if err := db.EnqueueProbeCommand(cmd); err != nil {
+		httputil.InternalError(c, "Failed to enqueue command", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"command_id": cmd.CommandID,
+		"status":     cmd.Status,
+		"expires_at": cmd.ExpiresAt,
+	}))
+}
+
+// GetProbeCommands lists a probe's recent commands for the admin UI
+// (GET /admin/api/probes/:id/commands). Payload is json:"-" on the model AND
+// left encrypted by the query layer, so it cannot leak through this response.
+func (h *Handler) GetProbeCommands(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	limit := 50
+	if l, err := strconv.Atoi(c.DefaultQuery("limit", "50")); err == nil {
+		limit = l
+	}
+	cmds, err := db.GetProbeCommands(id, limit)
+	if err != nil {
+		httputil.InternalError(c, "Failed to list probe commands", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(cmds))
 }
 
 // processObservedHostKeys applies the SSH host-key change-detection rule for the

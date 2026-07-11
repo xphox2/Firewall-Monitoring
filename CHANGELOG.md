@@ -4,6 +4,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.75] - 2026-07-11
+
+### Added — server→collector command channel (relay **schema v4**)
+
+> ⚠️ **This release introduces the first DOWNSTREAM channel on the probe
+> relay**: the server can now queue commands that the collector fetches on its
+> heartbeat and executes. It is the foundation for later configuration-write
+> automation (IPSec tunnel orchestration), whose payloads will carry
+> credentials — so the channel is deliberately narrow, double-gated on the
+> negotiated schema version, encrypted at rest, and (for now) supports only a
+> `noop` command type. Ensure the collector→server relay runs over **HTTPS**.
+
+- **`probe_commands` table + migration v39** (`ProbeCommand`: uuid
+  `command_id`, probe/device scope, type, payload, status
+  pending/dispatched/succeeded/failed/expired, result, attempts, expiry).
+  The `payload` column is **encrypted at rest** via the existing AES-256-GCM
+  field crypto, is excluded from all JSON serialization (`json:"-"`), and is
+  never logged. Terminal rows are retained 30 days (cleanup pass).
+- **Negotiated `schema_version` is now persisted on the probe row** at
+  register time (previously the server echoed the selected version but stored
+  nothing) — including on the already-approved+online fast path, so an
+  upgraded collector's re-register takes effect immediately. Migration v39
+  adds `probes.schema_version`.
+- **Heartbeat-carried delivery:** the heartbeat response now attaches
+  `pending_commands` — ONLY for probes whose registered schema version is
+  ≥ 4 (a v3 collector never sees the field and its queued commands stay
+  `pending`). Delivery flips a command pending→dispatched and counts an
+  attempt; a dispatched command with no reported result is re-delivered after
+  ~3 missed heartbeats (at-least-once, capped at 5 attempts → `failed`);
+  anything past `expires_at` (default TTL 15 min) is terminally `expired` and
+  never delivered — a stale write command must not fire late.
+- **Result ingest:** `POST /api/probes/:id/command-result` (probe
+  bearer-authed, rate-limited) accepts `{command_id, status
+  succeeded|failed, result}`, idempotent by `command_id` — the first terminal
+  result wins and replays no-op, so collector retries and redelivery races
+  are safe.
+- **Minimal admin surface for end-to-end verification:**
+  `POST /admin/api/probes/:id/commands` enqueues (allow-listed to `noop` in
+  this release) and `GET /admin/api/probes/:id/commands` lists a probe's
+  recent commands (payloads never returned).
+- `relay.SchemaVersionMax` 3 → **4**; wire DTOs (`HeartbeatResponse`,
+  `PendingCommand`, `CommandResultRequest`) documented in
+  `internal/relay/relay.go`; MIGRATING.md + docs/SUPPORT-MATRIX.md updated.
+  **Deploy order: server first** (it only adds endpoints/fields); collector
+  1.3.14+ follows at any time.
+- Tests: command enqueue/claim/dispatch semantics, payload
+  encrypted-at-rest round-trip, expiry, redelivery-after-missed-heartbeats,
+  max-attempts cap, result idempotency + probe scoping, heartbeat schema-v4
+  gating (v3 probe burns no attempts), register-time schema persistence (both
+  paths), admin noop-only allow-list + no-payload-leak; schema guardrail test
+  pinned to v4.
+
 ## [0.11.74] - 2026-07-11
 
 ### Changed — server no longer polls devices directly; telemetry alerting re-homed to collector-relayed data

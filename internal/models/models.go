@@ -854,8 +854,15 @@ type Probe struct {
 	ServerTLSCert    string     `json:"server_tls_cert"`
 	Description      string     `json:"description"`
 	TFTPServerIP     string     `json:"tftp_server_ip"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	// SchemaVersion is the relay wire-format version the server SELECTED for
+	// this probe at its last successful registration (see RegisterProbe and
+	// internal/relay/relay.go). 0 = registered before this column existed (or
+	// never re-registered) and is treated as v1. The heartbeat handler gates
+	// schema-v4 features (pending_commands delivery) on this value, so a v3
+	// collector is never sent a wire field it does not understand.
+	SchemaVersion int       `json:"schema_version"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 	// DecommissionedAt marks a probe as retired (decommissioned/replaced)
 	// WITHOUT deleting its row or any of its telemetry, so historical running
 	// totals continue to include it. Non-null => decommissioned: hidden from
@@ -868,6 +875,49 @@ type ProbeSite struct {
 	ProbeID uint `json:"probe_id" gorm:"primaryKey"`
 	SiteID  uint `json:"site_id" gorm:"primaryKey"`
 }
+
+// ProbeCommand is one queued server→collector command (relay schema v4).
+// Commands are delivered DOWN the wire on the heartbeat response
+// (pending_commands, gated on the probe's negotiated SchemaVersion ≥ 4) and
+// the collector reports the outcome to POST /api/probes/:id/command-result,
+// idempotent by CommandID. This channel will later carry configuration writes
+// whose payloads include credentials (IPSec PSKs, API secrets), so:
+//
+//   - Payload is ENCRYPTED AT REST via the AES-256-GCM field crypto
+//     (EnqueueProbeCommand encrypts, ClaimProbeCommands decrypts for the wire).
+//   - Payload is json:"-" — it must never appear in an admin API response.
+//   - Payload contents must NEVER be logged (log CommandID + Type only).
+//
+// Status lifecycle: pending → dispatched → succeeded | failed, with
+// expired as the terminal state for anything (pending or dispatched) that
+// passes ExpiresAt undelivered/unreported — a stale write command firing
+// hours later against a firewall is dangerous, so undelivered commands die.
+// A dispatched command whose result never arrives is re-delivered
+// (at-least-once) until ProbeCommandMaxAttempts, then marked failed.
+type ProbeCommand struct {
+	ID uint `json:"id" gorm:"primaryKey"`
+	// CommandID is the stable, globally-unique idempotency key (UUID) shared
+	// with the collector: redeliveries reuse it, and the result endpoint
+	// dedupes on it.
+	CommandID string `json:"command_id" gorm:"uniqueIndex;not null"`
+	ProbeID   uint   `json:"probe_id" gorm:"index"`
+	// DeviceID scopes the command to one of the probe's devices (0 = probe-
+	// level command, e.g. noop).
+	DeviceID uint   `json:"device_id"`
+	Type     string `json:"type"`
+	// Payload is the command's type-specific JSON document. Encrypted at rest;
+	// excluded from JSON serialization on purpose (see struct comment).
+	Payload   string    `json:"-" gorm:"type:text"`
+	Status    string    `json:"status" gorm:"default:pending;index"`
+	Result    string    `json:"result" gorm:"type:text"`
+	Attempts  int       `json:"attempts"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// TableName pins the table name so the wire/DB contract is explicit.
+func (ProbeCommand) TableName() string { return "probe_commands" }
 
 type ProbeApproval struct {
 	ID             uint       `json:"id" gorm:"primaryKey"`

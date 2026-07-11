@@ -29,6 +29,7 @@ func NewDatabaseForTesting(t interface {
 		&models.Probe{},
 		&models.ProbeApproval{},
 		&models.ProbeHeartbeat{},
+		&models.ProbeCommand{},
 		&models.Device{},
 		&models.Site{},
 		&models.SystemStatus{},
