@@ -129,6 +129,14 @@ func (d *Database) SaveHardwareSensors(sensors []models.HardwareSensor) error {
 	return batchInsertWithFallback(d.db, "hardware_sensors", sensors)
 }
 
+func (d *Database) SaveDiskUsage(rows []models.DiskUsage) error {
+	return batchInsertWithFallback(d.db, "disk_usage", rows)
+}
+
+func (d *Database) SaveLoadAverage(rows []models.LoadAverage) error {
+	return batchInsertWithFallback(d.db, "load_average", rows)
+}
+
 func (d *Database) SaveHAStatuses(statuses []models.HAStatus) error {
 	return batchInsertWithFallback(d.db, "ha_status", statuses)
 }

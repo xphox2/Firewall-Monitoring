@@ -137,6 +137,7 @@
         renderVPN();
         renderSensors();
         renderProcessors();
+        renderDiskAndLoad();
         renderAlerts();
         renderPing();
         renderHA();
@@ -1178,6 +1179,33 @@
         if (n.includes('power') || n.includes('psu')) return '🔌';
         if (n.includes('current') || u === 'a') return '📊';
         return '📋';
+    }
+
+    function renderDiskAndLoad() {
+        var disks = deviceData.disk_usage || [];
+        var load = deviceData.load_average;
+        var rows = document.getElementById('diskRows');
+        var empty = document.getElementById('storageEmpty');
+        var summary = document.getElementById('loadSummary');
+        if (!rows) return;
+
+        if (summary) {
+            summary.textContent = load ? ('load ' + load.load1.toFixed(2) + ' / ' + load.load5.toFixed(2) + ' / ' + load.load15.toFixed(2)) : '';
+        }
+        if (disks.length === 0 && !load) { rows.innerHTML = ''; empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
+
+        rows.innerHTML = disks.map(function(d) {
+            var pct = Math.max(0, Math.min(d.used_percent, 100));
+            var color = getGaugeColor(pct);
+            return '<div class="core-bar-wrapper">' +
+                '<span style="color:var(--fwmon-text-faint);font-size:0.78rem;min-width:110px;word-break:break-all" title="' + esc(d.mount) + '">' + esc(d.mount) + '</span>' +
+                '<div style="flex:1;background:var(--fwmon-panel-bg);border-radius:3px;height:16px;overflow:hidden">' +
+                    '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:3px;transition:width 0.3s"></div>' +
+                '</div>' +
+                '<span style="color:var(--fwmon-text);font-size:0.82rem;font-weight:600;min-width:150px;text-align:right">' + pct.toFixed(0) + '%&nbsp;&nbsp;' + formatBytes(d.used_bytes) + ' / ' + formatBytes(d.total_bytes) + '</span>' +
+            '</div>';
+        }).join('');
     }
 
     function renderProcessors() {

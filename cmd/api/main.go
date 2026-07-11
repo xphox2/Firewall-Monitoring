@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.72"
+const ServerVersion = "0.11.73"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -667,6 +667,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.POST("/probes/:id/vpn-status", middleware.ProbeRateLimiter(), handler.ReceiveVPNStatuses)
 		api.POST("/probes/:id/hardware-sensors", middleware.ProbeRateLimiter(), handler.ReceiveHardwareSensors)
 		api.POST("/probes/:id/processor-stats", middleware.ProbeRateLimiter(), handler.ReceiveProcessorStats)
+		api.POST("/probes/:id/disk-usage", middleware.ProbeRateLimiter(), handler.ReceiveDiskUsage)
+		api.POST("/probes/:id/load-average", middleware.ProbeRateLimiter(), handler.ReceiveLoadAverage)
 		api.POST("/probes/:id/ha-status", middleware.ProbeRateLimiter(), handler.ReceiveHAStatuses)
 		api.POST("/probes/:id/security-stats", middleware.ProbeRateLimiter(), handler.ReceiveSecurityStats)
 		api.POST("/probes/:id/sdwan-health", middleware.ProbeRateLimiter(), handler.ReceiveSDWANHealth)

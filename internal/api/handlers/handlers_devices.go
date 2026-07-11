@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -446,6 +447,21 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		log.Printf("Device %d: failed to get license info: %v", id, err)
 	}
 
+	// Latest disk usage (one row per mount, shared timestamp)
+	var diskUsage []models.DiskUsage
+	if err := latestSnapshotQuery("disk_usage").Find(&diskUsage).Error; err != nil {
+		log.Printf("Device %d: failed to get disk usage: %v", id, err)
+	}
+
+	// Latest load average (single row)
+	var loadAverage *models.LoadAverage
+	var la models.LoadAverage
+	if err := gdb.Where("device_id = ?", id).Order("timestamp DESC").First(&la).Error; err == nil {
+		loadAverage = &la
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("Device %d: failed to get load average: %v", id, err)
+	}
+
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"device":           device,
 		"system_status":    systemStatus,
@@ -453,6 +469,8 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 		"vpn_status":       vpnStatuses,
 		"hardware_sensors": sensors,
 		"processor_stats":  processorStats,
+		"disk_usage":       diskUsage,
+		"load_average":     loadAverage,
 		"recent_alerts":    recentAlerts,
 		"ping_stats":       pingStats,
 		"ha_status":        haStatus,

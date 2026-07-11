@@ -27,6 +27,8 @@ func (d *Database) migrateBaseline() error {
 		&models.HAStatus{},
 		&models.HardwareSensor{},
 		&models.ProcessorStats{},
+		&models.DiskUsage{},
+		&models.LoadAverage{},
 		&models.TrapEvent{},
 		&models.Alert{},
 		&models.UptimeRecord{},
@@ -1672,6 +1674,13 @@ func (d *Database) migrateAdminDashboardPrefs() error {
 	}
 	log.Printf("migrate v37 admin_dashboard_prefs: ensured admins.dashboard_prefs column")
 	return nil
+}
+
+// migrateAddDiskAndLoad (v38) creates the disk_usage and load_average
+// time-series tables (SNMP-collected filesystem usage and system load average).
+// New tables only, so plain AutoMigrate matches the v31/v35 new-table precedent.
+func (d *Database) migrateAddDiskAndLoad() error {
+	return d.db.AutoMigrate(&models.DiskUsage{}, &models.LoadAverage{})
 }
 
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every

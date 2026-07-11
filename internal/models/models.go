@@ -270,6 +270,34 @@ type ProcessorStats struct {
 
 func (ProcessorStats) TableName() string { return "processor_stats" }
 
+// DiskUsage is a per-filesystem usage snapshot (SNMP hrStorageTable). One row
+// per mount per poll; the whole set shares a timestamp so latestSnapshotQuery
+// returns them together.
+type DiskUsage struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Timestamp   time.Time `json:"timestamp" gorm:"index:idx_disk_device_ts,priority:2"`
+	DeviceID    uint      `json:"device_id" gorm:"index;index:idx_disk_device_ts,priority:1"`
+	Mount       string    `json:"mount"`
+	TotalBytes  uint64    `json:"total_bytes"`
+	UsedBytes   uint64    `json:"used_bytes"`
+	UsedPercent float64   `json:"used_percent"`
+}
+
+func (DiskUsage) TableName() string { return "disk_usage" }
+
+// LoadAverage is a single system load-average snapshot (UCD laLoad): one row per
+// poll carrying the 1/5/15-minute figures.
+type LoadAverage struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Timestamp time.Time `json:"timestamp" gorm:"index:idx_load_device_ts,priority:2"`
+	DeviceID  uint      `json:"device_id" gorm:"index;index:idx_load_device_ts,priority:1"`
+	Load1     float64   `json:"load1"`
+	Load5     float64   `json:"load5"`
+	Load15    float64   `json:"load15"`
+}
+
+func (LoadAverage) TableName() string { return "load_average" }
+
 type TrapEvent struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	Timestamp time.Time `json:"timestamp" gorm:"index:idx_trap_device_ts,priority:2"`

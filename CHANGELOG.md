@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.73] - 2026-07-11
+
+### Added — disk-usage & load-average telemetry (schema v3)
+- **Two new per-device time-series metrics** ingested from the collector over SNMP: filesystem usage (`disk_usage`, one row per mount) and system load average (`load_average`, one row per poll). Mirrors the existing `processor_stats` chain end to end.
+  - New `models.DiskUsage` / `models.LoadAverage` (composite `(device_id, timestamp)` indexes); migration **v38** `add_disk_and_load_tables` + baseline AutoMigrate; not partitioned (per-poll volume, matching `processor_stats`/`hardware_sensors`).
+  - New ingest endpoints `POST /api/probes/:id/disk-usage` and `/load-average` (probe rate-limited, batch-dedup, probe-owned-device filter, 500-row cap) with `Store.SaveDiskUsage`/`SaveLoadAverage`; both tables added to retention cleanup (status-days).
+  - Device-detail API returns `disk_usage` (latest snapshot) + `load_average` (latest row); device-detail UI gains a **Storage & Load** card (per-mount usage bars + 1/5/15 load-average badge).
+- **Relay schema bumped to v3** (`SchemaVersionMax`). The collector gates the two new sends on the negotiated schema, so a v3 collector against a v0.11.72 (schema-v2) server simply doesn't send them — no 404 churn. Deploy this server first; the collector follows at any time.
+
 ## [0.11.72] - 2026-07-09
 
 ### Fixed

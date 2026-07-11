@@ -86,6 +86,7 @@ var registeredMigrations = []migration{
 	{version: 35, name: "event_rules", run: (*Database).migrateEventRules},
 	{version: 36, name: "alert_site_scope", run: (*Database).migrateAlertSiteScope},
 	{version: 37, name: "admin_dashboard_prefs", run: (*Database).migrateAdminDashboardPrefs},
+	{version: 38, name: "add_disk_and_load_tables", run: (*Database).migrateAddDiskAndLoad},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

@@ -265,6 +265,8 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.InterfaceStats{}, "interface_stats", statusDays},
 		{&models.ProcessorStats{}, "processor_stats", ret.Days(ret.ProcessorStatsDays)},
 		{&models.HardwareSensor{}, "hardware_sensors", statusDays},
+		{&models.DiskUsage{}, "disk_usage", statusDays},
+		{&models.LoadAverage{}, "load_average", statusDays},
 		{&models.TrapEvent{}, "trap_events", trapDays},
 		{&models.LoginAttempt{}, "login_attempts", defaultDays},
 		{&models.FlowSample{}, "flow_samples", flowDays},

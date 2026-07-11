@@ -24,7 +24,7 @@ import "time"
 // (Min=1) for mixed-version deploys.
 const (
 	SchemaVersionMin = 1
-	SchemaVersionMax = 2
+	SchemaVersionMax = 3
 )
 
 type TrapEvent struct {
