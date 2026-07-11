@@ -28,23 +28,39 @@ versions can talk to which server versions, and what to do when a
 `schema_version` is the **probe↔server relay wire-format version**, exchanged
 in the `POST /api/probes/register` request and response bodies. It is **not**
 the semantic version of either binary; it is a small integer bumped in
-lockstep with this file whenever the relay handshake changes shape. Today it
-is **`1`**.
+lockstep with this file whenever the relay handshake changes shape. The
+current maximum is **`4`**; v1 through v3 remain fully supported.
 
 When a probe registers it sends its `schema_version`. The server validates it
-against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1`-`1`).
-Three outcomes:
+against `[relay.SchemaVersionMin, relay.SchemaVersionMax]` (currently `1`-`4`)
+and, since server v0.11.75, **persists the selected version on the probe row**
+(`probes.schema_version`) — version-gated downstream features key off the
+stored value. Three outcomes:
 
 | Probe sends | Server response | What happens next |
 |---|---|---|
 | `schema_version` absent | 200 OK, treated as v1 | The probe registers as before (pre-handshake collectors). |
-| `schema_version: 1` | 200 OK, `schema_version: 1` echoed | The probe registers normally. |
-| anything outside `1-1` | **426 Upgrade Required**, header `X-Probe-Schema-Version-Supported: 1-1` | The probe refuses to register. The body names the rejected version and points here. |
+| `schema_version: 1`–`4` | 200 OK, selected version echoed + persisted | The probe registers normally. |
+| anything outside `1-4` | **426 Upgrade Required**, header `X-Probe-Schema-Version-Supported: 1-4` | The probe refuses to register. The body names the rejected version and points here. |
 
-The supported range is **deliberately narrow** today (v1 only). The consts in
-`internal/relay/relay.go` are the single source of truth — shipping a future
-v2 only requires bumping `SchemaVersionMax` there and adding a row to
-`docs/SUPPORT-MATRIX.md`.
+Version history:
+
+- **v1** — the original relay format (pre-handshake collectors default here).
+- **v2** — sFlow interface counter samples (`/api/probes/:id/flow-counters`).
+- **v3** — `disk_usage` + `load_average` telemetry endpoints.
+- **v4** — the **server→collector command channel**: the heartbeat response
+  carries `pending_commands` and the collector reports outcomes to
+  `POST /api/probes/:id/command-result`. This is the FIRST schema version
+  where data flows **down** the relay beyond device sync — command payloads
+  are encrypted at rest on the server and may later carry credentials, so the
+  relay **must** run over HTTPS. The server only attaches `pending_commands`
+  for probes whose **registered** `schema_version` is ≥ 4; a v3 collector
+  never sees the field, and a v4 collector against a v3 server gates its
+  result sends the same way.
+
+The consts in `internal/relay/relay.go` are the single source of truth —
+shipping a future version only requires bumping `SchemaVersionMax` there and
+adding a row to `docs/SUPPORT-MATRIX.md`.
 
 ## Server support
 

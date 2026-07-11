@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.74"
+const ServerVersion = "0.11.76"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -679,6 +679,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		api.POST("/probes/:id/interface-errors", middleware.ProbeRateLimiter(), handler.ReceiveInterfaceErrors)
 		api.POST("/probes/:id/sensor-details", middleware.ProbeRateLimiter(), handler.ReceiveSensorDetails)
 		api.POST("/probes/:id/license-details", middleware.ProbeRateLimiter(), handler.ReceiveLicenseDetails)
+		// Relay schema v4: collector reports the outcome of a heartbeat-
+		// delivered command (idempotent by command_id).
+		api.POST("/probes/:id/command-result", middleware.ProbeRateLimiter(), handler.ReceiveCommandResult)
 
 		// Probe fetches its assigned devices
 		api.GET("/probes/:id/devices", middleware.ProbeRateLimiter(), handler.GetProbeDevices)
@@ -874,6 +877,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/probes/:id/reject", handler.RejectProbe)
 		admin.POST("/api/probes/:id/decommission", handler.DecommissionProbe)
 		admin.POST("/api/probes/:id/recommission", handler.RecommissionProbe)
+		// Relay schema v4 command channel: minimal enqueue (noop-only in PR-1)
+		// + list, for verifying the server→collector round-trip end-to-end.
+		admin.POST("/api/probes/:id/commands", handler.CreateProbeCommand)
+		admin.GET("/api/probes/:id/commands", handler.GetProbeCommands)
+		admin.DELETE("/api/probes/:id/commands/:cmdid", handler.CancelProbeCommand)
 		admin.POST("/api/probes/:id/regenerate-key", handler.RegenerateProbeKey)
 
 		admin.GET("/api/syslog", handler.GetSyslogMessages)

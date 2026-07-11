@@ -78,7 +78,8 @@ type DeviceStore interface {
 	ResolveDevicesByIPs(ips []string) map[string]uint
 }
 
-// ProbeStore covers probe registration lifecycle.
+// ProbeStore covers probe registration lifecycle and the relay schema-v4
+// server→collector command channel (probe_commands.go).
 type ProbeStore interface {
 	ApproveProbe(probeID uint, approvedBy uint) error
 	CreateProbe(probe *models.Probe) error
@@ -89,6 +90,12 @@ type ProbeStore interface {
 	GetAllProbes() ([]models.Probe, error)
 	RecommissionProbe(id uint) error
 	RejectProbe(probeID uint, reason string) error
+	EnqueueProbeCommand(cmd *models.ProbeCommand) error
+	ClaimProbeCommands(probeID uint) ([]models.ProbeCommand, error)
+	CompleteProbeCommand(probeID uint, commandID, status, result string) (bool, error)
+	GetProbeCommands(probeID uint, limit int) ([]models.ProbeCommand, error)
+	ExpireStaleProbeCommands() (int64, error)
+	CancelProbeCommand(probeID uint, commandID string) (bool, error)
 }
 
 // SiteStore covers site CRUD.

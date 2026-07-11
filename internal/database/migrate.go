@@ -43,6 +43,7 @@ func (d *Database) migrateBaseline() error {
 		&models.Probe{},
 		&models.ProbeApproval{},
 		&models.ProbeHeartbeat{},
+		&models.ProbeCommand{},
 		&models.PingResult{},
 		&models.PingStats{},
 		&models.SyslogMessage{},
@@ -1681,6 +1682,16 @@ func (d *Database) migrateAdminDashboardPrefs() error {
 // New tables only, so plain AutoMigrate matches the v31/v35 new-table precedent.
 func (d *Database) migrateAddDiskAndLoad() error {
 	return d.db.AutoMigrate(&models.DiskUsage{}, &models.LoadAverage{})
+}
+
+// migrateProbeCommandsAndSchemaVersion (v39) creates the probe_commands table
+// (the server→collector command channel, relay schema v4) and adds
+// probes.schema_version — the negotiated wire version persisted at register,
+// which the heartbeat handler gates pending_commands delivery on. New table +
+// additive int column with a zero default, so plain AutoMigrate matches the
+// v31/v35/v38 precedent on both dialects (probes is small and unpartitioned).
+func (d *Database) migrateProbeCommandsAndSchemaVersion() error {
+	return d.db.AutoMigrate(&models.Probe{}, &models.ProbeCommand{})
 }
 
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
