@@ -15,7 +15,7 @@ import (
 // pair them even though one side is not a bare ethernet/lag interface — bridge,
 // l2vlan and propVirtual are all valid LAN-segment interface types.
 func TestDetectPhysicalConnections_FortiGateSwitchInterface(t *testing.T) {
-	p, db := newTestPoller(t, nil)
+	p, db := newTestPoller(t)
 
 	site := &models.Site{Name: "HQ"}
 	if err := db.CreateSite(site); err != nil {
@@ -77,7 +77,7 @@ func TestDetectPhysicalConnections_FortiGateSwitchInterface(t *testing.T) {
 // that is identical across units, so two same-site firewalls must NOT be
 // connected through it — only through their real shared LAN.
 func TestDetectPhysicalConnections_ExcludesFortiLinkAndLinkLocal(t *testing.T) {
-	p, db := newTestPoller(t, nil)
+	p, db := newTestPoller(t)
 
 	site := &models.Site{Name: "HQ"}
 	if err := db.CreateSite(site); err != nil {
@@ -140,7 +140,7 @@ func TestDetectPhysicalConnections_ExcludesFortiLinkAndLinkLocal(t *testing.T) {
 // boundaries: tunnel/loopback interfaces are never LAN segments, and a shared
 // subnet across different sites must not be paired.
 func TestDetectPhysicalConnections_ExcludesTunnelAndCrossSite(t *testing.T) {
-	p, db := newTestPoller(t, nil)
+	p, db := newTestPoller(t)
 
 	siteA := &models.Site{Name: "A"}
 	siteB := &models.Site{Name: "B"}

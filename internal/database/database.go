@@ -408,7 +408,7 @@ func (d *Database) tryAcquireStartupLock() bool {
 // pollerWorkLockKey is a stable int64 keyed to the ASCII bytes of
 // "POLLERWORK"-ish content packed into a uint64 — chosen so it's visible
 // in pg_locks if an operator ever inspects it. AUDIT-007: shared by all
-// poller-process cron ticks (pollAllDevices, rollup, cleanup) so two
+// poller-process cron ticks (runMonitoringCycle, rollup, cleanup) so two
 // poller instances don't run the same work twice.
 const pollerWorkLockKey int64 = 0x504f4c4c45525357 // "POLLERSW"
 

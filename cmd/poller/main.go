@@ -30,23 +30,6 @@ import (
 	"firewall-mon/internal/threatfeed"
 )
 
-// deviceSNMP is the subset of *snmp.SNMPClient that pollDevice uses. Declaring
-// it as an interface lets tests inject a fake client in place of a live SNMP
-// connection. *snmp.SNMPClient satisfies it implicitly.
-type deviceSNMP interface {
-	GetSystemStatus(vendor ...string) (*models.SystemStatus, error)
-	GetInterfaceStats() ([]models.InterfaceStats, error)
-	GetInterfaceAddresses() ([]models.InterfaceAddress, error)
-	GetAllVPNTunnels() ([]models.VPNStatus, error)
-	GetHardwareSensors(vendor ...string) ([]models.HardwareSensor, error)
-	GetProcessorStats(vendor ...string) ([]models.ProcessorStats, error)
-	Close() error
-}
-
-// snmpDialer constructs a deviceSNMP from an SNMP config. Defaults to a live
-// client (snmp.NewSNMPClient); tests override it with a fake.
-type snmpDialer func(cfg *config.Config) (deviceSNMP, error)
-
 type Poller struct {
 	cfg            *config.Config
 	db             *database.Database
@@ -81,10 +64,6 @@ type Poller struct {
 	// goroutine (leader-locked), so it needs no mutex.
 	feedMasterSeen  *bool
 	feedEnabledSeen map[string]bool
-
-	// Injectable seam so pollDevice can be tested without a live SNMP
-	// connection. Wired to snmp.NewSNMPClient in NewPoller; overridden in tests.
-	newSNMP snmpDialer
 }
 
 // startThreatFeedSyncAsync runs the threat-feed sync off the poller's select
@@ -114,14 +93,6 @@ func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManage
 	// M30: pre-stamp the loop heartbeat so /readyz is ready during startup,
 	// before Start()'s first tick.
 	p.markLoopAlive()
-	// Wire the SNMP dialer to the live client; tests override p.newSNMP.
-	p.newSNMP = func(cfg *config.Config) (deviceSNMP, error) {
-		cl, err := snmp.NewSNMPClient(cfg)
-		if err != nil {
-			return nil, err
-		}
-		return cl, nil
-	}
 	// Real-time spike detector: judges live throughput against a per-interface
 	// seasonal (weekday, hour) baseline, refreshed every 6h from 30 days of
 	// hourly history, with a 30-minute re-fire cooldown.
@@ -212,8 +183,8 @@ func (p *Poller) Start() error {
 		}
 	}
 
-	// Poll immediately on startup
-	p.pollAllDevices()
+	// Run the first monitoring cycle immediately on startup
+	p.runMonitoringCycle()
 
 	ticker := time.NewTicker(p.cfg.SNMP.PollInterval)
 	defer ticker.Stop()
@@ -263,7 +234,7 @@ func (p *Poller) Start() error {
 			// AUDIT-007: per-tick advisory lock so two poller processes
 			// don't both run the same work. If another poller is active,
 			// skip this tick and try again on the next one.
-			p.runUnderLeaderLock("poll cycle", p.pollAllDevices)
+			p.runUnderLeaderLock("monitoring cycle", p.runMonitoringCycle)
 		case <-rollupTicker.C:
 			p.runUnderLeaderLock("rollup", func() {
 				if p.db != nil {
@@ -767,9 +738,16 @@ func (p *Poller) runThreatFeedSync() {
 	log.Printf("threat-feeds: sync complete, %d indicators upserted (expire in %dd)", total, ttl)
 }
 
-func (p *Poller) pollAllDevices() {
+// runMonitoringCycle is the poller's per-tick health/alert engine pass
+// (formerly pollAllDevices). The server no longer polls devices over SNMP
+// directly — collectors own all device polling and relay telemetry to the API
+// (v0.11.74) — so each cycle evaluates DB state only: staleness sweeps,
+// telemetry alert checks over the latest relayed rows, connection detection,
+// alert escalations, and probe data-flow monitoring. POLL_INTERVAL remains the
+// cycle cadence.
+func (p *Poller) runMonitoringCycle() {
 	if p.db == nil {
-		log.Println("Database not connected, skipping poll")
+		log.Println("Database not connected, skipping monitoring cycle")
 		return
 	}
 
@@ -785,32 +763,25 @@ func (p *Poller) pollAllDevices() {
 	}
 
 	if len(devices) == 0 {
-		log.Println("No devices configured, skipping poll")
+		log.Println("No devices configured, skipping monitoring cycle")
 		return
 	}
 
-	log.Printf("Polling %d devices...", len(devices))
+	log.Printf("Monitoring cycle: %d device(s)", len(devices))
 
-	// Poll devices concurrently with a semaphore to limit concurrent SNMP connections
-	sem := make(chan struct{}, 5) // max 5 concurrent polls
-	var wg sync.WaitGroup
+	// An enabled device with no collector assignment is polled by NOBODY now
+	// that the server's direct SNMP loop is retired. That is a configuration
+	// gap, not an outage — do NOT fire DEVICE_OFFLINE for it; surface it as one
+	// summary log line per cycle instead.
+	unassigned := 0
 	for i := range devices {
-		if !devices[i].Enabled {
-			continue
+		if devices[i].Enabled && devices[i].ProbeID == nil {
+			unassigned++
 		}
-		// Skip devices assigned to a remote probe — they are polled by the probe, not the server
-		if devices[i].ProbeID != nil {
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{} // acquire semaphore
-		go func(device *models.Device) {
-			defer wg.Done()
-			defer func() { <-sem }() // release semaphore
-			p.pollDevice(device)
-		}(&devices[i])
 	}
-	wg.Wait()
+	if unassigned > 0 {
+		log.Printf("%d enabled device(s) have no collector assigned and are not monitored", unassigned)
+	}
 
 	// Drop previous-interface baselines for devices/interfaces no longer polled
 	// so prevIfaceStats cannot grow without bound across the poller's lifetime
@@ -828,15 +799,14 @@ func (p *Poller) pollAllDevices() {
 	// Uses 3× poll interval as the threshold (minimum 5 minutes).
 	//
 	// Probe devices are polled by the remote collector, not this poller, so
-	// they never flow through updateDeviceStatus — which means they would
-	// silently flip offline in the UI with NO DEVICE_OFFLINE alert and NO
-	// critical email. We close that gap here: MarkStaleProbeDevicesOffline
+	// without this sweep they would silently flip offline in the UI with NO
+	// DEVICE_OFFLINE alert and NO critical email. MarkStaleProbeDevicesOffline
 	// returns the devices that transitioned online -> offline, and for each we
-	// fire the same alert + email path updateDeviceStatus uses. Recovery is
-	// handled by calling CheckDeviceOnline on every probe device that is back
-	// to reporting fresh data — sendRecovery is a no-op unless an offline
-	// alert is actually active, so this clears exactly the devices that were
-	// alerted, exactly once.
+	// fire the alert + email path. Recovery is handled by calling
+	// CheckDeviceOnline on every probe device that is back to reporting fresh
+	// data — sendRecovery is a no-op unless an offline alert is actually
+	// active, so this clears exactly the devices that were alerted, exactly
+	// once.
 	staleAfter := 3 * p.cfg.SNMP.PollInterval
 	if staleAfter < 5*time.Minute {
 		staleAfter = 5 * time.Minute
@@ -927,230 +897,6 @@ func (p *Poller) pruneStaleIfaceStats(ttl time.Duration) {
 	for key, st := range p.prevIfaceStats {
 		if st == nil || st.Timestamp.Before(cutoff) {
 			delete(p.prevIfaceStats, key)
-		}
-	}
-}
-
-func (p *Poller) pollDevice(device *models.Device) {
-	cfg := &config.Config{
-		SNMP: config.SNMPConfig{
-			SNMPHost:   device.IPAddress,
-			SNMPPort:   device.SNMPPort,
-			Community:  device.SNMPCommunity,
-			Version:    device.SNMPVersion,
-			V3Username: device.SNMPV3Username,
-			V3AuthType: device.SNMPV3AuthType,
-			V3AuthPass: device.SNMPV3AuthPass,
-			V3PrivType: device.SNMPV3PrivType,
-			V3PrivPass: device.SNMPV3PrivPass,
-			Timeout:    5 * time.Second,
-			Retries:    2,
-		},
-	}
-
-	client, err := p.newSNMP(cfg)
-	if err != nil {
-		log.Printf("Device %s (%s): failed to connect - %v", device.Name, device.IPAddress, err)
-		p.updateDeviceStatus(device, "offline")
-		return
-	}
-	defer client.Close()
-
-	vendor := device.Vendor
-	if vendor == "" {
-		vendor = "fortigate"
-	}
-
-	status, err := client.GetSystemStatus(vendor)
-	if err != nil {
-		log.Printf("Device %s (%s): poll error - %v", device.Name, device.IPAddress, err)
-		p.updateDeviceStatus(device, "offline")
-		return
-	}
-
-	log.Printf("Device %s (%s): CPU=%.1f%% Memory=%.1f%% Sessions=%d",
-		device.Name, device.IPAddress, status.CPUUsage, status.MemoryUsage, status.SessionCount)
-
-	// Save system status to database
-	if p.db != nil {
-		status.DeviceID = device.ID
-		status.Timestamp = time.Now()
-		if err := p.db.SaveSystemStatus(status); err != nil {
-			log.Printf("Device %s: failed to save status - %v", device.Name, err)
-		}
-	}
-
-	// Check alert thresholds
-	if p.alertManager != nil {
-		if err := p.alertManager.CheckSystemStatus(status, device.SiteID); err != nil {
-			log.Printf("Device %s: alert check error - %v", device.Name, err)
-		}
-	}
-
-	// Save interface stats to database
-	interfaces, err := client.GetInterfaceStats()
-	if err == nil && len(interfaces) > 0 {
-		if p.db != nil {
-			now := time.Now()
-			for i := range interfaces {
-				interfaces[i].DeviceID = device.ID
-				interfaces[i].Timestamp = now
-			}
-			if err := p.db.SaveInterfaceStats(interfaces); err != nil {
-				log.Printf("Device %s: failed to save interface stats - %v", device.Name, err)
-			}
-		}
-		// Check interface alerts
-		if p.alertManager != nil {
-			if err := p.alertManager.CheckInterfaceStatus(interfaces, device.SiteID); err != nil {
-				log.Printf("Device %s: interface alert check error - %v", device.Name, err)
-			}
-			// Check interface error/discard rates
-			p.ifaceStatsMu.RLock()
-			if err := p.alertManager.CheckInterfaceErrors(interfaces, p.prevIfaceStats, device.SiteID); err != nil {
-				log.Printf("Device %s: interface error check error - %v", device.Name, err)
-			}
-			p.ifaceStatsMu.RUnlock()
-		}
-		// Real-time spike detection on interface traffic. Throughput is derived
-		// from counter deltas (NOT raw cumulative counters), judged against a
-		// seasonal (weekday, hour) baseline, and only alerted once it has been
-		// sustained for SpikeMinDurationMinutes — so recurring/scheduled traffic
-		// and momentary blips don't cause alert panic.
-		if p.cfg.Alerts.SpikeAlertEnabled && p.spikeDetector != nil {
-			k := p.cfg.Alerts.SpikeStdDevThreshold
-			if k <= 0 {
-				k = 3.0
-			}
-			minDur := time.Duration(p.cfg.Alerts.SpikeMinDurationMinutes) * time.Minute
-			if minDur <= 0 {
-				minDur = 15 * time.Minute
-			}
-			pollNow := time.Now()
-			for i := range interfaces {
-				iface := &interfaces[i]
-				if iface.Status != "up" {
-					continue
-				}
-				p.ifaceStatsMu.RLock()
-				prev := p.prevIfaceStats[fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)]
-				var prevBytes float64
-				var prevTS time.Time
-				hasPrev := prev != nil
-				if hasPrev {
-					prevBytes = float64(prev.InBytes + prev.OutBytes)
-					prevTS = prev.Timestamp
-				}
-				p.ifaceStatsMu.RUnlock()
-				if !hasPrev {
-					continue // need a prior sample to derive throughput
-				}
-				elapsed := pollNow.Sub(prevTS).Seconds()
-				if elapsed <= 0 {
-					continue
-				}
-				delta := float64(iface.InBytes+iface.OutBytes) - prevBytes
-				if delta < 0 {
-					delta = 0 // counter reset / wrap
-				}
-				bps := delta * 8 / elapsed
-
-				dec := p.spikeDetector.Observe(fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index), pollNow, bps, k, minDur)
-				switch {
-				case dec.Fire:
-					p.emitSpikeAlert(device, iface, dec)
-				case dec.Resolve:
-					p.emitSpikeResolve(device, iface)
-				}
-			}
-		}
-
-		// Store current stats as previous for next poll cycle
-		p.ifaceStatsMu.Lock()
-		for i := range interfaces {
-			key := fmt.Sprintf("%d_%s", interfaces[i].DeviceID, interfaces[i].Name)
-			iface := interfaces[i]
-			p.prevIfaceStats[key] = &iface
-		}
-		p.ifaceStatsMu.Unlock()
-	}
-
-	// Collect interface IP addresses (standard IP-MIB, vendor-neutral)
-	ifAddrs, err := client.GetInterfaceAddresses()
-	if err != nil {
-		log.Printf("Device %s: interface address walk error - %v", device.Name, err)
-	} else if len(ifAddrs) > 0 {
-		now := time.Now()
-		for i := range ifAddrs {
-			ifAddrs[i].DeviceID = device.ID
-			ifAddrs[i].Timestamp = now
-		}
-		if p.db != nil {
-			if err := p.db.SaveInterfaceAddresses(ifAddrs); err != nil {
-				log.Printf("Device %s: failed to save interface addresses - %v", device.Name, err)
-			}
-		}
-		log.Printf("Device %s: %d interface addresses collected", device.Name, len(ifAddrs))
-	}
-
-	// Collect all VPN tunnel status (IPSec + GRE with proper type detection)
-	vpnStatuses, err := client.GetAllVPNTunnels()
-	if err != nil {
-		log.Printf("Device %s: VPN walk error - %v", device.Name, err)
-	} else if len(vpnStatuses) > 0 {
-		now := time.Now()
-		for i := range vpnStatuses {
-			vpnStatuses[i].DeviceID = device.ID
-			vpnStatuses[i].Timestamp = now
-		}
-		if p.db != nil {
-			if err := p.db.SaveVPNStatuses(vpnStatuses); err != nil {
-				log.Printf("Device %s: failed to save VPN statuses - %v", device.Name, err)
-			}
-		}
-		if p.alertManager != nil {
-			p.alertManager.CheckVPNStatus(vpnStatuses, device.SiteID)
-		}
-	}
-
-	// Collect hardware sensors
-	pollAndSave(
-		func() ([]models.HardwareSensor, error) { return client.GetHardwareSensors(vendor) },
-		func(s *models.HardwareSensor, now time.Time) { s.DeviceID = device.ID; s.Timestamp = now },
-		p.db.SaveHardwareSensors, p.db != nil, device.Name, "hardware sensor", "hardware sensors")
-
-	// Collect processor stats (CPU cores, NP/SPU ASICs)
-	pollAndSave(
-		func() ([]models.ProcessorStats, error) { return client.GetProcessorStats(vendor) },
-		func(s *models.ProcessorStats, now time.Time) { s.DeviceID = device.ID; s.Timestamp = now },
-		p.db.SaveProcessorStats, p.db != nil, device.Name, "processor stats", "processor stats")
-
-	p.updateDeviceStatus(device, "online")
-}
-
-// pollAndSave collects one optional metric set, and if it is non-empty stamps
-// each record with the device ID and a single poll timestamp and saves it.
-// A collection error is logged and the metric skipped; an empty result is
-// skipped silently; the save is gated on hasDB and its failure is logged.
-// pollLabel/saveLabel let each call keep its original log wording. get/stamp/
-// save are closures because Go generics cannot call a method or set a struct
-// field generically.
-func pollAndSave[T any](get func() ([]T, error), stamp func(*T, time.Time), save func([]T) error, hasDB bool, devName, pollLabel, saveLabel string) {
-	items, err := get()
-	if err != nil {
-		log.Printf("Device %s: %s poll error - %v", devName, pollLabel, err)
-		return
-	}
-	if len(items) == 0 {
-		return
-	}
-	now := time.Now()
-	for i := range items {
-		stamp(&items[i], now)
-	}
-	if hasDB {
-		if err := save(items); err != nil {
-			log.Printf("Device %s: failed to save %s - %v", devName, saveLabel, err)
 		}
 	}
 }
@@ -2186,27 +1932,6 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 		log.Printf("Physical auto-detect: upserted %d connection(s)", created)
 	}
 	return created
-}
-
-func (p *Poller) updateDeviceStatus(device *models.Device, status string) {
-	now := time.Now()
-	device.Status = status
-	device.LastPolled = now
-	if p.db != nil {
-		if err := p.db.UpdateDeviceStatus(device.ID, status, now); err != nil {
-			log.Printf("Device %s: failed to update status - %v", device.Name, err)
-		}
-	}
-	if p.alertManager != nil {
-		if status == "offline" {
-			p.alertManager.CheckDeviceOffline(device)
-			// Send enhanced HTML critical alert email
-			p.sendCriticalAlertEmail(device, "DEVICE_OFFLINE",
-				fmt.Sprintf("Device %s (%s) is offline", device.Name, device.IPAddress))
-		} else if status == "online" {
-			p.alertManager.CheckDeviceOnline(device)
-		}
-	}
 }
 
 // sendCriticalAlertEmail sends an HTML email for critical alerts with embedded charts.
