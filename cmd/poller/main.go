@@ -927,16 +927,20 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 
 	// System status: CPU / memory / disk / session thresholds. The query is
 	// bounded to fresh rows in SQL, so the freshness gate is implicit here.
+	freshStatus := make(map[uint]bool)
+	statusQueryOK := false
 	if p.alertManager != nil {
 		statuses, err := p.db.GetAllLatestSystemStatuses(cutoff)
 		if err != nil {
 			log.Printf("Telemetry check: failed to get system statuses - %v", err)
 		} else {
+			statusQueryOK = true
 			for i := range statuses {
 				dev, ok := devByID[statuses[i].DeviceID]
 				if !ok {
 					continue
 				}
+				freshStatus[statuses[i].DeviceID] = true
 				if err := p.alertManager.CheckSystemStatus(&statuses[i], dev.SiteID); err != nil {
 					log.Printf("Device %s: alert check error - %v", dev.Name, err)
 				}
@@ -1075,6 +1079,23 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 		}
 		for devID, devVPNs := range vpnsByDevice {
 			p.alertManager.CheckVPNStatus(devVPNs, devByID[devID].SiteID)
+		}
+	}
+
+	// Visibility: a device the server still considers online but for which no
+	// fresh telemetry exists means its rows were all excluded by the freshness
+	// gate — the likely cause is collector/server clock skew, which would
+	// silently disable every threshold check here. Surface it once per cycle
+	// rather than failing silent.
+	if statusQueryOK {
+		var stale int
+		for id, dev := range devByID {
+			if dev.Status == "online" && !freshStatus[id] {
+				stale++
+			}
+		}
+		if stale > 0 {
+			log.Printf("Telemetry check: %d online device(s) had no system_status within %v — check collector NTP/clock skew", stale, staleAfter)
 		}
 	}
 }

@@ -45,6 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `runMonitoringCycle` guardrail (stale sweeps behaviorally, full
   alert-engine call list pinned). Docs: architecture + README updated (server
   never polls devices; poller = monitoring/alert engine).
+- **No-data recovery guard (`CheckSystemStatus`):** `system_status` has two
+  writers with disjoint field coverage — the SSH `diagnose sys performance`
+  row carries CPU/memory but `disk_usage=0`. With alerting now evaluating the
+  newest relayed row, that partial row would auto-resolve (and then flap-mute)
+  a genuine open DISK_HIGH ~every SSH poll. A live device never reports 0%
+  cpu/mem/disk, so recovery now requires a real (`> 0`) reading; a 0/unpopulated
+  metric is treated as no-data and can't auto-resolve an alert. Regression test
+  added.
+- **Stale-telemetry visibility:** if a device the server still considers online
+  produced no `system_status` within the freshness window (the likely cause is
+  collector/server clock skew, which would silently disable every threshold
+  check), the poller now logs one summary line per cycle instead of failing
+  silent.
 
 ## [0.11.73] - 2026-07-11
 
