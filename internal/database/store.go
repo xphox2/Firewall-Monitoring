@@ -240,6 +240,8 @@ type IngestStore interface {
 	SavePingStats(stats *models.PingStats) error
 	FoldPingStats(deviceID, probeID uint, targetIP string, minL, maxL, sum float64, count int, packetLoss float64, now time.Time) error
 	SaveProcessorStats(stats []models.ProcessorStats) error
+	SaveDiskUsage(rows []models.DiskUsage) error
+	SaveLoadAverage(rows []models.LoadAverage) error
 	SaveSDWANHealth(health []models.SDWANHealth) error
 	SaveSecurityStats(stats []models.SecurityStats) error
 	SaveSyslogMessages(msgs []models.SyslogMessage) error

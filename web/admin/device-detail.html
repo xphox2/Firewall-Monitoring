@@ -340,6 +340,22 @@
                         <div id="sensorCards" class="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3"></div>
                         <div id="sensorEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting hardware sensor data. Enable SSH polling to collect sensor info.</div>
                     </div>
+
+                    <!-- Storage & Load -->
+                    <div class="card bg-[#161b22] border border-[#30363d] rounded-lg p-5">
+                        <div class="card-header flex justify-between items-center border-b border-[#30363d] pb-4 mb-4">
+                            <div>
+                                <h2 class="text-[1.1rem] font-bold text-[#e6edf3] flex items-center gap-2">
+                                    <span class="w-1.5 h-4 bg-[#f59e0b] rounded-full"></span>
+                                    Storage &amp; Load
+                                </h2>
+                                <p class="text-[0.75rem] text-[#8b949e] mt-1">Filesystem utilization and system load average</p>
+                            </div>
+                            <span id="loadSummary" class="text-[0.8rem] font-mono text-[#8b949e] bg-[#21262d] px-2.5 py-1 rounded-md border border-[#30363d]"></span>
+                        </div>
+                        <div id="diskRows" class="flex flex-col gap-2"></div>
+                        <div id="storageEmpty" class="empty text-center p-10 text-[#8b949e] hidden">Awaiting disk/load data from poller…</div>
+                    </div>
                 </div>
             </div>
 

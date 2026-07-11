@@ -556,6 +556,82 @@ func (h *Handler) ReceiveProcessorStats(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
 }
 
+func (h *Handler) ReceiveDiskUsage(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
+	var rows []models.DiskUsage
+	if err := c.ShouldBindJSON(&rows); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+		return
+	}
+	if len(rows) > 500 {
+		rows = rows[:500]
+	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	now := time.Now()
+	filtered := rows[:0]
+	for i := range rows {
+		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
+			continue
+		}
+		if rows[i].Timestamp.IsZero() {
+			rows[i].Timestamp = now
+		}
+		filtered = append(filtered, rows[i])
+	}
+	if err := h.db.SaveDiskUsage(filtered); err != nil {
+		log.Printf("ReceiveDiskUsage: DB save error: %v", err)
+		httputil.InternalError(c, "Failed to save disk usage", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
+}
+
+func (h *Handler) ReceiveLoadAverage(c *gin.Context) {
+	probe, ok := h.validateProbe(c)
+	if !ok {
+		return
+	}
+	batchID, dup := h.batchDedupCheck(c, probe.ID)
+	if dup {
+		return
+	}
+	defer h.markBatchIfOK(c, probe.ID, batchID)
+	var rows []models.LoadAverage
+	if err := c.ShouldBindJSON(&rows); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid JSON"))
+		return
+	}
+	if len(rows) > 500 {
+		rows = rows[:500]
+	}
+	allowedDevices := h.probeDeviceIDs(probe.ID)
+	now := time.Now()
+	filtered := rows[:0]
+	for i := range rows {
+		if rows[i].DeviceID > 0 && allowedDevices != nil && !allowedDevices[rows[i].DeviceID] {
+			continue
+		}
+		if rows[i].Timestamp.IsZero() {
+			rows[i].Timestamp = now
+		}
+		filtered = append(filtered, rows[i])
+	}
+	if err := h.db.SaveLoadAverage(filtered); err != nil {
+		log.Printf("ReceiveLoadAverage: DB save error: %v", err)
+		httputil.InternalError(c, "Failed to save load average", err)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"saved": len(filtered)}))
+}
+
 func (h *Handler) ReceiveHardwareSensors(c *gin.Context) {
 	probe, ok := h.validateProbe(c)
 	if !ok {

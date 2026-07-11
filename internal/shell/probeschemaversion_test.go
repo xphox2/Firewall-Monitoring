@@ -26,7 +26,7 @@ func TestProbeSchemaVersionHandshake(t *testing.T) {
 	relaySrc := readFile(t, "../../internal/relay/relay.go")
 	for _, needle := range []string{
 		"SchemaVersionMin = 1",
-		"SchemaVersionMax = 2",
+		"SchemaVersionMax = 3",
 		"SchemaVersion int `json:\"schema_version,omitempty\"`",
 	} {
 		if !strings.Contains(relaySrc, needle) {
