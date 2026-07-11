@@ -8,9 +8,11 @@ How Firewall-Mon's processes, data stores, and external systems fit together
 ## Components & data flow
 
 Three long-running server daemons (`fwmon-api`, `fwmon-poller`, `fwmon-trap`)
-share one database; `configcheck` is a one-shot CLI, not a daemon. Firewalls are
-monitored **directly** (the central poller polls them over SNMP) or **remotely**
-(a probe at the site polls them and relays the data back).
+share one database; `configcheck` is a one-shot CLI, not a daemon. The server
+never polls devices itself (the direct SNMP loop was retired in v0.11.74):
+every firewall is polled by a **collector** (probe) at its site, which relays
+the data back; `fwmon-poller` is the monitoring/alert engine that evaluates
+the relayed data.
 
 ```mermaid
 flowchart TB
@@ -24,7 +26,7 @@ flowchart TB
 
     subgraph server["Central server (single container)"]
         API["fwmon-api<br/>(Gin: admin + public + ingestion)"]
-        POLLER["fwmon-poller<br/>(SNMP poll loop)"]
+        POLLER["fwmon-poller<br/>(monitoring/alert engine)"]
         TRAP["fwmon-trap<br/>(SNMP trap receiver)"]
         DB[("PostgreSQL 16")]
         IRC["IRC bot(s)"]
@@ -34,7 +36,6 @@ flowchart TB
     USERS["Operators (admin panel)"]
     WALL["Public wallboard"]
 
-    FW -- "SNMP poll" --> POLLER
     FW -- "SNMP traps" --> TRAP
     FW -- "SNMP / syslog / sFlow / NetFlow / IPFIX / ICMP" --> PROBE
     PROBE -- "HTTPS relay (X-Probe-Batch-ID)" --> API
@@ -55,9 +56,13 @@ flowchart TB
 - The three server daemons (`api`, `poller`, `trap`) are separate processes
   sharing the DB; in the Docker image they run side-by-side under one
   entrypoint with PostgreSQL embedded.
-- The **poller** owns directly-polled devices and fires offline/threshold
-  alerts; **probe** devices are polled at the edge and the poller drives their
-  offline alerting from relayed freshness (v0.10.323).
+- The **poller** never talks SNMP to devices — it is the monitoring/alert
+  engine. Devices are polled at the edge by collectors; each poller cycle
+  evaluates the relayed DB rows: offline sweeps (stale `last_polled` →
+  DEVICE_OFFLINE + recovery), CPU/memory/disk/session/interface/VPN threshold
+  checks, traffic-spike detection, connection auto-detection, alert
+  escalations, and probe data-flow lag (v0.11.74). An enabled device with no
+  collector assigned is not monitored and is called out in the poller log.
 - Only one poller does migration/cleanup work at a time, gated by a Postgres
   advisory lock (AUDIT-007).
 - Secrets (SNMP/IRC/SMTP) are encrypted at rest with an AES-256 key derived
@@ -86,25 +91,26 @@ sequenceDiagram
     end
 ```
 
-## Sequence: poll cycle (directly-polled device)
+## Sequence: monitoring cycle (poller)
 
 ```mermaid
 sequenceDiagram
     participant Po as fwmon-poller
-    participant FW as Firewall (SNMP)
     participant D as PostgreSQL
     participant N as notifier
 
     loop every SNMP_POLL_INTERVAL (default 60s)
-        Po->>FW: GET system OIDs (vendor profile)
-        FW-->>Po: CPU / mem / disk / sessions / uptime
-        Po->>FW: WALK interfaces / VPN / HA / sensors
-        FW-->>Po: rows
-        Po->>D: insert time-series + update last_polled
-        alt threshold breached or device unreachable
+        Po->>D: refresh thresholds + load devices
+        Po->>D: sweep stale devices/probes (no fresh relayed data)
+        alt device went stale
+            Po->>N: DEVICE_OFFLINE alert (with cooldown/dedup)
+        end
+        Po->>D: read latest relayed system/interface/VPN rows
+        alt threshold breached / interface down / VPN down / traffic spike
             Po->>N: send alert (with cooldown/dedup)
             N-->>N: email / Slack / Discord / webhook
         end
+        Po->>D: auto-detect connections, escalations, probe data-flow
     end
 ```
 

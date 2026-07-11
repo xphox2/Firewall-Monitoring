@@ -14,7 +14,7 @@ import (
 // 192.168.255.2/32 on its own — a /32 inside the hub's /24 — and they are in
 // different sites (IPSec is cross-site).
 func TestDetectVPNConnections_TunnelOverlay(t *testing.T) {
-	p, db := newTestPoller(t, nil)
+	p, db := newTestPoller(t)
 
 	hubSite := &models.Site{Name: "DC"}
 	spokeSite := &models.Site{Name: "Branch"}
@@ -76,7 +76,7 @@ func TestDetectVPNConnections_TunnelOverlay(t *testing.T) {
 // /32 host address inside the hub's overlay, are linked to the hub but NOT to one
 // another (their /32s never contain each other).
 func TestDetectVPNConnections_SpokesNotLinkedToEachOther(t *testing.T) {
-	p, db := newTestPoller(t, nil)
+	p, db := newTestPoller(t)
 
 	site := &models.Site{Name: "S"}
 	if err := db.CreateSite(site); err != nil {

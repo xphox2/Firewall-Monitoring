@@ -251,7 +251,13 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 		if rc.resolved.ClearThreshold > 0 && rc.resolved.ClearThreshold < recoverBelow {
 			recoverBelow = rc.resolved.ClearThreshold
 		}
-		if fireAt > 0 && rc.current < recoverBelow {
+		// No-data guard: a value of exactly 0 means the metric is unpopulated in
+		// this row, not that it recovered to 0. A live device never reports 0%
+		// cpu/memory/disk — and system_status has two writers with disjoint field
+		// coverage (the SSH `diagnose sys performance` row carries cpu/mem but
+		// disk_usage=0), so a partial row landing as the newest sample must not
+		// auto-resolve a genuine open alert. Recovery waits for a real reading.
+		if fireAt > 0 && rc.current > 0 && rc.current < recoverBelow {
 			am.sendRecovery(rc.metricKey, rc.alertType, rc.metric,
 				fmt.Sprintf("%s recovered to %.1f", rc.metric, rc.current), status.DeviceID, siteID)
 		}
