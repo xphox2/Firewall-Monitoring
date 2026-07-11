@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -457,6 +458,8 @@ func (h *Handler) GetDeviceDetail(c *gin.Context) {
 	var la models.LoadAverage
 	if err := gdb.Where("device_id = ?", id).Order("timestamp DESC").First(&la).Error; err == nil {
 		loadAverage = &la
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("Device %d: failed to get load average: %v", id, err)
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{

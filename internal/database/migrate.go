@@ -1665,13 +1665,6 @@ func (d *Database) migrateAdminProfile() error {
 // migrateAdminDashboardPrefs (v37) adds the admins.dashboard_prefs column that
 // stores each user's customizable system-health dashboard layout (JSON). Additive
 // with an empty default so existing accounts fall back to the default layout.
-// migrateAddDiskAndLoad creates the disk_usage and load_average time-series
-// tables (SNMP-collected filesystem usage and system load average). New tables
-// only, so plain AutoMigrate matches the v31/v35 new-table precedent.
-func (d *Database) migrateAddDiskAndLoad() error {
-	return d.db.AutoMigrate(&models.DiskUsage{}, &models.LoadAverage{})
-}
-
 func (d *Database) migrateAdminDashboardPrefs() error {
 	if !d.dialect.IsPostgres() {
 		return d.db.AutoMigrate(&models.Admin{})
@@ -1681,6 +1674,13 @@ func (d *Database) migrateAdminDashboardPrefs() error {
 	}
 	log.Printf("migrate v37 admin_dashboard_prefs: ensured admins.dashboard_prefs column")
 	return nil
+}
+
+// migrateAddDiskAndLoad (v38) creates the disk_usage and load_average
+// time-series tables (SNMP-collected filesystem usage and system load average).
+// New tables only, so plain AutoMigrate matches the v31/v35 new-table precedent.
+func (d *Database) migrateAddDiskAndLoad() error {
+	return d.db.AutoMigrate(&models.DiskUsage{}, &models.LoadAverage{})
 }
 
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
