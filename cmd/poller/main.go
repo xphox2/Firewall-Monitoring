@@ -844,6 +844,15 @@ func (p *Poller) runMonitoringCycle() {
 		log.Printf("Marked %d probe(s) offline (no heartbeat for >%v): %s", len(staleProbes), staleAfter, strings.Join(names, ", "))
 	}
 
+	// Terminally expire probe commands whose TTL passed while their probe was
+	// offline or pre-v4 (ClaimProbeCommands only expires per-probe on a v4
+	// heartbeat, so those would otherwise sit non-terminal forever).
+	if n, cerr := p.db.ExpireStaleProbeCommands(); cerr != nil {
+		log.Printf("Expire stale probe commands error: %v", cerr)
+	} else if n > 0 {
+		log.Printf("Expired %d stale probe command(s) past TTL", n)
+	}
+
 	// Recovery: any probe device that is reporting fresh data clears its
 	// (possibly) active offline alert. CheckDeviceOnline -> sendRecovery
 	// returns immediately when no offline alert is active, so iterating every

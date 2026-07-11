@@ -1,6 +1,36 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.76] - 2026-07-11
+
+### Hardened — probe command channel (pre-merge review fixes)
+
+Follow-up hardening for the server→collector command channel introduced in
+0.11.75, from an adversarial review before merge:
+
+- **Redelivery/result-ingest race closed.** `ClaimProbeCommands` now guards
+  both the dispatch and the max-attempts fail-over `UPDATE`s on the row still
+  being non-terminal (`status IN (pending, dispatched)`) and skips on
+  `RowsAffected == 0`. Under READ COMMITTED, a concurrent
+  `command-result` POST could commit `succeeded`/`failed` between the claim
+  `SELECT` and the dispatch `UPDATE`; the old unguarded `WHERE id = ?` could
+  resurrect that terminal command back to `dispatched` and later record a
+  succeeded command as `failed`. Regression test asserts a completed command
+  is never re-delivered or flipped.
+- **Global stale-command sweep.** New `ExpireStaleProbeCommands` terminally
+  expires every non-terminal command past its TTL across all probes; the
+  poller runs it each monitoring cycle. Previously expiry ran only per-probe
+  on a v4 heartbeat, so a command queued against an offline or sub-v4 probe
+  sat non-terminal forever.
+- **Admin force-cleanup.** `DELETE /admin/api/probes/:id/commands/:cmdid`
+  (→ `CancelProbeCommand`) terminally expires a still-live command with
+  result `cancelled by admin`; probe-scoped, no-op on unknown/terminal.
+- **Enqueue guards.** `CreateProbeCommand` now caps the requested TTL
+  (default 900s, max 3600s, always sets `expires_at`) and verifies the target
+  device is actually managed by that probe before queuing.
+- Tests: stale-sweep expires only past-TTL rows, cancel expires-and-scopes,
+  terminal-not-resurrected.
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 

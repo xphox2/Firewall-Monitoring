@@ -135,8 +135,16 @@ func (d *Database) ClaimProbeCommands(probeID uint) ([]models.ProbeCommand, erro
 
 		for i := range cmds {
 			cmd := &cmds[i]
+			// Every mutation below is guarded on the command still being
+			// non-terminal (pending/dispatched). Under READ COMMITTED the SELECT
+			// above and these UPDATEs are separate reads, so a concurrent
+			// command-result POST can commit `succeeded`/`failed` in between; the
+			// status guard + RowsAffected check make sure we never resurrect a
+			// terminal command back to `dispatched` (which would later record a
+			// succeeded command as failed).
 			if cmd.Attempts+1 > ProbeCommandMaxAttempts {
-				if err := tx.Model(&models.ProbeCommand{}).Where("id = ?", cmd.ID).
+				if err := tx.Model(&models.ProbeCommand{}).
+					Where("id = ? AND status IN (?, ?)", cmd.ID, ProbeCommandStatusPending, ProbeCommandStatusDispatched).
 					Updates(map[string]interface{}{
 						"status": ProbeCommandStatusFailed,
 						"result": "max delivery attempts exceeded without a reported result",
@@ -145,12 +153,19 @@ func (d *Database) ClaimProbeCommands(probeID uint) ([]models.ProbeCommand, erro
 				}
 				continue
 			}
-			if err := tx.Model(&models.ProbeCommand{}).Where("id = ?", cmd.ID).
+			res := tx.Model(&models.ProbeCommand{}).
+				Where("id = ? AND status IN (?, ?)", cmd.ID, ProbeCommandStatusPending, ProbeCommandStatusDispatched).
 				Updates(map[string]interface{}{
 					"status":   ProbeCommandStatusDispatched,
 					"attempts": cmd.Attempts + 1,
-				}).Error; err != nil {
-				return fmt.Errorf("dispatch command: %w", err)
+				})
+			if res.Error != nil {
+				return fmt.Errorf("dispatch command: %w", res.Error)
+			}
+			if res.RowsAffected == 0 {
+				// A concurrent result completed this command between the SELECT
+				// and here — don't deliver it or burn an attempt.
+				continue
 			}
 			cmd.Status = ProbeCommandStatusDispatched
 			cmd.Attempts++
@@ -215,4 +230,34 @@ func (d *Database) GetProbeCommands(probeID uint, limit int) ([]models.ProbeComm
 	err := d.db.Where("probe_id = ?", probeID).
 		Order("id DESC").Limit(limit).Find(&cmds).Error
 	return cmds, err
+}
+
+// ExpireStaleProbeCommands terminally expires every non-terminal command whose
+// TTL has passed, across all probes. ClaimProbeCommands only expires per-probe on
+// a v4 heartbeat, so a command enqueued against an offline or sub-v4 probe would
+// otherwise sit non-terminal forever (and never reach the terminal-row cleanup).
+// The poller calls this every monitoring cycle. Returns the number expired.
+func (d *Database) ExpireStaleProbeCommands() (int64, error) {
+	res := d.db.Model(&models.ProbeCommand{}).
+		Where("status IN (?, ?) AND expires_at < ?",
+			ProbeCommandStatusPending, ProbeCommandStatusDispatched, time.Now()).
+		Updates(map[string]interface{}{
+			"status": ProbeCommandStatusExpired,
+			"result": "expired before completion",
+		})
+	return res.RowsAffected, res.Error
+}
+
+// CancelProbeCommand is the admin force-cleanup: terminally expire a still-live
+// command (e.g. one wedged against an offline probe). Scoped to the probe;
+// no-op (applied=false) if the command is unknown or already terminal.
+func (d *Database) CancelProbeCommand(probeID uint, commandID string) (applied bool, err error) {
+	res := d.db.Model(&models.ProbeCommand{}).
+		Where("command_id = ? AND probe_id = ? AND status IN (?, ?)",
+			commandID, probeID, ProbeCommandStatusPending, ProbeCommandStatusDispatched).
+		Updates(map[string]interface{}{
+			"status": ProbeCommandStatusExpired,
+			"result": "cancelled by admin",
+		})
+	return res.RowsAffected > 0, res.Error
 }

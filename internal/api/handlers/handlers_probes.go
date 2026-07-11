@@ -851,14 +851,31 @@ func (h *Handler) CreateProbeCommand(c *gin.Context) {
 		return
 	}
 
-	cmd := &models.ProbeCommand{
-		ProbeID:  probe.ID,
-		DeviceID: req.DeviceID,
-		Type:     req.Type,
-		Payload:  req.Payload,
+	// A device-targeted command must target a device THIS probe manages —
+	// defense before any write-type command exists.
+	if req.DeviceID > 0 {
+		dev, derr := db.GetDevice(req.DeviceID)
+		if derr != nil || dev.ProbeID == nil || *dev.ProbeID != probe.ID {
+			c.JSON(http.StatusBadRequest, response.Error("device_id is not managed by this probe"))
+			return
+		}
 	}
-	if req.TTLSeconds > 0 {
-		cmd.ExpiresAt = time.Now().Add(time.Duration(req.TTLSeconds) * time.Second)
+	// Cap TTL: default 15m, hard max 1h, so a wedged command can't outlive its
+	// usefulness and fire stale.
+	ttl := req.TTLSeconds
+	if ttl <= 0 {
+		ttl = 900
+	}
+	if ttl > 3600 {
+		ttl = 3600
+	}
+
+	cmd := &models.ProbeCommand{
+		ProbeID:   probe.ID,
+		DeviceID:  req.DeviceID,
+		Type:      req.Type,
+		Payload:   req.Payload,
+		ExpiresAt: time.Now().Add(time.Duration(ttl) * time.Second),
 	}
 	if err := db.EnqueueProbeCommand(cmd); err != nil {
 		httputil.InternalError(c, "Failed to enqueue command", err)
@@ -893,6 +910,35 @@ func (h *Handler) GetProbeCommands(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, response.Success(cmds))
+}
+
+// CancelProbeCommand force-expires a still-live command — the admin cleanup for
+// a command wedged against an offline probe (DELETE
+// /admin/api/probes/:id/commands/:cmdid). No-op if already terminal.
+func (h *Handler) CancelProbeCommand(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	cmdID := c.Param("cmdid")
+	if cmdID == "" {
+		c.JSON(http.StatusBadRequest, response.Error("Missing command id"))
+		return
+	}
+	applied, err := db.CancelProbeCommand(id, cmdID)
+	if err != nil {
+		httputil.InternalError(c, "Failed to cancel command", err)
+		return
+	}
+	if !applied {
+		c.JSON(http.StatusNotFound, response.Error("Command not found or already terminal"))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{"cancelled": true}))
 }
 
 // processObservedHostKeys applies the SSH host-key change-detection rule for the

@@ -245,3 +245,82 @@ func TestCompleteProbeCommand_IdempotentByCommandID(t *testing.T) {
 		t.Error("invalid result status must be rejected")
 	}
 }
+
+// TestExpireStaleProbeCommands: the global sweep terminally expires any
+// non-terminal command past its TTL — for probes that are offline/pre-v4 and so
+// never claim (where per-heartbeat expiry can't run).
+func TestExpireStaleProbeCommands(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	fresh := seedCommand(t, d, 11, func(c *models.ProbeCommand) { c.ExpiresAt = time.Now().Add(time.Hour) })
+	stale := seedCommand(t, d, 11, func(c *models.ProbeCommand) { c.ExpiresAt = time.Now().Add(-time.Minute) })
+
+	n, err := d.ExpireStaleProbeCommands()
+	if err != nil {
+		t.Fatalf("ExpireStaleProbeCommands: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expired %d, want 1 (only the past-TTL command)", n)
+	}
+	var gotStale, gotFresh models.ProbeCommand
+	d.Gorm().Where("command_id = ?", stale.CommandID).First(&gotStale)
+	if gotStale.Status != ProbeCommandStatusExpired {
+		t.Errorf("stale command status = %q, want expired", gotStale.Status)
+	}
+	d.Gorm().Where("command_id = ?", fresh.CommandID).First(&gotFresh)
+	if gotFresh.Status != ProbeCommandStatusPending {
+		t.Errorf("fresh command status = %q, want pending (untouched)", gotFresh.Status)
+	}
+}
+
+// TestCancelProbeCommand: admin force-cleanup expires a live command, is
+// probe-scoped, and is a no-op once terminal.
+func TestCancelProbeCommand(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	cmd := seedCommand(t, d, 12, nil)
+
+	if applied, err := d.CancelProbeCommand(12, cmd.CommandID); err != nil || !applied {
+		t.Fatalf("cancel live command: applied=%v err=%v, want true/nil", applied, err)
+	}
+	var got models.ProbeCommand
+	d.Gorm().Where("command_id = ?", cmd.CommandID).First(&got)
+	if got.Status != ProbeCommandStatusExpired || got.Result != "cancelled by admin" {
+		t.Errorf("cancelled command = %q/%q, want expired/'cancelled by admin'", got.Status, got.Result)
+	}
+	// Second cancel is a no-op (already terminal).
+	if applied, _ := d.CancelProbeCommand(12, cmd.CommandID); applied {
+		t.Error("cancelling an already-terminal command must be a no-op")
+	}
+	// Wrong probe scope.
+	other := seedCommand(t, d, 12, nil)
+	if applied, _ := d.CancelProbeCommand(999, other.CommandID); applied {
+		t.Error("cancelling another probe's command must be a no-op")
+	}
+}
+
+// TestClaimProbeCommands_TerminalNotResurrected: a command that completed
+// (succeeded) is never re-delivered or flipped back to dispatched — the
+// status-guarded claim UPDATE is what protects the race between the claim SELECT
+// and a concurrent result POST.
+func TestClaimProbeCommands_TerminalNotResurrected(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	cmd := seedCommand(t, d, 13, nil)
+	// Simulate a dispatched-then-redelivery-eligible command that then completes.
+	d.Gorm().Model(&models.ProbeCommand{}).Where("id = ?", cmd.ID).
+		Updates(map[string]interface{}{"status": ProbeCommandStatusDispatched, "updated_at": time.Now().Add(-time.Hour)})
+	if _, err := d.CompleteProbeCommand(13, cmd.CommandID, ProbeCommandStatusSucceeded, "done"); err != nil {
+		t.Fatalf("CompleteProbeCommand: %v", err)
+	}
+
+	claimed, err := d.ClaimProbeCommands(13)
+	if err != nil {
+		t.Fatalf("ClaimProbeCommands: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("claimed %d, want 0 (a succeeded command must not be re-delivered)", len(claimed))
+	}
+	var got models.ProbeCommand
+	d.Gorm().Where("command_id = ?", cmd.CommandID).First(&got)
+	if got.Status != ProbeCommandStatusSucceeded {
+		t.Errorf("status = %q, want succeeded (never resurrected to dispatched)", got.Status)
+	}
+}
