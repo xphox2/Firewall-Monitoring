@@ -1,6 +1,40 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.77] - 2026-07-12
+
+### Fixed — false INTERFACE_DOWN / VPN_TUNNEL_DOWN alert floods on collector-managed devices
+
+Since v0.11.74 the poller evaluates interface/VPN telemetry alert checks over
+collector-relayed rows, which enforced them on probe-managed firewalls **for the
+first time**. Those firewalls expose many interfaces that are enabled but
+never cabled (admin-up, operationally down) and many idle/never-established VPN
+tunnels (dial-up, disabled configs, unbuilt phase2 selectors). All of them
+report `status="down"` every cycle, so `CheckInterfaceStatus` /
+`CheckVPNStatus` fired on them and — because a down alert re-fires every
+cooldown as a periodic reminder — produced a continuous flood of false
+INTERFACE_DOWN and VPN_TUNNEL_DOWN alerts.
+
+- **Ever-up gate.** INTERFACE_DOWN and VPN_TUNNEL_DOWN now fire only for an
+  interface/tunnel that has actually been observed **up** at some point — a
+  real outage is "was working, now isn't." An interface/tunnel that has never
+  been up is a configuration state (unused port, idle tunnel), not an outage,
+  and is silent. The AlertManager records every `status="up"` row it sees each
+  cycle, and admin-down interfaces remain excluded as before.
+- **Restart-safe.** At poller startup the ever-up set is seeded from the
+  still-open INTERFACE_DOWN/VPN_TUNNEL_DOWN alerts (`SeedEverUpFromOpenAlerts`)
+  — an open down alert only exists because the link was up and then went down,
+  so it is the precise, cheap seed source (a small indexed read of open rows,
+  no scan of the high-volume telemetry tables and no statement-timeout risk).
+  A restart during a genuine ongoing outage therefore keeps re-firing its
+  reminder rather than going silent; currently-up links re-mark themselves on
+  the first cycle.
+- No schema change; no notifier/policy change. Genuine link/tunnel outages
+  (observed up, then down) alert and auto-resolve exactly as before.
+- Tests: up→down fires once; never-up interface/tunnel fires nothing;
+  restart-storm suppression and post-cooldown reminder still hold under the
+  gate.
+
 ## [0.11.76] - 2026-07-11
 
 ### Hardened — probe command channel (pre-merge review fixes)
