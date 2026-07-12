@@ -1417,20 +1417,31 @@
                     el.textContent = 'Alerts disabled for this scope';
                     return;
                 }
+                if (eff.in_maintenance) {
+                    el.className = 'alert-eff-hint is-disabled';
+                    el.textContent = 'In a maintenance window — alerts suppressed now';
+                    return;
+                }
                 if (prov.suppressed_by_rule) {
                     el.className = 'alert-eff-hint is-rule';
                     el.textContent = 'Suppressed by rule “' + (prov.rule_name || 'rule') + '”';
                     return;
                 }
+                // In zscore mode the fire point is baseline + K·σ with this value as a
+                // floor, so the static number alone isn't "the value that fires".
+                var zsuffix = eff.mode === 'zscore' ? ' · zscore (floor)' : '';
                 var val = fmtThreshold(eff.threshold, alertType);
                 if (prov.threshold === 'rule') {
                     el.className = 'alert-eff-hint is-rule';
-                    el.textContent = 'Set by rule “' + (prov.rule_name || 'rule') + '”: ' + val;
+                    el.textContent = 'Set by rule “' + (prov.rule_name || 'rule') + '”: ' + val + zsuffix;
+                } else if (!eff.threshold && eff.mode !== 'zscore') {
+                    // A static threshold of 0 never fires — "inherits 0" reads as configured.
+                    el.textContent = 'No threshold set — won’t fire';
                 } else if (prov.threshold === thisLayer) {
                     el.className = 'alert-eff-hint is-override';
-                    el.textContent = 'Overridden here: ' + val;
+                    el.textContent = 'Overridden here: ' + val + zsuffix;
                 } else {
-                    el.textContent = 'Inherits ' + val + ' from ' + (ALERT_LAYER_NAMES[prov.threshold] || prov.threshold || 'default');
+                    el.textContent = 'Inherits ' + val + ' from ' + (ALERT_LAYER_NAMES[prov.threshold] || prov.threshold || 'default') + zsuffix;
                 }
             }).catch(function() { el.textContent = ''; });
         });

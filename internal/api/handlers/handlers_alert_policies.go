@@ -295,6 +295,7 @@ func (h *Handler) GetEffectiveAlertConfig(c *gin.Context) {
 			"severity":         resolved.Severity,
 			"alert_enabled":    resolved.AlertEnabled,
 			"storm_sources":    resolved.StormSources,
+			"in_maintenance":   resolved.InMaintenance,
 		},
 		"provenance": gin.H{
 			"threshold":          prov.Threshold,

@@ -527,6 +527,9 @@ func overrideThreshold(current float64, alertType models.AlertType, cpu, mem, di
 // When siteID is nil and deviceID != 0, the device's site is filled from deviceMeta
 // so the result matches what the poller resolves. metric is the sample key
 // ("cpu_usage"/"memory_usage"/"disk_usage"/"session_count"); "" skips rule reconciliation.
+// Site-scope queries (deviceID=0) match vendor-agnostic rules with vendor="generic";
+// a vendor-scoped rule that will override individual devices at fire time is not
+// reflected in a site-level hint (site aggregation has no single vendor).
 func (am *AlertManager) EffectiveAlertConfig(deviceID uint, siteID *uint, alertType models.AlertType, metric string) (ResolvedAlertConfig, ConfigProvenance) {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
@@ -574,6 +577,14 @@ func (am *AlertManager) EffectiveAlertConfig(deviceID uint, siteID *uint, alertT
 	}
 	if rule.cooldownMin != nil && *rule.cooldownMin > 0 {
 		prov.Cooldown = "rule"
+	}
+	// A rule that pins a policy sources its cooldown from that policy (via
+	// applyMetricRuleOverridesLocked→applyRulePolicy); the fired cooldown then
+	// comes from the rule's policy, so label it "rule" too.
+	if rule.policyID != nil {
+		if p := am.findPolicy(*rule.policyID); p != nil && p.CooldownMinutes > 0 {
+			prov.Cooldown = "rule"
+		}
 	}
 	return resolved, prov
 }
