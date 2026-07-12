@@ -118,18 +118,24 @@ func (am *AlertManager) ProcessSpike(device *models.Device, iface *models.Interf
 	effSite, vendor := am.spikeEffSiteVendorLocked(device.ID, siteID)
 	action, rule, matched := am.matchSpikeRuleLocked(spikeFields(device.ID, iface.Name, metricName, vendor), device.ID, effSite)
 	if matched {
+		am.recordHit(rule.id, now) // count the match (incl. suppress, mirroring trap)
 		if action == "suppress" {
 			am.mu.Unlock()
 			return // spike suppressed by an operator rule
 		}
-		am.recordHit(rule.id, now)
 		if rule.severity != "" {
 			sev = rule.severity
 		}
+		// Route through the pinned policy's channels ONLY if that policy still
+		// exists — otherwise a stale pin would fall through to the (all-false)
+		// default-policy channels and silence the spike. On a missing policy, keep
+		// the global snapshot (today's delivery).
 		if rule.policyID != nil {
-			am.applyRulePolicy(&resolved, *rule.policyID)
-			nc = BuildNotifyConfigFromResolved(resolved, globalNC)
-			policyID = resolved.PolicyID
+			if p := am.findPolicy(*rule.policyID); p != nil {
+				applyPolicyChannels(&resolved, p)
+				nc = BuildNotifyConfigFromResolved(resolved, globalNC)
+				policyID = &p.ID
+			}
 		}
 	}
 	am.markActiveLocked(key, now)
@@ -170,15 +176,23 @@ func (am *AlertManager) ProcessSpikeResolve(device *models.Device, iface *models
 		delete(am.activeAlerts, key)
 		delete(am.fireStart, key)
 	}
-	resolved := am.resolveAlertConfig(device.ID, siteID, models.AlertTypeTrafficSpike)
-	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
-	nc := globalNC
-	effSite, vendor := am.spikeEffSiteVendorLocked(device.ID, siteID)
-	if action, rule, matched := am.matchSpikeRuleLocked(spikeFields(device.ID, iface.Name, metricName, vendor), device.ID, effSite); matched && action != "suppress" && rule.policyID != nil {
-		am.applyRulePolicy(&resolved, *rule.policyID)
-		nc = BuildNotifyConfigFromResolved(resolved, globalNC)
+	// Only the notify path needs the resolved config / policy routing, and it runs
+	// only when wasActive — so skip that work on a cold (post-restart) resolve.
+	var nc notifier.NotifyConfig
+	inMaint := false
+	if wasActive {
+		resolved := am.resolveAlertConfig(device.ID, siteID, models.AlertTypeTrafficSpike)
+		globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+		nc = globalNC
+		effSite, vendor := am.spikeEffSiteVendorLocked(device.ID, siteID)
+		if action, rule, matched := am.matchSpikeRuleLocked(spikeFields(device.ID, iface.Name, metricName, vendor), device.ID, effSite); matched && action != "suppress" && rule.policyID != nil {
+			if p := am.findPolicy(*rule.policyID); p != nil { // pinned policy must still exist
+				applyPolicyChannels(&resolved, p)
+				nc = BuildNotifyConfigFromResolved(resolved, globalNC)
+			}
+		}
+		inMaint = resolved.InMaintenance
 	}
-	inMaint := resolved.InMaintenance
 	am.mu.Unlock()
 
 	// Close the open fired row(s) regardless of in-process state (restart-safe;

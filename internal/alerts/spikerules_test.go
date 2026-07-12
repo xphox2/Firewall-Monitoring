@@ -76,11 +76,16 @@ func TestProcessSpike_FiresAndResolves(t *testing.T) {
 	if n := openSpikeAlerts(t, am, 1, "eth0"); n != 1 {
 		t.Fatalf("fire: want 1 open spike alert, got %d", n)
 	}
-	// The severity is the detector's, not a resolved default.
+	// The severity is the detector's, not a resolved default; and with no pinned
+	// policy the alert PolicyID stays nil (BLOCKER 1: delivery via global snapshot,
+	// not the default policy's all-false channels).
 	var got models.Alert
 	am.db.Gorm().Where("alert_type = ? AND resolved_at IS NULL", models.AlertTypeTrafficSpike).First(&got)
 	if got.Severity != "warning" {
 		t.Errorf("severity should be the detector's warning, got %q", got.Severity)
+	}
+	if got.PolicyID != nil {
+		t.Errorf("PolicyID must be nil when no rule pins a policy, got %v", *got.PolicyID)
 	}
 	// Resolve closes the open row.
 	am.ProcessSpikeResolve(dev, iface, "normal", nil)

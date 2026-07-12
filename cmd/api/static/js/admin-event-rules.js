@@ -453,6 +453,10 @@
         $('er-spike-preview-note').style.display = isSpike ? '' : 'none';
         $('er-trap-preview-note').style.display = isTrap ? '' : 'none';
         if (noPreview) { $('er-preview-samples').style.display = 'none'; }
+        // Spike rules ignore the per-rule cooldown (the detector paces episodes), so
+        // hide that field for spike to avoid a dead knob.
+        var cd = $('er-cooldown');
+        if (cd) { var cg = cd.closest('.form-group'); if (cg) cg.style.display = isSpike ? 'none' : ''; }
         onMetricModeChange();
         onActionChange();
     }

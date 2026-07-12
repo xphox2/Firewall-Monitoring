@@ -1754,6 +1754,16 @@ func (d *Database) migrateSpikeRuleInheritSettings() error {
 		Update("description", "Alert on a sustained traffic spike vs the interface's seasonal baseline. Inherits the Settings → Alerts spike sensitivity unless you set values here.").Error; err != nil {
 		return fmt.Errorf("migrate v43 refresh spike description: %w", err)
 	}
+	// (c) The old poller path NEVER closed a fired spike row (its resolve inserted a
+	// separate resolved row). Close any lingering OPEN TRAFFIC_SPIKE rows once here
+	// so the pre-4b orphans clear immediately — the new detector re-opens a fresh
+	// row on the next spike. Idempotent (matches only resolved_at IS NULL).
+	now := time.Now()
+	if err := d.db.Model(&models.Alert{}).
+		Where("alert_type = ? AND resolved_at IS NULL", models.AlertTypeTrafficSpike).
+		Updates(map[string]interface{}{"resolved_at": now, "acknowledged": true, "acknowledged_at": now}).Error; err != nil {
+		return fmt.Errorf("migrate v43 close orphan spike alerts: %w", err)
+	}
 	return nil
 }
 
