@@ -78,6 +78,15 @@ type Decision struct { Fire, Suppress, Recover bool; Severity models.Severity; R
 ```
 The existing `matchExpr.eval` is reused verbatim for `appliesTo` + suppression scoping. The **Phase 0 deliverable** is this interface + the three `dampen_json` schemas, **dry‑run‑mapped on paper against the two hardest cases** (z‑score CPU, seasonal spike) and against `resolveAlertConfig`'s full device→site→policy→default override chain, proving the record shape survives Phases 2–3 without another migration or a rule explosion. If the mapping fails, we learn it before v41 exists.
 
+### 3.1 Phase 0 result — PASS (validated against the real code)
+Every stateful parameter has a home; no field is orphaned and no extra migration is needed:
+- **z‑score threshold** — `zscoreFireAt(resolved, deviceID, metric)` (`baseline_f17.go:95`) computes `baseline + K·σ` from `resolved.{Mode, Threshold(floor), ZScoreK}` → `dampen_json {mode, threshold, zscore_k}`. The `metric` evaluator **calls the existing F17 code**; the match tree never sees it.
+- **hysteresis** — `recoverBelow = fireAt − 0.5·std` (z‑score, `alerts.go:325`) or static `ClearThreshold` → `dampen_json {clear_threshold}`; the evaluator owns the recovery‑path comparison.
+- **spike** — `Observe(key, now, bps, k, minDuration)` (`report/spike.go:233`) keeps the seasonal baseline + sustain → `dampen_json {stddev_k, min_duration_minutes}`.
+- **override chain** — `ResolvedAlertConfig`'s per‑type fields (Threshold/ClearThreshold/Mode/ZScoreK/StormSources → `dampen_json`; Severity → `rule.Severity`; CooldownMinutes → `rule`; channels/escalation → `rule.PolicyID`; InMaintenance → maintenance windows, unchanged). The device→site→policy→default precedence is reproduced by **priority‑ordered rules** (a DeviceID‑scoped rule outranks a global one); Phase 4 synthesizes device/site‑scoped rules + `PolicyScope` from the existing override columns.
+
+Conclusion: `dampen_json` (not fixed columns) + a per‑source evaluator that reuses the shipped F17/spike/hysteresis math is sufficient for all sources. **Safe to bake migration v41 (the single `DampenJSON` column) and start Phase 1.**
+
 ---
 
 ## 4. The `state` dampening semantics (Phase 1 content)
