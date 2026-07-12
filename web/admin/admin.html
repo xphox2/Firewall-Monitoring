@@ -2684,6 +2684,12 @@
     <datalist id="er-metric-field-hints">
         <option value="event_type"><option value="metric"><option value="vendor"><option value="device_id">
     </datalist>
+    <datalist id="er-spike-field-hints">
+        <option value="event_type"><option value="interface_name"><option value="metric"><option value="vendor"><option value="device_id">
+    </datalist>
+    <datalist id="er-trap-field-hints">
+        <option value="trap_type"><option value="vendor"><option value="source_ip"><option value="severity">
+    </datalist>
     <div class="modal" id="event-rule-modal" role="dialog" aria-modal="true" aria-labelledby="event-rule-modal-title">
         <div class="modal-content">
             <div class="modal-header">
@@ -2707,7 +2713,7 @@
                     <div class="policy-section-header"><h3>Scope</h3></div>
                     <div class="policy-section-body">
                         <div class="form-row form-row-4">
-                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="metric">Metric (CPU / memory / disk / sessions)</option><option value="any">Any</option></select></div>
+                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="metric">Metric (CPU / memory / disk / sessions)</option><option value="spike">Spike (traffic anomaly)</option><option value="trap">Trap (SNMP / HA)</option><option value="any">Any</option></select></div>
                             <div class="form-group"><label for="er-vendor">Vendor</label><select id="er-vendor"></select></div>
                             <div class="form-group"><label for="er-device">Device</label><select id="er-device"></select></div>
                             <div class="form-group"><label for="er-site">Site</label><select id="er-site"></select></div>
@@ -2738,7 +2744,7 @@
                         <div id="er-alert-fields">
                             <div class="form-row form-row-3">
                                 <div class="form-group"><label for="er-severity">Severity</label><select id="er-severity"><option value="">Use type default</option><option value="info">Info</option><option value="warning">Warning</option><option value="critical">Critical</option></select></div>
-                                <div class="form-group"><label for="er-alert-type">Alert Type</label><select id="er-alert-type"><option value="">Default (LOG_RULE_MATCH)</option><option value="LOG_RULE_MATCH">LOG_RULE_MATCH</option><option value="SYSLOG_ALERT">SYSLOG_ALERT</option><option value="SYSLOG_CRITICAL">SYSLOG_CRITICAL</option><option value="SYSLOG_EMERGENCY">SYSLOG_EMERGENCY</option><option value="INTERFACE_DOWN">INTERFACE_DOWN</option><option value="VPN_TUNNEL_DOWN">VPN_TUNNEL_DOWN</option><option value="CPU_HIGH">CPU_HIGH</option><option value="MEMORY_HIGH">MEMORY_HIGH</option><option value="DISK_HIGH">DISK_HIGH</option><option value="SESSIONS_HIGH">SESSIONS_HIGH</option></select></div>
+                                <div class="form-group"><label for="er-alert-type">Alert Type</label><select id="er-alert-type"><option value="">Default (LOG_RULE_MATCH)</option><option value="LOG_RULE_MATCH">LOG_RULE_MATCH</option><option value="SYSLOG_ALERT">SYSLOG_ALERT</option><option value="SYSLOG_CRITICAL">SYSLOG_CRITICAL</option><option value="SYSLOG_EMERGENCY">SYSLOG_EMERGENCY</option><option value="INTERFACE_DOWN">INTERFACE_DOWN</option><option value="VPN_TUNNEL_DOWN">VPN_TUNNEL_DOWN</option><option value="CPU_HIGH">CPU_HIGH</option><option value="MEMORY_HIGH">MEMORY_HIGH</option><option value="DISK_HIGH">DISK_HIGH</option><option value="SESSIONS_HIGH">SESSIONS_HIGH</option><option value="TRAFFIC_SPIKE">TRAFFIC_SPIKE</option><option value="HA_MEMBER_DOWN">HA_MEMBER_DOWN</option><option value="HA_HEARTBEAT_FAIL">HA_HEARTBEAT_FAIL</option><option value="HA_SWITCH">HA_SWITCH</option><option value="LINK_DOWN">LINK_DOWN</option></select></div>
                                 <div class="form-group"><label for="er-group-by">Dedup by field</label><input type="text" id="er-group-by" list="er-field-hints" placeholder="e.g. srcip (optional)"></div>
                             </div>
                             <div class="form-row form-row-2">
@@ -2772,6 +2778,16 @@
                         </div>
                     </div>
                 </div>
+                <div class="policy-section" id="er-spike-section" style="display:none">
+                    <div class="policy-section-header"><h3>Spike sensitivity</h3></div>
+                    <div class="policy-section-body">
+                        <div class="field-hint" style="margin-bottom:12px;line-height:1.5"><strong>Preview.</strong> Traffic-spike alerting still runs in the poller today; this template is the config surface and takes effect in an upcoming release. A spike fires when an interface's throughput stays above its seasonal (weekday/hour) baseline by K standard deviations for the sustain window.</div>
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-spike-k">Sensitivity — Z-score K (σ multiplier)</label><input type="number" id="er-spike-k" min="0" step="any" placeholder="3"><div class="field-hint">Higher = less sensitive. Blank = 3.</div></div>
+                            <div class="form-group"><label for="er-spike-duration">Sustain (minutes)</label><input type="number" id="er-spike-duration" min="0" max="1440" placeholder="15"><div class="field-hint">How long the spike must persist before alerting. Blank = 15.</div></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="policy-section" id="er-preview-section">
                     <div class="policy-section-header"><h3>Preview</h3></div>
                     <div class="policy-section-body">
@@ -2785,6 +2801,8 @@
                         </div>
                         <div id="er-state-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">State rules match live device up/down events, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>interface_down</code> / <code>vpn_tunnel_down</code>), <code>interface_name</code>, <code>tunnel_name</code>, or <code>vendor</code>.</div>
                         <div id="er-metric-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Metric rules evaluate live device telemetry, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>cpu_high</code> / <code>memory_high</code> / <code>disk_high</code> / <code>sessions_high</code>), <code>metric</code>, or <code>vendor</code>.</div>
+                        <div id="er-spike-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Spike rules evaluate live interface throughput vs a seasonal baseline, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>traffic_spike</code>), <code>interface_name</code>, or <code>vendor</code>.</div>
+                        <div id="er-trap-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Trap rules match live SNMP traps, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>trap_type</code> (<code>HA_MEMBER_DOWN</code> / <code>HA_HEARTBEAT_FAIL</code> / <code>HA_SWITCH</code> / <code>LINK_DOWN</code>), <code>vendor</code>, or <code>source_ip</code>.</div>
                     </div>
                 </div>
                 <div class="modal-footer">

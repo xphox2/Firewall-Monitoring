@@ -34,6 +34,8 @@
         var s = $('er-source').value;
         if (s === 'state') return 'er-state-field-hints';
         if (s === 'metric') return 'er-metric-field-hints';
+        if (s === 'spike') return 'er-spike-field-hints';
+        if (s === 'trap') return 'er-trap-field-hints';
         return 'er-field-hints';
     }
 
@@ -200,6 +202,7 @@
         loadDampenFromRule(r);
         // Threshold (metric rules): parse mode + threshold/clear/k.
         loadMetricFromRule(r);
+        loadSpikeFromRule(r);
 
         // conditions: parse match_json into rows, or advanced raw for nested trees
         $('er-advanced-toggle').checked = false;
@@ -271,12 +274,39 @@
         return JSON.stringify(out);
     }
 
-    // metricOrStateDampen returns the dampen_json for the current source ('' for
-    // sources that don't use it).
-    function metricOrStateDampen() {
+    // loadSpikeFromRule fills the spike inputs from a rule's dampen_json
+    // {stddev_k, min_duration_minutes}. Blank = the shipped defaults.
+    function loadSpikeFromRule(r) {
+        var k = '', dur = '';
+        if (r && r.dampen_json) {
+            try {
+                var d = JSON.parse(r.dampen_json);
+                if (typeof d.stddev_k === 'number' && d.stddev_k > 0) k = d.stddev_k;
+                if (typeof d.min_duration_minutes === 'number' && d.min_duration_minutes > 0) dur = d.min_duration_minutes;
+            } catch (e) { /* keep blanks on a malformed blob */ }
+        }
+        $('er-spike-k').value = k;
+        $('er-spike-duration').value = dur;
+    }
+
+    // collectSpikeDampen serializes the spike inputs. Blank fields are omitted so
+    // they inherit the detector defaults (k=3, sustain=15m).
+    function collectSpikeDampen() {
+        var out = {};
+        var k = parseFloat($('er-spike-k').value);
+        if (!isNaN(k) && k > 0) out.stddev_k = k;
+        var dur = parseInt($('er-spike-duration').value, 10);
+        if (!isNaN(dur) && dur > 0) out.min_duration_minutes = dur;
+        return JSON.stringify(out);
+    }
+
+    // dampenForSource returns the dampen_json for the current source ('' for
+    // sources that don't use it, e.g. trap/syslog/flow).
+    function dampenForSource() {
         var s = $('er-source').value;
         if (s === 'state') return collectDampen();
         if (s === 'metric') return collectMetricDampen();
+        if (s === 'spike') return collectSpikeDampen();
         return '';
     }
 
@@ -389,11 +419,12 @@
     function onActionChange() {
         var isAlert = $('er-action').value !== 'suppress';
         $('er-alert-fields').style.display = isAlert ? '' : 'none';
-        // Dampening/threshold panels only apply to an ALERT rule (a suppress rule
-        // mutes, so there's nothing to dampen or threshold).
+        // Dampening/threshold/spike panels only apply to an ALERT rule (a suppress
+        // rule mutes, so there's nothing to dampen).
         var src = $('er-source').value;
         $('er-dampen-section').style.display = (src === 'state' && isAlert) ? '' : 'none';
         $('er-metric-section').style.display = (src === 'metric' && isAlert) ? '' : 'none';
+        $('er-spike-section').style.display = (src === 'spike' && isAlert) ? '' : 'none';
     }
 
     // onMetricModeChange shows the Z-score K field only in zscore mode.
@@ -407,17 +438,20 @@
     // logs, meaningless for live state/metric events) in favor of a note.
     function onSourceChange() {
         var src = $('er-source').value;
-        var isState = src === 'state', isMetric = src === 'metric';
+        var isState = src === 'state', isMetric = src === 'metric', isSpike = src === 'spike', isTrap = src === 'trap';
         // Swap the field-hint datalist on every open condition row + the dedup field.
         var list = fieldHintsId();
         document.querySelectorAll('#er-conditions .er-cond-field').forEach(function (el) { el.setAttribute('list', list); });
         var gb = $('er-group-by'); if (gb) gb.setAttribute('list', list);
-        // Preview vs source-specific note.
-        var noPreview = isState || isMetric;
+        // Preview vs source-specific note. State/metric/spike/trap all evaluate live
+        // telemetry, not stored logs, so the syslog preview is meaningless for them.
+        var noPreview = isState || isMetric || isSpike || isTrap;
         $('er-preview-btn').style.display = noPreview ? 'none' : '';
         $('er-preview-result').style.display = noPreview ? 'none' : '';
         $('er-state-preview-note').style.display = isState ? '' : 'none';
         $('er-metric-preview-note').style.display = isMetric ? '' : 'none';
+        $('er-spike-preview-note').style.display = isSpike ? '' : 'none';
+        $('er-trap-preview-note').style.display = isTrap ? '' : 'none';
         if (noPreview) { $('er-preview-samples').style.display = 'none'; }
         onMetricModeChange();
         onActionChange();
@@ -488,7 +522,7 @@
                 group_by: $('er-group-by').value.trim(),
                 cooldown_minutes: $('er-cooldown').value ? parseInt($('er-cooldown').value, 10) : null,
                 policy_id: $('er-policy').value ? parseInt($('er-policy').value, 10) : null,
-                dampen_json: metricOrStateDampen()
+                dampen_json: dampenForSource()
             };
             var url = id ? (API + '/event-rules/' + id) : (API + '/event-rules');
             AC.apiFetch(url, { method: id ? 'PUT' : 'POST', body: body }).then(function () {

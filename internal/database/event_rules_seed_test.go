@@ -50,6 +50,32 @@ func TestEnsureDefaultRules_MetricTemplatesInert(t *testing.T) {
 	}
 }
 
+// TestEnsureDefaultRules_SpikeTrapTemplatesInert (Phase 3): the spike + trap
+// templates ship but must NOT be owned — the legacy poller/ProcessTrap paths
+// still drive them until Phase 4.
+func TestEnsureDefaultRules_SpikeTrapTemplatesInert(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultRules()
+
+	var spikeCount, trapCount int64
+	d.db.Model(&models.EventRule{}).Where("source = ?", "spike").Count(&spikeCount)
+	d.db.Model(&models.EventRule{}).Where("source = ?", "trap").Count(&trapCount)
+	if spikeCount != 1 {
+		t.Errorf("want 1 spike template, got %d", spikeCount)
+	}
+	if trapCount != 4 {
+		t.Errorf("want 4 trap templates, got %d", trapCount)
+	}
+
+	// Ownership flag must NOT include traffic_spike or any trap type.
+	owned, _ := d.GetSettingValue("state_engine_owns")
+	for _, ev := range []string{"traffic_spike", "HA_MEMBER_DOWN", "LINK_DOWN"} {
+		if strings.Contains(owned, ev) {
+			t.Errorf("state_engine_owns %q must NOT contain %q (Phase 3 is inert)", owned, ev)
+		}
+	}
+}
+
 // TestEnsureDefaultRules_NoResurrectOnBump verifies the seed-generation guard: an
 // operator-deleted OLDER-generation seed is not recreated when a newer generation
 // is applied. Simulated by pre-setting the marker to the state generation and

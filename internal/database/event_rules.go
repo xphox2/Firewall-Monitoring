@@ -17,11 +17,12 @@ import (
 // on a version bump (M5). eventRuleSeedVersion is the highest generation and is
 // the value written to the marker.
 const (
-	seedVerSyslog = 1 // legacy syslog sev0-2 + FortiGate examples
-	seedVerState  = 2 // interface/VPN down (Phase 1)
-	seedVerMetric = 3 // CPU/mem/disk/session thresholds (Phase 2, inert)
+	seedVerSyslog    = 1 // legacy syslog sev0-2 + FortiGate examples
+	seedVerState     = 2 // interface/VPN down (Phase 1)
+	seedVerMetric    = 3 // CPU/mem/disk/session thresholds (Phase 2, inert)
+	seedVerTrapSpike = 4 // traffic spike + HA/LINK trap templates (Phase 3, inert)
 
-	eventRuleSeedVersion = seedVerMetric
+	eventRuleSeedVersion = seedVerTrapSpike
 )
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
@@ -166,6 +167,36 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeSessionsHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"sessions_high"}`,
 			DampenJSON: `{"mode":"static"}`},
+		// Spike-source built-in (seed_version 4, Phase 3 — INERT). The seasonal
+		// traffic-spike detector still fires directly in the poller today; this
+		// template is the config surface (scope/suppress + dampen params) and does
+		// NOT drive alerting yet (traffic_spike is absent from state_engine_owns).
+		{Name: "Traffic spike", Description: "Alert on a sustained traffic spike vs the interface's seasonal baseline. Preview — traffic-spike alerting still runs in the poller today.",
+			Enabled: true, Priority: 100, Source: "spike", Action: "alert",
+			AlertType: models.AlertTypeTrafficSpike, SeedVersion: seedVerTrapSpike,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"traffic_spike"}`,
+			DampenJSON: `{"stddev_k":3,"min_duration_minutes":15}`},
+		// Trap-source built-ins (seed_version 4, Phase 3 — INERT). SNMP/HA trap
+		// scoping templates. ProcessTrap already resolves policy config; these
+		// rules become the scope/suppress surface once Phase 4 routes ProcessTrap
+		// through matched trap rules. Severity blank ⇒ per-type default applies. No
+		// dampen_json — traps route via the base rule fields. Match on trap_type.
+		{Name: "HA member down", Description: "HA cluster member down (SNMP trap). Preview — not driving alerts yet.",
+			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
+			AlertType: models.AlertTypeHAMemberDown, SeedVersion: seedVerTrapSpike,
+			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_MEMBER_DOWN"}`},
+		{Name: "HA heartbeat failure", Description: "HA cluster heartbeat lost (SNMP trap). Preview — not driving alerts yet.",
+			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
+			AlertType: models.AlertTypeHAHeartbeatFail, SeedVersion: seedVerTrapSpike,
+			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_HEARTBEAT_FAIL"}`},
+		{Name: "HA failover", Description: "HA cluster failover/switch (SNMP trap). Preview — not driving alerts yet.",
+			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
+			AlertType: models.AlertTypeHASwitch, SeedVersion: seedVerTrapSpike,
+			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_SWITCH"}`},
+		{Name: "Link down (trap)", Description: "Interface link down reported by SNMP trap. Preview — not driving alerts yet.",
+			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
+			AlertType: "LINK_DOWN", SeedVersion: seedVerTrapSpike,
+			MatchJSON: `{"op":"eq","field":"trap_type","value":"LINK_DOWN"}`},
 	}
 }
 
