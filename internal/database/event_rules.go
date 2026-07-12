@@ -139,14 +139,15 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeVPNTunnelDown, SeedVersion: seedVerState,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"vpn_tunnel_down"}`,
 			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
-		// Metric-source built-ins (seed_version 3). ACTIVE as of Phase 4a: when
-		// owned (ActivateRuleOwnership), CheckSystemStatus routes CPU/mem/disk/
-		// session alerting through these rules. dampen_json carries mode only (no
-		// threshold) so they INHERIT the operator's existing Settings→Alerts /
-		// policy / device thresholds — non-regressive. Leave the threshold blank in
-		// the rule to keep inheriting; set it to override. Severity blank ⇒ per-type
-		// default. To turn a type OFF, use a suppress rule (deleting the template
-		// falls back to the legacy path, which still alerts).
+		// Metric-source built-ins (seed_version 3). ACTIVE as of Phase 4a:
+		// CheckSystemStatus always consults matching metric rules (no ownership
+		// flag), falling back to the legacy path on no match. dampen_json carries
+		// mode only (no threshold) so they INHERIT the operator's existing
+		// Settings→Alerts / policy / device thresholds — non-regressive. Leave the
+		// threshold blank in the rule to keep inheriting; set it to override.
+		// Severity blank ⇒ per-type default. To turn a type OFF, use a suppress
+		// rule (deleting the template falls back to the legacy path, which still
+		// alerts).
 		{Name: "CPU high", Description: "Threshold alert when device CPU usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeCPUHigh, SeedVersion: seedVerMetric,
@@ -176,12 +177,13 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeTrafficSpike, SeedVersion: seedVerTrapSpike,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"traffic_spike"}`,
 			DampenJSON: `{"stddev_k":3,"min_duration_minutes":15}`},
-		// Trap-source built-ins (seed_version 4). ACTIVE as of Phase 4a: when owned
-		// (ActivateRuleOwnership), ProcessTrap consults these for scope/suppress +
-		// per-rule severity/routing on top of the existing policy path. Severity
-		// blank ⇒ per-type default applies. No dampen_json — traps route via the
-		// base rule fields. Match on trap_type. To mute a trap type, use a suppress
-		// rule (deleting the template falls back to the legacy policy path).
+		// Trap-source built-ins (seed_version 4). ACTIVE as of Phase 4a: ProcessTrap
+		// always consults matching trap rules (any trap type, no ownership flag) for
+		// scope/suppress + per-rule severity/routing on top of the existing policy
+		// path, falling back to the legacy path on no match. Severity blank ⇒
+		// per-type default applies. No dampen_json — traps route via the base rule
+		// fields. Match on trap_type. To mute a trap type, use a suppress rule
+		// (deleting the template falls back to the legacy policy path).
 		{Name: "HA member down", Description: "HA cluster member down (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHAMemberDown, SeedVersion: seedVerTrapSpike,
