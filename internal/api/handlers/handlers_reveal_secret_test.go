@@ -6,12 +6,15 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 )
 
 // revealCtx builds an authenticated admin gin.Context for the reveal endpoint,
@@ -102,6 +105,52 @@ func TestRevealDeviceSecret_EmptyStored(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 when nothing is stored", rec.Code)
+	}
+}
+
+func TestRevealDeviceSecret_EmptyPassword(t *testing.T) {
+	h, db, u := profileTestHandler(t, "admin1", auth.RoleAdmin, "s3cret-pw")
+	dev := &models.Device{Name: "fw", IPAddress: "10.0.0.1", SSHPassword: "actual-ssh-pw"}
+	db.Gorm().Create(dev)
+
+	c, rec := revealCtx(dev.ID, "admin1", u.ID, `{"password":"","field":"ssh_password"}`)
+	h.RevealDeviceSecret(c)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for an empty password", rec.Code)
+	}
+}
+
+// TestRevealDeviceSecret_TOTPStepUp: a 2FA-enrolled admin must also supply a
+// valid authenticator code — a correct password alone is rejected.
+func TestRevealDeviceSecret_TOTPStepUp(t *testing.T) {
+	h, db, u := profileTestHandler(t, "admin1", auth.RoleAdmin, "s3cret-pw")
+	const secret = "JBSWY3DPEHPK3PXP" // valid base32 test secret
+	if err := db.Gorm().Model(&models.Admin{}).Where("id = ?", u.ID).
+		Updates(map[string]interface{}{"totp_enabled": true, "totp_secret": secret}).Error; err != nil {
+		t.Fatalf("enroll TOTP: %v", err)
+	}
+	dev := &models.Device{Name: "fw", IPAddress: "10.0.0.1", SSHPassword: "actual-ssh-pw"}
+	db.Gorm().Create(dev)
+
+	// Correct password, no code → 403.
+	c, rec := revealCtx(dev.ID, "admin1", u.ID, `{"password":"s3cret-pw","field":"ssh_password"}`)
+	h.RevealDeviceSecret(c)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 when 2FA enrolled and no code supplied", rec.Code)
+	}
+
+	// Correct password + valid code → 200.
+	code, err := totp.GenerateCodeCustom(secret, time.Now(), totp.ValidateOpts{
+		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
+	})
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	c2, rec2 := revealCtx(dev.ID, "admin1", u.ID, `{"password":"s3cret-pw","totp_code":"`+code+`","field":"ssh_password"}`)
+	h.RevealDeviceSecret(c2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with a valid 2FA code", rec2.Code)
 	}
 }
 

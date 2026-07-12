@@ -256,8 +256,9 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		filteredUpdates[field] = db.EncryptField(str)
 	}
 
-	// Encrypt SSH password if present (ssh_password is not redacted on GET, but
-	// guard the mask anyway for consistency and future-proofing).
+	// Encrypt SSH password if present. ssh_password is now redacted on GET
+	// (v0.11.78), so the client resends the mask on an unchanged save — treat the
+	// mask (and empty) as "leave unchanged" exactly like the SNMP secrets above.
 	if sshPw, ok := filteredUpdates["ssh_password"]; ok {
 		str, isStr := sshPw.(string)
 		if !isStr || str == "" || str == httputil.RedactedMask {
@@ -353,6 +354,7 @@ func (h *Handler) RevealDeviceSecret(c *gin.Context) {
 
 	var req struct {
 		Password string `json:"password"`
+		TOTPCode string `json:"totp_code"`
 		Field    string `json:"field"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -375,6 +377,19 @@ func (h *Handler) RevealDeviceSecret(c *gin.Context) {
 	if err != nil || admin == nil || !h.authManager.CheckPassword(req.Password, admin.Password) {
 		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
 		return
+	}
+	// Step-up: if the caller has 2FA enrolled, a valid TOTP code is also
+	// required — so a phished password + stolen session (which alone couldn't
+	// pass a fresh 2FA login) can't be escalated into bulk credential harvesting.
+	if admin.TOTPEnabled {
+		if req.TOTPCode == "" {
+			c.JSON(http.StatusForbidden, response.Error("Authenticator code required"))
+			return
+		}
+		if !validateTOTPCode(req.TOTPCode, admin.TOTPSecret) {
+			c.JSON(http.StatusForbidden, response.Error("Authenticator code is incorrect"))
+			return
+		}
 	}
 
 	device, err := db.GetDevice(id) // secrets decrypted in-place by the store

@@ -21,7 +21,10 @@ icon, without it being exposed by default.
     viewers cannot reveal credentials, even though they can edit devices);
   - **re-verifies the caller's OWN password** before returning anything (a
     hijacked idle admin session can't harvest credentials), resolving the admin
-    by JWT identity, never a request-supplied one;
+    by JWT identity, never a request-supplied one; and, for a 2FA-enrolled
+    admin, **also requires a valid authenticator code** (step-up), so a phished
+    password + stolen session — which alone couldn't pass a fresh 2FA login —
+    can't be escalated into bulk credential harvesting;
   - **rate-limited** at the route (login limiter — it checks a password);
   - **field whitelist** (ssh_password / snmp_community / snmpv3_auth_pass /
     snmpv3_priv_pass) so it can't be coerced into dumping arbitrary columns;
@@ -30,8 +33,10 @@ icon, without it being exposed by default.
     its status (including a failed password check). The plaintext value is
     returned in the response body only and is never written to a log.
 - **UI:** an eye icon next to each secret field in the device edit modal (shown
-  only when editing an existing device) opens a password-confirmation dialog and
-  then displays the stored value in-place.
+  only when editing an existing device) opens a password- (and, if enrolled,
+  2FA-) confirmation dialog and then displays the stored value in-place. Revealed
+  values are cleared and re-masked when the modal is reopened or closed, so
+  plaintext never lingers in the DOM.
 - Tests: reveal success returns the value + writes the audit row; wrong password
   → 403 and no reveal audit row; non-whitelisted field → 400; empty stored value
   → 404; `RedactDevice` masks `ssh_password`.

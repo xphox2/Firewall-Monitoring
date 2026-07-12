@@ -2619,8 +2619,10 @@
         if (!deviceId) return; // create mode — nothing stored yet
         revealSecretCtx = { field: field, targetId: targetId };
         var pw = document.getElementById('reveal-secret-password');
+        var totp = document.getElementById('reveal-secret-totp');
         var err = document.getElementById('reveal-secret-error');
         if (pw) pw.value = '';
+        if (totp) totp.value = '';
         if (err) { err.style.display = 'none'; err.textContent = ''; }
         AC.openModal('reveal-secret-modal');
     }
@@ -2628,6 +2630,7 @@
     function submitRevealSecret() {
         var deviceId = document.getElementById('device-id').value;
         var pw = document.getElementById('reveal-secret-password').value;
+        var totp = document.getElementById('reveal-secret-totp').value;
         var err = document.getElementById('reveal-secret-error');
         var showErr = function(msg) { if (err) { err.textContent = msg; err.style.display = ''; } };
         if (!deviceId || !revealSecretCtx.field) return;
@@ -2635,7 +2638,7 @@
         apiFetch(API_BASE + '/devices/' + deviceId + '/reveal-secret', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pw, field: revealSecretCtx.field })
+            body: JSON.stringify({ password: pw, totp_code: totp.trim(), field: revealSecretCtx.field })
         }).then(function(resp) {
             var secret = resp && resp.data ? resp.data.secret : '';
             var input = document.getElementById(revealSecretCtx.targetId);
@@ -2650,8 +2653,22 @@
         });
     }
 
+    // resetSecretFields clears the device secret inputs and restores their
+    // masked input type, so a value revealed via the eye icon never lingers in
+    // the DOM (or as a shoulder-surfable text field) after the modal is reopened
+    // or closed. device-community is a text field by design; the rest are
+    // password-typed.
+    function resetSecretFields() {
+        [['device-community', 'text'], ['device-v3-auth-pass', 'password'],
+         ['device-v3-priv-pass', 'password'], ['device-ssh-password', 'password']].forEach(function(pair) {
+            var el = document.getElementById(pair[0]);
+            if (el) { el.value = ''; el.type = pair[1]; }
+        });
+    }
+
     function showDeviceModal(id) {
         AC.openModal('device-modal');
+        resetSecretFields();
         document.getElementById('device-modal-title').textContent = id ? 'Edit Device' : 'Add Device';
         populateProbeSelect('device-probe');
         populateSiteSelect('device-site');
@@ -2699,7 +2716,7 @@
         toggleV3Fields();
     }
 
-    function closeDeviceModal() { AC.closeModal('device-modal'); }
+    function closeDeviceModal() { resetSecretFields(); AC.closeModal('device-modal'); }
 
     function toggleV3Fields() {
         var ver = document.getElementById('device-snmp-version').value;
@@ -2792,10 +2809,10 @@
                 data.snmpv3_username = document.getElementById('device-v3-username').value;
                 data.snmpv3_auth_type = document.getElementById('device-v3-auth-type').value;
                 var authPass = document.getElementById('device-v3-auth-pass').value;
-                if (authPass) data.snmpv3_auth_pass = authPass;
+                if (authPass && !/^\*+$/.test(authPass)) data.snmpv3_auth_pass = authPass;
                 data.snmpv3_priv_type = document.getElementById('device-v3-priv-type').value;
                 var privPass = document.getElementById('device-v3-priv-pass').value;
-                if (privPass) data.snmpv3_priv_pass = privPass;
+                if (privPass && !/^\*+$/.test(privPass)) data.snmpv3_priv_pass = privPass;
             }
             var probeVal = document.getElementById('device-probe').value;
             var siteVal = document.getElementById('device-site').value;
