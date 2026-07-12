@@ -1,6 +1,41 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.78] - 2026-07-12
+
+### Added — secure "reveal saved value" for device credentials + closed a plaintext leak
+
+Operators can now recover or confirm a stored device credential (SSH password,
+SNMP community, SNMPv3 auth/priv passwords) from the device edit form via an eye
+icon, without it being exposed by default.
+
+- **Security fix — SSH password was returned in plaintext on every device GET.**
+  `RedactDevice` masked the SNMP secrets but not `ssh_password`, so the admin
+  UI received every firewall's SSH admin password in the clear on each device
+  list/detail load. `ssh_password` is now masked (`********`) on GET like the
+  other secrets. The write path already treats the mask as "unchanged", so
+  round-trip saves are unaffected.
+- **New reveal endpoint** `POST /admin/api/devices/:id/reveal-secret` returns
+  one decrypted secret, gated defense-in-depth:
+  - **admin-only** (added to the RBAC `adminOnlyRoutes` matrix — operators and
+    viewers cannot reveal credentials, even though they can edit devices);
+  - **re-verifies the caller's OWN password** before returning anything (a
+    hijacked idle admin session can't harvest credentials), resolving the admin
+    by JWT identity, never a request-supplied one;
+  - **rate-limited** at the route (login limiter — it checks a password);
+  - **field whitelist** (ssh_password / snmp_community / snmpv3_auth_pass /
+    snmpv3_priv_pass) so it can't be coerced into dumping arbitrary columns;
+  - **audit-logged** with an explicit record of who revealed which field on
+    which device; the audit middleware independently records every attempt and
+    its status (including a failed password check). The plaintext value is
+    returned in the response body only and is never written to a log.
+- **UI:** an eye icon next to each secret field in the device edit modal (shown
+  only when editing an existing device) opens a password-confirmation dialog and
+  then displays the stored value in-place.
+- Tests: reveal success returns the value + writes the audit row; wrong password
+  → 403 and no reveal audit row; non-whitelisted field → 400; empty stored value
+  → 404; `RedactDevice` masks `ssh_password`.
+
 ## [0.11.77] - 2026-07-12
 
 ### Fixed — false INTERFACE_DOWN / VPN_TUNNEL_DOWN alert floods on collector-managed devices

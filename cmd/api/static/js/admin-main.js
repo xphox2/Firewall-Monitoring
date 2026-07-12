@@ -2604,6 +2604,50 @@
             var el = document.getElementById(noteId);
             if (el) el.style.display = isEdit ? '' : 'none';
         });
+        // The reveal (eye) buttons only make sense when editing an existing
+        // device — there is no stored secret to reveal on create.
+        document.querySelectorAll('#device-form .reveal-secret-btn').forEach(function(btn) {
+            btn.style.display = isEdit ? '' : 'none';
+        });
+    }
+
+    // revealSecretCtx holds which field/input the pending reveal targets.
+    var revealSecretCtx = { field: '', targetId: '' };
+
+    function openRevealSecret(field, targetId) {
+        var deviceId = document.getElementById('device-id').value;
+        if (!deviceId) return; // create mode — nothing stored yet
+        revealSecretCtx = { field: field, targetId: targetId };
+        var pw = document.getElementById('reveal-secret-password');
+        var err = document.getElementById('reveal-secret-error');
+        if (pw) pw.value = '';
+        if (err) { err.style.display = 'none'; err.textContent = ''; }
+        AC.openModal('reveal-secret-modal');
+    }
+
+    function submitRevealSecret() {
+        var deviceId = document.getElementById('device-id').value;
+        var pw = document.getElementById('reveal-secret-password').value;
+        var err = document.getElementById('reveal-secret-error');
+        var showErr = function(msg) { if (err) { err.textContent = msg; err.style.display = ''; } };
+        if (!deviceId || !revealSecretCtx.field) return;
+        if (!pw) { showErr('Enter your password.'); return; }
+        apiFetch(API_BASE + '/devices/' + deviceId + '/reveal-secret', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pw, field: revealSecretCtx.field })
+        }).then(function(resp) {
+            var secret = resp && resp.data ? resp.data.secret : '';
+            var input = document.getElementById(revealSecretCtx.targetId);
+            if (input) {
+                input.type = 'text';       // show it
+                input.value = secret;      // populate the (blank) field with the real value
+            }
+            AC.closeModal('reveal-secret-modal');
+            AC.showSuccess('Value revealed — it will be re-saved unchanged unless you edit it.');
+        }).catch(function(e) {
+            showErr(e && e.message ? e.message : 'Could not reveal value.');
+        });
     }
 
     function showDeviceModal(id) {
@@ -2712,6 +2756,14 @@
     }
 
     // Device form submit
+    var revealSecretForm = document.getElementById('reveal-secret-form');
+    if (revealSecretForm) {
+        revealSecretForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            submitRevealSecret();
+        });
+    }
+
     var deviceForm = document.getElementById('device-form');
     if (deviceForm) {
         deviceForm.addEventListener('submit', function(e) {
@@ -4020,6 +4072,8 @@
         'test-email': function() { testEmail(); },
         'test-webhook': function(el) { testWebhook(el.dataset.type); },
         'close-device-modal': function() { closeDeviceModal(); },
+        'reveal-device-secret': function(el) { openRevealSecret(el.dataset.field, el.dataset.target); },
+        'close-reveal-secret-modal': function() { AC.closeModal('reveal-secret-modal'); },
         'device-alert-config': function(el) { showDeviceAlertModal(parseInt(el.dataset.id)); },
         'close-device-alert-modal': function() { closeDeviceAlertModal(); },
         'reset-device-alert-config': function() { resetDeviceAlertConfig(); },
