@@ -218,6 +218,68 @@ func TestCheckRelayedTelemetry_InterfaceNeverUpNoAlert(t *testing.T) {
 	}
 }
 
+// TestCheckRelayedTelemetry_NeverUpStaleAlertAutoResolved reproduces the exact
+// user report: a permanently-down port carries a stale OPEN INTERFACE_DOWN alert
+// (from the old circular seed). After a cycle the false alert is auto-resolved
+// AND does not re-fire — clearing it makes it stay cleared.
+func TestCheckRelayedTelemetry_NeverUpStaleAlertAutoResolved(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := &models.Device{Name: "fw3c", IPAddress: "10.0.0.26", Enabled: true}
+	mustCreate(t, db, dev)
+	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now(), Name: "wan2", Index: 3, Status: "down", AdminStatus: "up"})
+	// Pre-existing stale/false open alert for this never-up port.
+	mustCreate(t, db, &models.Alert{DeviceID: dev.ID, AlertType: "INTERFACE_DOWN", MetricName: "interface_wan2", Timestamp: time.Now()})
+
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+
+	var open int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL", dev.ID, "INTERFACE_DOWN").
+		Count(&open)
+	if open != 0 {
+		t.Errorf("stale false INTERFACE_DOWN not auto-resolved for a never-up port: %d still open", open)
+	}
+	// A second cycle must not resurrect it.
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL", dev.ID, "INTERFACE_DOWN").
+		Count(&open)
+	if open != 0 {
+		t.Errorf("never-up port re-fired INTERFACE_DOWN on a later cycle: %d open", open)
+	}
+}
+
+// TestCheckRelayedTelemetry_RealLinkDownAcrossRestart is the MAJOR-3 case: a
+// FRESH poller (empty ever-up = a restart) sees a down interface that has
+// carried traffic (nonzero counters — a real link whose outage predates this
+// process). It must be recognized from its counters and ALERT, and its existing
+// open alert must NOT be auto-resolved.
+func TestCheckRelayedTelemetry_RealLinkDownAcrossRestart(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := &models.Device{Name: "fw3d", IPAddress: "10.0.0.36", Enabled: true}
+	mustCreate(t, db, dev)
+	// Down now, but with real traffic counters from when it was up.
+	mustCreate(t, db, &models.InterfaceStats{
+		DeviceID: dev.ID, Timestamp: time.Now(), Name: "wan1", Index: 2,
+		Status: "down", AdminStatus: "up", InBytes: 5_000_000, OutBytes: 3_000_000,
+	})
+	// A pre-existing open alert from before the "restart" must be preserved.
+	preexisting := &models.Alert{DeviceID: dev.ID, AlertType: "INTERFACE_DOWN", MetricName: "interface_wan1", Timestamp: time.Now().Add(-time.Hour)}
+	mustCreate(t, db, preexisting)
+
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+
+	// The real link is recognized from counters and still has an OPEN alert
+	// (the pre-existing one was NOT auto-resolved).
+	var open int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL", dev.ID, "INTERFACE_DOWN").
+		Count(&open)
+	if open == 0 {
+		t.Error("a real link's (nonzero-counter) outage was wrongly auto-resolved across a restart")
+	}
+}
+
 // TestCheckRelayedTelemetry_VPNDown: a tunnel that was UP and then goes down
 // fires VPN_TUNNEL_DOWN. The ever-up gate requires the prior up observation.
 func TestCheckRelayedTelemetry_VPNDown(t *testing.T) {

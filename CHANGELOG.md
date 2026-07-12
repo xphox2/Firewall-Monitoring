@@ -1,6 +1,46 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.79] - 2026-07-12
+
+### Fixed — recurring false INTERFACE_DOWN / VPN_TUNNEL_DOWN alerts for never-up ports (root cause)
+
+The v0.11.77 ever-up gate reduced the flood but left a recurring case: a
+permanently-down, never-cabled port (admin-up, oper-down) would keep re-firing
+INTERFACE_DOWN — you clear it, it comes back — even though it has always been
+down. Root cause: the ever-up set was **seeded from the still-open down alerts**,
+which is **circular** — a stale/false open alert re-marked a never-up port as
+"ever up," so it kept firing, and clearing the alert didn't clear the in-memory
+mark. It also required operators to admin-down unused ports, which isn't always
+acceptable.
+
+- **Ever-up is now derived from the interface's traffic COUNTERS, not open
+  alerts.** A never-cabled port has literally zero in/out octets; a real link
+  that was ever up has nonzero counters that persist even while the link is
+  down. So a down interface fires INTERFACE_DOWN only if it has carried traffic
+  (or was seen up live this session) — a dark port never does, **with no
+  admin-down required**. This needs **no history query, no new index, and no
+  time window**, so it can't trigger the startup statement-timeout that a
+  high-volume `interface_stats` scan would risk; and it recognizes a real link
+  that is down across a poller restart *better* than history (counters are in
+  the current snapshot). VPN tunnels use the same signal to STOP the flood
+  (bytes / uptime mark a real tunnel), but are **suppress-only** — a
+  zero-counter down tunnel is never auto-resolved, because FortiGate VPN
+  counters are per-SA and can read 0 for a down phase2, and silencing a real
+  tunnel outage would be worse than leaving a stale alert for one manual clear.
+- **The circular open-alerts seed is removed.** `SeedEverUpFromOpenAlerts` is
+  gone; ever-up is populated from live up-rows plus the counter check.
+- **Stale false INTERFACE_DOWN alerts are auto-cleaned.** When the poller sees a
+  down port with zero counters that it doesn't already know was up, it
+  **silently resolves** any lingering open INTERFACE_DOWN alert (a cold resolve
+  — no "back up" notification) and leaves it un-marked, so the ones already in
+  your queue clear themselves and do not return. A real outage (nonzero
+  counters) is never auto-resolved.
+- Tests: never-up port with a stale open alert is auto-resolved and never
+  re-fires (reproduces the report); a real link (nonzero counters) down across a
+  restart is recognized and alerts; restart-storm suppression and post-cooldown
+  reminder still hold.
+
 ## [0.11.78] - 2026-07-12
 
 ### Added — secure "reveal saved value" for device credentials + closed a plaintext leak

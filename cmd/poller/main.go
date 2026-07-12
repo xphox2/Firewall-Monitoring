@@ -38,7 +38,12 @@ type Poller struct {
 	spikeDetector  *report.SeasonalSpikeDetector
 	prevIfaceStats map[string]*models.InterfaceStats // "deviceID_ifName" -> previous stats
 	ifaceStatsMu   sync.RWMutex
-	stopChan       chan struct{}
+	// everUpChecked caches the interface/VPN keys whose telemetry HISTORY has
+	// already been consulted for "was it ever operationally up", so the bounded
+	// history query runs at most once per link/tunnel per process lifetime.
+	everUpChecked map[string]bool
+	everUpMu      sync.Mutex
+	stopChan      chan struct{}
 
 	// loopBeat is the unix-seconds timestamp of the Start() loop's last sign of
 	// life (M30 of the 2026-07-01 audit). Stamped when the loop starts, before
@@ -88,6 +93,7 @@ func NewPoller(cfg *config.Config, db *database.Database, am *alerts.AlertManage
 		alertManager:   am,
 		notifier:       notif,
 		prevIfaceStats: make(map[string]*models.InterfaceStats),
+		everUpChecked:  make(map[string]bool),
 		stopChan:       make(chan struct{}),
 	}
 	// M30: pre-stamp the loop heartbeat so /readyz is ready during startup,
@@ -183,16 +189,10 @@ func (p *Poller) Start() error {
 		}
 	}
 
-	// Seed the interface/VPN "ever-up" set from the still-open down alerts BEFORE
-	// the first cycle, so a restart during an ongoing outage keeps re-firing its
-	// reminder instead of going silent. Currently-up links re-mark themselves on
-	// the first cycle; enabled-but-never-cabled ports and idle tunnels stay
-	// suppressed. Cheap indexed read of open alerts — no telemetry-table scan.
-	if p.alertManager != nil && p.db != nil {
-		if err := p.alertManager.SeedEverUpFromOpenAlerts(); err != nil {
-			log.Printf("Ever-up seed failed (interface/VPN down alerts rebuild from live data): %v", err)
-		}
-	}
+	// The interface/VPN "ever-up" state is resolved per-link from telemetry
+	// history on demand (resolveInterfaceEverUp), not seeded at startup — the old
+	// open-alerts seed was circular (a stale false alert re-marked a never-up port
+	// as ever-up, so it fired forever).
 
 	// Run the first monitoring cycle immediately on startup
 	p.runMonitoringCycle()
@@ -1002,6 +1002,11 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 		p.ifaceStatsMu.RUnlock()
 
 		if p.alertManager != nil {
+			// Resolve "was this interface ever operationally up" from telemetry
+			// history BEFORE the down check, so INTERFACE_DOWN fires only for a
+			// real link (an outage) and never for an enabled-but-never-cabled
+			// port — without relying on the operator admin-downing it.
+			p.resolveInterfaceEverUp(devIfaces, device.SiteID)
 			// Interface down/up is level state, not a delta — evaluate the
 			// full fresh snapshot (a repeated sample can't corrupt it, and the
 			// recovery path must keep seeing "up" rows).
@@ -1098,6 +1103,7 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 			vpnsByDevice[vpn.DeviceID] = append(vpnsByDevice[vpn.DeviceID], vpn)
 		}
 		for devID, devVPNs := range vpnsByDevice {
+			p.resolveVPNEverUp(devVPNs, devByID[devID].SiteID)
 			p.alertManager.CheckVPNStatus(devVPNs, devByID[devID].SiteID)
 		}
 	}
@@ -1116,6 +1122,88 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 		}
 		if stale > 0 {
 			log.Printf("Telemetry check: %d online device(s) had no system_status within %v — check collector NTP/clock skew", stale, staleAfter)
+		}
+	}
+}
+
+// maxEverUpChecked caps the once-per-link dedup set so a churn of ephemeral
+// dial-up tunnel names can't grow it unbounded across the process lifetime
+// (mirrors the AlertManager's everUp cap).
+const maxEverUpChecked = 50000
+
+// everUpAlreadyChecked records (once) that a link/tunnel key has been resolved
+// this process, so the mark/auto-resolve below runs at most once per key. Bounded.
+func (p *Poller) everUpAlreadyChecked(key string) bool {
+	p.everUpMu.Lock()
+	defer p.everUpMu.Unlock()
+	if p.everUpChecked == nil {
+		p.everUpChecked = make(map[string]bool)
+	}
+	if p.everUpChecked[key] {
+		return true
+	}
+	if len(p.everUpChecked) < maxEverUpChecked {
+		p.everUpChecked[key] = true
+	}
+	return false
+}
+
+// resolveInterfaceEverUp decides, from the CURRENT snapshot's traffic counters,
+// whether a down interface is a real link (an outage) or an enabled-but-never-
+// cabled dark port — WITHOUT any history query (which on prod's high-volume,
+// partitioned interface_stats would risk the startup statement-timeout crash).
+// A never-cabled port has literally zero in/out octets; a real link that was
+// ever up has nonzero counters that persist across link-down. So:
+//   - nonzero counters → mark ever-up (a genuine outage still alerts, including
+//     across a poller restart, since counters live in the snapshot);
+//   - zero counters AND not already known ever-up → a dark port: silently clear
+//     any stale/false INTERFACE_DOWN and leave it un-marked so it can't fire.
+//
+// Runs at most once per interface per process. Currently-up interfaces are
+// marked live by CheckInterfaceStatus and skipped here.
+func (p *Poller) resolveInterfaceEverUp(ifaces []models.InterfaceStats, siteID *uint) {
+	if p.alertManager == nil {
+		return
+	}
+	for i := range ifaces {
+		iface := &ifaces[i]
+		if iface.Status != "down" || iface.AdminStatus != "up" {
+			continue
+		}
+		if p.everUpAlreadyChecked(fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)) {
+			continue
+		}
+		if iface.InBytes+iface.OutBytes > 0 {
+			p.alertManager.MarkInterfaceEverUp(iface.DeviceID, iface.Name)
+		} else if !p.alertManager.IsInterfaceEverUp(iface.DeviceID, iface.Name) {
+			p.alertManager.AutoResolveInterfaceDown(iface.DeviceID, iface.Name, siteID)
+		}
+	}
+}
+
+// resolveVPNEverUp is the VPN-tunnel counterpart of resolveInterfaceEverUp, but
+// SUPPRESS-ONLY: a tunnel that has carried bytes or accrued uptime is marked
+// ever-up (so a real tunnel outage still alerts), but a zero-counter down tunnel
+// is NEVER auto-resolved. Unlike vendor-independent IF-MIB interface octets,
+// FortiGate VPN counters are per-SA (fgVpnTunEntInOctets/UpTime) and may read 0
+// for a down phase2 — so auto-resolving on zero counters could silently close a
+// genuine FortiGate tunnel outage across a poller restart. The ever-up gate
+// alone stops the idle-tunnel flood; a lingering false VPN alert is left for the
+// operator to clear once (it can't re-fire).
+func (p *Poller) resolveVPNEverUp(vpns []models.VPNStatus, _ *uint) {
+	if p.alertManager == nil {
+		return
+	}
+	for i := range vpns {
+		vpn := &vpns[i]
+		if vpn.Status != "down" {
+			continue
+		}
+		if p.everUpAlreadyChecked("vpn_" + fmt.Sprintf("%d_%s", vpn.DeviceID, vpn.TunnelName)) {
+			continue
+		}
+		if vpn.BytesIn+vpn.BytesOut > 0 || vpn.TunnelUptime > 0 {
+			p.alertManager.MarkVPNEverUp(vpn.DeviceID, vpn.TunnelName)
 		}
 	}
 }
