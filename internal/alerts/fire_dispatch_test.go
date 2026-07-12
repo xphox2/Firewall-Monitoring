@@ -20,6 +20,10 @@ func TestCheckInterfaceStatus_FiresSavesAndCooldown(t *testing.T) {
 	cfg.Alerts.InterfaceDownAlert = true // legacy toggle; required when the policy cache is unloaded
 	am := NewAlertManager(cfg, notifier.NewNotifier(cfg), db)
 
+	// The interface must have been observed UP before a down is treated as an
+	// outage (ever-up gate) — otherwise it's an enabled-but-never-cabled port.
+	am.everUp[ifaceDownKey(1, "port1")] = true
+
 	ifaces := []models.InterfaceStats{
 		{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"},
 	}

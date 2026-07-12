@@ -25,6 +25,16 @@ type AlertManager struct {
 	lastAlert    map[string]time.Time
 	cooldownFor  map[string]time.Duration // L2: per-key effective cooldown, so prune evicts only past each key's OWN window
 	activeAlerts map[string]bool          // tracks currently-firing alert keys for recovery detection
+	// everUp records the alert keys (iface_down_/vpn_down_) of interfaces and
+	// VPN tunnels observed status="up" at least once. INTERFACE_DOWN/VPN_TUNNEL_DOWN
+	// fire ONLY for a key in this set — a real outage is "was up, now down".
+	// Enabled-but-never-cabled ports and idle/never-up tunnels (common on
+	// collector-managed firewalls, alert-checked for the first time since
+	// v0.11.74) are never in the set, so they can't flood. Marked from live
+	// up-rows each cycle and DB-seeded at poller startup (SeedEverUpFromDB) so
+	// the gate survives a restart. mu-guarded; bounded by the fleet's interface
+	// + tunnel count.
+	everUp map[string]bool
 	// Flap suppression (F13): fireStart records when a key went active so
 	// sendRecovery can measure how long the alert lived; flapShortResolves
 	// accumulates the timestamps of short-lived (< FlapMinActiveSeconds)
@@ -81,6 +91,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		lastAlert:           make(map[string]time.Time),
 		cooldownFor:         make(map[string]time.Duration),
 		activeAlerts:        make(map[string]bool),
+		everUp:              make(map[string]bool),
 		fireStart:           make(map[string]time.Time),
 		flapShortResolves:   make(map[string][]time.Time),
 		baselines:           make(map[uint]deviceBaselines),
@@ -109,6 +120,47 @@ func (am *AlertManager) StormThreshold(siteID *uint) int {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
 	return am.resolveAlertConfig(0, siteID, models.AlertTypeSFlowSecurityDigest).StormSources
+}
+
+// ifaceDownKey / vpnDownKey build the cooldown/active/ever-up map keys. Kept as
+// helpers so the firing paths and the ever-up seed can't drift apart.
+func ifaceDownKey(deviceID uint, name string) string {
+	return fmt.Sprintf("iface_down_%d_%s", deviceID, name)
+}
+
+func vpnDownKey(deviceID uint, tunnelName string) string {
+	return fmt.Sprintf("vpn_down_%d_%s", deviceID, tunnelName)
+}
+
+// SeedEverUpFromDB primes the ever-up set from history so that after a poller
+// restart INTERFACE_DOWN/VPN_TUNNEL_DOWN still fire for links/tunnels that were
+// genuinely up before the restart (a real outage), while enabled-but-never-up
+// ports and idle tunnels stay suppressed. `window` bounds how far back to look
+// (a link/tunnel up within the window is treated as a real member of the
+// topology). Best-effort: a query error is logged by the caller and leaves the
+// set to rebuild from live up-rows.
+func (am *AlertManager) SeedEverUpFromDB(window time.Duration) error {
+	if am.db == nil {
+		return nil
+	}
+	since := time.Now().Add(-window)
+	ifaceKeys, err := am.db.GetEverUpInterfaceKeys(since)
+	if err != nil {
+		return err
+	}
+	vpnKeys, verr := am.db.GetEverUpVPNKeys(since)
+	if verr != nil {
+		return verr
+	}
+	am.mu.Lock()
+	for _, k := range ifaceKeys {
+		am.everUp[ifaceDownKey(k.DeviceID, k.Name)] = true
+	}
+	for _, k := range vpnKeys {
+		am.everUp[vpnDownKey(k.DeviceID, k.Name)] = true
+	}
+	am.mu.Unlock()
+	return nil
 }
 
 // markActiveLocked flips a state-alert key to active and stamps when it fired
@@ -274,7 +326,22 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 
 	for _, iface := range interfaces {
+		key := ifaceDownKey(iface.DeviceID, iface.Name)
+		// Record every interface seen up so a later down transition can fire.
+		if iface.Status == "up" {
+			am.everUp[key] = true
+			continue
+		}
 		if iface.Status != "down" || iface.AdminStatus != "up" {
+			continue
+		}
+		// Only a link that was genuinely UP at some point is an outage. An
+		// enabled-but-never-cabled port stays admin-up/oper-down forever and
+		// must NOT alert (it would flood collector-managed firewalls, which
+		// expose many dark ports and are alert-checked here for the first time
+		// since v0.11.74). Seeded from history at startup so this survives a
+		// poller restart.
+		if !am.everUp[key] {
 			continue
 		}
 		resolved := am.resolveAlertConfig(iface.DeviceID, siteID, "INTERFACE_DOWN")
@@ -285,7 +352,6 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		if !am.config.Alerts.InterfaceDownAlert && !am.policyCache.loaded {
 			continue
 		}
-		key := fmt.Sprintf("iface_down_%d_%s", iface.DeviceID, iface.Name)
 		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 		if am.canAlertWithCooldown(key, now, cooldown) {
 			alert := models.Alert{
@@ -1418,14 +1484,25 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 	now := time.Now()
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	for _, vpn := range vpnStatuses {
+		key := vpnDownKey(vpn.DeviceID, vpn.TunnelName)
+		if vpn.Status == "up" {
+			am.everUp[key] = true
+			continue
+		}
 		if vpn.Status != "down" {
+			continue
+		}
+		// Only a tunnel that has actually come up is an outage when down.
+		// Idle/never-up tunnels (dial-up, disabled configs, unestablished
+		// phase2 selectors) relay status="down" every cycle and must not
+		// alert. Seeded from history at startup (restart-safe).
+		if !am.everUp[key] {
 			continue
 		}
 		resolved := am.resolveAlertConfig(vpn.DeviceID, siteID, "VPN_TUNNEL_DOWN")
 		if !resolved.AlertEnabled {
 			continue
 		}
-		key := fmt.Sprintf("vpn_down_%d_%s", vpn.DeviceID, vpn.TunnelName)
 		cooldown := time.Duration(resolved.CooldownMinutes) * time.Minute
 		if am.canAlertWithCooldown(key, now, cooldown) {
 			alert := models.Alert{

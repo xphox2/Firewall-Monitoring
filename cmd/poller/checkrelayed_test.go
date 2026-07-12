@@ -171,16 +171,28 @@ func TestCheckRelayedTelemetry_SameSampleGuard(t *testing.T) {
 	}
 }
 
-// TestCheckRelayedTelemetry_InterfaceDown: a fresh down (admin-up) interface
-// row fires INTERFACE_DOWN, and prevIfaceStats is populated after the cycle.
+// TestCheckRelayedTelemetry_InterfaceDown: an interface that was UP and then
+// goes down fires INTERFACE_DOWN (a real outage), and prevIfaceStats is
+// populated. The ever-up gate requires the prior up observation.
 func TestCheckRelayedTelemetry_InterfaceDown(t *testing.T) {
 	p, db := newTelemetryTestPoller(t)
 	dev := &models.Device{Name: "fw3", IPAddress: "10.0.0.6", Enabled: true}
 	mustCreate(t, db, dev)
-	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now(), Name: "wan1", Index: 2, Status: "down", AdminStatus: "up"})
 
+	// Cycle 1: interface is up — records it as ever-up, fires nothing.
+	row := &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now().Add(-time.Minute), Name: "wan1", Index: 2, Status: "up", AdminStatus: "up"}
+	mustCreate(t, db, row)
 	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 0 {
+		t.Fatalf("INTERFACE_DOWN after up cycle = %d, want 0", got)
+	}
 
+	// Cycle 2: same interface now down (admin-up) → real outage → fires once.
+	if err := db.Gorm().Model(&models.InterfaceStats{}).Where("id = ?", row.ID).
+		Updates(map[string]interface{}{"status": "down", "timestamp": time.Now()}).Error; err != nil {
+		t.Fatalf("advance to down: %v", err)
+	}
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
 	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 1 {
 		t.Errorf("INTERFACE_DOWN alerts = %d, want 1", got)
 	}
@@ -190,18 +202,60 @@ func TestCheckRelayedTelemetry_InterfaceDown(t *testing.T) {
 	}
 }
 
-// TestCheckRelayedTelemetry_VPNDown: a fresh down VPN tunnel row fires
-// VPN_TUNNEL_DOWN.
+// TestCheckRelayedTelemetry_InterfaceNeverUpNoAlert: an interface that is down
+// on first sight and was never observed up (an enabled-but-never-cabled port)
+// must NOT fire — this is the false-alert flood the ever-up gate closes.
+func TestCheckRelayedTelemetry_InterfaceNeverUpNoAlert(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := &models.Device{Name: "fw3b", IPAddress: "10.0.0.16", Enabled: true}
+	mustCreate(t, db, dev)
+	mustCreate(t, db, &models.InterfaceStats{DeviceID: dev.ID, Timestamp: time.Now(), Name: "dmz3", Index: 7, Status: "down", AdminStatus: "up"})
+
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+
+	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 0 {
+		t.Errorf("INTERFACE_DOWN for a never-up port = %d, want 0", got)
+	}
+}
+
+// TestCheckRelayedTelemetry_VPNDown: a tunnel that was UP and then goes down
+// fires VPN_TUNNEL_DOWN. The ever-up gate requires the prior up observation.
 func TestCheckRelayedTelemetry_VPNDown(t *testing.T) {
 	p, db := newTelemetryTestPoller(t)
 	dev := &models.Device{Name: "fw4", IPAddress: "10.0.0.7", Enabled: true}
 	mustCreate(t, db, dev)
-	mustCreate(t, db, &models.VPNStatus{DeviceID: dev.ID, Timestamp: time.Now(), TunnelName: "branch-vpn", Status: "down"})
+
+	// Cycle 1: tunnel up — recorded ever-up, no alert.
+	row := &models.VPNStatus{DeviceID: dev.ID, Timestamp: time.Now().Add(-time.Minute), TunnelName: "branch-vpn", Status: "up"}
+	mustCreate(t, db, row)
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 0 {
+		t.Fatalf("VPN_TUNNEL_DOWN after up cycle = %d, want 0", got)
+	}
+
+	// Cycle 2: tunnel now down → real outage → fires once.
+	if err := db.Gorm().Model(&models.VPNStatus{}).Where("id = ?", row.ID).
+		Updates(map[string]interface{}{"status": "down", "timestamp": time.Now()}).Error; err != nil {
+		t.Fatalf("advance to down: %v", err)
+	}
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 1 {
+		t.Errorf("VPN_TUNNEL_DOWN alerts = %d, want 1", got)
+	}
+}
+
+// TestCheckRelayedTelemetry_VPNNeverUpNoAlert: a tunnel that is down on first
+// sight and never observed up (idle dial-up / disabled config) must NOT fire.
+func TestCheckRelayedTelemetry_VPNNeverUpNoAlert(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := &models.Device{Name: "fw4b", IPAddress: "10.0.0.17", Enabled: true}
+	mustCreate(t, db, dev)
+	mustCreate(t, db, &models.VPNStatus{DeviceID: dev.ID, Timestamp: time.Now(), TunnelName: "idle-dialup", Status: "down"})
 
 	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
 
-	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 1 {
-		t.Errorf("VPN_TUNNEL_DOWN alerts = %d, want 1", got)
+	if got := countAlerts(t, db, "VPN_TUNNEL_DOWN", dev.ID); got != 0 {
+		t.Errorf("VPN_TUNNEL_DOWN for a never-up tunnel = %d, want 0", got)
 	}
 }
 

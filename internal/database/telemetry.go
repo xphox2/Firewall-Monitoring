@@ -328,6 +328,41 @@ func (d *Database) GetAllLatestVPNStatuses() ([]models.VPNStatus, error) {
 	return statuses, err
 }
 
+// DeviceKeyName pairs a device ID with a named sub-entity (an interface name or
+// a VPN tunnel name). Returned by the ever-up seed queries below.
+type DeviceKeyName struct {
+	DeviceID uint
+	Name     string
+}
+
+// GetEverUpInterfaceKeys returns the (device_id, interface name) pairs that have
+// reported status='up' at least once since `since`. The poller seeds its
+// "ever-up" set with this at startup so INTERFACE_DOWN only fires for interfaces
+// that were genuinely up (a real outage) — not enabled-but-never-cabled ports —
+// and so that gate survives a poller restart. Bounded by `since` to keep the
+// DISTINCT scan inside recent partitions.
+func (d *Database) GetEverUpInterfaceKeys(since time.Time) ([]DeviceKeyName, error) {
+	var keys []DeviceKeyName
+	err := d.db.Model(&models.InterfaceStats{}).
+		Distinct("device_id", "name").
+		Where("status = ? AND timestamp > ?", "up", since).
+		Find(&keys).Error
+	return keys, err
+}
+
+// GetEverUpVPNKeys returns the (device_id, tunnel name) pairs that have reported
+// status='up' at least once since `since` — the VPN_TUNNEL_DOWN counterpart of
+// GetEverUpInterfaceKeys. Idle/never-up tunnels (dial-up, disabled configs,
+// unestablished phase2 selectors) are absent, so they never alert.
+func (d *Database) GetEverUpVPNKeys(since time.Time) ([]DeviceKeyName, error) {
+	var keys []DeviceKeyName
+	err := d.db.Model(&models.VPNStatus{}).
+		Distinct("device_id", "tunnel_name as name").
+		Where("status = ? AND timestamp > ?", "up", since).
+		Find(&keys).Error
+	return keys, err
+}
+
 // RecentHAFailover reports whether the device's HA cluster changed its active
 // member (master serial) within the window — i.e. a failover happened recently.
 // True when the ha_status history for the device holds two or more distinct

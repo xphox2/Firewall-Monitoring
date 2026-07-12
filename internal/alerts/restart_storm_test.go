@@ -70,6 +70,7 @@ func TestDispatchFired_SuppressesRestartStorm(t *testing.T) {
 
 	now := time.Now()
 	seedAlert(t, db, openAlert(1, "INTERFACE_DOWN", "interface_port1", now)) // pre-restart, fresh
+	am.everUp[ifaceDownKey(1, "port1")] = true                               // seed models SeedEverUpFromDB: this link was up before the restart
 
 	ifaces := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"}}
 	count := func() int64 {
@@ -97,6 +98,7 @@ func TestDispatchFired_ReminderFiresAfterCooldown(t *testing.T) {
 
 	now := time.Now()
 	seedAlert(t, db, openAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-10*time.Minute))) // older than 5m cooldown
+	am.everUp[ifaceDownKey(1, "port1")] = true                                                    // seed models SeedEverUpFromDB: this link was up before the restart
 
 	ifaces := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"}}
 	if err := am.CheckInterfaceStatus(ifaces, nil); err != nil {

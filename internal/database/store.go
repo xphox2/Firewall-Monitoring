@@ -175,6 +175,8 @@ type TelemetryReadStore interface {
 	GetLatestSystemStatus() (*models.SystemStatus, error)
 	GetLatestVPNStatuses(deviceID uint) ([]models.VPNStatus, error)
 	GetAllLatestVPNStatuses() ([]models.VPNStatus, error)
+	GetEverUpInterfaceKeys(since time.Time) ([]DeviceKeyName, error)
+	GetEverUpVPNKeys(since time.Time) ([]DeviceKeyName, error)
 	GetSystemStatusHistory(deviceID uint, hours int) ([]models.SystemStatus, error)
 	GetSystemStatusBuckets(deviceID uint, rangeStr string) ([]SystemStatusBucket, error)
 	GetSecurityStatsHistory(deviceID uint, hours int) ([]models.SecurityStats, error)
