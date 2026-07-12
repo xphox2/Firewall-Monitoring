@@ -138,6 +138,7 @@
             case 'reports': if (window.AdminReports && window.AdminReports.init) window.AdminReports.init(); break;
             case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
             case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
+            case 'alerting': if (window.FwmonAlerting && window.FwmonAlerting.init) window.FwmonAlerting.init(); break;
             case 'alert-policies': loadAlertPolicies(); break;
             case 'event-rules': if (window.FwmonEventRules && window.FwmonEventRules.init) window.FwmonEventRules.init(); break;
             case 'probes': if (window.FwmonProbes && window.FwmonProbes.init) window.FwmonProbes.init(); break;
@@ -2470,7 +2471,11 @@
             var savedReportVals = {};
             settings.filter(function(s) { return s.category === 'reports'; }).forEach(function(s) { savedReportVals[s.key] = s.value; });
 
-            document.getElementById('settings-alerts').innerHTML = [
+            // v0.11.87: global alert thresholds moved to the dedicated Alerting
+            // page (FwmonAlerting). The div is gone from Settings; guard so this
+            // legacy render no-ops if the element is absent.
+            var elSettingsAlerts = document.getElementById('settings-alerts');
+            if (elSettingsAlerts) elSettingsAlerts.innerHTML = [
                 { key: 'cpu_threshold', label: 'CPU Threshold (%)', value: 80, type: 'number' },
                 { key: 'memory_threshold', label: 'Memory Threshold (%)', value: 80, type: 'number' },
                 { key: 'disk_threshold', label: 'Disk Threshold (%)', value: 90, type: 'number' },
@@ -2543,8 +2548,10 @@
             '<div class="setting-item"><label>Daily Report Time (HH:MM)</label><select name="report_daily_time" class="report-time-select">' + reportTimeOptions + '</select></div>' +
             '<div class="setting-item"><label>Weekly Report Day</label><select name="report_weekly_day" class="report-day-select"><option value="">-- Select --</option>' + reportDayOptions + '</select></div>';
 
-            // Spike detection settings
-            document.getElementById('settings-spike').innerHTML = [
+            // Spike detection settings — moved to the Alerting page (v0.11.87);
+            // guard so this legacy render no-ops if the element is absent.
+            var elSettingsSpike = document.getElementById('settings-spike');
+            if (elSettingsSpike) elSettingsSpike.innerHTML = [
                 { key: 'spike_alert_enabled', label: 'Enable Spike Alerts', type: 'checkbox' },
                 { key: 'spike_stddev_threshold', label: 'Standard Deviation Threshold (1.0-10.0)', type: 'number', value: '3.0', min: '1', max: '10', step: '0.1' },
                 { key: 'spike_min_duration_minutes', label: 'Minimum Sustained Duration (minutes)', type: 'number', value: '15', min: '1', max: '1440', step: '1' }
@@ -3271,7 +3278,7 @@
         // this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
-            'alert-policies':'alert-policies', 'event-rules':'event-rules', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel',
+            'alerting':'alerting', 'alert-policies':'alert-policies', 'event-rules':'event-rules', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel',
             'probes':'probes', 'sites':'sites', 'irc':'irc' };
         var page = pageMap[lastSegment];
         if (page) {
@@ -3390,7 +3397,7 @@
 
     function showPolicyModal(id) {
         AC.openModal('policy-modal');
-        document.getElementById('policy-modal-title').textContent = id ? 'Edit Alert Policy' : 'Create Alert Policy';
+        document.getElementById('policy-modal-title').textContent = id ? 'Edit Notification Profile' : 'Create Notification Profile';
         document.getElementById('policy-form').reset();
         document.getElementById('policy-id').value = '';
         policyUnrenderedRules = [];
@@ -4335,7 +4342,7 @@
     // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, noc:1, alerts:1, traps:1,
-        'alert-policies':1, 'event-rules':1, maintenance:1, audit:1, 'threat-intel':1,
+        alerting:1, 'alert-policies':1, 'event-rules':1, maintenance:1, audit:1, 'threat-intel':1,
         probes:1, sites:1, irc:1 };
 
     document.addEventListener('click', function(ev) {

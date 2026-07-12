@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"firewall-mon/internal/alerts"
@@ -305,6 +306,184 @@ func (h *Handler) GetEffectiveAlertConfig(c *gin.Context) {
 			"rule_id":            prov.RuleID,
 			"rule_name":          prov.RuleName,
 		},
+	}))
+}
+
+// alertOverrideRow is one customized-threshold entry for the Alerting hub's
+// overrides overview. Value/AlertType are omitted for non-threshold kinds
+// (e.g. "disabled").
+type alertOverrideRow struct {
+	Scope          string           `json:"scope"` // global|policy|site|device|rule
+	ScopeID        uint             `json:"scope_id"`
+	ScopeName      string           `json:"scope_name"`
+	AlertType      models.AlertType `json:"alert_type,omitempty"`
+	Value          float64          `json:"value,omitempty"`
+	Kind           string           `json:"kind"` // threshold|disabled|custom
+	ShadowedByRule bool             `json:"shadowed_by_rule,omitempty"`
+}
+
+// metricThresholdRows emits one "threshold" row per metric the config overrides
+// (stored value > 0), so the overview lists only what's actually customized.
+func metricThresholdRows(scope string, id uint, name string, cpu, mem, disk float64, sess int) []alertOverrideRow {
+	var out []alertOverrideRow
+	add := func(at models.AlertType, v float64) {
+		if v > 0 {
+			out = append(out, alertOverrideRow{Scope: scope, ScopeID: id, ScopeName: name, AlertType: at, Value: v, Kind: "threshold"})
+		}
+	}
+	add(models.AlertTypeCPUHigh, cpu)
+	add(models.AlertTypeMemoryHigh, mem)
+	add(models.AlertTypeDiskHigh, disk)
+	add(models.AlertTypeSessionsHigh, float64(sess))
+	return out
+}
+
+// alertGlobalDefaults reads the global threshold + spike defaults from
+// SystemSettings (fresh DB read), falling back to the process config for any
+// key not yet persisted. These are the values the Alerting hub edits.
+func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
+	g := gin.H{
+		"cpu_threshold":              h.config.Alerts.CPUThreshold,
+		"memory_threshold":           h.config.Alerts.MemoryThreshold,
+		"disk_threshold":             h.config.Alerts.DiskThreshold,
+		"session_threshold":          h.config.Alerts.SessionThreshold,
+		"spike_alert_enabled":        h.config.Alerts.SpikeAlertEnabled,
+		"spike_stddev_threshold":     h.config.Alerts.SpikeStdDevThreshold,
+		"spike_min_duration_minutes": h.config.Alerts.SpikeMinDurationMinutes,
+	}
+	var settings []models.SystemSetting
+	db.Gorm().Where(`"key" IN ?`, []string{
+		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
+		"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
+	}).Find(&settings)
+	for _, s := range settings {
+		if s.Value == "" {
+			continue
+		}
+		switch s.Key {
+		case "cpu_threshold", "memory_threshold", "disk_threshold", "spike_stddev_threshold":
+			if v, err := strconv.ParseFloat(s.Value, 64); err == nil {
+				g[s.Key] = v
+			}
+		case "session_threshold", "spike_min_duration_minutes":
+			if v, err := strconv.Atoi(s.Value); err == nil {
+				g[s.Key] = v
+			}
+		case "spike_alert_enabled":
+			g[s.Key] = s.Value == "true"
+		}
+	}
+	return g
+}
+
+// GetAlertConfigOverview returns the global defaults plus a bounded list of every
+// scope that customizes a threshold (site/device/policy-rule/metric-rule) — the
+// data behind the Alerting hub. Read-only; viewer-accessible (thresholds aren't
+// secrets, matching the effective endpoint).
+func (h *Handler) GetAlertConfigOverview(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+
+	devName := map[uint]string{}
+	if devs, err := db.GetAllDevices(); err == nil {
+		for _, d := range devs {
+			devName[d.ID] = d.Name
+		}
+	}
+	siteName := map[uint]string{}
+	if sites, err := db.GetAllSites(); err == nil {
+		for _, s := range sites {
+			siteName[s.ID] = s.Name
+		}
+	}
+
+	var rows []alertOverrideRow
+
+	// Device overrides (threshold rows + an alerts-disabled row).
+	if cfgs, err := db.GetAllDeviceAlertConfigs(); err == nil {
+		for _, cfg := range cfgs {
+			name := devName[cfg.DeviceID]
+			if !cfg.AlertsEnabled {
+				rows = append(rows, alertOverrideRow{Scope: "device", ScopeID: cfg.DeviceID, ScopeName: name, Kind: "disabled"})
+			}
+			rows = append(rows, metricThresholdRows("device", cfg.DeviceID, name,
+				cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold)...)
+		}
+	}
+	// Site overrides.
+	if cfgs, err := db.GetAllSiteAlertConfigs(); err == nil {
+		for _, cfg := range cfgs {
+			rows = append(rows, metricThresholdRows("site", cfg.SiteID, siteName[cfg.SiteID],
+				cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold)...)
+		}
+	}
+	// Policy AlertRule thresholds (enabled, metric types only).
+	if policies, err := db.GetAlertPolicies(); err == nil {
+		for _, p := range policies {
+			for _, r := range p.Rules {
+				if r.Enabled && r.Threshold > 0 && alerts.IsMetricAlertType(r.AlertType) {
+					rows = append(rows, alertOverrideRow{Scope: "policy", ScopeID: p.ID, ScopeName: p.Name, AlertType: r.AlertType, Value: r.Threshold, Kind: "threshold"})
+				}
+			}
+		}
+	}
+	// Metric Event-Rule thresholds (enabled, dampen threshold > 0).
+	if evRules, err := db.ListEventRules(); err == nil {
+		metricEvents := []string{alerts.MetricEventCPU, alerts.MetricEventMemory, alerts.MetricEventDisk, alerts.MetricEventSessions}
+		for _, r := range evRules {
+			if !r.Enabled || r.Source != "metric" {
+				continue
+			}
+			th, _, _, _, ok := alerts.ParseMetricDampen(r.DampenJSON)
+			if !ok || th <= 0 {
+				continue
+			}
+			at := r.AlertType
+			if !alerts.IsMetricAlertType(at) {
+				at = "" // derive from the match tree, never guess
+				for _, ev := range metricEvents {
+					if strings.Contains(r.MatchJSON, `"`+ev+`"`) {
+						at = alerts.MetricAlertTypeForEvent(ev)
+						break
+					}
+				}
+			}
+			row := alertOverrideRow{Scope: "rule", ScopeID: r.ID, ScopeName: r.Name, Value: th, Kind: "threshold"}
+			if alerts.IsMetricAlertType(at) {
+				row.AlertType = at
+			} else {
+				row.Kind = "custom"
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	// Truthfulness: flag site/device threshold rows a metric rule currently
+	// overrides at fire time (bounded by the override count).
+	if h.alertManager != nil {
+		for i := range rows {
+			r := &rows[i]
+			if r.Kind != "threshold" || !alerts.IsMetricAlertType(r.AlertType) {
+				continue
+			}
+			key := metricSampleKey(r.AlertType)
+			switch r.Scope {
+			case "device":
+				_, prov := h.alertManager.EffectiveAlertConfig(r.ScopeID, nil, r.AlertType, key)
+				r.ShadowedByRule = prov.Threshold == "rule"
+			case "site":
+				sid := r.ScopeID
+				_, prov := h.alertManager.EffectiveAlertConfig(0, &sid, r.AlertType, key)
+				r.ShadowedByRule = prov.Threshold == "rule"
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"global":    h.alertGlobalDefaults(db),
+		"overrides": rows,
 	}))
 }
 

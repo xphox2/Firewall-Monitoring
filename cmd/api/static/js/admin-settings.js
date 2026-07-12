@@ -13,9 +13,10 @@
 
     // Exactly the containers saveSettings() collects from. Anything outside
     // this scope is not "global settings" and must not count as dirty.
+    // #settings-alerts and #settings-spike moved to the Alerting page (v0.11.87).
     var TRACKED_CONTAINERS = [
-        '#settings-alerts', '#settings-notifications', '#settings-smtp',
-        '#settings-reports', '#settings-spike', '#settings-detection',
+        '#settings-notifications', '#settings-smtp',
+        '#settings-reports', '#settings-detection',
         '#display-settings'
     ];
     var TRACKED_SELECTOR = TRACKED_CONTAINERS.join(',');
