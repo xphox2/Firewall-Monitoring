@@ -11,7 +11,7 @@ import (
 )
 
 // Seed generations. Each seed rule carries the version it was INTRODUCED in
-// (seedVerSyslog/State/Metric), NOT the current top version — the resurrection
+// (seedVerSyslog/State/Metric/TrapSpike), NOT the current top version — the resurrection
 // guard in EnsureDefaultRules only seeds rules whose SeedVersion is newer than
 // the last-applied marker, so an operator-deleted older seed is never recreated
 // on a version bump (M5). eventRuleSeedVersion is the highest generation and is
