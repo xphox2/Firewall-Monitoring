@@ -2781,7 +2781,7 @@
                 <div class="policy-section" id="er-spike-section" style="display:none">
                     <div class="policy-section-header"><h3>Spike sensitivity</h3></div>
                     <div class="policy-section-body">
-                        <div class="field-hint" style="margin-bottom:12px;line-height:1.5"><strong>Preview.</strong> Traffic-spike alerting still runs in the poller today; this template is the config surface and takes effect in an upcoming release. A spike fires when an interface's throughput stays above its seasonal (weekday/hour) baseline by K standard deviations for the sustain window.</div>
+                        <div class="field-hint" style="margin-bottom:12px;line-height:1.5">A spike fires when an interface's throughput stays above its seasonal (weekday/hour) baseline by K standard deviations for the sustain window. <strong>Leave these blank to inherit</strong> the <strong>Settings → Alerts</strong> spike sensitivity (recommended); set them to override for the rule's scope. To turn spikes off, add a <em>suppress</em> rule.</div>
                         <div class="form-row form-row-2">
                             <div class="form-group"><label for="er-spike-k">Sensitivity — Z-score K (σ multiplier)</label><input type="number" id="er-spike-k" min="0" step="any" placeholder="3"><div class="field-hint">Higher = less sensitive. Blank = 3.</div></div>
                             <div class="form-group"><label for="er-spike-duration">Sustain (minutes)</label><input type="number" id="er-spike-duration" min="0" max="1440" placeholder="15"><div class="field-hint">How long the spike must persist before alerting. Blank = 15.</div></div>

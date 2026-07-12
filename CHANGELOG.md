@@ -1,6 +1,32 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.85] - 2026-07-12
+
+### Changed — traffic-spike alerts are now driven by Event Rules (non-regressive)
+
+Traffic-spike alerting (the last alert type that bypassed the alert engine) now
+flows through the "Traffic spike" Event Rule. The seasonal detector is unchanged;
+only the fire/notify/resolve path moved. **Upgrade is non-regressive** — spikes
+fire at the same sensitivity (the rule inherits your live **Settings → Alerts**
+spike sensitivity/sustain), with the same severity and the same notification
+destinations for a default-policy install.
+
+- **Spike rules:** scope a spike rule to a device/site/vendor/interface, override
+  the sensitivity (`stddev_k`) / sustain window, override severity, route it to a
+  specific notification policy, or **suppress** it — all in the Event Rules editor.
+  Leave the sensitivity fields blank to keep inheriting the global setting.
+- **Correct open/resolve lifecycle:** a spike now opens exactly one alert row that
+  is **closed** on recovery (the old poller path inserted a separate resolved row
+  and left the original open forever — that orphaned row is cleaned up on the
+  first recovery after upgrade).
+- **Now respects maintenance windows** (a spike inside a maintenance window is
+  suppressed, like every other alert). A post-restart cold resolve closes the
+  alert silently (no spurious "returned to normal" for a spike this process never
+  fired).
+- Migration **v43** clears the built-in rule's baked sensitivity to inherit the
+  live setting (only when untouched — an operator-tuned value is preserved).
+
 ## [0.11.84] - 2026-07-12
 
 ### Changed — CPU/memory/disk/session threshold and SNMP/HA trap alerts are now driven by Event Rules (non-regressive)

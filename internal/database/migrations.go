@@ -91,6 +91,7 @@ var registeredMigrations = []migration{
 	{version: 40, name: "ipsec_tunnels", run: (*Database).migrateIPSecTunnels},
 	{version: 41, name: "event_rule_dampen_json", run: (*Database).migrateEventRuleDampenJSON},
 	{version: 42, name: "activate_metric_trap_rule_descriptions", run: (*Database).migrateActivatedSeedDescriptions},
+	{version: 43, name: "activate_spike_rule_inherit_settings", run: (*Database).migrateSpikeRuleInheritSettings},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

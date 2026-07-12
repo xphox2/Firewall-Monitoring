@@ -131,48 +131,6 @@ func humanBps(bps float64) string {
 	}
 }
 
-// emitSpikeAlert saves and sends one sustained-spike alert.
-func (p *Poller) emitSpikeAlert(device *models.Device, iface *models.InterfaceStats, dec report.SpikeDecision) {
-	alert := models.Alert{
-		Timestamp:    time.Now(),
-		DeviceID:     iface.DeviceID,
-		AlertType:    "TRAFFIC_SPIKE",
-		Severity:     models.Severity(dec.Severity),
-		Message:      fmt.Sprintf("Sustained traffic spike on %s: %s (typical ~%s for this time)", iface.Name, humanBps(dec.Value), humanBps(dec.Mean)),
-		MetricName:   fmt.Sprintf("traffic_%s", iface.Name),
-		CurrentValue: dec.Value,
-		Threshold:    dec.Mean,
-	}
-	if p.db != nil {
-		p.db.SaveAlert(&alert)
-	}
-	nc := notifier.SnapshotConfig(&p.cfg.Alerts)
-	if err := p.notifier.SendAlert(&alert, nc); err != nil {
-		log.Printf("Device %s: spike alert send error - %v", device.Name, err)
-	}
-}
-
-// emitSpikeResolve records that a previously-alerted spike has cleared.
-func (p *Poller) emitSpikeResolve(device *models.Device, iface *models.InterfaceStats) {
-	now := time.Now()
-	alert := models.Alert{
-		Timestamp:  now,
-		DeviceID:   iface.DeviceID,
-		AlertType:  "TRAFFIC_SPIKE",
-		Severity:   "info",
-		Message:    fmt.Sprintf("Traffic on %s returned to normal", iface.Name),
-		MetricName: fmt.Sprintf("traffic_%s", iface.Name),
-		ResolvedAt: &now,
-	}
-	if p.db != nil {
-		p.db.SaveAlert(&alert)
-	}
-	nc := notifier.SnapshotConfig(&p.cfg.Alerts)
-	if err := p.notifier.SendAlert(&alert, nc); err != nil {
-		log.Printf("Device %s: spike resolve send error - %v", device.Name, err)
-	}
-}
-
 func (p *Poller) Start() error {
 	if p.cfg.SNMP.PollInterval < 30*time.Second {
 		p.cfg.SNMP.PollInterval = 30 * time.Second
@@ -1026,15 +984,7 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 		// seasonal (weekday, hour) baseline, and only alerted once it has been
 		// sustained for SpikeMinDurationMinutes — so recurring/scheduled traffic
 		// and momentary blips don't cause alert panic.
-		if p.cfg.Alerts.SpikeAlertEnabled && p.spikeDetector != nil {
-			k := p.cfg.Alerts.SpikeStdDevThreshold
-			if k <= 0 {
-				k = 3.0
-			}
-			minDur := time.Duration(p.cfg.Alerts.SpikeMinDurationMinutes) * time.Minute
-			if minDur <= 0 {
-				minDur = 15 * time.Minute
-			}
+		if p.cfg.Alerts.SpikeAlertEnabled && p.spikeDetector != nil && p.alertManager != nil {
 			for i := range newSamples {
 				iface := &newSamples[i]
 				if iface.Status != "up" {
@@ -1063,12 +1013,17 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 				}
 				bps := delta * 8 / elapsed
 
+				// Phase 4b: the detector params come from the matching spike rule (or
+				// the live spike settings), and fire/resolve route through the rule
+				// engine (scope/suppress/severity/policy + proper open/resolve).
+				k, minDur := p.alertManager.SpikeParamsFor(iface.DeviceID, device.SiteID, iface.Name)
 				dec := p.spikeDetector.Observe(fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index), iface.Timestamp, bps, k, minDur)
 				switch {
 				case dec.Fire:
-					p.emitSpikeAlert(device, iface, dec)
+					msg := fmt.Sprintf("Sustained traffic spike on %s: %s (typical ~%s for this time)", iface.Name, humanBps(dec.Value), humanBps(dec.Mean))
+					p.alertManager.ProcessSpike(device, iface, dec.Severity, dec.Value, dec.Mean, msg, device.SiteID)
 				case dec.Resolve:
-					p.emitSpikeResolve(device, iface)
+					p.alertManager.ProcessSpikeResolve(device, iface, fmt.Sprintf("Traffic on %s returned to normal", iface.Name), device.SiteID)
 				}
 			}
 		}
