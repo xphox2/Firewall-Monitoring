@@ -1,6 +1,36 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.84] - 2026-07-12
+
+### Changed — CPU/memory/disk/session threshold and SNMP/HA trap alerts are now driven by Event Rules (non-regressive)
+
+The metric and trap Event Rule templates (shipped inert in earlier releases) are
+now **live**: CPU/mem/disk/session threshold alerting routes through the metric
+rules and SNMP/HA trap alerting consults the trap rules. **Upgrade is
+non-regressive** — the shipped rules inherit your existing Settings → Alerts /
+policy / device thresholds, so alerts fire at the same levels as before. What you
+gain is the ability to **scope, suppress, and re-route** these alerts per rule.
+
+- **Metric rules active:** a metric rule can override the threshold, hysteresis
+  clear-band, z-score mode/K, severity, notify policy, and cooldown for its scope;
+  leave a field blank to inherit. Mode is upgrade-only (a rule can opt into
+  z-score but won't silently downgrade a policy-level z-score to static). z-score
+  set only in a rule now correctly triggers the adaptive baseline.
+- **Trap rules active:** a trap rule can suppress a trap type, override its
+  severity/cooldown/routing, and opt an info/notice trap type in to alerting — on
+  top of the existing policy path. Works for **any** trap type, not just the
+  seeded HA/LINK ones.
+- **Both are non-regressive by construction:** the evaluators always consult
+  matching rules and fall back to the legacy path when no rule matches, so a type
+  whose template you deleted keeps alerting on the legacy path rather than going
+  silent — threshold and trap alerts are too important to lose. **To turn a type
+  off,** add a *suppress* rule (or disable it in Settings → Alerts / the policy).
+- Metric/trap rules honor **site scope** (a rule scoped to a site matches that
+  site's devices even for traps, which arrive without a site id).
+- Traffic-spike alerting is **not** in this release (it still runs in the poller);
+  its rule engine lands in a follow-up with a dedicated design.
+
 ## [0.11.83] - 2026-07-12
 
 ### Added — traffic-spike and SNMP/HA trap templates in Event Rules (preview; no change to live alerting)

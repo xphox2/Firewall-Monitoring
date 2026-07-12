@@ -139,30 +139,31 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeVPNTunnelDown, SeedVersion: seedVerState,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"vpn_tunnel_down"}`,
 			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
-		// Metric-source built-ins (seed_version 3, Phase 2 — INERT). CPU/memory/
-		// disk/session threshold templates so operators can see/scope them in the
-		// Event Rules UI. They do NOT drive alerting yet: the metric types are
-		// deliberately absent from the state_engine_owns flag, so the legacy
-		// CheckSystemStatus path still owns them. dampen_json carries mode only (no
-		// threshold) so a later ownership flip inherits the operator's existing
-		// Settings→Alerts / policy / device thresholds — non-regressive. Severity
-		// blank ⇒ per-type default applies.
-		{Name: "CPU high", Description: "Threshold alert when device CPU usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		// Metric-source built-ins (seed_version 3). ACTIVE as of Phase 4a:
+		// CheckSystemStatus always consults matching metric rules (no ownership
+		// flag), falling back to the legacy path on no match. dampen_json carries
+		// mode only (no threshold) so they INHERIT the operator's existing
+		// Settings→Alerts / policy / device thresholds — non-regressive. Leave the
+		// threshold blank in the rule to keep inheriting; set it to override.
+		// Severity blank ⇒ per-type default. To turn a type OFF, use a suppress
+		// rule (deleting the template falls back to the legacy path, which still
+		// alerts).
+		{Name: "CPU high", Description: "Threshold alert when device CPU usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeCPUHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"cpu_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		{Name: "Memory high", Description: "Threshold alert when device memory usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		{Name: "Memory high", Description: "Threshold alert when device memory usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeMemoryHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"memory_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		{Name: "Disk high", Description: "Threshold alert when device disk usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		{Name: "Disk high", Description: "Threshold alert when device disk usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeDiskHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"disk_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		{Name: "Session count high", Description: "Threshold alert when device session count is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		{Name: "Session count high", Description: "Threshold alert when device session count is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeSessionsHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"sessions_high"}`,
@@ -176,26 +177,28 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeTrafficSpike, SeedVersion: seedVerTrapSpike,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"traffic_spike"}`,
 			DampenJSON: `{"stddev_k":3,"min_duration_minutes":15}`},
-		// Trap-source built-ins (seed_version 4, Phase 3 — INERT). SNMP/HA trap
-		// scoping templates. ProcessTrap already resolves policy config; these
-		// rules become the scope/suppress surface once Phase 4 routes ProcessTrap
-		// through matched trap rules. Severity blank ⇒ per-type default applies. No
-		// dampen_json — traps route via the base rule fields. Match on trap_type.
-		{Name: "HA member down", Description: "HA cluster member down (SNMP trap). Preview — not driving alerts yet.",
+		// Trap-source built-ins (seed_version 4). ACTIVE as of Phase 4a: ProcessTrap
+		// always consults matching trap rules (any trap type, no ownership flag) for
+		// scope/suppress + per-rule severity/routing on top of the existing policy
+		// path, falling back to the legacy path on no match. Severity blank ⇒
+		// per-type default applies. No dampen_json — traps route via the base rule
+		// fields. Match on trap_type. To mute a trap type, use a suppress rule
+		// (deleting the template falls back to the legacy policy path).
+		{Name: "HA member down", Description: "HA cluster member down (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHAMemberDown, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_MEMBER_DOWN"}`},
-		{Name: "HA heartbeat failure", Description: "HA cluster heartbeat lost (SNMP trap). Preview — not driving alerts yet.",
+		{Name: "HA heartbeat failure", Description: "HA cluster heartbeat lost (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHAHeartbeatFail, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_HEARTBEAT_FAIL"}`},
-		{Name: "HA failover", Description: "HA cluster failover/switch (SNMP trap). Preview — not driving alerts yet.",
+		{Name: "HA failover", Description: "HA cluster failover/switch (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHASwitch, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_SWITCH"}`},
-		{Name: "Link down (trap)", Description: "Interface link down reported by SNMP trap. Preview — not driving alerts yet.",
+		{Name: "Link down (trap)", Description: "Interface link down reported by SNMP trap.",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
-			AlertType: "LINK_DOWN", SeedVersion: seedVerTrapSpike,
+			AlertType: models.AlertTypeLinkDown, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"LINK_DOWN"}`},
 	}
 }

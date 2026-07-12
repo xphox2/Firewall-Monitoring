@@ -25,6 +25,7 @@ const (
 	AlertTypeTrafficSpike       AlertType = "TRAFFIC_SPIKE"
 	AlertTypeProbeDataLag       AlertType = "PROBE_DATA_LAG"
 	AlertTypeProbeDataTruncated AlertType = "PROBE_DATA_TRUNCATED"
+	AlertTypeLinkDown           AlertType = "LINK_DOWN" // generic SNMP linkDown trap
 	AlertTypeHAHeartbeatFail    AlertType = "HA_HEARTBEAT_FAIL"
 	AlertTypeHAMemberDown       AlertType = "HA_MEMBER_DOWN"
 	AlertTypeHAMemberUp         AlertType = "HA_MEMBER_UP"

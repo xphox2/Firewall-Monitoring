@@ -79,6 +79,45 @@ func TestEnsureDefaultRules_SpikeTrapTemplatesInert(t *testing.T) {
 	}
 }
 
+// TestMigrateActivatedSeedDescriptions refreshes stale "Preview" copy on the
+// now-active metric/trap seeds, only for shipped seeds, idempotently.
+func TestMigrateActivatedSeedDescriptions(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	// A shipped seed with the OLD preview description.
+	seed := &models.EventRule{Name: "CPU high", Source: "metric", SeedVersion: 3,
+		Description: "Threshold alert when device CPU usage is high. Preview — not driving alerts yet (see Settings → Alerts)."}
+	if err := d.db.Create(seed).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// An operator-created rule with the same name must NOT be touched (seed_version 0).
+	op := &models.EventRule{Name: "HA member down", Source: "trap", SeedVersion: 0, Description: "my custom note"}
+	if err := d.db.Create(op).Error; err != nil {
+		t.Fatalf("op rule: %v", err)
+	}
+
+	oldDesc := seed.Description
+	if err := d.migrateActivatedSeedDescriptions(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	var gotSeed, gotOp models.EventRule
+	if err := d.db.First(&gotSeed, seed.ID).Error; err != nil {
+		t.Fatalf("load seed: %v", err)
+	}
+	if gotSeed.Description == oldDesc || gotSeed.Description == "" {
+		t.Errorf("seed description not refreshed: %q", gotSeed.Description)
+	}
+	if err := d.db.First(&gotOp, op.ID).Error; err != nil {
+		t.Fatalf("load op: %v", err)
+	}
+	if gotOp.Description != "my custom note" {
+		t.Errorf("operator rule (seed_version 0) description must be untouched, got %q", gotOp.Description)
+	}
+	// Idempotent.
+	if err := d.migrateActivatedSeedDescriptions(); err != nil {
+		t.Fatalf("migrate re-run: %v", err)
+	}
+}
+
 // TestEnsureDefaultRules_UpgradeMarker3To4 exercises the real Phase-2→Phase-3
 // upgrade: a marker at "3" with the gen 1-3 rows already present must seed ONLY
 // the gen-4 spike/trap rules, leave a deleted older seed dead, advance the marker

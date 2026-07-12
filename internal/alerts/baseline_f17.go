@@ -29,11 +29,14 @@ type deviceBaselines struct {
 }
 
 // zscoreConfigured reports whether any loaded rule opted into zscore mode —
-// the gate that keeps baseline DB reads off installs that never use F17.
+// the gate that keeps baseline DB reads off installs that never use F17. Covers
+// BOTH policy AlertRules (policyCache.anyZScore) and metric Event Rules whose
+// dampen_json opts into zscore (anyMetricZScoreRule, set in RefreshEventRules) —
+// otherwise an event-rule-only zscore would never get baselines (Phase 4a).
 func (am *AlertManager) zscoreConfigured() bool {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
-	return am.policyCache.loaded && am.policyCache.anyZScore
+	return (am.policyCache.loaded && am.policyCache.anyZScore) || am.anyMetricZScoreRule
 }
 
 // ensureBaseline refreshes the device's baseline if stale. Called WITHOUT
