@@ -10,7 +10,13 @@ import "firewall-mon/internal/models"
 // SNMP polling for that device.
 const RedactedMask = "********"
 
-// RedactDevice masks SNMP secrets on a single device.
+// RedactDevice masks credential secrets on a single device. The SSH password is
+// admin-level credential material and MUST be masked here like the SNMP secrets
+// — before this it was returned in plaintext on every device GET. The plaintext
+// is available only through the dedicated, re-authenticated, audit-logged
+// reveal endpoint (RevealDeviceSecret). The write path already treats an
+// incoming value equal to RedactedMask as "unchanged", so masking here is safe
+// for round-trip saves.
 func RedactDevice(d *models.Device) {
 	if d.SNMPCommunity != "" {
 		d.SNMPCommunity = RedactedMask
@@ -20,6 +26,9 @@ func RedactDevice(d *models.Device) {
 	}
 	if d.SNMPV3PrivPass != "" {
 		d.SNMPV3PrivPass = RedactedMask
+	}
+	if d.SSHPassword != "" {
+		d.SSHPassword = RedactedMask
 	}
 }
 

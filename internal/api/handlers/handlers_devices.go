@@ -256,8 +256,9 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 		filteredUpdates[field] = db.EncryptField(str)
 	}
 
-	// Encrypt SSH password if present (ssh_password is not redacted on GET, but
-	// guard the mask anyway for consistency and future-proofing).
+	// Encrypt SSH password if present. ssh_password is now redacted on GET
+	// (v0.11.78), so the client resends the mask on an unchanged save — treat the
+	// mask (and empty) as "leave unchanged" exactly like the SNMP secrets above.
 	if sshPw, ok := filteredUpdates["ssh_password"]; ok {
 		str, isStr := sshPw.(string)
 		if !isStr || str == "" || str == httputil.RedactedMask {
@@ -307,6 +308,119 @@ func (h *Handler) DeleteDevice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Message("Device deleted"))
+}
+
+// revealableDeviceSecrets is the whitelist of device credential fields the
+// reveal endpoint may return in plaintext. Anything not listed is rejected, so
+// the endpoint can never be turned into a general field dumper.
+var revealableDeviceSecrets = map[string]func(*models.Device) string{
+	"ssh_password":     func(d *models.Device) string { return d.SSHPassword },
+	"snmp_community":   func(d *models.Device) string { return d.SNMPCommunity },
+	"snmpv3_auth_pass": func(d *models.Device) string { return d.SNMPV3AuthPass },
+	"snmpv3_priv_pass": func(d *models.Device) string { return d.SNMPV3PrivPass },
+}
+
+// RevealDeviceSecret returns ONE decrypted device credential in plaintext, so an
+// operator can recover/confirm a stored secret (e.g. an SSH admin password) they
+// otherwise only see masked. It is deliberately narrow and defense-in-depth:
+//
+//   - admin-only (the route is in adminOnlyRoutes) and rate-limited at the route;
+//   - re-verifies the CALLER'S OWN password before returning anything, so a
+//     hijacked but idle admin session can't harvest credentials;
+//   - whitelists the field, so it can't be coerced into dumping arbitrary data;
+//   - writes an explicit audit record naming who revealed which field on which
+//     device (the audit middleware also records the attempt + status, including
+//     a failed password check, independently).
+//
+// The plaintext is returned in the JSON body only; it is NEVER written to a log.
+func (h *Handler) RevealDeviceSecret(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+
+	username, _ := c.Get("username")
+	userIDVal, _ := c.Get("user_id")
+	usernameStr, _ := username.(string)
+	userID, _ := userIDVal.(uint)
+	if usernameStr == "" {
+		c.JSON(http.StatusUnauthorized, response.Error("Not authenticated"))
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+		TOTPCode string `json:"totp_code"`
+		Field    string `json:"field"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+	extract, allowed := revealableDeviceSecrets[req.Field]
+	if !allowed {
+		c.JSON(http.StatusBadRequest, response.Error("Unknown secret field"))
+		return
+	}
+	if req.Password == "" {
+		c.JSON(http.StatusForbidden, response.Error("Password is required"))
+		return
+	}
+
+	// Re-verify the caller's own password. Resolve the admin by the JWT username
+	// (never a request-supplied identity) so this can only confirm the caller.
+	admin, err := db.GetAdminByUsername(usernameStr)
+	if err != nil || admin == nil || !h.authManager.CheckPassword(req.Password, admin.Password) {
+		c.JSON(http.StatusForbidden, response.Error("Password is incorrect"))
+		return
+	}
+	// Step-up: if the caller has 2FA enrolled, a valid TOTP code is also
+	// required — so a phished password + stolen session (which alone couldn't
+	// pass a fresh 2FA login) can't be escalated into bulk credential harvesting.
+	if admin.TOTPEnabled {
+		if req.TOTPCode == "" {
+			c.JSON(http.StatusForbidden, response.Error("Authenticator code required"))
+			return
+		}
+		if !validateTOTPCode(req.TOTPCode, admin.TOTPSecret) {
+			c.JSON(http.StatusForbidden, response.Error("Authenticator code is incorrect"))
+			return
+		}
+	}
+
+	device, err := db.GetDevice(id) // secrets decrypted in-place by the store
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Device not found"))
+		return
+	}
+	secret := extract(device)
+	if secret == "" {
+		c.JSON(http.StatusNotFound, response.Error("No value is stored for that field"))
+		return
+	}
+
+	// Explicit forensic record: WHO revealed WHICH field on WHICH device. The
+	// value itself is never logged. Best-effort — a log failure must not block
+	// the operator's legitimate recovery.
+	if err := db.SaveAuditLog(&models.AuditLog{
+		CreatedAt: time.Now(),
+		Actor:     usernameStr,
+		ActorID:   userID,
+		Method:    "POST",
+		Action:    "reveal_secret",
+		Target:    fmt.Sprintf("device_id=%d field=%s", id, req.Field),
+		Status:    http.StatusOK,
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}); err != nil {
+		log.Printf("reveal-secret: audit log write failed for device %d field %s by %s: %v", id, req.Field, usernameStr, err)
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{"field": req.Field, "secret": secret}))
 }
 
 func (h *Handler) GetDeviceDetail(c *gin.Context) {

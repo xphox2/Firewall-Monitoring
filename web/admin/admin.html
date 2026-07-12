@@ -2331,7 +2331,7 @@
                     </select>
                 </div>
                 <div class="form-group" id="community-group">
-                    <label for="device-community">SNMP Community <span id="community-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
+                    <label for="device-community">SNMP Community <span id="community-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span><button type="button" class="reveal-secret-btn" data-action="reveal-device-secret" data-field="snmp_community" data-target="device-community" title="Reveal saved value" aria-label="Reveal saved value" style="display:none;background:none;border:none;color:var(--fwmon-text-faint);cursor:pointer;padding:0 2px;font-size:0.85rem">👁</button></label>
                     <input type="text" id="device-community" value="public" autocomplete="one-time-code" placeholder="Enter a new community only if changing">
                 </div>
                 <div id="snmpv3-fields" style="display:none">
@@ -2354,7 +2354,7 @@
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="device-v3-auth-pass">Auth Password <span id="v3-auth-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
+                        <label for="device-v3-auth-pass">Auth Password <span id="v3-auth-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span><button type="button" class="reveal-secret-btn" data-action="reveal-device-secret" data-field="snmpv3_auth_pass" data-target="device-v3-auth-pass" title="Reveal saved value" aria-label="Reveal saved value" style="display:none;background:none;border:none;color:var(--fwmon-text-faint);cursor:pointer;padding:0 2px;font-size:0.85rem">👁</button></label>
                         <input type="password" id="device-v3-auth-pass" autocomplete="new-password" placeholder="Enter a new password only if changing">
                     </div>
                     <div class="form-row">
@@ -2369,7 +2369,7 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="device-v3-priv-pass">Privacy Password <span id="v3-priv-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
+                            <label for="device-v3-priv-pass">Privacy Password <span id="v3-priv-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span><button type="button" class="reveal-secret-btn" data-action="reveal-device-secret" data-field="snmpv3_priv_pass" data-target="device-v3-priv-pass" title="Reveal saved value" aria-label="Reveal saved value" style="display:none;background:none;border:none;color:var(--fwmon-text-faint);cursor:pointer;padding:0 2px;font-size:0.85rem">👁</button></label>
                             <input type="password" id="device-v3-priv-pass" autocomplete="new-password" placeholder="Enter a new password only if changing">
                         </div>
                     </div>
@@ -2423,7 +2423,7 @@
                             <input type="text" id="device-ssh-username" autocomplete="one-time-code">
                         </div>
                         <div class="form-group">
-                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span></label>
+                            <label for="device-ssh-password">SSH Password <span id="ssh-password-note" style="color:var(--fwmon-text-faint);font-weight:normal;display:none">— leave blank to keep current</span><button type="button" class="reveal-secret-btn" data-action="reveal-device-secret" data-field="ssh_password" data-target="device-ssh-password" title="Reveal saved value" aria-label="Reveal saved value" style="display:none;background:none;border:none;color:var(--fwmon-text-faint);cursor:pointer;padding:0 2px;font-size:0.85rem">👁</button></label>
                             <input type="password" id="device-ssh-password" autocomplete="new-password" placeholder="Enter a new password only if changing">
                         </div>
                     </div>
@@ -2444,6 +2444,32 @@
                 <div class="modal-footer">
                     <button type="button" class="btn secondary" data-action="close-device-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reveal Secret Modal (re-auth to view a stored device credential) -->
+    <div class="modal" id="reveal-secret-modal" role="dialog" aria-modal="true" aria-labelledby="reveal-secret-title">
+        <div class="modal-content" style="max-width:440px">
+            <div class="modal-header">
+                <h2 id="reveal-secret-title">Reveal saved value</h2>
+                <button class="modal-close" data-action="close-reveal-secret-modal">&times;</button>
+            </div>
+            <form id="reveal-secret-form" autocomplete="off">
+                <p style="color:var(--fwmon-text-faint);font-size:0.85rem;margin:0 0 12px 0">Confirm your account password to reveal this stored credential. This action is recorded in the audit log.</p>
+                <div class="form-group">
+                    <label for="reveal-secret-password">Your password</label>
+                    <input type="password" id="reveal-secret-password" autocomplete="current-password">
+                </div>
+                <div class="form-group">
+                    <label for="reveal-secret-totp">Authenticator code <span style="color:var(--fwmon-text-faint);font-weight:normal">— only if 2FA is enabled</span></label>
+                    <input type="text" id="reveal-secret-totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+                </div>
+                <div id="reveal-secret-error" style="display:none;color:#ef4444;font-size:0.85rem;margin-bottom:8px"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" data-action="close-reveal-secret-modal">Cancel</button>
+                    <button type="submit" class="btn">Reveal</button>
                 </div>
             </form>
         </div>

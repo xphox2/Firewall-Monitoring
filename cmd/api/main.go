@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.77"
+const ServerVersion = "0.11.78"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -726,6 +726,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/tokens":                    true,
 			"/admin/api/tokens/:id":                true,
 			"/admin/api/probes/:id/regenerate-key": true,
+			// Revealing a stored device credential in plaintext is admin-only,
+			// even though day-to-day device edits are operator-level.
+			"/admin/api/devices/:id/reveal-secret": true,
 			// LC-17: IRC server/channel config carries credential material
 			// (server/NickServ/SASL passwords, channel keys) and the test
 			// endpoint dials an arbitrary request-supplied host with request-
@@ -858,6 +861,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/devices/test", handler.TestDeviceConnection)
 		admin.PUT("/api/devices/:id", handler.UpdateDevice)
 		admin.DELETE("/api/devices/:id", handler.DeleteDevice)
+		// Reveal one decrypted device credential — admin-only (in adminOnlyRoutes),
+		// rate-limited like login (it re-verifies a password), audit-logged.
+		admin.POST("/api/devices/:id/reveal-secret", middleware.LoginRateLimiter(), handler.RevealDeviceSecret)
 
 		admin.GET("/api/sites", handler.GetSites)
 		admin.POST("/api/sites", handler.CreateSite)
