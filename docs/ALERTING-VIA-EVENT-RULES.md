@@ -43,7 +43,7 @@ Migration: **v41** = the additive `DampenJSON` (+ `PolicyScope` when Phase 4 lan
 ### 2.2 `dampen_json` schemas (per source)
 ```jsonc
 // source=state (interface/VPN/device down)
-{ "refire_mode": "episode", "min_up_seconds": 14400, "daily_cap": 1 }
+{ "refire_mode": "episode", "min_up_seconds": 3600, "daily_cap": 1 }
 // source=metric (CPU/mem/disk/session)
 { "mode": "static|zscore", "threshold": 90, "clear_threshold": 80, "zscore_k": 3.0 }
 // source=spike
@@ -85,7 +85,7 @@ The existing `matchExpr.eval` is reused verbatim for `appliesTo` + suppression s
 A down alert fires only on a genuinely **new outage episode**. On each down observation for a link/tunnel `key`:
 
 1. **An open (unresolved) alert already exists for `key`** → **suppress** (same continuous‑down episode → no re‑fire after ack, no periodic "still down" reminders).
-2. **New episode** (recovered since the last alert) → fire iff: **first‑ever** down, **or** it was **up ≥ `min_up_seconds`** (default 4h) before this down, **or** **≥ 24h** since the last down alert (the `daily_cap`). Else **suppress**.
+2. **New episode** (recovered since the last alert) → fire iff: **first‑ever** down, **or** it was **up ≥ `min_up_seconds`** (default **1h**) before this down, **or** **≥ 24h** since the last down alert (the `daily_cap`). Else **suppress**.
 
 Identical for interfaces and VPNs. Composes with the shipped **everUp counter gate** (v0.11.79 — never alert a never‑cabled port), maintenance windows, and incident grouping.
 
@@ -135,10 +135,10 @@ Non‑lossy path: add **`PolicyScope *uint`** to EventRule ("applies to devices 
 
 ---
 
-## 8. Open decisions for the owner
-1. **Phase 1 UI:** ship a minimal `source=state` editor in Phase 1, or declare the seeded templates **API‑editable‑only** until the unified Phase 5 UI? (Recommendation: minimal Phase 1 UI — an operator opening a seeded rule in today's syslog‑shaped builder is confusing.)
-2. **`min_up_seconds` default** — 4h as proposed, or 2–3h?
-3. **Deprecation posture:** does the old Alert‑Policy threshold UI get removed in Phase 5, or kept read‑only for a release?
+## 8. Decisions (RESOLVED by owner)
+1. **Phase 1 UI: a complete, polished `source=state` Event Rules UI** — not minimal, not API‑only. Full create/edit/list/suppress with per‑source match‑field hints and the dampening knobs, built to extend to `metric`/etc. in later phases. Console design‑language tokens + a mobile section + a no‑dead‑ends security pass (per project UI conventions).
+2. **`min_up_seconds` default = 3600 (1 hour).**
+3. **Remove the old Alert‑Policy threshold UI in Phase 5** (folded into notification/escalation profiles + the unified rules surface). No read‑only grace period.
 
 ## 9. Non‑goals / guarantees
 - **No alerting gap or double‑fire** during migration — the per‑type ownership flag guarantees exactly one path owns each type at any time.
