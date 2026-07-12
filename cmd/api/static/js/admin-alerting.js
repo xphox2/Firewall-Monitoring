@@ -39,7 +39,7 @@
             populateGlobal(d.global || {});
             renderOverrides(d.overrides || []);
         }).catch(function(e) {
-            console.error('[Alerting] load failed:', e);
+            fwmonLog.error('[Alerting] load failed:', e);
             AC.showError('Failed to load alerting config: ' + e.message);
         });
     }
