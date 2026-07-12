@@ -23,16 +23,19 @@ acceptable.
   time window**, so it can't trigger the startup statement-timeout that a
   high-volume `interface_stats` scan would risk; and it recognizes a real link
   that is down across a poller restart *better* than history (counters are in
-  the current snapshot). VPN tunnels use the same signal (bytes / tunnel
-  uptime).
+  the current snapshot). VPN tunnels use the same signal to STOP the flood
+  (bytes / uptime mark a real tunnel), but are **suppress-only** — a
+  zero-counter down tunnel is never auto-resolved, because FortiGate VPN
+  counters are per-SA and can read 0 for a down phase2, and silencing a real
+  tunnel outage would be worse than leaving a stale alert for one manual clear.
 - **The circular open-alerts seed is removed.** `SeedEverUpFromOpenAlerts` is
   gone; ever-up is populated from live up-rows plus the counter check.
-- **Stale false alerts are auto-cleaned.** When the poller sees a down port/
-  tunnel with zero counters that it doesn't already know was up, it **silently
-  resolves** any lingering open INTERFACE_DOWN/VPN_TUNNEL_DOWN alert (a cold
-  resolve — no "back up" notification) and leaves it un-marked, so the ones
-  already in your queue clear themselves and do not return. A real outage (which
-  has nonzero counters) is never auto-resolved.
+- **Stale false INTERFACE_DOWN alerts are auto-cleaned.** When the poller sees a
+  down port with zero counters that it doesn't already know was up, it
+  **silently resolves** any lingering open INTERFACE_DOWN alert (a cold resolve
+  — no "back up" notification) and leaves it un-marked, so the ones already in
+  your queue clear themselves and do not return. A real outage (nonzero
+  counters) is never auto-resolved.
 - Tests: never-up port with a stale open alert is auto-resolved and never
   re-fires (reproduces the report); a real link (nonzero counters) down across a
   restart is recognized and alerts; restart-storm suppression and post-cooldown

@@ -263,11 +263,20 @@ func TestCheckRelayedTelemetry_RealLinkDownAcrossRestart(t *testing.T) {
 		DeviceID: dev.ID, Timestamp: time.Now(), Name: "wan1", Index: 2,
 		Status: "down", AdminStatus: "up", InBytes: 5_000_000, OutBytes: 3_000_000,
 	})
+	// A pre-existing open alert from before the "restart" must be preserved.
+	preexisting := &models.Alert{DeviceID: dev.ID, AlertType: "INTERFACE_DOWN", MetricName: "interface_wan1", Timestamp: time.Now().Add(-time.Hour)}
+	mustCreate(t, db, preexisting)
 
 	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
 
-	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 1 {
-		t.Errorf("a real link (nonzero counters) down across a restart should alert; got %d", got)
+	// The real link is recognized from counters and still has an OPEN alert
+	// (the pre-existing one was NOT auto-resolved).
+	var open int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL", dev.ID, "INTERFACE_DOWN").
+		Count(&open)
+	if open == 0 {
+		t.Error("a real link's (nonzero-counter) outage was wrongly auto-resolved across a restart")
 	}
 }
 

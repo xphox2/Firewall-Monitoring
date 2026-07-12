@@ -1181,10 +1181,16 @@ func (p *Poller) resolveInterfaceEverUp(ifaces []models.InterfaceStats, siteID *
 	}
 }
 
-// resolveVPNEverUp is the VPN-tunnel counterpart of resolveInterfaceEverUp. A
-// tunnel that ever established has carried bytes or accrued uptime; a never-
-// established/idle tunnel has neither.
-func (p *Poller) resolveVPNEverUp(vpns []models.VPNStatus, siteID *uint) {
+// resolveVPNEverUp is the VPN-tunnel counterpart of resolveInterfaceEverUp, but
+// SUPPRESS-ONLY: a tunnel that has carried bytes or accrued uptime is marked
+// ever-up (so a real tunnel outage still alerts), but a zero-counter down tunnel
+// is NEVER auto-resolved. Unlike vendor-independent IF-MIB interface octets,
+// FortiGate VPN counters are per-SA (fgVpnTunEntInOctets/UpTime) and may read 0
+// for a down phase2 — so auto-resolving on zero counters could silently close a
+// genuine FortiGate tunnel outage across a poller restart. The ever-up gate
+// alone stops the idle-tunnel flood; a lingering false VPN alert is left for the
+// operator to clear once (it can't re-fire).
+func (p *Poller) resolveVPNEverUp(vpns []models.VPNStatus, _ *uint) {
 	if p.alertManager == nil {
 		return
 	}
@@ -1198,8 +1204,6 @@ func (p *Poller) resolveVPNEverUp(vpns []models.VPNStatus, siteID *uint) {
 		}
 		if vpn.BytesIn+vpn.BytesOut > 0 || vpn.TunnelUptime > 0 {
 			p.alertManager.MarkVPNEverUp(vpn.DeviceID, vpn.TunnelName)
-		} else if !p.alertManager.IsVPNEverUp(vpn.DeviceID, vpn.TunnelName) {
-			p.alertManager.AutoResolveVPNDown(vpn.DeviceID, vpn.TunnelName, siteID)
 		}
 	}
 }

@@ -176,13 +176,6 @@ func (am *AlertManager) IsInterfaceEverUp(deviceID uint, name string) bool {
 	return am.everUp[ifaceDownKey(deviceID, name)]
 }
 
-// IsVPNEverUp is the VPN counterpart of IsInterfaceEverUp.
-func (am *AlertManager) IsVPNEverUp(deviceID uint, tunnelName string) bool {
-	am.mu.RLock()
-	defer am.mu.RUnlock()
-	return am.everUp[vpnDownKey(deviceID, tunnelName)]
-}
-
 // AutoResolveInterfaceDown silently clears any OPEN INTERFACE_DOWN alert for an
 // interface the poller has determined is NOT a monitored link (never
 // operationally up in its history). It is a cold resolve — sendRecovery only
@@ -192,12 +185,6 @@ func (am *AlertManager) IsVPNEverUp(deviceID uint, tunnelName string) bool {
 func (am *AlertManager) AutoResolveInterfaceDown(deviceID uint, name string, siteID *uint) {
 	am.sendRecovery(ifaceDownKey(deviceID, name), "INTERFACE_DOWN", "interface_"+name,
 		"interface has never been operationally up — not a monitored link", deviceID, siteID)
-}
-
-// AutoResolveVPNDown is the VPN counterpart of AutoResolveInterfaceDown.
-func (am *AlertManager) AutoResolveVPNDown(deviceID uint, tunnelName string, siteID *uint) {
-	am.sendRecovery(vpnDownKey(deviceID, tunnelName), "VPN_TUNNEL_DOWN", "vpn_"+tunnelName,
-		"tunnel has never been established — not an active tunnel", deviceID, siteID)
 }
 
 // markActiveLocked flips a state-alert key to active and stamps when it fired
