@@ -919,6 +919,40 @@ type ProbeCommand struct {
 // TableName pins the table name so the wire/DB contract is explicit.
 func (ProbeCommand) TableName() string { return "probe_commands" }
 
+// IPSecTunnel is a persisted vendor-neutral IPSec tunnel intent created by the
+// provisioning wizard. The full structured intent lives in IntentJSON (the
+// in-memory form is ipsec.TunnelIntent); a handful of columns are promoted for
+// querying/listing. The PSK is stored separately, ENCRYPTED at rest, excluded
+// from JSON, and never returned unmasked.
+type IPSecTunnel struct {
+	ID      uint   `json:"id" gorm:"primaryKey"`
+	Name    string `json:"name" gorm:"uniqueIndex;not null"`
+	Enabled bool   `json:"enabled" gorm:"default:true"`
+	// Status: draft, deploying, verifying, up, down, degraded, rolled_back,
+	// rollback_failed, error.
+	Status    string `json:"status" gorm:"default:draft;index"`
+	LastError string `json:"last_error" gorm:"type:text"`
+
+	// Promoted endpoint columns for listing/filtering.
+	ADeviceID uint   `json:"a_device_id" gorm:"index"`
+	BDeviceID uint   `json:"b_device_id" gorm:"index"`
+	AVendor   string `json:"a_vendor"`
+	BVendor   string `json:"b_vendor"`
+
+	// IntentJSON is the serialized ipsec.TunnelIntent WITHOUT the PSK. Excluded
+	// from API JSON (the handler re-expands it into a masked response DTO).
+	IntentJSON string `json:"-" gorm:"type:text"`
+	// PSK is encrypted at rest via the field crypto; json:"-" so it never leaks.
+	PSK string `json:"-" gorm:"type:text"`
+
+	LastDeployedAt *time.Time `json:"last_deployed_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// TableName pins the table name so the wire/DB contract is explicit.
+func (IPSecTunnel) TableName() string { return "ipsec_tunnels" }
+
 type ProbeApproval struct {
 	ID             uint       `json:"id" gorm:"primaryKey"`
 	ProbeID        uint       `json:"probe_id" gorm:"uniqueIndex;not null"`

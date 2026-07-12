@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.79"
+const ServerVersion = "0.11.80"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -729,6 +729,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// Revealing a stored device credential in plaintext is admin-only,
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
+			// IPSec provisioning carries PSK credential material — admin-only.
+			"/admin/api/ipsec/tunnels":             true,
+			"/admin/api/ipsec/tunnels/:id":         true,
+			"/admin/api/ipsec/tunnels/:id/preview": true,
 			// LC-17: IRC server/channel config carries credential material
 			// (server/NickServ/SASL passwords, channel keys) and the test
 			// endpoint dials an arbitrary request-supplied host with request-
@@ -864,6 +868,17 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// Reveal one decrypted device credential — admin-only (in adminOnlyRoutes),
 		// rate-limited like login (it re-verifies a password), audit-logged.
 		admin.POST("/api/devices/:id/reveal-secret", middleware.LoginRateLimiter(), handler.RevealDeviceSecret)
+
+		// IPSec provisioning wizard (PR-A: intent CRUD + capabilities + preview;
+		// no live device writes). Tunnels carry PSK credential material, so the
+		// mutations are admin-only (in adminOnlyRoutes).
+		admin.GET("/api/ipsec/capabilities", handler.IPSecCapabilities)
+		admin.GET("/api/ipsec/tunnels", handler.ListIPSecTunnels)
+		admin.POST("/api/ipsec/tunnels", handler.CreateIPSecTunnel)
+		admin.GET("/api/ipsec/tunnels/:id", handler.GetIPSecTunnel)
+		admin.PUT("/api/ipsec/tunnels/:id", handler.UpdateIPSecTunnel)
+		admin.DELETE("/api/ipsec/tunnels/:id", handler.DeleteIPSecTunnel)
+		admin.GET("/api/ipsec/tunnels/:id/preview", handler.PreviewIPSecTunnel)
 
 		admin.GET("/api/sites", handler.GetSites)
 		admin.POST("/api/sites", handler.CreateSite)

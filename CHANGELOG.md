@@ -1,6 +1,40 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.80] - 2026-07-12
+
+### Added — cross-vendor IPSec provisioning core (wizard PR-A: intent, drivers, preview; no device writes yet)
+
+The vendor-neutral foundation for the IPSec tunnel provisioning wizard. This PR
+adds the intent model, the per-vendor template/driver framework, best-practice
+crypto presets, validation linters, tunnel CRUD, and a per-vendor config
+**preview** — but it makes **no live changes to any device** (the collector
+apply/verify/rollback path is a later PR).
+
+- **New `internal/ipsec` package** — one canonical, symmetric `TunnelIntent`
+  (`Ends[2]`) rendered to each vendor through a pluggable `VendorDriver` +
+  declarative `CapabilityDescriptor`. Crypto is structured enums, never vendor
+  strings; a render-time projection (`RenderView`) emits both ends from one
+  intent so they can't drift. **FortiGate (CLI) and OPNsense (config.xml/REST
+  Connections) drivers** ship, with a conformance test suite that renders a
+  canonical intent through every driver and checks the invariants (checksum
+  matches steps; the PSK is in the apply steps but never in the human preview).
+- **Best-practice crypto presets** (RFC 8221/8247, NSA CNSA, NIST): **Modern**
+  (IKEv2 · AES-256-GCM · SHA-384 · DH-20 · PFS) default, **Compatible**
+  (AES-256-CBC · SHA-256 · DH-14) interop floor, plus Custom; the wizard
+  resolves to the strongest profile BOTH ends support.
+- **Validation linters** (pure, run before anything is written): capability
+  intersection, self-lockout (a routed subnet containing the peer's endpoint),
+  subnet overlap, default-route-over-VTI, no-initiator, PSK strength; findings
+  are block/warn. PSK auto-generated 256-bit over a CLI-safe alphabet; VTI /30
+  auto-allocated from the link-local pool.
+- **Tunnel persistence + API (admin-only)** — `ipsec_tunnels` table (migration
+  v40), `IPSecStore` CRUD with the PSK encrypted at rest and masked on GET;
+  `GET /admin/api/ipsec/capabilities?a=&b=` (the intersection that drives the
+  wizard), tunnel CRUD, and `GET /admin/api/ipsec/tunnels/:id/preview` (the
+  exact per-vendor config each end will receive, PSK redacted). Mutations are in
+  the `adminOnlyRoutes` RBAC matrix (guarded by a route test) — tunnels carry
+  PSK credential material.
 ## [0.11.79] - 2026-07-12
 
 ### Fixed — recurring false INTERFACE_DOWN / VPN_TUNNEL_DOWN alerts for never-up ports (root cause)

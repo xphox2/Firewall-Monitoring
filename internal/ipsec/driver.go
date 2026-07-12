@@ -1,0 +1,318 @@
+package ipsec
+
+import (
+	"fmt"
+	"sort"
+	"sync"
+)
+
+// SelectorModel captures how a vendor expresses phase-2 traffic selectors for a
+// route-based tunnel. Almost every vendor uses 0.0.0.0/0; pfSense VTI is the
+// exception (it uses the tunnel-endpoint /30 host addresses).
+type SelectorModel string
+
+const (
+	SelectorZero     SelectorModel = "zero"     // 0.0.0.0/0 both ends (FortiGate/OPNsense/Cisco/PAN)
+	SelectorEndpoint SelectorModel = "endpoint" // VTI endpoint /32s (pfSense)
+)
+
+// PushTransport is how the collector applies this vendor's config.
+type PushTransport string
+
+const (
+	PushSSHCLI PushTransport = "ssh_cli"
+	PushREST   PushTransport = "rest"
+)
+
+// CapabilityDescriptor is the declarative, per-vendor feature/constraint sheet.
+// It drives BOTH pre-flight validation AND the wizard UI (options offered =
+// intersection of both ends' descriptors), so there is no vendor-specific UI or
+// validation branching. Adding a vendor = adding a descriptor + templates.
+type CapabilityDescriptor struct {
+	Vendor      string
+	IKEVersions []IKEVersion
+	Modes       []Mode
+
+	Encryption []Encryption
+	Integrity  []Integrity
+	PRF        []PRF
+	DHGroups   []DHGroup
+
+	PFS      bool
+	MSSClamp bool
+
+	// MaxTunnelNameLen bounds the generated object name (FortiGate phase1-iface
+	// is 15 chars). 0 = unbounded.
+	MaxTunnelNameLen int
+	// RequiresFirewallPolicy: the driver must emit a pass rule/policy or traffic
+	// is dropped (OPNsense Connections, Palo Alto).
+	RequiresFirewallPolicy bool
+	// AutoObjects the driver injects that the operator would otherwise forget
+	// (e.g. "blackhole_route", "firewall_policy") — surfaced in preview.
+	AutoObjects []string
+
+	SelectorModel   SelectorModel
+	IDTypes         []IDType
+	PushTransport   PushTransport
+	RendererName    string
+	TemplateVersion string
+}
+
+func (d CapabilityDescriptor) supportsEnc(e Encryption) bool { return containsEnc(d.Encryption, e) }
+func (d CapabilityDescriptor) supportsDH(g DHGroup) bool     { return containsDH(d.DHGroups, g) }
+func (d CapabilityDescriptor) supportsMode(m Mode) bool      { return containsMode(d.Modes, m) }
+func (d CapabilityDescriptor) supportsIKE(v IKEVersion) bool { return containsIKE(d.IKEVersions, v) }
+func (d CapabilityDescriptor) supportsInteg(i Integrity) bool {
+	return i == IntegrityNone || containsInteg(d.Integrity, i)
+}
+func (d CapabilityDescriptor) supportsPRF(p PRF) bool { return containsPRF(d.PRF, p) }
+
+func containsInteg(s []Integrity, i Integrity) bool {
+	for _, x := range s {
+		if x == i {
+			return true
+		}
+	}
+	return false
+}
+func containsPRF(s []PRF, p PRF) bool {
+	for _, x := range s {
+		if x == p {
+			return true
+		}
+	}
+	return false
+}
+
+// Intersect returns the capabilities BOTH vendors support — the exact option set
+// the wizard may offer for a tunnel between them (so it never presents a choice
+// one end can't honor). Vendor/renderer-specific scalar fields are left zero;
+// only the negotiable sets + booleans are meaningful on the result.
+func Intersect(a, b CapabilityDescriptor) CapabilityDescriptor {
+	out := CapabilityDescriptor{
+		Vendor:           a.Vendor + "+" + b.Vendor,
+		PFS:              a.PFS && b.PFS,
+		MSSClamp:         a.MSSClamp && b.MSSClamp,
+		SelectorModel:    a.SelectorModel, // informational; render uses each end's own
+		MaxTunnelNameLen: minNonZero(a.MaxTunnelNameLen, b.MaxTunnelNameLen),
+	}
+	for _, v := range a.IKEVersions {
+		if containsIKE(b.IKEVersions, v) {
+			out.IKEVersions = append(out.IKEVersions, v)
+		}
+	}
+	for _, m := range a.Modes {
+		if containsMode(b.Modes, m) {
+			out.Modes = append(out.Modes, m)
+		}
+	}
+	for _, e := range a.Encryption {
+		if containsEnc(b.Encryption, e) {
+			out.Encryption = append(out.Encryption, e)
+		}
+	}
+	for _, in := range a.Integrity {
+		if containsInteg(b.Integrity, in) {
+			out.Integrity = append(out.Integrity, in)
+		}
+	}
+	for _, p := range a.PRF {
+		if containsPRF(b.PRF, p) {
+			out.PRF = append(out.PRF, p)
+		}
+	}
+	for _, g := range a.DHGroups {
+		if containsDH(b.DHGroups, g) {
+			out.DHGroups = append(out.DHGroups, g)
+		}
+	}
+	for _, t := range a.IDTypes {
+		if containsIDType(b.IDTypes, t) {
+			out.IDTypes = append(out.IDTypes, t)
+		}
+	}
+	return out
+}
+
+func minNonZero(a, b int) int {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	case a < b:
+		return a
+	default:
+		return b
+	}
+}
+
+func containsIDType(s []IDType, t IDType) bool {
+	for _, x := range s {
+		if x == t {
+			return true
+		}
+	}
+	return false
+}
+
+// ApplyStepKind distinguishes a CLI text block from a structured HTTP API call —
+// so a FortiGate CLI script and an OPNsense REST batch are the SAME abstraction.
+type ApplyStepKind string
+
+const (
+	StepSSHCLI  ApplyStepKind = "ssh_cli"
+	StepHTTPAPI ApplyStepKind = "http_api"
+)
+
+// ApplyStep is one unit of config the collector applies. Exactly one of the CLI
+// or HTTP fields is populated per Kind. Description is human-facing (shown in
+// preview); it must never contain the PSK.
+type ApplyStep struct {
+	Kind        ApplyStepKind `json:"kind"`
+	Description string        `json:"description"`
+
+	// SSH_CLI
+	CLI string `json:"cli,omitempty"`
+
+	// HTTP_API
+	Method string `json:"method,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Body   string `json:"body,omitempty"`
+}
+
+// ArtifactKind labels what an Artifact does, for ordering + rollback.
+type ArtifactKind string
+
+const (
+	ArtifactApply  ArtifactKind = "apply"
+	ArtifactRemove ArtifactKind = "remove"
+	ArtifactStatus ArtifactKind = "status"
+)
+
+// Artifact is the rendered, ready-to-apply config for ONE end. The collector
+// checksum-verifies before applying exactly these bytes — so the preview the
+// operator approved is provably what runs.
+type Artifact struct {
+	Vendor          string       `json:"vendor"`
+	Kind            ArtifactKind `json:"kind"`
+	Steps           []ApplyStep  `json:"steps"`
+	Checksum        string       `json:"checksum"`
+	TemplateVersion string       `json:"template_version"`
+	// PreviewText is a human-readable rendering (native syntax) for the wizard
+	// preview pane; it has the PSK REDACTED and is not what gets applied.
+	PreviewText string `json:"preview_text"`
+	// AutoObjects lists the auto-injected objects (routes/policies/MSS) surfaced
+	// in preview so the operator sees what changes forwarding.
+	AutoObjects []string `json:"auto_objects,omitempty"`
+}
+
+// ProbeStep is a read-only command the collector runs to read SA state.
+type ProbeStep struct {
+	Kind   ApplyStepKind `json:"kind"`
+	CLI    string        `json:"cli,omitempty"`
+	Method string        `json:"method,omitempty"`
+	Path   string        `json:"path,omitempty"`
+}
+
+// SAState is the normalized liveness of one SA layer.
+type SAState string
+
+const (
+	SAUp      SAState = "up"
+	SADown    SAState = "down"
+	SAUnknown SAState = "unknown"
+)
+
+// TunnelStatus is the vendor-normalized result of a StatusProbe.
+type TunnelStatus struct {
+	IKE      SAState `json:"ike"`
+	Child    SAState `json:"child"`
+	RawError string  `json:"raw_error,omitempty"`
+}
+
+// VendorDriver renders and reads an intent for one vendor. All methods are pure
+// (no I/O): Render/RenderRemove build Artifacts; StatusProbe returns the
+// commands to run; ParseStatus interprets their raw output. The collector does
+// the I/O.
+type VendorDriver interface {
+	Capabilities() CapabilityDescriptor
+	Render(v RenderView) (Artifact, error)
+	RenderRemove(v RenderView) (Artifact, error)
+	StatusProbe(v RenderView) []ProbeStep
+	ParseStatus(raw string) (TunnelStatus, error)
+}
+
+var (
+	registryMu sync.RWMutex
+	registry   = map[string]VendorDriver{}
+)
+
+// Register adds a vendor driver. Called from each vendor package's init().
+func Register(d VendorDriver) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registry[d.Capabilities().Vendor] = d
+}
+
+// Driver returns the registered driver for a vendor, or (nil,false).
+func Driver(vendor string) (VendorDriver, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	d, ok := registry[vendor]
+	return d, ok
+}
+
+// Vendors returns the sorted list of vendors with a provisioning driver.
+func Vendors() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	out := make([]string, 0, len(registry))
+	for v := range registry {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Capabilities returns a vendor's descriptor, or an error if unregistered.
+func Capabilities(vendor string) (CapabilityDescriptor, error) {
+	d, ok := Driver(vendor)
+	if !ok {
+		return CapabilityDescriptor{}, fmt.Errorf("no IPSec provisioning driver for vendor %q", vendor)
+	}
+	return d.Capabilities(), nil
+}
+
+func containsEnc(s []Encryption, e Encryption) bool {
+	for _, x := range s {
+		if x == e {
+			return true
+		}
+	}
+	return false
+}
+func containsDH(s []DHGroup, g DHGroup) bool {
+	for _, x := range s {
+		if x == g {
+			return true
+		}
+	}
+	return false
+}
+func containsMode(s []Mode, m Mode) bool {
+	for _, x := range s {
+		if x == m {
+			return true
+		}
+	}
+	return false
+}
+func containsIKE(s []IKEVersion, v IKEVersion) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
