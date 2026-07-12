@@ -330,3 +330,25 @@ func ValidateMetricDampenJSON(s string) string {
 	}
 	return ""
 }
+
+// ValidateSpikeDampenJSON checks a spike rule's dampen_json for the NOC editor.
+// Empty is allowed (defaults apply). Returns a human-readable message on error.
+// Phase 3 validates the shape; the seasonal-spike evaluator that consumes these
+// params lands in Phase 4.
+func ValidateSpikeDampenJSON(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	var dp dampenParams
+	if err := json.Unmarshal([]byte(s), &dp); err != nil {
+		return "Invalid dampen_json: " + err.Error()
+	}
+	if dp.StddevK < 0 {
+		return "dampen_json stddev_k must be ≥ 0"
+	}
+	if dp.MinDurationMinutes < 0 {
+		return "dampen_json min_duration_minutes must be ≥ 0"
+	}
+	return ""
+}

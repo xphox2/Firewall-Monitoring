@@ -50,11 +50,85 @@ func TestEnsureDefaultRules_MetricTemplatesInert(t *testing.T) {
 	}
 }
 
+// TestEnsureDefaultRules_SpikeTrapTemplatesInert (Phase 3): the spike + trap
+// templates ship but must NOT be owned — the legacy poller/ProcessTrap paths
+// still drive them until Phase 4.
+func TestEnsureDefaultRules_SpikeTrapTemplatesInert(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultRules()
+
+	var spikeCount, trapCount int64
+	d.db.Model(&models.EventRule{}).Where("source = ?", "spike").Count(&spikeCount)
+	d.db.Model(&models.EventRule{}).Where("source = ?", "trap").Count(&trapCount)
+	if spikeCount != 1 {
+		t.Errorf("want 1 spike template, got %d", spikeCount)
+	}
+	if trapCount != 4 {
+		t.Errorf("want 4 trap templates, got %d", trapCount)
+	}
+
+	// Ownership flag must NOT include traffic_spike or any trap type (compared
+	// case-insensitively — the flag holds event_type-style tokens, so guard against
+	// either casing sneaking in).
+	owned, _ := d.GetSettingValue("state_engine_owns")
+	lowerOwned := strings.ToLower(owned)
+	for _, ev := range []string{"traffic_spike", "ha_member_down", "link_down"} {
+		if strings.Contains(lowerOwned, ev) {
+			t.Errorf("state_engine_owns %q must NOT contain %q (Phase 3 is inert)", owned, ev)
+		}
+	}
+}
+
+// TestEnsureDefaultRules_UpgradeMarker3To4 exercises the real Phase-2→Phase-3
+// upgrade: a marker at "3" with the gen 1-3 rows already present must seed ONLY
+// the gen-4 spike/trap rules, leave a deleted older seed dead, advance the marker
+// to 4, and not touch the existing ownership flag.
+func TestEnsureDefaultRules_UpgradeMarker3To4(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultRules() // fresh: seeds all gens, marker=4, flag set
+	// Simulate a machine that last ran at gen 3 (Phase 2): roll the marker back and
+	// remove the gen-4 rows so the "upgrade" re-seeds them.
+	if err := d.db.Where("source IN ?", []string{"spike", "trap"}).Delete(&models.EventRule{}).Error; err != nil {
+		t.Fatalf("clear gen-4 rows: %v", err)
+	}
+	// Operator had deleted a gen-2 state seed before upgrading.
+	if err := d.db.Where("name = ?", "VPN tunnel down").Delete(&models.EventRule{}).Error; err != nil {
+		t.Fatalf("delete state seed: %v", err)
+	}
+	// Operator edited the ownership flag before upgrading.
+	if err := d.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: "interface_down"}); err != nil {
+		t.Fatalf("edit flag: %v", err)
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{Key: "event_rules_seed_version", Value: "3"}); err != nil {
+		t.Fatalf("set marker 3: %v", err)
+	}
+
+	d.EnsureDefaultRules() // upgrade 3→4
+
+	var spikeCount, trapCount, vpnCount int64
+	d.db.Model(&models.EventRule{}).Where("source = ?", "spike").Count(&spikeCount)
+	d.db.Model(&models.EventRule{}).Where("source = ?", "trap").Count(&trapCount)
+	d.db.Model(&models.EventRule{}).Where("name = ?", "VPN tunnel down").Count(&vpnCount)
+	if spikeCount != 1 || trapCount != 4 {
+		t.Errorf("gen-4 rules not seeded on 3→4 upgrade: spike=%d trap=%d", spikeCount, trapCount)
+	}
+	if vpnCount != 0 {
+		t.Error("operator-deleted gen-2 state seed was resurrected on the 3→4 upgrade")
+	}
+	if v, _ := d.GetSettingValue("event_rules_seed_version"); v != "4" {
+		t.Errorf("marker not advanced to 4, got %q", v)
+	}
+	if v, _ := d.GetSettingValue("state_engine_owns"); v != "interface_down" {
+		t.Errorf("ownership flag clobbered on upgrade: got %q", v)
+	}
+}
+
 // TestEnsureDefaultRules_NoResurrectOnBump verifies the seed-generation guard: an
 // operator-deleted OLDER-generation seed is not recreated when a newer generation
 // is applied. Simulated by pre-setting the marker to the state generation and
 // deleting a syslog (gen 1) seed, then running EnsureDefaultRules (which applies
-// gen 3): the deleted gen-1 rule must stay gone; the gen-3 metric rules appear.
+// the newer generations 3+4): the deleted gen-1 rule must stay gone; the gen-3
+// metric rules appear.
 func TestEnsureDefaultRules_NoResurrectOnBump(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	// Seed everything once (fresh install → marker = current).

@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.83] - 2026-07-12
+
+### Added — traffic-spike and SNMP/HA trap templates in Event Rules (preview; no change to live alerting)
+
+Continues bringing every alert type onto the Event Rules surface. Adds two new
+rule sources — `spike` (traffic anomaly) and `trap` (SNMP / HA) — as data model,
+validation, built-in templates, and editor UI. Like the metric templates, they
+are deliberately **inert**: traffic-spike alerting still runs in the poller and
+trap alerting still runs through its existing policy path, exactly as before. No
+live alerting changes on upgrade.
+
+- **`spike` source** with a `dampen_json` blob (`{"stddev_k":…,"min_duration_minutes":…}`,
+  reuses the existing column — no migration), a validator, a seeded "Traffic
+  spike" template, and an editor **Spike sensitivity** panel (Z-score K + sustain
+  minutes).
+- **`trap` source** with seeded HA/LINK templates ("HA member down", "HA
+  heartbeat failure", "HA failover", "Link down (trap)") that scope on
+  `trap_type`; a trap editor note + field hints (`trap_type` / `vendor` /
+  `source_ip`). Traps carry no dampen blob — they scope/route via the base rule
+  fields.
+- All five templates ship with a **Preview** note and are excluded from the
+  ownership flag, so nothing about live alerting changes. The seasonal
+  spike-detector routing and trap-rule evaluation land in a later release.
+
 ## [0.11.82] - 2026-07-12
 
 ### Added — CPU/memory/disk/session threshold templates in Event Rules (preview; no change to live alerting)

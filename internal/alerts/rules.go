@@ -144,9 +144,9 @@ type compiledRule struct {
 
 // dampenParams is the parsed DampenJSON. Fields are per-source; state uses
 // RefireMode/MinUpSeconds/DailyCap, metric uses Mode/Threshold/ClearThreshold/
-// ZScoreK. Zero values fall back to sane defaults at use time. (Phase 2 parses
-// the metric fields for validation/round-trip; the metric evaluator that reads
-// them lands in Phase 4.)
+// ZScoreK, spike uses StddevK/MinDurationMinutes. Zero values fall back to sane
+// defaults at use time. (Phases 2-3 parse the metric/spike fields for validation
+// + round-trip; the evaluators that read them land in Phase 4.)
 type dampenParams struct {
 	// state source
 	RefireMode   string `json:"refire_mode,omitempty"`
@@ -157,6 +157,9 @@ type dampenParams struct {
 	Threshold      float64 `json:"threshold,omitempty"`       // 0 = inherit resolved threshold
 	ClearThreshold float64 `json:"clear_threshold,omitempty"` // 0 = default hysteresis
 	ZScoreK        float64 `json:"zscore_k,omitempty"`        // 0 = default 3.0
+	// spike source
+	StddevK            float64 `json:"stddev_k,omitempty"`             // σ multiplier (0 = default 3)
+	MinDurationMinutes int     `json:"min_duration_minutes,omitempty"` // sustain window (0 = default 15)
 }
 
 // appliesTo reports whether the rule is in scope for an event's source/vendor/

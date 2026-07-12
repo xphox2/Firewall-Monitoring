@@ -26,6 +26,17 @@ const (
 	MetricEventSessions = "sessions_high"
 )
 
+// Spike event type (source="spike", Phase 3 config surface; the seasonal spike
+// detector wiring lands in Phase 4). The seeded template scopes on this; the
+// dampen blob carries stddev_k + min_duration_minutes.
+const SpikeEventTraffic = "traffic_spike"
+
+// Trap scoping fields (source="trap", Phase 3 config surface). ProcessTrap is
+// already resolveAlertConfig-aware; Phase 4 routes it through matched trap rules.
+// A trap rule scopes on: trap_type (e.g. HA_MEMBER_DOWN / LINK_DOWN), vendor,
+// source_ip. Traps carry no dampen_json — scope/severity/cooldown/routing come
+// from the base rule fields.
+
 // interfaceStateFields builds the matchable field set for a down interface.
 func interfaceStateFields(deviceID uint, ifaceName, adminStatus, vendor string) map[string]string {
 	return map[string]string{

@@ -18,7 +18,7 @@ import (
 // tester reads raw syslog content.
 
 var (
-	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true, "state": true, "metric": true}
+	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true, "state": true, "metric": true, "spike": true, "trap": true}
 	validRuleActions = map[string]bool{"alert": true, "suppress": true}
 )
 
@@ -34,7 +34,7 @@ func validateEventRule(r *models.EventRule) string {
 		r.Source = "syslog"
 	}
 	if !validRuleSources[r.Source] {
-		return "Source must be syslog, flow, state, metric, or any"
+		return "Source must be syslog, flow, state, metric, spike, trap, or any"
 	}
 	if r.Action == "" {
 		r.Action = "alert"
@@ -61,6 +61,14 @@ func validateEventRule(r *models.EventRule) string {
 	// rules are inert (the legacy Settings→Alerts path drives metric alerting).
 	if r.Source == "metric" {
 		if msg := alerts.ValidateMetricDampenJSON(r.DampenJSON); msg != "" {
+			return msg
+		}
+	}
+	// spike rules (traffic-spike detector params). Inert until Phase 4 (the
+	// detector still fires directly in the poller). trap rules carry no dampen_json
+	// — they scope/route via the base rule fields, so no per-source blob to check.
+	if r.Source == "spike" {
+		if msg := alerts.ValidateSpikeDampenJSON(r.DampenJSON); msg != "" {
 			return msg
 		}
 	}

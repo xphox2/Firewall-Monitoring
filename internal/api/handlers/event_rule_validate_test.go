@@ -91,3 +91,42 @@ func TestValidateEventRule_MetricBadDampenRejected(t *testing.T) {
 		}
 	}
 }
+
+// Spike + trap sources (Phase 3) — validateEventRule allows both; spike validates
+// its dampen_json, trap carries none.
+
+func TestValidateEventRule_SpikeSourceAllowed(t *testing.T) {
+	r := &models.EventRule{
+		Name: "Traffic spike", Source: "spike", Action: "alert",
+		MatchJSON:  `{"op":"eq","field":"event_type","value":"traffic_spike"}`,
+		DampenJSON: `{"stddev_k":3,"min_duration_minutes":15}`,
+	}
+	if msg := validateEventRule(r); msg != "" {
+		t.Fatalf("valid spike rule rejected: %s", msg)
+	}
+}
+
+func TestValidateEventRule_SpikeBadDampenRejected(t *testing.T) {
+	cases := map[string]string{
+		"malformed": `{nope`,
+		"neg k":     `{"stddev_k":-1}`,
+		"neg dur":   `{"min_duration_minutes":-5}`,
+	}
+	for name, dj := range cases {
+		r := &models.EventRule{Name: "S", Source: "spike", Action: "alert", DampenJSON: dj}
+		if msg := validateEventRule(r); msg == "" {
+			t.Errorf("%s: expected rejection, got none", name)
+		}
+	}
+}
+
+func TestValidateEventRule_TrapSourceAllowed(t *testing.T) {
+	r := &models.EventRule{
+		Name: "HA member down", Source: "trap", Action: "alert",
+		AlertType: models.AlertTypeHAMemberDown,
+		MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_MEMBER_DOWN"}`,
+	}
+	if msg := validateEventRule(r); msg != "" {
+		t.Fatalf("valid trap rule rejected: %s", msg)
+	}
+}
