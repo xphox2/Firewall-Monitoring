@@ -23,7 +23,7 @@ func canonicalIntent() *ipsec.TunnelIntent {
 		IKELifetimeSecs: m.IKELifetimeSecs,
 		DPD:             ipsec.DPD{DelaySecs: 30},
 		PSK:             "abcDEF012345678901234567890XYZ", // 30 chars, CLI-safe
-		VTISubnet:       "169.254.0.28/30",
+		VTISubnet:       "169.254.1.28/30",
 		Ends: [2]ipsec.EndpointSpec{
 			{ // A = FortiGate, public WAN, dynamic responder (peer B is behind NAT)
 				DeviceID: 1, Vendor: "fortigate", PeerIP: "66.179.9.155",

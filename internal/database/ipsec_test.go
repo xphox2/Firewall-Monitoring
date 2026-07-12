@@ -13,7 +13,7 @@ func sampleIntent() *ipsec.TunnelIntent {
 	return &ipsec.TunnelIntent{
 		Name: "fwm-t1", Enabled: true, IKEVersion: m.IKEVersion, Mode: ipsec.ModeRouteBased,
 		IKE: m.IKE, ESP: m.ESP, IKELifetimeSecs: m.IKELifetimeSecs, PSK: "s3cretPSKvalue012345",
-		VTISubnet: "169.254.0.4/30",
+		VTISubnet: "169.254.1.4/30",
 		Ends: [2]ipsec.EndpointSpec{
 			{DeviceID: 10, Vendor: "fortigate", PeerIP: "203.0.113.1", ProtectedSubnets: []string{"10.0.0.0/24"}},
 			{DeviceID: 20, Vendor: "opnsense", PeerIP: "198.51.100.1", ProtectedSubnets: []string{"192.168.50.0/24"}},

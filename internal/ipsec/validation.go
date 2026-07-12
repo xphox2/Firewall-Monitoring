@@ -112,6 +112,14 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 		}
 	}
 
+	// --- non-AEAD ciphers REQUIRE an integrity algorithm (GCM carries its own).
+	if !isAEAD(intent.IKE.Enc) && intent.IKE.Integ == IntegrityNone {
+		add(SeverityBlock, "integrity_required", "the IKE cipher is not AEAD and needs an integrity algorithm")
+	}
+	if !isAEAD(intent.ESP.Enc) && intent.ESP.Integ == IntegrityNone {
+		add(SeverityBlock, "integrity_required", "the ESP cipher is not AEAD and needs an integrity algorithm")
+	}
+
 	// --- PSK hard floor.
 	if ok, reason := validPSK(intent.PSK); !ok {
 		add(SeverityBlock, "psk_invalid", reason)
@@ -137,13 +145,23 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			add(SeverityWarn, "mss_unset",
 				fmt.Sprintf("%s has no TCP MSS clamp — large packets may drop over the tunnel (recommend ~1350)", endLabel(intent, i)))
 		}
-		if !e.Dynamic && e.PeerIP != "" {
-			if ip := net.ParseIP(e.PeerIP); ip != nil {
-				if isPrivate(ip) {
-					add(SeverityWarn, "peer_private",
-						fmt.Sprintf("%s's endpoint %s is a private/CGNAT address — confirm it is reachable by the peer", endLabel(intent, i), e.PeerIP))
-				}
+		// A non-dynamic (dialable) end MUST carry a valid endpoint IP: it is
+		// interpolated unquoted into vendor config (FortiGate `set remote-gw`,
+		// OPNsense remote_addrs), so an unparsable/empty value must be blocked,
+		// not just warned. (Dynamic ends legitimately have no static peer IP.)
+		if !e.Dynamic {
+			ip := net.ParseIP(e.PeerIP)
+			if ip == nil {
+				add(SeverityBlock, "peer_ip_invalid",
+					fmt.Sprintf("%s has no valid static endpoint IP address", endLabel(intent, i)))
+			} else if isPrivate(ip) {
+				add(SeverityWarn, "peer_private",
+					fmt.Sprintf("%s's endpoint %s is a private/CGNAT address — confirm it is reachable by the peer", endLabel(intent, i), e.PeerIP))
 			}
+		}
+		if e.InnerIP != "" && net.ParseIP(e.InnerIP) == nil {
+			add(SeverityBlock, "inner_ip_invalid",
+				fmt.Sprintf("%s VTI inner address %q is not a valid IP", endLabel(intent, i), e.InnerIP))
 		}
 	}
 	if intent.DPD.DelaySecs <= 0 {
@@ -215,6 +233,11 @@ func parseCIDRs(cidrs []string) (nets []*net.IPNet, errs []string) {
 }
 
 func netsOverlap(a, b *net.IPNet) bool { return a.Contains(b.IP) || b.Contains(a.IP) }
+
+// isAEAD reports whether an encryption algorithm carries its own integrity
+// (Galois/Counter mode), so a separate integrity algorithm is neither needed nor
+// used.
+func isAEAD(e Encryption) bool { return e == EncAES256GCM16 || e == EncAES128GCM16 }
 
 // safeToken reports whether s is a safe interface-name/IKE-ID token: only
 // [A-Za-z0-9._:-], so it can't break out of a quoted CLI/config context.

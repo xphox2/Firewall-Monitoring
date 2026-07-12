@@ -12,7 +12,7 @@ import (
 const vtiBase uint32 = 0xA9FE0100 // 169.254.1.0
 
 // vtiUsable /30s: 169.254.1.0 .. 169.254.254.255 minus the metadata /24, ≈ 16192.
-const vtiSpan uint32 = 253 * 64 // /30s across 169.254.1..253 (skip .0, .169, .254, .255)
+const vtiSpan uint32 = 253 * 64 // /30s across 169.254.1..253 (skip .0 and .255 (RFC 3927 reserved), and .169 (metadata))
 
 // AllocateVTI deterministically derives the /30 transit network and the two
 // inner host IPs for a tunnel, from its ID. Deterministic so a redeploy of the
