@@ -86,6 +86,8 @@ func NewDatabaseForTesting(t interface {
 		&models.Incident{},
 		// v0.11.46: flow-source silencing table.
 		&models.FlowSourceSuppression{},
+		// Event-rule engine (v35+): rules.
+		&models.EventRule{},
 	}
 
 	for _, m := range testModels {

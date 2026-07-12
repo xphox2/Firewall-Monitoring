@@ -156,3 +156,33 @@ func TestMarkAndAutoResolveInterfaceDown(t *testing.T) {
 		t.Errorf("a real (ever-up) link's down alert should fire once; got %d", openReal)
 	}
 }
+
+// TestSendRecovery_ResolvesAckedAlert pins the episode-model prerequisite: an
+// ACKED open down alert must resolve on recovery (previously it lingered open
+// forever, which would suppress that link's future episodes indefinitely).
+func TestSendRecovery_ResolvesAckedAlert(t *testing.T) {
+	am, db := newTestManager(t)
+	now := time.Now()
+	acked := openAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-time.Hour))
+	at := now.Add(-30 * time.Minute)
+	acked.Acknowledged = true
+	acked.AcknowledgedAt = &at
+	seedAlert(t, db, acked)
+
+	am.sendRecovery(ifaceDownKey(1, "port1"), "INTERFACE_DOWN", "interface_port1",
+		"Interface port1 is back up", 1, nil)
+
+	var open int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND resolved_at IS NULL", 1, "INTERFACE_DOWN").
+		Count(&open)
+	if open != 0 {
+		t.Errorf("acked open alert not resolved on recovery: %d still open", open)
+	}
+	// The original ack timestamp must be preserved (not overwritten to now).
+	var got models.Alert
+	db.Gorm().Where("device_id = ?", 1).First(&got)
+	if got.AcknowledgedAt == nil || !got.AcknowledgedAt.Equal(at) {
+		t.Errorf("original ack timestamp not preserved: %v want %v", got.AcknowledgedAt, at)
+	}
+}

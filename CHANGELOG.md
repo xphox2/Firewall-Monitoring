@@ -1,6 +1,50 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.81] - 2026-07-12
+
+### Added — interface/VPN "down" alerting moves to Event Rules, with flap dampening (unified alerting, phase 1)
+
+Interface-down and VPN-tunnel-down alerts are now driven by the Event Rules
+engine as editable, suppressible built-in templates, and they gain the
+long-requested flap dampening. This is the first phase of consolidating all
+alerting onto one configurable surface.
+
+- **Two new built-in state templates** — "Interface down" and "VPN tunnel down"
+  (source **state**) ship enabled. They can be edited, scoped (per vendor /
+  device / site), routed to a notify policy, or disabled — disabling a template
+  turns that alert type off, on purpose. A one-time ownership flag
+  (`state_engine_owns`) hands the two types from the legacy per-type path to the
+  new engine atomically, so there is no gap and no double-fire during upgrade.
+- **Flap dampening** (the point of this change): a down link now alerts **once
+  per outage** and stays silent while it is down — *even after you acknowledge*
+  — until it recovers and drops again. A flapping link is capped at **one alert
+  per day**; but if the link had been up for at least an hour before dropping,
+  it alerts immediately (a genuine new outage, not a flap). The "up-run"
+  duration is measured from the last recovery, so it survives a poller restart.
+  Both thresholds (min-up minutes, daily cap) are editable per rule.
+- **Event Rules editor** gains a **State** source with a **Flap dampening**
+  panel, state-specific field hints (`event_type` / `interface_name` /
+  `tunnel_name` / `vendor`), and the `INTERFACE_DOWN` / `VPN_TUNNEL_DOWN` alert
+  types. The syslog preview is replaced with guidance for state rules (they
+  match live device events, not stored logs). Mobile-friendly: the panel reuses
+  the responsive form rows and stacks on narrow viewports.
+- **Recovery now closes an acknowledged outage.** Previously an acked
+  interface/VPN down row stayed open forever; on recovery it is now resolved
+  (preserving the original ack time) so the next drop is correctly a new
+  episode.
+- Migration **v41** adds `event_rules.dampen_json` (a per-source dampening blob,
+  so future source types add parameters with no further schema change).
+- Hardening (adversarial review): the owned path still honors a per-device
+  "alerts disabled" / per-type policy disable, so ownership never resurrects an
+  alert an operator turned off; a link that flaps and then stays **down** is
+  re-escalated at most once per day instead of going silent behind a misleading
+  "back up"; the daily cap now counts notifications in a rolling 24 h window
+  (so `daily_cap: N` genuinely allows N); a version bump no longer resurrects an
+  older built-in rule the operator had deleted; a transient DB error fails safe
+  (no re-notify storm); and recovery **appends** its note to an operator's
+  acknowledgement comment instead of overwriting it.
+
 ## [0.11.80] - 2026-07-12
 
 ### Added — cross-vendor IPSec provisioning core (wizard PR-A: intent, drivers, preview; no device writes yet)

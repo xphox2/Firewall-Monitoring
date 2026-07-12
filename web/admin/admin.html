@@ -2677,6 +2677,10 @@
         <option value="dstip"><option value="srcport"><option value="dstport"><option value="user">
         <option value="service"><option value="severity"><option value="facility"><option value="app_name"><option value="message">
     </datalist>
+    <datalist id="er-state-field-hints">
+        <option value="event_type"><option value="interface_name"><option value="tunnel_name">
+        <option value="admin_status"><option value="vendor"><option value="device_id">
+    </datalist>
     <div class="modal" id="event-rule-modal" role="dialog" aria-modal="true" aria-labelledby="event-rule-modal-title">
         <div class="modal-content">
             <div class="modal-header">
@@ -2700,7 +2704,7 @@
                     <div class="policy-section-header"><h3>Scope</h3></div>
                     <div class="policy-section-body">
                         <div class="form-row form-row-4">
-                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="any">Any</option></select></div>
+                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="any">Any</option></select></div>
                             <div class="form-group"><label for="er-vendor">Vendor</label><select id="er-vendor"></select></div>
                             <div class="form-group"><label for="er-device">Device</label><select id="er-device"></select></div>
                             <div class="form-group"><label for="er-site">Site</label><select id="er-site"></select></div>
@@ -2731,7 +2735,7 @@
                         <div id="er-alert-fields">
                             <div class="form-row form-row-3">
                                 <div class="form-group"><label for="er-severity">Severity</label><select id="er-severity"><option value="">Use type default</option><option value="info">Info</option><option value="warning">Warning</option><option value="critical">Critical</option></select></div>
-                                <div class="form-group"><label for="er-alert-type">Alert Type</label><select id="er-alert-type"><option value="">Default (LOG_RULE_MATCH)</option><option value="LOG_RULE_MATCH">LOG_RULE_MATCH</option><option value="SYSLOG_ALERT">SYSLOG_ALERT</option><option value="SYSLOG_CRITICAL">SYSLOG_CRITICAL</option><option value="SYSLOG_EMERGENCY">SYSLOG_EMERGENCY</option></select></div>
+                                <div class="form-group"><label for="er-alert-type">Alert Type</label><select id="er-alert-type"><option value="">Default (LOG_RULE_MATCH)</option><option value="LOG_RULE_MATCH">LOG_RULE_MATCH</option><option value="SYSLOG_ALERT">SYSLOG_ALERT</option><option value="SYSLOG_CRITICAL">SYSLOG_CRITICAL</option><option value="SYSLOG_EMERGENCY">SYSLOG_EMERGENCY</option><option value="INTERFACE_DOWN">INTERFACE_DOWN</option><option value="VPN_TUNNEL_DOWN">VPN_TUNNEL_DOWN</option></select></div>
                                 <div class="form-group"><label for="er-group-by">Dedup by field</label><input type="text" id="er-group-by" list="er-field-hints" placeholder="e.g. srcip (optional)"></div>
                             </div>
                             <div class="form-row form-row-2">
@@ -2741,7 +2745,17 @@
                         </div>
                     </div>
                 </div>
-                <div class="policy-section">
+                <div class="policy-section" id="er-dampen-section" style="display:none">
+                    <div class="policy-section-header"><h3>Flap dampening</h3></div>
+                    <div class="policy-section-body">
+                        <div class="field-hint" style="margin-bottom:12px;line-height:1.5">State alerts fire <strong>once per outage</strong> and stay silent while the link is down — even after you acknowledge — until it recovers and drops again. These settings control re-alerting when a link flaps up and down.</div>
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-min-up">Alert immediately if up for at least (minutes)</label><input type="number" id="er-min-up" min="0" max="10080" placeholder="60"><div class="field-hint">A link that was healthy this long before dropping is a genuine new outage — alert right away, bypassing the daily cap.</div></div>
+                            <div class="form-group"><label for="er-daily-cap">Max alerts per day while flapping</label><input type="number" id="er-daily-cap" min="0" max="100" placeholder="1"><div class="field-hint">Rapid up/down cycles collapse to at most this many alerts per 24 h. 0 = no cap (alert every outage).</div></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="policy-section" id="er-preview-section">
                     <div class="policy-section-header"><h3>Preview</h3></div>
                     <div class="policy-section-body">
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2752,6 +2766,7 @@
                             <div style="font-size:0.85rem;margin-bottom:4px;color:var(--fwmon-text-faint)">Sample matches:</div>
                             <div id="er-preview-samples-list" style="max-height:180px;overflow-y:auto;background:var(--fwmon-bg);padding:8px;border-radius:6px;font-family:monospace;font-size:0.78rem"></div>
                         </div>
+                        <div id="er-state-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">State rules match live device up/down events, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>interface_down</code> / <code>vpn_tunnel_down</code>), <code>interface_name</code>, <code>tunnel_name</code>, or <code>vendor</code>.</div>
                     </div>
                 </div>
                 <div class="modal-footer">

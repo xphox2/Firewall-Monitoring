@@ -70,6 +70,11 @@ type AlertManager struct {
 	// device→(vendor,site) map, both refreshed alongside policyCache under am.mu.
 	eventRules []compiledRule
 	deviceMeta map[uint]database.DeviceRuleMeta
+	// stateOwned is the set of event_types the state-rule engine owns (from the
+	// `state_engine_owns` SystemSetting CSV). While a type is owned, its legacy
+	// resolveAlertConfig firing path is bypassed and dampening runs in
+	// staterules.go. Refreshed alongside eventRules under am.mu.
+	stateOwned map[string]bool
 	// ruleHits accumulates per-rule match counts in memory (H2: flushed in
 	// batches by RefreshEventRules, never a per-match UPDATE). Own mutex so the
 	// hot path never contends with am.mu.
@@ -102,6 +107,7 @@ func NewAlertManager(cfg *config.Config, notif *notifier.Notifier, db *database.
 		lastSeverity:        make(map[string]int),
 		stormSourcesDefault: 25, // matches the detect_security_storm_sources code default
 		alertCooldown:       5 * time.Minute,
+		stateOwned:          make(map[string]bool),
 	}
 }
 
@@ -344,10 +350,12 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 
 func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats, siteID *uint) error {
 	var fired []firedEntry
+	var stateCands []stateCandidate
 
 	am.mu.Lock()
 	now := time.Now()
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	owned := am.stateOwned[StateEventInterfaceDown]
 
 	for _, iface := range interfaces {
 		key := ifaceDownKey(iface.DeviceID, iface.Name)
@@ -372,6 +380,32 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		if !am.everUp[key] {
 			continue
 		}
+
+		// State-engine ownership: route the down-decision through enabled
+		// source="state" rules (scope/suppress/severity/routing) + episode
+		// dampening. A disabled/absent alert rule for an owned type means "alerts
+		// off, on purpose" — no legacy fallback while owned.
+		if owned {
+			vendor := "generic"
+			if m, ok := am.deviceMeta[iface.DeviceID]; ok && m.Vendor != "" {
+				vendor = m.Vendor
+			}
+			fields := interfaceStateFields(iface.DeviceID, iface.Name, iface.AdminStatus, vendor)
+			action, rule, matched := am.matchStateRuleLocked(fields, iface.DeviceID, siteID)
+			if !matched || action == "suppress" {
+				continue
+			}
+			cand, ok := am.buildStateCandidateLocked(
+				rule, iface.DeviceID, siteID, key, "INTERFACE_DOWN",
+				fmt.Sprintf("interface_%s", iface.Name),
+				fmt.Sprintf("Interface %s is down", iface.Name), globalNC)
+			if !ok {
+				continue // alerting disabled for this device/type
+			}
+			stateCands = append(stateCands, cand)
+			continue
+		}
+
 		resolved := am.resolveAlertConfig(iface.DeviceID, siteID, "INTERFACE_DOWN")
 		if !resolved.AlertEnabled {
 			continue
@@ -401,6 +435,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	am.mu.Unlock()
 
 	am.dispatchFired(fired, globalNC, "interface")
+	am.dispatchStateCandidates(stateCands, now)
 
 	// Recovery: interfaces that are now up
 	for _, iface := range interfaces {
@@ -1402,8 +1437,11 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 	// underlying issue clears, the recovery event unsnoozes it for the operator.
 	if am.db != nil {
 		now := time.Now()
-		am.db.Gorm().Model(&models.Alert{}).
-			Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND acknowledged = ?", deviceID, alertType, metricName, false).
+		base := am.db.Gorm().Model(&models.Alert{}).
+			Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", deviceID, alertType, metricName)
+		// Unacked open rows: resolve + auto-acknowledge so they leave the NOC
+		// default queue with zero clicks, and clear any snooze.
+		base.Session(&gorm.Session{}).Where("acknowledged = ?", false).
 			Updates(map[string]interface{}{
 				"resolved_at":     now,
 				"acknowledged":    true,
@@ -1412,6 +1450,20 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 				"snoozed_until":   nil,
 				"snoozed_by":      "",
 				"snoozed_reason":  "",
+			})
+		// Already-ACKED open rows: also resolve them now (previously they lingered
+		// open forever), so an acked outage CLOSES on recovery and a later down is
+		// a genuinely NEW episode. Preserve the operator's original ack timestamp
+		// AND their ack note — APPEND the auto-resolution rather than overwrite, so
+		// a root-cause comment the operator typed on ack isn't lost. `||` +
+		// COALESCE are supported by both SQLite (test) and PostgreSQL (prod).
+		base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
+			Updates(map[string]interface{}{
+				"resolved_at":    now,
+				"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", "Auto-resolved: "+message, "\nAuto-resolved: "+message),
+				"snoozed_until":  nil,
+				"snoozed_by":     "",
+				"snoozed_reason": "",
 			})
 	}
 
@@ -1507,10 +1559,12 @@ func (am *AlertManager) dispatchFired(fired []firedEntry, globalNC notifier.Noti
 
 func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *uint) error {
 	var fired []firedEntry
+	var stateCands []stateCandidate
 
 	am.mu.Lock()
 	now := time.Now()
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+	owned := am.stateOwned[StateEventVPNDown]
 	for _, vpn := range vpnStatuses {
 		key := vpnDownKey(vpn.DeviceID, vpn.TunnelName)
 		if vpn.Status == "up" {
@@ -1528,6 +1582,30 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 		if !am.everUp[key] {
 			continue
 		}
+
+		// State-engine ownership: route through source="state" rules + episode
+		// dampening (mirrors CheckInterfaceStatus).
+		if owned {
+			vendor := "generic"
+			if m, ok := am.deviceMeta[vpn.DeviceID]; ok && m.Vendor != "" {
+				vendor = m.Vendor
+			}
+			fields := vpnStateFields(vpn.DeviceID, vpn.TunnelName, vendor)
+			action, rule, matched := am.matchStateRuleLocked(fields, vpn.DeviceID, siteID)
+			if !matched || action == "suppress" {
+				continue
+			}
+			cand, ok := am.buildStateCandidateLocked(
+				rule, vpn.DeviceID, siteID, key, "VPN_TUNNEL_DOWN",
+				fmt.Sprintf("vpn_%s", vpn.TunnelName),
+				fmt.Sprintf("VPN tunnel %s to %s is down", vpn.TunnelName, vpn.RemoteIP), globalNC)
+			if !ok {
+				continue // alerting disabled for this device/type
+			}
+			stateCands = append(stateCands, cand)
+			continue
+		}
+
 		resolved := am.resolveAlertConfig(vpn.DeviceID, siteID, "VPN_TUNNEL_DOWN")
 		if !resolved.AlertEnabled {
 			continue
@@ -1552,6 +1630,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 	am.mu.Unlock()
 
 	am.dispatchFired(fired, globalNC, "VPN")
+	am.dispatchStateCandidates(stateCands, now)
 
 	// Recovery: VPN tunnels that are now up
 	for _, vpn := range vpnStatuses {

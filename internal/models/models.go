@@ -459,7 +459,11 @@ type EventRule struct {
 	// Priority orders evaluation (lower first); ties break by ID. First matching
 	// suppress rule drops the event; first matching alert rule fires and stops.
 	Priority int `json:"priority" gorm:"default:100;index"`
-	// Source scopes the rule to an event stream: "syslog", "flow", or "any".
+	// Source scopes the rule to an event stream: "syslog", "flow", "any", or a
+	// telemetry source — "state" (interface/VPN/device up-down), and later
+	// "metric"/"spike"/"trap". For telemetry sources the match expression scopes/
+	// suppresses only (event_type, interface_name, tunnel_name, vendor …); the
+	// per-source stateful evaluator decides firing + dampening.
 	Source string `json:"source" gorm:"default:syslog;index"`
 	// VendorScope limits a rule to one device vendor ("" = any). Lets FortiGate
 	// field rules coexist with future OPNsense/pfSense rules.
@@ -482,6 +486,11 @@ type EventRule struct {
 	CooldownMinutes *int   `json:"cooldown_minutes"`
 	// PolicyID routes notifications (nil = the device's resolved policy).
 	PolicyID *uint `json:"policy_id"`
+	// DampenJSON holds per-source dampening params (validated per Source), so new
+	// source types add params with no schema change. state:
+	// {"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}; metric:
+	// {"mode":"static|zscore","threshold":90,"clear_threshold":80,"zscore_k":3}.
+	DampenJSON string `json:"dampen_json" gorm:"type:text"`
 	// SeedVersion marks a shipped default (0 = operator-created). EnsureDefaultRules
 	// keys idempotency off (Name, SeedVersion) so a deleted/edited seed is not
 	// resurrected on restart.

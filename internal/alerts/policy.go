@@ -179,29 +179,7 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 	}
 
 	if policy != nil {
-		resolved.PolicyID = &policy.ID
-		resolved.NotifyEmail = policy.NotifyEmail
-		resolved.NotifySlack = policy.NotifySlack
-		resolved.NotifyDiscord = policy.NotifyDiscord
-		resolved.NotifyWebhook = policy.NotifyWebhook
-		resolved.NotifyPagerDuty = policy.NotifyPagerDuty
-		resolved.NotifyOpsgenie = policy.NotifyOpsgenie
-		resolved.NotifyTeams = policy.NotifyTeams
-		resolved.EmailRecipients = policy.EmailRecipients
-		resolved.SlackURL = policy.SlackWebhookURL
-		resolved.DiscordURL = policy.DiscordWebhookURL
-		resolved.WebhookURL = policy.WebhookURL
-		// M3 of the 2026-07-01 audit: apply the same `> 0` floor the site/device
-		// overrides use (below). A policy row with CooldownMinutes=0 previously
-		// zeroed the resolved cooldown — making `now.Sub(last) > 0` always true,
-		// i.e. a per-cycle alert STORM for every alert type on that policy.
-		// 0 now means "inherit the per-type default".
-		if policy.CooldownMinutes > 0 {
-			resolved.CooldownMinutes = policy.CooldownMinutes
-		}
-		resolved.EscalationEnabled = policy.EscalationEnabled
-		resolved.EscalationMinutes = policy.EscalationMinutes
-		resolved.EscalationRepeat = policy.EscalationRepeat
+		applyPolicyChannels(&resolved, policy)
 	}
 
 	// Find matching AlertRule
@@ -329,6 +307,43 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 
 func (am *AlertManager) findPolicy(id uint) *models.AlertPolicy {
 	return am.policyCache.policyByID[id]
+}
+
+// applyPolicyChannels copies a policy's notification channels, escalation, and
+// (non-zero) cooldown onto a resolved config. Shared by resolveAlertConfig and
+// applyRulePolicy so the two can't drift.
+func applyPolicyChannels(resolved *ResolvedAlertConfig, policy *models.AlertPolicy) {
+	resolved.PolicyID = &policy.ID
+	resolved.NotifyEmail = policy.NotifyEmail
+	resolved.NotifySlack = policy.NotifySlack
+	resolved.NotifyDiscord = policy.NotifyDiscord
+	resolved.NotifyWebhook = policy.NotifyWebhook
+	resolved.NotifyPagerDuty = policy.NotifyPagerDuty
+	resolved.NotifyOpsgenie = policy.NotifyOpsgenie
+	resolved.NotifyTeams = policy.NotifyTeams
+	resolved.EmailRecipients = policy.EmailRecipients
+	resolved.SlackURL = policy.SlackWebhookURL
+	resolved.DiscordURL = policy.DiscordWebhookURL
+	resolved.WebhookURL = policy.WebhookURL
+	// M3 (2026-07-01 audit): a 0 cooldown means "inherit the per-type default",
+	// not "zero" (which caused a per-cycle storm).
+	if policy.CooldownMinutes > 0 {
+		resolved.CooldownMinutes = policy.CooldownMinutes
+	}
+	resolved.EscalationEnabled = policy.EscalationEnabled
+	resolved.EscalationMinutes = policy.EscalationMinutes
+	resolved.EscalationRepeat = policy.EscalationRepeat
+}
+
+// applyRulePolicy re-resolves the notification channels/escalation from a
+// SPECIFIC policy — used when an Event Rule pins a PolicyID different from the
+// device's resolved policy. Without this the rule's first notification would go
+// out on the device policy's channels (the rule's policy only took effect at
+// escalation time). Caller holds am.mu (reads policyCache).
+func (am *AlertManager) applyRulePolicy(resolved *ResolvedAlertConfig, policyID uint) {
+	if p := am.findPolicy(policyID); p != nil {
+		applyPolicyChannels(resolved, p)
+	}
 }
 
 func (am *AlertManager) globalThresholdForType(alertType models.AlertType) float64 {

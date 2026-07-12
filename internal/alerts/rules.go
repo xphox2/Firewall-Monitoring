@@ -138,6 +138,17 @@ type compiledRule struct {
 	cooldownMin *int
 	policyID    *uint
 	match       matchExpr
+	// dampen holds the parsed per-source dampening params (state source today).
+	dampen dampenParams
+}
+
+// dampenParams is the parsed DampenJSON. Fields are per-source; state uses
+// RefireMode/MinUpSeconds/DailyCap. Zero values fall back to sane defaults at
+// use time.
+type dampenParams struct {
+	RefireMode   string `json:"refire_mode"`
+	MinUpSeconds int    `json:"min_up_seconds"`
+	DailyCap     int    `json:"daily_cap"`
 }
 
 // appliesTo reports whether the rule is in scope for an event's source/vendor/
@@ -186,11 +197,18 @@ func compileRules(rules []models.EventRule) []compiledRule {
 		if source == "" {
 			source = "syslog"
 		}
+		var dp dampenParams
+		if strings.TrimSpace(src.DampenJSON) != "" {
+			if err := json.Unmarshal([]byte(src.DampenJSON), &dp); err != nil {
+				log.Printf("event-rule %d %q: bad dampen_json, ignoring: %v", src.ID, src.Name, err)
+			}
+		}
 		out = append(out, compiledRule{
 			id: src.ID, name: src.Name, priority: src.Priority, source: source,
 			vendor: src.VendorScope, deviceID: src.DeviceID, siteID: src.SiteID,
 			action: action, alertType: at, severity: src.Severity, groupBy: src.GroupBy,
 			cooldownMin: src.CooldownMinutes, policyID: src.PolicyID, match: compileMatch(rm),
+			dampen: dp,
 		})
 	}
 	return out
@@ -244,9 +262,11 @@ func (am *AlertManager) RefreshEventRules(db *database.Database) {
 		return
 	}
 	compiled := compileRules(rules)
+	ownedCSV, _ := db.GetSettingValue(stateOwnedTypesSetting)
 	am.mu.Lock()
 	am.eventRules = compiled
 	am.deviceMeta = meta
+	am.setStateOwnedLocked(ownedCSV)
 	am.mu.Unlock()
 }
 
@@ -341,7 +361,9 @@ func (am *AlertManager) fireEventAlert(r *compiledRule, msg *models.SyslogMessag
 	now := time.Now()
 	resolved := am.resolveAlertConfig(msg.DeviceID, siteID, r.alertType)
 	if r.policyID != nil {
-		resolved.PolicyID = r.policyID
+		// Route notifications through the RULE's policy — channels + escalation,
+		// not just the ID — so the first notification honors it (not the device's).
+		am.applyRulePolicy(&resolved, *r.policyID)
 	}
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cdMin := resolved.CooldownMinutes
