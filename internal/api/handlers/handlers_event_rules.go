@@ -18,7 +18,7 @@ import (
 // tester reads raw syslog content.
 
 var (
-	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true}
+	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true, "state": true}
 	validRuleActions = map[string]bool{"alert": true, "suppress": true}
 )
 
@@ -34,7 +34,7 @@ func validateEventRule(r *models.EventRule) string {
 		r.Source = "syslog"
 	}
 	if !validRuleSources[r.Source] {
-		return "Source must be syslog, flow, or any"
+		return "Source must be syslog, flow, state, or any"
 	}
 	if r.Action == "" {
 		r.Action = "alert"
@@ -46,6 +46,14 @@ func validateEventRule(r *models.EventRule) string {
 	if strings.TrimSpace(r.MatchJSON) != "" {
 		if _, err := alerts.CompileTestRule(r.MatchJSON); err != nil {
 			return "Invalid match_json: " + err.Error()
+		}
+	}
+	// dampen_json is a per-source blob; today only state rules use it (episode/
+	// flap dampening). Validate its shape + bounds so a bad blob can't silently
+	// disable dampening at runtime.
+	if r.Source == "state" {
+		if msg := alerts.ValidateStateDampenJSON(r.DampenJSON); msg != "" {
+			return msg
 		}
 	}
 	return ""

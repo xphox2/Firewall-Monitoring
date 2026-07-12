@@ -13,7 +13,7 @@ import (
 // eventRuleSeedVersion marks the shipped seed set. Bump it (and add to
 // defaultEventRules) to introduce a new generation of defaults; the one-time
 // marker guarantees an operator-deleted seed is never resurrected (M5).
-const eventRuleSeedVersion = 1
+const eventRuleSeedVersion = 2
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
 // SystemSetting marker). The legacy "alert on syslog severity 0-2" behavior
@@ -41,6 +41,17 @@ func (d *Database) EnsureDefaultRules() {
 		Type: "int", Category: "alerts", Label: "Event rule seed version",
 	}); err != nil {
 		log.Printf("EnsureDefaultRules: set marker: %v", err)
+	}
+	// Hand interface/VPN down alerting to the state-rule engine (Phase 1). The
+	// seed rules above now own it; setting the ownership flag switches the live
+	// evaluator from the legacy per-type path to the dampened state path. Done
+	// AFTER the rules exist so there is never a window where the type is "owned"
+	// but has no rule (which would silence alerts). Idempotent.
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key: "state_engine_owns", Value: "interface_down,vpn_tunnel_down",
+		Type: "string", Category: "alerts", Label: "Alert types owned by the state-rule engine",
+	}); err != nil {
+		log.Printf("EnsureDefaultRules: set state-engine ownership: %v", err)
 	}
 }
 
@@ -74,6 +85,22 @@ func defaultEventRules() []models.EventRule {
 			Enabled: false, Priority: 10, Source: "syslog", VendorScope: "fortigate",
 			Action: "suppress", SeedVersion: eventRuleSeedVersion,
 			MatchJSON: `{"op":"and","conditions":[{"op":"eq","field":"subtype","value":"forward"},{"op":"eq","field":"level","value":"warning"}]}`},
+		// State-source built-ins (seed_version 2): interface and VPN down alerting,
+		// now owned by the state-rule engine (see EnsureDefaultRules ownership flag).
+		// Severity is left blank so the per-type default/policy still applies. The
+		// dampening blob encodes the flap policy: fire once per outage episode,
+		// stay silent while down (incl. acked), at most one alert/day while
+		// flapping, but fire immediately when the link was up ≥1h before dropping.
+		{Name: "Interface down", Description: "Alert when a monitored interface that has been up goes down. Fire-once-per-outage with flap dampening.",
+			Enabled: true, Priority: 100, Source: "state", Action: "alert",
+			AlertType: models.AlertTypeInterfaceDown, SeedVersion: eventRuleSeedVersion,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"interface_down"}`,
+			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
+		{Name: "VPN tunnel down", Description: "Alert when a monitored VPN tunnel that has been up goes down. Fire-once-per-outage with flap dampening.",
+			Enabled: true, Priority: 100, Source: "state", Action: "alert",
+			AlertType: models.AlertTypeVPNTunnelDown, SeedVersion: eventRuleSeedVersion,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"vpn_tunnel_down"}`,
+			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
 	}
 }
 

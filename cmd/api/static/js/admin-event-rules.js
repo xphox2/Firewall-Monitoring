@@ -25,6 +25,12 @@
     // Common FortiGate fields offered as datalist suggestions (free-text still allowed).
     var FIELD_HINTS = ['subtype', 'level', 'logid', 'logdesc', 'action', 'srcintf', 'dstintf',
         'srcip', 'dstip', 'srcport', 'dstport', 'user', 'service', 'severity', 'facility', 'app_name', 'message'];
+    // Default state-rule dampening (mirrors the server seed + defaults).
+    var STATE_DEFAULT_MIN_UP_MIN = 60; // 3600s
+    var STATE_DEFAULT_DAILY_CAP = 1;
+
+    // The datalist a condition field should suggest from, by current source.
+    function fieldHintsId() { return $('er-source').value === 'state' ? 'er-state-field-hints' : 'er-field-hints'; }
 
     var rules = [];
     var devices = [];
@@ -184,14 +190,42 @@
         $('er-group-by').value = r ? (r.group_by || '') : '';
         $('er-cooldown').value = r && r.cooldown_minutes ? r.cooldown_minutes : '';
 
+        // Dampening (state rules): parse the blob into minutes + cap, defaulting to
+        // the shipped values so a fresh state rule pre-fills sensible numbers.
+        loadDampenFromRule(r);
+
         // conditions: parse match_json into rows, or advanced raw for nested trees
         $('er-advanced-toggle').checked = false;
         $('er-raw-json').value = '';
         setAdvanced(false);
         loadConditionsFromRule(r);
-        onActionChange();
+        onSourceChange();
         clearPreview();
         AC.openModal('event-rule-modal');
+    }
+
+    // loadDampenFromRule fills the minutes/cap inputs from a rule's dampen_json.
+    // New state rules (or non-state rules) fall back to the shipped defaults.
+    function loadDampenFromRule(r) {
+        var minMin = STATE_DEFAULT_MIN_UP_MIN, cap = STATE_DEFAULT_DAILY_CAP;
+        if (r && r.dampen_json) {
+            try {
+                var d = JSON.parse(r.dampen_json);
+                if (typeof d.min_up_seconds === 'number') minMin = Math.round(d.min_up_seconds / 60);
+                if (typeof d.daily_cap === 'number') cap = d.daily_cap;
+            } catch (e) { /* keep defaults on a malformed blob */ }
+        }
+        $('er-min-up').value = minMin;
+        $('er-daily-cap').value = cap;
+    }
+
+    // collectDampen serializes the dampening inputs to the state dampen_json blob.
+    function collectDampen() {
+        var minMin = parseInt($('er-min-up').value, 10);
+        if (isNaN(minMin) || minMin < 0) minMin = STATE_DEFAULT_MIN_UP_MIN;
+        var cap = parseInt($('er-daily-cap').value, 10);
+        if (isNaN(cap) || cap < 0) cap = STATE_DEFAULT_DAILY_CAP;
+        return JSON.stringify({ refire_mode: 'episode', min_up_seconds: minMin * 60, daily_cap: cap });
     }
 
     function loadConditionsFromRule(r) {
@@ -230,7 +264,7 @@
         var opts = OPS.map(function (o) { return '<option value="' + o + '"' + (cond && cond.op === o ? ' selected' : '') + '>' + o + '</option>'; }).join('');
         var val = cond ? (cond.op === 'in' ? (cond.values || []).join(', ') : (cond.value == null ? '' : cond.value)) : '';
         row.innerHTML =
-            '<input class="er-cond-field" list="er-field-hints" placeholder="field" value="' + esc(cond ? cond.field : '') + '" style="flex:1">' +
+            '<input class="er-cond-field" list="' + fieldHintsId() + '" placeholder="field" value="' + esc(cond ? cond.field : '') + '" style="flex:1">' +
             '<select class="er-cond-op" style="flex:0 0 130px">' + opts + '</select>' +
             '<input class="er-cond-value" placeholder="value" value="' + esc(val) + '" style="flex:1">' +
             '<button type="button" class="btn danger sm er-cond-del" title="Remove">×</button>';
@@ -303,6 +337,27 @@
     function onActionChange() {
         var isAlert = $('er-action').value !== 'suppress';
         $('er-alert-fields').style.display = isAlert ? '' : 'none';
+        // Dampening only applies to a state ALERT rule (a suppress rule mutes, so
+        // there's nothing to dampen).
+        var isState = $('er-source').value === 'state';
+        $('er-dampen-section').style.display = (isState && isAlert) ? '' : 'none';
+    }
+
+    // onSourceChange re-scopes the editor to the selected source: state rules get
+    // the dampening panel + state field hints and hide the syslog preview (which
+    // tests stored logs, meaningless for live up/down events).
+    function onSourceChange() {
+        var isState = $('er-source').value === 'state';
+        // Swap the field-hint datalist on every open condition row + the dedup field.
+        var list = fieldHintsId();
+        document.querySelectorAll('#er-conditions .er-cond-field').forEach(function (el) { el.setAttribute('list', list); });
+        var gb = $('er-group-by'); if (gb) gb.setAttribute('list', list);
+        // Preview vs state note.
+        $('er-preview-btn').style.display = isState ? 'none' : '';
+        $('er-preview-result').style.display = isState ? 'none' : '';
+        $('er-state-preview-note').style.display = isState ? '' : 'none';
+        if (isState) { $('er-preview-samples').style.display = 'none'; }
+        onActionChange();
     }
 
     // ---- preview ----------------------------------------------------------
@@ -369,7 +424,8 @@
                 severity: $('er-severity').value || '',
                 group_by: $('er-group-by').value.trim(),
                 cooldown_minutes: $('er-cooldown').value ? parseInt($('er-cooldown').value, 10) : null,
-                policy_id: $('er-policy').value ? parseInt($('er-policy').value, 10) : null
+                policy_id: $('er-policy').value ? parseInt($('er-policy').value, 10) : null,
+                dampen_json: ($('er-source').value === 'state') ? collectDampen() : ''
             };
             var url = id ? (API + '/event-rules/' + id) : (API + '/event-rules');
             AC.apiFetch(url, { method: id ? 'PUT' : 'POST', body: body }).then(function () {
@@ -425,6 +481,8 @@
         if (addCond) addCond.addEventListener('click', function () { addConditionRow(); });
         var actionSel = $('er-action');
         if (actionSel) actionSel.addEventListener('change', onActionChange);
+        var sourceSel = $('er-source');
+        if (sourceSel) sourceSel.addEventListener('change', onSourceChange);
         var previewBtn = $('er-preview-btn');
         if (previewBtn) previewBtn.addEventListener('click', previewRule);
         var advToggle = $('er-advanced-toggle');
