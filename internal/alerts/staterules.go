@@ -170,6 +170,11 @@ func (am *AlertManager) decideStateFire(c stateCandidate, now time.Time) stateFi
 	// Re-escalate once the newest suppressed marker is ≥24h old AND the daily
 	// budget has room. The age guard prevents a per-cycle re-fire loop (each fire
 	// writes a fresh marker), so this delivers at most one escalation per day.
+	// This step precedes the min_up ≥1h fast-path (step 4); that ordering is safe
+	// because recovery (sendRecovery) resolves any open suppressed marker, so a
+	// genuine up-≥1h-then-down outage has no open suppressed row here and reaches
+	// step 4 normally — an open suppressed marker only coexists with a live-down
+	// link.
 	var newestSuppressed models.Alert
 	if err := g.Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND suppressed = ?", c.deviceID, c.alertType, c.metricName, true).
 		Order("timestamp DESC").First(&newestSuppressed).Error; err == nil {
