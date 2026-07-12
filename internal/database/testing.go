@@ -30,6 +30,7 @@ func NewDatabaseForTesting(t interface {
 		&models.ProbeApproval{},
 		&models.ProbeHeartbeat{},
 		&models.ProbeCommand{},
+		&models.IPSecTunnel{},
 		&models.Device{},
 		&models.Site{},
 		&models.SystemStatus{},

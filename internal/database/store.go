@@ -46,6 +46,7 @@ type Store interface {
 	AuditStore
 	SecretStore
 	MaintenanceOpsStore
+	IPSecStore
 
 	// Gorm exposes the raw *gorm.DB for handlers that build ad-hoc queries
 	// (partial updates, one-off lookups). Unchanged escape hatch.
@@ -64,6 +65,17 @@ var _ Store = (*Database)(nil)
 // request-scoping plumbing in the handler layer never touches the concrete type.
 func (d *Database) WithContextStore(ctx context.Context) Store {
 	return d.WithContext(ctx)
+}
+
+// IPSecStore covers IPSec provisioning-wizard tunnel CRUD (PSK encrypted at
+// rest by the implementation; masked by handlers on GET).
+type IPSecStore interface {
+	CreateIPSecTunnel(m *models.IPSecTunnel) error
+	GetIPSecTunnel(id uint) (*models.IPSecTunnel, error)
+	ListIPSecTunnels() ([]models.IPSecTunnel, error)
+	UpdateIPSecTunnel(m *models.IPSecTunnel) error
+	UpdateIPSecTunnelStatus(id uint, status, lastErr string) error
+	DeleteIPSecTunnel(id uint) error
 }
 
 // DeviceStore covers device CRUD and probe-scoped device lookups.

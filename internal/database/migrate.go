@@ -44,6 +44,7 @@ func (d *Database) migrateBaseline() error {
 		&models.ProbeApproval{},
 		&models.ProbeHeartbeat{},
 		&models.ProbeCommand{},
+		&models.IPSecTunnel{},
 		&models.PingResult{},
 		&models.PingStats{},
 		&models.SyslogMessage{},
@@ -1692,6 +1693,13 @@ func (d *Database) migrateAddDiskAndLoad() error {
 // v31/v35/v38 precedent on both dialects (probes is small and unpartitioned).
 func (d *Database) migrateProbeCommandsAndSchemaVersion() error {
 	return d.db.AutoMigrate(&models.Probe{}, &models.ProbeCommand{})
+}
+
+// migrateIPSecTunnels (v40) creates the ipsec_tunnels table backing the
+// cross-vendor IPSec provisioning wizard. New table, plain AutoMigrate (small,
+// unpartitioned) — same precedent as v39.
+func (d *Database) migrateIPSecTunnels() error {
+	return d.db.AutoMigrate(&models.IPSecTunnel{})
 }
 
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
