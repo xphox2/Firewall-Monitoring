@@ -39,6 +39,7 @@ func (d *Database) EnsureDefaultRules() {
 			prevMarker = n
 		}
 	}
+	seedFailed := false
 	for _, r := range defaultEventRules() {
 		// Only seed rules NEWER than the last-applied marker. Re-inserting an older
 		// generation's rules on a version bump would resurrect seeds the operator
@@ -54,7 +55,16 @@ func (d *Database) EnsureDefaultRules() {
 		}
 		if err := d.db.Create(&r).Error; err != nil {
 			log.Printf("EnsureDefaultRules: seed %q: %v", r.Name, err)
+			seedFailed = true
 		}
+	}
+	// Do NOT advance the marker if any insert failed: the per-generation guard is
+	// permanent (SeedVersion <= marker never re-seeds), so advancing past a failed
+	// generation would drop that seed forever. Leaving the marker lets the next
+	// startup retry (name-dedup skips the ones that did land). Skip the ownership
+	// flag too — it must only flip once its state rules exist.
+	if seedFailed {
+		return
 	}
 	if err := d.UpsertSetting(&models.SystemSetting{
 		Key: "event_rules_seed_version", Value: strconv.Itoa(eventRuleSeedVersion),
@@ -62,20 +72,27 @@ func (d *Database) EnsureDefaultRules() {
 	}); err != nil {
 		log.Printf("EnsureDefaultRules: set marker: %v", err)
 	}
-	// Hand interface/VPN down alerting to the state-rule engine (Phase 1). The
-	// seed rules above now own it; setting the ownership flag switches the live
-	// evaluator from the legacy per-type path to the dampened state path. Done
-	// AFTER the rules exist so there is never a window where the type is "owned"
-	// but has no rule (which would silence alerts). Idempotent.
-	if err := d.UpsertSetting(&models.SystemSetting{
-		Key: "state_engine_owns", Value: "interface_down,vpn_tunnel_down",
-		Type: "string", Category: "alerts", Label: "Alert types owned by the state-rule engine",
-	}); err != nil {
-		log.Printf("EnsureDefaultRules: set state-engine ownership: %v", err)
+	// Hand interface/VPN down alerting to the state-rule engine (Phase 1). Set the
+	// ownership flag ONLY when it is absent (first ever seed) — never overwrite an
+	// existing value on a later generation bump, or an operator who edited it (e.g.
+	// reverted a type to the legacy path) would have their choice silently reset on
+	// upgrade. Set AFTER the rules exist so a type is never "owned" with no rule.
+	// NOTE for a future phase that adds metric/other types here: it must UNION into
+	// this value AND gate each type on an enabled matching rule actually existing
+	// (a deleted preview template must not leave an owned type silently un-alerting).
+	if _, ok := d.GetSettingValue("state_engine_owns"); !ok {
+		if err := d.UpsertSetting(&models.SystemSetting{
+			Key: "state_engine_owns", Value: "interface_down,vpn_tunnel_down",
+			Type: "string", Category: "alerts", Label: "Alert types owned by the state-rule engine",
+		}); err != nil {
+			log.Printf("EnsureDefaultRules: set state-engine ownership: %v", err)
+		}
 	}
 }
 
-// defaultEventRules is the shipped seed set (seed_version 1).
+// defaultEventRules is the shipped seed set across all generations; each rule
+// carries its introduction version (seedVer*). EnsureDefaultRules seeds only the
+// generations newer than the last-applied marker.
 func defaultEventRules() []models.EventRule {
 	sev := func(s string) models.Severity { return models.Severity(s) }
 	return []models.EventRule{
@@ -187,11 +204,14 @@ func (d *Database) CreateEventRule(r *models.EventRule) error {
 
 // UpdateEventRule persists edits to an existing rule. Uses a map-free struct
 // save on the id so zero-values (e.g. Enabled=false, Priority=0) are written.
+// dampen_json MUST be in the Select list — it holds the state flap params and
+// the metric threshold params, so omitting it silently drops every threshold /
+// dampening edit made through the editor.
 func (d *Database) UpdateEventRule(r *models.EventRule) error {
 	return d.db.Model(&models.EventRule{ID: r.ID}).Select(
 		"name", "description", "enabled", "priority", "source", "vendor_scope",
 		"device_id", "site_id", "match_json", "action", "alert_type", "severity",
-		"group_by", "cooldown_minutes", "policy_id", "updated_at",
+		"group_by", "cooldown_minutes", "policy_id", "dampen_json", "updated_at",
 	).Updates(r).Error
 }
 

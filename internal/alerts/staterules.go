@@ -321,7 +321,10 @@ func ValidateMetricDampenJSON(s string) string {
 	}
 	// A clear threshold at or above the fire threshold inverts the hysteresis band
 	// (recover ≥ fire) — the alert would clear immediately. Only meaningful when
-	// both are set.
+	// both are set here. NOTE: when threshold is omitted (= inherit the resolved
+	// Settings→Alerts/policy value), the band cannot be checked at save time; the
+	// Phase 4 metric evaluator must clamp clear_threshold below the resolved fire
+	// threshold at runtime.
 	if dp.Threshold > 0 && dp.ClearThreshold > 0 && dp.ClearThreshold >= dp.Threshold {
 		return "dampen_json clear_threshold must be below threshold"
 	}

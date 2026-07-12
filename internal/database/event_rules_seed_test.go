@@ -79,3 +79,49 @@ func TestEnsureDefaultRules_NoResurrectOnBump(t *testing.T) {
 		t.Errorf("want 4 metric seeds after bump, got %d", metricCount)
 	}
 }
+
+// TestUpdateEventRule_PersistsDampenJSON is the regression guard for the review's
+// HIGH finding: UpdateEventRule dropped dampen_json from its column Select, so
+// every threshold / flap edit through the editor was silently lost.
+func TestUpdateEventRule_PersistsDampenJSON(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	r := &models.EventRule{
+		Name: "CPU high (test)", Enabled: true, Source: "metric", Action: "alert",
+		AlertType: models.AlertTypeCPUHigh, DampenJSON: `{"mode":"static"}`,
+	}
+	if err := d.CreateEventRule(r); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	r.DampenJSON = `{"mode":"zscore","threshold":88,"clear_threshold":80,"zscore_k":3}`
+	if err := d.UpdateEventRule(r); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, err := d.GetEventRule(r.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.DampenJSON != r.DampenJSON {
+		t.Errorf("dampen_json not persisted on update: got %q want %q", got.DampenJSON, r.DampenJSON)
+	}
+}
+
+// TestEnsureDefaultRules_OwnershipFlagNotClobbered guards the review's MEDIUM
+// finding: a version bump must NOT overwrite an operator-edited state_engine_owns
+// (e.g. a type reverted to the legacy path), or alerting silently changes on
+// upgrade.
+func TestEnsureDefaultRules_OwnershipFlagNotClobbered(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultRules()
+	// Operator reverts interface_down to legacy by editing the flag.
+	if err := d.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: "vpn_tunnel_down"}); err != nil {
+		t.Fatalf("edit flag: %v", err)
+	}
+	// Simulate an older marker so a "bump" re-runs the seed body.
+	if err := d.UpsertSetting(&models.SystemSetting{Key: "event_rules_seed_version", Value: "2"}); err != nil {
+		t.Fatalf("reset marker: %v", err)
+	}
+	d.EnsureDefaultRules()
+	if v, _ := d.GetSettingValue("state_engine_owns"); v != "vpn_tunnel_down" {
+		t.Errorf("ownership flag clobbered on bump: got %q, want operator's %q", v, "vpn_tunnel_down")
+	}
+}

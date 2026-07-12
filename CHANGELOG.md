@@ -28,6 +28,17 @@ before. Nothing about live alerting changes on upgrade.
   *introduced* in rather than the current top version, so bumping the seed set no
   longer risks recreating an older built-in an operator had deleted.
 
+### Fixed
+- **Event Rule edits now persist the dampening/threshold blob.** `dampen_json`
+  was missing from the update statement's column list, so editing a rule's flap
+  dampening (Phase 1) or metric threshold silently dropped the change. Editor
+  saves now round-trip correctly.
+- **Upgrades no longer reset the state-rule ownership flag.** The
+  `state_engine_owns` setting is now written only when absent, so an operator who
+  edited it (e.g. reverted a type to the legacy path) keeps their choice across a
+  version bump. Seeding also no longer advances its version marker if a template
+  insert failed, so a transient error can't permanently skip a built-in.
+
 ## [0.11.81] - 2026-07-12
 
 ### Added — interface/VPN "down" alerting moves to Event Rules, with flap dampening (unified alerting, phase 1)
