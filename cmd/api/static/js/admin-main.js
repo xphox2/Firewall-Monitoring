@@ -3392,7 +3392,7 @@
                 '</div>' +
             '</div>';
         }).join('');
-        grid.innerHTML = html || '<div class="col-span-full card text-center p-8 text-[#8b949e]">No alert policies configured</div>';
+        grid.innerHTML = html || '<div class="col-span-full card text-center p-8 text-[#8b949e]">No notification profiles configured</div>';
     }
 
     function showPolicyModal(id) {
@@ -3644,8 +3644,8 @@
     }
 
     function deletePolicy(id) {
-        AC.confirm('Delete this alert policy?', {
-            title: 'Delete alert policy?',
+        AC.confirm('Delete this notification profile?', {
+            title: 'Delete notification profile?',
             confirmLabel: 'Delete',
             danger: true,
         }).then(function(ok) {

@@ -52,13 +52,18 @@
         var spikeEnabled = el('alerting-g-spike-enabled');
         if (spikeEnabled) spikeEnabled.checked = g.spike_alert_enabled === true;
 
-        // Read-only for non-admins (values visible, editing gated).
-        var isAdmin = (AC.sessionRole === 'admin');
-        Object.keys(GLOBAL_FIELDS).forEach(function(key) {
-            var input = el(GLOBAL_FIELDS[key]);
-            if (input) input.disabled = !isAdmin;
+        // Read-only for non-admins (values visible, editing gated). Gate on the
+        // session promise, not the sync AC.sessionRole — /me and this overview
+        // race, and reading sessionRole before /me resolves would wrongly disable
+        // the inputs for a real admin (the Save button un-hides via CSS anyway).
+        AC.whenMe().then(function(me) {
+            var isAdmin = me && me.role === 'admin';
+            Object.keys(GLOBAL_FIELDS).forEach(function(key) {
+                var input = el(GLOBAL_FIELDS[key]);
+                if (input) input.disabled = !isAdmin;
+            });
+            if (spikeEnabled) spikeEnabled.disabled = !isAdmin;
         });
-        if (spikeEnabled) spikeEnabled.disabled = !isAdmin;
     }
 
     function renderOverrides(rows) {
@@ -68,6 +73,14 @@
             wrap.innerHTML = '<p style="color:var(--fwmon-text-mute);font-size:0.85rem;margin:0;">No threshold overrides — global defaults apply everywhere.</p>';
             return;
         }
+        // Stable, readable order: group by scope (device→site→profile→rule), then name.
+        var scopeOrder = { device: 0, site: 1, policy: 2, rule: 3 };
+        rows = rows.slice().sort(function(a, b) {
+            var sa = scopeOrder[a.scope] != null ? scopeOrder[a.scope] : 9;
+            var sb = scopeOrder[b.scope] != null ? scopeOrder[b.scope] : 9;
+            if (sa !== sb) return sa - sb;
+            return (a.scope_name || '').localeCompare(b.scope_name || '');
+        });
         var body = rows.map(function(r) {
             var scope = SCOPE_LABEL[r.scope] || r.scope;
             var metric, value, note = '';
