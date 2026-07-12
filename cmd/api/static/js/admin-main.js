@@ -3985,6 +3985,13 @@
             }
 
             AC.openModal('device-alert-modal');
+
+            // Phase 5a: show where each threshold's fired value comes from
+            // (inherited / overridden here / set by rule).
+            AC.renderAlertInheritanceHints({ deviceId: deviceId }, 'device', {
+                CPU_HIGH: 'device-eff-cpu', MEMORY_HIGH: 'device-eff-memory',
+                DISK_HIGH: 'device-eff-disk', SESSIONS_HIGH: 'device-eff-sessions'
+            });
         }).catch(function(e) {
             console.error('Failed to load alert config:', e);
             AC.showError('Failed to load alert config: ' + e.message);

@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.86] - 2026-07-12
+
+### Added — unified alert-threshold editing across the global → site → device hierarchy
+
+Operators can now set a default alert threshold and push it out, then override it
+site-by-site and device-by-device, from one consistent surface — over the same
+proven layered resolution the engine already uses (global default → policy →
+site → device). Nothing changes in how alerts fire; this closes two editing gaps.
+
+- **Per-site alert overrides now have a UI.** The Sites page gains an "Alert
+  overrides" action opening a modal for a site's policy, CPU/memory/disk/session
+  thresholds, cooldown, and storm-source digest. The storage and API already
+  existed; only the editor was missing, so "customize site by site" was previously
+  impossible in the console.
+- **Effective-value visibility.** The device and site alert modals now show, under
+  each threshold, where the value that actually fires comes from — "Inherits 80
+  from Global", "Overridden here", "Set by rule X", or "Suppressed by rule X" —
+  via a new read-only `GET /admin/api/alert-config/effective` endpoint that
+  resolves both the layered chain AND any matching metric Event Rule (so the
+  displayed value is the value that fires, never a stale half-truth).
+- **Instant feedback after editing.** Device/site/policy alert edits now refresh
+  the running resolution immediately instead of waiting for the ~60s background
+  cache cycle, so the modal reflects the change on the spot.
+- Internal: extracted the device→site→default policy selection into a single
+  shared helper so the editor's resolution and the firing path can never drift;
+  threshold-override detection now distinguishes a real override from inheritance
+  even when the value equals the upstream default.
+
 ## [0.11.85] - 2026-07-12
 
 ### Changed — traffic-spike alerts are now driven by Event Rules (non-regressive)

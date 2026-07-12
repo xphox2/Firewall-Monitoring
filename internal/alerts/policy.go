@@ -55,6 +55,30 @@ type ResolvedAlertConfig struct {
 	EscalationRepeat  int
 }
 
+// ConfigProvenance reports WHERE each resolved field's winning value came from,
+// for the read-only "effective config" endpoint (Phase 5a). It is populated only
+// when a non-nil sink is threaded through resolveAlertConfigProv / EffectiveAlertConfig;
+// the firing path passes nil and pays a single nil-check. Layer tags:
+// "global" | "policy" | "site" | "device" | "rule" (metric Event Rule override).
+type ConfigProvenance struct {
+	// Threshold names the layer that supplied the effective Threshold.
+	Threshold string
+	// Cooldown names the layer that supplied the effective CooldownMinutes
+	// ("default" = the per-type default, no override).
+	Cooldown string
+	// SuppressedByRule is true when a metric suppress Event Rule mutes firing
+	// (recovery still runs on the legacy band). RuleID/RuleName identify it.
+	SuppressedByRule bool
+	// AlertsDisabled is true when this scope is turned off — device
+	// AlertsEnabled=false OR a matched policy AlertRule is disabled — so the UI
+	// renders "alerts disabled here", never "inherits 0".
+	AlertsDisabled bool
+	// RuleID/RuleName identify a metric Event Rule that overrode or suppressed
+	// the effective config (0/"" when no rule participated).
+	RuleID   uint
+	RuleName string
+}
+
 // PolicyCache holds in-memory copies of all policy-related data.
 // Refreshed once per poll cycle alongside threshold refresh.
 type PolicyCache struct {
@@ -140,19 +164,59 @@ func (am *AlertManager) RefreshPolicyCache(db *database.Database) {
 	am.RefreshEventRules(db)
 }
 
+// resolvedPolicyIDLocked returns the ID of the AlertPolicy that governs a
+// (device, site) pair, following the same device → site → default precedence as
+// resolveAlertConfig. It returns the ID of the policy actually FOUND via
+// findPolicy — so a dangling PolicyID (points at a deleted policy) correctly
+// falls through to the next layer instead of naming a nonexistent policy. Nil
+// when the cache holds no default policy. Caller holds am.mu (reads policyCache).
+func (am *AlertManager) resolvedPolicyIDLocked(deviceID uint, siteID *uint) *uint {
+	if devCfg := am.policyCache.deviceConfigs[deviceID]; devCfg != nil && devCfg.PolicyID != nil {
+		if p := am.findPolicy(*devCfg.PolicyID); p != nil {
+			return &p.ID
+		}
+	}
+	if siteID != nil {
+		if siteCfg := am.policyCache.siteConfigs[*siteID]; siteCfg != nil && siteCfg.PolicyID != nil {
+			if p := am.findPolicy(*siteCfg.PolicyID); p != nil {
+				return &p.ID
+			}
+		}
+	}
+	if am.policyCache.defaultPolicy != nil {
+		return &am.policyCache.defaultPolicy.ID
+	}
+	return nil
+}
+
 // resolveAlertConfig computes the effective alert configuration for a given device and alert type.
 // Resolution order: Device Override → Site Override → Policy AlertRule → Policy defaults → Global defaults
 func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertType models.AlertType) ResolvedAlertConfig {
+	return am.resolveAlertConfigProv(deviceID, siteID, alertType, nil)
+}
+
+// resolveAlertConfigProv is resolveAlertConfig with an optional provenance sink.
+// When prov != nil it records which layer supplied the winning Threshold/Cooldown
+// (and the disabled state), so the "effective config" endpoint reports the value
+// that actually FIRES — computed by the real resolver, never a reimplementation.
+// A nil sink is the hot firing path. Caller holds am.mu.
+func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, alertType models.AlertType, prov *ConfigProvenance) ResolvedAlertConfig {
 	resolved := ResolvedAlertConfig{
 		AlertEnabled:    true,
 		CooldownMinutes: defaultCooldownForType(alertType),
 		Severity:        defaultSeverityForType(alertType),
 		StormSources:    am.stormSourcesDefault, // global SystemSetting default (0 = off)
 	}
+	if prov != nil {
+		prov.Cooldown = "default"
+	}
 
 	if !am.policyCache.loaded {
 		// Fallback to global config when cache not loaded
 		resolved.Threshold = am.globalThresholdForType(alertType)
+		if prov != nil {
+			prov.Threshold = "global"
+		}
 		return resolved
 	}
 
@@ -161,25 +225,23 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 	// Check device alerts enabled
 	if devCfg != nil && !devCfg.AlertsEnabled {
 		resolved.AlertEnabled = false
+		if prov != nil {
+			prov.AlertsDisabled = true
+		}
 		return resolved
 	}
 
-	// Resolve policy: device → site → default
+	// Resolve policy: device → site → default (shared helper, dangling-safe)
 	var policy *models.AlertPolicy
-	if devCfg != nil && devCfg.PolicyID != nil {
-		policy = am.findPolicy(*devCfg.PolicyID)
-	}
-	if policy == nil && siteID != nil {
-		if siteCfg := am.policyCache.siteConfigs[*siteID]; siteCfg != nil && siteCfg.PolicyID != nil {
-			policy = am.findPolicy(*siteCfg.PolicyID)
-		}
-	}
-	if policy == nil {
-		policy = am.policyCache.defaultPolicy
+	if pid := am.resolvedPolicyIDLocked(deviceID, siteID); pid != nil {
+		policy = am.findPolicy(*pid)
 	}
 
 	if policy != nil {
 		applyPolicyChannels(&resolved, policy)
+		if prov != nil && policy.CooldownMinutes > 0 {
+			prov.Cooldown = "policy"
+		}
 	}
 
 	// Find matching AlertRule
@@ -196,6 +258,9 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 	if rule != nil {
 		if !rule.Enabled {
 			resolved.AlertEnabled = false
+			if prov != nil {
+				prov.AlertsDisabled = true
+			}
 			return resolved
 		}
 		resolved.RuleMatched = true
@@ -205,6 +270,9 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		}
 		if rule.Threshold > 0 {
 			resolved.Threshold = rule.Threshold
+			if prov != nil {
+				prov.Threshold = "policy"
+			}
 		}
 		if rule.ClearThreshold > 0 {
 			resolved.ClearThreshold = rule.ClearThreshold
@@ -219,6 +287,9 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 		// the default rather than disabling the cooldown entirely).
 		if rule.CooldownMinutes != nil && *rule.CooldownMinutes > 0 {
 			resolved.CooldownMinutes = *rule.CooldownMinutes
+			if prov != nil {
+				prov.Cooldown = "policy"
+			}
 		}
 		// StormSources uses `!= nil`, NOT `> 0` (v0.11.46): a non-nil 0 must
 		// DISABLE the digest for this policy, whereas 0 means "inherit" for
@@ -244,10 +315,18 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 	// Site-level threshold/cooldown overrides
 	if siteID != nil {
 		if siteCfg := am.policyCache.siteConfigs[*siteID]; siteCfg != nil {
-			resolved.Threshold = overrideThreshold(resolved.Threshold, alertType,
-				siteCfg.CPUThreshold, siteCfg.MemoryThreshold, siteCfg.DiskThreshold, siteCfg.SessionThreshold)
+			if v, ok := overrideThreshold(resolved.Threshold, alertType,
+				siteCfg.CPUThreshold, siteCfg.MemoryThreshold, siteCfg.DiskThreshold, siteCfg.SessionThreshold); ok {
+				resolved.Threshold = v
+				if prov != nil {
+					prov.Threshold = "site"
+				}
+			}
 			if siteCfg.CooldownMinutes > 0 {
 				resolved.CooldownMinutes = siteCfg.CooldownMinutes
+				if prov != nil {
+					prov.Cooldown = "site"
+				}
 			}
 			// Per-site storm-threshold override — `!= nil` semantics (see the
 			// rule-level override above): non-nil 0 disables the digest for this site.
@@ -259,16 +338,27 @@ func (am *AlertManager) resolveAlertConfig(deviceID uint, siteID *uint, alertTyp
 
 	// Device-level threshold/cooldown overrides (most specific wins)
 	if devCfg != nil {
-		resolved.Threshold = overrideThreshold(resolved.Threshold, alertType,
-			devCfg.CPUThreshold, devCfg.MemoryThreshold, devCfg.DiskThreshold, devCfg.SessionThreshold)
+		if v, ok := overrideThreshold(resolved.Threshold, alertType,
+			devCfg.CPUThreshold, devCfg.MemoryThreshold, devCfg.DiskThreshold, devCfg.SessionThreshold); ok {
+			resolved.Threshold = v
+			if prov != nil {
+				prov.Threshold = "device"
+			}
+		}
 		if devCfg.CooldownMinutes > 0 {
 			resolved.CooldownMinutes = devCfg.CooldownMinutes
+			if prov != nil {
+				prov.Cooldown = "device"
+			}
 		}
 	}
 
 	// If threshold is still 0, fall back to global
 	if resolved.Threshold == 0 {
 		resolved.Threshold = am.globalThresholdForType(alertType)
+		if prov != nil {
+			prov.Threshold = "global"
+		}
 	}
 
 	// Check maintenance windows
@@ -401,27 +491,102 @@ func defaultSeverityForType(alertType models.AlertType) models.Severity {
 }
 
 // overrideThreshold returns the override threshold for the given alert type if > 0.
-// Works for both device and site configs by accepting raw field values.
-func overrideThreshold(current float64, alertType models.AlertType, cpu, mem, disk float64, sess int) float64 {
+// Works for both device and site configs by accepting raw field values. The
+// second return is true when this layer actually supplied the value (a stored
+// value > 0) — so provenance can distinguish a real override from inheritance
+// even when the override is numerically equal to the upstream value (`> 0` is the
+// single source of override truth, matching the firing path).
+func overrideThreshold(current float64, alertType models.AlertType, cpu, mem, disk float64, sess int) (float64, bool) {
 	switch alertType {
 	case "CPU_HIGH":
 		if cpu > 0 {
-			return cpu
+			return cpu, true
 		}
 	case "MEMORY_HIGH":
 		if mem > 0 {
-			return mem
+			return mem, true
 		}
 	case "DISK_HIGH":
 		if disk > 0 {
-			return disk
+			return disk, true
 		}
 	case "SESSIONS_HIGH":
 		if sess > 0 {
-			return float64(sess)
+			return float64(sess), true
 		}
 	}
-	return current
+	return current, false
+}
+
+// EffectiveAlertConfig resolves the config that actually FIRES for a (device, site,
+// metricType) — reconciling BOTH threshold stores: the layered resolve chain AND
+// a matching metric Event Rule (which overrides the chain, or suppresses firing).
+// It returns per-field provenance for the read-only editor. Read-only: takes the
+// RLock and only reads shared state (resolveAlertConfigProv / matchMetricRuleLocked /
+// applyMetricRuleOverridesLocked are mutation-free; recordHit is firing-path only).
+// When siteID is nil and deviceID != 0, the device's site is filled from deviceMeta
+// so the result matches what the poller resolves. metric is the sample key
+// ("cpu_usage"/"memory_usage"/"disk_usage"/"session_count"); "" skips rule reconciliation.
+// Site-scope queries (deviceID=0) match vendor-agnostic rules with vendor="generic";
+// a vendor-scoped rule that will override individual devices at fire time is not
+// reflected in a site-level hint (site aggregation has no single vendor).
+func (am *AlertManager) EffectiveAlertConfig(deviceID uint, siteID *uint, alertType models.AlertType, metric string) (ResolvedAlertConfig, ConfigProvenance) {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+
+	// Match the firing path: a bare device resolves through its own site's overrides.
+	effSite := siteID
+	if effSite == nil && deviceID != 0 {
+		if m, ok := am.deviceMeta[deviceID]; ok {
+			effSite = m.SiteID
+		}
+	}
+
+	var prov ConfigProvenance
+	resolved := am.resolveAlertConfigProv(deviceID, effSite, alertType, &prov)
+	if !resolved.AlertEnabled {
+		// Already flagged AlertsDisabled in the resolver; no rule reconciliation.
+		return resolved, prov
+	}
+
+	// Reconcile the metric Event Rule store for the four metric types, mirroring
+	// resolveMetricEffectiveLocked so the displayed value equals the fired value.
+	event := metricEventType(alertType)
+	if event == "" {
+		return resolved, prov
+	}
+	vendor := "generic"
+	if m, ok := am.deviceMeta[deviceID]; ok && m.Vendor != "" {
+		vendor = m.Vendor
+	}
+	action, rule, matched := am.matchMetricRuleLocked(metricFields(deviceID, event, metric, vendor), deviceID, effSite)
+	if !matched {
+		return resolved, prov
+	}
+	prov.RuleID = rule.id
+	prov.RuleName = rule.name
+	if action == "suppress" {
+		prov.SuppressedByRule = true
+		return resolved, prov
+	}
+	am.applyMetricRuleOverridesLocked(&resolved, rule)
+	// A rule that explicitly set a threshold wins over the chain (metricrules.go),
+	// so the effective threshold provenance is the rule.
+	if rule.dampen.Threshold > 0 {
+		prov.Threshold = "rule"
+	}
+	if rule.cooldownMin != nil && *rule.cooldownMin > 0 {
+		prov.Cooldown = "rule"
+	}
+	// A rule that pins a policy sources its cooldown from that policy (via
+	// applyMetricRuleOverridesLocked→applyRulePolicy); the fired cooldown then
+	// comes from the rule's policy, so label it "rule" too.
+	if rule.policyID != nil {
+		if p := am.findPolicy(*rule.policyID); p != nil && p.CooldownMinutes > 0 {
+			prov.Cooldown = "rule"
+		}
+	}
+	return resolved, prov
 }
 
 // BuildNotifyConfigFromResolved creates a NotifyConfig for use with the notifier.

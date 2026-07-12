@@ -1380,8 +1380,76 @@
         return '<table class="fwmon-table"><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Proto</th><th>Bytes</th><th>Pkts</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }
 
+    // ---- Alert-config inheritance hints (Phase 5a) ----
+    // The device/site alert modals show, under each threshold input, where the
+    // value that ACTUALLY FIRES comes from (global/policy/site/device/rule) via
+    // the /alert-config/effective endpoint — so operators can see "inherits 80
+    // from Global" vs "overridden here" vs "set by rule X".
+    var ALERT_METRIC_TYPES = ['CPU_HIGH', 'MEMORY_HIGH', 'DISK_HIGH', 'SESSIONS_HIGH'];
+    var ALERT_LAYER_NAMES = { global: 'Global', policy: 'Policy', site: 'Site', device: 'Device' };
+
+    function fmtThreshold(v, alertType) {
+        if (v == null) return '';
+        if (alertType === 'SESSIONS_HIGH') return Number(v).toLocaleString();
+        return (Math.round(Number(v) * 100) / 100) + '%';
+    }
+
+    // renderAlertInheritanceHints fetches the effective config for the four metric
+    // types at a device or site scope and writes a short hint into each mapped
+    // element. scope = {deviceId:N} or {siteId:N}; thisLayer = 'device' | 'site'
+    // (so an override AT this layer reads "Overridden here"); hintIds maps
+    // alertType → element id.
+    function renderAlertInheritanceHints(scope, thisLayer, hintIds) {
+        ALERT_METRIC_TYPES.forEach(function(alertType) {
+            var el = document.getElementById(hintIds[alertType]);
+            if (!el) return;
+            el.className = 'alert-eff-hint';
+            el.textContent = '…';
+            var q = 'alert_type=' + encodeURIComponent(alertType);
+            if (scope.deviceId) q += '&device_id=' + scope.deviceId;
+            if (scope.siteId) q += '&site_id=' + scope.siteId;
+            apiFetch(API_BASE + '/alert-config/effective?' + q).then(function(resp) {
+                var d = resp && resp.data ? resp.data : null;
+                if (!d) { el.textContent = ''; return; }
+                var eff = d.effective || {}, prov = d.provenance || {};
+                if (prov.alerts_disabled) {
+                    el.className = 'alert-eff-hint is-disabled';
+                    el.textContent = 'Alerts disabled for this scope';
+                    return;
+                }
+                if (eff.in_maintenance) {
+                    el.className = 'alert-eff-hint is-disabled';
+                    el.textContent = 'In a maintenance window — alerts suppressed now';
+                    return;
+                }
+                if (prov.suppressed_by_rule) {
+                    el.className = 'alert-eff-hint is-rule';
+                    el.textContent = 'Suppressed by rule “' + (prov.rule_name || 'rule') + '”';
+                    return;
+                }
+                // In zscore mode the fire point is baseline + K·σ with this value as a
+                // floor, so the static number alone isn't "the value that fires".
+                var zsuffix = eff.mode === 'zscore' ? ' · zscore (floor)' : '';
+                var val = fmtThreshold(eff.threshold, alertType);
+                if (prov.threshold === 'rule') {
+                    el.className = 'alert-eff-hint is-rule';
+                    el.textContent = 'Set by rule “' + (prov.rule_name || 'rule') + '”: ' + val + zsuffix;
+                } else if (!eff.threshold && eff.mode !== 'zscore') {
+                    // A static threshold of 0 never fires — "inherits 0" reads as configured.
+                    el.textContent = 'No threshold set — won’t fire';
+                } else if (prov.threshold === thisLayer) {
+                    el.className = 'alert-eff-hint is-override';
+                    el.textContent = 'Overridden here: ' + val + zsuffix;
+                } else {
+                    el.textContent = 'Inherits ' + val + ' from ' + (ALERT_LAYER_NAMES[prov.threshold] || prov.threshold || 'default') + zsuffix;
+                }
+            }).catch(function() { el.textContent = ''; });
+        });
+    }
+
     window.AdminCommon = {
         API_BASE: API_BASE,
+        renderAlertInheritanceHints: renderAlertInheritanceHints,
         flagEmoji: flagEmoji,
         asnChip: asnChip,
         ipRef: ipRef,

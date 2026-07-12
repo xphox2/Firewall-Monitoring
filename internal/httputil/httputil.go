@@ -77,6 +77,22 @@ func ParseID(c *gin.Context) (uint, bool) {
 	return uint(idUint), true
 }
 
+// ParseUintQuery extracts a uint from the named query parameter. Returns
+// (value, true) when the parameter is present and a valid uint; (0, false) when
+// it is absent or unparseable (no error is written — the caller decides whether
+// the parameter was required).
+func ParseUintQuery(c *gin.Context, name string) (uint, bool) {
+	raw := c.Query(name)
+	if raw == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint(v), true
+}
+
 // ParseHours extracts hours from the "hours" query parameter.
 // Default is 24, max is 8760 (1 year).
 func ParseHours(c *gin.Context) int {

@@ -1322,3 +1322,17 @@ html[data-role="operator"] [data-min-role="admin"] {
      * packs down instead of overflowing the module edge. */
     .dash-tiles { grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
 }
+
+/* Phase 5a: inheritance hint shown under a threshold input in the device/site
+ * alert-config modals — "Inherits 80 from Global", "Overridden here", or
+ * "Set by rule X". Muted, compact; the rule/override variants get an accent. */
+.alert-eff-hint {
+    font-size: 0.72rem;
+    color: var(--fwmon-text-mute);
+    margin-top: 3px;
+    min-height: 14px;
+    line-height: 1.3;
+}
+.alert-eff-hint.is-override { color: var(--fwmon-text-dim); }
+.alert-eff-hint.is-rule { color: var(--fwmon-accent, var(--fwmon-text-dim)); }
+.alert-eff-hint.is-disabled { color: var(--fwmon-danger, var(--fwmon-text-dim)); }
