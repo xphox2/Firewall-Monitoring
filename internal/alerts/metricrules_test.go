@@ -14,7 +14,8 @@ import (
 // path.
 
 // addCPUMetricRule installs an enabled source="metric" rule for CPU_HIGH with the
-// given action/severity/dampen, flips ownership for cpu_high, and refreshes.
+// given action/severity/dampen and refreshes. The metric evaluator always
+// consults rules (no ownership flag), so creating the rule is enough.
 func addCPUMetricRule(t *testing.T, am *AlertManager, db *database.Database, action, severity, dampen string) {
 	t.Helper()
 	r := &models.EventRule{
@@ -24,9 +25,6 @@ func addCPUMetricRule(t *testing.T, am *AlertManager, db *database.Database, act
 	}
 	if err := db.CreateEventRule(r); err != nil {
 		t.Fatalf("create metric rule: %v", err)
-	}
-	if err := db.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: "cpu_high"}); err != nil {
-		t.Fatalf("set ownership: %v", err)
 	}
 	am.RefreshEventRules(db)
 }
@@ -108,19 +106,16 @@ func TestMetricRule_SuppressMutesFireButRecovers(t *testing.T) {
 	}
 }
 
-func TestMetricRule_OwnedNoRuleFallsBackToLegacy(t *testing.T) {
+func TestMetricRule_NoRuleFallsBackToLegacy(t *testing.T) {
 	am, db := newTestManager(t)
 	setHysteresisPolicy(am, 90, 0)
 	const dev = 7
-	// Own cpu_high but provide NO enabled metric rule → legacy must still fire.
-	if err := db.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: "cpu_high"}); err != nil {
-		t.Fatal(err)
-	}
+	// No metric rule at all → the legacy path must still fire.
 	am.RefreshEventRules(db)
 	if err := am.CheckSystemStatus(cpuStatus(dev, 95), nil); err != nil {
 		t.Fatal(err)
 	}
 	if n := openCPUAlerts(t, am, dev); n != 1 {
-		t.Fatalf("owned + no rule must fall back to legacy and fire, got %d open", n)
+		t.Fatalf("no rule must fall back to legacy and fire, got %d open", n)
 	}
 }

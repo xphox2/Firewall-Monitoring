@@ -19,14 +19,15 @@ gain is the ability to **scope, suppress, and re-route** these alerts per rule.
   set only in a rule now correctly triggers the adaptive baseline.
 - **Trap rules active:** a trap rule can suppress a trap type, override its
   severity/cooldown/routing, and opt an info/notice trap type in to alerting — on
-  top of the existing policy path.
-- **To turn a metric/trap type off,** add a *suppress* rule (or disable it in
-  Settings → Alerts / the policy). Deleting a built-in template falls back to the
-  legacy path (which still alerts) rather than silently going quiet — threshold
-  and trap alerts are too important to lose to a deleted template.
-- **Activation** unions the newly-live types into the ownership flag once, on
-  startup, only for a type whose enabled rule exists (an operator-deleted
-  template stays on the legacy path); an operator-edited flag is preserved.
+  top of the existing policy path. Works for **any** trap type, not just the
+  seeded HA/LINK ones.
+- **Both are non-regressive by construction:** the evaluators always consult
+  matching rules and fall back to the legacy path when no rule matches, so a type
+  whose template you deleted keeps alerting on the legacy path rather than going
+  silent — threshold and trap alerts are too important to lose. **To turn a type
+  off,** add a *suppress* rule (or disable it in Settings → Alerts / the policy).
+- Metric/trap rules honor **site scope** (a rule scoped to a site matches that
+  site's devices even for traps, which arrive without a site id).
 - Traffic-spike alerting is **not** in this release (it still runs in the poller);
   its rule engine lands in a follow-up with a dedicated design.
 

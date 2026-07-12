@@ -360,12 +360,6 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	// now ships as rules, so this must run before syslog ingestion serves.
 	d.EnsureDefaultRules()
 
-	// Activate rule-engine ownership for newly-graduated alert types (Phase 4a:
-	// metric + trap). MUST run AFTER EnsureDefaultRules so the seeds it gates on
-	// exist (covers the same-startup Phase-1→4 upgrade cohort). Idempotent via its
-	// own marker.
-	d.ActivateRuleOwnership()
-
 	// Backfill empty vendor → fortigate (the in-code default per
 	// internal/models/models.go) and audit the fleet's vendor distribution.
 	// Any device whose vendor lacks a rich normalizer in internal/configdiff

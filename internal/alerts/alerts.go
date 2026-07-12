@@ -503,19 +503,25 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	resolved := am.resolveAlertConfig(trap.DeviceID, siteID, models.AlertType(trap.TrapType))
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 
-	// Phase 4a: when this trap_type is owned by the rule engine, consult a matching
-	// source="trap" Event Rule ON TOP of the policy config — suppress, or override
-	// severity/cooldown/routing. A matched EVENT rule also counts as opt-in for the
-	// LC-14 info/notice gate (mirroring resolved.RuleMatched). owned + no matching
-	// rule → the legacy path runs unchanged.
+	// Phase 4a: consult a matching source="trap" Event Rule ON TOP of the policy
+	// config — suppress, or override severity/cooldown/routing — for ANY trap type
+	// (no ownership flag: no matching rule → the legacy path runs unchanged, so
+	// consulting is always non-regressive). A matched EVENT rule also counts as
+	// opt-in for the LC-14 info/notice gate (mirroring resolved.RuleMatched).
 	eventRuleMatched := false
 	var eventRuleSeverity models.Severity
-	if am.stateOwned[trap.TrapType] {
+	{
 		vendor := "generic"
-		if m, ok := am.deviceMeta[trap.DeviceID]; ok && m.Vendor != "" {
-			vendor = m.Vendor
+		effSite := siteID
+		if m, ok := am.deviceMeta[trap.DeviceID]; ok {
+			if m.Vendor != "" {
+				vendor = m.Vendor
+			}
+			if effSite == nil {
+				effSite = m.SiteID // site-scoped trap rules match without a per-call siteID
+			}
 		}
-		action, rule, matched := am.matchTrapRuleLocked(trapFields(trap, vendor), trap.DeviceID, siteID)
+		action, rule, matched := am.matchTrapRuleLocked(trapFields(trap, vendor), trap.DeviceID, effSite)
 		if matched {
 			am.recordHit(rule.id, now)
 			if action == "suppress" {

@@ -69,30 +69,37 @@ func (am *AlertManager) matchMetricRuleLocked(fields map[string]string, deviceID
 // resolveMetricEffectiveLocked computes the effective config for one metric check.
 // It is used for BOTH the fire and recovery legs (resolved once), so they always
 // agree. Returns:
-//   - resolved: the config the fire/recovery math uses (rule-overridden when
-//     owned+matched-alert; the legacy resolveAlertConfig otherwise).
+//   - resolved: the config the fire/recovery math uses (rule-overridden when a
+//     metric alert rule matches; the legacy resolveAlertConfig otherwise).
 //   - skipFire: a suppress rule matched — mute the fire, but recovery still runs
 //     so an already-open alert isn't stranded open.
 //
-// Ownership contract (deliberately different from `state`): owned + NO matching
-// enabled rule → fall back to legacy (never silently drop a CPU/disk alert). To
-// turn a metric type OFF, use a suppress rule or disable it in Settings→Alerts /
-// the policy. Caller holds am.mu.
+// The metric evaluator ALWAYS consults matching rules and falls back to legacy on
+// no match (never silently drop a CPU/disk alert) — so it needs no ownership
+// flag; the shipped seeds carry no threshold and thus inherit exactly today's
+// config (non-regressive). To turn a metric type OFF, use a suppress rule or
+// disable it in Settings→Alerts / the policy. `now`/`siteID` reserved for parity
+// with the other evaluators. Caller holds am.mu.
 func (am *AlertManager) resolveMetricEffectiveLocked(deviceID uint, siteID *uint, alertType models.AlertType, metric string, now time.Time) (resolved ResolvedAlertConfig, skipFire bool) {
 	resolved = am.resolveAlertConfig(deviceID, siteID, alertType)
 	event := metricEventType(alertType)
-	if event == "" || !am.stateOwned[event] {
-		return resolved, false // not owned → legacy
+	if event == "" {
+		return resolved, false // unknown metric type → legacy
 	}
+	effSite := siteID
 	vendor := "generic"
-	if m, ok := am.deviceMeta[deviceID]; ok && m.Vendor != "" {
-		vendor = m.Vendor
+	if m, ok := am.deviceMeta[deviceID]; ok {
+		if m.Vendor != "" {
+			vendor = m.Vendor
+		}
+		if effSite == nil {
+			effSite = m.SiteID // site-scoped rules match without a per-call siteID
+		}
 	}
-	action, rule, matched := am.matchMetricRuleLocked(metricFields(deviceID, event, metric, vendor), deviceID, siteID)
+	action, rule, matched := am.matchMetricRuleLocked(metricFields(deviceID, event, metric, vendor), deviceID, effSite)
 	if !matched {
-		return resolved, false // owned but no rule → legacy fallback (safety)
+		return resolved, false // no rule → legacy
 	}
-	am.recordHit(rule.id, now)
 	if action == "suppress" {
 		return resolved, true // mute fire; recovery still runs on the legacy band
 	}

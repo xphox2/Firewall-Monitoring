@@ -79,58 +79,42 @@ func TestEnsureDefaultRules_SpikeTrapTemplatesInert(t *testing.T) {
 	}
 }
 
-// Phase 4a: ActivateRuleOwnership graduates metric + trap types into
-// state_engine_owns, gated per-token on an enabled matching rule, idempotently.
-
-func TestActivateRuleOwnership_UnionsGatedTokens(t *testing.T) {
+// TestMigrateActivatedSeedDescriptions refreshes stale "Preview" copy on the
+// now-active metric/trap seeds, only for shipped seeds, idempotently.
+func TestMigrateActivatedSeedDescriptions(t *testing.T) {
 	d := NewDatabaseForTesting(t)
-	d.EnsureDefaultRules() // seeds all + flag=interface_down,vpn_tunnel_down
-	// Operator deleted the CPU seed before activating.
-	if err := d.db.Where("source = ? AND alert_type = ?", "metric", models.AlertTypeCPUHigh).Delete(&models.EventRule{}).Error; err != nil {
-		t.Fatalf("delete CPU seed: %v", err)
+	// A shipped seed with the OLD preview description.
+	seed := &models.EventRule{Name: "CPU high", Source: "metric", SeedVersion: 3,
+		Description: "Threshold alert when device CPU usage is high. Preview — not driving alerts yet (see Settings → Alerts)."}
+	if err := d.db.Create(seed).Error; err != nil {
+		t.Fatalf("seed: %v", err)
 	}
-	d.ActivateRuleOwnership()
+	// An operator-created rule with the same name must NOT be touched (seed_version 0).
+	op := &models.EventRule{Name: "HA member down", Source: "trap", SeedVersion: 0, Description: "my custom note"}
+	if err := d.db.Create(op).Error; err != nil {
+		t.Fatalf("op rule: %v", err)
+	}
 
-	owned, _ := d.GetSettingValue("state_engine_owns")
-	// Phase-1 state types preserved.
-	if !strings.Contains(owned, "interface_down") || !strings.Contains(owned, "vpn_tunnel_down") {
-		t.Errorf("state types lost: %q", owned)
+	oldDesc := seed.Description
+	if err := d.migrateActivatedSeedDescriptions(); err != nil {
+		t.Fatalf("migrate: %v", err)
 	}
-	// Metric types with a live seed are owned; the deleted CPU one is NOT.
-	for _, ev := range []string{"memory_high", "disk_high", "sessions_high"} {
-		if !strings.Contains(owned, ev) {
-			t.Errorf("expected %q owned: %q", ev, owned)
-		}
+	var gotSeed, gotOp models.EventRule
+	if err := d.db.First(&gotSeed, seed.ID).Error; err != nil {
+		t.Fatalf("load seed: %v", err)
 	}
-	if strings.Contains(owned, "cpu_high") {
-		t.Errorf("deleted CPU seed must NOT be owned: %q", owned)
+	if gotSeed.Description == oldDesc || gotSeed.Description == "" {
+		t.Errorf("seed description not refreshed: %q", gotSeed.Description)
 	}
-	// Trap tokens owned.
-	for _, ev := range []string{"HA_MEMBER_DOWN", "HA_HEARTBEAT_FAIL", "HA_SWITCH", "LINK_DOWN"} {
-		if !strings.Contains(owned, ev) {
-			t.Errorf("expected trap token %q owned: %q", ev, owned)
-		}
+	if err := d.db.First(&gotOp, op.ID).Error; err != nil {
+		t.Fatalf("load op: %v", err)
 	}
-	// spike NOT owned (Phase 4b).
-	if strings.Contains(owned, "traffic_spike") {
-		t.Errorf("traffic_spike must not be owned yet: %q", owned)
+	if gotOp.Description != "my custom note" {
+		t.Errorf("operator rule (seed_version 0) description must be untouched, got %q", gotOp.Description)
 	}
-	// Marker set.
-	if v, _ := d.GetSettingValue("alert_ownership_activation"); v != "1" {
-		t.Errorf("activation marker = %q, want 1", v)
-	}
-}
-
-func TestActivateRuleOwnership_IdempotentAndPreservesEdits(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	d.EnsureDefaultRules()
-	d.ActivateRuleOwnership()
-	first, _ := d.GetSettingValue("state_engine_owns")
-	// Re-run: marker already at 1 → no-op (idempotent).
-	d.ActivateRuleOwnership()
-	second, _ := d.GetSettingValue("state_engine_owns")
-	if first != second {
-		t.Errorf("activation not idempotent: %q -> %q", first, second)
+	// Idempotent.
+	if err := d.migrateActivatedSeedDescriptions(); err != nil {
+		t.Fatalf("migrate re-run: %v", err)
 	}
 }
 

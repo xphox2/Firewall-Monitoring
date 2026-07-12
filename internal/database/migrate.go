@@ -1709,6 +1709,33 @@ func (d *Database) migrateEventRuleDampenJSON() error {
 	return d.db.AutoMigrate(&models.EventRule{})
 }
 
+// migrateActivatedSeedDescriptions (v42, Phase 4a) refreshes the descriptions of
+// the metric + trap built-in rules on installs that took the earlier "Preview —
+// not driving alerts yet" copy: those rules now DRIVE alerting, so the preview
+// caveat is misleading. Matches by the shipped seed name; idempotent (re-running
+// re-sets the same text). Only the description column is touched — never an
+// operator-edited match/threshold/severity.
+func (d *Database) migrateActivatedSeedDescriptions() error {
+	updates := map[string]string{
+		"CPU high":             "Threshold alert when device CPU usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
+		"Memory high":          "Threshold alert when device memory usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
+		"Disk high":            "Threshold alert when device disk usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
+		"Session count high":   "Threshold alert when device session count is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
+		"HA member down":       "HA cluster member down (SNMP trap).",
+		"HA heartbeat failure": "HA cluster heartbeat lost (SNMP trap).",
+		"HA failover":          "HA cluster failover/switch (SNMP trap).",
+		"Link down (trap)":     "Interface link down reported by SNMP trap.",
+	}
+	for name, desc := range updates {
+		if err := d.db.Model(&models.EventRule{}).
+			Where("name = ? AND seed_version > 0", name).
+			Update("description", desc).Error; err != nil {
+			return fmt.Errorf("migrate v42 refresh %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
 // column the multi-protocol flow ingest needs in ONE migration — flow_samples
 // is monthly RANGE-partitioned on prod-shaped installs, so column adds are a

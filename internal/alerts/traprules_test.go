@@ -22,10 +22,7 @@ func addTrapRule(t *testing.T, am *AlertManager, db *database.Database, trapType
 	if err := db.CreateEventRule(r); err != nil {
 		t.Fatalf("create trap rule: %v", err)
 	}
-	if err := db.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: trapType}); err != nil {
-		t.Fatalf("set ownership: %v", err)
-	}
-	am.RefreshEventRules(db)
+	am.RefreshEventRules(db) // trap evaluator always consults rules — no ownership flag
 }
 
 func trapAlertCount(t *testing.T, am *AlertManager, trapType string) int64 {
@@ -84,16 +81,42 @@ func TestTrapRule_InfoTrapOptIn(t *testing.T) {
 	}
 }
 
-func TestTrapRule_OwnedNoRuleFallsBackToLegacy(t *testing.T) {
+func TestTrapRule_NoRuleFallsBackToLegacy(t *testing.T) {
 	am, db := newTestManager(t)
-	// Own the type but provide no trap rule → the legacy path still fires a
-	// warning/critical trap.
-	if err := db.UpsertSetting(&models.SystemSetting{Key: "state_engine_owns", Value: "HA_MEMBER_DOWN"}); err != nil {
-		t.Fatal(err)
-	}
-	am.RefreshEventRules(db)
+	am.RefreshEventRules(db) // no trap rules
 	fireTrap(t, am, "HA_MEMBER_DOWN", "critical")
 	if n := trapAlertCount(t, am, "HA_MEMBER_DOWN"); n != 1 {
-		t.Fatalf("owned + no rule must fall back to legacy and fire, got %d", n)
+		t.Fatalf("no rule must fall back to legacy and fire, got %d", n)
+	}
+}
+
+// TestTrapRule_SiteScopedMatches is the regression guard for the Fable HIGH
+// finding: ProcessTrap gets siteID=nil, so a site-scoped trap rule must match via
+// the device's own SiteID (from deviceMeta) — otherwise scoping is silently dead.
+func TestTrapRule_SiteScopedMatches(t *testing.T) {
+	am, db := newTestManager(t)
+	site := uint(3)
+	// A device at site 3 (so ResolveDeviceByIP + deviceMeta resolve the site).
+	if err := db.Gorm().Create(&models.Device{
+		Name: "fw", IPAddress: "10.9.9.9", Vendor: "fortigate", SiteID: &site,
+	}).Error; err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+	// A suppress trap rule scoped to site 3.
+	r := &models.EventRule{
+		Name: "suppress HA site3", Enabled: true, Source: "trap", Action: "suppress",
+		SiteID: &site, AlertType: models.AlertTypeHAMemberDown,
+		MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_MEMBER_DOWN"}`,
+	}
+	if err := db.CreateEventRule(r); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	am.RefreshEventRules(db)
+
+	// A critical HA trap from the site-3 device (siteID passed as nil, as the
+	// trap-receiver does) must be SUPPRESSED by the site-scoped rule.
+	fireTrap(t, am, "HA_MEMBER_DOWN", "critical")
+	if n := trapAlertCount(t, am, "HA_MEMBER_DOWN"); n != 0 {
+		t.Fatalf("site-scoped suppress must match via device site; got %d alerts", n)
 	}
 }

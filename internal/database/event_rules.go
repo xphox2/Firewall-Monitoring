@@ -3,7 +3,6 @@ package database
 import (
 	"log"
 	"strconv"
-	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -89,86 +88,6 @@ func (d *Database) EnsureDefaultRules() {
 		}); err != nil {
 			log.Printf("EnsureDefaultRules: set state-engine ownership: %v", err)
 		}
-	}
-}
-
-// ruleOwnershipActivationVersion is the current activation generation.
-// 1 = metric + trap (Phase 4a). Spike (Phase 4b) bumps to 2.
-const ruleOwnershipActivationVersion = 1
-
-// ownershipToken pairs an ownership CSV token with the (source, alert_type) whose
-// enabled rule must exist for that token to be activated.
-type ownershipToken struct {
-	token     string
-	source    string
-	alertType models.AlertType
-}
-
-// phase4aOwnershipTokens graduate from inert to active in activation version 1:
-// the metric threshold types (event_type token) and the seeded HA/LINK trap types
-// (trap_type token). Each is owned ONLY if its enabled matching rule exists.
-var phase4aOwnershipTokens = []ownershipToken{
-	{"cpu_high", "metric", models.AlertTypeCPUHigh},
-	{"memory_high", "metric", models.AlertTypeMemoryHigh},
-	{"disk_high", "metric", models.AlertTypeDiskHigh},
-	{"sessions_high", "metric", models.AlertTypeSessionsHigh},
-	{"HA_MEMBER_DOWN", "trap", models.AlertTypeHAMemberDown},
-	{"HA_HEARTBEAT_FAIL", "trap", models.AlertTypeHAHeartbeatFail},
-	{"HA_SWITCH", "trap", models.AlertTypeHASwitch},
-	{"LINK_DOWN", "trap", models.AlertTypeLinkDown},
-}
-
-// ActivateRuleOwnership graduates the metric + trap alert types from inert to
-// rule-driven by UNIONing their tokens into state_engine_owns — but only for a
-// token whose enabled matching rule actually exists (so an operator-deleted
-// template leaves that type on the legacy path, not silently un-alerting). It
-// runs AFTER EnsureDefaultRules (the seeds it gates on must exist first — this is
-// why it is NOT a pre-seed migration) and is idempotent via its own marker.
-// Preserves an operator-edited flag (union, never overwrite). NOTE: an operator
-// who emptied the flag still receives these newly-graduated tokens — they were
-// never owned before and activation is non-regressive (rules inherit thresholds),
-// so this is the intended upgrade, not a reset of their choice.
-func (d *Database) ActivateRuleOwnership() {
-	if v, ok := d.GetSettingValue("alert_ownership_activation"); ok {
-		if n, err := strconv.Atoi(v); err == nil && n >= ruleOwnershipActivationVersion {
-			return
-		}
-	}
-	owned := map[string]bool{}
-	var order []string
-	if csv, ok := d.GetSettingValue("state_engine_owns"); ok {
-		for _, t := range strings.Split(csv, ",") {
-			if t = strings.TrimSpace(t); t != "" && !owned[t] {
-				owned[t] = true
-				order = append(order, t)
-			}
-		}
-	}
-	for _, ot := range phase4aOwnershipTokens {
-		if owned[ot.token] {
-			continue
-		}
-		var n int64
-		d.db.Model(&models.EventRule{}).
-			Where("enabled = ? AND source = ? AND alert_type = ?", true, ot.source, ot.alertType).
-			Count(&n)
-		if n > 0 {
-			owned[ot.token] = true
-			order = append(order, ot.token)
-		}
-	}
-	if err := d.UpsertSetting(&models.SystemSetting{
-		Key: "state_engine_owns", Value: strings.Join(order, ","),
-		Type: "string", Category: "alerts", Label: "Alert types owned by the state-rule engine",
-	}); err != nil {
-		log.Printf("ActivateRuleOwnership: update ownership flag: %v", err)
-		return // don't advance the marker if the write failed — retry next startup
-	}
-	if err := d.UpsertSetting(&models.SystemSetting{
-		Key: "alert_ownership_activation", Value: strconv.Itoa(ruleOwnershipActivationVersion),
-		Type: "int", Category: "alerts", Label: "Rule-engine ownership activation version",
-	}); err != nil {
-		log.Printf("ActivateRuleOwnership: set marker: %v", err)
 	}
 }
 
