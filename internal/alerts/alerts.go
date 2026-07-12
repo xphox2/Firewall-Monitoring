@@ -1479,48 +1479,9 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 	am.mu.Unlock()
 
 	// Always run the precisely-scoped DB resolve, independent of the in-memory
-	// activeAlerts state. This is idempotent (the WHERE clause matches only OPEN,
-	// unacknowledged rows) and survives a poller restart that lost activeAlerts —
-	// an orphaned offline alert still auto-clears on the next recovery signal.
-	//
-	// We auto-ACKNOWLEDGE as well as resolve so the original alert leaves the NOC's
-	// default open queue with zero manual clicks; resolved_at is retained for the
-	// audit trail and the RESOLVED badge in the UI.
-	//
-	// AUDIT-144: also clear the snooze fields, so a snoozed alert that just resolved
-	// doesn't linger in the "snoozed" view as if it were still active — when the
-	// underlying issue clears, the recovery event unsnoozes it for the operator.
-	if am.db != nil {
-		now := time.Now()
-		base := am.db.Gorm().Model(&models.Alert{}).
-			Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", deviceID, alertType, metricName)
-		// Unacked open rows: resolve + auto-acknowledge so they leave the NOC
-		// default queue with zero clicks, and clear any snooze.
-		base.Session(&gorm.Session{}).Where("acknowledged = ?", false).
-			Updates(map[string]interface{}{
-				"resolved_at":     now,
-				"acknowledged":    true,
-				"acknowledged_at": now,
-				"notes":           "Auto-resolved: " + message,
-				"snoozed_until":   nil,
-				"snoozed_by":      "",
-				"snoozed_reason":  "",
-			})
-		// Already-ACKED open rows: also resolve them now (previously they lingered
-		// open forever), so an acked outage CLOSES on recovery and a later down is
-		// a genuinely NEW episode. Preserve the operator's original ack timestamp
-		// AND their ack note — APPEND the auto-resolution rather than overwrite, so
-		// a root-cause comment the operator typed on ack isn't lost. `||` +
-		// COALESCE are supported by both SQLite (test) and PostgreSQL (prod).
-		base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
-			Updates(map[string]interface{}{
-				"resolved_at":    now,
-				"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", "Auto-resolved: "+message, "\nAuto-resolved: "+message),
-				"snoozed_until":  nil,
-				"snoozed_by":     "",
-				"snoozed_reason": "",
-			})
-	}
+	// activeAlerts state (idempotent + restart-safe). Extracted so the spike
+	// resolve path (ProcessSpikeResolve) can reuse the exact close semantics.
+	am.resolveOpenAlertRows(deviceID, alertType, metricName, message)
 
 	// Only notify + record the companion when the alert was active in THIS process.
 	// A cold resolve (post-restart, or a redundant per-poll up signal) clears the
@@ -1567,6 +1528,39 @@ func (am *AlertManager) saveAlert(alert *models.Alert) {
 	if err := am.db.SaveAlert(alert); err != nil {
 		log.Printf("Failed to persist alert %s: %v", alert.AlertType, err)
 	}
+}
+
+// resolveOpenAlertRows closes every OPEN row for (device, alertType, metricName):
+// unacked rows resolve + auto-acknowledge + clear snooze; acked rows resolve
+// (preserving the ack timestamp, APPENDING the auto-resolution note). Idempotent
+// and restart-safe (matches only resolved_at IS NULL). Shared by sendRecovery and
+// ProcessSpikeResolve.
+func (am *AlertManager) resolveOpenAlertRows(deviceID uint, alertType models.AlertType, metricName, message string) {
+	if am.db == nil {
+		return
+	}
+	now := time.Now()
+	base := am.db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", deviceID, alertType, metricName)
+	base.Session(&gorm.Session{}).Where("acknowledged = ?", false).
+		Updates(map[string]interface{}{
+			"resolved_at":     now,
+			"acknowledged":    true,
+			"acknowledged_at": now,
+			"notes":           "Auto-resolved: " + message,
+			"snoozed_until":   nil,
+			"snoozed_by":      "",
+			"snoozed_reason":  "",
+		})
+	// AUDIT-144 + acked-recovery: also close acked rows, preserving the ack note.
+	base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
+		Updates(map[string]interface{}{
+			"resolved_at":    now,
+			"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", "Auto-resolved: "+message, "\nAuto-resolved: "+message),
+			"snoozed_until":  nil,
+			"snoozed_by":     "",
+			"snoozed_reason": "",
+		})
 }
 
 // dispatchFired persists each fired alert and sends it unless suppressed. The

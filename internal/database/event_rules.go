@@ -168,15 +168,17 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeSessionsHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"sessions_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		// Spike-source built-in (seed_version 4, Phase 3 — INERT). The seasonal
-		// traffic-spike detector still fires directly in the poller today; this
-		// template is the config surface (scope/suppress + dampen params) and does
-		// NOT drive alerting yet (traffic_spike is absent from state_engine_owns).
-		{Name: "Traffic spike", Description: "Alert on a sustained traffic spike vs the interface's seasonal baseline. Preview — traffic-spike alerting still runs in the poller today.",
+		// Spike-source built-in (seed_version 4). ACTIVE as of Phase 4b: the poller
+		// routes the seasonal traffic-spike detector's fire/resolve through
+		// ProcessSpike/ProcessSpikeResolve, always consulting this rule (scope/
+		// suppress/severity/policy). dampen_json is EMPTY so the detector params
+		// INHERIT the live Settings→Alerts spike sensitivity/sustain — set stddev_k/
+		// min_duration_minutes in the rule to override for its scope. Non-regressive.
+		{Name: "Traffic spike", Description: "Alert on a sustained traffic spike vs the interface's seasonal baseline. Inherits the Settings → Alerts spike sensitivity unless you set values here.",
 			Enabled: true, Priority: 100, Source: "spike", Action: "alert",
 			AlertType: models.AlertTypeTrafficSpike, SeedVersion: seedVerTrapSpike,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"traffic_spike"}`,
-			DampenJSON: `{"stddev_k":3,"min_duration_minutes":15}`},
+			DampenJSON: `{}`},
 		// Trap-source built-ins (seed_version 4). ACTIVE as of Phase 4a: ProcessTrap
 		// always consults matching trap rules (any trap type, no ownership flag) for
 		// scope/suppress + per-rule severity/routing on top of the existing policy

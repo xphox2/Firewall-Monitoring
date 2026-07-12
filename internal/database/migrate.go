@@ -1736,6 +1736,37 @@ func (d *Database) migrateActivatedSeedDescriptions() error {
 	return nil
 }
 
+// migrateSpikeRuleInheritSettings (v43, Phase 4b) activates the "Traffic spike"
+// rule non-regressively. (a) Clears the baked dampen params to '{}' so the rule
+// INHERITS the operator's live spike SystemSettings — but ONLY when the value is
+// still the exact shipped default, so an operator who tuned k/min-duration in the
+// rule keeps their value. (b) Refreshes the now-stale "Preview" description.
+// seed_version>0 guards operator-created rules; idempotent.
+func (d *Database) migrateSpikeRuleInheritSettings() error {
+	if err := d.db.Model(&models.EventRule{}).
+		Where("name = ? AND seed_version > 0 AND dampen_json = ?",
+			"Traffic spike", `{"stddev_k":3,"min_duration_minutes":15}`).
+		Update("dampen_json", "{}").Error; err != nil {
+		return fmt.Errorf("migrate v43 clear spike dampen: %w", err)
+	}
+	if err := d.db.Model(&models.EventRule{}).
+		Where("name = ? AND seed_version > 0", "Traffic spike").
+		Update("description", "Alert on a sustained traffic spike vs the interface's seasonal baseline. Inherits the Settings → Alerts spike sensitivity unless you set values here.").Error; err != nil {
+		return fmt.Errorf("migrate v43 refresh spike description: %w", err)
+	}
+	// (c) The old poller path NEVER closed a fired spike row (its resolve inserted a
+	// separate resolved row). Close any lingering OPEN TRAFFIC_SPIKE rows once here
+	// so the pre-4b orphans clear immediately — the new detector re-opens a fresh
+	// row on the next spike. Idempotent (matches only resolved_at IS NULL).
+	now := time.Now()
+	if err := d.db.Model(&models.Alert{}).
+		Where("alert_type = ? AND resolved_at IS NULL", models.AlertTypeTrafficSpike).
+		Updates(map[string]interface{}{"resolved_at": now, "acknowledged": true, "acknowledged_at": now}).Error; err != nil {
+		return fmt.Errorf("migrate v43 close orphan spike alerts: %w", err)
+	}
+	return nil
+}
+
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
 // column the multi-protocol flow ingest needs in ONE migration — flow_samples
 // is monthly RANGE-partitioned on prod-shaped installs, so column adds are a

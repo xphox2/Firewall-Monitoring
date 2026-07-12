@@ -118,6 +118,48 @@ func TestMigrateActivatedSeedDescriptions(t *testing.T) {
 	}
 }
 
+// TestMigrateSpikeRuleInheritSettings (v43) clears the baked spike dampen to '{}'
+// ONLY for the untouched shipped default, and refreshes the description.
+func TestMigrateSpikeRuleInheritSettings(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	// Untouched shipped seed (baked default) → should be cleared to {}.
+	def := &models.EventRule{Name: "Traffic spike", Source: "spike", SeedVersion: 4,
+		Description: "… Preview — traffic-spike alerting still runs in the poller today.",
+		DampenJSON:  `{"stddev_k":3,"min_duration_minutes":15}`}
+	if err := d.db.Create(def).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := d.migrateSpikeRuleInheritSettings(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	var got models.EventRule
+	d.db.First(&got, def.ID)
+	if got.DampenJSON != "{}" {
+		t.Errorf("untouched spike dampen should be cleared to {}, got %q", got.DampenJSON)
+	}
+	if got.Description == def.Description {
+		t.Errorf("spike description not refreshed")
+	}
+}
+
+func TestMigrateSpikeRuleInheritSettings_LeavesTunedValue(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	// Operator-tuned dampen (k=8) → must NOT be cleared.
+	tuned := &models.EventRule{Name: "Traffic spike", Source: "spike", SeedVersion: 4,
+		DampenJSON: `{"stddev_k":8,"min_duration_minutes":30}`}
+	if err := d.db.Create(tuned).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := d.migrateSpikeRuleInheritSettings(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	var got models.EventRule
+	d.db.First(&got, tuned.ID)
+	if got.DampenJSON != `{"stddev_k":8,"min_duration_minutes":30}` {
+		t.Errorf("operator-tuned spike dampen must be untouched, got %q", got.DampenJSON)
+	}
+}
+
 // TestEnsureDefaultRules_UpgradeMarker3To4 exercises the real Phase-2→Phase-3
 // upgrade: a marker at "3" with the gen 1-3 rows already present must seed ONLY
 // the gen-4 spike/trap rules, leave a deleted older seed dead, advance the marker
