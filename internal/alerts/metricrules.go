@@ -1,7 +1,9 @@
 package alerts
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -16,6 +18,43 @@ import (
 // the rule only overrides fields an operator explicitly set. The stateful
 // threshold math (zscoreFireAt + hysteresis) is REUSED unchanged in
 // CheckSystemStatus — the rule only supplies the ResolvedAlertConfig it reads.
+
+// ParseMetricDampen parses a metric Event Rule's DampenJSON into its threshold
+// fields. ok reports whether the JSON parsed (NOT whether a threshold is set —
+// callers check threshold > 0 for a live override). Exported so the alert-config
+// overview handler reuses the one dampen schema instead of re-declaring it.
+func ParseMetricDampen(dampenJSON string) (threshold, clear, k float64, mode string, ok bool) {
+	s := strings.TrimSpace(dampenJSON)
+	if s == "" {
+		return 0, 0, 0, "", false
+	}
+	var dp dampenParams
+	if err := json.Unmarshal([]byte(s), &dp); err != nil {
+		return 0, 0, 0, "", false
+	}
+	return dp.Threshold, dp.ClearThreshold, dp.ZScoreK, dp.Mode, true
+}
+
+// MetricAlertTypeForEvent maps a metric event_type token (cpu_high/…) to its
+// AlertType, or "" if the token isn't one of the four metric checks.
+func MetricAlertTypeForEvent(event string) models.AlertType {
+	switch event {
+	case MetricEventCPU:
+		return models.AlertTypeCPUHigh
+	case MetricEventMemory:
+		return models.AlertTypeMemoryHigh
+	case MetricEventDisk:
+		return models.AlertTypeDiskHigh
+	case MetricEventSessions:
+		return models.AlertTypeSessionsHigh
+	}
+	return ""
+}
+
+// IsMetricAlertType reports whether at is one of the four metric threshold types.
+func IsMetricAlertType(at models.AlertType) bool {
+	return metricEventType(at) != ""
+}
 
 // metricEventType maps a metric AlertType to its rule scoping token (the
 // event_type the seed matches + the ownership flag key).

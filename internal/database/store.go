@@ -152,9 +152,11 @@ type AlertPolicyStore interface {
 	UpdateAlertPolicy(policy *models.AlertPolicy) error
 	BatchUpsertAlertRules(policyID uint, rules []models.AlertRule) error
 	GetDeviceAlertConfig(deviceID uint) (*models.DeviceAlertConfig, error)
+	GetAllDeviceAlertConfigs() ([]models.DeviceAlertConfig, error)
 	UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error
 	DeleteDeviceAlertConfig(deviceID uint) error
 	GetSiteAlertConfig(siteID uint) (*models.SiteAlertConfig, error)
+	GetAllSiteAlertConfigs() ([]models.SiteAlertConfig, error)
 	UpsertSiteAlertConfig(cfg *models.SiteAlertConfig) error
 	DeleteSiteAlertConfig(siteID uint) error
 	// Event rules (v35): unified vendor-aware alert/suppress rule engine.

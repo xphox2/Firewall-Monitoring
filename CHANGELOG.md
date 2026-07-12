@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.87] - 2026-07-12
+
+### Added — a single "Alerting" page for the whole threshold hierarchy
+
+Alert-threshold configuration was spread across six places. A new **Alerting**
+page (Configuration nav) brings the hierarchy into one view — no change to how
+alerts fire, no migration.
+
+- **Global defaults live here now.** Edit the CPU/Memory/Disk/Session thresholds
+  and traffic-spike settings on the Alerting page; they moved off the Settings →
+  Alerting section (which now points to the new page). Saving refreshes the
+  running alert resolution immediately (no ~60s lag).
+- **Overrides overview.** One bounded list of everywhere a threshold is
+  customized above the defaults — per site, per device, per notification profile,
+  and per metric event rule — each with its value and a badge when an event rule
+  currently overrides it. Rows drill straight into the site/device editor or the
+  profile/rule page. Disabled-device rows are surfaced too, so a silenced device
+  can't hide.
+- New read-only `GET /admin/api/alert-config/overview` aggregates the above
+  (viewer-accessible; thresholds aren't secrets).
+
+### Changed — "Alert Policies" renamed to "Notification Profiles"
+
+The policies surface is now labelled **Notification Profiles** (nav, page,
+modal, and the device/site profile selectors) to reflect that it defines
+channels, escalation, and routing. Only display text changed — routes, APIs, and
+stored data are untouched.
+
 ## [0.11.86] - 2026-07-12
 
 ### Added — unified alert-threshold editing across the global → site → device hierarchy

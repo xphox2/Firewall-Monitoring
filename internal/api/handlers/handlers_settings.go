@@ -357,6 +357,22 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		httputil.InternalError(c, fmt.Sprintf("Failed to save %d setting(s)", len(failedKeys)), nil)
 		return
 	}
+
+	// If an alert-threshold or spike setting changed, refresh the running alert
+	// resolution now instead of waiting for the ~60s ticker — so the Alerting
+	// hub (which edits these) reflects the save on its own re-render.
+	refreshedAlerting := false
+	for _, s := range validSettings {
+		switch s.Key {
+		case "cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
+			"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes":
+			refreshedAlerting = true
+		}
+	}
+	if refreshedAlerting {
+		h.refreshAlertConfigCache(h.reqDB(c))
+	}
+
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"message":  "Settings updated",
 		"warnings": warnings,

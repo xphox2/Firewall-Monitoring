@@ -227,6 +227,7 @@
     <script defer src="/static/js/admin-reports.js"></script>
     <script defer src="/static/js/admin-threatintel.js"></script>
     <script defer src="/static/js/admin-event-rules.js"></script>
+    <script defer src="/static/js/admin-alerting.js"></script>
     <script defer src="/static/js/admin-probes.js"></script>
     <script defer src="/static/js/admin-sites.js"></script>
     <script defer src="/static/js/admin-irc.js"></script>
@@ -793,12 +794,65 @@
         </div>
 
         <!-- Alert Policies Page -->
+        <!-- Alerting hub (v0.11.87 — FwmonAlerting in admin-alerting.js) -->
+        <div class="page" id="page-alerting">
+            <div class="flex justify-between items-center mb-6 mt-4">
+                <div>
+                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Alerting</h2>
+                    <p class="text-xs text-[#8b949e] mt-1">Set global alert defaults, then push them out and override site-by-site and device-by-device.</p>
+                </div>
+            </div>
+
+            <div class="card" style="padding:20px;margin-bottom:20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <h3 style="font-size:1rem;font-weight:600;color:var(--fwmon-text);margin:0;">Global defaults</h3>
+                    <button class="btn sm" data-action="alerting-save-global" data-min-role="admin">Save defaults</button>
+                </div>
+                <p style="color:var(--fwmon-text-faint);font-size:0.8rem;margin:0 0 14px;">These apply everywhere unless a site, device, notification profile, or event rule overrides them.</p>
+                <div class="form-row">
+                    <div class="form-group"><label for="alerting-g-cpu">CPU (%)</label><input type="number" id="alerting-g-cpu" min="0" max="100" step="1"></div>
+                    <div class="form-group"><label for="alerting-g-memory">Memory (%)</label><input type="number" id="alerting-g-memory" min="0" max="100" step="1"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label for="alerting-g-disk">Disk (%)</label><input type="number" id="alerting-g-disk" min="0" max="100" step="1"></div>
+                    <div class="form-group"><label for="alerting-g-sessions">Sessions</label><input type="number" id="alerting-g-sessions" min="1" step="1"></div>
+                </div>
+                <div style="border-top:1px solid var(--fwmon-border);margin:14px 0 12px;padding-top:12px;">
+                    <label class="toggle-label" style="margin-bottom:12px;">
+                        <span class="toggle-switch"><input type="checkbox" id="alerting-g-spike-enabled"><span class="toggle-slider"></span></span>
+                        <span>Traffic-spike alerts enabled</span>
+                    </label>
+                    <div class="form-row">
+                        <div class="form-group"><label for="alerting-g-spike-stddev">Spike σ threshold</label><input type="number" id="alerting-g-spike-stddev" min="1" max="10" step="0.1"></div>
+                        <div class="form-group"><label for="alerting-g-spike-min">Spike min duration (min)</label><input type="number" id="alerting-g-spike-min" min="1" max="1440" step="1"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="padding:20px;margin-bottom:20px;">
+                <h3 style="font-size:1rem;font-weight:600;color:var(--fwmon-text);margin:0 0 4px;">Overrides</h3>
+                <p style="color:var(--fwmon-text-faint);font-size:0.8rem;margin:0 0 14px;">Everywhere a threshold is customized above the global defaults.</p>
+                <div id="alerting-overrides"><!-- rendered by admin-alerting.js --></div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <a class="card" href="/admin/alert-policies" style="padding:16px;text-decoration:none;display:block;">
+                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 4px;">Notification Profiles →</h3>
+                    <p style="color:var(--fwmon-text-faint);font-size:0.8rem;margin:0;">Channels, escalation, and per-alert-type severity/routing.</p>
+                </a>
+                <a class="card" href="/admin/event-rules" style="padding:16px;text-decoration:none;display:block;">
+                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 4px;">Event Rules →</h3>
+                    <p style="color:var(--fwmon-text-faint);font-size:0.8rem;margin:0;">Conditional overrides, suppression, and spike-sensitivity rules (not shown above).</p>
+                </a>
+            </div>
+        </div>
+
         <div class="page" id="page-alert-policies">
             <div class="stat-grid stat-grid-3">
                 <div class="stat-card stat-card-accent">
                     <div class="stat-icon">📋</div>
                     <div class="stat-content">
-                        <div class="stat-label">Total Policies</div>
+                        <div class="stat-label">Total Profiles</div>
                         <div class="stat-value accent" id="ap-total">--</div>
                     </div>
                 </div>
@@ -819,10 +873,10 @@
             </div>
             <div class="flex justify-between items-center mb-6 mt-4">
                 <div>
-                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Alert Policies</h2>
+                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">Notification Profiles</h2>
                     <p class="text-xs text-[#8b949e] mt-1">Define routing logic and thresholds for firewall status notifications.</p>
                 </div>
-                <button class="btn" data-action="show-policy-modal" data-min-role="operator">+ Create Policy</button>
+                <button class="btn" data-action="show-policy-modal" data-min-role="operator">+ Create Profile</button>
             </div>
             
             <div id="alert-policies-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -1114,13 +1168,9 @@
             </section>
             <section class="settings-section active" id="settings-section-alerting" data-section="alerting">
             <div class="card">
-                <div class="card-header"><h2>Alert Settings</h2></div>
-                <div class="settings-grid" id="settings-alerts"></div>
-            </div>
-            <div class="card">
-                <div class="card-header"><h2>Traffic Spike Detection</h2></div>
-                <p style="color: var(--fwmon-text-faint); margin-bottom: 12px; font-size: 0.85rem;">Alert when traffic exceeds the rolling average by a configurable number of standard deviations.</p>
-                <div class="settings-grid" id="settings-spike"></div>
+                <div class="card-header"><h2>Alert Thresholds &amp; Spike Detection</h2></div>
+                <p style="color: var(--fwmon-text-faint); margin-bottom: 14px; font-size: 0.9rem;">Global alert thresholds and traffic-spike settings now live on the dedicated Alerting page, alongside the site- and device-level overrides that build on them.</p>
+                <a class="btn" href="/admin/alerting">Go to Alerting →</a>
             </div>
             </section>
             <section class="settings-section" id="settings-section-notifications" data-section="notifications">
@@ -2494,7 +2544,7 @@
                     </label>
                 </div>
                 <div class="form-group">
-                    <label for="device-alert-policy">Alert Policy</label>
+                    <label for="device-alert-policy">Notification Profile</label>
                     <select id="device-alert-policy">
                         <option value="">— Inherit from site/global —</option>
                     </select>
@@ -2554,7 +2604,7 @@
                 <input type="hidden" id="site-alert-site-id">
                 <p style="color:var(--fwmon-text-faint);font-size:0.8rem;margin:0 0 12px;">Site overrides sit between the policy and per-device overrides: a device without its own value inherits from here.</p>
                 <div class="form-group">
-                    <label for="site-alert-policy">Alert Policy</label>
+                    <label for="site-alert-policy">Notification Profile</label>
                     <select id="site-alert-policy">
                         <option value="">— Inherit from global default —</option>
                     </select>
@@ -2883,7 +2933,7 @@
     <div class="modal" id="policy-modal" role="dialog" aria-modal="true" aria-labelledby="policy-modal-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 id="policy-modal-title">Create Alert Policy</h2>
+                <h2 id="policy-modal-title">Create Notification Profile</h2>
                 <button class="modal-close" data-action="close-policy-modal">&times;</button>
             </div>
             <form id="policy-form">
