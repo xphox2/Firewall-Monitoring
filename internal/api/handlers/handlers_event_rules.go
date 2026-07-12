@@ -18,7 +18,7 @@ import (
 // tester reads raw syslog content.
 
 var (
-	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true, "state": true}
+	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true, "state": true, "metric": true}
 	validRuleActions = map[string]bool{"alert": true, "suppress": true}
 )
 
@@ -34,7 +34,7 @@ func validateEventRule(r *models.EventRule) string {
 		r.Source = "syslog"
 	}
 	if !validRuleSources[r.Source] {
-		return "Source must be syslog, flow, state, or any"
+		return "Source must be syslog, flow, state, metric, or any"
 	}
 	if r.Action == "" {
 		r.Action = "alert"
@@ -53,6 +53,14 @@ func validateEventRule(r *models.EventRule) string {
 	// disable dampening at runtime.
 	if r.Source == "state" {
 		if msg := alerts.ValidateStateDampenJSON(r.DampenJSON); msg != "" {
+			return msg
+		}
+	}
+	// metric rules (CPU/mem/disk/session thresholds) — validate the threshold blob
+	// shape. The evaluator that acts on it ships in a later phase; today these
+	// rules are inert (the legacy Settings→Alerts path drives metric alerting).
+	if r.Source == "metric" {
+		if msg := alerts.ValidateMetricDampenJSON(r.DampenJSON); msg != "" {
 			return msg
 		}
 	}

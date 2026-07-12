@@ -10,10 +10,19 @@ import (
 	"gorm.io/gorm"
 )
 
-// eventRuleSeedVersion marks the shipped seed set. Bump it (and add to
-// defaultEventRules) to introduce a new generation of defaults; the one-time
-// marker guarantees an operator-deleted seed is never resurrected (M5).
-const eventRuleSeedVersion = 2
+// Seed generations. Each seed rule carries the version it was INTRODUCED in
+// (seedVerSyslog/State/Metric), NOT the current top version — the resurrection
+// guard in EnsureDefaultRules only seeds rules whose SeedVersion is newer than
+// the last-applied marker, so an operator-deleted older seed is never recreated
+// on a version bump (M5). eventRuleSeedVersion is the highest generation and is
+// the value written to the marker.
+const (
+	seedVerSyslog = 1 // legacy syslog sev0-2 + FortiGate examples
+	seedVerState  = 2 // interface/VPN down (Phase 1)
+	seedVerMetric = 3 // CPU/mem/disk/session thresholds (Phase 2, inert)
+
+	eventRuleSeedVersion = seedVerMetric
+)
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
 // SystemSetting marker). The legacy "alert on syslog severity 0-2" behavior
@@ -74,27 +83,27 @@ func defaultEventRules() []models.EventRule {
 		// severity left blank so the type's historical default applies).
 		{Name: "Syslog Emergency (severity 0)", Description: "Legacy: alert on syslog Emergency messages.",
 			Enabled: true, Priority: 100, Source: "syslog", Action: "alert",
-			AlertType: models.AlertTypeSyslogEmergency, SeedVersion: eventRuleSeedVersion,
+			AlertType: models.AlertTypeSyslogEmergency, SeedVersion: seedVerSyslog,
 			MatchJSON: `{"op":"eq","field":"severity","value":"0"}`},
 		{Name: "Syslog Alert (severity 1)", Description: "Legacy: alert on syslog Alert messages.",
 			Enabled: true, Priority: 100, Source: "syslog", Action: "alert",
-			AlertType: models.AlertTypeSyslogAlert, SeedVersion: eventRuleSeedVersion,
+			AlertType: models.AlertTypeSyslogAlert, SeedVersion: seedVerSyslog,
 			MatchJSON: `{"op":"eq","field":"severity","value":"1"}`},
 		{Name: "Syslog Critical (severity 2)", Description: "Legacy: alert on syslog Critical messages.",
 			Enabled: true, Priority: 100, Source: "syslog", Action: "alert",
-			AlertType: models.AlertTypeSyslogCritical, SeedVersion: eventRuleSeedVersion,
+			AlertType: models.AlertTypeSyslogCritical, SeedVersion: seedVerSyslog,
 			MatchJSON: `{"op":"eq","field":"severity","value":"2"}`},
 		// FortiGate VPN/IPsec errors — the actionable signal buried under the
 		// forward-traffic flood. Matches regardless of syslog severity.
 		{Name: "FortiGate VPN/IPsec errors", Description: "Alert on FortiGate VPN subtype error-level logs (IPsec phase/ESP failures).",
 			Enabled: true, Priority: 50, Source: "syslog", VendorScope: "fortigate",
-			Action: "alert", Severity: sev("critical"), SeedVersion: eventRuleSeedVersion,
+			Action: "alert", Severity: sev("critical"), SeedVersion: seedVerSyslog,
 			MatchJSON: `{"op":"and","conditions":[{"op":"eq","field":"subtype","value":"vpn"},{"op":"eq","field":"level","value":"error"}]}`},
 		// Example suppression — shipped DISABLED so it can't silently mute a
 		// future broad operator alert rule (M5).
 		{Name: "Suppress FortiGate forward-traffic warnings", Description: "Example: mute the high-volume forward-traffic warning logs. Disabled by default.",
 			Enabled: false, Priority: 10, Source: "syslog", VendorScope: "fortigate",
-			Action: "suppress", SeedVersion: eventRuleSeedVersion,
+			Action: "suppress", SeedVersion: seedVerSyslog,
 			MatchJSON: `{"op":"and","conditions":[{"op":"eq","field":"subtype","value":"forward"},{"op":"eq","field":"level","value":"warning"}]}`},
 		// State-source built-ins (seed_version 2): interface and VPN down alerting,
 		// now owned by the state-rule engine (see EnsureDefaultRules ownership flag).
@@ -104,14 +113,42 @@ func defaultEventRules() []models.EventRule {
 		// flapping, but fire immediately when the link was up ≥1h before dropping.
 		{Name: "Interface down", Description: "Alert when a monitored interface that has been up goes down. Fire-once-per-outage with flap dampening.",
 			Enabled: true, Priority: 100, Source: "state", Action: "alert",
-			AlertType: models.AlertTypeInterfaceDown, SeedVersion: eventRuleSeedVersion,
+			AlertType: models.AlertTypeInterfaceDown, SeedVersion: seedVerState,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"interface_down"}`,
 			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
 		{Name: "VPN tunnel down", Description: "Alert when a monitored VPN tunnel that has been up goes down. Fire-once-per-outage with flap dampening.",
 			Enabled: true, Priority: 100, Source: "state", Action: "alert",
-			AlertType: models.AlertTypeVPNTunnelDown, SeedVersion: eventRuleSeedVersion,
+			AlertType: models.AlertTypeVPNTunnelDown, SeedVersion: seedVerState,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"vpn_tunnel_down"}`,
 			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
+		// Metric-source built-ins (seed_version 3, Phase 2 — INERT). CPU/memory/
+		// disk/session threshold templates so operators can see/scope them in the
+		// Event Rules UI. They do NOT drive alerting yet: the metric types are
+		// deliberately absent from the state_engine_owns flag, so the legacy
+		// CheckSystemStatus path still owns them. dampen_json carries mode only (no
+		// threshold) so a later ownership flip inherits the operator's existing
+		// Settings→Alerts / policy / device thresholds — non-regressive. Severity
+		// blank ⇒ per-type default applies.
+		{Name: "CPU high", Description: "Threshold alert when device CPU usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
+			AlertType: models.AlertTypeCPUHigh, SeedVersion: seedVerMetric,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"cpu_high"}`,
+			DampenJSON: `{"mode":"static"}`},
+		{Name: "Memory high", Description: "Threshold alert when device memory usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
+			AlertType: models.AlertTypeMemoryHigh, SeedVersion: seedVerMetric,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"memory_high"}`,
+			DampenJSON: `{"mode":"static"}`},
+		{Name: "Disk high", Description: "Threshold alert when device disk usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
+			AlertType: models.AlertTypeDiskHigh, SeedVersion: seedVerMetric,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"disk_high"}`,
+			DampenJSON: `{"mode":"static"}`},
+		{Name: "Session count high", Description: "Threshold alert when device session count is high. Preview — not driving alerts yet (see Settings → Alerts).",
+			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
+			AlertType: models.AlertTypeSessionsHigh, SeedVersion: seedVerMetric,
+			MatchJSON:  `{"op":"eq","field":"event_type","value":"sessions_high"}`,
+			DampenJSON: `{"mode":"static"}`},
 	}
 }
 

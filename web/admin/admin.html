@@ -2681,6 +2681,9 @@
         <option value="event_type"><option value="interface_name"><option value="tunnel_name">
         <option value="admin_status"><option value="vendor"><option value="device_id">
     </datalist>
+    <datalist id="er-metric-field-hints">
+        <option value="event_type"><option value="metric"><option value="vendor"><option value="device_id">
+    </datalist>
     <div class="modal" id="event-rule-modal" role="dialog" aria-modal="true" aria-labelledby="event-rule-modal-title">
         <div class="modal-content">
             <div class="modal-header">
@@ -2704,7 +2707,7 @@
                     <div class="policy-section-header"><h3>Scope</h3></div>
                     <div class="policy-section-body">
                         <div class="form-row form-row-4">
-                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="any">Any</option></select></div>
+                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="metric">Metric (CPU / memory / disk / sessions)</option><option value="any">Any</option></select></div>
                             <div class="form-group"><label for="er-vendor">Vendor</label><select id="er-vendor"></select></div>
                             <div class="form-group"><label for="er-device">Device</label><select id="er-device"></select></div>
                             <div class="form-group"><label for="er-site">Site</label><select id="er-site"></select></div>
@@ -2735,7 +2738,7 @@
                         <div id="er-alert-fields">
                             <div class="form-row form-row-3">
                                 <div class="form-group"><label for="er-severity">Severity</label><select id="er-severity"><option value="">Use type default</option><option value="info">Info</option><option value="warning">Warning</option><option value="critical">Critical</option></select></div>
-                                <div class="form-group"><label for="er-alert-type">Alert Type</label><select id="er-alert-type"><option value="">Default (LOG_RULE_MATCH)</option><option value="LOG_RULE_MATCH">LOG_RULE_MATCH</option><option value="SYSLOG_ALERT">SYSLOG_ALERT</option><option value="SYSLOG_CRITICAL">SYSLOG_CRITICAL</option><option value="SYSLOG_EMERGENCY">SYSLOG_EMERGENCY</option><option value="INTERFACE_DOWN">INTERFACE_DOWN</option><option value="VPN_TUNNEL_DOWN">VPN_TUNNEL_DOWN</option></select></div>
+                                <div class="form-group"><label for="er-alert-type">Alert Type</label><select id="er-alert-type"><option value="">Default (LOG_RULE_MATCH)</option><option value="LOG_RULE_MATCH">LOG_RULE_MATCH</option><option value="SYSLOG_ALERT">SYSLOG_ALERT</option><option value="SYSLOG_CRITICAL">SYSLOG_CRITICAL</option><option value="SYSLOG_EMERGENCY">SYSLOG_EMERGENCY</option><option value="INTERFACE_DOWN">INTERFACE_DOWN</option><option value="VPN_TUNNEL_DOWN">VPN_TUNNEL_DOWN</option><option value="CPU_HIGH">CPU_HIGH</option><option value="MEMORY_HIGH">MEMORY_HIGH</option><option value="DISK_HIGH">DISK_HIGH</option><option value="SESSIONS_HIGH">SESSIONS_HIGH</option></select></div>
                                 <div class="form-group"><label for="er-group-by">Dedup by field</label><input type="text" id="er-group-by" list="er-field-hints" placeholder="e.g. srcip (optional)"></div>
                             </div>
                             <div class="form-row form-row-2">
@@ -2755,6 +2758,20 @@
                         </div>
                     </div>
                 </div>
+                <div class="policy-section" id="er-metric-section" style="display:none">
+                    <div class="policy-section-header"><h3>Threshold</h3></div>
+                    <div class="policy-section-body">
+                        <div class="field-hint" style="margin-bottom:12px;line-height:1.5"><strong>Preview.</strong> Metric rules are being rolled out — CPU / memory / disk / session alerting still uses <strong>Settings → Alerts</strong> (and any per-device or policy thresholds) today. These settings take effect in an upcoming release; editing them now is safe but has no live effect yet.</div>
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-metric-mode">Mode</label><select id="er-metric-mode"><option value="static">Static threshold</option><option value="zscore">Z-score baseline (adaptive)</option></select><div class="field-hint">Static fires at a fixed value; z-score fires at the device's own baseline + K·σ (static value acts as a floor).</div></div>
+                            <div class="form-group"><label for="er-metric-threshold">Threshold</label><input type="number" id="er-metric-threshold" min="0" step="any" placeholder="inherit from Alerts settings"><div class="field-hint">Leave blank to use the current Settings → Alerts / policy / device threshold for this metric.</div></div>
+                        </div>
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-metric-clear">Clear threshold (hysteresis)</label><input type="number" id="er-metric-clear" min="0" step="any" placeholder="default band"><div class="field-hint">Recover only once the metric falls below this. Must be below the fire threshold. Blank = default band.</div></div>
+                            <div class="form-group" id="er-metric-k-group" style="display:none"><label for="er-metric-k">Z-score K (σ multiplier)</label><input type="number" id="er-metric-k" min="0" step="any" placeholder="3"><div class="field-hint">Deviations above the baseline before firing. Blank = 3.</div></div>
+                        </div>
+                    </div>
+                </div>
                 <div class="policy-section" id="er-preview-section">
                     <div class="policy-section-header"><h3>Preview</h3></div>
                     <div class="policy-section-body">
@@ -2767,6 +2784,7 @@
                             <div id="er-preview-samples-list" style="max-height:180px;overflow-y:auto;background:var(--fwmon-bg);padding:8px;border-radius:6px;font-family:monospace;font-size:0.78rem"></div>
                         </div>
                         <div id="er-state-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">State rules match live device up/down events, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>interface_down</code> / <code>vpn_tunnel_down</code>), <code>interface_name</code>, <code>tunnel_name</code>, or <code>vendor</code>.</div>
+                        <div id="er-metric-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Metric rules evaluate live device telemetry, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>cpu_high</code> / <code>memory_high</code> / <code>disk_high</code> / <code>sessions_high</code>), <code>metric</code>, or <code>vendor</code>.</div>
                     </div>
                 </div>
                 <div class="modal-footer">

@@ -14,6 +14,18 @@ const (
 	StateEventDeviceOffline = "device_offline" // Phase 3
 )
 
+// Metric event types (source="metric"). Phase 2 ships these as the scoping
+// vocabulary for the seeded CPU/mem/disk/session templates + validation; the
+// metric evaluator that matches on them lands in Phase 4 (until then the legacy
+// CheckSystemStatus path drives these alerts). One event_type per system metric,
+// mirroring the AlertType.
+const (
+	MetricEventCPU      = "cpu_high"
+	MetricEventMemory   = "memory_high"
+	MetricEventDisk     = "disk_high"
+	MetricEventSessions = "sessions_high"
+)
+
 // interfaceStateFields builds the matchable field set for a down interface.
 func interfaceStateFields(deviceID uint, ifaceName, adminStatus, vendor string) map[string]string {
 	return map[string]string{

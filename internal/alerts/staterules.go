@@ -291,3 +291,39 @@ func ValidateStateDampenJSON(s string) string {
 	}
 	return ""
 }
+
+// ValidateMetricDampenJSON checks a metric rule's dampen_json for the NOC editor.
+// Empty is allowed (the rule then inherits the resolved threshold). Returns a
+// human-readable message on error. Phase 2 validates the shape; the metric
+// evaluator that consumes these params lands in Phase 4.
+func ValidateMetricDampenJSON(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	var dp dampenParams
+	if err := json.Unmarshal([]byte(s), &dp); err != nil {
+		return "Invalid dampen_json: " + err.Error()
+	}
+	switch dp.Mode {
+	case "", "static", "zscore":
+	default:
+		return `dampen_json mode must be "static" or "zscore" (or empty)`
+	}
+	if dp.Threshold < 0 {
+		return "dampen_json threshold must be ≥ 0"
+	}
+	if dp.ClearThreshold < 0 {
+		return "dampen_json clear_threshold must be ≥ 0"
+	}
+	if dp.ZScoreK < 0 {
+		return "dampen_json zscore_k must be ≥ 0"
+	}
+	// A clear threshold at or above the fire threshold inverts the hysteresis band
+	// (recover ≥ fire) — the alert would clear immediately. Only meaningful when
+	// both are set.
+	if dp.Threshold > 0 && dp.ClearThreshold > 0 && dp.ClearThreshold >= dp.Threshold {
+		return "dampen_json clear_threshold must be below threshold"
+	}
+	return ""
+}
