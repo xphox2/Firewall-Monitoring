@@ -70,7 +70,7 @@ func TestDispatchFired_SuppressesRestartStorm(t *testing.T) {
 
 	now := time.Now()
 	seedAlert(t, db, openAlert(1, "INTERFACE_DOWN", "interface_port1", now)) // pre-restart, fresh
-	am.everUp[ifaceDownKey(1, "port1")] = true                               // seed models SeedEverUpFromOpenAlerts: this link was up before the restart
+	am.everUp[ifaceDownKey(1, "port1")] = true                               // models MarkInterfaceEverUp: history shows this link was up before the restart
 
 	ifaces := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"}}
 	count := func() int64 {
@@ -98,7 +98,7 @@ func TestDispatchFired_ReminderFiresAfterCooldown(t *testing.T) {
 
 	now := time.Now()
 	seedAlert(t, db, openAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-10*time.Minute))) // older than 5m cooldown
-	am.everUp[ifaceDownKey(1, "port1")] = true                                                    // seed models SeedEverUpFromOpenAlerts: this link was up before the restart
+	am.everUp[ifaceDownKey(1, "port1")] = true                                                    // models MarkInterfaceEverUp: history shows this link was up before the restart
 
 	ifaces := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"}}
 	if err := am.CheckInterfaceStatus(ifaces, nil); err != nil {
@@ -111,34 +111,48 @@ func TestDispatchFired_ReminderFiresAfterCooldown(t *testing.T) {
 	}
 }
 
-// TestSeedEverUpFromOpenAlerts verifies the restart seed: an open
-// INTERFACE_DOWN/VPN_TUNNEL_DOWN alert re-primes the ever-up set (so its
-// reminder keeps firing after a restart), while a RESOLVED alert does not
-// (a healed link must not be treated as an ongoing outage).
-func TestSeedEverUpFromOpenAlerts(t *testing.T) {
-	am, db := newTestManager(t)
+// TestMarkAndAutoResolveInterfaceDown verifies the history-driven ever-up gate:
+// MarkInterfaceEverUp lets a real link's down alert fire, while
+// AutoResolveInterfaceDown silently clears a stale false alert for a never-up
+// port and leaves it un-marked so it can't re-fire.
+func TestMarkAndAutoResolveInterfaceDown(t *testing.T) {
+	db := database.NewDatabaseForTesting(t)
+	cfg := &config.Config{}
+	cfg.Alerts.InterfaceDownAlert = true
+	am := NewAlertManager(cfg, notifier.NewNotifier(cfg), db)
 	now := time.Now()
 
-	seedAlert(t, db, openAlert(1, "INTERFACE_DOWN", "interface_wan1", now)) // open → seeds
-	seedAlert(t, db, openAlert(2, "VPN_TUNNEL_DOWN", "vpn_t1", now))        // open → seeds
-	resolved := openAlert(3, "INTERFACE_DOWN", "interface_dead", now)       // resolved → must NOT seed
-	ra := now
-	resolved.ResolvedAt = &ra
-	seedAlert(t, db, resolved)
-
-	if err := am.SeedEverUpFromOpenAlerts(); err != nil {
-		t.Fatalf("SeedEverUpFromOpenAlerts: %v", err)
+	// A never-up port with a stale OPEN false alert (the bug's residue).
+	seedAlert(t, db, openAlert(3, "INTERFACE_DOWN", "interface_dead", now))
+	am.AutoResolveInterfaceDown(3, "dead", nil)
+	var openDead int64
+	db.Gorm().Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", 3, "INTERFACE_DOWN", "interface_dead").
+		Count(&openDead)
+	if openDead != 0 {
+		t.Errorf("stale false alert for a never-up port was not auto-resolved (%d still open)", openDead)
 	}
-
 	am.mu.RLock()
-	defer am.mu.RUnlock()
-	if !am.everUp[ifaceDownKey(1, "wan1")] {
-		t.Error("open INTERFACE_DOWN did not seed ever-up for its interface")
-	}
-	if !am.everUp[vpnDownKey(2, "t1")] {
-		t.Error("open VPN_TUNNEL_DOWN did not seed ever-up for its tunnel")
-	}
 	if am.everUp[ifaceDownKey(3, "dead")] {
-		t.Error("resolved INTERFACE_DOWN must not seed ever-up")
+		t.Error("a never-up port must NOT be marked ever-up (would let it fire again)")
+	}
+	am.mu.RUnlock()
+
+	// A real link that WAS up → marked → its down alert may fire.
+	am.MarkInterfaceEverUp(1, "port1")
+	am.mu.RLock()
+	marked := am.everUp[ifaceDownKey(1, "port1")]
+	am.mu.RUnlock()
+	if !marked {
+		t.Error("MarkInterfaceEverUp did not mark a real link ever-up")
+	}
+	ifaces := []models.InterfaceStats{{DeviceID: 1, Name: "port1", Status: "down", AdminStatus: "up"}}
+	if err := am.CheckInterfaceStatus(ifaces, nil); err != nil {
+		t.Fatal(err)
+	}
+	var openReal int64
+	db.Gorm().Model(&models.Alert{}).Where("alert_type = ? AND device_id = ?", "INTERFACE_DOWN", 1).Count(&openReal)
+	if openReal != 1 {
+		t.Errorf("a real (ever-up) link's down alert should fire once; got %d", openReal)
 	}
 }

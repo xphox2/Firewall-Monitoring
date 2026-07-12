@@ -148,45 +148,37 @@ func (am *AlertManager) markEverUpLocked(key string) {
 	am.everUp[key] = true
 }
 
-// SeedEverUpFromOpenAlerts primes the ever-up set from the still-OPEN
-// INTERFACE_DOWN/VPN_TUNNEL_DOWN alerts so that after a poller restart a genuine
-// ongoing outage keeps re-firing its periodic reminder instead of going silent
-// (a fresh AlertManager has an empty ever-up set). An open down alert only
-// exists because the link/tunnel was observed up and then went down — exactly
-// the ever-up condition — so it is the precise, cheap seed source: a small
-// indexed read of open rows, no time window, and no scan of the high-volume
-// telemetry tables. Currently-up interfaces need no seed; they re-mark
-// themselves on the first cycle. Best-effort: an error is logged by the caller
-// and the set rebuilds from live up-rows.
-func (am *AlertManager) SeedEverUpFromOpenAlerts() error {
-	if am.db == nil {
-		return nil
-	}
-	var rows []struct {
-		DeviceID   uint
-		AlertType  string
-		MetricName string
-	}
-	if err := am.db.Gorm().Model(&models.Alert{}).
-		Select("device_id", "alert_type", "metric_name").
-		Where("alert_type IN (?) AND resolved_at IS NULL",
-			[]string{"INTERFACE_DOWN", "VPN_TUNNEL_DOWN"}).
-		Scan(&rows).Error; err != nil {
-		return err
-	}
+// MarkInterfaceEverUp records that an interface has been observed operationally
+// up (the poller calls this from a bounded telemetry-history check, so a real
+// link that is down across a poller restart still alerts). Idempotent + bounded.
+func (am *AlertManager) MarkInterfaceEverUp(deviceID uint, name string) {
 	am.mu.Lock()
-	for _, r := range rows {
-		switch r.AlertType {
-		case "INTERFACE_DOWN":
-			// MetricName is "interface_<name>" (see CheckInterfaceStatus).
-			am.markEverUpLocked(ifaceDownKey(r.DeviceID, strings.TrimPrefix(r.MetricName, "interface_")))
-		case "VPN_TUNNEL_DOWN":
-			// MetricName is "vpn_<tunnel>" (see CheckVPNStatus).
-			am.markEverUpLocked(vpnDownKey(r.DeviceID, strings.TrimPrefix(r.MetricName, "vpn_")))
-		}
-	}
+	am.markEverUpLocked(ifaceDownKey(deviceID, name))
 	am.mu.Unlock()
-	return nil
+}
+
+// MarkVPNEverUp is the VPN counterpart of MarkInterfaceEverUp.
+func (am *AlertManager) MarkVPNEverUp(deviceID uint, tunnelName string) {
+	am.mu.Lock()
+	am.markEverUpLocked(vpnDownKey(deviceID, tunnelName))
+	am.mu.Unlock()
+}
+
+// AutoResolveInterfaceDown silently clears any OPEN INTERFACE_DOWN alert for an
+// interface the poller has determined is NOT a monitored link (never
+// operationally up in its history). It is a cold resolve — sendRecovery only
+// touches the DB and sends no "back up" notification when the key isn't active
+// in this process — so it cleans up the false alerts that the old open-alerts
+// seed used to perpetuate, without notifying anyone.
+func (am *AlertManager) AutoResolveInterfaceDown(deviceID uint, name string, siteID *uint) {
+	am.sendRecovery(ifaceDownKey(deviceID, name), "INTERFACE_DOWN", "interface_"+name,
+		"interface has never been operationally up — not a monitored link", deviceID, siteID)
+}
+
+// AutoResolveVPNDown is the VPN counterpart of AutoResolveInterfaceDown.
+func (am *AlertManager) AutoResolveVPNDown(deviceID uint, tunnelName string, siteID *uint) {
+	am.sendRecovery(vpnDownKey(deviceID, tunnelName), "VPN_TUNNEL_DOWN", "vpn_"+tunnelName,
+		"tunnel has never been established — not an active tunnel", deviceID, siteID)
 }
 
 // markActiveLocked flips a state-alert key to active and stamps when it fired
@@ -364,9 +356,13 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		// Only a link that was genuinely UP at some point is an outage. An
 		// enabled-but-never-cabled port stays admin-up/oper-down forever and
 		// must NOT alert (it would flood collector-managed firewalls, which
-		// expose many dark ports and are alert-checked here for the first time
-		// since v0.11.74). Seeded from history at startup so this survives a
-		// poller restart.
+		// expose many dark ports). everUp is populated from LIVE up-rows here
+		// AND from a bounded telemetry-HISTORY check the poller runs before this
+		// (MarkInterfaceEverUp) — so a real link that is down across a poller
+		// restart still alerts, while an always-down port never does. NOTE: this
+		// is deliberately NOT seeded from open alerts, which was circular — a
+		// stale false alert re-marked a never-up port as ever-up and it fired
+		// forever (the bug this replaced).
 		if !am.everUp[key] {
 			continue
 		}

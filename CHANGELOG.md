@@ -1,6 +1,38 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.79] - 2026-07-12
+
+### Fixed — recurring false INTERFACE_DOWN / VPN_TUNNEL_DOWN alerts for never-up ports (root cause)
+
+The v0.11.77 ever-up gate reduced the flood but left a recurring case: a
+permanently-down, never-cabled port (admin-up, oper-down) would keep re-firing
+INTERFACE_DOWN — you clear it, it comes back — even though it has always been
+down. Root cause: the ever-up set was **seeded from the still-open down alerts**,
+which is **circular** — a stale/false open alert re-marked a never-up port as
+"ever up," so it kept firing, and clearing the alert didn't clear the in-memory
+mark. It also required operators to admin-down unused ports, which isn't always
+acceptable.
+
+- **Ever-up is now derived from telemetry HISTORY, the authoritative signal.**
+  An interface/tunnel alerts as "down" only if it has actually reported
+  `status='up'` at some point (`InterfaceEverUp` / `VPNEverUp` — a bounded,
+  index-assisted, 30-day existence check the poller runs at most **once per
+  link per process**, then caches). An enabled-but-never-cabled port has no
+  up-history, so it is never marked and can never fire — no admin-down required.
+  A genuine link that is down across a poller restart is still recognized from
+  its history and alerts normally.
+- **The circular open-alerts seed is removed.** `SeedEverUpFromOpenAlerts` is
+  gone; ever-up is populated from live up-rows plus the history check.
+- **Stale false alerts are auto-cleaned.** When the poller determines a down
+  port/tunnel has never been up, it **silently resolves** any lingering open
+  INTERFACE_DOWN/VPN_TUNNEL_DOWN alert for it (a cold resolve — no "back up"
+  notification) and leaves it un-marked, so the ones already in your queue clear
+  themselves and do not return.
+- Tests: never-up port with a stale open alert is auto-resolved and never
+  re-fires (reproduces the report); a real (ever-up) link's down alert still
+  fires; restart-storm suppression and post-cooldown reminder still hold.
+
 ## [0.11.78] - 2026-07-12
 
 ### Added — secure "reveal saved value" for device credentials + closed a plaintext leak
