@@ -61,6 +61,27 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			add(SeverityBlock, "dhgroup_unsupported",
 				fmt.Sprintf("%s does not support IKE DH group %s", endLabel(intent, i), intent.IKE.DH))
 		}
+		if !c.supportsInteg(intent.IKE.Integ) || !c.supportsInteg(intent.ESP.Integ) {
+			add(SeverityBlock, "integrity_unsupported",
+				fmt.Sprintf("%s does not support the selected integrity algorithm", endLabel(intent, i)))
+		}
+		if !c.supportsPRF(intent.IKE.PRF) {
+			add(SeverityBlock, "prf_unsupported",
+				fmt.Sprintf("%s does not support the selected PRF", endLabel(intent, i)))
+		}
+		// Interface names and IKE IDs are interpolated into vendor CLI/config the
+		// collector will apply — reject anything outside a safe token set so a
+		// stray quote/space can't break out of the config context downstream.
+		for _, tok := range []struct{ label, val string }{
+			{"egress interface", intent.Ends[i].EgressIface},
+			{"LAN interface", intent.Ends[i].LANIface},
+			{"IKE identity", intent.Ends[i].LocalID.Value},
+		} {
+			if tok.val != "" && !safeToken(tok.val) {
+				add(SeverityBlock, "unsafe_value",
+					fmt.Sprintf("%s %s %q contains characters outside [A-Za-z0-9._:-]", endLabel(intent, i), tok.label, tok.val))
+			}
+		}
 		if intent.ESP.PFS != DHGroupNone && !c.supportsDH(intent.ESP.PFS) {
 			add(SeverityBlock, "pfs_unsupported",
 				fmt.Sprintf("%s does not support PFS DH group %s", endLabel(intent, i), intent.ESP.PFS))
@@ -162,8 +183,11 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 		peerIP := net.ParseIP(peer.PeerIP)
 		for _, n := range routed {
 			if isDefaultRoute(n) {
+				// A default route already implies the peer-path problem; report it
+				// once (the more specific self_lockout below is skipped for 0/0).
 				fs = append(fs, Finding{SeverityBlock, "default_route_over_vti",
 					fmt.Sprintf("%s would route 0.0.0.0/0 over the tunnel — a pinned host route to the peer is required first", endLabel(intent, i))})
+				continue
 			}
 			if peerIP != nil && n.Contains(peerIP) {
 				fs = append(fs, Finding{SeverityBlock, "self_lockout",
@@ -191,6 +215,20 @@ func parseCIDRs(cidrs []string) (nets []*net.IPNet, errs []string) {
 }
 
 func netsOverlap(a, b *net.IPNet) bool { return a.Contains(b.IP) || b.Contains(a.IP) }
+
+// safeToken reports whether s is a safe interface-name/IKE-ID token: only
+// [A-Za-z0-9._:-], so it can't break out of a quoted CLI/config context.
+func safeToken(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-' || r == ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 func isDefaultRoute(n *net.IPNet) bool {
 	ones, bits := n.Mask.Size()

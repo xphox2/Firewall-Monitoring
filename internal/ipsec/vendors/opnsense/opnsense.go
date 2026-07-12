@@ -30,7 +30,7 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 	return ipsec.CapabilityDescriptor{
 		Vendor:      "opnsense",
 		IKEVersions: []ipsec.IKEVersion{ipsec.IKEv2, ipsec.IKEv1},
-		Modes:       []ipsec.Mode{ipsec.ModeRouteBased, ipsec.ModePolicyBased},
+		Modes:       []ipsec.Mode{ipsec.ModeRouteBased}, // v1 is route-based only (the driver renders a VTI)
 		Encryption:  []ipsec.Encryption{ipsec.EncAES256GCM16, ipsec.EncAES128GCM16, ipsec.EncAES256CBC, ipsec.EncAES128CBC},
 		Integrity:   []ipsec.Integrity{ipsec.IntegritySHA512, ipsec.IntegritySHA384, ipsec.IntegritySHA256},
 		PRF:         []ipsec.PRF{ipsec.PRFSHA512, ipsec.PRFSHA384, ipsec.PRFSHA256},
@@ -107,13 +107,17 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 			"local_ts":      "0.0.0.0/0",
 			"remote_ts":     "0.0.0.0/0",
 			"rekey_time":    itoa(childLife),
-			"start_action":  startAction(local.Dynamic),
+			"start_action":  startAction(remote.Dynamic),
 			"close_action":  "start",
 			"dpd_action":    "restart",
 		},
 	})
-	psk := jsonBody(map[string]any{
-		"preSharedKey": map[string]any{"description": desc, "type": "PSK", "ident": local.LocalID.Value, "keyid": remote.LocalID.Value, "Key": "%PSK%"},
+	// Marshal the PSK step with the REAL key so json.Marshal escapes it correctly
+	// (a post-marshal string replace would corrupt a key containing JSON-special
+	// chars). This body is a step (never the preview), so the redacted preview
+	// still never sees the PSK.
+	pskStep := jsonBody(map[string]any{
+		"preSharedKey": map[string]any{"description": desc, "type": "PSK", "ident": local.LocalID.Value, "keyid": remote.LocalID.Value, "Key": in.PSK},
 	})
 	vti := jsonBody(map[string]any{
 		"vti": map[string]any{"description": desc, "reqid": itoa(local.Reqid), "local": local.InnerIP, "remote": remote.InnerIP},
@@ -127,7 +131,7 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 		api("Add local auth (PSK identity)", "POST", "/api/ipsec/connections/addLocal", localAuth),
 		api("Add remote auth (PSK identity)", "POST", "/api/ipsec/connections/addRemote", remoteAuth),
 		api("Add child SA (0/0 selectors, policies off, pinned reqid)", "POST", "/api/ipsec/connections/addChild", child),
-		api("Store pre-shared key", "POST", "/api/ipsec/pre_shared_keys/addItem", inject(psk, in.PSK)),
+		api("Store pre-shared key", "POST", "/api/ipsec/pre_shared_keys/addItem", pskStep),
 		api("Create VTI (Virtual Tunnel Interface)", "POST", "/api/interfaces/vti_settings/addItem", vti),
 		api("Create gateway on the VTI", "POST", "/api/routing/settings/addGateway", gw),
 	}
@@ -207,8 +211,6 @@ func jsonBody(m map[string]any) string {
 
 func byDesc(desc string) string { return jsonBody(map[string]any{"description": desc}) }
 
-func inject(body, psk string) string { return strings.ReplaceAll(body, "%PSK%", psk) }
-
 func boolStr(b bool) string {
 	if b {
 		return "1"
@@ -225,9 +227,12 @@ func ikeVersion(v ipsec.IKEVersion) string {
 	return "2"
 }
 
-func startAction(dynamic bool) string {
-	if dynamic {
-		return "trap" // responder waits; the peer initiates
+// startAction decides whether THIS end initiates. If the REMOTE peer is dynamic
+// (behind NAT / no reachable static address) this end cannot dial it, so it must
+// be a pure responder ("none"); otherwise it initiates ("start").
+func startAction(remoteDynamic bool) string {
+	if remoteDynamic {
+		return "none"
 	}
 	return "start"
 }

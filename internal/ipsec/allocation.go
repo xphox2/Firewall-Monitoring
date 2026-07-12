@@ -6,20 +6,31 @@ import (
 	"net"
 )
 
-// vtiBase is the reserved link-local pool (169.254.0.0/16, RFC 3927) the wizard
-// carves /30 transit networks from for route-based (VTI) tunnels. Link-local is
-// never routed globally, so a transit /30 can't collide with real subnets.
-const vtiBase uint32 = 0xA9FE0000 // 169.254.0.0
+// vtiBase starts at 169.254.1.0 — the link-local pool (169.254.0.0/16, RFC 3927)
+// with the reserved first /24 (169.254.0.0/24) skipped. Link-local is never
+// routed globally, so a transit /30 can't collide with a real subnet.
+const vtiBase uint32 = 0xA9FE0100 // 169.254.1.0
+
+// vtiUsable /30s: 169.254.1.0 .. 169.254.254.255 minus the metadata /24, ≈ 16192.
+const vtiSpan uint32 = 253 * 64 // /30s across 169.254.1..253 (skip .0, .169, .254, .255)
 
 // AllocateVTI deterministically derives the /30 transit network and the two
 // inner host IPs for a tunnel, from its ID. Deterministic so a redeploy of the
-// same tunnel reuses the same addressing. The /16 holds 16384 /30s.
+// same tunnel reuses the same addressing. Reserved link-local ranges — the first
+// /24, the last /24, and 169.254.169.0/24 (which contains the cloud metadata IP
+// 169.254.169.254) — are skipped so cloud-hosted firewalls aren't broken.
 //
 // Returns (cidr, innerA, innerB): innerA is Ends[0]'s VTI address, innerB is
 // Ends[1]'s.
 func AllocateVTI(tunnelID uint) (cidr, innerA, innerB string) {
-	offset := uint32(tunnelID%16384) * 4
-	network := vtiBase + offset
+	id := uint32(tunnelID % uint(vtiSpan))
+	// Map the ID onto the usable span, then skip the metadata /24 (169.254.169.x).
+	third := 1 + id/64 // 1..253
+	if third >= 169 {
+		third++ // skip 169.254.169.0/24
+	}
+	fourth := (id % 64) * 4 // 0,4,...,252 within the /24
+	network := (vtiBase & 0xFFFF0000) | third<<8 | fourth
 	cidr = fmt.Sprintf("%s/30", u32ToIP(network).String())
 	innerA = u32ToIP(network + 1).String()
 	innerB = u32ToIP(network + 2).String()

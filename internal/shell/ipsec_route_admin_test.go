@@ -34,6 +34,7 @@ func TestIPSecRoutesAdminOnly(t *testing.T) {
 	for _, needle := range []string{
 		`"/admin/api/ipsec/tunnels":true`,
 		`"/admin/api/ipsec/tunnels/:id":true`,
+		`"/admin/api/ipsec/tunnels/:id/preview":true`,
 	} {
 		if !strings.Contains(adminOnly, needle) {
 			t.Errorf("adminOnlyRoutes missing %q — IPSec provisioning carries PSK material and must stay admin-only", needle)

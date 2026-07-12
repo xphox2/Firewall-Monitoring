@@ -83,25 +83,25 @@ const (
 // IKEProposal is the Phase-1 (IKE SA) transform set. Integ is IntegrityNone for
 // AEAD ciphers (GCM). Written IDENTICALLY to both ends.
 type IKEProposal struct {
-	Enc   Encryption
-	Integ Integrity
-	PRF   PRF
-	DH    DHGroup
+	Enc   Encryption `json:"enc"`
+	Integ Integrity  `json:"integ"`
+	PRF   PRF        `json:"prf"`
+	DH    DHGroup    `json:"dh"`
 }
 
 // ESPProposal is the Phase-2 (child SA) transform set. Integ is IntegrityNone
 // for AEAD. PFS is the DH group for perfect forward secrecy (DHGroupNone = off).
 // Written IDENTICALLY to both ends.
 type ESPProposal struct {
-	Enc   Encryption
-	Integ Integrity
-	PFS   DHGroup
+	Enc   Encryption `json:"enc"`
+	Integ Integrity  `json:"integ"`
+	PFS   DHGroup    `json:"pfs"`
 }
 
 // IKEIdentity is a peer's explicit IKE identity (never rely on IP-default).
 type IKEIdentity struct {
-	Type  IDType
-	Value string
+	Type  IDType `json:"type"`
+	Value string `json:"value"`
 }
 
 // EndpointSpec is one end of the tunnel. The two EndpointSpecs are symmetric;
@@ -109,71 +109,71 @@ type IKEIdentity struct {
 type EndpointSpec struct {
 	// DeviceID is the monitored device this end provisions onto (0 = unmanaged
 	// peer, rendered as a downloadable parameter sheet — deferred past v1).
-	DeviceID uint
-	Vendor   string
+	DeviceID uint   `json:"device_id"`
+	Vendor   string `json:"vendor"`
 
 	// PeerIP is this end's own tunnel endpoint address (its WAN / the address
 	// the OTHER end dials). May be empty for a dynamic responder end.
-	PeerIP string
+	PeerIP string `json:"peer_ip"`
 	// EgressIface is the WAN/outgoing interface the phase1 binds to.
-	EgressIface string
+	EgressIface string `json:"egress_iface"`
 	// LANIface is the inside interface for firewall policy src/dst.
-	LANIface string
+	LANIface string `json:"lan_iface"`
 	// LocalID is this end's IKE identity (mirrored as the peer's Remote ID).
-	LocalID IKEIdentity
+	LocalID IKEIdentity `json:"local_id"`
 	// Dynamic marks a responder end whose peer address is not statically known
 	// (behind NAT / RFC1918 WAN); the other end must be the sole initiator.
-	Dynamic bool
+	Dynamic bool `json:"dynamic"`
 
 	// ProtectedSubnets drive STATIC ROUTES + firewall rules only (NOT phase2
 	// selectors, which stay 0/0 for route-based).
-	ProtectedSubnets []string
+	ProtectedSubnets []string `json:"protected_subnets"`
 
 	// InnerIP is this end's address on the VTI /30 (route-based).
-	InnerIP string
+	InnerIP string `json:"inner_ip"`
 	// Reqid / IfID / TunnelNum are per-end-local allocations the wizard owns.
-	Reqid     int
-	IfID      int
-	TunnelNum int
+	Reqid     int `json:"reqid"`
+	IfID      int `json:"if_id"`
+	TunnelNum int `json:"tunnel_num"`
 
 	// ChildLifetimeSecs is per-end (deliberately offset — the initiator side is
 	// shorter so it owns rekey, avoiding simultaneous-rekey duplicate SAs).
-	ChildLifetimeSecs int
+	ChildLifetimeSecs int `json:"child_lifetime_secs"`
 	// MSSClamp is the per-end TCP MSS clamp (0 = none/auto).
-	MSSClamp int
+	MSSClamp int `json:"mss_clamp"`
 }
 
 // DPD is dead-peer-detection config (per-end-local, not negotiated).
 type DPD struct {
-	DelaySecs   int
-	TimeoutSecs int // IKEv1-only for strongSwan; drivers ignore where N/A
+	DelaySecs   int `json:"delay_secs"`
+	TimeoutSecs int `json:"timeout_secs"` // IKEv1-only for strongSwan; drivers ignore where N/A
 }
 
 // TunnelIntent is the ONE canonical description of a tunnel. It renders to both
 // ends. Tunnel-level crypto/PSK/mode are written identically to both ends;
 // per-end detail lives in Ends[i].
 type TunnelIntent struct {
-	ID      uint
-	Name    string // fwm-t<ID>-safe; drivers truncate to CapabilityDescriptor.MaxTunnelNameLen
-	Enabled bool
+	ID      uint   `json:"id"`
+	Name    string `json:"name"` // fwm-t<ID>-safe; drivers truncate to CapabilityDescriptor.MaxTunnelNameLen
+	Enabled bool   `json:"enabled"`
 
-	IKEVersion IKEVersion
-	Mode       Mode
-	IKE        IKEProposal
-	ESP        ESPProposal
+	IKEVersion IKEVersion  `json:"ike_version"`
+	Mode       Mode        `json:"mode"`
+	IKE        IKEProposal `json:"ike"`
+	ESP        ESPProposal `json:"esp"`
 
-	IKELifetimeSecs int
-	DPD             DPD
+	IKELifetimeSecs int `json:"ike_lifetime_secs"`
+	DPD             DPD `json:"dpd"`
 
 	// PSK is the plaintext pre-shared key, supplied only at render time (stored
 	// encrypted; never persisted here). Redacted from every log/echo.
-	PSK string
+	PSK string `json:"psk,omitempty"`
 
 	// VTISubnet is the /30 transit network for route-based tunnels (e.g.
 	// 169.254.x.y/30); Ends[i].InnerIP are the two host addresses.
-	VTISubnet string
+	VTISubnet string `json:"vti_subnet"`
 
-	Ends [2]EndpointSpec
+	Ends [2]EndpointSpec `json:"ends"`
 }
 
 // RenderView projects the symmetric intent into local/remote terms for ONE end.

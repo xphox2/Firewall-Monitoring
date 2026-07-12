@@ -27,7 +27,7 @@ func (driver) Capabilities() ipsec.CapabilityDescriptor {
 	return ipsec.CapabilityDescriptor{
 		Vendor:      "fortigate",
 		IKEVersions: []ipsec.IKEVersion{ipsec.IKEv2, ipsec.IKEv1},
-		Modes:       []ipsec.Mode{ipsec.ModeRouteBased, ipsec.ModePolicyBased},
+		Modes:       []ipsec.Mode{ipsec.ModeRouteBased}, // v1 is route-based only (the driver renders VTI)
 		Encryption:  []ipsec.Encryption{ipsec.EncAES256GCM16, ipsec.EncAES128GCM16, ipsec.EncAES256CBC, ipsec.EncAES128CBC},
 		Integrity:   []ipsec.Integrity{ipsec.IntegritySHA512, ipsec.IntegritySHA384, ipsec.IntegritySHA256},
 		PRF:         []ipsec.PRF{ipsec.PRFSHA512, ipsec.PRFSHA384, ipsec.PRFSHA256},
@@ -76,11 +76,15 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	fmt.Fprintf(&p1b, "    set peertype one\n")
 	fmt.Fprintf(&p1b, "    set localid-type %s\n    set localid \"%s\"\n", idType(local.LocalID.Type), local.LocalID.Value)
 	fmt.Fprintf(&p1b, "    set peerid \"%s\"\n", remote.LocalID.Value)
+	if in.IKELifetimeSecs > 0 {
+		fmt.Fprintf(&p1b, "    set keylife %d\n", in.IKELifetimeSecs)
+	}
 	if in.DPD.DelaySecs > 0 {
 		fmt.Fprintf(&p1b, "    set dpd on-idle\n    set dpd-retryinterval %d\n", in.DPD.DelaySecs)
 	}
 	fmt.Fprintf(&p1b, "    set add-route disable\n")
-	fmt.Fprintf(&p1b, "    set psksecret %s\n  next\nend", "%PSK%")
+	// Quote the PSK; validation guarantees no embedded quote/backslash.
+	fmt.Fprintf(&p1b, "    set psksecret \"%s\"\n  next\nend", "%PSK%")
 	p1Block := p1b.String()
 
 	// phase2-interface (0/0 selectors; routing steers traffic).

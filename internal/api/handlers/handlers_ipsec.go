@@ -11,6 +11,7 @@ import (
 	_ "firewall-mon/internal/ipsec/vendors" // register fortigate + opnsense drivers
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // IPSec tunnel provisioning-wizard handlers (PR-A: intent CRUD + capabilities +
@@ -71,11 +72,13 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
+	intent.ID = 0 // the server assigns the ID; never trust a client-supplied one
 	if _, bad := resolveCaps(&intent); bad != "" {
 		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
 		return
 	}
-	if intent.PSK == "" {
+	// Generate a PSK when absent OR when the client round-tripped the mask.
+	if intent.PSK == "" || intent.PSK == ipsecPSKMask {
 		psk, err := ipsec.GeneratePSK()
 		if err != nil {
 			httputil.InternalError(c, "Failed to generate PSK", err)
@@ -89,17 +92,26 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 		httputil.InternalError(c, "Failed to encode tunnel", err)
 		return
 	}
+	// Insert with a UNIQUE placeholder name so concurrent creates can't collide
+	// on an empty name; then rename to fwm-t<ID>. On failure the placeholder row
+	// is removed so it can't linger.
+	m.Name = "fwm-new-" + uuid.NewString()
 	if err := db.CreateIPSecTunnel(m); err != nil {
 		httputil.InternalError(c, "Failed to create tunnel", err)
 		return
 	}
-	// Backfill ID-derived fields and re-persist so the stored intent is complete.
 	intent.ID = m.ID
 	hydrateDerived(&intent)
-	m2, _ := database.IPSecIntentToModel(&intent)
+	m2, err := database.IPSecIntentToModel(&intent)
+	if err != nil {
+		_ = db.DeleteIPSecTunnel(m.ID)
+		httputil.InternalError(c, "Failed to encode tunnel", err)
+		return
+	}
 	m2.ID = m.ID
 	m2.Status = "draft"
 	if err := db.UpdateIPSecTunnel(m2); err != nil {
+		_ = db.DeleteIPSecTunnel(m.ID)
 		httputil.InternalError(c, "Failed to finalize tunnel", err)
 		return
 	}
@@ -162,7 +174,8 @@ func (h *Handler) UpdateIPSecTunnel(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := db.GetIPSecTunnel(id); err != nil {
+	existing, err := db.GetIPSecTunnel(id)
+	if err != nil {
 		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
 		return
 	}
@@ -174,6 +187,12 @@ func (h *Handler) UpdateIPSecTunnel(c *gin.Context) {
 	if _, bad := resolveCaps(&intent); bad != "" {
 		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
 		return
+	}
+	// A masked/empty PSK means "unchanged": fold the real stored (decrypted) key
+	// back in so validation sees a valid PSK and the store re-persists it. The
+	// store's mask-guard also protects direct model writes.
+	if intent.PSK == "" || intent.PSK == ipsecPSKMask {
+		intent.PSK = existing.PSK
 	}
 	intent.ID = id
 	hydrateDerived(&intent)

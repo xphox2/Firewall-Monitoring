@@ -39,8 +39,14 @@ func validPSK(psk string) (ok bool, reason string) {
 	if len(psk) < 20 {
 		return false, "pre-shared key must be at least 20 characters"
 	}
-	if strings.ContainsAny(psk, "\"\n\r") {
-		return false, "pre-shared key must not contain quotes or newlines"
+	// Only printable, non-space ASCII, excluding the chars that break a CLI/
+	// config/JSON context (quote, backslash, backtick). This keeps the PSK the
+	// device receives byte-identical to the stored key across FortiGate CLI,
+	// OPNsense JSON, and future vendors.
+	for _, r := range psk {
+		if r < 0x21 || r > 0x7e || r == '"' || r == '\\' || r == '`' {
+			return false, "pre-shared key may only contain printable ASCII (no spaces, quotes, backslashes or backticks)"
+		}
 	}
 	return true, ""
 }

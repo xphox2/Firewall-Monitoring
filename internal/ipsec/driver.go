@@ -62,6 +62,27 @@ func (d CapabilityDescriptor) supportsEnc(e Encryption) bool { return containsEn
 func (d CapabilityDescriptor) supportsDH(g DHGroup) bool     { return containsDH(d.DHGroups, g) }
 func (d CapabilityDescriptor) supportsMode(m Mode) bool      { return containsMode(d.Modes, m) }
 func (d CapabilityDescriptor) supportsIKE(v IKEVersion) bool { return containsIKE(d.IKEVersions, v) }
+func (d CapabilityDescriptor) supportsInteg(i Integrity) bool {
+	return i == IntegrityNone || containsInteg(d.Integrity, i)
+}
+func (d CapabilityDescriptor) supportsPRF(p PRF) bool { return containsPRF(d.PRF, p) }
+
+func containsInteg(s []Integrity, i Integrity) bool {
+	for _, x := range s {
+		if x == i {
+			return true
+		}
+	}
+	return false
+}
+func containsPRF(s []PRF, p PRF) bool {
+	for _, x := range s {
+		if x == p {
+			return true
+		}
+	}
+	return false
+}
 
 // Intersect returns the capabilities BOTH vendors support — the exact option set
 // the wizard may offer for a tunnel between them (so it never presents a choice
@@ -88,6 +109,16 @@ func Intersect(a, b CapabilityDescriptor) CapabilityDescriptor {
 	for _, e := range a.Encryption {
 		if containsEnc(b.Encryption, e) {
 			out.Encryption = append(out.Encryption, e)
+		}
+	}
+	for _, in := range a.Integrity {
+		if containsInteg(b.Integrity, in) {
+			out.Integrity = append(out.Integrity, in)
+		}
+	}
+	for _, p := range a.PRF {
+		if containsPRF(b.PRF, p) {
+			out.PRF = append(out.PRF, p)
 		}
 	}
 	for _, g := range a.DHGroups {

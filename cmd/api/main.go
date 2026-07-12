@@ -730,8 +730,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
 			// IPSec provisioning carries PSK credential material — admin-only.
-			"/admin/api/ipsec/tunnels":     true,
-			"/admin/api/ipsec/tunnels/:id": true,
+			"/admin/api/ipsec/tunnels":             true,
+			"/admin/api/ipsec/tunnels/:id":         true,
+			"/admin/api/ipsec/tunnels/:id/preview": true,
 			// LC-17: IRC server/channel config carries credential material
 			// (server/NickServ/SASL passwords, channel keys) and the test
 			// endpoint dials an arbitrary request-supplied host with request-
