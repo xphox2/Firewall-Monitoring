@@ -3,6 +3,7 @@ package database
 import (
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -91,6 +92,86 @@ func (d *Database) EnsureDefaultRules() {
 	}
 }
 
+// ruleOwnershipActivationVersion is the current activation generation.
+// 1 = metric + trap (Phase 4a). Spike (Phase 4b) bumps to 2.
+const ruleOwnershipActivationVersion = 1
+
+// ownershipToken pairs an ownership CSV token with the (source, alert_type) whose
+// enabled rule must exist for that token to be activated.
+type ownershipToken struct {
+	token     string
+	source    string
+	alertType models.AlertType
+}
+
+// phase4aOwnershipTokens graduate from inert to active in activation version 1:
+// the metric threshold types (event_type token) and the seeded HA/LINK trap types
+// (trap_type token). Each is owned ONLY if its enabled matching rule exists.
+var phase4aOwnershipTokens = []ownershipToken{
+	{"cpu_high", "metric", models.AlertTypeCPUHigh},
+	{"memory_high", "metric", models.AlertTypeMemoryHigh},
+	{"disk_high", "metric", models.AlertTypeDiskHigh},
+	{"sessions_high", "metric", models.AlertTypeSessionsHigh},
+	{"HA_MEMBER_DOWN", "trap", models.AlertTypeHAMemberDown},
+	{"HA_HEARTBEAT_FAIL", "trap", models.AlertTypeHAHeartbeatFail},
+	{"HA_SWITCH", "trap", models.AlertTypeHASwitch},
+	{"LINK_DOWN", "trap", models.AlertTypeLinkDown},
+}
+
+// ActivateRuleOwnership graduates the metric + trap alert types from inert to
+// rule-driven by UNIONing their tokens into state_engine_owns — but only for a
+// token whose enabled matching rule actually exists (so an operator-deleted
+// template leaves that type on the legacy path, not silently un-alerting). It
+// runs AFTER EnsureDefaultRules (the seeds it gates on must exist first — this is
+// why it is NOT a pre-seed migration) and is idempotent via its own marker.
+// Preserves an operator-edited flag (union, never overwrite). NOTE: an operator
+// who emptied the flag still receives these newly-graduated tokens — they were
+// never owned before and activation is non-regressive (rules inherit thresholds),
+// so this is the intended upgrade, not a reset of their choice.
+func (d *Database) ActivateRuleOwnership() {
+	if v, ok := d.GetSettingValue("alert_ownership_activation"); ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= ruleOwnershipActivationVersion {
+			return
+		}
+	}
+	owned := map[string]bool{}
+	var order []string
+	if csv, ok := d.GetSettingValue("state_engine_owns"); ok {
+		for _, t := range strings.Split(csv, ",") {
+			if t = strings.TrimSpace(t); t != "" && !owned[t] {
+				owned[t] = true
+				order = append(order, t)
+			}
+		}
+	}
+	for _, ot := range phase4aOwnershipTokens {
+		if owned[ot.token] {
+			continue
+		}
+		var n int64
+		d.db.Model(&models.EventRule{}).
+			Where("enabled = ? AND source = ? AND alert_type = ?", true, ot.source, ot.alertType).
+			Count(&n)
+		if n > 0 {
+			owned[ot.token] = true
+			order = append(order, ot.token)
+		}
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key: "state_engine_owns", Value: strings.Join(order, ","),
+		Type: "string", Category: "alerts", Label: "Alert types owned by the state-rule engine",
+	}); err != nil {
+		log.Printf("ActivateRuleOwnership: update ownership flag: %v", err)
+		return // don't advance the marker if the write failed — retry next startup
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{
+		Key: "alert_ownership_activation", Value: strconv.Itoa(ruleOwnershipActivationVersion),
+		Type: "int", Category: "alerts", Label: "Rule-engine ownership activation version",
+	}); err != nil {
+		log.Printf("ActivateRuleOwnership: set marker: %v", err)
+	}
+}
+
 // defaultEventRules is the shipped seed set across all generations; each rule
 // carries its introduction version (seedVer*). EnsureDefaultRules seeds only the
 // generations newer than the last-applied marker.
@@ -139,30 +220,30 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeVPNTunnelDown, SeedVersion: seedVerState,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"vpn_tunnel_down"}`,
 			DampenJSON: `{"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}`},
-		// Metric-source built-ins (seed_version 3, Phase 2 — INERT). CPU/memory/
-		// disk/session threshold templates so operators can see/scope them in the
-		// Event Rules UI. They do NOT drive alerting yet: the metric types are
-		// deliberately absent from the state_engine_owns flag, so the legacy
-		// CheckSystemStatus path still owns them. dampen_json carries mode only (no
-		// threshold) so a later ownership flip inherits the operator's existing
-		// Settings→Alerts / policy / device thresholds — non-regressive. Severity
-		// blank ⇒ per-type default applies.
-		{Name: "CPU high", Description: "Threshold alert when device CPU usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		// Metric-source built-ins (seed_version 3). ACTIVE as of Phase 4a: when
+		// owned (ActivateRuleOwnership), CheckSystemStatus routes CPU/mem/disk/
+		// session alerting through these rules. dampen_json carries mode only (no
+		// threshold) so they INHERIT the operator's existing Settings→Alerts /
+		// policy / device thresholds — non-regressive. Leave the threshold blank in
+		// the rule to keep inheriting; set it to override. Severity blank ⇒ per-type
+		// default. To turn a type OFF, use a suppress rule (deleting the template
+		// falls back to the legacy path, which still alerts).
+		{Name: "CPU high", Description: "Threshold alert when device CPU usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeCPUHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"cpu_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		{Name: "Memory high", Description: "Threshold alert when device memory usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		{Name: "Memory high", Description: "Threshold alert when device memory usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeMemoryHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"memory_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		{Name: "Disk high", Description: "Threshold alert when device disk usage is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		{Name: "Disk high", Description: "Threshold alert when device disk usage is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeDiskHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"disk_high"}`,
 			DampenJSON: `{"mode":"static"}`},
-		{Name: "Session count high", Description: "Threshold alert when device session count is high. Preview — not driving alerts yet (see Settings → Alerts).",
+		{Name: "Session count high", Description: "Threshold alert when device session count is high. Inherits the Settings → Alerts / policy threshold unless you set one here.",
 			Enabled: true, Priority: 100, Source: "metric", Action: "alert",
 			AlertType: models.AlertTypeSessionsHigh, SeedVersion: seedVerMetric,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"sessions_high"}`,
@@ -176,26 +257,27 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeTrafficSpike, SeedVersion: seedVerTrapSpike,
 			MatchJSON:  `{"op":"eq","field":"event_type","value":"traffic_spike"}`,
 			DampenJSON: `{"stddev_k":3,"min_duration_minutes":15}`},
-		// Trap-source built-ins (seed_version 4, Phase 3 — INERT). SNMP/HA trap
-		// scoping templates. ProcessTrap already resolves policy config; these
-		// rules become the scope/suppress surface once Phase 4 routes ProcessTrap
-		// through matched trap rules. Severity blank ⇒ per-type default applies. No
-		// dampen_json — traps route via the base rule fields. Match on trap_type.
-		{Name: "HA member down", Description: "HA cluster member down (SNMP trap). Preview — not driving alerts yet.",
+		// Trap-source built-ins (seed_version 4). ACTIVE as of Phase 4a: when owned
+		// (ActivateRuleOwnership), ProcessTrap consults these for scope/suppress +
+		// per-rule severity/routing on top of the existing policy path. Severity
+		// blank ⇒ per-type default applies. No dampen_json — traps route via the
+		// base rule fields. Match on trap_type. To mute a trap type, use a suppress
+		// rule (deleting the template falls back to the legacy policy path).
+		{Name: "HA member down", Description: "HA cluster member down (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHAMemberDown, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_MEMBER_DOWN"}`},
-		{Name: "HA heartbeat failure", Description: "HA cluster heartbeat lost (SNMP trap). Preview — not driving alerts yet.",
+		{Name: "HA heartbeat failure", Description: "HA cluster heartbeat lost (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHAHeartbeatFail, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_HEARTBEAT_FAIL"}`},
-		{Name: "HA failover", Description: "HA cluster failover/switch (SNMP trap). Preview — not driving alerts yet.",
+		{Name: "HA failover", Description: "HA cluster failover/switch (SNMP trap).",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
 			AlertType: models.AlertTypeHASwitch, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"HA_SWITCH"}`},
-		{Name: "Link down (trap)", Description: "Interface link down reported by SNMP trap. Preview — not driving alerts yet.",
+		{Name: "Link down (trap)", Description: "Interface link down reported by SNMP trap.",
 			Enabled: true, Priority: 100, Source: "trap", Action: "alert",
-			AlertType: "LINK_DOWN", SeedVersion: seedVerTrapSpike,
+			AlertType: models.AlertTypeLinkDown, SeedVersion: seedVerTrapSpike,
 			MatchJSON: `{"op":"eq","field":"trap_type","value":"LINK_DOWN"}`},
 	}
 }

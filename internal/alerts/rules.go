@@ -274,10 +274,19 @@ func (am *AlertManager) RefreshEventRules(db *database.Database) {
 	}
 	compiled := compileRules(rules)
 	ownedCSV, _ := db.GetSettingValue(stateOwnedTypesSetting)
+	// Does any enabled metric rule opt into zscore? Extends the baseline gate.
+	anyMetricZScore := false
+	for i := range compiled {
+		if compiled[i].source == "metric" && compiled[i].dampen.Mode == "zscore" {
+			anyMetricZScore = true
+			break
+		}
+	}
 	am.mu.Lock()
 	am.eventRules = compiled
 	am.deviceMeta = meta
 	am.setStateOwnedLocked(ownedCSV)
+	am.anyMetricZScoreRule = anyMetricZScore
 	am.mu.Unlock()
 }
 

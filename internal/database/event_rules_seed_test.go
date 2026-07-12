@@ -79,6 +79,61 @@ func TestEnsureDefaultRules_SpikeTrapTemplatesInert(t *testing.T) {
 	}
 }
 
+// Phase 4a: ActivateRuleOwnership graduates metric + trap types into
+// state_engine_owns, gated per-token on an enabled matching rule, idempotently.
+
+func TestActivateRuleOwnership_UnionsGatedTokens(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultRules() // seeds all + flag=interface_down,vpn_tunnel_down
+	// Operator deleted the CPU seed before activating.
+	if err := d.db.Where("source = ? AND alert_type = ?", "metric", models.AlertTypeCPUHigh).Delete(&models.EventRule{}).Error; err != nil {
+		t.Fatalf("delete CPU seed: %v", err)
+	}
+	d.ActivateRuleOwnership()
+
+	owned, _ := d.GetSettingValue("state_engine_owns")
+	// Phase-1 state types preserved.
+	if !strings.Contains(owned, "interface_down") || !strings.Contains(owned, "vpn_tunnel_down") {
+		t.Errorf("state types lost: %q", owned)
+	}
+	// Metric types with a live seed are owned; the deleted CPU one is NOT.
+	for _, ev := range []string{"memory_high", "disk_high", "sessions_high"} {
+		if !strings.Contains(owned, ev) {
+			t.Errorf("expected %q owned: %q", ev, owned)
+		}
+	}
+	if strings.Contains(owned, "cpu_high") {
+		t.Errorf("deleted CPU seed must NOT be owned: %q", owned)
+	}
+	// Trap tokens owned.
+	for _, ev := range []string{"HA_MEMBER_DOWN", "HA_HEARTBEAT_FAIL", "HA_SWITCH", "LINK_DOWN"} {
+		if !strings.Contains(owned, ev) {
+			t.Errorf("expected trap token %q owned: %q", ev, owned)
+		}
+	}
+	// spike NOT owned (Phase 4b).
+	if strings.Contains(owned, "traffic_spike") {
+		t.Errorf("traffic_spike must not be owned yet: %q", owned)
+	}
+	// Marker set.
+	if v, _ := d.GetSettingValue("alert_ownership_activation"); v != "1" {
+		t.Errorf("activation marker = %q, want 1", v)
+	}
+}
+
+func TestActivateRuleOwnership_IdempotentAndPreservesEdits(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	d.EnsureDefaultRules()
+	d.ActivateRuleOwnership()
+	first, _ := d.GetSettingValue("state_engine_owns")
+	// Re-run: marker already at 1 → no-op (idempotent).
+	d.ActivateRuleOwnership()
+	second, _ := d.GetSettingValue("state_engine_owns")
+	if first != second {
+		t.Errorf("activation not idempotent: %q -> %q", first, second)
+	}
+}
+
 // TestEnsureDefaultRules_UpgradeMarker3To4 exercises the real Phase-2→Phase-3
 // upgrade: a marker at "3" with the gen 1-3 rows already present must seed ONLY
 // the gen-4 spike/trap rules, leave a deleted older seed dead, advance the marker

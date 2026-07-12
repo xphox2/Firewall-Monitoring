@@ -1,6 +1,35 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.84] - 2026-07-12
+
+### Changed — CPU/memory/disk/session threshold and SNMP/HA trap alerts are now driven by Event Rules (non-regressive)
+
+The metric and trap Event Rule templates (shipped inert in earlier releases) are
+now **live**: CPU/mem/disk/session threshold alerting routes through the metric
+rules and SNMP/HA trap alerting consults the trap rules. **Upgrade is
+non-regressive** — the shipped rules inherit your existing Settings → Alerts /
+policy / device thresholds, so alerts fire at the same levels as before. What you
+gain is the ability to **scope, suppress, and re-route** these alerts per rule.
+
+- **Metric rules active:** a metric rule can override the threshold, hysteresis
+  clear-band, z-score mode/K, severity, notify policy, and cooldown for its scope;
+  leave a field blank to inherit. Mode is upgrade-only (a rule can opt into
+  z-score but won't silently downgrade a policy-level z-score to static). z-score
+  set only in a rule now correctly triggers the adaptive baseline.
+- **Trap rules active:** a trap rule can suppress a trap type, override its
+  severity/cooldown/routing, and opt an info/notice trap type in to alerting — on
+  top of the existing policy path.
+- **To turn a metric/trap type off,** add a *suppress* rule (or disable it in
+  Settings → Alerts / the policy). Deleting a built-in template falls back to the
+  legacy path (which still alerts) rather than silently going quiet — threshold
+  and trap alerts are too important to lose to a deleted template.
+- **Activation** unions the newly-live types into the ownership flag once, on
+  startup, only for a type whose enabled rule exists (an operator-deleted
+  template stays on the legacy path); an operator-edited flag is preserved.
+- Traffic-spike alerting is **not** in this release (it still runs in the poller);
+  its rule engine lands in a follow-up with a dedicated design.
+
 ## [0.11.83] - 2026-07-12
 
 ### Added — traffic-spike and SNMP/HA trap templates in Event Rules (preview; no change to live alerting)

@@ -70,11 +70,16 @@ type AlertManager struct {
 	// device→(vendor,site) map, both refreshed alongside policyCache under am.mu.
 	eventRules []compiledRule
 	deviceMeta map[uint]database.DeviceRuleMeta
-	// stateOwned is the set of event_types the state-rule engine owns (from the
+	// stateOwned is the set of event_types the rule engine owns (from the
 	// `state_engine_owns` SystemSetting CSV). While a type is owned, its legacy
-	// resolveAlertConfig firing path is bypassed and dampening runs in
-	// staterules.go. Refreshed alongside eventRules under am.mu.
+	// resolveAlertConfig firing path is bypassed and the per-source evaluator
+	// (staterules.go / metricrules.go / traprules.go) runs. Refreshed alongside
+	// eventRules under am.mu.
 	stateOwned map[string]bool
+	// anyMetricZScoreRule is true when a compiled metric Event Rule opts into
+	// zscore mode — extends the baseline-prefetch gate (zscoreConfigured) so an
+	// event-rule-only zscore still gets F17 baselines. Set in RefreshEventRules.
+	anyMetricZScoreRule bool
 	// ruleHits accumulates per-rule match counts in memory (H2: flushed in
 	// batches by RefreshEventRules, never a per-match UPDATE). Own mutex so the
 	// hot path never contends with am.mu.
@@ -251,17 +256,37 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 	var fired []firedEntry
 
 	// F17: refresh this device's baseline BEFORE taking am.mu (DB read).
-	// No-op unless some rule opted into zscore mode.
+	// No-op unless some policy rule OR metric event rule opted into zscore mode.
 	if am.zscoreConfigured() {
 		am.ensureBaseline(status.DeviceID)
+	}
+
+	// Effective per-check config, resolved ONCE and reused for both the fire and
+	// recovery legs (Phase 4a: previously resolved twice). When a metric event_type
+	// is owned, the config is sourced from the matching metric rule (override-else-
+	// inherit); a suppress rule sets skipFire (mute the fire, still recover).
+	type effCheck struct {
+		metricCheck
+		resolved ResolvedAlertConfig
+		skipFire bool
 	}
 
 	am.mu.Lock()
 	now := time.Now()
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 
-	for _, chk := range checks {
-		resolved := am.resolveAlertConfig(status.DeviceID, siteID, chk.alertType)
+	effs := make([]effCheck, len(checks))
+	for i, chk := range checks {
+		resolved, skipFire := am.resolveMetricEffectiveLocked(status.DeviceID, siteID, chk.alertType, chk.metric, now)
+		effs[i] = effCheck{chk, resolved, skipFire}
+	}
+
+	for _, e := range effs {
+		if e.skipFire {
+			continue // suppress rule: no fire (recovery still runs below)
+		}
+		chk := e.metricCheck
+		resolved := e.resolved
 		if !resolved.AlertEnabled {
 			continue
 		}
@@ -306,22 +331,12 @@ func (am *AlertManager) CheckSystemStatus(status *models.SystemStatus, siteID *u
 
 	am.dispatchFired(fired, globalNC, "system")
 
-	// Recovery checks — batch resolve under one lock. Maintenance no longer
-	// defers resolution here (LC-13): sendRecovery itself performs the DB
-	// auto-resolve and mutes the notification while in maintenance, matching
-	// the other recovery paths.
-	am.mu.Lock()
-	type recoveryCheck struct {
-		metricCheck
-		resolved ResolvedAlertConfig
-	}
-	recoveryChecks := make([]recoveryCheck, len(checks))
-	for i, chk := range checks {
-		recoveryChecks[i] = recoveryCheck{chk, am.resolveAlertConfig(status.DeviceID, siteID, chk.alertType)}
-	}
-	am.mu.Unlock()
-
-	for _, rc := range recoveryChecks {
+	// Recovery — reuse the effective config resolved above (no re-resolve). Runs
+	// for every check regardless of skipFire/AlertEnabled so an already-open alert
+	// still auto-resolves (sendRecovery's DB resolve is idempotent + notify-gated).
+	// Maintenance no longer defers resolution here (LC-13): sendRecovery itself
+	// performs the DB auto-resolve and mutes the notification while in maintenance.
+	for _, rc := range effs {
 		// Effective fire level (static or F17 zscore), then the recovery band:
 		// F14 clear-band when configured; zscore mode gets a built-in half-σ
 		// band below its dynamic threshold so baseline noise doesn't flap.
@@ -487,9 +502,41 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 	now := time.Now()
 	resolved := am.resolveAlertConfig(trap.DeviceID, siteID, models.AlertType(trap.TrapType))
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
+
+	// Phase 4a: when this trap_type is owned by the rule engine, consult a matching
+	// source="trap" Event Rule ON TOP of the policy config — suppress, or override
+	// severity/cooldown/routing. A matched EVENT rule also counts as opt-in for the
+	// LC-14 info/notice gate (mirroring resolved.RuleMatched). owned + no matching
+	// rule → the legacy path runs unchanged.
+	eventRuleMatched := false
+	var eventRuleSeverity models.Severity
+	if am.stateOwned[trap.TrapType] {
+		vendor := "generic"
+		if m, ok := am.deviceMeta[trap.DeviceID]; ok && m.Vendor != "" {
+			vendor = m.Vendor
+		}
+		action, rule, matched := am.matchTrapRuleLocked(trapFields(trap, vendor), trap.DeviceID, siteID)
+		if matched {
+			am.recordHit(rule.id, now)
+			if action == "suppress" {
+				am.mu.Unlock()
+				return nil // trap suppressed by an operator rule
+			}
+			eventRuleMatched = true
+			eventRuleSeverity = rule.severity
+			if rule.policyID != nil {
+				am.applyRulePolicy(&resolved, *rule.policyID)
+			}
+			if rule.cooldownMin != nil && *rule.cooldownMin > 0 {
+				resolved.CooldownMinutes = *rule.cooldownMin
+			}
+		}
+	}
+
 	// Severity filter AFTER policy resolution (LC-14): info/notice traps stay
-	// dropped by default, but an enabled rule for this trap type opts it in.
-	if trap.Severity != "critical" && trap.Severity != "warning" && !resolved.RuleMatched {
+	// dropped by default, but an enabled policy rule OR a matched trap event rule
+	// for this trap type opts it in.
+	if trap.Severity != "critical" && trap.Severity != "warning" && !resolved.RuleMatched && !eventRuleMatched {
 		am.mu.Unlock()
 		return nil
 	}
@@ -504,13 +551,15 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 		return nil
 	}
 
-	// LC-14: honor a per-rule severity override (operators can upgrade a
-	// LINK_DOWN to critical or downgrade a noisy trap type); otherwise keep
-	// the trap parser's own severity — the same fallback pattern as
-	// ProcessFlowDetection.
+	// Severity precedence (most-specific wins): a matched trap EVENT rule's
+	// severity > the policy AlertRule severity (resolved.RuleSeverity) > the trap
+	// parser's own severity — mirroring ProcessFlowDetection's fallback pattern.
 	severity := models.Severity(trap.Severity)
 	if resolved.RuleSeverity != "" {
 		severity = resolved.RuleSeverity
+	}
+	if eventRuleSeverity != "" {
+		severity = eventRuleSeverity
 	}
 
 	alert := models.Alert{
