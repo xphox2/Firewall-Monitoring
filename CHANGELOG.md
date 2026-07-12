@@ -21,10 +21,14 @@ INTERFACE_DOWN and VPN_TUNNEL_DOWN alerts.
   been up is a configuration state (unused port, idle tunnel), not an outage,
   and is silent. The AlertManager records every `status="up"` row it sees each
   cycle, and admin-down interfaces remain excluded as before.
-- **Restart-safe.** The ever-up set is seeded from telemetry history at poller
-  startup (`SeedEverUpFromDB`, 30-day window via new
-  `GetEverUpInterfaceKeys` / `GetEverUpVPNKeys`), so a poller restart during a
-  genuine ongoing outage still keeps alerting on it rather than going silent.
+- **Restart-safe.** At poller startup the ever-up set is seeded from the
+  still-open INTERFACE_DOWN/VPN_TUNNEL_DOWN alerts (`SeedEverUpFromOpenAlerts`)
+  — an open down alert only exists because the link was up and then went down,
+  so it is the precise, cheap seed source (a small indexed read of open rows,
+  no scan of the high-volume telemetry tables and no statement-timeout risk).
+  A restart during a genuine ongoing outage therefore keeps re-firing its
+  reminder rather than going silent; currently-up links re-mark themselves on
+  the first cycle.
 - No schema change; no notifier/policy change. Genuine link/tunnel outages
   (observed up, then down) alert and auto-resolve exactly as before.
 - Tests: up→down fires once; never-up interface/tunnel fires nothing;

@@ -183,13 +183,13 @@ func (p *Poller) Start() error {
 		}
 	}
 
-	// Seed the interface/VPN "ever-up" set from history BEFORE the first cycle,
-	// so INTERFACE_DOWN/VPN_TUNNEL_DOWN fire for links/tunnels that were genuinely
-	// up before this (re)start — a real outage — while enabled-but-never-cabled
-	// ports and idle tunnels stay suppressed. Without this, a restart during an
-	// ongoing outage would lose the ability to keep alerting on it.
+	// Seed the interface/VPN "ever-up" set from the still-open down alerts BEFORE
+	// the first cycle, so a restart during an ongoing outage keeps re-firing its
+	// reminder instead of going silent. Currently-up links re-mark themselves on
+	// the first cycle; enabled-but-never-cabled ports and idle tunnels stay
+	// suppressed. Cheap indexed read of open alerts — no telemetry-table scan.
 	if p.alertManager != nil && p.db != nil {
-		if err := p.alertManager.SeedEverUpFromDB(30 * 24 * time.Hour); err != nil {
+		if err := p.alertManager.SeedEverUpFromOpenAlerts(); err != nil {
 			log.Printf("Ever-up seed failed (interface/VPN down alerts rebuild from live data): %v", err)
 		}
 	}

@@ -132,32 +132,58 @@ func vpnDownKey(deviceID uint, tunnelName string) string {
 	return fmt.Sprintf("vpn_down_%d_%s", deviceID, tunnelName)
 }
 
-// SeedEverUpFromDB primes the ever-up set from history so that after a poller
-// restart INTERFACE_DOWN/VPN_TUNNEL_DOWN still fire for links/tunnels that were
-// genuinely up before the restart (a real outage), while enabled-but-never-up
-// ports and idle tunnels stay suppressed. `window` bounds how far back to look
-// (a link/tunnel up within the window is treated as a real member of the
-// topology). Best-effort: a query error is logged by the caller and leaves the
-// set to rebuild from live up-rows.
-func (am *AlertManager) SeedEverUpFromDB(window time.Duration) error {
+// maxEverUpEntries bounds the ever-up set the same way maxLastAlertEntries
+// bounds the cooldown map: managed interfaces/tunnels can't drive it far, but a
+// churn of dial-up tunnel instance names over a long-lived process shouldn't
+// grow it without limit. Dropping a mark only means a subsequent live "up" row
+// re-adds it, so the cap is harmless.
+const maxEverUpEntries = 50000
+
+// markEverUpLocked records that key (an iface_down_/vpn_down_ key) has been seen
+// up, enforcing the size cap. Caller holds am.mu.
+func (am *AlertManager) markEverUpLocked(key string) {
+	if _, exists := am.everUp[key]; !exists && len(am.everUp) >= maxEverUpEntries {
+		return
+	}
+	am.everUp[key] = true
+}
+
+// SeedEverUpFromOpenAlerts primes the ever-up set from the still-OPEN
+// INTERFACE_DOWN/VPN_TUNNEL_DOWN alerts so that after a poller restart a genuine
+// ongoing outage keeps re-firing its periodic reminder instead of going silent
+// (a fresh AlertManager has an empty ever-up set). An open down alert only
+// exists because the link/tunnel was observed up and then went down — exactly
+// the ever-up condition — so it is the precise, cheap seed source: a small
+// indexed read of open rows, no time window, and no scan of the high-volume
+// telemetry tables. Currently-up interfaces need no seed; they re-mark
+// themselves on the first cycle. Best-effort: an error is logged by the caller
+// and the set rebuilds from live up-rows.
+func (am *AlertManager) SeedEverUpFromOpenAlerts() error {
 	if am.db == nil {
 		return nil
 	}
-	since := time.Now().Add(-window)
-	ifaceKeys, err := am.db.GetEverUpInterfaceKeys(since)
-	if err != nil {
+	var rows []struct {
+		DeviceID   uint
+		AlertType  string
+		MetricName string
+	}
+	if err := am.db.Gorm().Model(&models.Alert{}).
+		Select("device_id", "alert_type", "metric_name").
+		Where("alert_type IN (?) AND resolved_at IS NULL",
+			[]string{"INTERFACE_DOWN", "VPN_TUNNEL_DOWN"}).
+		Scan(&rows).Error; err != nil {
 		return err
 	}
-	vpnKeys, verr := am.db.GetEverUpVPNKeys(since)
-	if verr != nil {
-		return verr
-	}
 	am.mu.Lock()
-	for _, k := range ifaceKeys {
-		am.everUp[ifaceDownKey(k.DeviceID, k.Name)] = true
-	}
-	for _, k := range vpnKeys {
-		am.everUp[vpnDownKey(k.DeviceID, k.Name)] = true
+	for _, r := range rows {
+		switch r.AlertType {
+		case "INTERFACE_DOWN":
+			// MetricName is "interface_<name>" (see CheckInterfaceStatus).
+			am.markEverUpLocked(ifaceDownKey(r.DeviceID, strings.TrimPrefix(r.MetricName, "interface_")))
+		case "VPN_TUNNEL_DOWN":
+			// MetricName is "vpn_<tunnel>" (see CheckVPNStatus).
+			am.markEverUpLocked(vpnDownKey(r.DeviceID, strings.TrimPrefix(r.MetricName, "vpn_")))
+		}
 	}
 	am.mu.Unlock()
 	return nil
@@ -329,7 +355,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		key := ifaceDownKey(iface.DeviceID, iface.Name)
 		// Record every interface seen up so a later down transition can fire.
 		if iface.Status == "up" {
-			am.everUp[key] = true
+			am.markEverUpLocked(key)
 			continue
 		}
 		if iface.Status != "down" || iface.AdminStatus != "up" {
@@ -377,7 +403,7 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 	// Recovery: interfaces that are now up
 	for _, iface := range interfaces {
 		if iface.Status == "up" {
-			key := fmt.Sprintf("iface_down_%d_%s", iface.DeviceID, iface.Name)
+			key := ifaceDownKey(iface.DeviceID, iface.Name)
 			am.sendRecovery(key, "INTERFACE_DOWN", fmt.Sprintf("interface_%s", iface.Name),
 				fmt.Sprintf("Interface %s is back up", iface.Name), iface.DeviceID, siteID)
 		}
@@ -1486,7 +1512,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 	for _, vpn := range vpnStatuses {
 		key := vpnDownKey(vpn.DeviceID, vpn.TunnelName)
 		if vpn.Status == "up" {
-			am.everUp[key] = true
+			am.markEverUpLocked(key)
 			continue
 		}
 		if vpn.Status != "down" {
@@ -1527,7 +1553,7 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 	// Recovery: VPN tunnels that are now up
 	for _, vpn := range vpnStatuses {
 		if vpn.Status == "up" {
-			key := fmt.Sprintf("vpn_down_%d_%s", vpn.DeviceID, vpn.TunnelName)
+			key := vpnDownKey(vpn.DeviceID, vpn.TunnelName)
 			am.sendRecovery(key, "VPN_TUNNEL_DOWN", fmt.Sprintf("vpn_%s", vpn.TunnelName),
 				fmt.Sprintf("VPN tunnel %s to %s is back up", vpn.TunnelName, vpn.RemoteIP), vpn.DeviceID, siteID)
 		}
