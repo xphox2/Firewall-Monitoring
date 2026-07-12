@@ -1402,8 +1402,11 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 	// underlying issue clears, the recovery event unsnoozes it for the operator.
 	if am.db != nil {
 		now := time.Now()
-		am.db.Gorm().Model(&models.Alert{}).
-			Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND acknowledged = ?", deviceID, alertType, metricName, false).
+		base := am.db.Gorm().Model(&models.Alert{}).
+			Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", deviceID, alertType, metricName)
+		// Unacked open rows: resolve + auto-acknowledge so they leave the NOC
+		// default queue with zero clicks, and clear any snooze.
+		base.Session(&gorm.Session{}).Where("acknowledged = ?", false).
 			Updates(map[string]interface{}{
 				"resolved_at":     now,
 				"acknowledged":    true,
@@ -1412,6 +1415,17 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 				"snoozed_until":   nil,
 				"snoozed_by":      "",
 				"snoozed_reason":  "",
+			})
+		// Already-ACKED open rows: also resolve them now (previously they lingered
+		// open forever), so an acked outage CLOSES on recovery and a later down is
+		// a genuinely NEW episode. Preserve the operator's original ack timestamp.
+		base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
+			Updates(map[string]interface{}{
+				"resolved_at":    now,
+				"notes":          "Auto-resolved: " + message,
+				"snoozed_until":  nil,
+				"snoozed_by":     "",
+				"snoozed_reason": "",
 			})
 	}
 

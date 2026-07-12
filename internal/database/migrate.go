@@ -1702,6 +1702,13 @@ func (d *Database) migrateIPSecTunnels() error {
 	return d.db.AutoMigrate(&models.IPSecTunnel{})
 }
 
+// migrateEventRuleDampenJSON (v41) adds event_rules.dampen_json — the per-source
+// dampening params blob backing the unified alerting-via-Event-Rules program.
+// Additive text column, plain AutoMigrate (event_rules is small, unpartitioned).
+func (d *Database) migrateEventRuleDampenJSON() error {
+	return d.db.AutoMigrate(&models.EventRule{})
+}
+
 // migrateFlowIngestColumns (v29, Tranche 3 NetFlow v5/v9 + IPFIX) adds every
 // column the multi-protocol flow ingest needs in ONE migration — flow_samples
 // is monthly RANGE-partitioned on prod-shaped installs, so column adds are a

@@ -341,7 +341,9 @@ func (am *AlertManager) fireEventAlert(r *compiledRule, msg *models.SyslogMessag
 	now := time.Now()
 	resolved := am.resolveAlertConfig(msg.DeviceID, siteID, r.alertType)
 	if r.policyID != nil {
-		resolved.PolicyID = r.policyID
+		// Route notifications through the RULE's policy — channels + escalation,
+		// not just the ID — so the first notification honors it (not the device's).
+		am.applyRulePolicy(&resolved, *r.policyID)
 	}
 	globalNC := notifier.SnapshotConfig(&am.config.Alerts)
 	cdMin := resolved.CooldownMinutes

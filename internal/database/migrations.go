@@ -89,6 +89,7 @@ var registeredMigrations = []migration{
 	{version: 38, name: "add_disk_and_load_tables", run: (*Database).migrateAddDiskAndLoad},
 	{version: 39, name: "probe_commands_and_schema_version", run: (*Database).migrateProbeCommandsAndSchemaVersion},
 	{version: 40, name: "ipsec_tunnels", run: (*Database).migrateIPSecTunnels},
+	{version: 41, name: "event_rule_dampen_json", run: (*Database).migrateEventRuleDampenJSON},
 }
 
 // RunMigrations applies every registered migration not yet recorded in
