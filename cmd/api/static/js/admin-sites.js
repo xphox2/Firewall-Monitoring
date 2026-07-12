@@ -54,6 +54,7 @@
                     '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:flex-end;gap:6px;border-top:1px solid var(--fwmon-border);padding-top:12px;">' +
+                    '<button class="btn sm secondary" data-action="site-alert-config" data-min-role="operator" data-id="' + site.id + '">Alert overrides</button> ' +
                     '<button class="btn sm secondary" data-action="edit-site" data-min-role="operator" data-id="' + site.id + '">Edit</button> ' +
                     '<button class="btn sm danger" data-action="delete-site" data-min-role="operator" data-id="' + site.id + '">Delete</button>' +
                 '</div>' +
@@ -144,17 +145,121 @@
         });
     }
 
+    // ---- Site Alert Config Modal (Phase 5a) ----
+    function siteName(id) {
+        for (var i = 0; i < sites.length; i++) { if (sites[i].id === id) return sites[i].name; }
+        return '';
+    }
+
+    function showSiteAlertModal(id) {
+        var nm = siteName(id);
+        document.getElementById('site-alert-modal-title').textContent = nm ? 'Alert Configuration: ' + nm : 'Site Alert Configuration';
+        document.getElementById('site-alert-site-id').value = id;
+        ['cpu', 'memory', 'disk', 'sessions', 'cooldown', 'storm'].forEach(function(f) {
+            document.getElementById('site-alert-' + f).value = '';
+        });
+        var policySelect = document.getElementById('site-alert-policy');
+        policySelect.innerHTML = '<option value="">— Inherit from global default —</option>';
+
+        Promise.all([
+            AC.apiFetch(API_BASE + '/sites/' + id + '/alert-config'),
+            AC.apiFetch(API_BASE + '/alert-policies')
+        ]).then(function(results) {
+            var cfgResp = results[0], polResp = results[1];
+            if (polResp && polResp.data) {
+                polResp.data.forEach(function(p) {
+                    var opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    policySelect.appendChild(opt);
+                });
+            }
+            if (cfgResp && cfgResp.data) {
+                var cfg = cfgResp.data;
+                if (cfg.policy_id) policySelect.value = cfg.policy_id;
+                if (cfg.cpu_threshold) document.getElementById('site-alert-cpu').value = cfg.cpu_threshold;
+                if (cfg.memory_threshold) document.getElementById('site-alert-memory').value = cfg.memory_threshold;
+                if (cfg.disk_threshold) document.getElementById('site-alert-disk').value = cfg.disk_threshold;
+                if (cfg.session_threshold) document.getElementById('site-alert-sessions').value = cfg.session_threshold;
+                if (cfg.cooldown_minutes) document.getElementById('site-alert-cooldown').value = cfg.cooldown_minutes;
+                if (cfg.storm_sources != null) document.getElementById('site-alert-storm').value = cfg.storm_sources;
+            }
+            AC.openModal('site-alert-modal');
+            AC.renderAlertInheritanceHints({ siteId: id }, 'site', {
+                CPU_HIGH: 'site-eff-cpu', MEMORY_HIGH: 'site-eff-memory',
+                DISK_HIGH: 'site-eff-disk', SESSIONS_HIGH: 'site-eff-sessions'
+            });
+        }).catch(function(e) {
+            console.error('[Sites] Failed to load site alert config:', e);
+            AC.showError('Failed to load site alert config: ' + e.message);
+        });
+    }
+
+    function closeSiteAlertModal() { AC.closeModal('site-alert-modal'); }
+
+    function resetSiteAlertConfig() {
+        var id = document.getElementById('site-alert-site-id').value;
+        if (!id) return;
+        AC.confirm('Reset alert configuration to defaults? This removes all overrides for this site.', {
+            title: 'Reset site alert config?', confirmLabel: 'Reset', danger: true,
+        }).then(function(ok) {
+            if (!ok) return;
+            AC.apiFetch(API_BASE + '/sites/' + id + '/alert-config', { method: 'DELETE' }).then(function() {
+                closeSiteAlertModal();
+                AC.showSuccess('Site alert config reset to defaults');
+            }).catch(function(e) {
+                AC.showError('Reset failed: ' + e.message);
+            });
+        });
+    }
+
+    function saveSiteAlertConfig(e) {
+        e.preventDefault();
+        var id = document.getElementById('site-alert-site-id').value;
+        if (!id) return;
+        function num(f, isInt) {
+            var v = document.getElementById('site-alert-' + f).value;
+            if (v === '') return 0;
+            return isInt ? parseInt(v) : parseFloat(v);
+        }
+        var policyVal = document.getElementById('site-alert-policy').value;
+        var stormRaw = document.getElementById('site-alert-storm').value;
+        var data = {
+            site_id: parseInt(id),
+            policy_id: policyVal ? parseInt(policyVal) : null,
+            cpu_threshold: num('cpu'),
+            memory_threshold: num('memory'),
+            disk_threshold: num('disk'),
+            session_threshold: num('sessions', true),
+            cooldown_minutes: num('cooldown', true),
+            // Tri-state: blank = inherit (null), a number (incl. 0) = explicit.
+            storm_sources: stormRaw === '' ? null : parseInt(stormRaw)
+        };
+        AC.apiFetch(API_BASE + '/sites/' + id + '/alert-config', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: data
+        }).then(function() {
+            closeSiteAlertModal();
+            AC.showSuccess('Site alert config saved');
+        }).catch(function(err) {
+            AC.showError('Error saving site alert config: ' + err.message);
+        });
+    }
+
     // Event delegation
     AC.delegateEvent('click', {
         'show-add-modal': function() { showAddModal(); },
         'edit-site': function(el) { editSite(parseInt(el.dataset.id)); },
         'delete-site': function(el) { deleteSite(parseInt(el.dataset.id)); },
+        'site-alert-config': function(el) { showSiteAlertModal(parseInt(el.dataset.id)); },
+        'close-site-alert-modal': function() { closeSiteAlertModal(); },
+        'reset-site-alert-config': function() { resetSiteAlertConfig(); },
         'close-modal': function() { closeModal(); },
         'logout': function() { AC.doLogout(); }
     });
 
     // Form submit
     document.getElementById('site-form').addEventListener('submit', saveSite);
+    var siteAlertForm = document.getElementById('site-alert-form');
+    if (siteAlertForm) siteAlertForm.addEventListener('submit', saveSiteAlertConfig);
 
     // Init — the SPA calls this when the Sites page is shown (admin-main.js
     // loadPageData). Event/form wiring above runs once at module load; only

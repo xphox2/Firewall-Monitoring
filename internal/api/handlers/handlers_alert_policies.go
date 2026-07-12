@@ -7,6 +7,7 @@ import (
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
 
@@ -77,6 +78,7 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		httputil.InternalError(c, "Failed to create alert policy", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusCreated, response.Success(policy))
 }
@@ -114,6 +116,7 @@ func (h *Handler) UpdateAlertPolicy(c *gin.Context) {
 		httputil.InternalError(c, "Failed to update alert policy", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Success(policy))
 }
@@ -136,6 +139,7 @@ func (h *Handler) DeleteAlertPolicy(c *gin.Context) {
 		}
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Message("Alert policy deleted"))
 }
@@ -181,6 +185,8 @@ func (h *Handler) CloneAlertPolicy(c *gin.Context) {
 		}
 	}
 
+	h.refreshAlertConfigCache(db)
+
 	// Reload with rules
 	result, _ := db.GetAlertPolicy(clone.ID)
 	c.JSON(http.StatusCreated, response.Success(result))
@@ -212,10 +218,93 @@ func (h *Handler) BatchUpsertAlertRules(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save rules", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	// Reload policy with rules
 	policy, _ := db.GetAlertPolicy(id)
 	c.JSON(http.StatusOK, response.Success(policy))
+}
+
+// refreshAlertConfigCache reloads the AlertManager's policy/threshold cache
+// immediately after an admin edits an alert config, so the modal's own
+// save→re-render loop shows the new value instead of waiting up to 60s for the
+// background ticker (cmd/api LC-9). Admin-rate, nil-safe.
+func (h *Handler) refreshAlertConfigCache(db database.Store) {
+	if h.alertManager == nil || db == nil {
+		return
+	}
+	h.alertManager.RefreshThresholds(db.Gorm())
+}
+
+// metricSampleKey maps a metric AlertType to the telemetry sample key the metric
+// Event Rule engine matches on (mirrors CheckSystemStatus). Empty for non-metric
+// types — the effective endpoint restricts to these four.
+func metricSampleKey(at models.AlertType) string {
+	switch at {
+	case models.AlertTypeCPUHigh:
+		return "cpu_usage"
+	case models.AlertTypeMemoryHigh:
+		return "memory_usage"
+	case models.AlertTypeDiskHigh:
+		return "disk_usage"
+	case models.AlertTypeSessionsHigh:
+		return "session_count"
+	}
+	return ""
+}
+
+// GetEffectiveAlertConfig returns the RESOLVED alert config that actually fires
+// for a device or site + metric alert type, with per-field provenance, so the
+// device/site modals can show "inherits 80 from Global" vs "overridden to 85
+// here" vs "set by rule X". Read-only, admin-only. Reconciles both the layered
+// resolve chain AND a matching metric Event Rule (via AlertManager.EffectiveAlertConfig).
+func (h *Handler) GetEffectiveAlertConfig(c *gin.Context) {
+	if h.alertManager == nil {
+		c.JSON(http.StatusServiceUnavailable, response.Error("Alert engine not ready"))
+		return
+	}
+
+	alertType := models.AlertType(strings.TrimSpace(c.Query("alert_type")))
+	metric := metricSampleKey(alertType)
+	if metric == "" {
+		c.JSON(http.StatusBadRequest, response.Error("alert_type must be one of CPU_HIGH, MEMORY_HIGH, DISK_HIGH, SESSIONS_HIGH"))
+		return
+	}
+
+	deviceID, dOK := httputil.ParseUintQuery(c, "device_id")
+	siteRaw, sOK := httputil.ParseUintQuery(c, "site_id")
+	if !dOK && !sOK {
+		c.JSON(http.StatusBadRequest, response.Error("device_id or site_id is required"))
+		return
+	}
+	var siteID *uint
+	if sOK {
+		siteID = &siteRaw
+	}
+
+	resolved, prov := h.alertManager.EffectiveAlertConfig(deviceID, siteID, alertType, metric)
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"alert_type": alertType,
+		"effective": gin.H{
+			"threshold":        resolved.Threshold,
+			"clear_threshold":  resolved.ClearThreshold,
+			"mode":             resolved.Mode,
+			"zscore_k":         resolved.ZScoreK,
+			"cooldown_minutes": resolved.CooldownMinutes,
+			"severity":         resolved.Severity,
+			"alert_enabled":    resolved.AlertEnabled,
+			"storm_sources":    resolved.StormSources,
+		},
+		"provenance": gin.H{
+			"threshold":          prov.Threshold,
+			"cooldown":           prov.Cooldown,
+			"suppressed_by_rule": prov.SuppressedByRule,
+			"alerts_disabled":    prov.AlertsDisabled,
+			"rule_id":            prov.RuleID,
+			"rule_name":          prov.RuleName,
+		},
+	}))
 }
 
 // Device alert config endpoints
@@ -282,6 +371,7 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save device alert config", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Success(cfg))
 }
@@ -321,6 +411,7 @@ func (h *Handler) DeleteDeviceAlertConfig(c *gin.Context) {
 		httputil.InternalError(c, "Failed to delete device alert config", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Message("Device alert config deleted"))
 }
@@ -381,6 +472,7 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 		httputil.InternalError(c, "Failed to save site alert config", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Success(cfg))
 }
@@ -399,6 +491,7 @@ func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
 		httputil.InternalError(c, "Failed to delete site alert config", err)
 		return
 	}
+	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Message("Site alert config deleted"))
 }
