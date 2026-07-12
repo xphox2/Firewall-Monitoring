@@ -491,9 +491,10 @@ type EventRule struct {
 	// {"refire_mode":"episode","min_up_seconds":3600,"daily_cap":1}; metric:
 	// {"mode":"static|zscore","threshold":90,"clear_threshold":80,"zscore_k":3}.
 	DampenJSON string `json:"dampen_json" gorm:"type:text"`
-	// SeedVersion marks a shipped default (0 = operator-created). EnsureDefaultRules
-	// keys idempotency off (Name, SeedVersion) so a deleted/edited seed is not
-	// resurrected on restart.
+	// SeedVersion marks the generation a shipped default was introduced in (0 =
+	// operator-created). EnsureDefaultRules seeds a generation only while the
+	// last-applied marker is below it, and skips any name that already exists —
+	// so a deleted/edited seed is not resurrected on restart or a version bump.
 	SeedVersion int        `json:"seed_version"`
 	HitCount    int64      `json:"hit_count"`
 	LastHitAt   *time.Time `json:"last_hit_at"`

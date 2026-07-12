@@ -30,7 +30,12 @@
     var STATE_DEFAULT_DAILY_CAP = 1;
 
     // The datalist a condition field should suggest from, by current source.
-    function fieldHintsId() { return $('er-source').value === 'state' ? 'er-state-field-hints' : 'er-field-hints'; }
+    function fieldHintsId() {
+        var s = $('er-source').value;
+        if (s === 'state') return 'er-state-field-hints';
+        if (s === 'metric') return 'er-metric-field-hints';
+        return 'er-field-hints';
+    }
 
     var rules = [];
     var devices = [];
@@ -193,6 +198,8 @@
         // Dampening (state rules): parse the blob into minutes + cap, defaulting to
         // the shipped values so a fresh state rule pre-fills sensible numbers.
         loadDampenFromRule(r);
+        // Threshold (metric rules): parse mode + threshold/clear/k.
+        loadMetricFromRule(r);
 
         // conditions: parse match_json into rows, or advanced raw for nested trees
         $('er-advanced-toggle').checked = false;
@@ -226,6 +233,51 @@
         var cap = parseInt($('er-daily-cap').value, 10);
         if (isNaN(cap) || cap < 0) cap = STATE_DEFAULT_DAILY_CAP;
         return JSON.stringify({ refire_mode: 'episode', min_up_seconds: minMin * 60, daily_cap: cap });
+    }
+
+    // loadMetricFromRule fills the metric threshold inputs from a rule's
+    // dampen_json {mode,threshold,clear_threshold,zscore_k}. Blank threshold =
+    // inherit the Settings→Alerts / policy / device value.
+    function loadMetricFromRule(r) {
+        var mode = 'static', th = '', clr = '', k = '';
+        if (r && r.dampen_json) {
+            try {
+                var d = JSON.parse(r.dampen_json);
+                if (d.mode === 'zscore' || d.mode === 'static') mode = d.mode;
+                if (typeof d.threshold === 'number' && d.threshold > 0) th = d.threshold;
+                if (typeof d.clear_threshold === 'number' && d.clear_threshold > 0) clr = d.clear_threshold;
+                if (typeof d.zscore_k === 'number' && d.zscore_k > 0) k = d.zscore_k;
+            } catch (e) { /* keep defaults on a malformed blob */ }
+        }
+        $('er-metric-mode').value = mode;
+        $('er-metric-threshold').value = th;
+        $('er-metric-clear').value = clr;
+        $('er-metric-k').value = k;
+    }
+
+    // collectMetricDampen serializes the metric threshold inputs. Blank numeric
+    // fields are OMITTED (0 would read as "inherit"/"default" — we keep them
+    // absent so an empty threshold genuinely inherits the resolved value).
+    function collectMetricDampen() {
+        var out = { mode: $('er-metric-mode').value || 'static' };
+        var th = parseFloat($('er-metric-threshold').value);
+        if (!isNaN(th) && th > 0) out.threshold = th;
+        var clr = parseFloat($('er-metric-clear').value);
+        if (!isNaN(clr) && clr > 0) out.clear_threshold = clr;
+        if (out.mode === 'zscore') {
+            var k = parseFloat($('er-metric-k').value);
+            if (!isNaN(k) && k > 0) out.zscore_k = k;
+        }
+        return JSON.stringify(out);
+    }
+
+    // metricOrStateDampen returns the dampen_json for the current source ('' for
+    // sources that don't use it).
+    function metricOrStateDampen() {
+        var s = $('er-source').value;
+        if (s === 'state') return collectDampen();
+        if (s === 'metric') return collectMetricDampen();
+        return '';
     }
 
     function loadConditionsFromRule(r) {
@@ -337,26 +389,37 @@
     function onActionChange() {
         var isAlert = $('er-action').value !== 'suppress';
         $('er-alert-fields').style.display = isAlert ? '' : 'none';
-        // Dampening only applies to a state ALERT rule (a suppress rule mutes, so
-        // there's nothing to dampen).
-        var isState = $('er-source').value === 'state';
-        $('er-dampen-section').style.display = (isState && isAlert) ? '' : 'none';
+        // Dampening/threshold panels only apply to an ALERT rule (a suppress rule
+        // mutes, so there's nothing to dampen or threshold).
+        var src = $('er-source').value;
+        $('er-dampen-section').style.display = (src === 'state' && isAlert) ? '' : 'none';
+        $('er-metric-section').style.display = (src === 'metric' && isAlert) ? '' : 'none';
+    }
+
+    // onMetricModeChange shows the Z-score K field only in zscore mode.
+    function onMetricModeChange() {
+        $('er-metric-k-group').style.display = ($('er-metric-mode').value === 'zscore') ? '' : 'none';
     }
 
     // onSourceChange re-scopes the editor to the selected source: state rules get
-    // the dampening panel + state field hints and hide the syslog preview (which
-    // tests stored logs, meaningless for live up/down events).
+    // the dampening panel + state field hints; metric rules get the threshold
+    // panel + metric field hints. Both hide the syslog preview (which tests stored
+    // logs, meaningless for live state/metric events) in favor of a note.
     function onSourceChange() {
-        var isState = $('er-source').value === 'state';
+        var src = $('er-source').value;
+        var isState = src === 'state', isMetric = src === 'metric';
         // Swap the field-hint datalist on every open condition row + the dedup field.
         var list = fieldHintsId();
         document.querySelectorAll('#er-conditions .er-cond-field').forEach(function (el) { el.setAttribute('list', list); });
         var gb = $('er-group-by'); if (gb) gb.setAttribute('list', list);
-        // Preview vs state note.
-        $('er-preview-btn').style.display = isState ? 'none' : '';
-        $('er-preview-result').style.display = isState ? 'none' : '';
+        // Preview vs source-specific note.
+        var noPreview = isState || isMetric;
+        $('er-preview-btn').style.display = noPreview ? 'none' : '';
+        $('er-preview-result').style.display = noPreview ? 'none' : '';
         $('er-state-preview-note').style.display = isState ? '' : 'none';
-        if (isState) { $('er-preview-samples').style.display = 'none'; }
+        $('er-metric-preview-note').style.display = isMetric ? '' : 'none';
+        if (noPreview) { $('er-preview-samples').style.display = 'none'; }
+        onMetricModeChange();
         onActionChange();
     }
 
@@ -425,7 +488,7 @@
                 group_by: $('er-group-by').value.trim(),
                 cooldown_minutes: $('er-cooldown').value ? parseInt($('er-cooldown').value, 10) : null,
                 policy_id: $('er-policy').value ? parseInt($('er-policy').value, 10) : null,
-                dampen_json: ($('er-source').value === 'state') ? collectDampen() : ''
+                dampen_json: metricOrStateDampen()
             };
             var url = id ? (API + '/event-rules/' + id) : (API + '/event-rules');
             AC.apiFetch(url, { method: id ? 'PUT' : 'POST', body: body }).then(function () {
@@ -483,6 +546,8 @@
         if (actionSel) actionSel.addEventListener('change', onActionChange);
         var sourceSel = $('er-source');
         if (sourceSel) sourceSel.addEventListener('change', onSourceChange);
+        var metricMode = $('er-metric-mode');
+        if (metricMode) metricMode.addEventListener('change', onMetricModeChange);
         var previewBtn = $('er-preview-btn');
         if (previewBtn) previewBtn.addEventListener('click', previewRule);
         var advToggle = $('er-advanced-toggle');

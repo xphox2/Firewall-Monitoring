@@ -1,6 +1,44 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.82] - 2026-07-12
+
+### Added — CPU/memory/disk/session threshold templates in Event Rules (preview; no change to live alerting)
+
+Groundwork for moving metric threshold alerts onto the Event Rules surface. This
+adds the `metric` rule source — data model, validation, four built-in templates,
+and the editor UI — but it is deliberately **inert**: metric alerting still runs
+through **Settings → Alerts** (and any policy/device/site thresholds) exactly as
+before. Nothing about live alerting changes on upgrade.
+
+- **New `metric` source** for Event Rules, with a `dampen_json` threshold blob
+  (`{"mode":"static|zscore","threshold":…,"clear_threshold":…,"zscore_k":…}`) —
+  reuses the existing `dampen_json` column (no migration). Validated on save
+  (mode, non-negative values, non-inverted hysteresis band).
+- **Four built-in templates** — "CPU high", "Memory high", "Disk high", "Session
+  count high" — visible and editable in the Event Rules editor. They ship with a
+  clear **Preview** banner and do **not** drive alerts yet; the metric types are
+  intentionally excluded from the state-rule ownership flag, so the legacy path
+  still owns them. A blank threshold means "inherit the current threshold", so a
+  future activation is non-regressive.
+- **Editor UI**: a Threshold panel (Static / Z-score mode, threshold, hysteresis
+  clear-threshold, z-score K) with metric field hints and a preview note, mobile
+  responsive.
+- **Seed-generation fix**: built-in rules now carry the version they were
+  *introduced* in rather than the current top version, so bumping the seed set no
+  longer risks recreating an older built-in an operator had deleted.
+
+### Fixed
+- **Event Rule edits now persist the dampening/threshold blob.** `dampen_json`
+  was missing from the update statement's column list, so editing a rule's flap
+  dampening (Phase 1) or metric threshold silently dropped the change. Editor
+  saves now round-trip correctly.
+- **Upgrades no longer reset the state-rule ownership flag.** The
+  `state_engine_owns` setting is now written only when absent, so an operator who
+  edited it (e.g. reverted a type to the legacy path) keeps their choice across a
+  version bump. Seeding also no longer advances its version marker if a template
+  insert failed, so a transient error can't permanently skip a built-in.
+
 ## [0.11.81] - 2026-07-12
 
 ### Added — interface/VPN "down" alerting moves to Event Rules, with flap dampening (unified alerting, phase 1)

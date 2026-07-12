@@ -50,3 +50,44 @@ func TestValidateEventRule_UnknownSourceRejected(t *testing.T) {
 		t.Fatal("unknown source should be rejected")
 	}
 }
+
+// Metric source (Phase 2) — validateEventRule allows source=metric and validates
+// the threshold dampen_json.
+
+func TestValidateEventRule_MetricSourceAllowed(t *testing.T) {
+	r := &models.EventRule{
+		Name:       "CPU high",
+		Source:     "metric",
+		Action:     "alert",
+		MatchJSON:  `{"op":"eq","field":"event_type","value":"cpu_high"}`,
+		DampenJSON: `{"mode":"zscore","threshold":90,"clear_threshold":80,"zscore_k":3}`,
+	}
+	if msg := validateEventRule(r); msg != "" {
+		t.Fatalf("valid metric rule rejected: %s", msg)
+	}
+}
+
+func TestValidateEventRule_MetricEmptyAndModeOnlyOK(t *testing.T) {
+	for _, dj := range []string{"", `{"mode":"static"}`} {
+		r := &models.EventRule{Name: "M", Source: "metric", Action: "alert", DampenJSON: dj}
+		if msg := validateEventRule(r); msg != "" {
+			t.Errorf("dampen_json %q should be allowed: %s", dj, msg)
+		}
+	}
+}
+
+func TestValidateEventRule_MetricBadDampenRejected(t *testing.T) {
+	cases := map[string]string{
+		"malformed":     `{oops`,
+		"bad mode":      `{"mode":"magic"}`,
+		"neg threshold": `{"threshold":-1}`,
+		"neg k":         `{"zscore_k":-2}`,
+		"inverted band": `{"threshold":90,"clear_threshold":95}`,
+	}
+	for name, dj := range cases {
+		r := &models.EventRule{Name: "M", Source: "metric", Action: "alert", DampenJSON: dj}
+		if msg := validateEventRule(r); msg == "" {
+			t.Errorf("%s: expected rejection, got none", name)
+		}
+	}
+}
