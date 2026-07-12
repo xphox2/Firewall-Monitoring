@@ -52,15 +52,6 @@ type stateCandidate struct {
 	dampen     dampenParams
 }
 
-// stateEngineOwns reports whether the state engine (not the legacy path) owns an
-// event type. Cached from the seed; a disabled/deleted template still leaves the
-// flag set, so "disable the template = alerts off, on purpose".
-func (am *AlertManager) stateEngineOwns(eventType string) bool {
-	am.mu.RLock()
-	defer am.mu.RUnlock()
-	return am.stateOwned[eventType]
-}
-
 // setStateOwnedLocked replaces the owned-types set (called from RefreshEventRules
 // under am.mu).
 func (am *AlertManager) setStateOwnedLocked(csv string) {
@@ -97,10 +88,17 @@ func (am *AlertManager) matchStateRuleLocked(fields map[string]string, deviceID 
 }
 
 // buildStateCandidateLocked resolves severity + routing for a matched alert rule
-// and returns the candidate (whose fire is decided later, outside the lock).
-// Caller holds am.mu.
-func (am *AlertManager) buildStateCandidateLocked(rule *compiledRule, deviceID uint, siteID *uint, key string, alertType models.AlertType, metricName, message string, globalNC notifier.NotifyConfig) stateCandidate {
+// and returns the candidate (whose fire is decided later, outside the lock). The
+// bool is false when alerting is disabled for this device/type — a per-device
+// "alerts off" (AlertsEnabled=false) or a per-type policy AlertRule with
+// Enabled=false — mirroring the legacy path's AlertEnabled gate so ownership
+// doesn't resurrect an alert an operator deliberately turned off. Caller holds
+// am.mu.
+func (am *AlertManager) buildStateCandidateLocked(rule *compiledRule, deviceID uint, siteID *uint, key string, alertType models.AlertType, metricName, message string, globalNC notifier.NotifyConfig) (stateCandidate, bool) {
 	resolved := am.resolveAlertConfig(deviceID, siteID, alertType)
+	if !resolved.AlertEnabled {
+		return stateCandidate{}, false
+	}
 	if rule.severity != "" {
 		resolved.Severity = rule.severity
 	}
@@ -111,7 +109,12 @@ func (am *AlertManager) buildStateCandidateLocked(rule *compiledRule, deviceID u
 	if dp.MinUpSeconds <= 0 {
 		dp.MinUpSeconds = defaultStateMinUpSeconds
 	}
-	if dp.DailyCap == 0 {
+	// DailyCap: 0 means "no cap" (alert on every outage episode) — the UI and the
+	// seed rules always set refire_mode, so an explicitly-configured rule honors
+	// its 0 verbatim. Only a rule with NO dampen configured at all (empty blob →
+	// refire_mode == "" and cap == 0) falls back to the default cap, so a bare
+	// state rule still dampens sensibly. Negatives are blocked at validation.
+	if dp.RefireMode == "" && dp.DailyCap == 0 {
 		dp.DailyCap = defaultStateDailyCap
 	}
 	return stateCandidate{
@@ -119,38 +122,78 @@ func (am *AlertManager) buildStateCandidateLocked(rule *compiledRule, deviceID u
 		message: message, severity: resolved.Severity, policyID: resolved.PolicyID,
 		maint: resolved.InMaintenance, nc: BuildNotifyConfigFromResolved(resolved, globalNC),
 		dampen: dp,
-	}
+	}, true
 }
 
 // decideStateFire is the DB-driven episode/flap decision. Pure DB reads — runs
 // OUTSIDE am.mu. The "how long was it up" signal is `now − last recovery
 // (resolved_at)`, which is persistent across a poller restart (no in-memory
-// timing to lose).
+// timing to lose). It is check-then-insert (the caller saves the row after this
+// returns) and so assumes a SINGLE-GOROUTINE caller per (device, metric) — true
+// today: cmd/poller drives Check{Interface,VPN}Status in sequential loops. If a
+// second concurrent poller is ever added, this needs a unique open-row index.
 func (am *AlertManager) decideStateFire(c stateCandidate, now time.Time) stateFireDecision {
 	if am.db == nil {
 		return stateFire
 	}
 	g := am.db.Gorm()
-	// (1) Same continuous-down episode? An open row (acked OR not) means the
-	// outage is already tracked — suppress. This is what makes "don't re-alert an
-	// acked down until it recovers and drops again" work: the ack leaves the row
-	// open, so we stay silent until sendRecovery resolves it.
-	var openCnt int64
-	g.Model(&models.Alert{}).
-		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL", c.deviceID, c.alertType, c.metricName).
-		Count(&openCnt)
-	if openCnt > 0 {
+	dayAgo := now.Add(-stateDailyWindow)
+
+	// (1) A LIVE alert already tracks this outage — an OPEN, non-suppressed row
+	// (acked OR not) → suppress. This is what makes "don't re-alert an acked down
+	// until it recovers and drops again" work: the ack leaves the row open, so we
+	// stay silent until sendRecovery resolves it. On a DB error, skip rather than
+	// fire — an uncertain read must never storm a re-notification every cycle.
+	var openNotified int64
+	if err := g.Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND suppressed = ?", c.deviceID, c.alertType, c.metricName, false).
+		Count(&openNotified).Error; err != nil {
 		return stateSkip
 	}
-	// (2) First-ever down for this resource → always fire.
+	if openNotified > 0 {
+		return stateSkip
+	}
+
+	// Notifications already delivered in the rolling 24h window — the daily cap is
+	// "at most DailyCap NOTIFIED (suppressed=false) alerts per 24h".
+	var notifiedToday int64
+	if err := g.Model(&models.Alert{}).
+		Where("device_id = ? AND alert_type = ? AND metric_name = ? AND suppressed = ? AND timestamp >= ?", c.deviceID, c.alertType, c.metricName, false, dayAgo).
+		Count(&notifiedToday).Error; err != nil {
+		return stateSkip
+	}
+	capReached := c.dampen.DailyCap > 0 && notifiedToday >= int64(c.dampen.DailyCap)
+
+	// (2) A stuck outage whose only open marker is SUPPRESSED (a flap-capped
+	// episode, or one muted by maintenance/incident): a link that flapped and then
+	// stayed DOWN would otherwise be silent forever after a misleading "back up".
+	// Re-escalate once the newest suppressed marker is ≥24h old AND the daily
+	// budget has room. The age guard prevents a per-cycle re-fire loop (each fire
+	// writes a fresh marker), so this delivers at most one escalation per day.
+	var newestSuppressed models.Alert
+	if err := g.Where("device_id = ? AND alert_type = ? AND metric_name = ? AND resolved_at IS NULL AND suppressed = ?", c.deviceID, c.alertType, c.metricName, true).
+		Order("timestamp DESC").First(&newestSuppressed).Error; err == nil {
+		if capReached {
+			return stateSkip
+		}
+		if now.Sub(newestSuppressed.Timestamp) >= stateDailyWindow {
+			return stateFire
+		}
+		return stateSkip
+	}
+
+	// (3) First-ever down for this resource → always fire.
 	var anyCnt int64
-	g.Model(&models.Alert{}).
+	if err := g.Model(&models.Alert{}).
 		Where("device_id = ? AND alert_type = ? AND metric_name = ?", c.deviceID, c.alertType, c.metricName).
-		Count(&anyCnt)
+		Count(&anyCnt).Error; err != nil {
+		return stateSkip
+	}
 	if anyCnt == 0 {
 		return stateFire
 	}
-	// (3) Up-run duration = time since the most recent recovery. A link that was
+
+	// (4) Up-run duration = time since the most recent recovery. A link that was
 	// up for ≥ min_up_seconds before dropping is a genuinely fresh outage, not a
 	// flap — fire even inside the daily cap ("unless it was up for a few hours").
 	var lr struct{ ResolvedAt *time.Time }
@@ -161,23 +204,13 @@ func (am *AlertManager) decideStateFire(c stateCandidate, now time.Time) stateFi
 		now.Sub(*lr.ResolvedAt) >= time.Duration(c.dampen.MinUpSeconds)*time.Second {
 		return stateFire
 	}
-	// (4) Daily flap cap: at most one NOTIFIED alert per 24h while flapping.
-	// Compare against the last alert we actually notified (Suppressed=false), NOT
-	// the suppressed flap-evidence rows — otherwise a link flapping every few
-	// minutes keeps advancing the "last row" timestamp and would be suppressed
-	// forever, never delivering the promised once-per-day alert.
-	if c.dampen.DailyCap <= 0 {
-		return stateFire // cap disabled → every new episode fires
+
+	// (5) Daily flap cap: fire while the 24h notify budget has room, else save
+	// Suppressed (flap evidence, no notify). DailyCap<=0 disables the cap.
+	if c.dampen.DailyCap <= 0 || !capReached {
+		return stateFire
 	}
-	var lastFired models.Alert
-	if err := g.Where("device_id = ? AND alert_type = ? AND metric_name = ? AND suppressed = ?", c.deviceID, c.alertType, c.metricName, false).
-		Order("timestamp DESC").First(&lastFired).Error; err != nil {
-		return stateFire // never notified before → fire once
-	}
-	if now.Sub(lastFired.Timestamp) >= stateDailyWindow {
-		return stateFire // ≥24h since the last notification → allow one more
-	}
-	return stateSuppressCapped // flapping within the cap → save Suppressed, no notify
+	return stateSuppressCapped
 }
 
 // dispatchStateCandidates applies the episode/flap decision to each candidate and

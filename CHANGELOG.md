@@ -35,6 +35,15 @@ alerting onto one configurable surface.
   episode.
 - Migration **v41** adds `event_rules.dampen_json` (a per-source dampening blob,
   so future source types add parameters with no further schema change).
+- Hardening (adversarial review): the owned path still honors a per-device
+  "alerts disabled" / per-type policy disable, so ownership never resurrects an
+  alert an operator turned off; a link that flaps and then stays **down** is
+  re-escalated at most once per day instead of going silent behind a misleading
+  "back up"; the daily cap now counts notifications in a rolling 24 h window
+  (so `daily_cap: N` genuinely allows N); a version bump no longer resurrects an
+  older built-in rule the operator had deleted; a transient DB error fails safe
+  (no re-notify storm); and recovery **appends** its note to an operator's
+  acknowledgement comment instead of overwriting it.
 
 ## [0.11.80] - 2026-07-12
 

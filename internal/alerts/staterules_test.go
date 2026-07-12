@@ -6,6 +6,7 @@ import (
 
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/notifier"
 )
 
 // Phase-1 state-rule engine: the episode/flap dampening in decideStateFire is
@@ -130,6 +131,90 @@ func TestDecideStateFire_DailyCapDisabledAlwaysFires(t *testing.T) {
 		t.Fatalf("disabled cap must fire every episode, got %v", got)
 	}
 }
+
+// TestBuildStateCandidate_DailyCapZeroHonored guards the UI promise that
+// daily_cap 0 = "no cap": an explicitly-configured rule (refire_mode set) must
+// keep 0, while a bare rule (empty dampen) falls back to the default cap of 1.
+func TestBuildStateCandidate_DailyCapZeroHonored(t *testing.T) {
+	am, _ := newTestManager(t)
+	var nc notifier.NotifyConfig
+
+	explicit := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: 3600, DailyCap: 0}}
+	c, ok := am.buildStateCandidateLocked(explicit, 1, nil, "k", "INTERFACE_DOWN", "interface_x", "down", nc)
+	if !ok {
+		t.Fatal("candidate should be enabled by default")
+	}
+	if c.dampen.DailyCap != 0 {
+		t.Errorf("explicit daily_cap 0 must be honored as no-cap, got %d", c.dampen.DailyCap)
+	}
+
+	bare := &compiledRule{source: "state", dampen: dampenParams{}}
+	c2, _ := am.buildStateCandidateLocked(bare, 1, nil, "k", "INTERFACE_DOWN", "interface_x", "down", nc)
+	if c2.dampen.DailyCap != defaultStateDailyCap {
+		t.Errorf("bare rule must default daily_cap to %d, got %d", defaultStateDailyCap, c2.dampen.DailyCap)
+	}
+	if c2.dampen.MinUpSeconds != defaultStateMinUpSeconds {
+		t.Errorf("bare rule must default min_up to %d, got %d", defaultStateMinUpSeconds, c2.dampen.MinUpSeconds)
+	}
+}
+
+// TestBuildStateCandidate_DisabledAlertSkipped covers Fable finding #1: when
+// alerting is disabled for a device (AlertsEnabled=false), the owned path must
+// NOT build a candidate — ownership must never resurrect an alert the operator
+// turned off.
+func TestBuildStateCandidate_DisabledAlertSkipped(t *testing.T) {
+	am, db := newTestManager(t)
+	var nc notifier.NotifyConfig
+	// Load a policy cache with a device whose alerts are disabled. AlertsEnabled
+	// has a `default:true` tag, so GORM omits the false zero-value on Create —
+	// force it with an explicit column Update.
+	if err := db.Gorm().Create(&models.DeviceAlertConfig{DeviceID: 7}).Error; err != nil {
+		t.Fatalf("seed device config: %v", err)
+	}
+	if err := db.Gorm().Model(&models.DeviceAlertConfig{}).Where("device_id = ?", 7).Update("alerts_enabled", false).Error; err != nil {
+		t.Fatalf("disable device alerts: %v", err)
+	}
+	am.RefreshPolicyCache(db)
+
+	rule := &compiledRule{source: "state", dampen: dampenParams{RefireMode: "episode", MinUpSeconds: 3600, DailyCap: 1}}
+	if _, ok := am.buildStateCandidateLocked(rule, 7, nil, "k", "INTERFACE_DOWN", "interface_x", "down", nc); ok {
+		t.Fatal("candidate must NOT be built when device alerting is disabled")
+	}
+}
+
+// TestDecideStateFire_StuckAfterFlapReEscalates covers Fable finding #2: a link
+// that flapped (last notify within 24h) and then STAYED down leaves a suppressed
+// open marker; once that marker is ≥24h old and the daily budget has room, the
+// engine re-escalates so the outage isn't silent forever.
+func TestDecideStateFire_StuckAfterFlapReEscalates(t *testing.T) {
+	am, db := newTestManager(t)
+	now := time.Now()
+	// Last NOTIFIED alert 30h ago (outside the 24h window) and resolved.
+	firedResolved := now.Add(-30*time.Hour + time.Minute)
+	seedAlert(t, db, mkAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-30*time.Hour), false, &firedResolved, true))
+	// A suppressed OPEN marker created 25h ago that never recovered (stuck down).
+	seedAlert(t, db, mkAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-25*time.Hour), true, nil, false))
+	c := stateCand(1, "INTERFACE_DOWN", "interface_port1", 3600, 1)
+	if got := am.decideStateFire(c, now); got != stateFire {
+		t.Fatalf("stuck suppressed episode ≥24h with budget must re-escalate, got %v", got)
+	}
+}
+
+// TestDecideStateFire_StuckSuppressedRecentStaysQuiet: the same stuck marker but
+// only 2h old (and a notification already delivered this window) must NOT re-fire
+// — the age guard prevents a per-cycle re-escalation loop.
+func TestDecideStateFire_StuckSuppressedRecentStaysQuiet(t *testing.T) {
+	am, db := newTestManager(t)
+	now := time.Now()
+	seedAlert(t, db, mkAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-3*time.Hour), false, ptrTime(now.Add(-2*time.Hour-50*time.Minute)), true))
+	seedAlert(t, db, mkAlert(1, "INTERFACE_DOWN", "interface_port1", now.Add(-2*time.Hour), true, nil, false))
+	c := stateCand(1, "INTERFACE_DOWN", "interface_port1", 3600, 1)
+	if got := am.decideStateFire(c, now); got != stateSkip {
+		t.Fatalf("recent stuck suppressed marker must stay quiet, got %v", got)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
 
 // seedStateRule installs an enabled source="state" alert rule matching one
 // event_type and flips the ownership flag so CheckInterfaceStatus/CheckVPNStatus

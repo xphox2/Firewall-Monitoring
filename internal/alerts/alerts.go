@@ -395,10 +395,14 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 			if !matched || action == "suppress" {
 				continue
 			}
-			stateCands = append(stateCands, am.buildStateCandidateLocked(
+			cand, ok := am.buildStateCandidateLocked(
 				rule, iface.DeviceID, siteID, key, "INTERFACE_DOWN",
 				fmt.Sprintf("interface_%s", iface.Name),
-				fmt.Sprintf("Interface %s is down", iface.Name), globalNC))
+				fmt.Sprintf("Interface %s is down", iface.Name), globalNC)
+			if !ok {
+				continue // alerting disabled for this device/type
+			}
+			stateCands = append(stateCands, cand)
 			continue
 		}
 
@@ -1449,11 +1453,14 @@ func (am *AlertManager) sendRecovery(key string, alertType models.AlertType, met
 			})
 		// Already-ACKED open rows: also resolve them now (previously they lingered
 		// open forever), so an acked outage CLOSES on recovery and a later down is
-		// a genuinely NEW episode. Preserve the operator's original ack timestamp.
+		// a genuinely NEW episode. Preserve the operator's original ack timestamp
+		// AND their ack note — APPEND the auto-resolution rather than overwrite, so
+		// a root-cause comment the operator typed on ack isn't lost. `||` +
+		// COALESCE are supported by both SQLite (test) and PostgreSQL (prod).
 		base.Session(&gorm.Session{}).Where("acknowledged = ?", true).
 			Updates(map[string]interface{}{
 				"resolved_at":    now,
-				"notes":          "Auto-resolved: " + message,
+				"notes":          gorm.Expr("CASE WHEN COALESCE(notes,'') = '' THEN ? ELSE notes || ? END", "Auto-resolved: "+message, "\nAuto-resolved: "+message),
 				"snoozed_until":  nil,
 				"snoozed_by":     "",
 				"snoozed_reason": "",
@@ -1588,10 +1595,14 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 			if !matched || action == "suppress" {
 				continue
 			}
-			stateCands = append(stateCands, am.buildStateCandidateLocked(
+			cand, ok := am.buildStateCandidateLocked(
 				rule, vpn.DeviceID, siteID, key, "VPN_TUNNEL_DOWN",
 				fmt.Sprintf("vpn_%s", vpn.TunnelName),
-				fmt.Sprintf("VPN tunnel %s to %s is down", vpn.TunnelName, vpn.RemoteIP), globalNC))
+				fmt.Sprintf("VPN tunnel %s to %s is down", vpn.TunnelName, vpn.RemoteIP), globalNC)
+			if !ok {
+				continue // alerting disabled for this device/type
+			}
+			stateCands = append(stateCands, cand)
 			continue
 		}
 

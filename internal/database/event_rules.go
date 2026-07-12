@@ -21,12 +21,23 @@ const eventRuleSeedVersion = 2
 // existing per-type policy config keeps applying; plus a FortiGate VPN-error
 // alert and a (disabled) forward-traffic suppress example.
 func (d *Database) EnsureDefaultRules() {
+	prevMarker := 0
 	if v, ok := d.GetSettingValue("event_rules_seed_version"); ok {
-		if n, _ := strconv.Atoi(v); n >= eventRuleSeedVersion {
-			return
+		if n, err := strconv.Atoi(v); err == nil {
+			if n >= eventRuleSeedVersion {
+				return
+			}
+			prevMarker = n
 		}
 	}
 	for _, r := range defaultEventRules() {
+		// Only seed rules NEWER than the last-applied marker. Re-inserting an older
+		// generation's rules on a version bump would resurrect seeds the operator
+		// deliberately deleted (DeleteEventRule is a hard delete) — the M5 no-
+		// resurrection guarantee. A brand-new install (prevMarker 0) gets them all.
+		if r.SeedVersion <= prevMarker {
+			continue
+		}
 		var count int64
 		d.db.Model(&models.EventRule{}).Where("name = ?", r.Name).Count(&count)
 		if count > 0 {
