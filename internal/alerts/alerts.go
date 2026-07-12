@@ -26,14 +26,17 @@ type AlertManager struct {
 	cooldownFor  map[string]time.Duration // L2: per-key effective cooldown, so prune evicts only past each key's OWN window
 	activeAlerts map[string]bool          // tracks currently-firing alert keys for recovery detection
 	// everUp records the alert keys (iface_down_/vpn_down_) of interfaces and
-	// VPN tunnels observed status="up" at least once. INTERFACE_DOWN/VPN_TUNNEL_DOWN
-	// fire ONLY for a key in this set — a real outage is "was up, now down".
-	// Enabled-but-never-cabled ports and idle/never-up tunnels (common on
-	// collector-managed firewalls, alert-checked for the first time since
-	// v0.11.74) are never in the set, so they can't flood. Marked from live
-	// up-rows each cycle and DB-seeded at poller startup (SeedEverUpFromDB) so
-	// the gate survives a restart. mu-guarded; bounded by the fleet's interface
-	// + tunnel count.
+	// VPN tunnels known to have been operationally up. INTERFACE_DOWN/
+	// VPN_TUNNEL_DOWN fire ONLY for a key in this set — a real outage is "was up,
+	// now down". Enabled-but-never-cabled ports and idle/never-up tunnels (common
+	// on collector-managed firewalls, alert-checked for the first time since
+	// v0.11.74) are never in the set, so they can't flood. Populated from live
+	// up-rows each cycle AND, for a link that is down across a poller restart,
+	// from the poller's traffic-counter check (MarkInterfaceEverUp/MarkVPNEverUp)
+	// — a link that ever carried traffic has nonzero counters that persist while
+	// down. It is deliberately NOT seeded from open alerts, which was circular (a
+	// stale false alert re-marked a never-up port as ever-up, so it fired
+	// forever). mu-guarded; bounded by the fleet's interface + tunnel count.
 	everUp map[string]bool
 	// Flap suppression (F13): fireStart records when a key went active so
 	// sendRecovery can measure how long the alert lived; flapShortResolves
@@ -149,8 +152,9 @@ func (am *AlertManager) markEverUpLocked(key string) {
 }
 
 // MarkInterfaceEverUp records that an interface has been observed operationally
-// up (the poller calls this from a bounded telemetry-history check, so a real
-// link that is down across a poller restart still alerts). Idempotent + bounded.
+// up — the poller calls this for a down link that has carried traffic (nonzero
+// counters), so a real link that is down across a poller restart still alerts.
+// Idempotent + bounded.
 func (am *AlertManager) MarkInterfaceEverUp(deviceID uint, name string) {
 	am.mu.Lock()
 	am.markEverUpLocked(ifaceDownKey(deviceID, name))
@@ -162,6 +166,21 @@ func (am *AlertManager) MarkVPNEverUp(deviceID uint, tunnelName string) {
 	am.mu.Lock()
 	am.markEverUpLocked(vpnDownKey(deviceID, tunnelName))
 	am.mu.Unlock()
+}
+
+// IsInterfaceEverUp reports whether an interface is currently marked ever-up, so
+// the poller can avoid auto-resolving a link it already knows was up.
+func (am *AlertManager) IsInterfaceEverUp(deviceID uint, name string) bool {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.everUp[ifaceDownKey(deviceID, name)]
+}
+
+// IsVPNEverUp is the VPN counterpart of IsInterfaceEverUp.
+func (am *AlertManager) IsVPNEverUp(deviceID uint, tunnelName string) bool {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.everUp[vpnDownKey(deviceID, tunnelName)]
 }
 
 // AutoResolveInterfaceDown silently clears any OPEN INTERFACE_DOWN alert for an
@@ -357,12 +376,12 @@ func (am *AlertManager) CheckInterfaceStatus(interfaces []models.InterfaceStats,
 		// enabled-but-never-cabled port stays admin-up/oper-down forever and
 		// must NOT alert (it would flood collector-managed firewalls, which
 		// expose many dark ports). everUp is populated from LIVE up-rows here
-		// AND from a bounded telemetry-HISTORY check the poller runs before this
-		// (MarkInterfaceEverUp) — so a real link that is down across a poller
-		// restart still alerts, while an always-down port never does. NOTE: this
-		// is deliberately NOT seeded from open alerts, which was circular — a
-		// stale false alert re-marked a never-up port as ever-up and it fired
-		// forever (the bug this replaced).
+		// AND, for a link down across a poller restart, from the poller's
+		// traffic-counter check (MarkInterfaceEverUp) — so a real link that ever
+		// carried traffic still alerts, while an always-down/never-cabled port
+		// never does, WITHOUT the operator having to admin-down it. NOTE:
+		// deliberately NOT seeded from open alerts, which was circular (a stale
+		// false alert re-marked a never-up port as ever-up and it fired forever).
 		if !am.everUp[key] {
 			continue
 		}
@@ -1517,7 +1536,8 @@ func (am *AlertManager) CheckVPNStatus(vpnStatuses []models.VPNStatus, siteID *u
 		// Only a tunnel that has actually come up is an outage when down.
 		// Idle/never-up tunnels (dial-up, disabled configs, unestablished
 		// phase2 selectors) relay status="down" every cycle and must not
-		// alert. Seeded from history at startup (restart-safe).
+		// alert. everUp is populated from live up-rows and the poller's
+		// counter/uptime check (MarkVPNEverUp), never from open alerts.
 		if !am.everUp[key] {
 			continue
 		}

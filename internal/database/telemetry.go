@@ -97,33 +97,6 @@ func (d *Database) GetAllLatestInterfaces() ([]models.InterfaceStats, error) {
 	return ifaces, err
 }
 
-// InterfaceEverUp reports whether an interface has EVER reported status='up' in
-// its telemetry history since `since`. This is the authoritative signal for
-// "this is a real link that went down (an outage)" vs "an enabled-but-never-
-// cabled port" — the latter has no up-history and must not alert, regardless of
-// admin status. The query is a bounded, index-assisted LIMIT-1 existence check
-// (device_id + timestamp window), so it is cheap and can't scan the whole table.
-func (d *Database) InterfaceEverUp(deviceID uint, name string, since time.Time) (bool, error) {
-	var rows []struct{ ID uint }
-	err := d.db.Model(&models.InterfaceStats{}).
-		Select("id").
-		Where("device_id = ? AND name = ? AND status = ? AND timestamp > ?", deviceID, name, "up", since).
-		Limit(1).Scan(&rows).Error
-	return len(rows) > 0, err
-}
-
-// VPNEverUp is the VPN-tunnel counterpart of InterfaceEverUp: has a tunnel ever
-// reported status='up' since `since`. An idle/never-established tunnel has no
-// up-history and must not alert.
-func (d *Database) VPNEverUp(deviceID uint, tunnelName string, since time.Time) (bool, error) {
-	var rows []struct{ ID uint }
-	err := d.db.Model(&models.VPNStatus{}).
-		Select("id").
-		Where("device_id = ? AND tunnel_name = ? AND status = ? AND timestamp > ?", deviceID, tunnelName, "up", since).
-		Limit(1).Scan(&rows).Error
-	return len(rows) > 0, err
-}
-
 // GetAllLatestSystemStatuses returns the latest system_status row per device,
 // considering only rows newer than since. The bound is applied in SQL — not
 // post-filtered — so the MAX(timestamp) scan stays inside recent partitions

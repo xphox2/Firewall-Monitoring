@@ -1126,88 +1126,79 @@ func (p *Poller) checkRelayedTelemetry(devices []models.Device, staleAfter time.
 	}
 }
 
-// everUpHistoryWindow bounds the telemetry-history "was it ever up" lookup. A
-// link/tunnel up within this window is treated as a real member of the topology
-// that can legitimately alert when down; anything with no up-sample in the
-// window is a dark port / idle tunnel and stays silent. The window keeps the
-// existence query index-bounded (can't scan the whole high-volume table).
-const everUpHistoryWindow = 30 * 24 * time.Hour
+// maxEverUpChecked caps the once-per-link dedup set so a churn of ephemeral
+// dial-up tunnel names can't grow it unbounded across the process lifetime
+// (mirrors the AlertManager's everUp cap).
+const maxEverUpChecked = 50000
 
-// resolveInterfaceEverUp consults telemetry history ONCE per interface (cached)
-// for the down interfaces in a device's snapshot: a link with an up-sample in
-// the window is marked ever-up (so a genuine outage still alerts across a poller
-// restart); a link that has never been up has any stale/false INTERFACE_DOWN
-// alert silently cleared and is left un-marked so it can't fire. Currently-up
-// interfaces are marked live by CheckInterfaceStatus and skipped here.
+// everUpAlreadyChecked records (once) that a link/tunnel key has been resolved
+// this process, so the mark/auto-resolve below runs at most once per key. Bounded.
+func (p *Poller) everUpAlreadyChecked(key string) bool {
+	p.everUpMu.Lock()
+	defer p.everUpMu.Unlock()
+	if p.everUpChecked == nil {
+		p.everUpChecked = make(map[string]bool)
+	}
+	if p.everUpChecked[key] {
+		return true
+	}
+	if len(p.everUpChecked) < maxEverUpChecked {
+		p.everUpChecked[key] = true
+	}
+	return false
+}
+
+// resolveInterfaceEverUp decides, from the CURRENT snapshot's traffic counters,
+// whether a down interface is a real link (an outage) or an enabled-but-never-
+// cabled dark port — WITHOUT any history query (which on prod's high-volume,
+// partitioned interface_stats would risk the startup statement-timeout crash).
+// A never-cabled port has literally zero in/out octets; a real link that was
+// ever up has nonzero counters that persist across link-down. So:
+//   - nonzero counters → mark ever-up (a genuine outage still alerts, including
+//     across a poller restart, since counters live in the snapshot);
+//   - zero counters AND not already known ever-up → a dark port: silently clear
+//     any stale/false INTERFACE_DOWN and leave it un-marked so it can't fire.
+//
+// Runs at most once per interface per process. Currently-up interfaces are
+// marked live by CheckInterfaceStatus and skipped here.
 func (p *Poller) resolveInterfaceEverUp(ifaces []models.InterfaceStats, siteID *uint) {
-	if p.db == nil || p.alertManager == nil {
+	if p.alertManager == nil {
 		return
 	}
-	since := time.Now().Add(-everUpHistoryWindow)
 	for i := range ifaces {
 		iface := &ifaces[i]
 		if iface.Status != "down" || iface.AdminStatus != "up" {
 			continue
 		}
-		key := fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)
-		p.everUpMu.Lock()
-		if p.everUpChecked == nil {
-			p.everUpChecked = make(map[string]bool)
-		}
-		checked := p.everUpChecked[key]
-		p.everUpChecked[key] = true
-		p.everUpMu.Unlock()
-		if checked {
+		if p.everUpAlreadyChecked(fmt.Sprintf("%d_%s", iface.DeviceID, iface.Name)) {
 			continue
 		}
-		up, err := p.db.InterfaceEverUp(iface.DeviceID, iface.Name, since)
-		if err != nil {
-			// On error, don't cache the "checked" verdict — retry next cycle.
-			p.everUpMu.Lock()
-			delete(p.everUpChecked, key)
-			p.everUpMu.Unlock()
-			continue
-		}
-		if up {
+		if iface.InBytes+iface.OutBytes > 0 {
 			p.alertManager.MarkInterfaceEverUp(iface.DeviceID, iface.Name)
-		} else {
+		} else if !p.alertManager.IsInterfaceEverUp(iface.DeviceID, iface.Name) {
 			p.alertManager.AutoResolveInterfaceDown(iface.DeviceID, iface.Name, siteID)
 		}
 	}
 }
 
-// resolveVPNEverUp is the VPN-tunnel counterpart of resolveInterfaceEverUp.
+// resolveVPNEverUp is the VPN-tunnel counterpart of resolveInterfaceEverUp. A
+// tunnel that ever established has carried bytes or accrued uptime; a never-
+// established/idle tunnel has neither.
 func (p *Poller) resolveVPNEverUp(vpns []models.VPNStatus, siteID *uint) {
-	if p.db == nil || p.alertManager == nil {
+	if p.alertManager == nil {
 		return
 	}
-	since := time.Now().Add(-everUpHistoryWindow)
 	for i := range vpns {
 		vpn := &vpns[i]
 		if vpn.Status != "down" {
 			continue
 		}
-		key := "vpn_" + fmt.Sprintf("%d_%s", vpn.DeviceID, vpn.TunnelName)
-		p.everUpMu.Lock()
-		if p.everUpChecked == nil {
-			p.everUpChecked = make(map[string]bool)
-		}
-		checked := p.everUpChecked[key]
-		p.everUpChecked[key] = true
-		p.everUpMu.Unlock()
-		if checked {
+		if p.everUpAlreadyChecked("vpn_" + fmt.Sprintf("%d_%s", vpn.DeviceID, vpn.TunnelName)) {
 			continue
 		}
-		up, err := p.db.VPNEverUp(vpn.DeviceID, vpn.TunnelName, since)
-		if err != nil {
-			p.everUpMu.Lock()
-			delete(p.everUpChecked, key)
-			p.everUpMu.Unlock()
-			continue
-		}
-		if up {
+		if vpn.BytesIn+vpn.BytesOut > 0 || vpn.TunnelUptime > 0 {
 			p.alertManager.MarkVPNEverUp(vpn.DeviceID, vpn.TunnelName)
-		} else {
+		} else if !p.alertManager.IsVPNEverUp(vpn.DeviceID, vpn.TunnelName) {
 			p.alertManager.AutoResolveVPNDown(vpn.DeviceID, vpn.TunnelName, siteID)
 		}
 	}

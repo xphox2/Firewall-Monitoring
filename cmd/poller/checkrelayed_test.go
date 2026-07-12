@@ -249,6 +249,28 @@ func TestCheckRelayedTelemetry_NeverUpStaleAlertAutoResolved(t *testing.T) {
 	}
 }
 
+// TestCheckRelayedTelemetry_RealLinkDownAcrossRestart is the MAJOR-3 case: a
+// FRESH poller (empty ever-up = a restart) sees a down interface that has
+// carried traffic (nonzero counters — a real link whose outage predates this
+// process). It must be recognized from its counters and ALERT, and its existing
+// open alert must NOT be auto-resolved.
+func TestCheckRelayedTelemetry_RealLinkDownAcrossRestart(t *testing.T) {
+	p, db := newTelemetryTestPoller(t)
+	dev := &models.Device{Name: "fw3d", IPAddress: "10.0.0.36", Enabled: true}
+	mustCreate(t, db, dev)
+	// Down now, but with real traffic counters from when it was up.
+	mustCreate(t, db, &models.InterfaceStats{
+		DeviceID: dev.ID, Timestamp: time.Now(), Name: "wan1", Index: 2,
+		Status: "down", AdminStatus: "up", InBytes: 5_000_000, OutBytes: 3_000_000,
+	})
+
+	p.checkRelayedTelemetry([]models.Device{*dev}, telemetryStaleAfter)
+
+	if got := countAlerts(t, db, "INTERFACE_DOWN", dev.ID); got != 1 {
+		t.Errorf("a real link (nonzero counters) down across a restart should alert; got %d", got)
+	}
+}
+
 // TestCheckRelayedTelemetry_VPNDown: a tunnel that was UP and then goes down
 // fires VPN_TUNNEL_DOWN. The ever-up gate requires the prior up observation.
 func TestCheckRelayedTelemetry_VPNDown(t *testing.T) {
