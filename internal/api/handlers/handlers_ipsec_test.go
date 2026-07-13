@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"firewall-mon/internal/ipsec"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 
 	"github.com/gin-gonic/gin"
 )
@@ -295,5 +297,86 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	resp2 := wrap2.Data
 	if len(resp2.Interfaces) != 0 || len(resp2.LANSubnets) != 0 || resp2.SuggestedEgress != "" {
 		t.Errorf("never-polled device should yield empty hints, got %+v", resp2)
+	}
+}
+
+// TestIPSec_EndpointHints_PolledOverLAN pins the phantom-self-lockout fix: a
+// firewall monitored over a LAN/mgmt IP (not its WAN) must still resolve the real
+// public WAN interface as egress/peer, and must NEVER auto-suggest the WAN's own
+// subnet as a protected subnet — else the wizard would trip its own self_lockout
+// guard on its own suggestions.
+func TestIPSec_EndpointHints_PolledOverLAN(t *testing.T) {
+	h, db := setupTestHandler(t)
+
+	// device.IPAddress is the LAN/mgmt address (10.0.0.1), NOT the WAN.
+	dev := &models.Device{Name: "fg-lanpoll", IPAddress: "10.0.0.1", Vendor: "fortigate"}
+	if err := db.Gorm().Create(dev).Error; err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+	ts := time.Now()
+	ifaces := []models.InterfaceStats{
+		{DeviceID: dev.ID, Timestamp: ts, Name: "port1", Index: 1, TypeName: "ethernet", Status: "up"},  // real WAN (public)
+		{DeviceID: dev.ID, Timestamp: ts, Name: "mgmt", Index: 2, TypeName: "bridge", Status: "up"},     // LAN/mgmt (bears the polled IP)
+		{DeviceID: dev.ID, Timestamp: ts, Name: "internal", Index: 3, TypeName: "bridge", Status: "up"}, // another LAN
+	}
+	if err := db.Gorm().Create(&ifaces).Error; err != nil {
+		t.Fatalf("create ifaces: %v", err)
+	}
+	addrs := []models.InterfaceAddress{
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 1, IPAddress: "66.179.9.155", NetMask: "255.255.255.0"}, // WAN /24 (would-be self-lockout)
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 2, IPAddress: "10.0.0.1", NetMask: "255.255.255.0"},     // mgmt LAN
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 3, IPAddress: "172.16.5.1", NetMask: "255.255.255.0"},   // real LAN
+	}
+	if err := db.Gorm().Create(&addrs).Error; err != nil {
+		t.Fatalf("create addrs: %v", err)
+	}
+
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(dev.ID))}}
+	h.GetIPSecEndpointHints(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var wrap struct {
+		Data ipsecHintsResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &wrap); err != nil {
+		t.Fatal(err)
+	}
+	resp := wrap.Data
+
+	// The real public WAN interface is the egress/peer, not the mgmt iface it's polled over.
+	if resp.SuggestedEgress != "port1" {
+		t.Errorf("suggested_egress = %q, want port1 (the public WAN uplink, not the mgmt iface)", resp.SuggestedEgress)
+	}
+	if resp.SuggestedPeerIP != "66.179.9.155" {
+		t.Errorf("suggested_peer_ip = %q, want 66.179.9.155 (the WAN public IP)", resp.SuggestedPeerIP)
+	}
+	// The WAN subnet must NOT be a protected subnet; the real LANs are.
+	for _, s := range resp.LANSubnets {
+		if s == "66.179.9.0/24" {
+			t.Error("the WAN subnet 66.179.9.0/24 must NEVER be an auto-suggested protected subnet (phantom self-lockout)")
+		}
+	}
+	// Belt-and-suspenders: no auto-suggested subnet may contain the peer's WAN IP,
+	// and none may be a public network (a protected LAN is always private).
+	peer := net.ParseIP(resp.SuggestedPeerIP)
+	for _, s := range resp.LANSubnets {
+		if _, n, err := net.ParseCIDR(s); err == nil && peer != nil && n.Contains(peer) {
+			t.Errorf("lan_subnet %s contains the peer WAN IP %s — would self-lockout", s, resp.SuggestedPeerIP)
+		}
+		if ip, _, err := net.ParseCIDR(s); err == nil && netclass.IsPublicIP(ip.String()) {
+			t.Errorf("lan_subnet %s is a public network — must never be an auto-suggested protected subnet", s)
+		}
+	}
+	// The genuine LAN behind the firewall is suggested.
+	found := false
+	for _, s := range resp.LANSubnets {
+		if s == "172.16.5.0/24" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the real LAN 172.16.5.0/24 in lan_subnets, got %v", resp.LANSubnets)
 	}
 }

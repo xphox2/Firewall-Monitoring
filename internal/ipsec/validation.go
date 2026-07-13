@@ -241,7 +241,7 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				// path will pin a /32). Surface it as an acknowledgeable warning
 				// rather than a hard block so the operator can proceed.
 				fs = append(fs, Finding{SeverityWarn, "self_lockout",
-					fmt.Sprintf("routing %s over the tunnel includes the peer's own endpoint %s — safe only if a host route to the peer via the WAN is pinned; narrow the subnet if unsure", n.String(), peer.PeerIP)})
+					fmt.Sprintf("protected subnet %s includes the peer's WAN endpoint %s — the tunnel carries LAN subnets, not the WAN; remove the WAN/transit network from the protected list (or pin a host route to the peer)", n.String(), peer.PeerIP)})
 			}
 		}
 	}
