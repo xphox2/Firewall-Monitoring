@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
@@ -228,6 +229,78 @@ func (h *Handler) GetAlert(c *gin.Context) {
 	// detail view renders src→dst (with country/ASN) and which detectors fired.
 	detections, _ := db.GetDetectionsByAlert(alert.ID)
 	c.JSON(http.StatusOK, response.Success(gin.H{"alert": alert, "detections": detections}))
+}
+
+// SuggestEventRuleForAlert returns a prefilled Event Rule that would suppress (or,
+// with the action flipped, customize) the class of a given alert — the backend
+// for the "Create Event Rule from this alert" buttons. Admin-only (rule creation
+// is admin-only). The alert→matcher mapping lives in alerts.SuggestRuleForAlert so
+// it's derived from the same fields the engine matches on, not re-parsed in JS.
+func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	var alert models.Alert
+	if err := db.Gorm().First(&alert, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Alert not found"))
+		return
+	}
+	al := []models.Alert{alert}
+	enrichAlertsDeviceSite(db.Gorm(), al)
+	alert = al[0]
+
+	in := alerts.SuggestInput{
+		AlertType:  alert.AlertType,
+		DeviceID:   alert.DeviceID,
+		SiteID:     alert.SiteID,
+		MetricName: alert.MetricName,
+		Message:    alert.Message,
+		DeviceName: alert.DeviceName,
+		StateOwned: h.stateOwnedSet(db),
+	}
+	if alert.DeviceID != 0 {
+		if d, err := db.GetDevice(alert.DeviceID); err == nil && d != nil {
+			in.Vendor = d.Vendor
+		}
+	}
+	// For syslog, the firing rule's name is stored in MetricName; find it so the
+	// suggestion out-prioritizes it and "customize" can open it directly.
+	if alert.MetricName != "" {
+		if rules, err := db.ListEventRules(); err == nil {
+			for i := range rules {
+				if rules[i].Name == alert.MetricName {
+					p := rules[i].Priority
+					rid := rules[i].ID
+					in.FiringRulePriority = &p
+					in.ExistingRuleID = &rid
+					break
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(alerts.SuggestRuleForAlert(in)))
+}
+
+// stateOwnedSet reads the state_engine_owns SystemSetting (CSV of event_types the
+// state-rule engine owns), so a suggestion for an unowned interface/VPN type can
+// warn that a rule would be inert.
+func (h *Handler) stateOwnedSet(db database.Store) map[string]bool {
+	m := map[string]bool{}
+	var s models.SystemSetting
+	if err := db.Gorm().Where(`"key" = ?`, "state_engine_owns").First(&s).Error; err == nil {
+		for _, t := range strings.Split(s.Value, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				m[t] = true
+			}
+		}
+	}
+	return m
 }
 
 func (h *Handler) GetTraps(c *gin.Context) {

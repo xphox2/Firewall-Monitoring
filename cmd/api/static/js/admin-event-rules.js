@@ -52,12 +52,42 @@
 
     function init() {
         if (!wired) { wire(); wired = true; }
-        loadLists();
-        loadRules();
+        // A "Create rule from alert" click on the Alerts page stashes a one-shot
+        // prefill and navigates here; open the editor once the device/site/rule
+        // lists are loaded (else a device-scoped suppress would save fleet-wide).
+        var pending = takePendingPrefill();
+        Promise.all([loadLists(), loadRules()]).then(function () {
+            if (pending) openFromPrefill(pending);
+        });
+    }
+
+    // takePendingPrefill reads + clears the one-shot handoff from the Alerts page.
+    function takePendingPrefill() {
+        var raw;
+        try { raw = sessionStorage.getItem('fwmon_rule_prefill'); } catch (e) { return null; }
+        if (!raw) return null;
+        try { sessionStorage.removeItem('fwmon_rule_prefill'); } catch (e) { /* ignore */ }
+        try { return JSON.parse(raw); } catch (e) { return null; }
+    }
+
+    // openFromPrefill opens the editor for a suggested rule (or the existing rule
+    // when "customize" targeted one), verifying the device/site scope actually took.
+    function openFromPrefill(pending) {
+        if (pending.editId) { openRuleModal(pending.editId); return; }
+        var pf = pending.rule || {};
+        pf.action = pending.action || 'suppress';
+        pf.enabled = true;
+        pf.name = pf.suggested_name || pf.name || '';
+        openRuleModal(null, pf);
+        if (pf.device_id && String($('er-device').value) !== String(pf.device_id)) {
+            AC.showError('Could not pre-select the device for this rule — set the scope manually before saving.');
+        } else if (pf.site_id && String($('er-site').value) !== String(pf.site_id)) {
+            AC.showError('Could not pre-select the site for this rule — set the scope manually before saving.');
+        }
     }
 
     function loadLists() {
-        Promise.all([
+        return Promise.all([
             AC.apiFetch(API + '/devices').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/sites').catch(function () { return { data: [] }; }),
             AC.apiFetch(API + '/alert-policies').catch(function () { return { data: [] }; })
@@ -69,7 +99,7 @@
     }
 
     function loadRules() {
-        AC.apiFetch(API + '/event-rules').then(function (res) {
+        return AC.apiFetch(API + '/event-rules').then(function (res) {
             rules = res.data || [];
             renderStats();
             renderTable();
@@ -172,10 +202,13 @@
         sel.innerHTML = html;
     }
 
-    function openRuleModal(id) {
-        var r = id ? rules.find(function (x) { return x.id === id; }) : null;
-        $('event-rule-modal-title').textContent = r ? 'Edit Event Rule' : 'Create Event Rule';
-        $('event-rule-id').value = r ? r.id : '';
+    function openRuleModal(id, prefill) {
+        // Edit → load from the in-memory list; Create → blank, unless a prefill
+        // object (same shape as a rule) is passed from the "create from alert" flow.
+        var r = id ? rules.find(function (x) { return x.id === id; }) : (prefill || null);
+        var isEdit = !!id;
+        $('event-rule-modal-title').textContent = isEdit ? 'Edit Event Rule' : (prefill ? 'New Event Rule (from alert)' : 'Create Event Rule');
+        $('event-rule-id').value = isEdit ? r.id : ''; // MUST be empty for prefill → POST, not PUT /undefined
         $('er-name').value = r ? r.name : '';
         $('er-description').value = r ? (r.description || '') : '';
         $('er-enabled').checked = r ? !!r.enabled : true;
