@@ -78,6 +78,10 @@
         pf.action = pending.action || 'suppress';
         pf.enabled = true;
         pf.name = pf.suggested_name || pf.name || '';
+        // The suggested name says "Suppress …"; relabel for the customize path.
+        if (pf.action === 'alert' && pf.name.indexOf('Suppress ') === 0) {
+            pf.name = 'Customize ' + pf.name.slice('Suppress '.length);
+        }
         openRuleModal(null, pf);
         if (pf.device_id && String($('er-device').value) !== String(pf.device_id)) {
             AC.showError('Could not pre-select the device for this rule — set the scope manually before saving.');
@@ -206,6 +210,7 @@
         // Edit → load from the in-memory list; Create → blank, unless a prefill
         // object (same shape as a rule) is passed from the "create from alert" flow.
         var r = id ? rules.find(function (x) { return x.id === id; }) : (prefill || null);
+        if (id && !r) { AC.showError('That rule no longer exists.'); return; } // deleted between suggest + open
         var isEdit = !!id;
         $('event-rule-modal-title').textContent = isEdit ? 'Edit Event Rule' : (prefill ? 'New Event Rule (from alert)' : 'Create Event Rule');
         $('event-rule-id').value = isEdit ? r.id : ''; // MUST be empty for prefill → POST, not PUT /undefined
@@ -547,7 +552,7 @@
                 name: $('er-name').value.trim(),
                 description: $('er-description').value.trim(),
                 enabled: $('er-enabled').checked,
-                priority: parseInt($('er-priority').value, 10) || 100,
+                priority: (function () { var p = parseInt($('er-priority').value, 10); return isNaN(p) ? 100 : p; })(), // NOT `|| 100`: a suggested priority 0 must stay 0, not jump to 100
                 source: $('er-source').value || 'syslog',
                 vendor_scope: $('er-vendor').value || '',
                 device_id: $('er-device').value ? parseInt($('er-device').value, 10) : null,

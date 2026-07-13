@@ -155,9 +155,20 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 			effect = fmt.Sprintf("Suppress %s traps from all sources (the alert has no resolved device to scope to).", in.AlertType)
 		}
 	case "syslog":
-		matchJSON, effect = syslogMatch(in)
+		mj, ef, ok := syslogMatch(in)
+		if !ok {
+			// No KV discriminator and no message text → a matcher would be
+			// {contains message ""} which matches ALL syslog (a fleet-wide mute).
+			return SuggestResult{Supported: false,
+				Reason:      "This alert has no log content to derive a matcher from. Use a maintenance window to mute it.",
+				Alternative: "maintenance"}
+		}
+		matchJSON, effect = mj, ef
 		if in.FiringRulePriority != nil {
 			priority = *in.FiringRulePriority - 1
+			if priority < 0 {
+				priority = 0
+			}
 		}
 	}
 
@@ -181,20 +192,25 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 
 // syslogMatch picks the most stable KV discriminator from the alert's raw line,
 // falling back through subtype/level to a message-contains on the prefix-stripped
-// text. Returns the match_json + a human effect string.
-func syslogMatch(in SuggestInput) (string, string) {
+// text. Returns match_json, a human effect string, and ok=false when the alert
+// carries no usable content (empty message with no KV) — in which case the caller
+// must NOT synthesize a matcher (a {contains message ""} matches everything).
+func syslogMatch(in SuggestInput) (string, string, bool) {
 	raw := stripSyslogPrefix(in.Message, in.MetricName)
 	fields := logfields.Fields(in.Vendor, &models.SyslogMessage{Message: raw})
 	// Preference order among KV-extracted (non-base) fields.
 	for _, key := range []string{"logid", "subtype", "logdesc", "level"} {
 		if v, ok := fields[key]; ok && v != "" && !baseSyslogFields[key] {
-			return mustJSON(eqNode(key, v)), fmt.Sprintf("Suppress syslog events where %s=%s.", key, v)
+			return mustJSON(eqNode(key, v)), fmt.Sprintf("Suppress syslog events where %s=%s.", key, v), true
 		}
 	}
 	// Fallback: a message-contains on a bounded, stable substring of the raw line.
 	sub := boundedSubstring(raw, 60)
+	if sub == "" {
+		return "", "", false
+	}
 	return mustJSON(containsNode("message", sub)),
-		"Suppress syslog events whose message contains this text (refine the snippet to match the class you want)."
+		"Suppress syslog events whose message contains this text (refine the snippet to match the class you want).", true
 }
 
 // stripSyslogPrefix removes the "[<rule>] <host>: " prefix fireEventAlert adds,
@@ -210,12 +226,22 @@ func stripSyslogPrefix(msg, ruleName string) string {
 	return strings.TrimSpace(s)
 }
 
+// boundedSubstring returns up to n runes (rune-safe so a multi-byte character
+// isn't split into a replacement char that would never match).
 func boundedSubstring(s string, n int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return strings.TrimSpace(s[:n])
+	return strings.TrimSpace(string(r[:n]))
+}
+
+// IsSyslogRuleAlertType reports whether an alert type is served by the syslog
+// rule engine — the only case where alert.MetricName is a rule NAME (so the
+// handler must not treat a metric/state resource key as a rule name).
+func IsSyslogRuleAlertType(at models.AlertType) bool {
+	return ruleSourceForAlertType(at) == "syslog"
 }
 
 // ruleSourceForAlertType maps an alert type to the rule source that can suppress

@@ -118,6 +118,37 @@ func TestSuggestRule_SyslogKVAndFallback(t *testing.T) {
 	mustCompile(t, r2.Rule.MatchJSON)
 }
 
+func TestSuggestRule_SyslogEmptyAndPriorityClamp(t *testing.T) {
+	// Empty log content (prefix strips to nothing, no KV) → unsupported, NOT a
+	// {contains message ""} matcher that would silence all syslog.
+	r := SuggestRuleForAlert(SuggestInput{
+		AlertType: models.AlertTypeSyslogCritical, DeviceID: 7, Vendor: "generic",
+		MetricName: "Syslog sev0-2", Message: "[Syslog sev0-2] fw-01: ",
+	})
+	if r.Supported {
+		t.Fatalf("empty syslog content should be unsupported, got %+v", r.Rule)
+	}
+
+	// Firing rule at priority 0 → suggestion clamps to 0 (not -1).
+	zero := 0
+	r2 := SuggestRuleForAlert(SuggestInput{
+		AlertType: models.AlertTypeSyslogCritical, DeviceID: 7, Vendor: "fortigate",
+		MetricName: "R", Message: "[R] fw-01: logid=1 subtype=x", FiringRulePriority: &zero,
+	})
+	if !r2.Supported || r2.Rule.Priority != 0 {
+		t.Fatalf("priority should clamp to 0, got %+v", r2.Rule)
+	}
+}
+
+func TestIsSyslogRuleAlertType(t *testing.T) {
+	if !IsSyslogRuleAlertType(models.AlertTypeSyslogCritical) || !IsSyslogRuleAlertType(models.AlertTypeLogRuleMatch) {
+		t.Fatal("syslog types should report true")
+	}
+	if IsSyslogRuleAlertType(models.AlertTypeCPUHigh) || IsSyslogRuleAlertType(models.AlertTypeInterfaceDown) {
+		t.Fatal("non-syslog types must report false (MetricName is a resource key, not a rule name)")
+	}
+}
+
 func TestSuggestRule_Unsupported(t *testing.T) {
 	cases := []struct {
 		at  models.AlertType

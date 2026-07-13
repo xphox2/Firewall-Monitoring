@@ -269,8 +269,10 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 		}
 	}
 	// For syslog, the firing rule's name is stored in MetricName; find it so the
-	// suggestion out-prioritizes it and "customize" can open it directly.
-	if alert.MetricName != "" {
+	// suggestion out-prioritizes it and "customize" can open it directly. Only for
+	// syslog — for metric/state/spike/trap, MetricName is a resource key
+	// ("cpu_usage"/"interface_port5"/…), which must NOT be treated as a rule name.
+	if alert.MetricName != "" && alerts.IsSyslogRuleAlertType(alert.AlertType) {
 		if rules, err := db.ListEventRules(); err == nil {
 			for i := range rules {
 				if rules[i].Name == alert.MetricName {
