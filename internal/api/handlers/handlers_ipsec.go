@@ -28,17 +28,19 @@ type tunnelResponse struct {
 	Validation []ipsec.Finding     `json:"validation,omitempty"`
 }
 
-// resolveCaps returns both ends' capability descriptors, or a client error if a
-// vendor has no provisioning driver.
-func resolveCaps(intent *ipsec.TunnelIntent) (caps [2]ipsec.CapabilityDescriptor, badVendor string) {
+// resolveCaps returns both ends' capability descriptors, or a non-nil error if a
+// vendor has no provisioning driver. It returns an ERROR (not a bad-vendor
+// string) so an EMPTY vendor — which is a valid "no driver" case — can't collide
+// with the "" all-good sentinel and slip a nil-driver intent through to Render.
+func resolveCaps(intent *ipsec.TunnelIntent) (caps [2]ipsec.CapabilityDescriptor, err error) {
 	for i := range intent.Ends {
-		c, err := ipsec.Capabilities(intent.Ends[i].Vendor)
-		if err != nil {
-			return caps, intent.Ends[i].Vendor
+		c, e := ipsec.Capabilities(intent.Ends[i].Vendor)
+		if e != nil {
+			return caps, fmt.Errorf("end %c: %v", 'A'+i, e)
 		}
 		caps[i] = c
 	}
-	return caps, ""
+	return caps, nil
 }
 
 // hydrateDerived fills the ID-derived, wizard-owned fields (name, VTI addressing,
@@ -73,8 +75,8 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 		return
 	}
 	intent.ID = 0 // the server assigns the ID; never trust a client-supplied one
-	if _, bad := resolveCaps(&intent); bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	if _, err := resolveCaps(&intent); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
 		return
 	}
 	// Generate a PSK when absent OR when the client round-tripped the mask.
@@ -157,7 +159,7 @@ func (h *Handler) GetIPSecTunnel(c *gin.Context) {
 		return
 	}
 	var findings []ipsec.Finding
-	if caps, bad := resolveCaps(intent); bad == "" {
+	if caps, err := resolveCaps(intent); err == nil {
 		findings = ipsec.Validate(intent, caps)
 	}
 	intent.PSK = ipsecPSKMask
@@ -184,8 +186,8 @@ func (h *Handler) UpdateIPSecTunnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
-	if _, bad := resolveCaps(&intent); bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	if _, err := resolveCaps(&intent); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
 		return
 	}
 	// A masked/empty PSK means "unchanged": fold the real stored (decrypted) key
@@ -261,9 +263,9 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 		httputil.InternalError(c, "Failed to decode tunnel", err)
 		return
 	}
-	caps, bad := resolveCaps(intent)
-	if bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	caps, cerr := resolveCaps(intent)
+	if cerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
 		return
 	}
 	previews, rerr := renderBothEnds(intent)
@@ -281,7 +283,10 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 func renderBothEnds(intent *ipsec.TunnelIntent) ([]endPreview, error) {
 	previews := make([]endPreview, 0, 2)
 	for i := range intent.Ends {
-		d, _ := ipsec.Driver(intent.Ends[i].Vendor)
+		d, ok := ipsec.Driver(intent.Ends[i].Vendor)
+		if !ok {
+			return nil, fmt.Errorf("end %c (%q): no IPSec provisioning driver", 'A'+i, intent.Ends[i].Vendor)
+		}
 		art, err := d.Render(ipsec.ViewFor(intent, i))
 		if err != nil {
 			return nil, fmt.Errorf("end %c (%s): %v", 'A'+i, intent.Ends[i].Vendor, err)
@@ -310,9 +315,9 @@ func (h *Handler) PreviewIPSecIntent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
-	caps, bad := resolveCaps(&intent)
-	if bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	caps, cerr := resolveCaps(&intent)
+	if cerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
 		return
 	}
 	pskAutogen := intent.PSK == "" || intent.PSK == ipsecPSKMask

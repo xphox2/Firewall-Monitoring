@@ -81,4 +81,25 @@ func TestPreviewIPSecIntent_PRB(t *testing.T) {
 	if code2 != http.StatusBadRequest {
 		t.Fatalf("unknown vendor should 400, got %d", code2)
 	}
+
+	// EMPTY vendor must 400, not panic on a nil driver (the sentinel-collision
+	// bug: "" was indistinguishable from resolveCaps' all-good return). gin.New()
+	// has no Recovery, so a panic would fail the test outright.
+	empty := validPreviewIntent("")
+	empty.Ends[0].Vendor = ""
+	code3, _, _ := postPreview(t, h, empty)
+	if code3 != http.StatusBadRequest {
+		t.Fatalf("empty vendor should 400 (no nil-driver panic), got %d", code3)
+	}
+	// A completely empty body likewise.
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/ipsec/preview", h.PreviewIPSecIntent)
+	req := httptest.NewRequest("POST", "/api/ipsec/preview", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty body should 400 (no panic), got %d", w.Code)
+	}
 }
