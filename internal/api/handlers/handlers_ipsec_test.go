@@ -11,6 +11,7 @@ import (
 
 	"firewall-mon/internal/ipsec"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 
 	"github.com/gin-gonic/gin"
 )
@@ -357,11 +358,15 @@ func TestIPSec_EndpointHints_PolledOverLAN(t *testing.T) {
 			t.Error("the WAN subnet 66.179.9.0/24 must NEVER be an auto-suggested protected subnet (phantom self-lockout)")
 		}
 	}
-	// Belt-and-suspenders: no auto-suggested subnet may contain the peer's WAN IP.
+	// Belt-and-suspenders: no auto-suggested subnet may contain the peer's WAN IP,
+	// and none may be a public network (a protected LAN is always private).
 	peer := net.ParseIP(resp.SuggestedPeerIP)
 	for _, s := range resp.LANSubnets {
 		if _, n, err := net.ParseCIDR(s); err == nil && peer != nil && n.Contains(peer) {
 			t.Errorf("lan_subnet %s contains the peer WAN IP %s — would self-lockout", s, resp.SuggestedPeerIP)
+		}
+		if ip, _, err := net.ParseCIDR(s); err == nil && netclass.IsPublicIP(ip.String()) {
+			t.Errorf("lan_subnet %s is a public network — must never be an auto-suggested protected subnet", s)
 		}
 	}
 	// The genuine LAN behind the firewall is suggested.

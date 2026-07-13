@@ -561,6 +561,12 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 			if a.CIDR == "" || seenSubnet[a.CIDR] || netclass.IsFabricInterface(hi.Name, a.IP) {
 				continue
 			}
+			// A protected LAN is a private network; a public address is a WAN/transit
+			// or DMZ uplink, never an auto-suggested protected subnet (defends against
+			// a mis-picked egress leaving another public interface's subnet in).
+			if a.Public {
+				continue
+			}
 			if _, n, err := net.ParseCIDR(a.CIDR); err == nil && peerIP != nil && n.Contains(peerIP) {
 				continue // never protect a subnet that contains the WAN endpoint
 			}

@@ -13,11 +13,15 @@ interface — let the WAN interface's own subnet leak into the auto-suggested
 flagged its own suggestion.
 
 - The endpoint-hints endpoint now identifies the **WAN uplink by its public
-  address** (not by which interface the device is polled over), and **excludes from
-  the protected-subnet suggestions both the egress/WAN interface and any subnet
-  that contains the WAN endpoint**. A protected subnet can no longer contain the
-  peer's own WAN IP, so the tunnel can never self-lock-out on the wizard's
-  suggestions — regardless of how the firewall is monitored.
+  address** (not by which interface the device is polled over), **excludes from the
+  protected-subnet suggestions both the egress/WAN interface and any subnet that
+  contains the WAN endpoint**, and never auto-suggests a **public** network as a
+  protected subnet. When the WAN has a public address (the common case), a protected
+  subnet can no longer contain the peer's own WAN IP — so the tunnel can't
+  self-lock-out on the wizard's suggestions, whichever interface the firewall is
+  monitored over. (A firewall with an all-private WAN monitored over a *different*
+  private LAN is inherently ambiguous; the protected-subnet list stays
+  operator-editable for that edge.)
 - The generated FortiGate/OPNsense config was already correct: it routes and
   blackholes **only the remote end's private subnets**, never the WAN IP.
 - The `self_lockout` check remains a warning, but now only fires on a genuine
