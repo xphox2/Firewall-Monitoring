@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -441,19 +442,9 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 		Interfaces: []ipsecHintIface{},
 		LANSubnets: []string{},
 	}
-	// The interface bearing the device's polled (WAN/mgmt) IP is the egress; its
-	// own network is transit, never a "protected" LAN — exclude it from lan_subnets
-	// (otherwise a WAN /29 would be suggested as a protected subnet).
-	wanIdx := -1
-	for _, a := range addrs {
-		if a.IPAddress == device.IPAddress {
-			wanIdx = a.IfIndex
-			break
-		}
-	}
-
+	// Pass 1: build the interface list with per-address CIDR + public flags. (No
+	// protected-subnet selection yet — that needs the WAN endpoint decided first.)
 	sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
-	seenSubnet := map[string]bool{}
 	for _, iface := range ifaces {
 		// A VPN/tunnel carrier (tun0, wg0, …) is never a LAN segment even when its
 		// ifType reports propVirtual — exclude it from LAN classification + subnets.
@@ -469,65 +460,52 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 			ha := ipsecHintAddr{IP: a.IPAddress, Public: netclass.IsPublicIP(a.IPAddress)}
 			if cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask); ok {
 				ha.CIDR = cidr
-				// A candidate "protected subnet": a LAN-segment network that is not
-				// the WAN/egress transit network and not a FortiLink/link-local link.
-				if isLAN && iface.Index != wanIdx && !netclass.IsFabricInterface(iface.Name, a.IPAddress) && !seenSubnet[cidr] {
-					seenSubnet[cidr] = true
-					resp.LANSubnets = append(resp.LANSubnets, cidr)
-				}
 			}
 			hi.Addresses = append(hi.Addresses, ha)
 		}
 		resp.Interfaces = append(resp.Interfaces, hi)
 	}
 
-	// Egress = the interface bearing the device's polled (WAN/mgmt) IP, else the
-	// first up non-LAN interface.
-	for _, hi := range resp.Interfaces {
+	upNonVPN := func(hi ipsecHintIface) bool {
+		return strings.EqualFold(hi.Status, "up") && !netclass.IsVPNInterfaceName(hi.Name)
+	}
+	hasPublic := func(hi ipsecHintIface) bool {
+		for _, a := range hi.Addresses {
+			if a.Public {
+				return true
+			}
+		}
+		return false
+	}
+	bearsPolledIP := func(hi ipsecHintIface) bool {
 		for _, a := range hi.Addresses {
 			if a.IP == device.IPAddress {
-				resp.SuggestedEgress = hi.Name
-				break
+				return true
 			}
 		}
+		return false
+	}
+	pick := func(want func(ipsecHintIface) bool) {
 		if resp.SuggestedEgress != "" {
-			break
+			return
 		}
-	}
-	if resp.SuggestedEgress == "" {
 		for _, hi := range resp.Interfaces {
-			// A physical WAN uplink: up, not a LAN segment, and not a VPN/tunnel
-			// carrier (don't suggest ssl.root/tun0 as the tunnel egress).
-			if !hi.IsLAN && strings.EqualFold(hi.Status, "up") && !netclass.IsVPNInterfaceName(hi.Name) {
+			if want(hi) {
 				resp.SuggestedEgress = hi.Name
-				break
+				return
 			}
 		}
 	}
-	// LAN = first up LAN-type interface carrying an address, excluding the egress
-	// (WAN) interface itself (fall back to any such interface if none report "up").
-	for _, hi := range resp.Interfaces {
-		if hi.Name != resp.SuggestedEgress && hi.IsLAN && strings.EqualFold(hi.Status, "up") && len(hi.Addresses) > 0 {
-			resp.SuggestedLAN = hi.Name
-			break
-		}
-	}
-	if resp.SuggestedLAN == "" {
-		for _, hi := range resp.Interfaces {
-			if hi.Name != resp.SuggestedEgress && hi.IsLAN && len(hi.Addresses) > 0 {
-				resp.SuggestedLAN = hi.Name
-				break
-			}
-		}
-	}
+	// Egress = the WAN uplink. Prefer an up, non-VPN interface that carries a PUBLIC
+	// address (the real internet uplink) — NOT the interface that merely bears the
+	// polling IP, so a device monitored over its LAN mgmt address doesn't pick the
+	// LAN as its "egress". Order: public+polled → any public → bears-polled-IP
+	// (all-private/lab box) → first up non-LAN non-VPN.
+	pick(func(hi ipsecHintIface) bool { return upNonVPN(hi) && hasPublic(hi) && bearsPolledIP(hi) })
+	pick(func(hi ipsecHintIface) bool { return upNonVPN(hi) && hasPublic(hi) })
+	pick(func(hi ipsecHintIface) bool { return bearsPolledIP(hi) })
+	pick(func(hi ipsecHintIface) bool { return !hi.IsLAN && upNonVPN(hi) })
 
-	// Suggested peer IP = this end's own public endpoint, in priority order:
-	//   1. a public address on the egress (WAN) interface,
-	//   2. any public interface address,
-	//   3. the egress interface's first address (private — a NAT'd WAN; the
-	//      preview's peer_private warning nudges the operator to Custom… the real
-	//      public IP),
-	//   4. the polled mgmt IP as a last resort.
 	var egressIface *ipsecHintIface
 	for i := range resp.Interfaces {
 		if resp.Interfaces[i].Name == resp.SuggestedEgress {
@@ -535,6 +513,10 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 			break
 		}
 	}
+
+	// Suggested peer IP = this end's own public endpoint: egress public → any public
+	// → egress first addr → polled mgmt IP (behind NAT — operator overrides via
+	// Custom…; the preview's peer_private warning nudges them).
 	if egressIface != nil {
 		for _, a := range egressIface.Addresses {
 			if a.Public {
@@ -561,6 +543,47 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 	}
 	if resp.SuggestedPeerIP == "" {
 		resp.SuggestedPeerIP = device.IPAddress
+	}
+
+	// Protected-subnet candidates = LAN-segment networks, EXCLUDING the egress (WAN)
+	// interface's own subnets AND any subnet that contains this end's WAN endpoint
+	// (suggested_peer_ip). The "contains the peer IP" rule is the bulletproof guard:
+	// a protected subnet can never include the WAN endpoint, so the tunnel never
+	// self-locks-out on the wizard's own suggestions — regardless of which address
+	// the device is polled over. Fabric/link-local + /30–/32 are already filtered.
+	peerIP := net.ParseIP(resp.SuggestedPeerIP)
+	seenSubnet := map[string]bool{}
+	for _, hi := range resp.Interfaces {
+		if !hi.IsLAN || hi.Name == resp.SuggestedEgress {
+			continue
+		}
+		for _, a := range hi.Addresses {
+			if a.CIDR == "" || seenSubnet[a.CIDR] || netclass.IsFabricInterface(hi.Name, a.IP) {
+				continue
+			}
+			if _, n, err := net.ParseCIDR(a.CIDR); err == nil && peerIP != nil && n.Contains(peerIP) {
+				continue // never protect a subnet that contains the WAN endpoint
+			}
+			seenSubnet[a.CIDR] = true
+			resp.LANSubnets = append(resp.LANSubnets, a.CIDR)
+		}
+	}
+
+	// LAN = first up LAN-type interface carrying an address, excluding the egress
+	// (WAN) interface itself (fall back to any such interface if none report "up").
+	for _, hi := range resp.Interfaces {
+		if hi.Name != resp.SuggestedEgress && hi.IsLAN && strings.EqualFold(hi.Status, "up") && len(hi.Addresses) > 0 {
+			resp.SuggestedLAN = hi.Name
+			break
+		}
+	}
+	if resp.SuggestedLAN == "" {
+		for _, hi := range resp.Interfaces {
+			if hi.Name != resp.SuggestedEgress && hi.IsLAN && len(hi.Addresses) > 0 {
+				resp.SuggestedLAN = hi.Name
+				break
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, response.Success(resp))

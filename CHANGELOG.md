@@ -1,6 +1,31 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.92] - 2026-07-13
+
+### Fixed — IPSec wizard no longer suggests the WAN as a "protected subnet"
+
+The wizard could raise a confusing self-lockout warning against its **own**
+auto-fill. Root cause: when a firewall is monitored over a **LAN/management IP**
+(not its WAN), the WAN-subnet exclusion — which was keyed on the *polling*
+interface — let the WAN interface's own subnet leak into the auto-suggested
+"Protected subnets", while the peer IP was correctly the WAN. The wizard then
+flagged its own suggestion.
+
+- The endpoint-hints endpoint now identifies the **WAN uplink by its public
+  address** (not by which interface the device is polled over), and **excludes from
+  the protected-subnet suggestions both the egress/WAN interface and any subnet
+  that contains the WAN endpoint**. A protected subnet can no longer contain the
+  peer's own WAN IP, so the tunnel can never self-lock-out on the wizard's
+  suggestions — regardless of how the firewall is monitored.
+- The generated FortiGate/OPNsense config was already correct: it routes and
+  blackholes **only the remote end's private subnets**, never the WAN IP.
+- The `self_lockout` check remains a warning, but now only fires on a genuine
+  manual mis-entry, with a clearer message: *"protected subnet X includes the
+  peer's WAN endpoint Y — the tunnel carries LAN subnets, not the WAN; remove the
+  WAN/transit network from the protected list."* A full-tunnel default route still
+  hard-blocks.
+
 ## [0.11.91] - 2026-07-13
 
 ### Changed — IPSec wizard: pick each end's public IP; self-lockout is now a warning
