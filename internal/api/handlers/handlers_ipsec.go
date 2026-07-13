@@ -2,16 +2,22 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
+	"sort"
+	"strings"
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/ipsec"
 	_ "firewall-mon/internal/ipsec/vendors" // register fortigate + opnsense drivers
+	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // IPSec tunnel provisioning-wizard handlers (PR-A: intent CRUD + capabilities +
@@ -362,4 +368,156 @@ func (h *Handler) IPSecCapabilities(c *gin.Context) {
 		"allowed":  ipsec.Intersect(capA, capB),
 		"profiles": ipsec.Presets(),
 	}))
+}
+
+// --- IPSec wizard "endpoint hints" (read-only) --------------------------------
+//
+// GetIPSecEndpointHints feeds the wizard the picked device's REAL interfaces +
+// addresses (from the latest poll) so the operator selects egress/LAN interfaces
+// from live values and gets WAN IP + LAN subnets auto-filled instead of typing
+// them. Read-only; returns interface names/addresses only (no secrets). Admin-only.
+
+type ipsecHintAddr struct {
+	IP   string `json:"ip"`
+	CIDR string `json:"cidr,omitempty"` // network CIDR, absent for /30-/32 or unparseable
+}
+
+type ipsecHintIface struct {
+	Name      string          `json:"name"`
+	TypeName  string          `json:"type_name"`
+	Status    string          `json:"status"`
+	IsLAN     bool            `json:"is_lan"`
+	Addresses []ipsecHintAddr `json:"addresses"`
+}
+
+type ipsecHintsResponse struct {
+	WANIP           string           `json:"wan_ip"`
+	Interfaces      []ipsecHintIface `json:"interfaces"`
+	SuggestedEgress string           `json:"suggested_egress"`
+	SuggestedLAN    string           `json:"suggested_lan"`
+	LANSubnets      []string         `json:"lan_subnets"`
+}
+
+func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	device, err := db.GetDevice(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Device not found"))
+		return
+	}
+
+	// Latest interface + address snapshot for THIS device (same latest-timestamp
+	// pattern as GetDeviceDetail). A never-polled device yields empty slices — the
+	// wizard falls back to its editable fields, so this must not error.
+	gdb := db.Gorm()
+	latest := func(table string) *gorm.DB {
+		return gdb.Where("device_id = ? AND timestamp = (SELECT MAX(timestamp) FROM "+table+" WHERE device_id = ?)", id, id)
+	}
+	var ifaces []models.InterfaceStats
+	if err := latest("interface_stats").Find(&ifaces).Error; err != nil {
+		log.Printf("ipsec-hints: device %d interface stats: %v", id, err)
+	}
+	var addrs []models.InterfaceAddress
+	if err := latest("interface_addresses").Find(&addrs).Error; err != nil {
+		log.Printf("ipsec-hints: device %d interface addresses: %v", id, err)
+	}
+
+	addrsByIdx := make(map[int][]models.InterfaceAddress, len(addrs))
+	for _, a := range addrs {
+		addrsByIdx[a.IfIndex] = append(addrsByIdx[a.IfIndex], a)
+	}
+
+	resp := ipsecHintsResponse{
+		WANIP:      device.IPAddress,
+		Interfaces: []ipsecHintIface{},
+		LANSubnets: []string{},
+	}
+	// The interface bearing the device's polled (WAN/mgmt) IP is the egress; its
+	// own network is transit, never a "protected" LAN — exclude it from lan_subnets
+	// (otherwise a WAN /29 would be suggested as a protected subnet).
+	wanIdx := -1
+	for _, a := range addrs {
+		if a.IPAddress == device.IPAddress {
+			wanIdx = a.IfIndex
+			break
+		}
+	}
+
+	sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
+	seenSubnet := map[string]bool{}
+	for _, iface := range ifaces {
+		// A VPN/tunnel carrier (tun0, wg0, …) is never a LAN segment even when its
+		// ifType reports propVirtual — exclude it from LAN classification + subnets.
+		isLAN := netclass.IsLANType(iface.TypeName) && !netclass.IsVPNInterfaceName(iface.Name)
+		hi := ipsecHintIface{
+			Name:      iface.Name,
+			TypeName:  iface.TypeName,
+			Status:    iface.Status,
+			IsLAN:     isLAN,
+			Addresses: []ipsecHintAddr{},
+		}
+		for _, a := range addrsByIdx[iface.Index] {
+			ha := ipsecHintAddr{IP: a.IPAddress}
+			if cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask); ok {
+				ha.CIDR = cidr
+				// A candidate "protected subnet": a LAN-segment network that is not
+				// the WAN/egress transit network and not a FortiLink/link-local link.
+				if isLAN && iface.Index != wanIdx && !netclass.IsFabricInterface(iface.Name, a.IPAddress) && !seenSubnet[cidr] {
+					seenSubnet[cidr] = true
+					resp.LANSubnets = append(resp.LANSubnets, cidr)
+				}
+			}
+			hi.Addresses = append(hi.Addresses, ha)
+		}
+		resp.Interfaces = append(resp.Interfaces, hi)
+	}
+
+	// Egress = the interface bearing the device's polled (WAN/mgmt) IP, else the
+	// first up non-LAN interface.
+	for _, hi := range resp.Interfaces {
+		for _, a := range hi.Addresses {
+			if a.IP == device.IPAddress {
+				resp.SuggestedEgress = hi.Name
+				break
+			}
+		}
+		if resp.SuggestedEgress != "" {
+			break
+		}
+	}
+	if resp.SuggestedEgress == "" {
+		for _, hi := range resp.Interfaces {
+			// A physical WAN uplink: up, not a LAN segment, and not a VPN/tunnel
+			// carrier (don't suggest ssl.root/tun0 as the tunnel egress).
+			if !hi.IsLAN && strings.EqualFold(hi.Status, "up") && !netclass.IsVPNInterfaceName(hi.Name) {
+				resp.SuggestedEgress = hi.Name
+				break
+			}
+		}
+	}
+	// LAN = first up LAN-type interface carrying an address, excluding the egress
+	// (WAN) interface itself (fall back to any such interface if none report "up").
+	for _, hi := range resp.Interfaces {
+		if hi.Name != resp.SuggestedEgress && hi.IsLAN && strings.EqualFold(hi.Status, "up") && len(hi.Addresses) > 0 {
+			resp.SuggestedLAN = hi.Name
+			break
+		}
+	}
+	if resp.SuggestedLAN == "" {
+		for _, hi := range resp.Interfaces {
+			if hi.Name != resp.SuggestedEgress && hi.IsLAN && len(hi.Addresses) > 0 {
+				resp.SuggestedLAN = hi.Name
+				break
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(resp))
 }

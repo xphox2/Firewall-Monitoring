@@ -35,6 +35,26 @@ func TestValidate_IDMissingBlocks_PRB(t *testing.T) {
 	}
 }
 
+// Egress + LAN interfaces are required — an empty value would render an invalid
+// interface binding / firewall rule downstream, so it must block at validation.
+func TestValidate_EgressLANRequired(t *testing.T) {
+	in := canonicalIntent()
+	in.Ends[0].EgressIface = ""
+	in.Ends[1].LANIface = ""
+	fs := ipsec.Validate(in, bothCaps(t))
+	if !hasCode(fs, "egress_missing") {
+		t.Errorf("empty egress interface must block with egress_missing; got %+v", fs)
+	}
+	if !hasCode(fs, "lan_missing") {
+		t.Errorf("empty LAN interface must block with lan_missing; got %+v", fs)
+	}
+	// The canonical intent has both interfaces and must not trip either.
+	clean := ipsec.Validate(canonicalIntent(), bothCaps(t))
+	if hasCode(clean, "egress_missing") || hasCode(clean, "lan_missing") {
+		t.Errorf("canonical intent has both interfaces set and must not trip: %+v", clean)
+	}
+}
+
 // PR-B: OPNsense IKE rekey_time comes from the intent, and a missing lifetime
 // defaults to 24h (never 0 = never-rekey); child reqid is pinned from the intent.
 func TestOPNsense_RekeyAndReqidFromIntent_PRB(t *testing.T) {

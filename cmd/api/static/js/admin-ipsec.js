@@ -10,8 +10,14 @@
     var caps = null;       // { a, b, allowed, profiles } for the selected pair
     var devices = [];      // eligible (fortigate/opnsense) devices
     var lastPreviewOK = false;
+    var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
+    var lastHintSubnets = { a: '', b: '' }; // last auto-filled subnets, so a re-pick can refresh them
 
     function $(id) { return document.getElementById(id); }
+
+    // Any change to the intent invalidates a prior clean preview — Save must not
+    // persist an intent that was never previewed (the block-findings gate would lie).
+    function invalidate() { lastPreviewOK = false; $('ipsec-save-btn').disabled = true; }
     function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
     function vendorOf(d) { return (d.vendor || 'fortigate'); }
 
@@ -66,13 +72,21 @@
         $('ipsec-wizard-title').textContent = id ? 'Edit IPSec Tunnel' : 'New IPSec Tunnel';
         $('ipsec-edit-id').value = id || '';
         caps = null; lastPreviewOK = false;
+        lastHintSubnets.a = ''; lastHintSubnets.b = '';
+        hintGen.a++; hintGen.b++; // invalidate any in-flight hint responses from a prior open
         $('ipsec-crypto-section').style.display = 'none';
         $('ipsec-endpoints-section').style.display = 'none';
         $('ipsec-preview-section').style.display = 'none';
         $('ipsec-save-btn').disabled = true;
         $('ipsec-findings').innerHTML = '';
         $('ipsec-preview-panes').innerHTML = '';
-        ['a-peer', 'a-egress', 'a-lan', 'a-subnets', 'a-id', 'b-peer', 'b-egress', 'b-lan', 'b-subnets', 'b-id', 'psk'].forEach(function (f) { $('ipsec-' + f).value = ''; });
+        ['a-peer', 'a-subnets', 'a-id', 'b-peer', 'b-subnets', 'b-id', 'psk',
+            'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
+        ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
+            $('ipsec-' + f).innerHTML = '<option value="__custom__">Custom…</option>';
+            $('ipsec-' + f).value = '__custom__';
+            $('ipsec-' + f + '-custom').style.display = '';
+        });
         $('ipsec-a-dyn').checked = false; $('ipsec-b-dyn').checked = false;
 
         AC.apiFetch(API + '/devices').then(function (r) {
@@ -98,7 +112,7 @@
         // prefill peer IPs + identity from device data
         if (!$('ipsec-a-peer').value) $('ipsec-a-peer').value = a.ip_address || '';
         if (!$('ipsec-b-peer').value) $('ipsec-b-peer').value = b.ip_address || '';
-        return AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
+        var capsP = AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
             caps = (r && r.data) || null;
             if (!caps) return;
             $('ipsec-caps-note').textContent = 'Both ends support: ' + (caps.allowed.encryption || []).join(', ') + '.';
@@ -109,6 +123,85 @@
             $('ipsec-a-title').textContent = 'Endpoint A — ' + a.name + ' (' + vendorOf(a) + ')';
             $('ipsec-b-title').textContent = 'Endpoint B — ' + b.name + ' (' + vendorOf(b) + ')';
         }).catch(function (e) { AC.showError('No shared crypto for this pair: ' + e.message); });
+        // In parallel, populate egress/LAN interfaces + subnets from each device's
+        // real polled interface data (data-driven, not free-text). Non-fatal.
+        var hintsP = Promise.all([loadHints('a', a.id), loadHints('b', b.id)]);
+        return Promise.all([capsP, hintsP]).then(function () { });
+    }
+
+    // ---- data-driven endpoint hints -------------------------------------
+    // Fill the egress/LAN <select>s with the device's actual interfaces and
+    // pre-fill protected subnets from its LAN addressing. A "Custom…" option is
+    // always kept so an operator can still type an interface not yet polled.
+    function ifaceLabel(i) {
+        return i.name + ' — ' + (i.type_name || '?') + (i.status ? ' (' + i.status + ')' : '');
+    }
+
+    function populateIfaceSelect(pfx, kind, ifaces, suggested) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        var opts = ifaces.length ? '<option value="">— select —</option>' : '';
+        opts += ifaces.map(function (i) {
+            return '<option value="' + esc(i.name) + '">' + esc(ifaceLabel(i)) + '</option>';
+        }).join('');
+        opts += '<option value="__custom__">Custom…</option>';
+        sel.innerHTML = opts;
+        if (suggested) { sel.value = suggested; }
+        else if (!ifaces.length) { sel.value = '__custom__'; }
+        toggleCustom(pfx, kind);
+    }
+
+    function toggleCustom(pfx, kind) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        var custom = $('ipsec-' + pfx + '-' + kind + '-custom');
+        if (custom) { custom.style.display = (sel.value === '__custom__') ? '' : 'none'; }
+    }
+
+    // The effective interface name: the custom text when "Custom…" is selected,
+    // otherwise the chosen option's value.
+    function ifaceVal(pfx, kind) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        if (sel.value === '__custom__') { return ($('ipsec-' + pfx + '-' + kind + '-custom').value || '').trim(); }
+        return (sel.value || '').trim();
+    }
+
+    // Select a stored interface name when editing: pick the option if the device
+    // still reports it, else fall back to Custom… with the name preserved.
+    function setIfaceValue(pfx, kind, name) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        name = name || '';
+        var has = Array.prototype.some.call(sel.options, function (o) { return o.value === name; });
+        if (name && has) { sel.value = name; }
+        else if (name) { sel.value = '__custom__'; $('ipsec-' + pfx + '-' + kind + '-custom').value = name; }
+        else { sel.value = ''; }
+        toggleCustom(pfx, kind);
+    }
+
+    function loadHints(pfx, deviceId) {
+        var gen = ++hintGen[pfx]; // stamp this request; a newer device pick bumps it
+        return AC.apiFetch(API + '/devices/' + deviceId + '/ipsec-hints').then(function (r) {
+            if (gen !== hintGen[pfx]) { return; } // superseded by a later pick — ignore
+            var h = (r && r.data) || {};
+            var ifaces = h.interfaces || [];
+            populateIfaceSelect(pfx, 'egress', ifaces, h.suggested_egress);
+            populateIfaceSelect(pfx, 'lan', ifaces, h.suggested_lan);
+            // Fill subnets when the box is empty OR still holds the prior auto-fill
+            // (so re-picking a device refreshes them) — but never clobber an operator
+            // edit.
+            var box = $('ipsec-' + pfx + '-subnets');
+            var suggested = (h.lan_subnets || []).join('\n');
+            if (!box.value.trim() || box.value === lastHintSubnets[pfx]) {
+                box.value = suggested;
+            }
+            lastHintSubnets[pfx] = suggested;
+            // Hints mutate fields programmatically (no change event fires), so a hint
+            // landing after a clean preview must re-gate Save.
+            invalidate();
+        }).catch(function (e) {
+            if (gen !== hintGen[pfx]) { return; }
+            fwmonLog.warn('[IPSec] interface hints failed for device ' + deviceId + ':', e);
+            populateIfaceSelect(pfx, 'egress', [], '');
+            populateIfaceSelect(pfx, 'lan', [], '');
+        });
     }
 
     function renderProfiles() {
@@ -170,8 +263,8 @@
                 device_id: dev.id, vendor: vendorOf(dev),
                 peer_ip: $('ipsec-' + pfx + '-peer').value.trim(),
                 dynamic: $('ipsec-' + pfx + '-dyn').checked,
-                egress_iface: $('ipsec-' + pfx + '-egress').value.trim(),
-                lan_iface: $('ipsec-' + pfx + '-lan').value.trim(),
+                egress_iface: ifaceVal(pfx, 'egress'),
+                lan_iface: ifaceVal(pfx, 'lan'),
                 local_id: { type: 'keyid', value: $('ipsec-' + pfx + '-id').value.trim() },
                 protected_subnets: subnets('ipsec-' + pfx + '-subnets'),
                 child_lifetime_secs: life, mss_clamp: 1350
@@ -262,8 +355,8 @@
                 restoreCrypto(t);
                 $('ipsec-a-peer').value = t.ends[0].peer_ip || ''; $('ipsec-b-peer').value = t.ends[1].peer_ip || '';
                 $('ipsec-a-dyn').checked = !!t.ends[0].dynamic; $('ipsec-b-dyn').checked = !!t.ends[1].dynamic;
-                $('ipsec-a-egress').value = t.ends[0].egress_iface || ''; $('ipsec-b-egress').value = t.ends[1].egress_iface || '';
-                $('ipsec-a-lan').value = t.ends[0].lan_iface || ''; $('ipsec-b-lan').value = t.ends[1].lan_iface || '';
+                setIfaceValue('a', 'egress', t.ends[0].egress_iface); setIfaceValue('b', 'egress', t.ends[1].egress_iface);
+                setIfaceValue('a', 'lan', t.ends[0].lan_iface); setIfaceValue('b', 'lan', t.ends[1].lan_iface);
                 $('ipsec-a-subnets').value = (t.ends[0].protected_subnets || []).join('\n');
                 $('ipsec-b-subnets').value = (t.ends[1].protected_subnets || []).join('\n');
                 $('ipsec-a-id').value = (t.ends[0].local_id || {}).value || ''; $('ipsec-b-id').value = (t.ends[1].local_id || {}).value || '';
@@ -293,9 +386,11 @@
         });
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
-        // Any edit after a clean preview invalidates it — Save must not persist an
-        // intent that was never previewed (the block-findings gate would be a lie).
-        var invalidate = function () { lastPreviewOK = false; $('ipsec-save-btn').disabled = true; };
+        // Reveal the free-text field only when "Custom…" is chosen for an interface.
+        ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
+            $('ipsec-' + f).addEventListener('change', function () { toggleCustom(f.charAt(0), f.slice(2)); });
+        });
+        // Any edit after a clean preview invalidates it (see invalidate()).
         $('ipsec-wizard-form').addEventListener('input', invalidate);
         $('ipsec-wizard-form').addEventListener('change', invalidate);
     }
