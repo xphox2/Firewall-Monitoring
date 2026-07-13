@@ -68,6 +68,25 @@ func IsFabricInterface(ifName, ipAddr string) bool {
 	return false
 }
 
+// cgnat is the RFC 6598 carrier-grade-NAT shared space (100.64.0.0/10).
+var _, cgnat, _ = net.ParseCIDR("100.64.0.0/10")
+
+// IsPublicIP reports whether ip parses as a globally-routable address — i.e. not
+// RFC1918 private, loopback, link-local, CGNAT (RFC 6598), unspecified, or
+// multicast. Used to pick a firewall's real public WAN address out of its polled
+// interface IPs. Unparseable input is not public.
+func IsPublicIP(ip string) bool {
+	p := net.ParseIP(strings.TrimSpace(ip))
+	if p == nil {
+		return false
+	}
+	if p.IsPrivate() || p.IsLoopback() || p.IsLinkLocalUnicast() || p.IsLinkLocalMulticast() ||
+		p.IsMulticast() || p.IsUnspecified() {
+		return false
+	}
+	return !cgnat.Contains(p)
+}
+
 // SubnetCIDR derives the network CIDR (e.g. "10.10.10.0/24") from an IPv4 address
 // + dotted netmask. ok=false for unparseable input OR a point-to-point/host prefix
 // (/30, /31, /32) — those are WAN-link/host addresses, not a shared LAN segment.

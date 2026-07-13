@@ -161,11 +161,38 @@ func TestValidate_CatchesFootguns(t *testing.T) {
 		t.Fatalf("canonical intent should have no blocks; got %+v", fs)
 	}
 
-	// Self-lockout: route a subnet that contains the peer's own endpoint.
+	// Self-lockout: route a subnet that contains the peer's own endpoint. As of
+	// v0.11.91 this is an acknowledgeable WARNING (safe with a pinned peer route),
+	// not a hard block, so the operator can still save/deploy.
 	lock := canonicalIntent()
 	lock.Ends[0].ProtectedSubnets = []string{"66.179.9.0/24"} // contains A's peer IP 66.179.9.155
-	if !hasCode(ipsec.Validate(lock, c), "self_lockout") {
+	lockFS := ipsec.Validate(lock, c)
+	if !hasCode(lockFS, "self_lockout") {
 		t.Error("expected self_lockout finding")
+	}
+	if sevOf(lockFS, "self_lockout") != ipsec.SeverityWarn {
+		t.Errorf("self_lockout must be a warning, got %q", sevOf(lockFS, "self_lockout"))
+	}
+	if ipsec.HasBlock(lockFS) {
+		t.Errorf("a specific self-lockout subnet must not hard-block; got %+v", lockFS)
+	}
+
+	// A default route (0/0) over the VTI is still a hard block.
+	def := canonicalIntent()
+	def.Ends[0].ProtectedSubnets = []string{"0.0.0.0/0"}
+	defFS := ipsec.Validate(def, c)
+	if !hasCode(defFS, "default_route_over_vti") || sevOf(defFS, "default_route_over_vti") != ipsec.SeverityBlock {
+		t.Errorf("0.0.0.0/0 over the VTI must still block with default_route_over_vti; got %+v", defFS)
+	}
+
+	// The 0.0.0.0/1 + 128.0.0.0/1 full-tunnel split is a default-route equivalent
+	// that also captures the peer — it must still hard-block, not slip through as a
+	// self-lockout warning.
+	split := canonicalIntent()
+	split.Ends[0].ProtectedSubnets = []string{"0.0.0.0/1", "128.0.0.0/1"} // covers A's peer 66.179.9.155
+	splitFS := ipsec.Validate(split, c)
+	if !ipsec.HasBlock(splitFS) || !hasCode(splitFS, "default_route_over_vti") {
+		t.Errorf("a /1+/1 full-tunnel split covering the peer must hard-block; got %+v", splitFS)
 	}
 
 	// Overlapping protected subnets.
@@ -264,4 +291,13 @@ func hasCode(fs []ipsec.Finding, code string) bool {
 		}
 	}
 	return false
+}
+
+func sevOf(fs []ipsec.Finding, code string) ipsec.Severity {
+	for _, f := range fs {
+		if f.Code == code {
+			return f.Severity
+		}
+	}
+	return ""
 }

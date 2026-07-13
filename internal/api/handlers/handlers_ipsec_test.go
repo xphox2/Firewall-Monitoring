@@ -184,6 +184,10 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	if resp.SuggestedLAN != "internal" {
 		t.Errorf("suggested_lan = %q, want internal (first up LAN iface, sorted)", resp.SuggestedLAN)
 	}
+	// The peer/public endpoint suggestion is the egress (WAN) interface's public IP.
+	if resp.SuggestedPeerIP != "203.0.113.9" {
+		t.Errorf("suggested_peer_ip = %q, want 203.0.113.9 (public IP on the egress iface)", resp.SuggestedPeerIP)
+	}
 	wantSubnets := map[string]bool{"10.20.30.0/24": true, "192.168.9.0/24": true}
 	if len(resp.LANSubnets) != 2 {
 		t.Fatalf("lan_subnets = %v, want the two LAN /24s (WAN + tunnel excluded)", resp.LANSubnets)
@@ -202,6 +206,13 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	}
 	if byName["tunnel.1"].IsLAN {
 		t.Error("tunnel interface must NOT be flagged is_lan")
+	}
+	// The public WAN address is flagged public; private LAN addresses are not.
+	if !byName["port1"].Addresses[0].Public {
+		t.Errorf("port1 address 203.0.113.9 must be flagged public")
+	}
+	if byName["internal"].Addresses[0].Public {
+		t.Errorf("internal address 10.20.30.1 (RFC1918) must NOT be flagged public")
 	}
 	// A propVirtual OpenVPN tun device must NOT be classified LAN (the poller/wizard
 	// share this: else two VPN peers get a spurious direct connection).
