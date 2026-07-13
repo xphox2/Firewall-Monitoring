@@ -1,6 +1,29 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.89] - 2026-07-12
+
+### Added — IPSec tunnel wizard (author + preview, no device writes yet)
+
+A new **IPSec Tunnels** page (Configuration nav) makes the cross-vendor
+provisioning core usable: pick two firewalls (FortiGate/OPNsense), choose a
+crypto profile (or custom from the options both ends support), set the endpoints
+and protected subnets, and **preview the exact config each side would receive** —
+with validation findings (self-lockout, subnet overlap, weak crypto, missing IKE
+identity, …) that must be resolved before saving. Tunnels are saved as drafts;
+**no device is written** (that's the follow-on apply phase).
+
+- New read-only `POST /admin/api/ipsec/preview` renders both ends + validation
+  from a posted intent so the wizard can preview before persisting; the PSK is
+  never echoed. The pre-save preview is labelled provisional (tunnel name / VTI
+  addressing / reqid are assigned on save), and the authoritative preview is
+  re-fetched after saving.
+- Hardening surfaced while building the UI: an empty IKE identity is now a
+  blocking validation error; the OPNsense renderer defaults a missing IKE
+  lifetime to 24h so `rekey_time` can never render `0` (which strongSwan reads as
+  never-rekey); and `GET /ipsec/capabilities` + the new preview endpoint are now
+  admin-only alongside the rest of the IPSec routes.
+
 ## [0.11.88] - 2026-07-12
 
 ### Added — turn any alert into an Event Rule in two clicks

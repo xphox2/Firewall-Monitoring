@@ -139,6 +139,7 @@
             case 'alerts': wireAlertsAnalyticsPage(); loadAlerts(); break;
             case 'traps': wireTrapsAnalyticsPage(); loadTraps(); break;
             case 'alerting': if (window.FwmonAlerting && window.FwmonAlerting.init) window.FwmonAlerting.init(); break;
+            case 'ipsec': if (window.FwmonIPSec && window.FwmonIPSec.init) window.FwmonIPSec.init(); break;
             case 'alert-policies': loadAlertPolicies(); break;
             case 'event-rules': if (window.FwmonEventRules && window.FwmonEventRules.init) window.FwmonEventRules.init(); break;
             case 'probes': if (window.FwmonProbes && window.FwmonProbes.init) window.FwmonProbes.init(); break;
@@ -3309,7 +3310,7 @@
         // this code, so they must NOT be mapped here (see SPA_PAGES).
         var pageMap = { 'dashboard':'dashboard', 'devices':'devices', 'connections':'connections',
             'settings':'settings', 'reports':'reports', 'syslog':'syslog', 'flows':'flows', 'noc':'noc', 'alerts':'alerts', 'traps':'traps',
-            'alerting':'alerting', 'alert-policies':'alert-policies', 'event-rules':'event-rules', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel',
+            'alerting':'alerting', 'alert-policies':'alert-policies', 'event-rules':'event-rules', 'ipsec':'ipsec', 'maintenance':'maintenance', 'audit':'audit', 'profile':'profile', 'threat-intel':'threat-intel',
             'probes':'probes', 'sites':'sites', 'irc':'irc' };
         var page = pageMap[lastSegment];
         if (page) {
@@ -4376,7 +4377,7 @@
     // loadPageData() switch.
     var SPA_PAGES = { dashboard:1, devices:1, connections:1,
         settings:1, reports:1, syslog:1, flows:1, noc:1, alerts:1, traps:1,
-        alerting:1, 'alert-policies':1, 'event-rules':1, maintenance:1, audit:1, 'threat-intel':1,
+        alerting:1, 'alert-policies':1, 'event-rules':1, ipsec:1, maintenance:1, audit:1, 'threat-intel':1,
         probes:1, sites:1, irc:1 };
 
     document.addEventListener('click', function(ev) {

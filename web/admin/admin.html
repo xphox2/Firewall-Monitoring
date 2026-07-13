@@ -228,6 +228,7 @@
     <script defer src="/static/js/admin-threatintel.js"></script>
     <script defer src="/static/js/admin-event-rules.js"></script>
     <script defer src="/static/js/admin-alerting.js"></script>
+    <script defer src="/static/js/admin-ipsec.js"></script>
     <script defer src="/static/js/admin-probes.js"></script>
     <script defer src="/static/js/admin-sites.js"></script>
     <script defer src="/static/js/admin-irc.js"></script>
@@ -794,6 +795,18 @@
         </div>
 
         <!-- Alert Policies Page -->
+        <!-- IPSec Tunnels (v0.11.89 — FwmonIPSec in admin-ipsec.js) -->
+        <div class="page" id="page-ipsec">
+            <div class="flex justify-between items-center mb-6 mt-4">
+                <div>
+                    <h2 class="text-xl font-bold text-[#e6edf3] font-outfit">IPSec Tunnels</h2>
+                    <p class="text-xs text-[#8b949e] mt-1">Design a cross-vendor tunnel, validate it, and preview the exact config each firewall would receive. No device is written — this is authoring + preview only.</p>
+                </div>
+                <button class="btn" data-action="ipsec-new" data-min-role="admin">+ New Tunnel</button>
+            </div>
+            <div id="ipsec-tunnels-wrap"><!-- rendered by admin-ipsec.js --></div>
+        </div>
+
         <!-- Alerting hub (v0.11.87 — FwmonAlerting in admin-alerting.js) -->
         <div class="page" id="page-alerting">
             <div class="flex justify-between items-center mb-6 mt-4">
@@ -2651,6 +2664,91 @@
                     <button type="button" class="btn danger sm" data-action="reset-site-alert-config" data-min-role="operator" style="margin-right:auto;">Reset to Defaults</button>
                     <button type="button" class="btn secondary" data-action="close-site-alert-modal">Cancel</button>
                     <button type="submit" class="btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- IPSec Tunnel Wizard (v0.11.89) -->
+    <div class="modal" id="ipsec-wizard-modal" role="dialog" aria-modal="true" aria-labelledby="ipsec-wizard-title">
+        <div class="modal-content" style="max-width:920px;">
+            <div class="modal-header">
+                <h2 id="ipsec-wizard-title">New IPSec Tunnel</h2>
+                <button class="modal-close" data-action="ipsec-wizard-close">&times;</button>
+            </div>
+            <form id="ipsec-wizard-form">
+                <input type="hidden" id="ipsec-edit-id">
+                <!-- 1. Endpoints -->
+                <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">1 · Endpoints</h3>
+                <div class="form-row">
+                    <div class="form-group"><label for="ipsec-dev-a">Device A</label><select id="ipsec-dev-a"><option value="">— select —</option></select></div>
+                    <div class="form-group"><label for="ipsec-dev-b">Device B</label><select id="ipsec-dev-b"><option value="">— select —</option></select></div>
+                </div>
+                <p id="ipsec-caps-note" style="color:var(--fwmon-text-mute);font-size:0.78rem;margin:0 0 14px;">Pick two FortiGate/OPNsense devices to load the crypto options both support.</p>
+
+                <!-- 2. Crypto -->
+                <div id="ipsec-crypto-section" style="display:none;border-top:1px solid var(--fwmon-border);padding-top:12px;">
+                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">2 · Crypto</h3>
+                    <div class="form-group">
+                        <label>Profile</label>
+                        <div id="ipsec-profiles" style="display:flex;gap:16px;flex-wrap:wrap;"></div>
+                    </div>
+                    <div id="ipsec-custom-crypto" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group"><label for="ipsec-ikever">IKE version</label><select id="ipsec-ikever"></select></div>
+                            <div class="form-group"><label for="ipsec-enc">Encryption</label><select id="ipsec-enc"></select></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label for="ipsec-integ">Integrity (CBC only)</label><select id="ipsec-integ"></select></div>
+                            <div class="form-group"><label for="ipsec-prf">PRF</label><select id="ipsec-prf"></select></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label for="ipsec-dh">DH group (IKE)</label><select id="ipsec-dh"></select></div>
+                            <div class="form-group"><label class="toggle-label" style="margin-top:22px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-pfs" checked><span class="toggle-slider"></span></span><span>PFS (child SA)</span></label></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Per-endpoint -->
+                <div id="ipsec-endpoints-section" style="display:none;border-top:1px solid var(--fwmon-border);padding-top:12px;margin-top:12px;">
+                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">3 · Endpoint details</h3>
+                    <div class="form-row" style="align-items:flex-start;">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);margin-bottom:6px;" id="ipsec-a-title">Endpoint A</div>
+                            <div class="form-group"><label for="ipsec-a-peer">Peer IP (its WAN)</label><input type="text" id="ipsec-a-peer" placeholder="e.g. 66.179.9.155"></div>
+                            <label class="toggle-label" style="margin-bottom:8px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-a-dyn"><span class="toggle-slider"></span></span><span>Dynamic (peer address unknown)</span></label>
+                            <div class="form-group"><label for="ipsec-a-egress">Egress interface</label><input type="text" id="ipsec-a-egress" placeholder="port1 / wan"></div>
+                            <div class="form-group"><label for="ipsec-a-lan">LAN interface</label><input type="text" id="ipsec-a-lan" placeholder="port3 / lan"></div>
+                            <div class="form-group"><label for="ipsec-a-subnets">Protected subnets (one per line)</label><textarea id="ipsec-a-subnets" rows="2" placeholder="10.10.10.0/24"></textarea></div>
+                            <div class="form-group"><label for="ipsec-a-id">IKE identity</label><input type="text" id="ipsec-a-id" placeholder="site-a"></div>
+                        </div>
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);margin-bottom:6px;" id="ipsec-b-title">Endpoint B</div>
+                            <div class="form-group"><label for="ipsec-b-peer">Peer IP (its WAN)</label><input type="text" id="ipsec-b-peer" placeholder="e.g. 192.168.5.107"></div>
+                            <label class="toggle-label" style="margin-bottom:8px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-b-dyn"><span class="toggle-slider"></span></span><span>Dynamic (peer address unknown)</span></label>
+                            <div class="form-group"><label for="ipsec-b-egress">Egress interface</label><input type="text" id="ipsec-b-egress" placeholder="port1 / wan"></div>
+                            <div class="form-group"><label for="ipsec-b-lan">LAN interface</label><input type="text" id="ipsec-b-lan" placeholder="port3 / lan"></div>
+                            <div class="form-group"><label for="ipsec-b-subnets">Protected subnets (one per line)</label><textarea id="ipsec-b-subnets" rows="2" placeholder="192.168.50.0/24"></textarea></div>
+                            <div class="form-group"><label for="ipsec-b-id">IKE identity</label><input type="text" id="ipsec-b-id" placeholder="site-b"></div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="max-width:420px;">
+                        <label for="ipsec-psk">Pre-shared key</label>
+                        <input type="text" id="ipsec-psk" placeholder="leave blank to auto-generate on save" autocomplete="off">
+                    </div>
+                </div>
+
+                <!-- 4. Preview -->
+                <div id="ipsec-preview-section" style="display:none;border-top:1px solid var(--fwmon-border);padding-top:12px;margin-top:12px;">
+                    <h3 style="font-size:0.95rem;font-weight:600;color:var(--fwmon-text);margin:0 0 8px;">4 · Validation &amp; preview</h3>
+                    <div id="ipsec-findings" style="margin-bottom:10px;"></div>
+                    <div id="ipsec-preview-panes" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn secondary" data-action="ipsec-wizard-close">Cancel</button>
+                    <button type="button" class="btn secondary" data-action="ipsec-preview" data-min-role="admin">Validate &amp; Preview</button>
+                    <button type="button" class="btn" data-action="ipsec-save" data-min-role="admin" id="ipsec-save-btn" disabled>Save draft</button>
                 </div>
             </form>
         </div>

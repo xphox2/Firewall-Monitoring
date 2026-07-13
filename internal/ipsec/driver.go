@@ -29,33 +29,33 @@ const (
 // intersection of both ends' descriptors), so there is no vendor-specific UI or
 // validation branching. Adding a vendor = adding a descriptor + templates.
 type CapabilityDescriptor struct {
-	Vendor      string
-	IKEVersions []IKEVersion
-	Modes       []Mode
+	Vendor      string       `json:"vendor"`
+	IKEVersions []IKEVersion `json:"ike_versions"`
+	Modes       []Mode       `json:"modes"`
 
-	Encryption []Encryption
-	Integrity  []Integrity
-	PRF        []PRF
-	DHGroups   []DHGroup
+	Encryption []Encryption `json:"encryption"`
+	Integrity  []Integrity  `json:"integrity"`
+	PRF        []PRF        `json:"prf"`
+	DHGroups   []DHGroup    `json:"dh_groups"`
 
-	PFS      bool
-	MSSClamp bool
+	PFS      bool `json:"pfs"`
+	MSSClamp bool `json:"mss_clamp"`
 
 	// MaxTunnelNameLen bounds the generated object name (FortiGate phase1-iface
 	// is 15 chars). 0 = unbounded.
-	MaxTunnelNameLen int
+	MaxTunnelNameLen int `json:"max_tunnel_name_len"`
 	// RequiresFirewallPolicy: the driver must emit a pass rule/policy or traffic
 	// is dropped (OPNsense Connections, Palo Alto).
-	RequiresFirewallPolicy bool
+	RequiresFirewallPolicy bool `json:"requires_firewall_policy"`
 	// AutoObjects the driver injects that the operator would otherwise forget
 	// (e.g. "blackhole_route", "firewall_policy") — surfaced in preview.
-	AutoObjects []string
+	AutoObjects []string `json:"auto_objects"`
 
-	SelectorModel   SelectorModel
-	IDTypes         []IDType
-	PushTransport   PushTransport
-	RendererName    string
-	TemplateVersion string
+	SelectorModel   SelectorModel `json:"selector_model"`
+	IDTypes         []IDType      `json:"id_types"`
+	PushTransport   PushTransport `json:"push_transport"`
+	RendererName    string        `json:"renderer_name"`
+	TemplateVersion string        `json:"template_version"`
 }
 
 func (d CapabilityDescriptor) supportsEnc(e Encryption) bool { return containsEnc(d.Encryption, e) }

@@ -82,6 +82,12 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 					fmt.Sprintf("%s %s %q contains characters outside [A-Za-z0-9._:-]", endLabel(intent, i), tok.label, tok.val))
 			}
 		}
+		// Explicit IKE identity is mandatory (the wizard designs out IP-default IDs
+		// to avoid the NAT-ID failure class); an empty ID renders `set localid ""`.
+		if intent.Ends[i].LocalID.Value == "" {
+			add(SeverityBlock, "id_missing",
+				fmt.Sprintf("%s must have an explicit IKE identity value", endLabel(intent, i)))
+		}
 		if intent.ESP.PFS != DHGroupNone && !c.supportsDH(intent.ESP.PFS) {
 			add(SeverityBlock, "pfs_unsupported",
 				fmt.Sprintf("%s does not support PFS DH group %s", endLabel(intent, i), intent.ESP.PFS))

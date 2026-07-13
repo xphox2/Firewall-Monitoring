@@ -266,21 +266,74 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
 		return
 	}
+	previews, rerr := renderBothEnds(intent)
+	if rerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
+		return
+	}
+	findings := ipsec.Validate(intent, caps)
+	c.JSON(http.StatusOK, response.Success(gin.H{"ends": previews, "validation": findings}))
+}
+
+// renderBothEnds renders each end's redacted preview. It returns ONLY endPreview
+// (PreviewText + step count) — never the raw Artifact/Steps, which carry the
+// plaintext PSK. Shared by the stored-tunnel and stateless preview handlers.
+func renderBothEnds(intent *ipsec.TunnelIntent) ([]endPreview, error) {
 	previews := make([]endPreview, 0, 2)
 	for i := range intent.Ends {
 		d, _ := ipsec.Driver(intent.Ends[i].Vendor)
-		art, rerr := d.Render(ipsec.ViewFor(intent, i))
-		if rerr != nil {
-			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%s): %v", 'A'+i, intent.Ends[i].Vendor, rerr)))
-			return
+		art, err := d.Render(ipsec.ViewFor(intent, i))
+		if err != nil {
+			return nil, fmt.Errorf("end %c (%s): %v", 'A'+i, intent.Ends[i].Vendor, err)
 		}
 		previews = append(previews, endPreview{
 			End: i, Vendor: intent.Ends[i].Vendor, Preview: art.PreviewText,
 			AutoObjects: art.AutoObjects, Steps: len(art.Steps),
 		})
 	}
-	findings := ipsec.Validate(intent, caps)
-	c.JSON(http.StatusOK, response.Success(gin.H{"ends": previews, "validation": findings}))
+	return previews, nil
+}
+
+// ipsecPreviewPlaceholderPSK is a synthetic valid PSK used ONLY to render/validate
+// a pre-save preview when the operator hasn't set one yet (it will be generated
+// server-side on save). It is never rendered (PreviewText redacts) nor echoed.
+const ipsecPreviewPlaceholderPSK = "preview_placeholder_psk_generated_on_save_00"
+
+// PreviewIPSecIntent renders both ends' config + validation from a POSTed intent,
+// WITHOUT persisting — the wizard's "preview before you save" step. PSK is never
+// echoed; a blank/masked PSK is treated as "will be auto-generated on save". For
+// a create preview (id=0) the derived names/VTI/reqid are PROVISIONAL — the UI
+// labels them so, and re-fetches the authoritative /:id/preview after save.
+func (h *Handler) PreviewIPSecIntent(c *gin.Context) {
+	var intent ipsec.TunnelIntent
+	if err := c.ShouldBindJSON(&intent); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+	caps, bad := resolveCaps(&intent)
+	if bad != "" {
+		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+		return
+	}
+	pskAutogen := intent.PSK == "" || intent.PSK == ipsecPSKMask
+	if pskAutogen {
+		intent.PSK = ipsecPreviewPlaceholderPSK // validate/render only; never returned
+	}
+	// Honor a client-supplied id for edit-mode previews (read-only endpoint —
+	// trusting the id is harmless) so an edit preview is exact; id=0 → provisional.
+	hydrateDerived(&intent)
+	findings := ipsec.Validate(&intent, caps)
+	previews, rerr := renderBothEnds(&intent)
+	if rerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"ends":        previews,
+		"validation":  findings,
+		"psk_autogen": pskAutogen,
+		"provisional": intent.ID == 0, // names/VTI/reqid assigned on save
+	}))
 }
 
 // IPSecCapabilities returns the option set BOTH selected vendors support (the
