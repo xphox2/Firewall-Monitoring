@@ -32,6 +32,8 @@ func TestIPSecRoutesAdminOnly(t *testing.T) {
 	}
 	adminOnly := strings.Join(strings.Fields(body[start:start+end]), "")
 	for _, needle := range []string{
+		`"/admin/api/ipsec/capabilities":true`,
+		`"/admin/api/ipsec/preview":true`,
 		`"/admin/api/ipsec/tunnels":true`,
 		`"/admin/api/ipsec/tunnels/:id":true`,
 		`"/admin/api/ipsec/tunnels/:id/preview":true`,

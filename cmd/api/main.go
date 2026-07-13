@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.88"
+const ServerVersion = "0.11.89"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -730,6 +730,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
 			// IPSec provisioning carries PSK credential material — admin-only.
+			"/admin/api/ipsec/capabilities":        true,
+			"/admin/api/ipsec/preview":             true,
 			"/admin/api/ipsec/tunnels":             true,
 			"/admin/api/ipsec/tunnels/:id":         true,
 			"/admin/api/ipsec/tunnels/:id/preview": true,
@@ -826,6 +828,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
 
+		admin.GET("/ipsec", func(c *gin.Context) {
+			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
+		})
+
 		admin.GET("/alert-policies", func(c *gin.Context) {
 			middleware.RenderHTML(c, http.StatusOK, "admin.html", nil)
 		})
@@ -880,6 +886,7 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// no live device writes). Tunnels carry PSK credential material, so the
 		// mutations are admin-only (in adminOnlyRoutes).
 		admin.GET("/api/ipsec/capabilities", handler.IPSecCapabilities)
+		admin.POST("/api/ipsec/preview", handler.PreviewIPSecIntent)
 		admin.GET("/api/ipsec/tunnels", handler.ListIPSecTunnels)
 		admin.POST("/api/ipsec/tunnels", handler.CreateIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id", handler.GetIPSecTunnel)

@@ -66,6 +66,13 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 	if childLife <= 0 {
 		childLife = 3600
 	}
+	// strongSwan reads rekey_time=0 as "never rekey the IKE SA" — a security
+	// footgun. Default a missing tunnel lifetime to 24h (mirrors childLife above)
+	// so a preview/apply never silently disables IKE rekeying.
+	ikeLife := in.IKELifetimeSecs
+	if ikeLife <= 0 {
+		ikeLife = 86400
+	}
 	localAddr := local.PeerIP
 	if local.Dynamic {
 		localAddr = "%any"
@@ -86,7 +93,7 @@ func (d driver) Render(v ipsec.RenderView) (ipsec.Artifact, error) {
 			"local_addrs":  localAddr,
 			"remote_addrs": remoteAddr,
 			"dpd_delay":    itoa(in.DPD.DelaySecs),
-			"rekey_time":   itoa(in.IKELifetimeSecs),
+			"rekey_time":   itoa(ikeLife),
 			"unique":       "replace",
 		},
 	})

@@ -15,13 +15,13 @@ const (
 // Profile is a full crypto preset (IKE + ESP proposals + lifetimes). Research
 // sources: RFC 8221/8247, NSA CNSA/RFC 9206, NIST SP 800-57, BSI TR-02102-3.
 type Profile struct {
-	Name              ProfileName
-	Label             string
-	IKEVersion        IKEVersion
-	IKE               IKEProposal
-	ESP               ESPProposal
-	IKELifetimeSecs   int
-	ChildLifetimeSecs int
+	Name              ProfileName `json:"name"`
+	Label             string      `json:"label"`
+	IKEVersion        IKEVersion  `json:"ike_version"`
+	IKE               IKEProposal `json:"ike"`
+	ESP               ESPProposal `json:"esp"`
+	IKELifetimeSecs   int         `json:"ike_lifetime_secs"`
+	ChildLifetimeSecs int         `json:"child_lifetime_secs"`
 }
 
 // Modern is the default: AES-256-GCM / SHA-384 PRF / DH-20 (ECP-384), PFS on.

@@ -28,17 +28,19 @@ type tunnelResponse struct {
 	Validation []ipsec.Finding     `json:"validation,omitempty"`
 }
 
-// resolveCaps returns both ends' capability descriptors, or a client error if a
-// vendor has no provisioning driver.
-func resolveCaps(intent *ipsec.TunnelIntent) (caps [2]ipsec.CapabilityDescriptor, badVendor string) {
+// resolveCaps returns both ends' capability descriptors, or a non-nil error if a
+// vendor has no provisioning driver. It returns an ERROR (not a bad-vendor
+// string) so an EMPTY vendor — which is a valid "no driver" case — can't collide
+// with the "" all-good sentinel and slip a nil-driver intent through to Render.
+func resolveCaps(intent *ipsec.TunnelIntent) (caps [2]ipsec.CapabilityDescriptor, err error) {
 	for i := range intent.Ends {
-		c, err := ipsec.Capabilities(intent.Ends[i].Vendor)
-		if err != nil {
-			return caps, intent.Ends[i].Vendor
+		c, e := ipsec.Capabilities(intent.Ends[i].Vendor)
+		if e != nil {
+			return caps, fmt.Errorf("end %c: %v", 'A'+i, e)
 		}
 		caps[i] = c
 	}
-	return caps, ""
+	return caps, nil
 }
 
 // hydrateDerived fills the ID-derived, wizard-owned fields (name, VTI addressing,
@@ -73,8 +75,8 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 		return
 	}
 	intent.ID = 0 // the server assigns the ID; never trust a client-supplied one
-	if _, bad := resolveCaps(&intent); bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	if _, err := resolveCaps(&intent); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
 		return
 	}
 	// Generate a PSK when absent OR when the client round-tripped the mask.
@@ -157,7 +159,7 @@ func (h *Handler) GetIPSecTunnel(c *gin.Context) {
 		return
 	}
 	var findings []ipsec.Finding
-	if caps, bad := resolveCaps(intent); bad == "" {
+	if caps, err := resolveCaps(intent); err == nil {
 		findings = ipsec.Validate(intent, caps)
 	}
 	intent.PSK = ipsecPSKMask
@@ -184,8 +186,8 @@ func (h *Handler) UpdateIPSecTunnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
-	if _, bad := resolveCaps(&intent); bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	if _, err := resolveCaps(&intent); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
 		return
 	}
 	// A masked/empty PSK means "unchanged": fold the real stored (decrypted) key
@@ -261,26 +263,82 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 		httputil.InternalError(c, "Failed to decode tunnel", err)
 		return
 	}
-	caps, bad := resolveCaps(intent)
-	if bad != "" {
-		c.JSON(http.StatusBadRequest, response.Error("No IPSec provisioning driver for vendor: "+bad))
+	caps, cerr := resolveCaps(intent)
+	if cerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
 		return
 	}
+	previews, rerr := renderBothEnds(intent)
+	if rerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
+		return
+	}
+	findings := ipsec.Validate(intent, caps)
+	c.JSON(http.StatusOK, response.Success(gin.H{"ends": previews, "validation": findings}))
+}
+
+// renderBothEnds renders each end's redacted preview. It returns ONLY endPreview
+// (PreviewText + step count) — never the raw Artifact/Steps, which carry the
+// plaintext PSK. Shared by the stored-tunnel and stateless preview handlers.
+func renderBothEnds(intent *ipsec.TunnelIntent) ([]endPreview, error) {
 	previews := make([]endPreview, 0, 2)
 	for i := range intent.Ends {
-		d, _ := ipsec.Driver(intent.Ends[i].Vendor)
-		art, rerr := d.Render(ipsec.ViewFor(intent, i))
-		if rerr != nil {
-			c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("end %c (%s): %v", 'A'+i, intent.Ends[i].Vendor, rerr)))
-			return
+		d, ok := ipsec.Driver(intent.Ends[i].Vendor)
+		if !ok {
+			return nil, fmt.Errorf("end %c (%q): no IPSec provisioning driver", 'A'+i, intent.Ends[i].Vendor)
+		}
+		art, err := d.Render(ipsec.ViewFor(intent, i))
+		if err != nil {
+			return nil, fmt.Errorf("end %c (%s): %v", 'A'+i, intent.Ends[i].Vendor, err)
 		}
 		previews = append(previews, endPreview{
 			End: i, Vendor: intent.Ends[i].Vendor, Preview: art.PreviewText,
 			AutoObjects: art.AutoObjects, Steps: len(art.Steps),
 		})
 	}
-	findings := ipsec.Validate(intent, caps)
-	c.JSON(http.StatusOK, response.Success(gin.H{"ends": previews, "validation": findings}))
+	return previews, nil
+}
+
+// ipsecPreviewPlaceholderPSK is a synthetic valid PSK used ONLY to render/validate
+// a pre-save preview when the operator hasn't set one yet (it will be generated
+// server-side on save). It is never rendered (PreviewText redacts) nor echoed.
+const ipsecPreviewPlaceholderPSK = "preview_placeholder_psk_generated_on_save_00"
+
+// PreviewIPSecIntent renders both ends' config + validation from a POSTed intent,
+// WITHOUT persisting — the wizard's "preview before you save" step. PSK is never
+// echoed; a blank/masked PSK is treated as "will be auto-generated on save". For
+// a create preview (id=0) the derived names/VTI/reqid are PROVISIONAL — the UI
+// labels them so, and re-fetches the authoritative /:id/preview after save.
+func (h *Handler) PreviewIPSecIntent(c *gin.Context) {
+	var intent ipsec.TunnelIntent
+	if err := c.ShouldBindJSON(&intent); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+	caps, cerr := resolveCaps(&intent)
+	if cerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
+		return
+	}
+	pskAutogen := intent.PSK == "" || intent.PSK == ipsecPSKMask
+	if pskAutogen {
+		intent.PSK = ipsecPreviewPlaceholderPSK // validate/render only; never returned
+	}
+	// Honor a client-supplied id for edit-mode previews (read-only endpoint —
+	// trusting the id is harmless) so an edit preview is exact; id=0 → provisional.
+	hydrateDerived(&intent)
+	findings := ipsec.Validate(&intent, caps)
+	previews, rerr := renderBothEnds(&intent)
+	if rerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(rerr.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"ends":        previews,
+		"validation":  findings,
+		"psk_autogen": pskAutogen,
+		"provisional": intent.ID == 0, // names/VTI/reqid assigned on save
+	}))
 }
 
 // IPSecCapabilities returns the option set BOTH selected vendors support (the
