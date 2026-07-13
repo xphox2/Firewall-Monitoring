@@ -1,6 +1,32 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.91] - 2026-07-13
+
+### Changed — IPSec wizard: pick each end's public IP; self-lockout is now a warning
+
+Following up on the data-driven wizard, the endpoint IP is now handled from the
+firewall's real addressing instead of a single guessed value:
+
+- **"This end's public IP (WAN endpoint)"** is now a dropdown of the device's
+  actually-detected interface addresses, each labelled **WAN** (public) or **LAN**
+  (private), plus the management IP and a **Custom…** escape (for a public IP
+  behind NAT/PPPoE that no interface reports). It defaults to the public address on
+  the selected egress interface, and **updates when you change the egress
+  interface** — so it reflects the interface you picked, not just the polling IP.
+- The hints endpoint now returns a `public` flag per address and a
+  `suggested_peer_ip` (the egress interface's public address, falling back to the
+  management IP).
+- **Self-lockout is now an acknowledgeable warning, not a hard block.** Routing a
+  protected subnet that contains the peer's own WAN IP is safe when a host route to
+  the peer via the WAN is pinned (real firewalls generally have one; the apply path
+  will pin a `/32`), so the wizard now surfaces it as a warning and lets you
+  proceed. A default route (`0.0.0.0/0`) over the tunnel, overlapping subnets, and
+  an invalid/missing peer IP still hard-block.
+
+No device writes — authoring/preview only. Pinning the peer host route in the
+generated config (the real remedy for the lockout case) lands with the apply path.
+
 ## [0.11.90] - 2026-07-12
 
 ### Changed — IPSec wizard populates endpoints from each firewall's real data

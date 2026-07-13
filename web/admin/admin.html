@@ -2715,7 +2715,7 @@
                     <div class="form-row" style="align-items:flex-start;">
                         <div style="flex:1;min-width:0;">
                             <div style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);margin-bottom:6px;" id="ipsec-a-title">Endpoint A</div>
-                            <div class="form-group"><label for="ipsec-a-peer">Peer IP (its WAN)</label><input type="text" id="ipsec-a-peer" placeholder="e.g. 66.179.9.155"></div>
+                            <div class="form-group"><label for="ipsec-a-peer">This end's public IP (WAN endpoint)</label><select id="ipsec-a-peer"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-a-peer-custom" placeholder="e.g. 66.179.9.155" style="display:none;margin-top:6px;"></div>
                             <label class="toggle-label" style="margin-bottom:8px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-a-dyn"><span class="toggle-slider"></span></span><span>Dynamic (peer address unknown)</span></label>
                             <div class="form-group"><label for="ipsec-a-egress">Egress interface</label><select id="ipsec-a-egress"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-a-egress-custom" placeholder="interface name" style="display:none;margin-top:6px;"></div>
                             <div class="form-group"><label for="ipsec-a-lan">LAN interface</label><select id="ipsec-a-lan"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-a-lan-custom" placeholder="interface name" style="display:none;margin-top:6px;"></div>
@@ -2724,7 +2724,7 @@
                         </div>
                         <div style="flex:1;min-width:0;">
                             <div style="font-size:0.8rem;font-weight:600;color:var(--fwmon-text-dim);margin-bottom:6px;" id="ipsec-b-title">Endpoint B</div>
-                            <div class="form-group"><label for="ipsec-b-peer">Peer IP (its WAN)</label><input type="text" id="ipsec-b-peer" placeholder="e.g. 192.168.5.107"></div>
+                            <div class="form-group"><label for="ipsec-b-peer">This end's public IP (WAN endpoint)</label><select id="ipsec-b-peer"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-b-peer-custom" placeholder="e.g. 192.168.5.107" style="display:none;margin-top:6px;"></div>
                             <label class="toggle-label" style="margin-bottom:8px;"><span class="toggle-switch"><input type="checkbox" id="ipsec-b-dyn"><span class="toggle-slider"></span></span><span>Dynamic (peer address unknown)</span></label>
                             <div class="form-group"><label for="ipsec-b-egress">Egress interface</label><select id="ipsec-b-egress"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-b-egress-custom" placeholder="interface name" style="display:none;margin-top:6px;"></div>
                             <div class="form-group"><label for="ipsec-b-lan">LAN interface</label><select id="ipsec-b-lan"><option value="__custom__">Custom…</option></select><input type="text" id="ipsec-b-lan-custom" placeholder="interface name" style="display:none;margin-top:6px;"></div>

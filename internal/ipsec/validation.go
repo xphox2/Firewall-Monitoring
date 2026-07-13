@@ -225,8 +225,14 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				continue
 			}
 			if peerIP != nil && n.Contains(peerIP) {
-				fs = append(fs, Finding{SeverityBlock, "self_lockout",
-					fmt.Sprintf("routing %s over the tunnel would blackhole the path to the peer's own endpoint %s (self-lockout)", n.String(), peer.PeerIP)})
+				// A specific routed subnet that contains the peer's own endpoint is
+				// safe ONLY if a host route to the peer via the WAN is pinned (real
+				// firewalls usually have one via the WAN default route; the apply
+				// path will pin a /32). Surface it as an acknowledgeable warning
+				// rather than a hard block so the operator can proceed. (A 0/0
+				// default route over the VTI stays a block, above.)
+				fs = append(fs, Finding{SeverityWarn, "self_lockout",
+					fmt.Sprintf("routing %s over the tunnel includes the peer's own endpoint %s — safe only if a host route to the peer via the WAN is pinned; narrow the subnet if unsure", n.String(), peer.PeerIP)})
 			}
 		}
 	}

@@ -378,8 +378,9 @@ func (h *Handler) IPSecCapabilities(c *gin.Context) {
 // them. Read-only; returns interface names/addresses only (no secrets). Admin-only.
 
 type ipsecHintAddr struct {
-	IP   string `json:"ip"`
-	CIDR string `json:"cidr,omitempty"` // network CIDR, absent for /30-/32 or unparseable
+	IP     string `json:"ip"`
+	CIDR   string `json:"cidr,omitempty"` // network CIDR, absent for /30-/32 or unparseable
+	Public bool   `json:"public"`         // globally-routable (a WAN/public endpoint candidate)
 }
 
 type ipsecHintIface struct {
@@ -395,6 +396,7 @@ type ipsecHintsResponse struct {
 	Interfaces      []ipsecHintIface `json:"interfaces"`
 	SuggestedEgress string           `json:"suggested_egress"`
 	SuggestedLAN    string           `json:"suggested_lan"`
+	SuggestedPeerIP string           `json:"suggested_peer_ip"` // best-guess public endpoint (egress iface's public addr)
 	LANSubnets      []string         `json:"lan_subnets"`
 }
 
@@ -464,7 +466,7 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 			Addresses: []ipsecHintAddr{},
 		}
 		for _, a := range addrsByIdx[iface.Index] {
-			ha := ipsecHintAddr{IP: a.IPAddress}
+			ha := ipsecHintAddr{IP: a.IPAddress, Public: netclass.IsPublicIP(a.IPAddress)}
 			if cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask); ok {
 				ha.CIDR = cidr
 				// A candidate "protected subnet": a LAN-segment network that is not
@@ -517,6 +519,42 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 				break
 			}
 		}
+	}
+
+	// Suggested peer IP = this end's own public endpoint. Prefer a public address on
+	// the egress interface (the WAN uplink), then any public interface address, then
+	// the polled mgmt IP as a last resort (e.g. the device is behind NAT and no
+	// interface bears the public IP — the operator can override via Custom…).
+	for _, hi := range resp.Interfaces {
+		if hi.Name != resp.SuggestedEgress {
+			continue
+		}
+		for _, a := range hi.Addresses {
+			if a.Public {
+				resp.SuggestedPeerIP = a.IP
+				break
+			}
+		}
+		if resp.SuggestedPeerIP == "" && len(hi.Addresses) > 0 {
+			resp.SuggestedPeerIP = hi.Addresses[0].IP
+		}
+		break
+	}
+	if resp.SuggestedPeerIP == "" {
+		for _, hi := range resp.Interfaces {
+			for _, a := range hi.Addresses {
+				if a.Public {
+					resp.SuggestedPeerIP = a.IP
+					break
+				}
+			}
+			if resp.SuggestedPeerIP != "" {
+				break
+			}
+		}
+	}
+	if resp.SuggestedPeerIP == "" {
+		resp.SuggestedPeerIP = device.IPAddress
 	}
 
 	c.JSON(http.StatusOK, response.Success(resp))

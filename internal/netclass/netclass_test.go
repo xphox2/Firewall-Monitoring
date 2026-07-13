@@ -16,6 +16,27 @@ func TestIsLANType(t *testing.T) {
 	}
 }
 
+func TestIsPublicIP(t *testing.T) {
+	for _, ip := range []string{"66.179.9.155", "203.0.113.9", "8.8.8.8", "1.1.1.1"} {
+		if !IsPublicIP(ip) {
+			t.Errorf("IsPublicIP(%q) = false, want true (globally routable)", ip)
+		}
+	}
+	for _, ip := range []string{
+		"10.10.10.1", "192.168.1.1", "172.16.4.9", // RFC1918
+		"100.64.0.5",    // CGNAT
+		"127.0.0.1",     // loopback
+		"169.254.1.1",   // link-local
+		"0.0.0.0",       // unspecified
+		"224.0.0.1",     // multicast
+		"not-an-ip", "", // unparseable
+	} {
+		if IsPublicIP(ip) {
+			t.Errorf("IsPublicIP(%q) = true, want false (not globally routable)", ip)
+		}
+	}
+}
+
 func TestIsVPNInterfaceName(t *testing.T) {
 	for _, n := range []string{"tun0", "TAP1", "wg0", "vti1", "ovpns1", "ovpnc2", "gre1", "gif0", "ipsec0", "l2tp0", " wg1 "} {
 		if !IsVPNInterfaceName(n) {

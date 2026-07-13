@@ -12,6 +12,7 @@
     var lastPreviewOK = false;
     var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
     var lastHintSubnets = { a: '', b: '' }; // last auto-filled subnets, so a re-pick can refresh them
+    var endpointHints = { a: null, b: null }; // cached hints per endpoint (peer-IP options + egress→peer sync)
 
     function $(id) { return document.getElementById(id); }
 
@@ -73,6 +74,7 @@
         $('ipsec-edit-id').value = id || '';
         caps = null; lastPreviewOK = false;
         lastHintSubnets.a = ''; lastHintSubnets.b = '';
+        endpointHints.a = null; endpointHints.b = null;
         hintGen.a++; hintGen.b++; // invalidate any in-flight hint responses from a prior open
         $('ipsec-crypto-section').style.display = 'none';
         $('ipsec-endpoints-section').style.display = 'none';
@@ -80,9 +82,10 @@
         $('ipsec-save-btn').disabled = true;
         $('ipsec-findings').innerHTML = '';
         $('ipsec-preview-panes').innerHTML = '';
-        ['a-peer', 'a-subnets', 'a-id', 'b-peer', 'b-subnets', 'b-id', 'psk',
-            'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
-        ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
+        ['a-subnets', 'a-id', 'b-subnets', 'b-id', 'psk',
+            'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom',
+            'a-peer-custom', 'b-peer-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
+        ['a-egress', 'a-lan', 'b-egress', 'b-lan', 'a-peer', 'b-peer'].forEach(function (f) {
             $('ipsec-' + f).innerHTML = '<option value="__custom__">Custom…</option>';
             $('ipsec-' + f).value = '__custom__';
             $('ipsec-' + f + '-custom').style.display = '';
@@ -109,9 +112,8 @@
     function onDevicesChosen() {
         var a = deviceById($('ipsec-dev-a').value), b = deviceById($('ipsec-dev-b').value);
         if (!a || !b) { return Promise.resolve(); }
-        // prefill peer IPs + identity from device data
-        if (!$('ipsec-a-peer').value) $('ipsec-a-peer').value = a.ip_address || '';
-        if (!$('ipsec-b-peer').value) $('ipsec-b-peer').value = b.ip_address || '';
+        // Peer/public IP + interfaces + subnets are all populated from each device's
+        // real polled data by loadHints (below).
         var capsP = AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
             caps = (r && r.data) || null;
             if (!caps) return;
@@ -176,14 +178,60 @@
         toggleCustom(pfx, kind);
     }
 
+    // Build the peer/public-IP dropdown options from the device's detected
+    // interface addresses (each labelled WAN=public / LAN=private), plus the polled
+    // management IP if no interface reports it.
+    function addrOptions(h) {
+        var opts = [], seen = {};
+        (h.interfaces || []).forEach(function (i) {
+            (i.addresses || []).forEach(function (a) {
+                if (!a.ip || seen[a.ip]) { return; }
+                seen[a.ip] = true;
+                opts.push({ ip: a.ip, label: a.ip + ' — ' + i.name + ' (' + (a.public ? 'WAN' : 'LAN') + ')' });
+            });
+        });
+        if (h.wan_ip && !seen[h.wan_ip]) {
+            opts.push({ ip: h.wan_ip, label: h.wan_ip + ' — management IP' });
+        }
+        return opts;
+    }
+
+    function populatePeerSelect(pfx, h) {
+        var sel = $('ipsec-' + pfx + '-peer');
+        var opts = addrOptions(h);
+        var html = opts.length ? '<option value="">— select —</option>' : '';
+        html += opts.map(function (o) { return '<option value="' + esc(o.ip) + '">' + esc(o.label) + '</option>'; }).join('');
+        html += '<option value="__custom__">Custom…</option>';
+        sel.innerHTML = html;
+        // Default to the detected public endpoint; if it isn't a listed address
+        // (e.g. a NAT public IP), preload it into the Custom… field.
+        setIfaceValue(pfx, 'peer', h.suggested_peer_ip || '');
+    }
+
+    // When the egress (WAN) interface changes, re-default the peer/public IP to that
+    // interface's address (preferring a public one) — unless the operator has typed
+    // a manual Custom… value, which we never clobber.
+    function syncPeerToEgress(pfx) {
+        var h = endpointHints[pfx];
+        if (!h) { return; }
+        if ($('ipsec-' + pfx + '-peer').value === '__custom__') { return; }
+        var egress = ifaceVal(pfx, 'egress');
+        var iface = (h.interfaces || []).find(function (i) { return i.name === egress; });
+        if (!iface || !(iface.addresses || []).length) { return; }
+        var pub = iface.addresses.find(function (a) { return a.public; });
+        setIfaceValue(pfx, 'peer', (pub || iface.addresses[0]).ip);
+    }
+
     function loadHints(pfx, deviceId) {
         var gen = ++hintGen[pfx]; // stamp this request; a newer device pick bumps it
         return AC.apiFetch(API + '/devices/' + deviceId + '/ipsec-hints').then(function (r) {
             if (gen !== hintGen[pfx]) { return; } // superseded by a later pick — ignore
             var h = (r && r.data) || {};
+            endpointHints[pfx] = h;
             var ifaces = h.interfaces || [];
             populateIfaceSelect(pfx, 'egress', ifaces, h.suggested_egress);
             populateIfaceSelect(pfx, 'lan', ifaces, h.suggested_lan);
+            populatePeerSelect(pfx, h);
             // Fill subnets when the box is empty OR still holds the prior auto-fill
             // (so re-picking a device refreshes them) — but never clobber an operator
             // edit.
@@ -199,8 +247,14 @@
         }).catch(function (e) {
             if (gen !== hintGen[pfx]) { return; }
             fwmonLog.warn('[IPSec] interface hints failed for device ' + deviceId + ':', e);
+            // Degrade: keep the management IP as a peer option so the operator isn't
+            // forced to hand-type it, and leave interfaces editable via Custom….
+            var d = deviceById(deviceId);
+            var fh = { interfaces: [], wan_ip: (d && d.ip_address) || '', suggested_peer_ip: (d && d.ip_address) || '' };
+            endpointHints[pfx] = fh;
             populateIfaceSelect(pfx, 'egress', [], '');
             populateIfaceSelect(pfx, 'lan', [], '');
+            populatePeerSelect(pfx, fh);
         });
     }
 
@@ -261,7 +315,7 @@
         function end(dev, pfx, life) {
             return {
                 device_id: dev.id, vendor: vendorOf(dev),
-                peer_ip: $('ipsec-' + pfx + '-peer').value.trim(),
+                peer_ip: ifaceVal(pfx, 'peer'),
                 dynamic: $('ipsec-' + pfx + '-dyn').checked,
                 egress_iface: ifaceVal(pfx, 'egress'),
                 lan_iface: ifaceVal(pfx, 'lan'),
@@ -353,7 +407,7 @@
             // doesn't clobber the saved values.
             onDevicesChosen().then(function () {
                 restoreCrypto(t);
-                $('ipsec-a-peer').value = t.ends[0].peer_ip || ''; $('ipsec-b-peer').value = t.ends[1].peer_ip || '';
+                setIfaceValue('a', 'peer', t.ends[0].peer_ip); setIfaceValue('b', 'peer', t.ends[1].peer_ip);
                 $('ipsec-a-dyn').checked = !!t.ends[0].dynamic; $('ipsec-b-dyn').checked = !!t.ends[1].dynamic;
                 setIfaceValue('a', 'egress', t.ends[0].egress_iface); setIfaceValue('b', 'egress', t.ends[1].egress_iface);
                 setIfaceValue('a', 'lan', t.ends[0].lan_iface); setIfaceValue('b', 'lan', t.ends[1].lan_iface);
@@ -386,9 +440,14 @@
         });
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
-        // Reveal the free-text field only when "Custom…" is chosen for an interface.
-        ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
+        // Reveal the free-text field only when "Custom…" is chosen (egress/LAN/peer).
+        ['a-egress', 'a-lan', 'b-egress', 'b-lan', 'a-peer', 'b-peer'].forEach(function (f) {
             $('ipsec-' + f).addEventListener('change', function () { toggleCustom(f.charAt(0), f.slice(2)); });
+        });
+        // Changing the egress (WAN) interface re-defaults the peer/public IP to that
+        // interface's address.
+        ['a-egress', 'b-egress'].forEach(function (f) {
+            $('ipsec-' + f).addEventListener('change', function () { syncPeerToEgress(f.charAt(0)); });
         });
         // Any edit after a clean preview invalidates it (see invalidate()).
         $('ipsec-wizard-form').addEventListener('input', invalidate);
