@@ -1916,6 +1916,12 @@
                     '<button class="btn sm" data-action="show-ack-modal" data-min-role="operator" data-id="' + a.id + '">Acknowledge</button>' +
                     ' <button class="btn secondary sm" data-action="snooze-alert" data-min-role="operator" data-id="' + a.id + '">Snooze</button>';
             }
+            // Build an Event Rule from this alert (admin-only). The endpoint decides
+            // whether the alert type is rule-suppressible; on click we route to the
+            // Event Rules editor pre-filled, or explain why it can't be ruled.
+            statusHtml +=
+                ' <button class="btn secondary sm" data-action="suppress-with-rule" data-min-role="admin" data-id="' + a.id + '">Suppress with a rule</button>' +
+                ' <button class="btn secondary sm" data-action="customize-with-rule" data-min-role="admin" data-id="' + a.id + '">Customize with a rule</button>';
 
             var isSyslogAlert = a.metric_name === 'syslog';
             var parsedMsg = null;
@@ -2233,6 +2239,31 @@
         }).catch(function(e) {
             console.error('Failed to unsnooze alert:', e);
             AC.showError('Failed to unsnooze alert');
+        });
+    }
+
+    // Build an Event Rule from an alert (v0.11.88): ask the server for a suggested
+    // suppress/customize rule for this alert's class, then hand off to the Event
+    // Rules editor pre-filled — or explain why the type can't be ruled. The editor
+    // is the review/save step. mode: 'suppress' | 'customize'.
+    function createRuleFromAlert(id, mode) {
+        apiFetch(API_BASE + '/alerts/' + id + '/suggested-rule').then(function(resp) {
+            var d = resp && resp.data ? resp.data : null;
+            if (!d) { AC.showError('Could not build a rule from this alert'); return; }
+            if (!d.supported) {
+                AC.showError(d.reason || 'Event rules do not apply to this alert type.');
+                return;
+            }
+            var stash = { action: mode === 'customize' ? 'alert' : 'suppress' };
+            if (mode === 'customize' && d.existing_rule_id) {
+                stash.editId = d.existing_rule_id; // open the firing rule itself, not a near-duplicate
+            } else {
+                stash.rule = d.rule;
+            }
+            try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(stash)); } catch (e) { /* ignore */ }
+            window.location.href = '/admin/event-rules';
+        }).catch(function(e) {
+            AC.showError('Failed to build rule: ' + e.message);
         });
     }
 
@@ -4131,6 +4162,9 @@
         // Snooze handlers (v0.10.218, bundle G2).
         'snooze-alert':    function(el) { showSnoozePrompt(parseInt(el.dataset.id)); },
         'unsnooze-alert':  function(el) { unsnoozeAlert(parseInt(el.dataset.id)); },
+        // Create Event Rule from this alert (v0.11.88).
+        'suppress-with-rule':  function(el) { createRuleFromAlert(parseInt(el.dataset.id), 'suppress'); },
+        'customize-with-rule': function(el) { createRuleFromAlert(parseInt(el.dataset.id), 'customize'); },
         // Silence-a-source (v0.11.46).
         'silence-source':      function(el) { silenceSource(parseInt(el.dataset.id), el.dataset.src || ''); },
         'silence-all-sources': function(el) { silenceAllSources(parseInt(el.dataset.id)); },

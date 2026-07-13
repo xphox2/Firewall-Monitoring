@@ -1,6 +1,31 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.88] - 2026-07-12
+
+### Added — turn any alert into an Event Rule in two clicks
+
+Admins can now build their rule set from the alerts the system actually
+produces, instead of authoring every suppress/customize rule from scratch. Open
+an alert's detail and use **"Suppress with a rule"** or **"Customize with a
+rule"**: the Event Rules editor opens pre-filled with a correct matcher for that
+alert's class (right source, scoped to the device/interface it fired on), ready
+to review and save.
+
+- A new read-only `GET /admin/api/alerts/:id/suggested-rule` (admin-only) derives
+  the matcher server-side from the same fields the engine matches on — so the
+  suggested rule actually fires, and syslog suggestions key on the real extracted
+  fields (logid/subtype) rather than a guess.
+- The suggestion is given a priority that **out-ranks the built-in seed rules**,
+  so a "Suppress" rule takes effect immediately instead of being shadowed.
+- Type-aware: alert types the rule engine can't match (sFlow security/detections,
+  device-offline, SSH host-key, probe-data-lag, interface-errors, config-change)
+  get a clear explanation and a pointer to the right tool (Silence Source or a
+  maintenance window) instead of a rule that would silently do nothing. Interface/
+  VPN alerts running on the legacy path are flagged the same way.
+- "Customize" on a syslog alert opens the *existing* firing rule for editing
+  rather than creating a near-duplicate.
+
 ## [0.11.87] - 2026-07-12
 
 ### Added — a single "Alerting" page for the whole threshold hierarchy
