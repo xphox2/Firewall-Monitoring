@@ -37,7 +37,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.89"
+const ServerVersion = "0.11.90"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -735,6 +735,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/ipsec/tunnels":             true,
 			"/admin/api/ipsec/tunnels/:id":         true,
 			"/admin/api/ipsec/tunnels/:id/preview": true,
+			// Wizard interface hints expose per-device addressing to the admin-only
+			// IPSec wizard; keep behind the same admin gate.
+			"/admin/api/devices/:id/ipsec-hints": true,
 			// LC-17: IRC server/channel config carries credential material
 			// (server/NickServ/SASL passwords, channel keys) and the test
 			// endpoint dials an arbitrary request-supplied host with request-
@@ -893,6 +896,9 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.PUT("/api/ipsec/tunnels/:id", handler.UpdateIPSecTunnel)
 		admin.DELETE("/api/ipsec/tunnels/:id", handler.DeleteIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id/preview", handler.PreviewIPSecTunnel)
+		// Read-only endpoint hints: the picked device's real interfaces + addresses
+		// so the wizard populates egress/LAN/subnets from live data (admin-only).
+		admin.GET("/api/devices/:id/ipsec-hints", handler.GetIPSecEndpointHints)
 
 		admin.GET("/api/sites", handler.GetSites)
 		admin.POST("/api/sites", handler.CreateSite)

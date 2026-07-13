@@ -22,6 +22,9 @@ func TestIPSecRoutesAdminOnly(t *testing.T) {
 	if !strings.Contains(body, `admin.POST("/api/ipsec/tunnels"`) {
 		t.Fatalf("IPSec tunnel routes not registered under the admin group")
 	}
+	if !strings.Contains(body, `admin.GET("/api/devices/:id/ipsec-hints"`) {
+		t.Fatalf("IPSec wizard hints route not registered under the admin group")
+	}
 	start := strings.Index(body, "adminOnlyRoutes — role=admin")
 	if start < 0 {
 		t.Fatalf("adminOnlyRoutes map marker not found in main.go")
@@ -37,6 +40,7 @@ func TestIPSecRoutesAdminOnly(t *testing.T) {
 		`"/admin/api/ipsec/tunnels":true`,
 		`"/admin/api/ipsec/tunnels/:id":true`,
 		`"/admin/api/ipsec/tunnels/:id/preview":true`,
+		`"/admin/api/devices/:id/ipsec-hints":true`,
 	} {
 		if !strings.Contains(adminOnly, needle) {
 			t.Errorf("adminOnlyRoutes missing %q — IPSec provisioning carries PSK material and must stay admin-only", needle)

@@ -1,6 +1,33 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.90] - 2026-07-12
+
+### Changed — IPSec wizard populates endpoints from each firewall's real data
+
+The IPSec tunnel wizard no longer asks the operator to hand-type egress/LAN
+interface names or protected subnets. The moment two firewalls are picked, each
+endpoint's **Egress interface** and **LAN interface** become dropdowns of that
+device's **actual polled interfaces** (name — type — up/down), pre-selected to a
+sensible default, and the **Protected subnets** field is pre-filled with the LAN
+subnets derived from the device's real addressing. **Peer IP** continues to fill
+from the device's WAN/management address. A **Custom…** option remains on every
+interface dropdown, so an interface that hasn't been polled yet can still be
+entered — a device with no interface data simply falls back to the editable
+fields.
+
+- New read-only, admin-only endpoint `GET /admin/api/devices/:id/ipsec-hints`
+  returns the device's latest interfaces + addresses, each interface's LAN/segment
+  classification, the derived LAN CIDRs, and egress/LAN suggestions.
+- The LAN-interface classification, FortiLink/link-local fabric detection, and
+  address→CIDR derivation are now a single shared package (`internal/netclass`)
+  used by both the poller's physical-connection auto-detect and this endpoint, so
+  the heuristic can't drift. Extracting it fixed a latent poller bug where
+  software-switch/zone (`propVirtual`) interfaces were silently never matched.
+
+Data reflects each firewall's most recent poll; a truly on-demand "poll now"
+refresh is a planned follow-on. No device writes — authoring/preview only.
+
 ## [0.11.89] - 2026-07-12
 
 ### Added — IPSec tunnel wizard (author + preview, no device writes yet)

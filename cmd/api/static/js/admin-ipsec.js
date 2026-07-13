@@ -72,7 +72,13 @@
         $('ipsec-save-btn').disabled = true;
         $('ipsec-findings').innerHTML = '';
         $('ipsec-preview-panes').innerHTML = '';
-        ['a-peer', 'a-egress', 'a-lan', 'a-subnets', 'a-id', 'b-peer', 'b-egress', 'b-lan', 'b-subnets', 'b-id', 'psk'].forEach(function (f) { $('ipsec-' + f).value = ''; });
+        ['a-peer', 'a-subnets', 'a-id', 'b-peer', 'b-subnets', 'b-id', 'psk',
+            'a-egress-custom', 'a-lan-custom', 'b-egress-custom', 'b-lan-custom'].forEach(function (f) { $('ipsec-' + f).value = ''; });
+        ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
+            $('ipsec-' + f).innerHTML = '<option value="__custom__">Custom…</option>';
+            $('ipsec-' + f).value = '__custom__';
+            $('ipsec-' + f + '-custom').style.display = '';
+        });
         $('ipsec-a-dyn').checked = false; $('ipsec-b-dyn').checked = false;
 
         AC.apiFetch(API + '/devices').then(function (r) {
@@ -98,7 +104,7 @@
         // prefill peer IPs + identity from device data
         if (!$('ipsec-a-peer').value) $('ipsec-a-peer').value = a.ip_address || '';
         if (!$('ipsec-b-peer').value) $('ipsec-b-peer').value = b.ip_address || '';
-        return AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
+        var capsP = AC.apiFetch(API + '/ipsec/capabilities?a=' + encodeURIComponent(vendorOf(a)) + '&b=' + encodeURIComponent(vendorOf(b))).then(function (r) {
             caps = (r && r.data) || null;
             if (!caps) return;
             $('ipsec-caps-note').textContent = 'Both ends support: ' + (caps.allowed.encryption || []).join(', ') + '.';
@@ -109,6 +115,73 @@
             $('ipsec-a-title').textContent = 'Endpoint A — ' + a.name + ' (' + vendorOf(a) + ')';
             $('ipsec-b-title').textContent = 'Endpoint B — ' + b.name + ' (' + vendorOf(b) + ')';
         }).catch(function (e) { AC.showError('No shared crypto for this pair: ' + e.message); });
+        // In parallel, populate egress/LAN interfaces + subnets from each device's
+        // real polled interface data (data-driven, not free-text). Non-fatal.
+        var hintsP = Promise.all([loadHints('a', a.id), loadHints('b', b.id)]);
+        return Promise.all([capsP, hintsP]).then(function () { });
+    }
+
+    // ---- data-driven endpoint hints -------------------------------------
+    // Fill the egress/LAN <select>s with the device's actual interfaces and
+    // pre-fill protected subnets from its LAN addressing. A "Custom…" option is
+    // always kept so an operator can still type an interface not yet polled.
+    function ifaceLabel(i) {
+        return i.name + ' — ' + (i.type_name || '?') + (i.status ? ' (' + i.status + ')' : '');
+    }
+
+    function populateIfaceSelect(pfx, kind, ifaces, suggested) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        var opts = ifaces.length ? '<option value="">— select —</option>' : '';
+        opts += ifaces.map(function (i) {
+            return '<option value="' + esc(i.name) + '">' + esc(ifaceLabel(i)) + '</option>';
+        }).join('');
+        opts += '<option value="__custom__">Custom…</option>';
+        sel.innerHTML = opts;
+        if (suggested) { sel.value = suggested; }
+        else if (!ifaces.length) { sel.value = '__custom__'; }
+        toggleCustom(pfx, kind);
+    }
+
+    function toggleCustom(pfx, kind) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        var custom = $('ipsec-' + pfx + '-' + kind + '-custom');
+        if (custom) { custom.style.display = (sel.value === '__custom__') ? '' : 'none'; }
+    }
+
+    // The effective interface name: the custom text when "Custom…" is selected,
+    // otherwise the chosen option's value.
+    function ifaceVal(pfx, kind) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        if (sel.value === '__custom__') { return ($('ipsec-' + pfx + '-' + kind + '-custom').value || '').trim(); }
+        return (sel.value || '').trim();
+    }
+
+    // Select a stored interface name when editing: pick the option if the device
+    // still reports it, else fall back to Custom… with the name preserved.
+    function setIfaceValue(pfx, kind, name) {
+        var sel = $('ipsec-' + pfx + '-' + kind);
+        name = name || '';
+        var has = Array.prototype.some.call(sel.options, function (o) { return o.value === name; });
+        if (name && has) { sel.value = name; }
+        else if (name) { sel.value = '__custom__'; $('ipsec-' + pfx + '-' + kind + '-custom').value = name; }
+        else { sel.value = ''; }
+        toggleCustom(pfx, kind);
+    }
+
+    function loadHints(pfx, deviceId) {
+        return AC.apiFetch(API + '/devices/' + deviceId + '/ipsec-hints').then(function (r) {
+            var h = (r && r.data) || {};
+            var ifaces = h.interfaces || [];
+            populateIfaceSelect(pfx, 'egress', ifaces, h.suggested_egress);
+            populateIfaceSelect(pfx, 'lan', ifaces, h.suggested_lan);
+            if (!$('ipsec-' + pfx + '-subnets').value.trim() && (h.lan_subnets || []).length) {
+                $('ipsec-' + pfx + '-subnets').value = h.lan_subnets.join('\n');
+            }
+        }).catch(function (e) {
+            fwmonLog.warn('[IPSec] interface hints failed for device ' + deviceId + ':', e);
+            populateIfaceSelect(pfx, 'egress', [], '');
+            populateIfaceSelect(pfx, 'lan', [], '');
+        });
     }
 
     function renderProfiles() {
@@ -170,8 +243,8 @@
                 device_id: dev.id, vendor: vendorOf(dev),
                 peer_ip: $('ipsec-' + pfx + '-peer').value.trim(),
                 dynamic: $('ipsec-' + pfx + '-dyn').checked,
-                egress_iface: $('ipsec-' + pfx + '-egress').value.trim(),
-                lan_iface: $('ipsec-' + pfx + '-lan').value.trim(),
+                egress_iface: ifaceVal(pfx, 'egress'),
+                lan_iface: ifaceVal(pfx, 'lan'),
                 local_id: { type: 'keyid', value: $('ipsec-' + pfx + '-id').value.trim() },
                 protected_subnets: subnets('ipsec-' + pfx + '-subnets'),
                 child_lifetime_secs: life, mss_clamp: 1350
@@ -262,8 +335,8 @@
                 restoreCrypto(t);
                 $('ipsec-a-peer').value = t.ends[0].peer_ip || ''; $('ipsec-b-peer').value = t.ends[1].peer_ip || '';
                 $('ipsec-a-dyn').checked = !!t.ends[0].dynamic; $('ipsec-b-dyn').checked = !!t.ends[1].dynamic;
-                $('ipsec-a-egress').value = t.ends[0].egress_iface || ''; $('ipsec-b-egress').value = t.ends[1].egress_iface || '';
-                $('ipsec-a-lan').value = t.ends[0].lan_iface || ''; $('ipsec-b-lan').value = t.ends[1].lan_iface || '';
+                setIfaceValue('a', 'egress', t.ends[0].egress_iface); setIfaceValue('b', 'egress', t.ends[1].egress_iface);
+                setIfaceValue('a', 'lan', t.ends[0].lan_iface); setIfaceValue('b', 'lan', t.ends[1].lan_iface);
                 $('ipsec-a-subnets').value = (t.ends[0].protected_subnets || []).join('\n');
                 $('ipsec-b-subnets').value = (t.ends[1].protected_subnets || []).join('\n');
                 $('ipsec-a-id').value = (t.ends[0].local_id || {}).value || ''; $('ipsec-b-id').value = (t.ends[1].local_id || {}).value || '';
@@ -293,6 +366,10 @@
         });
         $('ipsec-dev-a').addEventListener('change', onDevicesChosen);
         $('ipsec-dev-b').addEventListener('change', onDevicesChosen);
+        // Reveal the free-text field only when "Custom…" is chosen for an interface.
+        ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
+            $('ipsec-' + f).addEventListener('change', function () { toggleCustom(f.charAt(0), f.slice(2)); });
+        });
         // Any edit after a clean preview invalidates it — Save must not persist an
         // intent that was never previewed (the block-findings gate would be a lie).
         var invalidate = function () { lastPreviewOK = false; $('ipsec-save-btn').disabled = true; };

@@ -23,6 +23,7 @@ import (
 	"firewall-mon/internal/logging"
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
+	"firewall-mon/internal/netclass"
 	"firewall-mon/internal/notifier"
 	"firewall-mon/internal/report"
 	"firewall-mon/internal/secrets"
@@ -1521,7 +1522,7 @@ func (p *Poller) detectVPNConnections(devices []models.Device) int {
 		var tunAddrs []tunAddr
 		for _, addr := range ifAddrs {
 			tif, ok := tunnelIface[fmt.Sprintf("%d:%d", addr.DeviceID, addr.IfIndex)]
-			if !ok || isFabricInterface("", addr.IPAddress) {
+			if !ok || netclass.IsFabricInterface("", addr.IPAddress) {
 				continue
 			}
 			ip := net.ParseIP(addr.IPAddress)
@@ -1957,24 +1958,9 @@ func (p *Poller) detectOverlayConnections(devices []models.Device) int {
 	return created
 }
 
-// isFabricInterface reports whether an interface is a device-to-fabric link that
-// must never be treated as an inter-device LAN adjacency. FortiLink interfaces
-// (firewall <-> FortiSwitch) are conventionally named "fortilink" and ship with
-// default IPs (169.254.x, 10.255.x) that are identical on every FortiGate, so two
-// same-site units would otherwise be falsely cross-connected through them. Link-
-// local addresses (169.254.0.0/16, RFC 3927) are likewise never a routed
-// inter-device LAN segment.
-func isFabricInterface(ifName, ipAddr string) bool {
-	if strings.EqualFold(strings.TrimSpace(ifName), "fortilink") {
-		return true
-	}
-	if ip := net.ParseIP(ipAddr); ip != nil {
-		if v4 := ip.To4(); v4 != nil && v4[0] == 169 && v4[1] == 254 {
-			return true
-		}
-	}
-	return false
-}
+// Fabric-link (FortiLink/link-local) classification and LAN-segment interface
+// typing + subnet derivation live in internal/netclass so the poller's physical
+// auto-detect and the IPSec wizard's hints endpoint share one source of truth.
 
 // detectPhysicalConnections finds LAN-segment interfaces on same-site devices
 // that share an IP subnet and creates auto-detected connections.
@@ -2026,17 +2012,9 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 		typeName string
 		status   string
 	}
-	physicalTypes := map[string]bool{
-		"ethernet":    true,
-		"lag":         true,
-		"bridge":      true, // FortiGate hardware/software switch (e.g. "internal")
-		"l2vlan":      true, // VLAN sub-interface holding the LAN gateway IP
-		"propVirtual": true, // software switch / zone
-	}
 	ifLookup := make(map[string]*physIface) // "deviceID:ifIndex" → entry
 	for _, iface := range ifaces {
-		tn := strings.ToLower(iface.TypeName)
-		if !physicalTypes[tn] {
+		if !netclass.IsLANType(iface.TypeName) {
 			continue
 		}
 		key := fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index)
@@ -2044,7 +2022,7 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 			deviceID: iface.DeviceID,
 			ifIndex:  iface.Index,
 			name:     iface.Name,
-			typeName: tn,
+			typeName: strings.ToLower(iface.TypeName),
 			status:   iface.Status,
 		}
 	}
@@ -2062,28 +2040,15 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 		if !ok {
 			continue // not a physical interface
 		}
-		if isFabricInterface(pif.name, addr.IPAddress) {
+		if netclass.IsFabricInterface(pif.name, addr.IPAddress) {
 			continue // FortiLink/link-local fabric link, not an inter-device LAN
 		}
-		ip := net.ParseIP(addr.IPAddress)
-		mask := net.ParseIP(addr.NetMask)
-		if ip == nil || mask == nil {
+		// Derive the network CIDR; ok=false skips unparseable addresses and
+		// /30–/32 point-to-point links (not shared LAN segments).
+		subnetKey, ok := netclass.SubnetCIDR(addr.IPAddress, addr.NetMask)
+		if !ok {
 			continue
 		}
-		ip4 := ip.To4()
-		mask4 := mask.To4()
-		if ip4 == nil || mask4 == nil {
-			continue
-		}
-
-		// Skip /30, /31, /32 (point-to-point WAN links, not LAN segments)
-		ones, bits := net.IPMask(mask4).Size()
-		if bits == 32 && ones >= 30 {
-			continue
-		}
-
-		network := ip4.Mask(net.IPMask(mask4))
-		subnetKey := fmt.Sprintf("%s/%d", network.String(), ones)
 
 		subnetGroups[subnetKey] = append(subnetGroups[subnetKey], subnetEntry{
 			iface:   pif,
