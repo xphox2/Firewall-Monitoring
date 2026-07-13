@@ -150,10 +150,10 @@ func TestIPSec_EndpointHints(t *testing.T) {
 		t.Fatalf("create ifaces: %v", err)
 	}
 	addrs := []models.InterfaceAddress{
-		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 1, IPAddress: "203.0.113.9", NetMask: "255.255.255.252"}, // WAN /30 → no subnet
-		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 3, IPAddress: "10.20.30.1", NetMask: "255.255.255.0"},    // LAN → 10.20.30.0/24
-		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 4, IPAddress: "192.168.9.1", NetMask: "255.255.255.0"},   // propVirtual LAN → 192.168.9.0/24
-		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 9, IPAddress: "169.254.0.2", NetMask: "255.255.255.0"},   // tunnel/fabric → excluded
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 1, IPAddress: "203.0.113.9", NetMask: "255.255.255.0"}, // WAN (bears device IP) → transit, excluded from lan_subnets
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 3, IPAddress: "10.20.30.1", NetMask: "255.255.255.0"},  // LAN → 10.20.30.0/24
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 4, IPAddress: "192.168.9.1", NetMask: "255.255.255.0"}, // propVirtual LAN → 192.168.9.0/24
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 9, IPAddress: "169.254.0.2", NetMask: "255.255.255.0"}, // tunnel/fabric → excluded
 	}
 	if err := db.Gorm().Create(&addrs).Error; err != nil {
 		t.Fatalf("create addrs: %v", err)
@@ -184,7 +184,7 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	}
 	wantSubnets := map[string]bool{"10.20.30.0/24": true, "192.168.9.0/24": true}
 	if len(resp.LANSubnets) != 2 {
-		t.Fatalf("lan_subnets = %v, want the two LAN /24s (WAN /30 + tunnel excluded)", resp.LANSubnets)
+		t.Fatalf("lan_subnets = %v, want the two LAN /24s (WAN + tunnel excluded)", resp.LANSubnets)
 	}
 	for _, s := range resp.LANSubnets {
 		if !wantSubnets[s] {
@@ -201,8 +201,55 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	if byName["tunnel.1"].IsLAN {
 		t.Error("tunnel interface must NOT be flagged is_lan")
 	}
-	if len(byName["port1"].Addresses) != 1 || byName["port1"].Addresses[0].CIDR != "" {
-		t.Errorf("port1 /30 WAN address should carry no CIDR: %+v", byName["port1"].Addresses)
+	// port1 bears the device's WAN IP: its /24 IS a valid network (CIDR present on
+	// the address) but must be excluded from lan_subnets as transit, not protected.
+	if got := byName["port1"].Addresses[0].CIDR; got != "203.0.113.0/24" {
+		t.Errorf("port1 address CIDR = %q, want 203.0.113.0/24", got)
+	}
+	for _, s := range resp.LANSubnets {
+		if s == "203.0.113.0/24" {
+			t.Error("WAN/egress transit subnet 203.0.113.0/24 must NOT be a protected lan_subnet")
+		}
+	}
+
+	// Egress-exclusion for suggested_lan: when the WAN interface sorts BEFORE the
+	// LAN one and is itself a LAN-type (e.g. OPNsense igb0=WAN, igb1=LAN, both
+	// ethernet), the LAN suggestion must skip the WAN interface.
+	devO := &models.Device{Name: "opn", IPAddress: "198.51.100.7", Vendor: "opnsense"}
+	if err := db.Gorm().Create(devO).Error; err != nil {
+		t.Fatalf("create opn device: %v", err)
+	}
+	oif := []models.InterfaceStats{
+		{DeviceID: devO.ID, Timestamp: ts, Name: "igb0", Index: 1, TypeName: "ethernet", Status: "up"}, // WAN
+		{DeviceID: devO.ID, Timestamp: ts, Name: "igb1", Index: 2, TypeName: "ethernet", Status: "up"}, // LAN
+	}
+	if err := db.Gorm().Create(&oif).Error; err != nil {
+		t.Fatalf("create opn ifaces: %v", err)
+	}
+	oaddr := []models.InterfaceAddress{
+		{DeviceID: devO.ID, Timestamp: ts, IfIndex: 1, IPAddress: "198.51.100.7", NetMask: "255.255.255.0"}, // WAN
+		{DeviceID: devO.ID, Timestamp: ts, IfIndex: 2, IPAddress: "192.168.20.1", NetMask: "255.255.255.0"}, // LAN
+	}
+	if err := db.Gorm().Create(&oaddr).Error; err != nil {
+		t.Fatalf("create opn addrs: %v", err)
+	}
+	cO, recO := jsonReq(http.MethodGet, "/x", "")
+	cO.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(devO.ID))}}
+	h.GetIPSecEndpointHints(cO)
+	var wrapO struct {
+		Data ipsecHintsResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recO.Body.Bytes(), &wrapO); err != nil {
+		t.Fatal(err)
+	}
+	if wrapO.Data.SuggestedEgress != "igb0" {
+		t.Errorf("opn suggested_egress = %q, want igb0", wrapO.Data.SuggestedEgress)
+	}
+	if wrapO.Data.SuggestedLAN != "igb1" {
+		t.Errorf("opn suggested_lan = %q, want igb1 (must skip the WAN interface)", wrapO.Data.SuggestedLAN)
+	}
+	if len(wrapO.Data.LANSubnets) != 1 || wrapO.Data.LANSubnets[0] != "192.168.20.0/24" {
+		t.Errorf("opn lan_subnets = %v, want [192.168.20.0/24] (WAN transit excluded)", wrapO.Data.LANSubnets)
 	}
 
 	// Never-polled device → empty hints, HTTP 200 (wizard falls back to editable).

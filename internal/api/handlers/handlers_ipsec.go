@@ -439,6 +439,17 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 		Interfaces: []ipsecHintIface{},
 		LANSubnets: []string{},
 	}
+	// The interface bearing the device's polled (WAN/mgmt) IP is the egress; its
+	// own network is transit, never a "protected" LAN — exclude it from lan_subnets
+	// (otherwise a WAN /29 would be suggested as a protected subnet).
+	wanIdx := -1
+	for _, a := range addrs {
+		if a.IPAddress == device.IPAddress {
+			wanIdx = a.IfIndex
+			break
+		}
+	}
+
 	sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
 	seenSubnet := map[string]bool{}
 	for _, iface := range ifaces {
@@ -454,9 +465,9 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 			ha := ipsecHintAddr{IP: a.IPAddress}
 			if cidr, ok := netclass.SubnetCIDR(a.IPAddress, a.NetMask); ok {
 				ha.CIDR = cidr
-				// A LAN-segment subnet is a candidate "protected subnet" — but not
-				// a FortiLink/link-local fabric address.
-				if isLAN && !netclass.IsFabricInterface(iface.Name, a.IPAddress) && !seenSubnet[cidr] {
+				// A candidate "protected subnet": a LAN-segment network that is not
+				// the WAN/egress transit network and not a FortiLink/link-local link.
+				if isLAN && iface.Index != wanIdx && !netclass.IsFabricInterface(iface.Name, a.IPAddress) && !seenSubnet[cidr] {
 					seenSubnet[cidr] = true
 					resp.LANSubnets = append(resp.LANSubnets, cidr)
 				}
@@ -487,17 +498,18 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 			}
 		}
 	}
-	// LAN = first up LAN-type interface carrying an address (fall back to any such
-	// interface if none report "up", since sFlow-only rows have no admin status).
+	// LAN = first up LAN-type interface carrying an address, excluding the egress
+	// (WAN) interface itself (fall back to any such interface if none report "up",
+	// since sFlow-only rows have no admin status).
 	for _, hi := range resp.Interfaces {
-		if hi.IsLAN && strings.EqualFold(hi.Status, "up") && len(hi.Addresses) > 0 {
+		if hi.Name != resp.SuggestedEgress && hi.IsLAN && strings.EqualFold(hi.Status, "up") && len(hi.Addresses) > 0 {
 			resp.SuggestedLAN = hi.Name
 			break
 		}
 	}
 	if resp.SuggestedLAN == "" {
 		for _, hi := range resp.Interfaces {
-			if hi.IsLAN && len(hi.Addresses) > 0 {
+			if hi.Name != resp.SuggestedEgress && hi.IsLAN && len(hi.Addresses) > 0 {
 				resp.SuggestedLAN = hi.Name
 				break
 			}
