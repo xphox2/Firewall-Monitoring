@@ -10,8 +10,14 @@
     var caps = null;       // { a, b, allowed, profiles } for the selected pair
     var devices = [];      // eligible (fortigate/opnsense) devices
     var lastPreviewOK = false;
+    var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
+    var lastHintSubnets = { a: '', b: '' }; // last auto-filled subnets, so a re-pick can refresh them
 
     function $(id) { return document.getElementById(id); }
+
+    // Any change to the intent invalidates a prior clean preview — Save must not
+    // persist an intent that was never previewed (the block-findings gate would lie).
+    function invalidate() { lastPreviewOK = false; $('ipsec-save-btn').disabled = true; }
     function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
     function vendorOf(d) { return (d.vendor || 'fortigate'); }
 
@@ -66,6 +72,8 @@
         $('ipsec-wizard-title').textContent = id ? 'Edit IPSec Tunnel' : 'New IPSec Tunnel';
         $('ipsec-edit-id').value = id || '';
         caps = null; lastPreviewOK = false;
+        lastHintSubnets.a = ''; lastHintSubnets.b = '';
+        hintGen.a++; hintGen.b++; // invalidate any in-flight hint responses from a prior open
         $('ipsec-crypto-section').style.display = 'none';
         $('ipsec-endpoints-section').style.display = 'none';
         $('ipsec-preview-section').style.display = 'none';
@@ -169,15 +177,27 @@
     }
 
     function loadHints(pfx, deviceId) {
+        var gen = ++hintGen[pfx]; // stamp this request; a newer device pick bumps it
         return AC.apiFetch(API + '/devices/' + deviceId + '/ipsec-hints').then(function (r) {
+            if (gen !== hintGen[pfx]) { return; } // superseded by a later pick — ignore
             var h = (r && r.data) || {};
             var ifaces = h.interfaces || [];
             populateIfaceSelect(pfx, 'egress', ifaces, h.suggested_egress);
             populateIfaceSelect(pfx, 'lan', ifaces, h.suggested_lan);
-            if (!$('ipsec-' + pfx + '-subnets').value.trim() && (h.lan_subnets || []).length) {
-                $('ipsec-' + pfx + '-subnets').value = h.lan_subnets.join('\n');
+            // Fill subnets when the box is empty OR still holds the prior auto-fill
+            // (so re-picking a device refreshes them) — but never clobber an operator
+            // edit.
+            var box = $('ipsec-' + pfx + '-subnets');
+            var suggested = (h.lan_subnets || []).join('\n');
+            if (!box.value.trim() || box.value === lastHintSubnets[pfx]) {
+                box.value = suggested;
             }
+            lastHintSubnets[pfx] = suggested;
+            // Hints mutate fields programmatically (no change event fires), so a hint
+            // landing after a clean preview must re-gate Save.
+            invalidate();
         }).catch(function (e) {
+            if (gen !== hintGen[pfx]) { return; }
             fwmonLog.warn('[IPSec] interface hints failed for device ' + deviceId + ':', e);
             populateIfaceSelect(pfx, 'egress', [], '');
             populateIfaceSelect(pfx, 'lan', [], '');
@@ -370,9 +390,7 @@
         ['a-egress', 'a-lan', 'b-egress', 'b-lan'].forEach(function (f) {
             $('ipsec-' + f).addEventListener('change', function () { toggleCustom(f.charAt(0), f.slice(2)); });
         });
-        // Any edit after a clean preview invalidates it — Save must not persist an
-        // intent that was never previewed (the block-findings gate would be a lie).
-        var invalidate = function () { lastPreviewOK = false; $('ipsec-save-btn').disabled = true; };
+        // Any edit after a clean preview invalidates it (see invalidate()).
         $('ipsec-wizard-form').addEventListener('input', invalidate);
         $('ipsec-wizard-form').addEventListener('change', invalidate);
     }

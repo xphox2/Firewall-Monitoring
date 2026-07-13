@@ -88,6 +88,17 @@ func Validate(intent *TunnelIntent, caps [2]CapabilityDescriptor) []Finding {
 			add(SeverityBlock, "id_missing",
 				fmt.Sprintf("%s must have an explicit IKE identity value", endLabel(intent, i)))
 		}
+		// Egress + LAN interfaces are required: route-based rendering binds the VTI
+		// to the egress and writes the LAN firewall policy, so an empty value would
+		// emit `set interface ""` / a rule with no source interface downstream.
+		if intent.Ends[i].EgressIface == "" {
+			add(SeverityBlock, "egress_missing",
+				fmt.Sprintf("%s must specify an egress (WAN) interface", endLabel(intent, i)))
+		}
+		if intent.Ends[i].LANIface == "" {
+			add(SeverityBlock, "lan_missing",
+				fmt.Sprintf("%s must specify a LAN interface", endLabel(intent, i)))
+		}
 		if intent.ESP.PFS != DHGroupNone && !c.supportsDH(intent.ESP.PFS) {
 			add(SeverityBlock, "pfs_unsupported",
 				fmt.Sprintf("%s does not support PFS DH group %s", endLabel(intent, i), intent.ESP.PFS))

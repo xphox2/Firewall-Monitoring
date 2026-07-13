@@ -16,6 +16,20 @@ func TestIsLANType(t *testing.T) {
 	}
 }
 
+func TestIsVPNInterfaceName(t *testing.T) {
+	for _, n := range []string{"tun0", "TAP1", "wg0", "vti1", "ovpns1", "ovpnc2", "gre1", "gif0", "ipsec0", "l2tp0", " wg1 "} {
+		if !IsVPNInterfaceName(n) {
+			t.Errorf("IsVPNInterfaceName(%q) = false, want true (VPN/tunnel carrier)", n)
+		}
+	}
+	// Real LAN / physical names must NOT be flagged.
+	for _, n := range []string{"internal", "port1", "lan", "igb1", "vlan50", "eth0", "sw0", "wan", "bridge0", ""} {
+		if IsVPNInterfaceName(n) {
+			t.Errorf("IsVPNInterfaceName(%q) = true, want false (physical/LAN name)", n)
+		}
+	}
+}
+
 func TestIsFabricInterface(t *testing.T) {
 	cases := []struct {
 		name, ip string

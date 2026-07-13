@@ -453,7 +453,9 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 	sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].Name < ifaces[j].Name })
 	seenSubnet := map[string]bool{}
 	for _, iface := range ifaces {
-		isLAN := netclass.IsLANType(iface.TypeName)
+		// A VPN/tunnel carrier (tun0, wg0, …) is never a LAN segment even when its
+		// ifType reports propVirtual — exclude it from LAN classification + subnets.
+		isLAN := netclass.IsLANType(iface.TypeName) && !netclass.IsVPNInterfaceName(iface.Name)
 		hi := ipsecHintIface{
 			Name:      iface.Name,
 			TypeName:  iface.TypeName,
@@ -492,15 +494,16 @@ func (h *Handler) GetIPSecEndpointHints(c *gin.Context) {
 	}
 	if resp.SuggestedEgress == "" {
 		for _, hi := range resp.Interfaces {
-			if !hi.IsLAN && strings.EqualFold(hi.Status, "up") {
+			// A physical WAN uplink: up, not a LAN segment, and not a VPN/tunnel
+			// carrier (don't suggest ssl.root/tun0 as the tunnel egress).
+			if !hi.IsLAN && strings.EqualFold(hi.Status, "up") && !netclass.IsVPNInterfaceName(hi.Name) {
 				resp.SuggestedEgress = hi.Name
 				break
 			}
 		}
 	}
 	// LAN = first up LAN-type interface carrying an address, excluding the egress
-	// (WAN) interface itself (fall back to any such interface if none report "up",
-	// since sFlow-only rows have no admin status).
+	// (WAN) interface itself (fall back to any such interface if none report "up").
 	for _, hi := range resp.Interfaces {
 		if hi.Name != resp.SuggestedEgress && hi.IsLAN && strings.EqualFold(hi.Status, "up") && len(hi.Addresses) > 0 {
 			resp.SuggestedLAN = hi.Name

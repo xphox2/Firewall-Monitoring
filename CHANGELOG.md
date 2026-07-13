@@ -24,6 +24,13 @@ fields.
   used by both the poller's physical-connection auto-detect and this endpoint, so
   the heuristic can't drift. Extracting it fixed a latent poller bug where
   software-switch/zone (`propVirtual`) interfaces were silently never matched.
+  VPN/overlay carriers (`tun*`/`wg*`/`vti*`/`ovpn*`/`gre*`/…) — which can report
+  the same `propVirtual` ifType — are excluded by name from LAN classification, so
+  two VPN peers are never mistaken for a direct physical connection.
+- The WAN/egress transit network is excluded from the protected-subnet
+  suggestions, and the LAN suggestion skips the WAN interface.
+- Egress and LAN interfaces are now required at validation (an empty value would
+  render an invalid interface binding downstream).
 
 Data reflects each firewall's most recent poll; a truly on-demand "poll now"
 refresh is a planned follow-on. No device writes — authoring/preview only.

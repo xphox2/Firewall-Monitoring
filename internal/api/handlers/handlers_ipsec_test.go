@@ -141,10 +141,11 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	}
 	ts := time.Now()
 	ifaces := []models.InterfaceStats{
-		{DeviceID: dev.ID, Timestamp: ts, Name: "port1", Index: 1, TypeName: "ethernet", Status: "up"},  // WAN (bears device IP)
-		{DeviceID: dev.ID, Timestamp: ts, Name: "internal", Index: 3, TypeName: "bridge", Status: "up"}, // LAN
-		{DeviceID: dev.ID, Timestamp: ts, Name: "tunnel.1", Index: 9, TypeName: "tunnel", Status: "up"}, // NOT a LAN segment
-		{DeviceID: dev.ID, Timestamp: ts, Name: "sw0", Index: 4, TypeName: "propVirtual", Status: "up"}, // LAN (dead-entry fix)
+		{DeviceID: dev.ID, Timestamp: ts, Name: "port1", Index: 1, TypeName: "ethernet", Status: "up"},   // WAN (bears device IP)
+		{DeviceID: dev.ID, Timestamp: ts, Name: "internal", Index: 3, TypeName: "bridge", Status: "up"},  // LAN
+		{DeviceID: dev.ID, Timestamp: ts, Name: "tunnel.1", Index: 9, TypeName: "tunnel", Status: "up"},  // NOT a LAN segment
+		{DeviceID: dev.ID, Timestamp: ts, Name: "sw0", Index: 4, TypeName: "propVirtual", Status: "up"},  // LAN (dead-entry fix)
+		{DeviceID: dev.ID, Timestamp: ts, Name: "tun0", Index: 7, TypeName: "propVirtual", Status: "up"}, // OpenVPN tun (propVirtual) — NOT a LAN
 	}
 	if err := db.Gorm().Create(&ifaces).Error; err != nil {
 		t.Fatalf("create ifaces: %v", err)
@@ -154,6 +155,7 @@ func TestIPSec_EndpointHints(t *testing.T) {
 		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 3, IPAddress: "10.20.30.1", NetMask: "255.255.255.0"},  // LAN → 10.20.30.0/24
 		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 4, IPAddress: "192.168.9.1", NetMask: "255.255.255.0"}, // propVirtual LAN → 192.168.9.0/24
 		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 9, IPAddress: "169.254.0.2", NetMask: "255.255.255.0"}, // tunnel/fabric → excluded
+		{DeviceID: dev.ID, Timestamp: ts, IfIndex: 7, IPAddress: "10.99.99.1", NetMask: "255.255.255.0"},  // tun0 VPN /24 → must NOT be a protected LAN
 	}
 	if err := db.Gorm().Create(&addrs).Error; err != nil {
 		t.Fatalf("create addrs: %v", err)
@@ -200,6 +202,16 @@ func TestIPSec_EndpointHints(t *testing.T) {
 	}
 	if byName["tunnel.1"].IsLAN {
 		t.Error("tunnel interface must NOT be flagged is_lan")
+	}
+	// A propVirtual OpenVPN tun device must NOT be classified LAN (the poller/wizard
+	// share this: else two VPN peers get a spurious direct connection).
+	if byName["tun0"].IsLAN {
+		t.Error("propVirtual tun0 (VPN carrier) must NOT be flagged is_lan")
+	}
+	for _, s := range resp.LANSubnets {
+		if s == "10.99.99.0/24" {
+			t.Error("VPN tun subnet 10.99.99.0/24 must NOT be a protected lan_subnet")
+		}
 	}
 	// port1 bears the device's WAN IP: its /24 IS a valid network (CIDR present on
 	// the address) but must be excluded from lan_subnets as transit, not protected.

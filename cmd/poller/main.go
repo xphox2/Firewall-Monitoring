@@ -2014,7 +2014,11 @@ func (p *Poller) detectPhysicalConnections(devices []models.Device) int {
 	}
 	ifLookup := make(map[string]*physIface) // "deviceID:ifIndex" → entry
 	for _, iface := range ifaces {
-		if !netclass.IsLANType(iface.TypeName) {
+		// A propVirtual (ifType 53) can be either a FortiGate software switch (a LAN
+		// segment) OR a Linux/BSD OpenVPN/WireGuard tun device (a VPN carrier, never
+		// a LAN). Exclude the VPN case by name so two VPN-peer devices sharing a
+		// tunnel /24 aren't reported as a direct physical connection.
+		if !netclass.IsLANType(iface.TypeName) || netclass.IsVPNInterfaceName(iface.Name) {
 			continue
 		}
 		key := fmt.Sprintf("%d:%d", iface.DeviceID, iface.Index)

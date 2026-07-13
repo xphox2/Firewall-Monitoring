@@ -34,6 +34,26 @@ func IsLANType(typeName string) bool {
 	return lanTypes[strings.ToLower(strings.TrimSpace(typeName))]
 }
 
+// vpnNamePrefixes are interface-NAME prefixes for VPN/overlay/tunnel carriers that
+// must never count as a LAN segment even when their ifType looks LAN-ish. A Linux/
+// BSD OpenVPN or WireGuard interface reports ifType 53 (propVirtual) — the same type
+// as a FortiGate software switch — so type alone can't tell them apart; the name can.
+var vpnNamePrefixes = []string{"tun", "tap", "wg", "vti", "ovpn", "gre", "gif", "ipsec", "l2tp", "wireguard"}
+
+// IsVPNInterfaceName reports whether an interface NAME denotes a VPN/tunnel/overlay
+// carrier (tun0, wg0, ovpns1, vti1, gif0, …) — a point-to-point/overlay link, never
+// a broadcast LAN segment. Used alongside IsLANType so a propVirtual tun device is
+// excluded from LAN-segment classification.
+func IsVPNInterfaceName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, p := range vpnNamePrefixes {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsFabricInterface reports a FortiLink/link-local (169.254.0.0/16) fabric link,
 // which is a management/stacking link, not an inter-device LAN segment.
 func IsFabricInterface(ifName, ipAddr string) bool {
