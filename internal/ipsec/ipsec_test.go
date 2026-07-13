@@ -185,6 +185,16 @@ func TestValidate_CatchesFootguns(t *testing.T) {
 		t.Errorf("0.0.0.0/0 over the VTI must still block with default_route_over_vti; got %+v", defFS)
 	}
 
+	// The 0.0.0.0/1 + 128.0.0.0/1 full-tunnel split is a default-route equivalent
+	// that also captures the peer — it must still hard-block, not slip through as a
+	// self-lockout warning.
+	split := canonicalIntent()
+	split.Ends[0].ProtectedSubnets = []string{"0.0.0.0/1", "128.0.0.0/1"} // covers A's peer 66.179.9.155
+	splitFS := ipsec.Validate(split, c)
+	if !ipsec.HasBlock(splitFS) || !hasCode(splitFS, "default_route_over_vti") {
+		t.Errorf("a /1+/1 full-tunnel split covering the peer must hard-block; got %+v", splitFS)
+	}
+
 	// Overlapping protected subnets.
 	ov := canonicalIntent()
 	ov.Ends[1].ProtectedSubnets = []string{"10.10.10.0/24"} // same as A

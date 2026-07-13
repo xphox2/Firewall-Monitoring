@@ -225,12 +225,21 @@ func validateSubnets(intent *TunnelIntent) []Finding {
 				continue
 			}
 			if peerIP != nil && n.Contains(peerIP) {
+				// A very broad covering prefix (e.g. the 0.0.0.0/1 + 128.0.0.0/1
+				// full-tunnel split) is a default-route equivalent: it captures the
+				// peer's own path and ~all traffic, so it needs a pinned peer route
+				// first — block it like 0/0, above. isBroadCoverPrefix keeps this
+				// from being bypassed by the /1 halves of a full tunnel.
+				if isBroadCoverPrefix(n) {
+					fs = append(fs, Finding{SeverityBlock, "default_route_over_vti",
+						fmt.Sprintf("%s would route %s over the tunnel — effectively a default route capturing the peer %s; a pinned host route to the peer is required first", endLabel(intent, i), n.String(), peer.PeerIP)})
+					continue
+				}
 				// A specific routed subnet that contains the peer's own endpoint is
 				// safe ONLY if a host route to the peer via the WAN is pinned (real
 				// firewalls usually have one via the WAN default route; the apply
 				// path will pin a /32). Surface it as an acknowledgeable warning
-				// rather than a hard block so the operator can proceed. (A 0/0
-				// default route over the VTI stays a block, above.)
+				// rather than a hard block so the operator can proceed.
 				fs = append(fs, Finding{SeverityWarn, "self_lockout",
 					fmt.Sprintf("routing %s over the tunnel includes the peer's own endpoint %s — safe only if a host route to the peer via the WAN is pinned; narrow the subnet if unsure", n.String(), peer.PeerIP)})
 			}
@@ -279,6 +288,15 @@ func safeToken(s string) bool {
 func isDefaultRoute(n *net.IPNet) bool {
 	ones, bits := n.Mask.Size()
 	return ones == 0 && bits != 0
+}
+
+// isBroadCoverPrefix reports whether n is broad enough to be a default-route
+// equivalent (prefix shorter than /8 ⇒ ≥16M addresses — no real LAN is that wide,
+// so a prefix this broad that also contains the peer is a full-tunnel attempt, not
+// a specific protected subnet). Catches the 0.0.0.0/1 + 128.0.0.0/1 split.
+func isBroadCoverPrefix(n *net.IPNet) bool {
+	ones, bits := n.Mask.Size()
+	return bits != 0 && ones < 8
 }
 
 func isPrivate(ip net.IP) bool {

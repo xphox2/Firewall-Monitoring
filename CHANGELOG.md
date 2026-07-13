@@ -21,8 +21,9 @@ firewall's real addressing instead of a single guessed value:
   protected subnet that contains the peer's own WAN IP is safe when a host route to
   the peer via the WAN is pinned (real firewalls generally have one; the apply path
   will pin a `/32`), so the wizard now surfaces it as a warning and lets you
-  proceed. A default route (`0.0.0.0/0`) over the tunnel, overlapping subnets, and
-  an invalid/missing peer IP still hard-block.
+  proceed. A default route (`0.0.0.0/0`) over the tunnel — or a full-tunnel
+  equivalent such as the `0.0.0.0/1 + 128.0.0.0/1` split — plus overlapping subnets
+  and an invalid/missing peer IP still hard-block.
 
 No device writes — authoring/preview only. Pinning the peer host route in the
 generated config (the real remedy for the lockout case) lands with the apply path.

@@ -13,6 +13,7 @@
     var hintGen = { a: 0, b: 0 };         // per-endpoint request token — drop stale hint responses
     var lastHintSubnets = { a: '', b: '' }; // last auto-filled subnets, so a re-pick can refresh them
     var endpointHints = { a: null, b: null }; // cached hints per endpoint (peer-IP options + egress→peer sync)
+    var loadedDevice = { a: '', b: '' };      // device id whose hints are loaded per endpoint (re-load only on change)
 
     function $(id) { return document.getElementById(id); }
 
@@ -75,6 +76,7 @@
         caps = null; lastPreviewOK = false;
         lastHintSubnets.a = ''; lastHintSubnets.b = '';
         endpointHints.a = null; endpointHints.b = null;
+        loadedDevice.a = ''; loadedDevice.b = '';
         hintGen.a++; hintGen.b++; // invalidate any in-flight hint responses from a prior open
         $('ipsec-crypto-section').style.display = 'none';
         $('ipsec-endpoints-section').style.display = 'none';
@@ -125,10 +127,13 @@
             $('ipsec-a-title').textContent = 'Endpoint A — ' + a.name + ' (' + vendorOf(a) + ')';
             $('ipsec-b-title').textContent = 'Endpoint B — ' + b.name + ' (' + vendorOf(b) + ')';
         }).catch(function (e) { AC.showError('No shared crypto for this pair: ' + e.message); });
-        // In parallel, populate egress/LAN interfaces + subnets from each device's
-        // real polled interface data (data-driven, not free-text). Non-fatal.
-        var hintsP = Promise.all([loadHints('a', a.id), loadHints('b', b.id)]);
-        return Promise.all([capsP, hintsP]).then(function () { });
+        // Populate interfaces/peer-IP/subnets from each device's real polled data —
+        // but only (re)load the endpoint whose device actually changed, so editing
+        // one end never clobbers a hand-picked peer/interface on the other. Non-fatal.
+        var pending = [];
+        if (String(a.id) !== loadedDevice.a) { loadedDevice.a = String(a.id); pending.push(loadHints('a', a.id)); }
+        if (String(b.id) !== loadedDevice.b) { loadedDevice.b = String(b.id); pending.push(loadHints('b', b.id)); }
+        return Promise.all([capsP, Promise.all(pending)]).then(function () { });
     }
 
     // ---- data-driven endpoint hints -------------------------------------
@@ -204,8 +209,15 @@
         html += '<option value="__custom__">Custom…</option>';
         sel.innerHTML = html;
         // Default to the detected public endpoint; if it isn't a listed address
-        // (e.g. a NAT public IP), preload it into the Custom… field.
-        setIfaceValue(pfx, 'peer', h.suggested_peer_ip || '');
+        // (e.g. a NAT public IP), preload it into the Custom… field. With no
+        // addresses at all, fall straight to Custom… so the field is usable.
+        var suggested = h.suggested_peer_ip || '';
+        if (!suggested && !opts.length) {
+            sel.value = '__custom__';
+            toggleCustom(pfx, 'peer');
+        } else {
+            setIfaceValue(pfx, 'peer', suggested);
+        }
     }
 
     // When the egress (WAN) interface changes, re-default the peer/public IP to that
@@ -255,6 +267,7 @@
             populateIfaceSelect(pfx, 'egress', [], '');
             populateIfaceSelect(pfx, 'lan', [], '');
             populatePeerSelect(pfx, fh);
+            invalidate();
         });
     }
 
