@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.94] - 2026-07-14
+
+### Changed — the connection map now draws REAL port-to-port links (relay **schema v5**, migrations v45+v46)
+
+The same-site "physical" links were previously guessed: any two devices with interfaces in the same subnet got an `ethernet` connection (`subnet_match`), producing a fake mesh where everything appeared wired to everything. The map now only draws links backed by **layer-2 evidence** — MAC forwarding tables, ARP caches and LLDP/CDP neighbor tables relayed by the collector (≥ 1.3.15) — with the actual interface names on both ends.
+
+- **New L2 evidence tables** (`topology_entries` ARP/FDB + `topology_neighbors` LLDP/CDP, migration **v45**): state tables with per-(device, type) REPLACE semantics — each relayed batch is the device's complete snapshot, so a MAC that moved ports can't linger and draw a stale link. Ingestion endpoints `POST /probes/:id/topology-entries` (cap 5000) and `/topology-neighbors` (cap 500) with the full sibling pipeline (probe auth, batch dedup, device-scope filter, batched last_polled bump); MACs normalized lowercase at the boundary. Relay `SchemaVersionMax` 4 → **5**.
+- **New inference engine** (`internal/l2infer`, pure + fully unit-tested): three evidence tiers — `lldp_neighbor` (both port names from the protocol) > `fdb_match` (A learned B's interface MAC on a port; bidirectional FDB names both ends, works through unmanaged switches) > `arp_match` (IP+MAC binding attributes the local port; MAC-ownership primary, IP fallback). VRRP/CARP/HSRP virtual MACs excluded; FortiGate FGCP virtual MACs stay ownable (ifPhysAddress reports them on HA clusters) with a multi-owner ambiguity drop; MAC moves resolve newest-port-wins; a VLAN trunk between one port pair is ONE link listing its VLANs; genuine parallel links (HA-sync + LAN) are separate rows; on port conflicts LLDP wins and the disagreeing FDB row is kept as discrepancy evidence.
+- **`detectPhysicalConnections` (subnet guess) DELETED**; `detectL2Links` replaces it in the poller cycle. Migration **v46** adds port columns to `device_connections` (`source/dest_if_index`, `source/dest_if_name`, `vlan_ids`) and **purges all `subnet_match` auto connections** (manual connections untouched). Port-aware upsert keyed pair+type+both-ifIndexes (parallel links can't collide; a legacy portless row is adopted so its ID/URLs survive).
+- **Staleness staircase:** evidence fresh (≤ 30 min) → link up/down; within grace (≤ 3 h) → status **`stale`** (amber dashed on the map); past grace → swept by the existing cleanup. One missed 5-minute topology snapshot can't flap the map.
+- **Connection detail now explains WHY a link exists:** the direct-family API carries `evidence` (the exact LLDP/FDB/ARP rows, re-derived by the same engine that drew the edge, with reporting device + freshness) — rendered as a Discovery Evidence table in the NOC slide-in panel and a new **Link Evidence** tab on the standalone connection page (which is now family-aware; it previously always rendered tunnel tables). Bridge header shows `port5 ↔ lan3 · LLDP confirmed`.
+- **Map:** single-link direct bundles and expanded sublanes are labeled with the port pair; link confidence is drawn as line STYLE (LLDP/FDB solid, ARP dashed — teal stays the direct color in both themes); stale links render amber-dashed. All neighbor-controlled strings (LLDP sysnames/port IDs) are HTML-escaped everywhere they render.
+- **Deploy note:** until the v1.3.15 collector relays topology data, the map shows **no local links** (the guessed ones are purged by v46) — upgrade server and collector together. Devices exposing no ARP/FDB/LLDP via SNMP show no local links by design. FortiGate LLDP may need enabling (`config system lldp` per interface); FortiGates whose SNMP agent lacks an ARP table are supplemented over SSH (`get system arp`).
+- Docs: MIGRATING.md + SUPPORT-MATRIX.md schema v5 rows. Tests: 17-case inference suite, snapshot replace semantics, handler scope/normalization, poller regression (shared subnet + fresh FDB without mutual MACs ⇒ NO link), staleness transitions, upsert key semantics, detail evidence, schema-pin guardrail.
+
 ## [0.11.93] - 2026-07-14
 
 ### Changed — Event Rules is now the single hub for suppressing/customizing ALL alerts
