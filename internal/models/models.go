@@ -499,8 +499,13 @@ type EventRule struct {
 	SeedVersion int        `json:"seed_version"`
 	HitCount    int64      `json:"hit_count"`
 	LastHitAt   *time.Time `json:"last_hit_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// ExpiresAt makes a rule TEMPORARY (v44): once past, the rule stops matching
+	// (checked at match time, not just cache refresh) and is pruned by cleanup.
+	// nil = permanent. Powers "suppress this source for 24h" as a temp suppress
+	// rule — the unified replacement for the old Silence-Source table.
+	ExpiresAt *time.Time `json:"expires_at" gorm:"index"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 func (EventRule) TableName() string { return "event_rules" }

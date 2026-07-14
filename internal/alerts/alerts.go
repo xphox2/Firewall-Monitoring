@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -805,6 +806,37 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 	}
 	if resolved.RuleSeverity != "" {
 		newSev = resolved.RuleSeverity
+	}
+	// flow_security customize: a matching alert-action Event Rule overrides the
+	// severity and/or notification routing (parity with the other sources). Applied
+	// HERE — before the escalation compare / cooldown-bypass / lastSeverity — so the
+	// override actually drives them. An explicit rule severity wins over the
+	// policy-rule severity above. (Suppress rules are filtered upstream in the
+	// poller; a suppress match reaching here still mutes, defensively.)
+	am.mu.RLock()
+	csEffSite := siteID
+	if csEffSite == nil {
+		if m, ok := am.deviceMeta[deviceID]; ok {
+			csEffSite = m.SiteID
+		}
+	}
+	srcCanon := src
+	if ip := net.ParseIP(src); ip != nil {
+		srcCanon = ip.String()
+	}
+	csRule := am.matchFlowSecurityRuleLocked(FlowSecFields(winner, srcCanon, csEffSite), deviceID, csEffSite)
+	am.mu.RUnlock()
+	if csRule != nil {
+		am.RecordEventRuleHit(csRule.id)
+		if csRule.action == "suppress" {
+			return 0, nil
+		}
+		if csRule.severity != "" {
+			newSev = csRule.severity
+		}
+		if csRule.policyID != nil {
+			resolved.PolicyID = csRule.policyID
+		}
 	}
 
 	// Find this event's still-open alert via the detection→alert link. Look back

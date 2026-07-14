@@ -417,14 +417,15 @@ func (p *Poller) runFlowDetectionCycle() {
 		link([]uint{d.ID}, alertID, d.Detector)
 	}
 
-	// v0.11.46 — silence + cross-source storm digest, applied to the security
-	// groups BEFORE the per-source loop:
-	//   1. silenced sources: ack their detections (off the NOC card) and drop them
-	//      so they neither alert nor count toward a storm;
+	// Suppression + cross-source storm digest, applied to the security groups
+	// BEFORE the per-source loop:
+	//   1. flow_security SUPPRESS Event Rules (v0.11.93, the unified replacement for
+	//      Silence-Source): ack + drop matched detections so they neither alert nor
+	//      count toward a storm;
 	//   2. storms: bucket surviving security detections by (site, detector); any
 	//      bucket over its resolved threshold collapses into ONE digest alert, and
 	//      those detections are removed from the per-source groups.
-	p.silenceSuppressedSources(securityBySrc)
+	p.applyFlowSecuritySuppressRules(securityBySrc)
 	p.alertManager.SetStormSourcesDefault(p.db.GetIntSetting("detect_security_storm_sources", 25))
 	p.rollUpSecurityStorms(securityBySrc, link)
 
@@ -456,34 +457,57 @@ func canonIP(s string) string {
 	return s
 }
 
-// silenceSuppressedSources drops every currently-silenced source from the
-// security groups: it acks that source's detections (so a suppressed attacker
-// doesn't flood the NOC card) and removes it from securityBySrc so it neither
-// fires an alert nor counts toward a storm. Fails OPEN — a load error is logged
-// and treated as "none suppressed" so a transient DB blip can't silence the whole
-// security pipeline. The active set is loaded ONCE (a storm has hundreds of
-// distinct sources; per-source point queries would be a per-cycle read storm).
-func (p *Poller) silenceSuppressedSources(securityBySrc map[string][]*models.FlowDetection) {
-	sups, err := p.db.ListActiveFlowSuppressions()
-	if err != nil {
-		log.Printf("flow-detect: load suppressions (fail-open, none applied): %v", err)
+// applyFlowSecuritySuppressRules mutes security detections matched by a
+// flow_security SUPPRESS Event Rule — the unified replacement for the retired
+// per-IP Silence-Source table. Matched PER DETECTION (a per-source group spans
+// devices + detectors): a detection whose first-match rule is a suppress rule is
+// acked (off the NOC card) and removed; a source is dropped from securityBySrc
+// only when ALL its detections are suppressed, so it neither alerts nor counts
+// toward a storm. Fails OPEN (nil manager / no matching rule → nothing muted).
+func (p *Poller) applyFlowSecuritySuppressRules(securityBySrc map[string][]*models.FlowDetection) {
+	if p.alertManager == nil || len(securityBySrc) == 0 {
 		return
 	}
-	if len(sups) == 0 {
-		return
+	// deviceID → siteID (0/absent = no site), built once per cycle.
+	devSite := map[uint]uint{}
+	if devs, err := p.db.GetAllDevices(); err == nil {
+		for i := range devs {
+			if devs[i].SiteID != nil {
+				devSite[devs[i].ID] = *devs[i].SiteID
+			}
+		}
 	}
-	set := make(map[string]struct{}, len(sups))
-	for _, s := range sups {
-		set[s.SrcAddr] = struct{}{}
+	siteOf := func(deviceID uint) *uint {
+		if s, ok := devSite[deviceID]; ok && s != 0 {
+			v := s
+			return &v
+		}
+		return nil
 	}
+	var ackIDs []uint
 	for src, group := range securityBySrc {
-		if _, ok := set[canonIP(src)]; !ok {
-			continue
+		srcCanon := canonIP(src)
+		kept := group[:0] // filter in place: kept grows no faster than we read
+		for _, d := range group {
+			site := siteOf(d.DeviceID)
+			action, ruleID, matched := p.alertManager.MatchFlowSecurityRule(alerts.FlowSecFields(d, srcCanon, site), d.DeviceID, site)
+			if matched && action == "suppress" {
+				p.alertManager.RecordEventRuleHit(ruleID)
+				ackIDs = append(ackIDs, d.ID)
+				continue
+			}
+			kept = append(kept, d)
 		}
-		if err := p.db.AckFlowDetections(detectionIDs(group)); err != nil {
-			log.Printf("flow-detect: ack suppressed source %s: %v", src, err)
+		if len(kept) == 0 {
+			delete(securityBySrc, src)
+		} else {
+			securityBySrc[src] = kept
 		}
-		delete(securityBySrc, src)
+	}
+	if len(ackIDs) > 0 {
+		if err := p.db.AckFlowDetections(ackIDs); err != nil {
+			log.Printf("flow-detect: ack rule-suppressed detections: %v", err)
+		}
 	}
 }
 

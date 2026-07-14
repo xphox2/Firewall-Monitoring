@@ -1,6 +1,8 @@
 package alerts
 
 import (
+	"time"
+
 	"firewall-mon/internal/models"
 )
 
@@ -31,6 +33,9 @@ func (am *AlertManager) matchTrapRuleLocked(fields map[string]string, deviceID u
 	for i := range am.eventRules {
 		r := &am.eventRules[i]
 		if r.source != "trap" {
+			continue
+		}
+		if r.expired(time.Now()) {
 			continue
 		}
 		if !r.appliesTo("trap", vendor, deviceID, siteID) {
