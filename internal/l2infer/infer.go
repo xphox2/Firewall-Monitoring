@@ -367,10 +367,44 @@ func pairKey(a, b uint) string {
 	return fmt.Sprintf("%d:%d", a, b)
 }
 
+// dirPortMap holds, per ORDERED (reporter, target) pair, the reporter's
+// best-tier local port toward the target — the input to transitive
+// suppression. First write wins, so filling in tier order (lldp local, fdb,
+// arp, then lldp REMOTE ports as the lowest-priority fallback for the far
+// side) keeps the strongest attribution.
+type dirPortMap map[uint]map[uint]portRef
+
+func (m dirPortMap) add(reporter, target uint, p portRef) {
+	if !p.known() {
+		return
+	}
+	if m[reporter] == nil {
+		m[reporter] = map[uint]portRef{}
+	}
+	if _, exists := m[reporter][target]; !exists {
+		m[reporter][target] = p
+	}
+}
+
 // InferLinks derives port-to-port links between monitored same-site devices.
 // Deterministic: identical inputs yield identically ordered output.
 func InferLinks(devs []DeviceMeta, ifaces []Iface, fdb []FDBRow, arp []ARPRow, nbrs []NeighborRow) []Link {
 	ix := buildIndexes(devs, ifaces)
+
+	lldpC := ix.lldpCandidates(nbrs)
+	fdbC := ix.fdbCandidates(fdb)
+	arpC := ix.arpCandidates(arp)
+
+	// Directional port attributions for transitive suppression.
+	dir := dirPortMap{}
+	for _, cands := range [][]candidate{lldpC, fdbC, arpC} {
+		for i := range cands {
+			dir.add(cands[i].reporter, cands[i].target, cands[i].port)
+		}
+	}
+	for i := range lldpC {
+		dir.add(lldpC[i].target, lldpC[i].reporter, lldpC[i].remotePort)
+	}
 
 	perPair := map[string][]*Link{}
 	addCandidates := func(cands []candidate) {
@@ -381,9 +415,9 @@ func InferLinks(devs []DeviceMeta, ifaces []Iface, fdb []FDBRow, arp []ARPRow, n
 		}
 	}
 
-	addCandidates(ix.lldpCandidates(nbrs))
-	addCandidates(ix.fdbCandidates(fdb))
-	addCandidates(ix.arpCandidates(arp))
+	addCandidates(lldpC)
+	addCandidates(fdbC)
+	addCandidates(arpC)
 
 	keys := make([]string, 0, len(perPair))
 	for k := range perPair {
@@ -407,11 +441,61 @@ func InferLinks(devs []DeviceMeta, ifaces []Iface, fdb []FDBRow, arp []ARPRow, n
 			return links[i].BIfName < links[j].BIfName
 		})
 		for _, l := range links {
+			// Transitive suppression: FDB/ARP "adjacency" through a
+			// MONITORED middle device is not a cable — drop it. LLDP links
+			// are protocol-confirmed direct adjacency and never suppressed.
+			if l.Method != MethodLLDP && ix.isTransitive(l.A, l.B, dir) {
+				continue
+			}
 			ix.finalize(l)
 			out = append(out, *l)
 		}
 	}
 	return out
+}
+
+// isTransitive reports whether the a—c attribution is explained by a
+// monitored device b sitting BETWEEN them: one endpoint reaches both b and
+// the far end through the SAME local port (they're down the same wire from
+// its viewpoint), while b reaches the two endpoints through DIFFERENT ports
+// (b genuinely forwards between them). This is the daisy-chain case —
+// OPNsense → FW2 → FW1 on one broadcast domain puts OPNsense's MAC in FW1's
+// FDB, but the OPNsense↔FW1 link is FW2's job to draw, twice. Links through
+// UNMANAGED switches are unaffected (no monitored b exists), and partial
+// data fails safe (missing port attributions → no suppression).
+func (ix *indexes) isTransitive(a, c uint, dir dirPortMap) bool {
+	behindVia := func(x, far uint) bool {
+		px := dir[x]
+		if px == nil {
+			return false
+		}
+		pxFar, ok := px[far]
+		if !ok {
+			return false
+		}
+		for b, pxb := range px {
+			if b == far {
+				continue
+			}
+			if _, monitored := ix.devices[b]; !monitored {
+				continue
+			}
+			if !samePort(pxFar, pxb) {
+				continue // x distinguishes b from far — b isn't on that wire
+			}
+			pb := dir[b]
+			if pb == nil {
+				continue
+			}
+			pbx, okX := pb[x]
+			pbFar, okFar := pb[far]
+			if okX && okFar && !samePort(pbx, pbFar) {
+				return true // b forwards between x and far on distinct ports
+			}
+		}
+		return false
+	}
+	return behindVia(a, c) || behindVia(c, a)
 }
 
 // lldpCandidates converts neighbor rows into directional candidates.

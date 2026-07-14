@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.95] - 2026-07-14
+
+### Fixed — false transitive links through a MONITORED middle device (live-found on the DC2 daisy chain)
+
+First live validation of the v0.11.94 port-to-port map surfaced a wrong link: OPNsense → DC2-FW2 → DC2-FW1 are daisy-chained on one broadcast domain, and the map drew **OPNsense ↔ DC2-FW1** — FW1's MAC table legitimately contains OPNsense's MAC (learned through the FW2 uplink) and OPNsense's ARP contains FW1, but that path is FW2's job to draw, twice. The "FDB works through switches" attribution is correct only when the switch in the middle is *unmanaged*.
+
+- `internal/l2infer` now applies **transitive suppression**: a non-LLDP link A↔C is dropped when a monitored device B exists where one endpoint reaches both B and the far end through the SAME local port (they're down the same wire from its view) while B reaches A and C through DIFFERENT ports (B genuinely forwards between them). Directional port attributions are collected per evidence tier (LLDP local > FDB > ARP, LLDP remote ports as fallback).
+- Safety properties (all tested): LLDP-confirmed adjacency is NEVER suppressed (the protocol's word beats the inference); partial middle-device data fails safe (no proof → link stays); links through unmanaged switches are unaffected (no monitored B exists). The reproduction test pins the exact DC2 topology.
+- Deploy note: the stale false link disappears on the first poller cycle after upgrade (the detector stops refreshing it; the existing cleanup sweeps it).
+
 ## [0.11.94] - 2026-07-14
 
 ### Changed — the connection map now draws REAL port-to-port links (relay **schema v5**, migrations v45+v46)
