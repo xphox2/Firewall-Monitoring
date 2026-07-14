@@ -262,6 +262,10 @@ type IngestStore interface {
 	SaveSecurityStats(stats []models.SecurityStats) error
 	SaveSyslogMessages(msgs []models.SyslogMessage) error
 	SaveSystemStatuses(statuses []models.SystemStatus) error
+	// SaveTopology*Snapshot REPLACE the device's rows per (device, type/
+	// protocol) scope — state tables, not time-series (see topology.go).
+	SaveTopologyEntriesSnapshot(entries []models.TopologyEntry) error
+	SaveTopologyNeighborsSnapshot(neighbors []models.TopologyNeighbor) error
 	SaveTrapEvents(traps []models.TrapEvent) error
 	SaveVPNStatuses(statuses []models.VPNStatus) error
 	MarkBatchProcessed(probeID uint, batchID string) error

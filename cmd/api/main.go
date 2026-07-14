@@ -682,6 +682,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// Relay schema v4: collector reports the outcome of a heartbeat-
 		// delivered command (idempotent by command_id).
 		api.POST("/probes/:id/command-result", middleware.ProbeRateLimiter(), handler.ReceiveCommandResult)
+		// Relay schema v5: L2 topology state snapshots (ARP/FDB + LLDP/CDP)
+		// for the port-to-port connection map — replace semantics per device.
+		api.POST("/probes/:id/topology-entries", middleware.ProbeRateLimiter(), handler.ReceiveTopologyEntries)
+		api.POST("/probes/:id/topology-neighbors", middleware.ProbeRateLimiter(), handler.ReceiveTopologyNeighbors)
 
 		// Probe fetches its assigned devices
 		api.GET("/probes/:id/devices", middleware.ProbeRateLimiter(), handler.GetProbeDevices)

@@ -29,6 +29,8 @@ func (d *Database) migrateBaseline() error {
 		&models.ProcessorStats{},
 		&models.DiskUsage{},
 		&models.LoadAverage{},
+		&models.TopologyEntry{},
+		&models.TopologyNeighbor{},
 		&models.TrapEvent{},
 		&models.Alert{},
 		&models.UptimeRecord{},
@@ -1875,4 +1877,12 @@ func (d *Database) migrateFlowRollupFirewallEvent() error {
 	}
 	log.Printf("migrate v30 flow_rollup_firewall_event: column ensured")
 	return nil
+}
+
+// migrateL2TopologyTables (v45) creates the topology_entries (ARP/FDB) and
+// topology_neighbors (LLDP/CDP) state tables for the port-to-port connection
+// map (relay schema v5). New tables only, so plain AutoMigrate matches the
+// v38 new-table precedent.
+func (d *Database) migrateL2TopologyTables() error {
+	return d.db.AutoMigrate(&models.TopologyEntry{}, &models.TopologyNeighbor{})
 }

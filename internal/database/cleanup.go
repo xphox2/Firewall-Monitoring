@@ -272,6 +272,11 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		{&models.FlowSample{}, "flow_samples", flowDays},
 		{&models.FlowInterfaceCounter{}, "flow_if_counters", flowDays},
 		{&models.InterfaceAddress{}, "interface_addresses", statusDays},
+		// L2 topology state tables (snapshot-replaced every topology cycle):
+		// retention only sweeps rows of deleted/offline devices — active
+		// devices refresh their timestamps every ~5 minutes.
+		{&models.TopologyEntry{}, "topology_entries", statusDays},
+		{&models.TopologyNeighbor{}, "topology_neighbors", statusDays},
 		{&models.PingResult{}, "ping_results", pingDays},
 		// AUDIT-029: the four tables that previously had no
 		// retention knob and grew unbounded on long-running
