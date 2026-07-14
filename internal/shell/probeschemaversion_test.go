@@ -26,11 +26,11 @@ func TestProbeSchemaVersionHandshake(t *testing.T) {
 	relaySrc := readFile(t, "../../internal/relay/relay.go")
 	for _, needle := range []string{
 		"SchemaVersionMin = 1",
-		// v4 = the server→collector command channel (heartbeat-delivered
-		// pending_commands + POST /api/probes/:id/command-result). Bump this
-		// needle in LOCKSTEP with the collector repo's relay.SchemaVersionMax
-		// and the MIGRATING.md / SUPPORT-MATRIX.md / COMPATIBILITY.md tables.
-		"SchemaVersionMax = 4",
+		// v5 = L2 topology snapshots (topology-entries + topology-neighbors,
+		// the port-to-port connection map). Bump this needle in LOCKSTEP with
+		// the collector repo's relay.SchemaVersionMax and the MIGRATING.md /
+		// SUPPORT-MATRIX.md / COMPATIBILITY.md tables.
+		"SchemaVersionMax = 5",
 		"SchemaVersion int `json:\"schema_version,omitempty\"`",
 	} {
 		if !strings.Contains(relaySrc, needle) {

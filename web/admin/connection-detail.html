@@ -98,6 +98,7 @@
         <a class="text-[#58a6ff] no-underline text-sm hover:underline" href="/admin/connections">&larr; Back to Connections</a>
 
         <div id="bridge-header" class="mt-3"></div>
+        <div id="bridge-subtitle" class="mb-3 text-center"></div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" id="stat-cards">
             <div class="stat-card text-center"><div class="stat-label">Total Bytes In</div><div class="stat-value" id="stat-bytes-in">-</div></div>
@@ -108,9 +109,10 @@
 
         <div class="border-b border-[#30363d] mb-4" id="section-tabs">
             <div class="section-tab active" data-action="switch-tab" data-tab="overview">Overview</div>
-            <div class="section-tab" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
-            <div class="section-tab" data-action="switch-tab" data-tab="dst-tunnels">Destination Tunnels</div>
+            <div class="section-tab" id="tab-src-tunnels" data-action="switch-tab" data-tab="src-tunnels">Source Tunnels</div>
+            <div class="section-tab" id="tab-dst-tunnels" data-action="switch-tab" data-tab="dst-tunnels">Destination Tunnels</div>
             <div class="section-tab hidden" id="tab-phase2" data-action="switch-tab" data-tab="phase2">Phase 2 Selectors</div>
+            <div class="section-tab hidden" id="tab-evidence" data-action="switch-tab" data-tab="evidence">Link Evidence</div>
             <div class="section-tab hidden" id="tab-flows" data-action="switch-tab" data-tab="flows">Traffic Analysis</div>
         </div>
 
@@ -171,6 +173,16 @@
                         <thead><tr><th></th><th>Phase 1</th><th>Phase 2</th><th>Type</th><th>Status</th><th>Remote GW</th><th>Local Subnet</th><th>Remote Subnet</th><th>Bytes In</th><th>Bytes Out</th><th>Uptime</th></tr></thead>
                         <tbody></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-content-evidence">
+            <div class="card mb-4">
+                <h2 class="text-base font-semibold mb-4">Link Discovery Evidence</h2>
+                <p style="color:var(--fwmon-text-faint);font-size:0.875rem;margin-bottom:16px;">The layer-2 observations (LLDP neighbors, MAC forwarding tables, ARP caches) that produced this port-to-port link.</p>
+                <div class="overflow-x-auto">
+                    <div id="evidence-container"></div>
                 </div>
             </div>
         </div>

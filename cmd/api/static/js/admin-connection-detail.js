@@ -121,6 +121,125 @@
             '</svg>';
     }
 
+    // L2 discovery labels (port-to-port links inferred from LLDP/FDB/ARP).
+    var L2_METHOD_LABELS = { lldp_neighbor: 'LLDP confirmed', fdb_match: 'MAC-table matched', arp_match: 'ARP inferred' };
+    var L2_TIER_LABELS = { lldp: 'LLDP', fdb: 'MAC table', arp: 'ARP' };
+
+    function relativeAge(ts) {
+        var ms = Date.now() - new Date(ts).getTime();
+        if (!isFinite(ms) || ms < 0) return '-';
+        var min = Math.floor(ms / 60000);
+        if (min < 1) return 'now';
+        if (min < 60) return min + 'm ago';
+        var h = Math.floor(min / 60);
+        if (h < 48) return h + 'h ago';
+        return Math.floor(h / 24) + 'd ago';
+    }
+
+    // renderBridgeSubtitle: "port5 ↔ lan3 · LLDP confirmed · VLAN 10,20" under
+    // the bridge for L2-inferred links. All values are network-controlled —
+    // escaped.
+    function renderBridgeSubtitle(conn) {
+        var el = document.getElementById('bridge-subtitle');
+        if (!el) return;
+        if (!conn.source_if_name && !conn.dest_if_name && !L2_METHOD_LABELS[conn.match_method]) {
+            el.innerHTML = '';
+            return;
+        }
+        var parts = [];
+        if (conn.source_if_name || conn.dest_if_name) {
+            parts.push('<span style="font-family:\'JetBrains Mono\',monospace;font-weight:600;color:var(--fwmon-text);">' +
+                AC.escapeHtml(conn.source_if_name || '?') + ' &harr; ' + AC.escapeHtml(conn.dest_if_name || '?') + '</span>');
+        }
+        if (L2_METHOD_LABELS[conn.match_method]) {
+            parts.push('<span class="badge info" style="font-size:0.7rem;">' + AC.escapeHtml(L2_METHOD_LABELS[conn.match_method]) + '</span>');
+        }
+        if (conn.vlan_ids) {
+            parts.push('<span style="color:var(--fwmon-text-faint);font-size:0.78rem;">VLAN ' + AC.escapeHtml(conn.vlan_ids) + '</span>');
+        }
+        if (conn.status === 'stale') {
+            parts.push('<span class="badge stale" style="font-size:0.7rem;">STALE EVIDENCE</span>');
+        }
+        el.innerHTML = '<div style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;">' + parts.join(' ') + '</div>';
+    }
+
+    // renderInterfaceTable: direct links show member interfaces instead of
+    // tunnels (the first tab is retitled "Interfaces").
+    function renderInterfaceTable(ifaces, conn, srcName, dstName) {
+        document.getElementById('src-tunnels-title').textContent = 'Interfaces (' + srcName + ' ↔ ' + dstName + ')';
+        var host = document.querySelector('#tab-content-src-tunnels .overflow-x-auto');
+        if (!host) return;
+        if (!ifaces.length) {
+            host.innerHTML = '<div style="text-align:center;color:var(--fwmon-text-mute);padding:30px;">No interface telemetry for this link yet.</div>';
+            return;
+        }
+        var rows = '';
+        ifaces.forEach(function(f) {
+            var statusBadge = '<span class="badge ' + AC.escapeHtml(f.status || 'unknown') + '">' + AC.escapeHtml((f.status || 'unknown').toUpperCase()) + '</span>';
+            rows +=
+                '<tr>' +
+                    '<td><a href="/admin/devices/' + encodeURIComponent(f.device_id) + '" style="color:var(--fwmon-accent);text-decoration:none;">' + AC.escapeHtml(f.device_name || ('Device ' + f.device_id)) + '</a></td>' +
+                    '<td style="font-family:\'JetBrains Mono\',monospace;">' + AC.escapeHtml(f.if_name || '-') + '</td>' +
+                    '<td>' + AC.escapeHtml(f.kind || '-') + '</td>' +
+                    '<td>' + (f.vlan_id ? AC.escapeHtml(String(f.vlan_id)) : '-') + '</td>' +
+                    '<td><code style="color:var(--fwmon-accent);font-size:0.8rem;">' + AC.escapeHtml(f.ip_address || '-') + '</code></td>' +
+                    '<td><code style="font-size:0.8rem;">' + AC.escapeHtml(f.subnet || '-') + '</code></td>' +
+                    '<td>' + statusBadge + '</td>' +
+                    '<td>' + formatBytes(f.in_bytes) + '</td>' +
+                    '<td>' + formatBytes(f.out_bytes) + '</td>' +
+                '</tr>';
+        });
+        host.innerHTML =
+            '<table class="tunnel-table">' +
+                '<thead><tr><th>Device</th><th>Interface</th><th>Kind</th><th>VLAN</th><th>IP</th><th>Subnet</th><th>Status</th><th>Bytes In</th><th>Bytes Out</th></tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+            '</table>';
+    }
+
+    // renderEvidence: the LLDP/FDB/ARP rows that produced the link. Every
+    // value is neighbor-controlled (LLDP sysnames/ports) or network-derived
+    // (MACs/IPs) — all escaped. No dead ends: devices link to their pages and
+    // the empty state explains itself.
+    function renderEvidence(conn, evidence) {
+        var container = document.getElementById('evidence-container');
+        if (!container) return;
+        if (!evidence.length) {
+            container.innerHTML =
+                '<div style="color:var(--fwmon-text-mute);padding:16px;font-size:0.875rem;">' +
+                'No layer-2 evidence in the current snapshots — the discovery data behind this link has expired. ' +
+                'The link is marked <span class="badge stale" style="font-size:0.7rem;">STALE</span> and will be removed automatically if no fresh evidence arrives.' +
+                '</div>';
+            return;
+        }
+        var rows = '';
+        evidence.forEach(function(ev) {
+            var observed = [];
+            if (ev.remote_mac) observed.push('MAC ' + AC.escapeHtml(ev.remote_mac));
+            if (ev.remote_ip) observed.push('IP ' + AC.escapeHtml(ev.remote_ip));
+            if (ev.remote_port) observed.push('port ' + AC.escapeHtml(ev.remote_port));
+            if (ev.remote_sysname) observed.push('sys ' + AC.escapeHtml(ev.remote_sysname));
+            var freshBadge = ev.fresh
+                ? '<span class="badge up">FRESH</span>'
+                : '<span class="badge stale">AGING</span>';
+            var note = ev.note ? '<div style="font-size:0.7rem;color:var(--fwmon-sig-warn);margin-top:2px;">' + AC.escapeHtml(ev.note) + '</div>' : '';
+            rows +=
+                '<tr>' +
+                    '<td><span class="badge info" style="font-size:0.68rem;">' + AC.escapeHtml(L2_TIER_LABELS[ev.tier] || ev.tier) + '</span></td>' +
+                    '<td><a href="/admin/devices/' + encodeURIComponent(ev.device_id) + '" style="color:var(--fwmon-accent);text-decoration:none;">' + AC.escapeHtml(ev.device_name || ('Device ' + ev.device_id)) + '</a></td>' +
+                    '<td style="font-family:\'JetBrains Mono\',monospace;">' + AC.escapeHtml(ev.local_if_name || String(ev.local_if_index || '-')) + '</td>' +
+                    '<td style="font-family:\'JetBrains Mono\',monospace;font-size:0.8rem;">' + (observed.join(' &middot; ') || '-') + note + '</td>' +
+                    '<td>' + (ev.vlan_id ? AC.escapeHtml(String(ev.vlan_id)) : '-') + '</td>' +
+                    '<td>' + AC.escapeHtml(relativeAge(ev.timestamp)) + '</td>' +
+                    '<td>' + freshBadge + '</td>' +
+                '</tr>';
+        });
+        container.innerHTML =
+            '<table class="tunnel-table">' +
+                '<thead><tr><th>Source</th><th>Reported by</th><th>Local port</th><th>Observed</th><th>VLAN</th><th>Age</th><th></th></tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+            '</table>';
+    }
+
     function loadConnectionDetail() {
         return AC.apiFetch(API_BASE + '/connections/' + connId + '/detail').then(function(result) {
             var data = result.data;
@@ -133,12 +252,11 @@
 
             document.title = srcName + ' - ' + dstName + ' | Connection Detail';
             renderBridge(srcName, dstName, conn.status, conn.connection_type);
+            renderBridgeSubtitle(conn);
 
             // Stat cards
             document.getElementById('stat-bytes-in').textContent = formatBytes(data.total_bytes_in);
             document.getElementById('stat-bytes-out').textContent = formatBytes(data.total_bytes_out);
-            var tunnelCount = (data.source_tunnels ? data.source_tunnels.length : 0) + (data.dest_tunnels ? data.dest_tunnels.length : 0);
-            document.getElementById('stat-tunnel-count').textContent = tunnelCount;
             var statusEl = document.getElementById('stat-status');
             // AUDIT-065: escape conn.status before it lands in innerHTML (both the
             // class attribute and the text). The server validates it to an enum,
@@ -154,16 +272,38 @@
             // visibility matches the data condition.
             document.getElementById('tab-flows').classList.toggle('hidden', !data.has_flow_data);
 
-            // Show/hide Phase 2 matches tab (same .hidden bug as above)
-            var p2matches = data.phase2_matches || [];
-            document.getElementById('tab-phase2').classList.toggle('hidden', p2matches.length === 0);
-            renderPhase2Matches(p2matches, srcName, dstName);
+            // Family branch: direct (ethernet/lag/l2vlan/bridge) links carry
+            // interfaces + L2 discovery evidence, not tunnels — the tunnel
+            // tabs render interface tables and the Evidence tab appears.
+            if (data.family === 'direct') {
+                var countCard = document.querySelector('#stat-tunnel-count');
+                var countLabel = countCard && countCard.parentElement.querySelector('.stat-label');
+                if (countLabel) countLabel.textContent = 'Interfaces';
+                document.getElementById('stat-tunnel-count').textContent = (data.interfaces || []).length;
 
-            // Render tunnel tables
-            renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id);
-            renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
-            document.getElementById('src-tunnels-title').textContent = 'Source Tunnels (' + srcName + ')';
-            document.getElementById('dst-tunnels-title').textContent = 'Destination Tunnels (' + dstName + ')';
+                document.getElementById('tab-src-tunnels').textContent = 'Interfaces';
+                document.getElementById('tab-dst-tunnels').classList.add('hidden');
+                document.getElementById('tab-phase2').classList.add('hidden');
+                document.getElementById('tab-evidence').classList.remove('hidden');
+
+                renderInterfaceTable(data.interfaces || [], conn, srcName, dstName);
+                renderEvidence(conn, data.evidence || []);
+            } else {
+                var tunnelCount = (data.source_tunnels ? data.source_tunnels.length : 0) + (data.dest_tunnels ? data.dest_tunnels.length : 0);
+                document.getElementById('stat-tunnel-count').textContent = tunnelCount;
+                document.getElementById('tab-evidence').classList.add('hidden');
+
+                // Show/hide Phase 2 matches tab (same .hidden bug as above)
+                var p2matches = data.phase2_matches || [];
+                document.getElementById('tab-phase2').classList.toggle('hidden', p2matches.length === 0);
+                renderPhase2Matches(p2matches, srcName, dstName);
+
+                // Render tunnel tables
+                renderTunnelTable('src-tunnels-table', data.source_tunnels || [], conn.source_device_id);
+                renderTunnelTable('dst-tunnels-table', data.dest_tunnels || [], conn.dest_device_id);
+                document.getElementById('src-tunnels-title').textContent = 'Source Tunnels (' + srcName + ')';
+                document.getElementById('dst-tunnels-title').textContent = 'Destination Tunnels (' + dstName + ')';
+            }
         }).catch(function(err) {
             console.error('[ConnectionDetail] Error loading detail:', err);
             AC.showError('Failed to load connection details');

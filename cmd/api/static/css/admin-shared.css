@@ -290,6 +290,14 @@
     color: var(--fwmon-sig-warn);
 }
 
+/* L2 topology link whose discovery evidence has aged past the fresh window
+   (up -> stale -> removed staircase). Same amber family as .warning; the
+   token resolves per theme. */
+.badge.stale {
+    background: rgba(210,153,34,0.15);
+    color: var(--fwmon-sig-warn);
+}
+
 .badge.unknown, .badge.info {
     background: rgba(139,148,158,0.15);
     color: var(--fwmon-text-faint);

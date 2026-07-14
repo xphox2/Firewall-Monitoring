@@ -40,8 +40,8 @@ stored value. Three outcomes:
 | Probe sends | Server response | What happens next |
 |---|---|---|
 | `schema_version` absent | 200 OK, treated as v1 | The probe registers as before (pre-handshake collectors). |
-| `schema_version: 1`–`4` | 200 OK, selected version echoed + persisted | The probe registers normally. |
-| anything outside `1-4` | **426 Upgrade Required**, header `X-Probe-Schema-Version-Supported: 1-4` | The probe refuses to register. The body names the rejected version and points here. |
+| `schema_version: 1`–`5` | 200 OK, selected version echoed + persisted | The probe registers normally. |
+| anything outside `1-5` | **426 Upgrade Required**, header `X-Probe-Schema-Version-Supported: 1-5` | The probe refuses to register. The body names the rejected version and points here. |
 
 Version history:
 
@@ -57,6 +57,13 @@ Version history:
   for probes whose **registered** `schema_version` is ≥ 4; a v3 collector
   never sees the field, and a v4 collector against a v3 server gates its
   result sends the same way.
+- **v5** — **L2 topology snapshots** for the port-to-port connection map:
+  ARP + MAC-table (FDB) rows to `POST /api/probes/:id/topology-entries` and
+  LLDP/CDP neighbor rows to `POST /api/probes/:id/topology-neighbors`. These
+  are STATE snapshots — the server REPLACES a device's rows per
+  (device, entry_type/protocol) scope on every batch — so the collector never
+  spools them (a replayed old snapshot would revert newer state) and gates
+  both sends on a negotiated ≥ 5.
 
 The consts in `internal/relay/relay.go` are the single source of truth —
 shipping a future version only requires bumping `SchemaVersionMax` there and

@@ -112,7 +112,7 @@ func TestRunMonitoringCycle_KeepsAlertEngineCalls(t *testing.T) {
 		"checkRelayedTelemetry(",
 		"detectVPNConnections(",
 		"detectOverlayConnections(",
-		"detectPhysicalConnections(",
+		"detectL2Links(",
 		"CheckEscalations()",
 		"CheckProbeDataFlow()",
 	} {

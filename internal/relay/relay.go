@@ -29,9 +29,15 @@ import "time"
 // and only attaches pending_commands for probes that negotiated ≥ 4, so a
 // v3 collector never sees the new field; a v4 collector against a v3 server
 // gates its result sends the same way. v1–v3 stay supported (Min=1).
+// v5 adds L2 TOPOLOGY snapshots for the port-to-port connection map:
+// TopologyEntry rows (ARP + MAC-table/FDB) to POST /probes/:id/topology-entries
+// and TopologyNeighbor rows (LLDP/CDP) to POST /probes/:id/topology-neighbors.
+// These are STATE snapshots — ingestion REPLACES the device's rows per
+// (device, entry_type/protocol) scope. The collector gates both sends on a
+// negotiated ≥ 5 and never spools them. v1–v4 stay supported (Min=1).
 const (
 	SchemaVersionMin = 1
-	SchemaVersionMax = 4
+	SchemaVersionMax = 5
 )
 
 type TrapEvent struct {

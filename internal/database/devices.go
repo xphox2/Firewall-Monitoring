@@ -347,6 +347,111 @@ func (d *Database) UpsertAutoConnection(sourceID, destID uint, status, tunnelNam
 	return d.db.Create(conn).Error
 }
 
+// L2LinkUpsert carries one inferred port-to-port link for UpsertAutoL2Connection.
+type L2LinkUpsert struct {
+	SourceID, DestID uint
+	Status           string
+	Name             string
+	ConnType         string // ethernet | lag
+	MatchMethod      string // lldp_neighbor | fdb_match | arp_match
+	SourceIfIndex    int
+	SourceIfName     string
+	DestIfIndex      int
+	DestIfName       string
+	VLANIDs          string
+	TunnelNames      string
+}
+
+// UpsertAutoL2Connection creates or updates an auto-detected PORT-LEVEL link.
+// Unlike UpsertAutoConnection (pair+type), the key is pair + type +
+// source_if_index + dest_if_index: parallel links between one device pair are
+// real (HA-sync + LAN), and dest_if_index must participate because direction
+// normalization puts a one-sided link's known port in dest_if_* with
+// source_if_index = 0 — keying on source alone would collide two one-sided
+// links on different ports of the same peer and flap them every cycle.
+// A manual row for the pair+type blocks auto rows entirely (same contract as
+// UpsertAutoConnection); a legacy/portless auto row (both ifIndexes 0) is
+// ADOPTED by the first port-level link so the connection ID survives.
+func (d *Database) UpsertAutoL2Connection(l L2LinkUpsert) error {
+	// Normalize direction, swapping port fields with the IDs.
+	if l.SourceID > l.DestID {
+		l.SourceID, l.DestID = l.DestID, l.SourceID
+		l.SourceIfIndex, l.DestIfIndex = l.DestIfIndex, l.SourceIfIndex
+		l.SourceIfName, l.DestIfName = l.DestIfName, l.SourceIfName
+	}
+
+	// Manual connection for this pair+type → never touch, never shadow.
+	var manual int64
+	err := d.db.Model(&models.DeviceConnection{}).
+		Where("((source_device_id = ? AND dest_device_id = ?) OR (source_device_id = ? AND dest_device_id = ?)) AND connection_type = ? AND auto_detected = ?",
+			l.SourceID, l.DestID, l.DestID, l.SourceID, l.ConnType, false).
+		Count(&manual).Error
+	if err != nil {
+		return fmt.Errorf("upsert l2 connection: manual lookup: %w", err)
+	}
+	if manual > 0 {
+		return nil
+	}
+
+	updates := map[string]interface{}{
+		"name":            l.Name,
+		"status":          l.Status,
+		"tunnel_names":    l.TunnelNames,
+		"connection_type": l.ConnType,
+		"match_method":    l.MatchMethod,
+		"source_if_index": l.SourceIfIndex,
+		"source_if_name":  l.SourceIfName,
+		"dest_if_index":   l.DestIfIndex,
+		"dest_if_name":    l.DestIfName,
+		"vlan_ids":        l.VLANIDs,
+		"last_check":      time.Now(),
+	}
+
+	// if_names participate in the key so two name-only links (both ifIndexes
+	// 0 — LLDP port IDs that aren't monitored iface names, SSH-ARP names
+	// absent from interface_stats) can't collide onto one thrashing row.
+	var existing models.DeviceConnection
+	err = d.db.Where("source_device_id = ? AND dest_device_id = ? AND connection_type = ? AND source_if_index = ? AND dest_if_index = ? AND source_if_name = ? AND dest_if_name = ? AND auto_detected = ?",
+		l.SourceID, l.DestID, l.ConnType, l.SourceIfIndex, l.DestIfIndex, l.SourceIfName, l.DestIfName, true).
+		First(&existing).Error
+	if err == nil {
+		return d.db.Model(&models.DeviceConnection{}).Where("id = ?", existing.ID).Updates(updates).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("upsert l2 connection: exact lookup: %w", err)
+	}
+
+	// Adopt a portless auto row (legacy or previously one-sided-on-the-other-
+	// axis rows do NOT qualify — only fully portless ones), preserving its ID.
+	err = d.db.Where("source_device_id = ? AND dest_device_id = ? AND connection_type = ? AND source_if_index = 0 AND dest_if_index = 0 AND source_if_name = '' AND dest_if_name = '' AND auto_detected = ?",
+		l.SourceID, l.DestID, l.ConnType, true).
+		First(&existing).Error
+	if err == nil {
+		return d.db.Model(&models.DeviceConnection{}).Where("id = ?", existing.ID).Updates(updates).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("upsert l2 connection: adoption lookup: %w", err)
+	}
+
+	conn := &models.DeviceConnection{
+		Name:           l.Name,
+		SourceDeviceID: l.SourceID,
+		DestDeviceID:   l.DestID,
+		ConnectionType: l.ConnType,
+		Status:         l.Status,
+		AutoDetected:   true,
+		TunnelNames:    l.TunnelNames,
+		MatchMethod:    l.MatchMethod,
+		SourceIfIndex:  l.SourceIfIndex,
+		SourceIfName:   l.SourceIfName,
+		DestIfIndex:    l.DestIfIndex,
+		DestIfName:     l.DestIfName,
+		VLANIDs:        l.VLANIDs,
+		LastCheck:      time.Now(),
+	}
+	return d.db.Create(conn).Error
+}
+
 func (d *Database) CreateConnection(conn *models.DeviceConnection) error {
 	return d.db.Create(conn).Error
 }

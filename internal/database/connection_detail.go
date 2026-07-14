@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"firewall-mon/internal/l2infer"
 	"firewall-mon/internal/models"
 	"firewall-mon/internal/snmp"
 
@@ -109,6 +110,21 @@ type ConnectionDetailResult struct {
 	ThroughputOut   float64                 `json:"throughput_out"`
 	HasFlowData     bool                    `json:"has_flow_data"`
 	Phase2Matches   []Phase2Match           `json:"phase2_matches"`
+	// Evidence explains WHY an L2-inferred direct link is drawn (which
+	// LLDP/FDB/ARP rows produced it). Populated for the direct family when
+	// the connection's match method is one of the L2 tiers; empty means the
+	// evidence has aged out (the UI states that explicitly).
+	Evidence []L2EvidenceOut `json:"evidence,omitempty"`
+}
+
+// L2EvidenceOut is one evidence row on the connection-detail API. The
+// embedded EvidenceRef fields (tier, reporting device, local port, observed
+// MAC/IP/remote-port/sysname, VLAN, timestamp, note) are NEIGHBOR- and
+// NETWORK-CONTROLLED strings — the UI must escape them.
+type L2EvidenceOut struct {
+	l2infer.EvidenceRef
+	DeviceName string `json:"device_name"`
+	Fresh      bool   `json:"fresh"`
 }
 
 // connectionFamily maps a connection_type to one of four telemetry families
@@ -421,6 +437,7 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 		var flowCount int64
 		d.db.Model(&models.FlowSample{}).Where("device_id IN ?", []uint{conn.SourceDeviceID, conn.DestDeviceID}).Limit(1).Count(&flowCount)
 		result.HasFlowData = flowCount > 0
+		result.Evidence = d.buildConnectionEvidence(&conn)
 		return result, nil
 	}
 
@@ -1132,4 +1149,107 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 	}
 
 	return result, nil
+}
+
+// buildConnectionEvidence re-runs the L2 link inference over just the
+// connection's two endpoint devices and returns the evidence rows of the link
+// matching this connection's port attribution — the same ALGORITHM that drew
+// the edge (internal/l2infer). Caveat: the poller runs it fleet-wide, so
+// ambiguity handling can differ here — a MAC/sysname that is multi-owner
+// across the fleet (dropped by the detector) resolves cleanly in this
+// two-device universe; the view is explanatory, not authoritative.
+// Returns nil for non-L2 match methods or when the evidence has aged past the
+// grace window (the UI renders an explicit empty state).
+func (d *Database) buildConnectionEvidence(conn *models.DeviceConnection) []L2EvidenceOut {
+	switch conn.MatchMethod {
+	case l2infer.MethodLLDP, l2infer.MethodFDB, l2infer.MethodARP:
+	default:
+		return nil
+	}
+
+	ids := []uint{conn.SourceDeviceID, conn.DestDeviceID}
+	var devices []models.Device
+	if err := d.db.Where("id IN ?", ids).Find(&devices).Error; err != nil || len(devices) < 2 {
+		return nil
+	}
+
+	devs := make([]l2infer.DeviceMeta, 0, 2)
+	for i := range devices {
+		dev := &devices[i]
+		ips := []string{dev.IPAddress}
+		for ip := range d.collectDeviceIPs(dev.ID, dev) {
+			ips = append(ips, ip)
+		}
+		devs = append(devs, l2infer.DeviceMeta{ID: dev.ID, Name: dev.Name, SiteID: dev.SiteID, IPs: ips})
+	}
+
+	var ifaces []l2infer.Iface
+	deviceNames := map[uint]string{}
+	for i := range devices {
+		deviceNames[devices[i].ID] = devices[i].Name
+		for _, st := range d.latestInterfacesForDevice(devices[i].ID) {
+			ifaces = append(ifaces, l2infer.Iface{
+				DeviceID: st.DeviceID, IfIndex: st.Index, Name: st.Name,
+				MAC: st.MACAddress, Status: st.Status, TypeName: strings.ToLower(st.TypeName),
+			})
+		}
+	}
+
+	cutoff := time.Now().Add(-l2infer.GraceWindow)
+	var entries []models.TopologyEntry
+	d.db.Where("device_id IN ? AND timestamp >= ?", ids, cutoff).Find(&entries)
+	var neighbors []models.TopologyNeighbor
+	d.db.Where("device_id IN ? AND timestamp >= ?", ids, cutoff).Find(&neighbors)
+
+	var fdb []l2infer.FDBRow
+	var arp []l2infer.ARPRow
+	for _, e := range entries {
+		switch e.EntryType {
+		case "fdb":
+			fdb = append(fdb, l2infer.FDBRow{DeviceID: e.DeviceID, IfIndex: e.IfIndex, MAC: e.MACAddress, VLANID: e.VlanID, Ts: e.Timestamp})
+		case "arp":
+			arp = append(arp, l2infer.ARPRow{DeviceID: e.DeviceID, IfIndex: e.IfIndex, IfName: e.IfName, IP: e.IPAddress, MAC: e.MACAddress, Ts: e.Timestamp})
+		}
+	}
+	var nbrs []l2infer.NeighborRow
+	for _, n := range neighbors {
+		nbrs = append(nbrs, l2infer.NeighborRow{
+			DeviceID: n.DeviceID, LocalIfIndex: n.LocalIfIndex, LocalIfName: n.LocalPortName,
+			ChassisID: n.RemoteChassisID, PortID: n.RemotePortID, PortDesc: n.RemotePortDesc,
+			SysName: n.RemoteSysName, Ts: n.Timestamp,
+		})
+	}
+
+	links := l2infer.InferLinks(devs, ifaces, fdb, arp, nbrs)
+	if len(links) == 0 {
+		return nil
+	}
+
+	// Pick the link matching this row's port attribution; with a single link
+	// (the common case) fall back to it even if the ports have since moved.
+	var match *l2infer.Link
+	for i := range links {
+		l := &links[i]
+		if l.AIfIndex == conn.SourceIfIndex && l.BIfIndex == conn.DestIfIndex {
+			match = l
+			break
+		}
+	}
+	if match == nil && len(links) == 1 {
+		match = &links[0]
+	}
+	if match == nil {
+		return nil
+	}
+
+	fresh := time.Now().Add(-l2infer.FreshWindow)
+	out := make([]L2EvidenceOut, 0, len(match.Evidence))
+	for _, ev := range match.Evidence {
+		out = append(out, L2EvidenceOut{
+			EvidenceRef: ev,
+			DeviceName:  deviceNames[ev.DeviceID],
+			Fresh:       !ev.Timestamp.Before(fresh),
+		})
+	}
+	return out
 }

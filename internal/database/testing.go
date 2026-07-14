@@ -46,6 +46,8 @@ func NewDatabaseForTesting(t interface {
 		&models.ProcessorStats{},
 		&models.DiskUsage{},
 		&models.LoadAverage{},
+		&models.TopologyEntry{},
+		&models.TopologyNeighbor{},
 		&models.DeviceConfigRevision{},
 		&models.TrapEvent{},
 		&models.SyslogMessage{},

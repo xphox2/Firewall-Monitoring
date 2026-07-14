@@ -725,6 +725,16 @@ type DeviceConnection struct {
 	AutoDetected   bool      `json:"auto_detected" gorm:"default:false"`
 	TunnelNames    string    `json:"tunnel_names"`
 	MatchMethod    string    `json:"match_method" gorm:"default:ip_match"`
+	// Port-level endpoints (L2-inferred direct links, migration v46). Zero
+	// ifIndex + empty name = that end's port is unknown (one-sided evidence).
+	// Direction-normalized with SourceDeviceID < DestDeviceID for auto rows.
+	SourceIfIndex int    `json:"source_if_index"`
+	SourceIfName  string `json:"source_if_name"`
+	DestIfIndex   int    `json:"dest_if_index"`
+	DestIfName    string `json:"dest_if_name"`
+	// VLANIDs is a comma-separated list of VLANs observed on the link (from
+	// FDB evidence); "" = untagged/unknown.
+	VLANIDs string `json:"vlan_ids" gorm:"column:vlan_ids"`
 }
 
 type InterfaceAddress struct {
@@ -735,6 +745,52 @@ type InterfaceAddress struct {
 	IPAddress string    `json:"ip_address" gorm:"index:idx_ifaddr_ip,priority:1;uniqueIndex:idx_ifaddr_dev_ip,priority:2"`
 	NetMask   string    `json:"net_mask"`
 }
+
+// TopologyEntry is one row of relayed L2 topology evidence (relay schema v5):
+// an ARP-cache binding (entry_type "arp": remote IP+MAC seen via local
+// interface if_index) or a MAC-table/FDB binding (entry_type "fdb": remote MAC
+// learned on if_index, VLAN vlan_id). STATE TABLE, not time-series: ingestion
+// REPLACES a device's rows per (device, entry_type) on every batch, so the
+// table always holds the latest complete snapshot. MACs are canonical
+// lowercase colon form ("aa:bb:cc:dd:ee:ff") — the poller's port-to-port link
+// inference joins them against interface MACs.
+type TopologyEntry struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	Timestamp  time.Time `json:"timestamp"`
+	DeviceID   uint      `json:"device_id" gorm:"index;index:idx_topo_dev_type,priority:1"`
+	EntryType  string    `json:"entry_type" gorm:"index:idx_topo_dev_type,priority:2"` // "fdb" | "arp"
+	IfIndex    int       `json:"if_index"`
+	IfName     string    `json:"if_name"`                       // SSH-sourced ARP only
+	MACAddress string    `json:"mac_address" gorm:"index"`      // canonical lowercase
+	IPAddress  string    `json:"ip_address"`                    // arp only
+	VlanID     int       `json:"vlan_id" gorm:"column:vlan_id"` // fdb only
+	Source     string    `json:"source"`                        // "snmp" | "ssh"
+}
+
+func (TopologyEntry) TableName() string { return "topology_entries" }
+
+// TopologyNeighbor is one relayed LLDP/CDP neighbor-table row (relay schema
+// v5): the reporting device's local port plus the identity the neighbor
+// advertised. Same replace-per-(device, protocol) snapshot semantics as
+// TopologyEntry. Remote* fields are NEIGHBOR-CONTROLLED strings — treat as
+// untrusted in any UI.
+type TopologyNeighbor struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	Timestamp       time.Time `json:"timestamp"`
+	DeviceID        uint      `json:"device_id" gorm:"index;index:idx_topo_nbr_dev_proto,priority:1"`
+	Protocol        string    `json:"protocol" gorm:"index:idx_topo_nbr_dev_proto,priority:2"` // "lldp" | "cdp"
+	LocalIfIndex    int       `json:"local_if_index"`
+	LocalPortName   string    `json:"local_port_name"`
+	RemoteChassisID string    `json:"remote_chassis_id" gorm:"column:remote_chassis_id"`
+	RemotePortID    string    `json:"remote_port_id" gorm:"column:remote_port_id"`
+	RemotePortDesc  string    `json:"remote_port_desc"`
+	RemoteSysName   string    `json:"remote_sys_name"`
+	RemoteSysDesc   string    `json:"remote_sys_desc"`
+	RemoteCaps      string    `json:"remote_caps"`
+	RemoteMgmtAddr  string    `json:"remote_mgmt_addr"` // neighbor's advertised mgmt IP (CDP cacheAddress)
+}
+
+func (TopologyNeighbor) TableName() string { return "topology_neighbors" }
 
 type SystemSetting struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`

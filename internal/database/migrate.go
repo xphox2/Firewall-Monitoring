@@ -29,6 +29,8 @@ func (d *Database) migrateBaseline() error {
 		&models.ProcessorStats{},
 		&models.DiskUsage{},
 		&models.LoadAverage{},
+		&models.TopologyEntry{},
+		&models.TopologyNeighbor{},
 		&models.TrapEvent{},
 		&models.Alert{},
 		&models.UptimeRecord{},
@@ -1874,5 +1876,32 @@ func (d *Database) migrateFlowRollupFirewallEvent() error {
 		return fmt.Errorf("migrate v30 add flow_rollups.firewall_event: %w", err)
 	}
 	log.Printf("migrate v30 flow_rollup_firewall_event: column ensured")
+	return nil
+}
+
+// migrateL2TopologyTables (v45) creates the topology_entries (ARP/FDB) and
+// topology_neighbors (LLDP/CDP) state tables for the port-to-port connection
+// map (relay schema v5). New tables only, so plain AutoMigrate matches the
+// v38 new-table precedent.
+func (d *Database) migrateL2TopologyTables() error {
+	return d.db.AutoMigrate(&models.TopologyEntry{}, &models.TopologyNeighbor{})
+}
+
+// migrateConnectionPortFields (v46) adds the port-level endpoint columns to
+// device_connections (source/dest ifIndex+ifName, vlan_ids) for L2-inferred
+// links, and PURGES the old subnet-guess auto connections: the map now only
+// draws links backed by L2 evidence ("hide unconfirmed" — the subnet_match
+// detector produced a fake mesh and was removed with this migration). Manual
+// connections (auto_detected = false) are never touched.
+func (d *Database) migrateConnectionPortFields() error {
+	if err := d.db.AutoMigrate(&models.DeviceConnection{}); err != nil {
+		return fmt.Errorf("migrate v46 add connection port fields: %w", err)
+	}
+	res := d.db.Where("auto_detected = ? AND match_method = ?", true, "subnet_match").
+		Delete(&models.DeviceConnection{})
+	if res.Error != nil {
+		return fmt.Errorf("migrate v46 purge subnet_match connections: %w", res.Error)
+	}
+	log.Printf("migrate v46 connection_port_fields: columns ensured, purged %d subnet_match auto connection(s)", res.RowsAffected)
 	return nil
 }
