@@ -52,7 +52,10 @@ func TestDetectL2Links_FDBCreatesPortLink(t *testing.T) {
 		t.Fatalf("save topology: %v", err)
 	}
 
-	n := p.detectL2Links([]models.Device{core, branch})
+	n, ok := p.detectL2Links([]models.Device{core, branch})
+	if !ok {
+		t.Fatal("detectL2Links reported a read failure")
+	}
 	if n != 1 {
 		t.Fatalf("detectL2Links created %d links, want 1", n)
 	}
@@ -114,7 +117,7 @@ func TestDetectL2Links_NoSubnetGuess(t *testing.T) {
 		t.Fatalf("save topology: %v", err)
 	}
 
-	if n := p.detectL2Links([]models.Device{fw1, fw2}); n != 0 {
+	if n, _ := p.detectL2Links([]models.Device{fw1, fw2}); n != 0 {
 		t.Fatalf("detectL2Links created %d links, want 0 (no L2 evidence of adjacency)", n)
 	}
 	conns, _ := db.GetAllConnections()
@@ -148,7 +151,7 @@ func TestDetectL2Links_CrossSiteIgnored(t *testing.T) {
 		t.Fatalf("save topology: %v", err)
 	}
 
-	if n := p.detectL2Links([]models.Device{a, b}); n != 0 {
+	if n, _ := p.detectL2Links([]models.Device{a, b}); n != 0 {
 		t.Fatalf("cross-site link created (%d), want 0", n)
 	}
 }
@@ -181,7 +184,7 @@ func TestDetectL2Links_StalenessTransitions(t *testing.T) {
 
 	// Fresh → up.
 	seed(time.Minute)
-	if n := p.detectL2Links([]models.Device{core, branch}); n != 1 {
+	if n, _ := p.detectL2Links([]models.Device{core, branch}); n != 1 {
 		t.Fatalf("fresh: created %d, want 1", n)
 	}
 	conns, _ := db.GetAllConnections()
@@ -192,7 +195,7 @@ func TestDetectL2Links_StalenessTransitions(t *testing.T) {
 	// Within grace but past fresh → stale (same row, same ID).
 	prevID := conns[0].ID
 	seed(time.Hour)
-	if n := p.detectL2Links([]models.Device{core, branch}); n != 1 {
+	if n, _ := p.detectL2Links([]models.Device{core, branch}); n != 1 {
 		t.Fatalf("stale window: created %d, want 1", n)
 	}
 	conns, _ = db.GetAllConnections()
@@ -203,7 +206,7 @@ func TestDetectL2Links_StalenessTransitions(t *testing.T) {
 	// Past grace → not refreshed → swept by the cycle cleanup.
 	seed(4 * time.Hour)
 	cycleStart := time.Now()
-	if n := p.detectL2Links([]models.Device{core, branch}); n != 0 {
+	if n, _ := p.detectL2Links([]models.Device{core, branch}); n != 0 {
 		t.Fatalf("past grace: created %d, want 0", n)
 	}
 	db.CleanupStaleAutoConnectionsBefore(cycleStart)

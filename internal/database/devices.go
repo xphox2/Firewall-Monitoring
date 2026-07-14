@@ -407,9 +407,12 @@ func (d *Database) UpsertAutoL2Connection(l L2LinkUpsert) error {
 		"last_check":      time.Now(),
 	}
 
+	// if_names participate in the key so two name-only links (both ifIndexes
+	// 0 — LLDP port IDs that aren't monitored iface names, SSH-ARP names
+	// absent from interface_stats) can't collide onto one thrashing row.
 	var existing models.DeviceConnection
-	err = d.db.Where("source_device_id = ? AND dest_device_id = ? AND connection_type = ? AND source_if_index = ? AND dest_if_index = ? AND auto_detected = ?",
-		l.SourceID, l.DestID, l.ConnType, l.SourceIfIndex, l.DestIfIndex, true).
+	err = d.db.Where("source_device_id = ? AND dest_device_id = ? AND connection_type = ? AND source_if_index = ? AND dest_if_index = ? AND source_if_name = ? AND dest_if_name = ? AND auto_detected = ?",
+		l.SourceID, l.DestID, l.ConnType, l.SourceIfIndex, l.DestIfIndex, l.SourceIfName, l.DestIfName, true).
 		First(&existing).Error
 	if err == nil {
 		return d.db.Model(&models.DeviceConnection{}).Where("id = ?", existing.ID).Updates(updates).Error

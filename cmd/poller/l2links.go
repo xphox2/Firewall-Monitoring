@@ -29,20 +29,25 @@ const (
 // with port labels on both ends. This replaced detectPhysicalConnections'
 // shared-subnet guess (v0.11.94): links are only drawn when layer-2 evidence
 // backs them ("hide unconfirmed").
-func (p *Poller) detectL2Links(devices []models.Device) int {
+//
+// ok=false means a READ failed (DB timeout, lock) — the caller must skip the
+// stale-connection sweep that cycle, or every L2 row would be deleted (their
+// last_check untouched while VPN/overlay detectors kept the aggregate count
+// positive) and recreated next cycle with new IDs.
+func (p *Poller) detectL2Links(devices []models.Device) (count int, ok bool) {
 	if p.db == nil || len(devices) == 0 {
-		return 0
+		return 0, true
 	}
 
 	ifaces, err := p.db.GetAllLatestInterfaces()
 	if err != nil {
 		log.Printf("L2 auto-detect: failed to get interfaces - %v", err)
-		return 0
+		return 0, false
 	}
 	ifAddrs, err := p.db.GetLatestInterfaceAddresses()
 	if err != nil {
 		log.Printf("L2 auto-detect: failed to get interface addresses - %v", err)
-		return 0
+		return 0, false
 	}
 
 	devs, infIfaces, ownedMACs := buildL2Inputs(devices, ifaces, ifAddrs)
@@ -54,23 +59,23 @@ func (p *Poller) detectL2Links(devices []models.Device) int {
 	fdbRows, err := p.db.GetTopologyEntriesSince(cutoff, "fdb", ownedMACs)
 	if err != nil {
 		log.Printf("L2 auto-detect: failed to get FDB evidence - %v", err)
-		return 0
+		return 0, false
 	}
 	arpRows, err := p.db.GetTopologyEntriesSince(cutoff, "arp", nil)
 	if err != nil {
 		log.Printf("L2 auto-detect: failed to get ARP evidence - %v", err)
-		return 0
+		return 0, false
 	}
 	nbrRows, err := p.db.GetTopologyNeighborsSince(cutoff)
 	if err != nil {
 		log.Printf("L2 auto-detect: failed to get neighbor evidence - %v", err)
-		return 0
+		return 0, false
 	}
 
 	links := l2infer.InferLinks(devs, infIfaces,
 		toFDBRows(fdbRows), toARPRows(arpRows), toNeighborRows(nbrRows))
 	if len(links) == 0 {
-		return 0
+		return 0, true
 	}
 
 	deviceByID := make(map[uint]*models.Device, len(devices))
@@ -108,7 +113,7 @@ func (p *Poller) detectL2Links(devices []models.Device) int {
 			created, tierCounts[l2infer.MethodLLDP], tierCounts[l2infer.MethodFDB],
 			tierCounts[l2infer.MethodARP], staleCount)
 	}
-	return created
+	return created, true
 }
 
 // buildL2Inputs adapts the poller's device/interface rows into l2infer inputs

@@ -97,7 +97,10 @@ func (d *Database) GetTopologyEntriesSince(cutoff time.Time, entryType string, o
 	if ownedMACs != nil {
 		q = q.Where("mac_address IN ?", ownedMACs)
 	}
-	err := q.Find(&entries).Error
+	// Deterministic order: the inference's merge order is input-order-
+	// sensitive for edge cases (parallel links with unknown ports), and PG
+	// heap order varies between reads.
+	err := q.Order("device_id, id").Find(&entries).Error
 	return entries, err
 }
 
@@ -105,7 +108,7 @@ func (d *Database) GetTopologyEntriesSince(cutoff time.Time, entryType string, o
 // cutoff (neighbor tables are small — no further filtering needed).
 func (d *Database) GetTopologyNeighborsSince(cutoff time.Time) ([]models.TopologyNeighbor, error) {
 	var neighbors []models.TopologyNeighbor
-	err := d.db.Where("timestamp >= ?", cutoff).Find(&neighbors).Error
+	err := d.db.Where("timestamp >= ?", cutoff).Order("device_id, id").Find(&neighbors).Error
 	return neighbors, err
 }
 

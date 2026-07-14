@@ -394,11 +394,17 @@ func InferLinks(devs []DeviceMeta, ifaces []Iface, fdb []FDBRow, arp []ARPRow, n
 	var out []Link
 	for _, k := range keys {
 		links := perPair[k]
-		sort.Slice(links, func(i, j int) bool {
+		sort.SliceStable(links, func(i, j int) bool {
 			if links[i].AIfIndex != links[j].AIfIndex {
 				return links[i].AIfIndex < links[j].AIfIndex
 			}
-			return links[i].BIfIndex < links[j].BIfIndex
+			if links[i].BIfIndex != links[j].BIfIndex {
+				return links[i].BIfIndex < links[j].BIfIndex
+			}
+			if links[i].AIfName != links[j].AIfName {
+				return links[i].AIfName < links[j].AIfName
+			}
+			return links[i].BIfName < links[j].BIfName
 		})
 		for _, l := range links {
 			ix.finalize(l)
@@ -501,12 +507,19 @@ func (ix *indexes) fdbCandidates(fdb []FDBRow) []candidate {
 
 	var out []candidate
 	for _, key := range keys {
+		// Newest snapshot wins; ties break on distinct-MAC count, then
+		// ifIndex, then port NAME — the name tiebreak matters for rows whose
+		// port never resolved to an ifIndex (both 0), where iterating the
+		// map would otherwise pick a nondeterministic winner and flap the
+		// attribution every cycle.
 		var best *portStat
 		for _, st := range acc[key] {
 			if best == nil ||
 				st.ts.After(best.ts) ||
 				(st.ts.Equal(best.ts) && len(st.macs) > len(best.macs)) ||
-				(st.ts.Equal(best.ts) && len(st.macs) == len(best.macs) && st.port.ifIndex < best.port.ifIndex) {
+				(st.ts.Equal(best.ts) && len(st.macs) == len(best.macs) && st.port.ifIndex < best.port.ifIndex) ||
+				(st.ts.Equal(best.ts) && len(st.macs) == len(best.macs) && st.port.ifIndex == best.port.ifIndex &&
+					strings.Compare(st.port.name, best.port.name) < 0) {
 				best = st
 			}
 		}
@@ -599,12 +612,20 @@ func (ix *indexes) arpCandidates(arp []ARPRow) []candidate {
 
 	var out []candidate
 	for _, key := range keys {
+		// Same deterministic comparator as the FDB tier. The port-NAME
+		// tiebreak is load-bearing here: SSH-sourced ARP rows carry names
+		// with ifIndex 0, and a collector snapshot stamps every row with one
+		// timestamp — without the name ordering, two name-only ports tie all
+		// the way down and the winner is map-iteration luck, flapping the
+		// stored attribution every cycle.
 		var best *portStat
 		for _, st := range acc[key] {
 			if best == nil ||
 				st.ts.After(best.ts) ||
 				(st.ts.Equal(best.ts) && st.rows > best.rows) ||
-				(st.ts.Equal(best.ts) && st.rows == best.rows && st.port.ifIndex < best.port.ifIndex) {
+				(st.ts.Equal(best.ts) && st.rows == best.rows && st.port.ifIndex < best.port.ifIndex) ||
+				(st.ts.Equal(best.ts) && st.rows == best.rows && st.port.ifIndex == best.port.ifIndex &&
+					strings.Compare(st.port.name, best.port.name) < 0) {
 				best = st
 			}
 		}

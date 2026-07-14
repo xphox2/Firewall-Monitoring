@@ -1153,8 +1153,11 @@ func (d *Database) GetConnectionFlowStats(connID uint, hours int) (*ConnectionFl
 
 // buildConnectionEvidence re-runs the L2 link inference over just the
 // connection's two endpoint devices and returns the evidence rows of the link
-// matching this connection's port attribution — the SAME logic that drew the
-// edge (internal/l2infer), so the explanation can't drift from the detector.
+// matching this connection's port attribution — the same ALGORITHM that drew
+// the edge (internal/l2infer). Caveat: the poller runs it fleet-wide, so
+// ambiguity handling can differ here — a MAC/sysname that is multi-owner
+// across the fleet (dropped by the detector) resolves cleanly in this
+// two-device universe; the view is explanatory, not authoritative.
 // Returns nil for non-L2 match methods or when the evidence has aged past the
 // grace window (the UI renders an explicit empty state).
 func (d *Database) buildConnectionEvidence(conn *models.DeviceConnection) []L2EvidenceOut {

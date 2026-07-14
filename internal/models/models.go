@@ -787,6 +787,7 @@ type TopologyNeighbor struct {
 	RemoteSysName   string    `json:"remote_sys_name"`
 	RemoteSysDesc   string    `json:"remote_sys_desc"`
 	RemoteCaps      string    `json:"remote_caps"`
+	RemoteMgmtAddr  string    `json:"remote_mgmt_addr"` // neighbor's advertised mgmt IP (CDP cacheAddress)
 }
 
 func (TopologyNeighbor) TableName() string { return "topology_neighbors" }

@@ -874,12 +874,17 @@ func (p *Poller) runMonitoringCycle() {
 	connCycleStart := time.Now()
 	vpnCount := p.detectVPNConnections(devices)
 	overlayCount := p.detectOverlayConnections(devices)
-	l2Count := p.detectL2Links(devices)
+	l2Count, l2OK := p.detectL2Links(devices)
 
 	// Clean up auto-detected connections not refreshed by any detector.
 	// Only run cleanup if at least one detector found connections — otherwise
-	// a transient failure (DB error, empty data) would wipe all existing connections.
-	if p.db != nil && (vpnCount+overlayCount+l2Count) > 0 {
+	// a transient failure (DB error, empty data) would wipe all existing
+	// connections. l2OK guards the same hazard one level finer: a failed L2
+	// evidence READ with healthy VPN detectors would otherwise sweep every L2
+	// row (their last_check untouched) and recreate them next cycle with new IDs.
+	if p.db != nil && !l2OK {
+		log.Printf("Connection detection: L2 detector read failed, skipping stale cleanup this cycle to preserve existing data")
+	} else if p.db != nil && (vpnCount+overlayCount+l2Count) > 0 {
 		removed := p.db.CleanupStaleAutoConnectionsBefore(connCycleStart)
 		if removed > 0 {
 			log.Printf("Connection cleanup: removed %d stale auto-detected connection(s)", removed)
