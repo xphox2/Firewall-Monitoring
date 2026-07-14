@@ -53,6 +53,29 @@
         return TYPE_LABELS[type] || type;
     }
 
+    // portLabel renders an L2-inferred link's endpoint interfaces
+    // ("port2 ↔ lan1"; "port2 ↔ ?" when one side is unknown). Names are
+    // capped so small screens don't get label soup; "" when the link carries
+    // no port attribution (VPN/overlay rows).
+    function portLabel(c) {
+        function cap(s) { return s.length > 14 ? s.slice(0, 13) + '…' : s; }
+        var src = c.source_if_name || '';
+        var dst = c.dest_if_name || '';
+        if (!src && !dst) return '';
+        return cap(src || '?') + ' ↔ ' + cap(dst || '?');
+    }
+
+    // bestMatchMethod: strongest L2 evidence tier among a bundle's members —
+    // drives the bundle's confidence line style.
+    var METHOD_RANK = { lldp_neighbor: 3, fdb_match: 2, arp_match: 1 };
+    function bestMatchMethod(conns) {
+        var best = '';
+        conns.forEach(function(c) {
+            if ((METHOD_RANK[c.match_method] || 0) > (METHOD_RANK[best] || 0)) best = c.match_method;
+        });
+        return best;
+    }
+
     // ---- 1a. Data Transformation (tunnel-bundled) ----
     function buildElements(devices, connections, siteMap, vpnMap, siteNames) {
         var elements = [];
@@ -266,16 +289,28 @@
                     }
                 });
                 var anyUp = p.directs.some(function(c) { return c.status === 'up'; });
+                var anyStale = p.directs.some(function(c) { return c.status === 'stale'; });
                 var anyDown = p.directs.some(function(c) { return c.status === 'down'; });
-                var bundleStatus = anyUp ? 'up' : (anyDown ? 'down' : 'unknown');
+                // Stale (L2 evidence aged past the fresh window) outranks down in
+                // the roll-up: an amber "evidence going quiet" reads differently
+                // from a red hard-down.
+                var bundleStatus = anyUp ? 'up' : (anyStale ? 'stale' : (anyDown ? 'down' : 'unknown'));
+                var bundleLabel = typeLabels.join(', ');
+                // Single-link bundles carry the port pair right on the map edge;
+                // multi-link bundles show ports on their expanded sublanes only.
+                if (p.directs.length === 1) {
+                    var pl = portLabel(p.directs[0]);
+                    if (pl) bundleLabel += '\n' + pl;
+                }
                 elements.push({ group: 'edges', data: {
                     id: 'direct-' + key,
                     source: 'dev-' + p.srcId, target: 'dev-' + p.dstId,
                     edgeType: 'direct-bundle', connType: 'direct',
                     status: bundleStatus,
+                    matchMethod: bestMatchMethod(p.directs),
                     childConns: p.directs.slice(),
                     expanded: false,
-                    label: typeLabels.join(', ')
+                    label: bundleLabel
                 }});
             }
         });
@@ -375,7 +410,7 @@
             { selector: 'edge[edgeType="tunnel-bundle"]', style: { 'width': 4, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
             // Direct bundle — one collapsed teal link per same-site pair; straight (not
             // parallel bezier) since it is now a single edge. Expands into sublanes on click.
-            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10 } },
+            { selector: 'edge[edgeType="direct-bundle"]', style: { 'width': 4, 'curve-style': 'straight', 'line-color': TYPE_COLORS.direct, 'label': 'data(label)', 'font-size': '9px', 'font-family': 'JetBrains Mono, monospace', 'color': cssVar('--fwmon-text-mute', '#8b949e'), 'text-rotation': 'autorotate', 'text-margin-y': -10, 'text-wrap': 'wrap' } },
             // Direct connection edges — bezier so parallel same-pair direct links stack/offset instead of overlapping into one line
             { selector: 'edge[edgeType="connection"]', style: { 'curve-style': 'bezier', 'control-point-step-size': 18 } },
             // Connection type colors
@@ -391,6 +426,17 @@
             { selector: 'edge[connType="lag"]', style: { 'line-color': TYPE_COLORS.lag, 'width': 4 } },
             { selector: 'edge[connType="ethernet"]', style: { 'line-color': TYPE_COLORS.ethernet, 'width': 2 } },
             { selector: 'edge[connType="tunnel"]', style: { 'line-color': TYPE_COLORS.tunnel } },
+            // L2 link confidence — line STYLE, not color (teal stays the direct
+            // color in both themes; zero new contrast surface): LLDP/FDB links
+            // stay solid (confirmed), ARP-inferred links are dashed.
+            { selector: 'edge[matchMethod="arp_match"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [6, 4] } },
+            // STALE edges — L2 evidence aged past the fresh window but within
+            // grace: amber dashed, distinct from red down. Declared after the
+            // connType colors so the warn color wins.
+            { selector: 'edge[status="stale"]', style: {
+                'line-style': 'dashed', 'line-dash-pattern': [4, 6], 'opacity': 0.75,
+                'line-color': cssVar('--fwmon-sig-warn', '#e7b53c')
+            }},
             // Sub-lane edges (expansion) — offset bezier for visual separation
             { selector: 'edge[edgeType="sublane"]', style: {
                 'width': 3, 'curve-style': 'unbundled-bezier',
@@ -697,16 +743,19 @@
                 });
             }
 
+            var laneMethod = (connObj && connObj.match_method) || '';
             if (isCrossSite) {
                 cy.add({ group: 'edges', data: {
                     id: laneId + '-a', source: laneSrc, target: 'cloud-internet',
                     edgeType: 'sublane', connType: connType, status: status,
+                    matchMethod: laneMethod,
                     connObj: connObj, parentTunnel: tunnelId, label: labelText
                 }});
                 styleLane(laneId + '-a');
                 cy.add({ group: 'edges', data: {
                     id: laneId + '-b', source: 'cloud-internet', target: remoteDst,
                     edgeType: 'sublane', connType: connType, status: status,
+                    matchMethod: laneMethod,
                     connObj: connObj, parentTunnel: tunnelId, label: ''
                 }});
                 // Mirror the offset on the other side so lanes fan outward symmetrically
@@ -719,6 +768,7 @@
                 cy.add({ group: 'edges', data: {
                     id: laneId, source: laneSrc, target: laneDst,
                     edgeType: 'sublane', connType: connType, status: status,
+                    matchMethod: laneMethod,
                     connObj: connObj, parentTunnel: tunnelId, label: labelText
                 }});
                 styleLane(laneId);
@@ -738,9 +788,18 @@
             addSublane(tunnelId + '-carrier', data.connType, data.status, data.connObj, getTypeLabel(data.connType), TYPE_COLORS[data.connType] || '#8b949e', 0);
         }
 
-        // Child sublanes (overlays inside a tunnel, or each same-site direct link)
+        // Child sublanes (overlays inside a tunnel, or each same-site direct
+        // link). Direct sublanes carry their port pair in the label; stale
+        // lanes get the warn color inline (styleLane's inline line-color
+        // outranks the stylesheet's stale selector).
         children.forEach(function(child, idx) {
-            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, getTypeLabel(child.connection_type), TYPE_COLORS[child.connection_type] || '#8b949e', idx + carrierCount);
+            var childLabel = getTypeLabel(child.connection_type);
+            var pl = portLabel(child);
+            if (pl) childLabel += ' ' + pl;
+            var laneColor = child.status === 'stale'
+                ? cssVar('--fwmon-sig-warn', '#e7b53c')
+                : (TYPE_COLORS[child.connection_type] || '#8b949e');
+            addSublane(tunnelId + '-lane-' + child.id, child.connection_type, child.status, child, childLabel, laneColor, idx + carrierCount);
         });
 
         // Restart particles to include new sublanes

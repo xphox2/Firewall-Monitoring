@@ -164,7 +164,7 @@
         const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
         const typeBadge = window.typeBadgeHtml(conn.connection_type);
         const statusBadge = `<span class="badge ${conn.status}">${window.escapeHtml((conn.status || 'unknown').toUpperCase())}</span>`;
-        const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',subnet_match:'Direct',tunnel_indirect:'Indirect',wan_inferred:'Indirect',name_match:'Indirect',overlay_name:'Indirect'};
+        const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',tunnel_indirect:'Indirect',wan_inferred:'Indirect',name_match:'Indirect',overlay_name:'Indirect',lldp_neighbor:'LLDP confirmed',fdb_match:'MAC-table matched',arp_match:'ARP inferred'};
         const methodBadge = conn.match_method ? `<span class="badge info" style="font-size:0.68rem;">${methodLabels[conn.match_method] || conn.match_method}</span>` : '';
 
         panel.innerHTML = `
@@ -282,10 +282,15 @@
 
             if (family === 'direct') {
                 // Direct links carry interfaces, not tunnels — render the member
-                // interfaces (from interface_stats) into the second tab.
+                // interfaces (from interface_stats) into the second tab, topped
+                // by the L2 port-pair summary and followed by the discovery
+                // evidence that drew the link.
                 const ifaces = data.interfaces || [];
+                const countLabel = document.getElementById('pkpi-count-label');
+                if (countLabel) countLabel.textContent = 'Interfaces';
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
                 renderPanelInterfaceTab(ifaces, c, srcName, dstName);
+                renderPanelL2Evidence(c, data.evidence || []);
                 if (p2Tab) p2Tab.style.display = 'none';
             } else if (family === 'overlay') {
                 // Overlay (VXLAN/L3VLAN): show config + SNMP-derived overlay
@@ -658,6 +663,80 @@
             html += ifaceSegmentCard(header, srcName, dstName, leftover.filter(onSrc), leftover.filter(onDst), 'rest');
         }
         container.innerHTML = html;
+    }
+
+    // l2MethodLabel: user-facing names for the L2 evidence tiers.
+    const L2_METHOD_LABELS = { lldp_neighbor: 'LLDP confirmed', fdb_match: 'MAC-table matched', arp_match: 'ARP inferred' };
+    const L2_TIER_LABELS = { lldp: 'LLDP', fdb: 'MAC table', arp: 'ARP' };
+
+    function l2RelativeAge(ts) {
+        const ms = Date.now() - new Date(ts).getTime();
+        if (!isFinite(ms) || ms < 0) return '-';
+        const min = Math.floor(ms / 60000);
+        if (min < 1) return 'now';
+        if (min < 60) return min + 'm ago';
+        const h = Math.floor(min / 60);
+        if (h < 48) return h + 'h ago';
+        return Math.floor(h / 24) + 'd ago';
+    }
+
+    // renderPanelL2Evidence: prepends the port-pair summary line and appends
+    // the discovery-evidence list around the interface cards in the direct
+    // tab. EVERY rendered value is neighbor-/network-controlled (LLDP sysnames,
+    // port strings, MACs) — all go through escapeHtml.
+    function renderPanelL2Evidence(c, evidence) {
+        const container = document.getElementById('ptab-tunnels');
+        if (!container) return;
+        const esc = window.escapeHtml;
+
+        // Summary line: port pair + method chip + VLANs (only for L2 links).
+        if (c.source_if_name || c.dest_if_name || L2_METHOD_LABELS[c.match_method]) {
+            const ports = `${esc(c.source_if_name || '?')} <span style="color:#2dd4bf;">&harr;</span> ${esc(c.dest_if_name || '?')}`;
+            const chip = L2_METHOD_LABELS[c.match_method]
+                ? `<span class="badge info" style="font-size:0.68rem;">${esc(L2_METHOD_LABELS[c.match_method])}</span>` : '';
+            const vlans = c.vlan_ids ? `<span style="font-size:0.72rem;color:var(--fwmon-text-mute);">VLAN ${esc(c.vlan_ids)}</span>` : '';
+            const stale = c.status === 'stale'
+                ? `<span class="badge stale" style="font-size:0.68rem;">STALE EVIDENCE</span>` : '';
+            container.insertAdjacentHTML('afterbegin',
+                `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:0.85rem;font-weight:600;color:var(--fwmon-text);background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:5px;padding:2px 10px;">${ports}</span>
+                    ${chip}${vlans}${stale}
+                </div>`);
+        }
+
+        if (!L2_METHOD_LABELS[c.match_method]) return; // manual/legacy link — no discovery evidence section
+
+        let rows = '';
+        (evidence || []).forEach(function(ev) {
+            const observed = [
+                ev.remote_mac ? `MAC ${esc(ev.remote_mac)}` : '',
+                ev.remote_ip ? `IP ${esc(ev.remote_ip)}` : '',
+                ev.remote_port ? `port ${esc(ev.remote_port)}` : '',
+                ev.remote_sysname ? `sys ${esc(ev.remote_sysname)}` : ''
+            ].filter(Boolean).join(' · ');
+            const freshDot = ev.fresh
+                ? '<span style="color:var(--fwmon-sig-ok);">&#9679;</span>'
+                : '<span style="color:var(--fwmon-sig-warn);" title="older than the fresh window">&#9679;</span>';
+            const note = ev.note ? `<div style="font-size:0.68rem;color:var(--fwmon-sig-warn);">${esc(ev.note)}</div>` : '';
+            rows += `<tr>
+                <td><span class="badge info" style="font-size:0.66rem;">${esc(L2_TIER_LABELS[ev.tier] || ev.tier)}</span></td>
+                <td><a href="/admin/devices/${encodeURIComponent(ev.device_id)}" style="color:var(--fwmon-accent);text-decoration:none;">${esc(ev.device_name || ('Device ' + ev.device_id))}</a></td>
+                <td style="font-family:'JetBrains Mono',monospace;">${esc(ev.local_if_name || String(ev.local_if_index || '-'))}</td>
+                <td style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;">${observed || '-'}${note}</td>
+                <td>${ev.vlan_id ? esc(String(ev.vlan_id)) : '-'}</td>
+                <td>${esc(l2RelativeAge(ev.timestamp))} ${freshDot}</td>
+            </tr>`;
+        });
+        const body = rows
+            ? `<div style="overflow-x:auto;"><table class="vpn-detail-table">
+                 <thead><tr><th>Source</th><th>Reported by</th><th>Local port</th><th>Observed</th><th>VLAN</th><th>Age</th></tr></thead>
+                 <tbody>${rows}</tbody></table></div>`
+            : `<div style="color:var(--fwmon-text-mute);font-size:0.78rem;padding:6px 2px;">No layer-2 evidence in the current snapshots — the discovery data behind this link has expired. The link is marked stale and will be removed if no fresh evidence arrives.</div>`;
+        container.insertAdjacentHTML('beforeend',
+            `<div style="margin-top:14px;">
+                <h5 style="font-size:0.8rem;color:var(--fwmon-text-faint);margin:0 0 6px 0;">Discovery Evidence <span style="font-weight:400;color:var(--fwmon-text-mute);">— why this link is drawn</span></h5>
+                ${body}
+            </div>`);
     }
 
     // renderPanelOverlayTab shows VXLAN/L3VLAN overlay detail derived from the
