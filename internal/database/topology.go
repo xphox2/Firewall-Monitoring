@@ -82,12 +82,18 @@ func (d *Database) SaveTopologyNeighborsSnapshot(neighbors []models.TopologyNeig
 }
 
 // GetTopologyEntriesSince returns topology entries fresher than the cutoff,
-// optionally filtered to a MAC allow-list (pre-lowercased — topology rows are
-// stored lowercase). The poller passes the monitored devices' interface MACs
-// here so multi-thousand-row FDB tables are filtered in SQL, not in Go.
-func (d *Database) GetTopologyEntriesSince(cutoff time.Time, ownedMACs []string) ([]models.TopologyEntry, error) {
+// optionally scoped to one entry type and/or filtered to a MAC allow-list
+// (pre-lowercased — topology rows are stored lowercase). The poller passes
+// the monitored devices' interface MACs for the FDB read so multi-thousand-
+// row MAC tables are filtered in SQL, but reads ARP UNFILTERED: the ARP
+// tier's IP-fallback match needs rows whose MAC is NOT a monitored interface
+// MAC (unreported ifPhysAddress, FGCP virtual MACs).
+func (d *Database) GetTopologyEntriesSince(cutoff time.Time, entryType string, ownedMACs []string) ([]models.TopologyEntry, error) {
 	var entries []models.TopologyEntry
 	q := d.db.Where("timestamp >= ?", cutoff)
+	if entryType != "" {
+		q = q.Where("entry_type = ?", entryType)
+	}
 	if ownedMACs != nil {
 		q = q.Where("mac_address IN ?", ownedMACs)
 	}

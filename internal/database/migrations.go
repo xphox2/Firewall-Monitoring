@@ -94,6 +94,7 @@ var registeredMigrations = []migration{
 	{version: 43, name: "activate_spike_rule_inherit_settings", run: (*Database).migrateSpikeRuleInheritSettings},
 	{version: 44, name: "event_rule_expiry_and_silence_migration", run: (*Database).migrateEventRuleExpiryAndSilences},
 	{version: 45, name: "l2_topology_tables", run: (*Database).migrateL2TopologyTables},
+	{version: 46, name: "connection_port_fields", run: (*Database).migrateConnectionPortFields},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

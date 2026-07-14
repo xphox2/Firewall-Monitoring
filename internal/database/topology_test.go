@@ -111,7 +111,7 @@ func TestGetTopologyEntriesSince_CutoffAndMACFilter(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, err := db.GetTopologyEntriesSince(time.Now().Add(-3*time.Hour), []string{"aa:bb:cc:00:00:02"})
+	got, err := db.GetTopologyEntriesSince(time.Now().Add(-3*time.Hour), "fdb", []string{"aa:bb:cc:00:00:02"})
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestGetTopologyEntriesSince_CutoffAndMACFilter(t *testing.T) {
 	}
 
 	// nil allow-list = no MAC filter.
-	all, err := db.GetTopologyEntriesSince(time.Now().Add(-3*time.Hour), nil)
+	all, err := db.GetTopologyEntriesSince(time.Now().Add(-3*time.Hour), "", nil)
 	if err != nil {
 		t.Fatalf("read all: %v", err)
 	}
@@ -156,5 +156,81 @@ func TestSaveTopologyNeighborsSnapshot_ScopedByProtocol(t *testing.T) {
 	db.Gorm().Where("device_id = 1 AND protocol = 'lldp'").First(&lldp)
 	if lldp.RemoteChassisID != "aa:bb:cc:00:00:99" {
 		t.Errorf("lldp row not replaced: %+v", lldp)
+	}
+}
+
+// TestGetConnectionDetail_L2Evidence: a direct fdb_match connection's detail
+// carries the evidence rows that drew it (same l2infer logic), with the
+// reporting device's name and a freshness flag.
+func TestGetConnectionDetail_L2Evidence(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+
+	site := &models.Site{Name: "HQ"}
+	if err := db.CreateSite(site); err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	mk := func(name, ip string) models.Device {
+		d := models.Device{Name: name, IPAddress: ip, Vendor: "fortigate", Enabled: true, SiteID: &site.ID}
+		if err := db.CreateDevice(&d); err != nil {
+			t.Fatalf("create device %s: %v", name, err)
+		}
+		return d
+	}
+	core := mk("fw-core", "192.168.5.1")
+	branch := mk("fw-branch", "192.168.5.107")
+
+	now := time.Now()
+	if err := db.SaveInterfaceStats([]models.InterfaceStats{
+		{DeviceID: core.ID, Index: 5, Name: "port5", TypeName: "ethernet", Status: "up", MACAddress: "AA:BB:CC:00:00:05", Timestamp: now},
+		{DeviceID: branch.ID, Index: 3, Name: "lan3", TypeName: "ethernet", Status: "up", MACAddress: "AA:BB:CC:00:01:03", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interface stats: %v", err)
+	}
+	if err := db.SaveTopologyEntriesSnapshot([]models.TopologyEntry{
+		{DeviceID: core.ID, EntryType: "fdb", IfIndex: 5, MACAddress: "aa:bb:cc:00:01:03", Timestamp: now, Source: "snmp"},
+		{DeviceID: branch.ID, EntryType: "fdb", IfIndex: 3, MACAddress: "aa:bb:cc:00:00:05", Timestamp: now, Source: "snmp"},
+	}); err != nil {
+		t.Fatalf("save topology: %v", err)
+	}
+	if err := db.UpsertAutoL2Connection(L2LinkUpsert{
+		SourceID: core.ID, DestID: branch.ID, Status: "up",
+		Name: "fw-core:port5 ↔ fw-branch:lan3", ConnType: "ethernet", MatchMethod: "fdb_match",
+		SourceIfIndex: 5, SourceIfName: "port5", DestIfIndex: 3, DestIfName: "lan3",
+		TunnelNames: "port5, lan3",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	conns, _ := db.GetAllConnections()
+	if len(conns) != 1 {
+		t.Fatalf("got %d connections, want 1", len(conns))
+	}
+
+	detail, err := db.GetConnectionDetail(conns[0].ID)
+	if err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail.Family != "direct" {
+		t.Fatalf("family = %q, want direct", detail.Family)
+	}
+	if len(detail.Evidence) == 0 {
+		t.Fatal("evidence empty for a fresh fdb_match connection")
+	}
+	sawCore := false
+	for _, ev := range detail.Evidence {
+		if ev.Tier != "fdb" {
+			t.Errorf("tier = %q, want fdb", ev.Tier)
+		}
+		if !ev.Fresh {
+			t.Errorf("fresh evidence flagged stale: %+v", ev)
+		}
+		if ev.DeviceID == core.ID {
+			sawCore = true
+			if ev.DeviceName != "fw-core" || ev.LocalIfName != "port5" || ev.RemoteMAC != "aa:bb:cc:00:01:03" {
+				t.Errorf("core evidence wrong: %+v", ev)
+			}
+		}
+	}
+	if !sawCore {
+		t.Error("no evidence row from the source device")
 	}
 }

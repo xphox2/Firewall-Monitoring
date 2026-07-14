@@ -725,6 +725,16 @@ type DeviceConnection struct {
 	AutoDetected   bool      `json:"auto_detected" gorm:"default:false"`
 	TunnelNames    string    `json:"tunnel_names"`
 	MatchMethod    string    `json:"match_method" gorm:"default:ip_match"`
+	// Port-level endpoints (L2-inferred direct links, migration v46). Zero
+	// ifIndex + empty name = that end's port is unknown (one-sided evidence).
+	// Direction-normalized with SourceDeviceID < DestDeviceID for auto rows.
+	SourceIfIndex int    `json:"source_if_index"`
+	SourceIfName  string `json:"source_if_name"`
+	DestIfIndex   int    `json:"dest_if_index"`
+	DestIfName    string `json:"dest_if_name"`
+	// VLANIDs is a comma-separated list of VLANs observed on the link (from
+	// FDB evidence); "" = untagged/unknown.
+	VLANIDs string `json:"vlan_ids" gorm:"column:vlan_ids"`
 }
 
 type InterfaceAddress struct {
