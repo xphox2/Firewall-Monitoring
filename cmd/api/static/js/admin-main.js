@@ -1470,47 +1470,14 @@
             alertsOffset = alerts.length;
             updateAlertPagination(alerts.length, total);
             loadAlertCharts();
-            loadSilencedSources();
         }).catch(function(e) {
-            console.error('Failed to load alerts:', e);
+            window.fwmonLog && window.fwmonLog.error && window.fwmonLog.error('Failed to load alerts:', e);
         });
     }
 
-    // loadSilencedSources renders the "Silenced sources" panel (v0.11.46): the
-    // sources currently muted via an sFlow security alert's Silence action, each
-    // un-silenceable. The card hides itself when nothing is silenced.
-    function loadSilencedSources() {
-        var card = document.getElementById('alerts-silenced-card');
-        var body = document.getElementById('alerts-silenced-body');
-        if (!card || !body) return;
-        apiFetch(API_BASE + '/sources/suppressions').then(function(res) {
-            var rows = (res && res.data) || [];
-            if (!rows.length) { card.style.display = 'none'; body.innerHTML = ''; return; }
-            card.style.display = '';
-            body.innerHTML = rows.map(function(s) {
-                return '<tr>' +
-                    '<td style="font-family:var(--fwmon-font-mono);">' + AC.ipRef(s.src_addr) + '</td>' +
-                    '<td>' + formatDate(s.suppressed_until) + '</td>' +
-                    '<td>' + escapeHtml(s.suppressed_by || '—') + '</td>' +
-                    '<td>' + escapeHtml(s.suppressed_reason || '') + '</td>' +
-                    '<td><button class="btn secondary sm" data-action="unsilence-source" data-min-role="operator" data-id="' + s.id + '">Un-silence</button></td>' +
-                '</tr>';
-            }).join('');
-            AC.enrichIps(body);
-        }).catch(function(e) {
-            window.fwmonLog && window.fwmonLog.error && window.fwmonLog.error('load silenced sources failed', e);
-        });
-    }
-
-    function unsilenceSource(id) {
-        apiFetch(API_BASE + '/sources/suppressions/' + id, { method: 'DELETE' }).then(function() {
-            AC.showSuccess('Source un-silenced');
-            loadSilencedSources();
-        }).catch(function(e) {
-            AC.showError('Failed to un-silence source');
-            console.error('unsilence failed', e);
-        });
-    }
+    // (Silenced-sources panel removed in v0.11.93 — source suppression is now
+    // unified under Event Rules; temporary flow_security rules show on that page
+    // with an Expires column and are lifted by deleting the rule.)
 
     // refreshAlertsAtCurrentPage re-fetches the same page the user is currently
     // viewing. Used after single-ack and bulk-ack so the user doesn't get
@@ -2042,9 +2009,10 @@
             var flowsHtml = '';
             if (linkedDetections.length) {
                 var flowsTitle = isDigest ? 'Offenders in this storm (' + linkedDetections.length + ' flagged)' : 'Flows &amp; detectors behind this alert';
-                var silenceAllBtn = (isDigest && !a.acknowledged && !a.resolved_at)
-                    ? ' <button type="button" class="btn sm" data-action="silence-all-sources" data-min-role="operator" data-id="' + a.id + '" style="font-size:0.72rem;float:right;">Silence all sources</button>'
-                    : '';
+                // No blanket "silence all" — that would mute brand-new attackers of
+                // the detector too. Each offender is suppressed individually below,
+                // creating a per-source temporary Event Rule.
+                var silenceAllBtn = '';
                 flowsHtml = '<div style="background:var(--fwmon-bg);border:1px solid var(--fwmon-border);border-radius:6px;padding:12px;margin-bottom:12px;">' +
                     '<div style="color:var(--fwmon-text-faint);font-size:0.75rem;text-transform:uppercase;margin-bottom:8px;">' + flowsTitle + silenceAllBtn + '</div>';
                 linkedDetections.forEach(function(d, idx) {
@@ -2060,7 +2028,7 @@
                           ' data-dport="' + escapeHtml(String(d.dst_port || '')) + '" style="font-size:0.72rem;">Show sampled packets</button>'
                         : '';
                     var silenceBtn = (suppressible && d.src_addr && !a.resolved_at)
-                        ? ' <button type="button" class="btn secondary sm" data-action="silence-source" data-min-role="operator" data-id="' + a.id + '" data-src="' + escapeHtml(d.src_addr) + '" style="font-size:0.72rem;" title="Suppress new alerts from this source">Silence</button>'
+                        ? ' <button type="button" class="btn secondary sm" data-action="suppress-source" data-min-role="admin" data-id="' + a.id + '" data-src="' + escapeHtml(d.src_addr) + '" style="font-size:0.72rem;" title="Create a temporary Event Rule suppressing this source">Suppress source</button>'
                         : '';
                     flowsHtml +=
                         '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-family:monospace;font-size:0.85rem;flex-wrap:wrap;">' +
@@ -2259,6 +2227,9 @@
             if (mode === 'customize' && d.existing_rule_id) {
                 stash.editId = d.existing_rule_id; // open the firing rule itself, not a near-duplicate
             } else {
+                // A suppress rule drops the source only next cycle, so ack the open
+                // alert on save (F3). Carried through the prefill to the rule editor.
+                if (mode !== 'customize' && d.rule) { d.rule.ack_alert_id = id; }
                 stash.rule = d.rule;
             }
             try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify(stash)); } catch (e) { /* ignore */ }
@@ -2268,48 +2239,21 @@
         });
     }
 
-    // Silence a specific attacking source behind an sFlow security alert (v0.11.46).
-    // src optional (defaults server-side to the alert's source). Alerting resumes
-    // once the window elapses (or within the alert's cooldown for a still-active
-    // attacker).
-    function silenceSource(id, src) {
-        var hoursStr = window.prompt('Silence ' + (src ? 'source ' + src : 'this source') +
-            ' for how many hours?\n(1–720; new alerts for it are suppressed until then)', '24');
-        if (hoursStr == null) return;
-        var hours = parseInt(hoursStr, 10);
-        if (!isFinite(hours) || hours < 1) { AC.showError('Enter a positive number of hours'); return; }
-        apiFetch(API_BASE + '/alerts/' + id + '/suppress-source', {
-            method: 'POST',
-            body: src ? { hours: hours, src: src } : { hours: hours }
-        }).then(function(res) {
-            closeAlertDetail();
-            refreshAlertsAtCurrentPage();
-            var s = res && res.data && res.data.src;
-            AC.showSuccess('Silenced ' + (s || 'source') + ' for ' + hours + 'h');
-        }).catch(function(e) {
-            console.error('Failed to silence source:', e);
-            AC.showError('Failed to silence source: ' + (e.message || ''));
-        });
-    }
-
-    // Silence EVERY source behind a storm digest and ack it (v0.11.46).
-    function silenceAllSources(id) {
-        var hoursStr = window.prompt('Silence ALL sources in this storm for how many hours?\n(1–720; the digest will be acknowledged)', '24');
-        if (hoursStr == null) return;
-        var hours = parseInt(hoursStr, 10);
-        if (!isFinite(hours) || hours < 1) { AC.showError('Enter a positive number of hours'); return; }
-        apiFetch(API_BASE + '/alerts/' + id + '/suppress-all', {
-            method: 'POST',
-            body: { hours: hours }
-        }).then(function(res) {
-            closeAlertDetail();
-            refreshAlertsAtCurrentPage();
-            var n = res && res.data && res.data.count;
-            AC.showSuccess('Silenced ' + (n || 'all') + ' sources for ' + hours + 'h');
-        }).catch(function(e) {
-            console.error('Failed to silence all sources:', e);
-            AC.showError('Failed to silence sources: ' + (e.message || ''));
-        });
+    // Suppress a specific offending source behind an sFlow security alert by
+    // creating a TEMPORARY flow_security Event Rule (the unified replacement for the
+    // old Silence-Source path). Opens the Event Rules builder prefilled with a
+    // source_ip match + 24h expiry; the alert is acked once the rule is saved.
+    function suppressSource(id, src) {
+        var rule = {
+            source: 'flow_security',
+            action: 'suppress',
+            match_json: JSON.stringify({ op: 'eq', field: 'source_ip', value: src }),
+            suggested_name: 'Suppress ' + src,
+            expires_hours: 24,
+            ack_alert_id: id
+        };
+        try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify({ action: 'suppress', rule: rule })); } catch (e) { /* ignore */ }
+        window.location.href = '/admin/event-rules';
     }
 
     var ackForm = document.getElementById('ack-form');
@@ -4166,10 +4110,8 @@
         // Create Event Rule from this alert (v0.11.88).
         'suppress-with-rule':  function(el) { createRuleFromAlert(parseInt(el.dataset.id), 'suppress'); },
         'customize-with-rule': function(el) { createRuleFromAlert(parseInt(el.dataset.id), 'customize'); },
-        // Silence-a-source (v0.11.46).
-        'silence-source':      function(el) { silenceSource(parseInt(el.dataset.id), el.dataset.src || ''); },
-        'silence-all-sources': function(el) { silenceAllSources(parseInt(el.dataset.id)); },
-        'unsilence-source':    function(el) { unsilenceSource(parseInt(el.dataset.id)); },
+        // Suppress a source → temporary flow_security Event Rule (v0.11.93).
+        'suppress-source':     function(el) { suppressSource(parseInt(el.dataset.id), el.dataset.src || ''); },
         'show-policy-modal': function() { showPolicyModal(); },
         'close-policy-modal': function() { closePolicyModal(); },
         'edit-policy': function(el) { showPolicyModal(parseInt(el.dataset.id)); },

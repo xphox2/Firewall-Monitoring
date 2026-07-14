@@ -36,6 +36,7 @@
         if (s === 'metric') return 'er-metric-field-hints';
         if (s === 'spike') return 'er-spike-field-hints';
         if (s === 'trap') return 'er-trap-field-hints';
+        if (s === 'flow_security') return 'er-flowsec-field-hints';
         return 'er-field-hints';
     }
 
@@ -44,6 +45,10 @@
     var sites = [];
     var policies = [];
     var wired = false;
+    // When a rule is created from an sFlow-security alert, the alert id to ack once
+    // the rule saves (the rule only drops the source from the next cycle, so the
+    // open alert would otherwise linger). Cleared after each open/save.
+    var pendingAckAlertId = null;
 
     function esc(s) { return AC.escapeHtml(String(s == null ? '' : s)); }
     function $(id) { return document.getElementById(id); }
@@ -160,6 +165,17 @@
         return n.field + ' ' + n.op + ' ' + (n.value == null ? '' : n.value);
     }
 
+    // expiresText renders a temporary rule's remaining window ("in 3h"/"in 2d"),
+    // an "expired" badge for one not yet pruned, or "—" for a permanent rule.
+    function expiresText(r) {
+        if (!r.expires_at) return '<span style="color:var(--fwmon-text-faint)">—</span>';
+        var ms = new Date(r.expires_at).getTime() - Date.now();
+        if (ms <= 0) return '<span class="badge" style="background:var(--fwmon-card-bg);color:var(--fwmon-text-faint)">expired</span>';
+        var h = Math.round(ms / 3600000);
+        var label = h >= 48 ? Math.round(h / 24) + 'd' : (h >= 1 ? h + 'h' : Math.max(1, Math.round(ms / 60000)) + 'm');
+        return '<span class="badge" title="' + esc(r.expires_at) + '">in ' + label + '</span>';
+    }
+
     function renderTable() {
         var wrap = $('event-rules-table-wrap');
         if (!wrap) return;
@@ -183,6 +199,7 @@
                 '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.match_json ? esc(r.match_json) : '') + '">' + matchSummary(r) + '</td>' +
                 '<td>' + actionBadge + '</td>' +
                 '<td>' + sevText + '</td>' +
+                '<td>' + expiresText(r) + '</td>' +
                 '<td>' + toggle + '</td>' +
                 '<td>' + (r.hit_count || 0).toLocaleString() + '</td>' +
                 '<td style="white-space:nowrap">' +
@@ -191,7 +208,7 @@
                 '</td></tr>';
         }).join('');
         wrap.innerHTML = '<div class="table-wrap" style="overflow-x:auto"><table class="data-table">' +
-            '<thead><tr><th>Pri</th><th>Name</th><th>Source</th><th>Vendor</th><th>Match</th><th>Action</th><th>Severity</th><th>Enabled</th><th>Hits</th><th></th></tr></thead>' +
+            '<thead><tr><th>Pri</th><th>Name</th><th>Source</th><th>Vendor</th><th>Match</th><th>Action</th><th>Severity</th><th>Expires</th><th>Enabled</th><th>Hits</th><th></th></tr></thead>' +
             '<tbody>' + rows + '</tbody></table></div>';
     }
 
@@ -204,6 +221,19 @@
             html += '<option value="' + esc(it[valueKey]) + '">' + esc(it[labelKey]) + '</option>';
         });
         sel.innerHTML = html;
+    }
+
+    // expiresHoursFor returns the value for the "expires in hours" input: a
+    // prefill's suggested hours (create-from-alert), or an existing rule's
+    // remaining hours (edit), or blank (permanent / fresh rule).
+    function expiresHoursFor(r, isEdit) {
+        if (!r) return '';
+        if (!isEdit && r.expires_hours) return r.expires_hours;
+        if (isEdit && r.expires_at) {
+            var ms = new Date(r.expires_at).getTime() - Date.now();
+            if (ms > 0) return Math.ceil(ms / 3600000);
+        }
+        return '';
     }
 
     function openRuleModal(id, prefill) {
@@ -234,6 +264,12 @@
         $('er-alert-type').value = r ? (r.alert_type || '') : '';
         $('er-group-by').value = r ? (r.group_by || '') : '';
         $('er-cooldown').value = r && r.cooldown_minutes ? r.cooldown_minutes : '';
+
+        // Temporary-rule expiry. A prefill from a "Suppress source" alert carries
+        // expires_hours (default 24); an existing rule shows its remaining hours.
+        $('er-expires').value = expiresHoursFor(r, isEdit);
+        // Ack-on-create handoff (F3): the alert this rule was built from, to ack on save.
+        pendingAckAlertId = (!isEdit && prefill && prefill.ack_alert_id) ? prefill.ack_alert_id : null;
 
         // Dampening (state rules): parse the blob into minutes + cap, defaulting to
         // the shipped values so a fresh state rule pre-fills sensible numbers.
@@ -476,20 +512,22 @@
     // logs, meaningless for live state/metric events) in favor of a note.
     function onSourceChange() {
         var src = $('er-source').value;
-        var isState = src === 'state', isMetric = src === 'metric', isSpike = src === 'spike', isTrap = src === 'trap';
+        var isState = src === 'state', isMetric = src === 'metric', isSpike = src === 'spike', isTrap = src === 'trap', isFlowSec = src === 'flow_security';
         // Swap the field-hint datalist on every open condition row + the dedup field.
         var list = fieldHintsId();
         document.querySelectorAll('#er-conditions .er-cond-field').forEach(function (el) { el.setAttribute('list', list); });
         var gb = $('er-group-by'); if (gb) gb.setAttribute('list', list);
-        // Preview vs source-specific note. State/metric/spike/trap all evaluate live
-        // telemetry, not stored logs, so the syslog preview is meaningless for them.
-        var noPreview = isState || isMetric || isSpike || isTrap;
+        // Preview vs source-specific note. State/metric/spike/trap/flow_security all
+        // evaluate live telemetry, not stored logs, so the syslog preview is
+        // meaningless for them.
+        var noPreview = isState || isMetric || isSpike || isTrap || isFlowSec;
         $('er-preview-btn').style.display = noPreview ? 'none' : '';
         $('er-preview-result').style.display = noPreview ? 'none' : '';
         $('er-state-preview-note').style.display = isState ? '' : 'none';
         $('er-metric-preview-note').style.display = isMetric ? '' : 'none';
         $('er-spike-preview-note').style.display = isSpike ? '' : 'none';
         $('er-trap-preview-note').style.display = isTrap ? '' : 'none';
+        $('er-flowsec-preview-note').style.display = isFlowSec ? '' : 'none';
         if (noPreview) { $('er-preview-samples').style.display = 'none'; }
         // Spike rules ignore the per-rule cooldown (the detector paces episodes), so
         // hide that field for spike to avoid a dead knob.
@@ -564,12 +602,23 @@
                 group_by: $('er-group-by').value.trim(),
                 cooldown_minutes: $('er-cooldown').value ? parseInt($('er-cooldown').value, 10) : null,
                 policy_id: $('er-policy').value ? parseInt($('er-policy').value, 10) : null,
-                dampen_json: dampenForSource()
+                dampen_json: dampenForSource(),
+                expires_at: (function () {
+                    var h = parseInt($('er-expires').value, 10);
+                    return (!isNaN(h) && h > 0) ? new Date(Date.now() + h * 3600000).toISOString() : null;
+                })()
             };
             var url = id ? (API + '/event-rules/' + id) : (API + '/event-rules');
+            var ackId = pendingAckAlertId; // capture before the async save
             AC.apiFetch(url, { method: id ? 'PUT' : 'POST', body: body }).then(function () {
                 AC.closeModal('event-rule-modal');
                 AC.showSuccess(id ? 'Rule updated' : 'Rule created');
+                // Ack the originating alert (F3): the rule only drops the source next
+                // cycle, so the open alert would otherwise linger. Best-effort.
+                if (!id && ackId) {
+                    AC.apiFetch(API + '/alerts/' + ackId + '/acknowledge', { method: 'POST', body: { notes: 'Suppressed via Event Rule' } }).catch(function () { });
+                }
+                pendingAckAlertId = null;
                 loadRules();
             }).catch(function (err) { AC.showError('Save failed: ' + err.message); });
         });
