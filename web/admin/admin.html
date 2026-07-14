@@ -725,17 +725,8 @@
                     <canvas id="alerts-type-chart"></canvas>
                 </div>
             </div>
-            <!-- Silenced sources (v0.11.46): sources muted via "Silence" on an
-                 sFlow security alert/digest; un-silence restores alerting. -->
-            <div class="card" id="alerts-silenced-card" style="display:none;">
-                <div class="card-header"><h2>Silenced sources</h2></div>
-                <div class="table-wrap" style="max-height:220px;">
-                    <table>
-                        <thead><tr><th>Source</th><th>Until</th><th>By</th><th>Reason</th><th></th></tr></thead>
-                        <tbody id="alerts-silenced-body"></tbody>
-                    </table>
-                </div>
-            </div>
+            <!-- Source suppression is unified under Event Rules (v0.11.93): a
+                 temporary flow_security rule replaces the old Silenced-sources panel. -->
             <div class="card">
                 <div class="card-header"><h2>Alert History</h2></div>
                 <div class="filter-bar">
@@ -2905,6 +2896,9 @@
     <datalist id="er-trap-field-hints">
         <option value="trap_type"><option value="vendor"><option value="source_ip"><option value="severity">
     </datalist>
+    <datalist id="er-flowsec-field-hints">
+        <option value="source_ip"><option value="detector"><option value="severity"><option value="event_type"><option value="device_id"><option value="site_id">
+    </datalist>
     <div class="modal" id="event-rule-modal" role="dialog" aria-modal="true" aria-labelledby="event-rule-modal-title">
         <div class="modal-content">
             <div class="modal-header">
@@ -2921,14 +2915,17 @@
                             <div class="form-group"><label for="er-priority">Priority</label><input type="number" id="er-priority" value="100" min="0" max="10000"><div class="field-hint">Lower runs first.</div></div>
                             <div class="form-group"><label for="er-enabled">Enabled</label><div><label class="channel-toggle"><input type="checkbox" id="er-enabled" checked> Rule is active</label></div></div>
                         </div>
-                        <div class="form-group"><label for="er-description">Description</label><input type="text" id="er-description" autocomplete="one-time-code" placeholder="Optional"></div>
+                        <div class="form-row form-row-2">
+                            <div class="form-group"><label for="er-description">Description</label><input type="text" id="er-description" autocomplete="one-time-code" placeholder="Optional"></div>
+                            <div class="form-group"><label for="er-expires">Temporary (expires in hours)</label><input type="number" id="er-expires" min="1" max="8760" placeholder="Blank = permanent"><div class="field-hint">The rule auto-lifts after this many hours. Blank = never expires.</div></div>
+                        </div>
                     </div>
                 </div>
                 <div class="policy-section">
                     <div class="policy-section-header"><h3>Scope</h3></div>
                     <div class="policy-section-body">
                         <div class="form-row form-row-4">
-                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="metric">Metric (CPU / memory / disk / sessions)</option><option value="spike">Spike (traffic anomaly)</option><option value="trap">Trap (SNMP / HA)</option><option value="any">Any</option></select></div>
+                            <div class="form-group"><label for="er-source">Source</label><select id="er-source"><option value="syslog">Syslog</option><option value="flow">Flow</option><option value="state">State (interface / VPN up-down)</option><option value="metric">Metric (CPU / memory / disk / sessions)</option><option value="spike">Spike (traffic anomaly)</option><option value="trap">Trap (SNMP / HA)</option><option value="flow_security">sFlow security (scanners / threats)</option><option value="any">Any</option></select></div>
                             <div class="form-group"><label for="er-vendor">Vendor</label><select id="er-vendor"></select></div>
                             <div class="form-group"><label for="er-device">Device</label><select id="er-device"></select></div>
                             <div class="form-group"><label for="er-site">Site</label><select id="er-site"></select></div>
@@ -3018,6 +3015,7 @@
                         <div id="er-metric-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Metric rules evaluate live device telemetry, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>cpu_high</code> / <code>memory_high</code> / <code>disk_high</code> / <code>sessions_high</code>), <code>metric</code>, or <code>vendor</code>.</div>
                         <div id="er-spike-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Spike rules evaluate live interface throughput vs a seasonal baseline, not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>event_type</code> (<code>traffic_spike</code>), <code>interface_name</code>, or <code>vendor</code>.</div>
                         <div id="er-trap-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">Trap rules match live SNMP traps (any trap type), not stored logs, so there is nothing to preview here. Scope the rule with conditions on <code>trap_type</code> (e.g. <code>HA_MEMBER_DOWN</code>, <code>LINK_DOWN</code>, or any vendor trap type), <code>vendor</code>, or <code>source_ip</code>.</div>
+                        <div id="er-flowsec-preview-note" style="display:none;color:var(--fwmon-text-faint);font-size:0.85rem;line-height:1.5">sFlow security rules match live security detections (port scans, threat-intel hits, exfil, C2, super-spreaders), not stored logs, so there is nothing to preview here. Scope with conditions on <code>source_ip</code> (the attacker), <code>detector</code> (<code>port_scan</code>, <code>threat_intel</code>, <code>data_exfil</code>, <code>super_spreader</code>, <code>c2_beacon</code>), or <code>severity</code>.</div>
                     </div>
                 </div>
                 <div class="modal-footer">

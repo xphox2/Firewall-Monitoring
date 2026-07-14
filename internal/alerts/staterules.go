@@ -76,6 +76,9 @@ func (am *AlertManager) matchStateRuleLocked(fields map[string]string, deviceID 
 		if r.source != "state" {
 			continue
 		}
+		if r.expired(time.Now()) {
+			continue
+		}
 		if !r.appliesTo("state", vendor, deviceID, siteID) {
 			continue
 		}

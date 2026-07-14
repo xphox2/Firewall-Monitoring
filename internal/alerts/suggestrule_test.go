@@ -149,12 +149,34 @@ func TestIsSyslogRuleAlertType(t *testing.T) {
 	}
 }
 
+func TestSuggestRule_FlowSecurity(t *testing.T) {
+	// A per-source sFlow-security alert → a temporary flow_security suppress rule
+	// matching the attacker IP (the unified replacement for Silence Source).
+	r := SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowSecurity, DeviceID: 7, SourceAddr: "198.51.100.9"})
+	if !r.Supported || r.Rule == nil {
+		t.Fatalf("SFLOW_SECURITY with a source should be supported; got %+v", r)
+	}
+	if r.Rule.Source != "flow_security" || r.Rule.Action != "suppress" {
+		t.Errorf("want flow_security/suppress, got %s/%s", r.Rule.Source, r.Rule.Action)
+	}
+	if r.Rule.ExpiresHours != 24 {
+		t.Errorf("suppress-a-source should default to a 24h temporary rule, got %d", r.Rule.ExpiresHours)
+	}
+	if !strings.Contains(r.Rule.MatchJSON, `"source_ip"`) || !strings.Contains(r.Rule.MatchJSON, "198.51.100.9") {
+		t.Errorf("match should key on source_ip=198.51.100.9, got %s", r.Rule.MatchJSON)
+	}
+	// The storm DIGEST (no single source) is NOT auto-suppressed blanket.
+	d := SuggestRuleForAlert(SuggestInput{AlertType: models.AlertTypeSFlowSecurityDigest, DeviceID: 0})
+	if d.Supported || d.Alternative != "per_source" {
+		t.Errorf("digest without a source should guide to per-source, got %+v", d)
+	}
+}
+
 func TestSuggestRule_Unsupported(t *testing.T) {
 	cases := []struct {
 		at  models.AlertType
 		alt string
 	}{
-		{models.AlertTypeSFlowSecurity, "silence_source"},
 		{models.AlertTypeSFlowCapacity, "maintenance"},
 		{models.AlertTypeDeviceOffline, "maintenance"},
 		{models.AlertTypeSSHHostKeyChanged, "maintenance"},

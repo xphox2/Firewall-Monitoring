@@ -221,11 +221,6 @@ type EventStatsStore interface {
 	GetDetectionsByAlert(alertID uint) ([]models.FlowDetection, error)
 	AckFlowDetection(id uint) error
 	AckFlowDetections(ids []uint) error
-	// Flow-source suppression (silence-a-source, v0.11.46).
-	SuppressFlowSource(src string, until time.Time, by, reason string) error
-	IsFlowSourceSuppressed(src string, ref time.Time) (bool, error)
-	ListActiveFlowSuppressions() ([]models.FlowSourceSuppression, error)
-	DeleteFlowSuppression(id uint) error
 	// UI-managed settings read-through (v0.11.46 — no new env vars).
 	GetBoolSetting(key string, def bool) bool
 	GetIntSetting(key string, def int) int

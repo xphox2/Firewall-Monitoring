@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.93] - 2026-07-14
+
+### Changed — Event Rules is now the single hub for suppressing/customizing ALL alerts
+
+sFlow security alerts (`SFLOW_SECURITY` / `SFLOW_SECURITY_DIGEST`) were the only
+class that bypassed the Event Rule engine — they could only be muted via a separate
+per-IP "Silence Source" table. They are now first-class Event Rules, and the old
+Silence path is retired.
+
+- **New `flow_security` rule source.** Rules can suppress OR customize (severity /
+  notification policy) sFlow security detections, matching on `source_ip`,
+  `detector` (port_scan / threat_intel / data_exfil / super_spreader / c2_beacon),
+  `severity`, `device_id`, `site_id`. The poller's security pipeline now consults
+  these rules **per detection** before consolidation, so a suppressed source never
+  alerts nor counts toward a storm.
+- **Temporary rules.** Event Rules gained an optional expiry ("Temporary — expires
+  in N hours"), shown as an **Expires** column and enforced at match time. A
+  temporary rule auto-lifts.
+- **"Suppress source"** on an sFlow security alert now creates a temporary
+  `flow_security` suppress rule (default 24h) via the rule builder, and
+  acknowledges the originating alert. The blanket "Silence all sources" is gone
+  (it would have muted brand-new attackers); each offender is suppressed
+  individually.
+- The standalone Silence-Source endpoints, the `flow_source_suppressions` code
+  path, and the "Silenced sources" dashboard panel are removed. Existing active
+  silences are migrated to temporary `flow_security` rules on upgrade (migration
+  v44).
+
 ## [0.11.92] - 2026-07-13
 
 ### Fixed — IPSec wizard no longer suggests the WAN as a "protected subnet"

@@ -56,3 +56,4 @@ node_modules/
 coverage.out
 coverage.html
 /api
+/poller

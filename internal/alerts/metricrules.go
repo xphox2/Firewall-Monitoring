@@ -94,6 +94,9 @@ func (am *AlertManager) matchMetricRuleLocked(fields map[string]string, deviceID
 		if r.source != "metric" {
 			continue
 		}
+		if r.expired(time.Now()) {
+			continue
+		}
 		if !r.appliesTo("metric", vendor, deviceID, siteID) {
 			continue
 		}

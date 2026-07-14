@@ -247,8 +247,18 @@ func (d *Database) UpdateEventRule(r *models.EventRule) error {
 	return d.db.Model(&models.EventRule{ID: r.ID}).Select(
 		"name", "description", "enabled", "priority", "source", "vendor_scope",
 		"device_id", "site_id", "match_json", "action", "alert_type", "severity",
-		"group_by", "cooldown_minutes", "policy_id", "dampen_json", "updated_at",
+		"group_by", "cooldown_minutes", "policy_id", "dampen_json", "expires_at", "updated_at",
 	).Updates(r).Error
+}
+
+// PruneExpiredEventRules deletes temporary rules whose expiry has passed (v0.11.93,
+// the unified replacement for the old flow-source-suppression prune). Expiry is
+// already enforced at match time; this is housekeeping so the table doesn't
+// accumulate dead temp rules. A permanent rule (expires_at IS NULL) is never
+// touched.
+func (d *Database) PruneExpiredEventRules() error {
+	return d.db.Where("expires_at IS NOT NULL AND expires_at <= ?", time.Now()).
+		Delete(&models.EventRule{}).Error
 }
 
 // DeleteEventRule removes a rule by id.

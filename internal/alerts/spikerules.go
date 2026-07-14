@@ -38,6 +38,9 @@ func (am *AlertManager) matchSpikeRuleLocked(fields map[string]string, deviceID 
 		if r.source != "spike" {
 			continue
 		}
+		if r.expired(time.Now()) {
+			continue
+		}
 		if !r.appliesTo("spike", fields["vendor"], deviceID, siteID) {
 			continue
 		}

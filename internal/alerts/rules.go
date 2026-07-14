@@ -140,6 +140,14 @@ type compiledRule struct {
 	match       matchExpr
 	// dampen holds the parsed per-source dampening params (state source today).
 	dampen dampenParams
+	// expiresAt makes a rule temporary; checked at match time via expired().
+	expiresAt *time.Time
+}
+
+// expired reports whether a temporary rule's window has passed. Checked at MATCH
+// time (not just cache refresh) so an expired rule stops suppressing immediately.
+func (r *compiledRule) expired(now time.Time) bool {
+	return r.expiresAt != nil && now.After(*r.expiresAt)
 }
 
 // dampenParams is the parsed DampenJSON. Fields are per-source; state uses
@@ -219,7 +227,7 @@ func compileRules(rules []models.EventRule) []compiledRule {
 			vendor: src.VendorScope, deviceID: src.DeviceID, siteID: src.SiteID,
 			action: action, alertType: at, severity: src.Severity, groupBy: src.GroupBy,
 			cooldownMin: src.CooldownMinutes, policyID: src.PolicyID, match: compileMatch(rm),
-			dampen: dp,
+			dampen: dp, expiresAt: src.ExpiresAt,
 		})
 	}
 	return out
@@ -261,6 +269,12 @@ func (am *AlertManager) RefreshEventRules(db *database.Database) {
 		return
 	}
 	am.flushEventRuleHits(db)
+	// Delete expired temporary rules promptly (every refresh, not just the nightly
+	// cleanup) so a lapsed "suppress for 24h" rule can't linger in the editor and
+	// resurrect-as-permanent on edit, or 400 the enable toggle. Non-fatal.
+	if err := db.PruneExpiredEventRules(); err != nil {
+		log.Printf("RefreshEventRules: prune expired rules: %v", err)
+	}
 
 	rules, err := db.GetEnabledEventRules()
 	if err != nil {
@@ -351,6 +365,9 @@ func (am *AlertManager) EvaluateSyslog(msg *models.SyslogMessage, siteID *uint) 
 	now := time.Now()
 	for i := range rules {
 		r := &rules[i]
+		if r.expired(now) {
+			continue
+		}
 		if !r.appliesTo("syslog", vendor, msg.DeviceID, effSite) {
 			continue
 		}

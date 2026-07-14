@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"testing"
+	"time"
 
 	"firewall-mon/internal/models"
 )
@@ -128,5 +129,27 @@ func TestValidateEventRule_TrapSourceAllowed(t *testing.T) {
 	}
 	if msg := validateEventRule(r); msg != "" {
 		t.Fatalf("valid trap rule rejected: %s", msg)
+	}
+}
+
+func TestValidateEventRule_FlowSecurityAndExpiry(t *testing.T) {
+	// flow_security is a valid source.
+	r := &models.EventRule{
+		Name: "mute scanner", Source: "flow_security", Action: "suppress",
+		MatchJSON: `{"op":"eq","field":"source_ip","value":"198.51.100.9"}`,
+	}
+	if msg := validateEventRule(r); msg != "" {
+		t.Fatalf("valid flow_security rule rejected: %s", msg)
+	}
+	// A future expiry is accepted; a past expiry is rejected.
+	future := time.Now().Add(time.Hour)
+	r.ExpiresAt = &future
+	if msg := validateEventRule(r); msg != "" {
+		t.Fatalf("future expiry rejected: %s", msg)
+	}
+	past := time.Now().Add(-time.Hour)
+	r.ExpiresAt = &past
+	if msg := validateEventRule(r); msg == "" {
+		t.Fatal("a past expires_at must be rejected")
 	}
 }
