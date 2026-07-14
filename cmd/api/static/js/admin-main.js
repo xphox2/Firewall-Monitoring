@@ -2028,7 +2028,7 @@
                           ' data-dport="' + escapeHtml(String(d.dst_port || '')) + '" style="font-size:0.72rem;">Show sampled packets</button>'
                         : '';
                     var silenceBtn = (suppressible && d.src_addr && !a.resolved_at)
-                        ? ' <button type="button" class="btn secondary sm" data-action="suppress-source" data-min-role="admin" data-id="' + a.id + '" data-src="' + escapeHtml(d.src_addr) + '" style="font-size:0.72rem;" title="Create a temporary Event Rule suppressing this source">Suppress source</button>'
+                        ? ' <button type="button" class="btn secondary sm" data-action="suppress-source" data-min-role="admin" data-id="' + a.id + '" data-src="' + escapeHtml(d.src_addr) + '" data-digest="' + (isDigest ? '1' : '') + '" style="font-size:0.72rem;" title="Create a temporary Event Rule suppressing this source">Suppress source</button>'
                         : '';
                     flowsHtml +=
                         '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;font-family:monospace;font-size:0.85rem;flex-wrap:wrap;">' +
@@ -2243,15 +2243,17 @@
     // creating a TEMPORARY flow_security Event Rule (the unified replacement for the
     // old Silence-Source path). Opens the Event Rules builder prefilled with a
     // source_ip match + 24h expiry; the alert is acked once the rule is saved.
-    function suppressSource(id, src) {
+    function suppressSource(id, src, isDigest) {
         var rule = {
             source: 'flow_security',
             action: 'suppress',
             match_json: JSON.stringify({ op: 'eq', field: 'source_ip', value: src }),
             suggested_name: 'Suppress ' + src,
-            expires_hours: 24,
-            ack_alert_id: id
+            expires_hours: 24
         };
+        // Ack the originating alert only for a per-source alert — acking the whole
+        // storm digest would drop its OTHER offenders off the open queue.
+        if (!isDigest) { rule.ack_alert_id = id; }
         try { sessionStorage.setItem('fwmon_rule_prefill', JSON.stringify({ action: 'suppress', rule: rule })); } catch (e) { /* ignore */ }
         window.location.href = '/admin/event-rules';
     }
@@ -4111,7 +4113,7 @@
         'suppress-with-rule':  function(el) { createRuleFromAlert(parseInt(el.dataset.id), 'suppress'); },
         'customize-with-rule': function(el) { createRuleFromAlert(parseInt(el.dataset.id), 'customize'); },
         // Suppress a source → temporary flow_security Event Rule (v0.11.93).
-        'suppress-source':     function(el) { suppressSource(parseInt(el.dataset.id), el.dataset.src || ''); },
+        'suppress-source':     function(el) { suppressSource(parseInt(el.dataset.id), el.dataset.src || '', el.dataset.digest === '1'); },
         'show-policy-modal': function() { showPolicyModal(); },
         'close-policy-modal': function() { closePolicyModal(); },
         'edit-policy': function(el) { showPolicyModal(parseInt(el.dataset.id)); },

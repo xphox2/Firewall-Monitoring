@@ -269,6 +269,12 @@ func (am *AlertManager) RefreshEventRules(db *database.Database) {
 		return
 	}
 	am.flushEventRuleHits(db)
+	// Delete expired temporary rules promptly (every refresh, not just the nightly
+	// cleanup) so a lapsed "suppress for 24h" rule can't linger in the editor and
+	// resurrect-as-permanent on edit, or 400 the enable toggle. Non-fatal.
+	if err := db.PruneExpiredEventRules(); err != nil {
+		log.Printf("RefreshEventRules: prune expired rules: %v", err)
+	}
 
 	rules, err := db.GetEnabledEventRules()
 	if err != nil {

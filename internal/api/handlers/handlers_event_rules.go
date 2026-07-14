@@ -37,9 +37,12 @@ func validateEventRule(r *models.EventRule) string {
 	if !validRuleSources[r.Source] {
 		return "Source must be syslog, flow, flow_security, state, metric, spike, trap, or any"
 	}
-	// A temporary rule's expiry must be in the future (a past ExpiresAt would make
-	// the rule dead-on-arrival).
-	if r.ExpiresAt != nil && !r.ExpiresAt.After(time.Now()) {
+	// On CREATE, a temporary rule's expiry must be in the future (a past ExpiresAt
+	// would make the rule dead-on-arrival). On UPDATE we allow a past expiry: a rule
+	// whose window already lapsed is still editable/toggle-able (and the refresh
+	// prune will remove it) — rejecting it would 400 the Enabled toggle. r.ID is 0
+	// only on create.
+	if r.ID == 0 && r.ExpiresAt != nil && !r.ExpiresAt.After(time.Now()) {
 		return "Expiry must be in the future"
 	}
 	if r.Action == "" {

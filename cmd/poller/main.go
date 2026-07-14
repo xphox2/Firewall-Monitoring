@@ -476,6 +476,8 @@ func (p *Poller) applyFlowSecuritySuppressRules(securityBySrc map[string][]*mode
 				devSite[devs[i].ID] = *devs[i].SiteID
 			}
 		}
+	} else {
+		log.Printf("flow-detect: load devices for flow_security site scope: %v", err)
 	}
 	siteOf := func(deviceID uint) *uint {
 		if s, ok := devSite[deviceID]; ok && s != 0 {

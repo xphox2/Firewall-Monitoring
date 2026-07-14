@@ -825,17 +825,27 @@ func (am *AlertManager) ProcessSecurityEvent(group []*models.FlowDetection, site
 		srcCanon = ip.String()
 	}
 	csRule := am.matchFlowSecurityRuleLocked(FlowSecFields(winner, srcCanon, csEffSite), deviceID, csEffSite)
+	if csRule != nil && csRule.action == "alert" {
+		if csRule.severity != "" {
+			newSev = csRule.severity
+		}
+		// Rewrite the notify channels + cooldown from the rule's policy/knobs, not
+		// just stamp the ID — else the alert routes on the device policy's channels
+		// while the row names the rule's policy (attribution lie). applyRulePolicy
+		// reads the policy cache, so do it under the same RLock.
+		if csRule.policyID != nil {
+			resolved.PolicyID = csRule.policyID
+			am.applyRulePolicy(&resolved, *csRule.policyID)
+		}
+		if csRule.cooldownMin != nil && *csRule.cooldownMin > 0 {
+			cooldown = time.Duration(*csRule.cooldownMin) * time.Minute
+		}
+	}
 	am.mu.RUnlock()
 	if csRule != nil {
 		am.RecordEventRuleHit(csRule.id)
 		if csRule.action == "suppress" {
 			return 0, nil
-		}
-		if csRule.severity != "" {
-			newSev = csRule.severity
-		}
-		if csRule.policyID != nil {
-			resolved.PolicyID = csRule.policyID
 		}
 	}
 

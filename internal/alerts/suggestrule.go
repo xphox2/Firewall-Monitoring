@@ -126,6 +126,7 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 	}
 
 	dev := deviceScope(in.DeviceID)
+	siteID := in.SiteID
 	name := suggestName(in.AlertType, in.DeviceName)
 	priority := suggestDefaultPriority
 	var matchJSON, dampen, effect string
@@ -148,6 +149,7 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 		effect = fmt.Sprintf("Suppress sFlow security events from %s.", srcIP)
 		expiresHours = 24 // temporary by default, like the old Silence
 		dev = nil         // match the source across devices (attribution is informational)
+		siteID = nil      // …and across sites — a source suppress is global, like the old Silence table
 	case "metric":
 		ev := metricEventType(in.AlertType)
 		matchJSON = mustJSON(eqNode("event_type", ev))
@@ -204,7 +206,7 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 			Action:        "suppress",
 			AlertType:     string(in.AlertType),
 			DeviceID:      dev,
-			SiteID:        in.SiteID,
+			SiteID:        siteID,
 			Priority:      priority,
 			MatchJSON:     matchJSON,
 			DampenJSON:    dampen,
