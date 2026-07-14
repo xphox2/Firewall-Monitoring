@@ -261,6 +261,7 @@ func (h *Handler) SuggestEventRuleForAlert(c *gin.Context) {
 		MetricName: alert.MetricName,
 		Message:    alert.Message,
 		DeviceName: alert.DeviceName,
+		SourceAddr: alert.SourceAddr,
 		StateOwned: h.stateOwnedSet(db),
 	}
 	if alert.DeviceID != 0 {

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
@@ -18,7 +19,7 @@ import (
 // tester reads raw syslog content.
 
 var (
-	validRuleSources = map[string]bool{"syslog": true, "flow": true, "any": true, "state": true, "metric": true, "spike": true, "trap": true}
+	validRuleSources = map[string]bool{"syslog": true, "flow": true, "flow_security": true, "any": true, "state": true, "metric": true, "spike": true, "trap": true}
 	validRuleActions = map[string]bool{"alert": true, "suppress": true}
 )
 
@@ -34,7 +35,12 @@ func validateEventRule(r *models.EventRule) string {
 		r.Source = "syslog"
 	}
 	if !validRuleSources[r.Source] {
-		return "Source must be syslog, flow, state, metric, spike, trap, or any"
+		return "Source must be syslog, flow, flow_security, state, metric, spike, trap, or any"
+	}
+	// A temporary rule's expiry must be in the future (a past ExpiresAt would make
+	// the rule dead-on-arrival).
+	if r.ExpiresAt != nil && !r.ExpiresAt.After(time.Now()) {
+		return "Expiry must be in the future"
 	}
 	if r.Action == "" {
 		r.Action = "alert"

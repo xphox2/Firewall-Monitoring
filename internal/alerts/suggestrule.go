@@ -3,6 +3,7 @@ package alerts
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	"firewall-mon/internal/logfields"
@@ -36,6 +37,9 @@ type SuggestInput struct {
 	// ExistingRuleID names the syslog rule that fired (so "customize" can open it
 	// directly instead of creating a near-duplicate).
 	ExistingRuleID *uint
+	// SourceAddr is the attacker/source IP for an sFlow-security alert; the
+	// flow_security suggestion matches on it (source_ip eq).
+	SourceAddr string
 }
 
 // SuggestedRule is the prefill the editor opens with. Fields mirror the
@@ -52,6 +56,9 @@ type SuggestedRule struct {
 	DampenJSON    string `json:"dampen_json,omitempty"`
 	Severity      string `json:"severity,omitempty"`
 	SuggestedName string `json:"suggested_name"`
+	// ExpiresHours prefills the "temporary rule" duration (0 = permanent). The
+	// suppress-a-source entry point defaults this to 24h — the old Silence default.
+	ExpiresHours int `json:"expires_hours,omitempty"`
 }
 
 // SuggestResult is the endpoint payload.
@@ -122,8 +129,25 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 	name := suggestName(in.AlertType, in.DeviceName)
 	priority := suggestDefaultPriority
 	var matchJSON, dampen, effect string
+	expiresHours := 0
 
 	switch src {
+	case "flow_security":
+		// A per-source security alert → suppress/customize that exact attacker IP.
+		// The storm DIGEST carries no single source; there the operator mutes each
+		// offender individually (per-offender "Suppress source" in the UI), so a
+		// digest-level blanket rule is deliberately NOT synthesized (it would blind
+		// brand-new attackers of that detector).
+		srcIP := canonIPStr(in.SourceAddr)
+		if srcIP == "" {
+			return SuggestResult{Supported: false,
+				Reason:      "This is a storm digest with many sources. Suppress individual offenders from the storm's list instead.",
+				Alternative: "per_source"}
+		}
+		matchJSON = mustJSON(eqNode("source_ip", srcIP))
+		effect = fmt.Sprintf("Suppress sFlow security events from %s.", srcIP)
+		expiresHours = 24 // temporary by default, like the old Silence
+		dev = nil         // match the source across devices (attribution is informational)
 	case "metric":
 		ev := metricEventType(in.AlertType)
 		matchJSON = mustJSON(eqNode("event_type", ev))
@@ -185,6 +209,7 @@ func SuggestRuleForAlert(in SuggestInput) SuggestResult {
 			MatchJSON:     matchJSON,
 			DampenJSON:    dampen,
 			SuggestedName: name,
+			ExpiresHours:  expiresHours,
 		},
 		ExistingRuleID: in.ExistingRuleID,
 	}
@@ -260,14 +285,26 @@ func ruleSourceForAlertType(at models.AlertType) string {
 	case models.AlertTypeSyslogEmergency, models.AlertTypeSyslogCritical, models.AlertTypeSyslogAlert,
 		models.AlertTypeLogRuleMatch:
 		return "syslog"
+	case models.AlertTypeSFlowSecurity, models.AlertTypeSFlowSecurityDigest:
+		return "flow_security"
 	}
 	return ""
 }
 
-func unsupportedReason(at models.AlertType) (reason, alternative string) {
-	if at == models.AlertTypeSFlowSecurity || at == models.AlertTypeSFlowSecurityDigest {
-		return "sFlow security alerts aren't matched by Event Rules. Use “Silence source” on the alert to mute a specific attacker, or a maintenance window.", "silence_source"
+// canonIPStr normalizes an IP string (IPv6 zero-compression/case) so a rule
+// matches the poller's canonicalized source field; empty/unparseable → "".
+func canonIPStr(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
 	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.String()
+	}
+	return s
+}
+
+func unsupportedReason(at models.AlertType) (reason, alternative string) {
 	if strings.HasPrefix(string(at), "SFLOW_") {
 		return "sFlow detections aren't matched by Event Rules. Tune the detector thresholds in Settings, or use a maintenance window.", "maintenance"
 	}

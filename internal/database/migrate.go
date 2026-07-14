@@ -1709,6 +1709,52 @@ func (d *Database) migrateEventRuleDampenJSON() error {
 	return d.db.AutoMigrate(&models.EventRule{})
 }
 
+// migrateEventRuleExpiryAndSilences (v44) adds EventRule.expires_at (temporary
+// rules) and migrates any still-active per-IP Silence-Source rows into equivalent
+// temporary flow_security suppress Event Rules — the unified suppression hub
+// replaces the standalone FlowSourceSuppression table. Idempotent: a rule whose
+// name already exists is skipped, so an insert-then-crash-before-version-stamp
+// re-run can't duplicate.
+func (d *Database) migrateEventRuleExpiryAndSilences() error {
+	if err := d.db.AutoMigrate(&models.EventRule{}); err != nil {
+		return fmt.Errorf("migrate v44 event_rules expires_at: %w", err)
+	}
+	var sups []models.FlowSourceSuppression
+	if err := d.db.Where("suppressed_until > ?", time.Now()).Find(&sups).Error; err != nil {
+		return fmt.Errorf("migrate v44 load active silences: %w", err)
+	}
+	for _, s := range sups {
+		name := "Silenced " + s.SrcAddr
+		var count int64
+		if err := d.db.Model(&models.EventRule{}).Where("name = ?", name).Count(&count).Error; err != nil {
+			return fmt.Errorf("migrate v44 dedup check: %w", err)
+		}
+		if count > 0 {
+			continue // already migrated (idempotent)
+		}
+		reason := s.SuppressedReason
+		if reason == "" {
+			reason = "migrated from Silence Source"
+		}
+		until := s.SuppressedUntil
+		rule := models.EventRule{
+			Name:        name,
+			Description: reason,
+			Enabled:     true,
+			Priority:    50,
+			Source:      "flow_security",
+			MatchJSON:   fmt.Sprintf(`{"op":"eq","field":"source_ip","value":%q}`, s.SrcAddr),
+			Action:      "suppress",
+			ExpiresAt:   &until,
+			SeedVersion: 0,
+		}
+		if err := d.db.Create(&rule).Error; err != nil {
+			return fmt.Errorf("migrate v44 create temp rule for %s: %w", s.SrcAddr, err)
+		}
+	}
+	return nil
+}
+
 // migrateActivatedSeedDescriptions (v42, Phase 4a) refreshes the descriptions of
 // the metric + trap built-in rules on installs that took the earlier "Preview —
 // not driving alerts yet" copy: those rules now DRIVE alerting, so the preview

@@ -247,7 +247,7 @@ func (d *Database) UpdateEventRule(r *models.EventRule) error {
 	return d.db.Model(&models.EventRule{ID: r.ID}).Select(
 		"name", "description", "enabled", "priority", "source", "vendor_scope",
 		"device_id", "site_id", "match_json", "action", "alert_type", "severity",
-		"group_by", "cooldown_minutes", "policy_id", "dampen_json", "updated_at",
+		"group_by", "cooldown_minutes", "policy_id", "dampen_json", "expires_at", "updated_at",
 	).Updates(r).Error
 }
 
