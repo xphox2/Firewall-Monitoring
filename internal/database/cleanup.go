@@ -491,12 +491,12 @@ func (d *Database) CleanupOldData(ret config.RetentionConfig) error {
 		return fmt.Errorf("failed to cleanup resolved incidents: %w", err)
 	}
 
-	// v0.11.46: expired flow-source suppressions. Silences default to 24h and are
-	// dropped once their window elapses so the table (one row per silenced
-	// attacker) stays tiny — the silence naturally lifting is the intended
-	// behavior. Non-fatal: a prune failure shouldn't fail the whole cleanup pass.
-	if err := d.PruneExpiredFlowSuppressions(); err != nil {
-		log.Printf("cleanup: prune expired flow suppressions warning: %v", err)
+	// v0.11.93: expired TEMPORARY event rules. A "suppress this source for 24h"
+	// rule (the unified replacement for Silence-Source) self-lifts once its window
+	// elapses; expiry is enforced at match time, so this is just housekeeping to
+	// keep the table tidy. Non-fatal: a prune failure shouldn't fail cleanup.
+	if err := d.PruneExpiredEventRules(); err != nil {
+		log.Printf("cleanup: prune expired event rules warning: %v", err)
 	}
 
 	return nil

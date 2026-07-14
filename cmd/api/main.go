@@ -945,11 +945,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/alerts/bulk-snooze", handler.BulkSnoozeAlerts)
 		admin.POST("/api/alerts/bulk-snooze-filter", handler.BulkSnoozeAlertsByFilter)
 		admin.POST("/api/alerts/:id/notes", handler.UpdateAlertNotes)
-		// v0.11.46: silence-a-source (operator parity with ack/snooze).
-		admin.POST("/api/alerts/:id/suppress-source", handler.SuppressAlertSource)
-		admin.POST("/api/alerts/:id/suppress-all", handler.SuppressAlertAllSources)
-		admin.GET("/api/sources/suppressions", handler.ListFlowSuppressions)
-		admin.DELETE("/api/sources/suppressions/:id", handler.DeleteFlowSuppression)
+		// Source suppression is unified under Event Rules (v0.11.93): a temporary
+		// flow_security suppress rule replaces the old per-IP Silence-Source path.
 		admin.GET("/api/alerts/:id", handler.GetAlert)
 		admin.GET("/api/alerts/:id/suggested-rule", handler.SuggestEventRuleForAlert)
 		admin.GET("/api/flows/stats", handler.GetFlowStats)
