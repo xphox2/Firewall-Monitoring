@@ -139,3 +139,64 @@ func TestInferLinks_TransitiveUnmanagedSwitchUnaffected(t *testing.T) {
 		t.Fatalf("unmanaged-switch link affected by suppression: %+v", links)
 	}
 }
+
+// The live DC2 network as it ACTUALLY reports (2026-07-14 snmpwalk): no
+// BRIDGE-MIB anywhere, no LLDP; OPNsense's ARP knows only FW1 (its gateway),
+// FW2's ARP knows only FW1. The FortiGate SSH bridge-FDB supplement provides
+// the missing per-member-port attribution as NAME-ONLY rows — with it, the
+// false OPNsense↔FW1 link is suppressed AND the true OPNsense↔FW2 link is
+// drawn from FW2's FDB alone.
+func TestInferLinks_SSHNameOnlyFDBSuppressesTransitive(t *testing.T) {
+	site := uint(1)
+	devs := []DeviceMeta{
+		{ID: 1, Name: "DC2-FW2", SiteID: &site, IPs: []string{"192.168.5.1"}},
+		{ID: 2, Name: "DC2-FW1", SiteID: &site, IPs: []string{"192.168.5.2"}},
+		{ID: 3, Name: "OPNsense", SiteID: &site, IPs: []string{"192.168.5.107"}},
+	}
+	ifaces := []Iface{
+		// FW2's switch member ports exist in interface stats by NAME.
+		{DeviceID: 1, IfIndex: 11, Name: "internal1", MAC: "AC:71:2E:6F:94:C8", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 1, IfIndex: 13, Name: "internal3", MAC: "AC:71:2E:6F:94:CA", Status: "up", TypeName: "ethernet"},
+		{DeviceID: 2, IfIndex: 6, Name: "internal", MAC: "E0:23:FF:6A:E5:D8", Status: "up", TypeName: "bridge"},
+		{DeviceID: 3, IfIndex: 2, Name: "lan", MAC: "E8:F6:D7:00:10:5B", Status: "up", TypeName: "ethernet"},
+	}
+	ts := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	// SSH bridge FDB from FW2 only — name-only rows, no ifIndex.
+	fdb := []FDBRow{
+		{DeviceID: 1, IfName: "internal3", MAC: "e8:f6:d7:00:10:5b", Ts: ts}, // OPNsense on member port 3
+		{DeviceID: 1, IfName: "internal1", MAC: "e0:23:ff:6a:e5:d8", Ts: ts}, // FW1 on member port 1
+	}
+	// The ARP reality: OPNsense↔FW1 mutual (gateway traffic), FW2→FW1 only.
+	arp := []ARPRow{
+		{DeviceID: 3, IfIndex: 2, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.107", MAC: "e8:f6:d7:00:10:5b", Ts: ts},
+		{DeviceID: 2, IfIndex: 6, IP: "192.168.5.1", MAC: "ac:71:2e:6f:94:c8", Ts: ts},
+		{DeviceID: 1, IfIndex: 15, IP: "192.168.5.2", MAC: "e0:23:ff:6a:e5:d8", Ts: ts},
+	}
+
+	links := InferLinks(devs, ifaces, fdb, arp, nil)
+	var gotOPNFW1, gotOPNFW2, gotFW1FW2 bool
+	for _, l := range links {
+		switch {
+		case (l.A == 2 && l.B == 3) || (l.A == 3 && l.B == 2):
+			gotOPNFW1 = true
+		case (l.A == 1 && l.B == 3) || (l.A == 3 && l.B == 1):
+			gotOPNFW2 = true
+			// FW2's side must carry the member port the MAC was learned on.
+			if l.A == 1 && l.AIfName != "internal3" {
+				t.Errorf("OPN↔FW2 FW2-side port = %q, want internal3", l.AIfName)
+			}
+		case (l.A == 1 && l.B == 2) || (l.A == 2 && l.B == 1):
+			gotFW1FW2 = true
+		}
+	}
+	if gotOPNFW1 {
+		t.Errorf("false transitive OPNsense↔FW1 link survived with SSH FDB present: %+v", links)
+	}
+	if !gotOPNFW2 {
+		t.Errorf("true OPNsense↔FW2 link missing (FW2's FDB sees OPNsense on internal3): %+v", links)
+	}
+	if !gotFW1FW2 {
+		t.Errorf("FW2↔FW1 link missing: %+v", links)
+	}
+}

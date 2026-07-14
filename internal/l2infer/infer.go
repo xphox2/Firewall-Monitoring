@@ -53,10 +53,13 @@ type Iface struct {
 	TypeName string // "ethernet"|"lag"|…
 }
 
-// FDBRow is one MAC-table entry reported by a device.
+// FDBRow is one MAC-table entry reported by a device. SSH-sourced rows
+// (FortiGate `diagnose netlink brctl`) carry the member port NAME instead of
+// an ifIndex.
 type FDBRow struct {
 	DeviceID uint
 	IfIndex  int
+	IfName   string
 	MAC      string
 	VLANID   int
 	Ts       time.Time
@@ -542,7 +545,7 @@ func (ix *indexes) fdbCandidates(fdb []FDBRow) []candidate {
 		refs   []EvidenceRef
 		anyRow bool
 	}
-	acc := map[string]map[int]*portStat{} // "reporter:target" → ifIndex → stats
+	acc := map[string]map[string]*portStat{} // "reporter:target" → portKey → stats
 	for _, row := range fdb {
 		mac := NormalizeMAC(row.MAC)
 		if mac == "" {
@@ -552,15 +555,16 @@ func (ix *indexes) fdbCandidates(fdb []FDBRow) []candidate {
 		if !ok || owner.deviceID == row.DeviceID || !ix.sameSite(row.DeviceID, owner.deviceID) {
 			continue
 		}
-		port := ix.resolvePort(row.DeviceID, row.IfIndex, "")
+		port := ix.resolvePort(row.DeviceID, row.IfIndex, row.IfName)
 		key := fmt.Sprintf("%d:%d", row.DeviceID, owner.deviceID)
+		portKey := fmt.Sprintf("%d:%s", port.ifIndex, strings.ToLower(port.name))
 		if acc[key] == nil {
-			acc[key] = map[int]*portStat{}
+			acc[key] = map[string]*portStat{}
 		}
-		st := acc[key][port.ifIndex]
+		st := acc[key][portKey]
 		if st == nil {
 			st = &portStat{port: port, macs: map[string]bool{}, vlans: map[int]bool{}}
-			acc[key][port.ifIndex] = st
+			acc[key][portKey] = st
 		}
 		st.anyRow = true
 		st.macs[mac] = true

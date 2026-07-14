@@ -163,8 +163,8 @@ func toFDBRows(entries []models.TopologyEntry) []l2infer.FDBRow {
 	out := make([]l2infer.FDBRow, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, l2infer.FDBRow{
-			DeviceID: e.DeviceID, IfIndex: e.IfIndex, MAC: e.MACAddress,
-			VLANID: e.VlanID, Ts: e.Timestamp,
+			DeviceID: e.DeviceID, IfIndex: e.IfIndex, IfName: e.IfName,
+			MAC: e.MACAddress, VLANID: e.VlanID, Ts: e.Timestamp,
 		})
 	}
 	return out

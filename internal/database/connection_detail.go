@@ -1206,7 +1206,7 @@ func (d *Database) buildConnectionEvidence(conn *models.DeviceConnection) []L2Ev
 	for _, e := range entries {
 		switch e.EntryType {
 		case "fdb":
-			fdb = append(fdb, l2infer.FDBRow{DeviceID: e.DeviceID, IfIndex: e.IfIndex, MAC: e.MACAddress, VLANID: e.VlanID, Ts: e.Timestamp})
+			fdb = append(fdb, l2infer.FDBRow{DeviceID: e.DeviceID, IfIndex: e.IfIndex, IfName: e.IfName, MAC: e.MACAddress, VLANID: e.VlanID, Ts: e.Timestamp})
 		case "arp":
 			arp = append(arp, l2infer.ARPRow{DeviceID: e.DeviceID, IfIndex: e.IfIndex, IfName: e.IfName, IP: e.IPAddress, MAC: e.MACAddress, Ts: e.Timestamp})
 		}

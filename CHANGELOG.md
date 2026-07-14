@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.96] - 2026-07-14
+
+### Fixed — name-only FDB rows now participate in link inference (FortiGate SSH bridge-FDB support)
+
+Completes the DC2 daisy-chain investigation: snmpwalks against the live devices showed **no BRIDGE-MIB and no LLDP on any of them**, and ARP alone cannot see an L2-only hop (OPNsense and DC2-FW2 never exchange L3 traffic, so neither is in the other's ARP cache) — the v0.11.95 transitive suppression had no evidence to fire on. Collector 1.3.16 adds the FortiGate SSH bridge-FDB supplement (`diagnose netlink brctl`), which reports MACs per member-port **name**; this release makes the inference consume those rows:
+
+- `l2infer.FDBRow` gains `IfName`; FDB port resolution now matches by name (like ARP already did) and the per-port accumulator keys on ifIndex+name so name-only ports can't collide.
+- With FW2's bridge FDB present, the false transitive OPNsense↔FW1 link is suppressed **from FW1's viewpoint** (FW1 sees OPNsense and FW2 through one port; FW2's FDB distinguishes them) — it works even though OPNsense never ARPs FW2 — and the true OPNsense↔FW2 link is drawn from FW2's FDB alone, carrying the member port name. Test pins the exact live-network evidence shape.
+- Deploy BOTH: server 0.11.96 + collector 1.3.16. The map corrects itself within one topology cycle (~5 min) + one poller cycle.
+
 ## [0.11.95] - 2026-07-14
 
 ### Fixed — false transitive links through a MONITORED middle device (live-found on the DC2 daisy chain)
