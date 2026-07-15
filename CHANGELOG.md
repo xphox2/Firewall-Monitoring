@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.102] - 2026-07-15
+
+### Fixed — two prod findings from the v0.11.101 live validation
+
+- **IRC reconnect hot loop.** A persistently failing IRC server produced ~3,500 log lines/min: go-ircevent's `Loop()` reconnects with zero delay whenever the TCP dial succeeds but the connection dies right after — and this library version defers the TLS handshake to the read loop, so an expired server certificate (the live case: cert expired 3 days before) became an infinite dial→fail cycle. The bot now consumes the first connection error itself, tears the connection down, and hands reconnection to the manager's 30s sweep with **jittered exponential backoff** (30s doubling to a 15-min ceiling, reset on successful registration). Reconnection now also honors the server's `AutoReconnect` flag, which the library's internal loop ignored. `conn.Quit()` is deliberately avoided in the teardown — its `SendRaw` can park forever on a dead write loop (the known H5 hazard).
+- **pgxpool silently downgraded on unix-socket DB hosts.** The COPY-protocol pool's DSN used `postgres://` URL form, which mangles a socket-path host (`DB_HOST=/var/run/postgresql` → database `"run/postgresql:5432/firewall_mon"`). On the single-container prod deployment the pool has therefore failed its ping since it was introduced, and `SaveFlowSamples` ran on the ~2× slower GORM fallback. The DSN now uses the same libpq key=value form (and `pgQuote` escaping) as the GORM connection, so any address that works for GORM works for pgx. Regression tests pin the socket-path and special-character-password shapes via `pgxpool.ParseConfig`.
+
 ## [0.11.101] - 2026-07-15
 
 ### Added — TELEMETRY_STALE: degraded-collection alert for reachable devices

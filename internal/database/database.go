@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -281,16 +280,19 @@ func openPGXPool(cfg *config.Config, maxOpen int) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// buildPGXURL assembles a postgres:// URL from the cfg fields. Uses net/url
-// so password special characters (e.g. `?`, `#`, `%`) are correctly percent-
-// escaped. Mirrors the GORM DSN-construction logic so the same connect string
-// reaches both pools.
+// buildPGXURL assembles a libpq key=value DSN from the cfg fields — the SAME
+// form (and the same pgQuote escaping) the GORM connection in Connect() uses,
+// so an address that works for GORM always works for pgx. The previous
+// postgres:// URL form broke on unix-socket hosts: the single-container prod
+// deployment sets DB_HOST=/var/run/postgresql, which the URL parser mangled
+// into database "run/postgresql:5432/firewall_mon" — the pool failed its ping
+// and SaveFlowSamples silently ran on the ~2x slower GORM fallback since the
+// pool was introduced.
 func buildPGXURL(cfg *config.Config) string {
-	user := url.QueryEscape(cfg.Database.User)
-	password := url.QueryEscape(cfg.Database.Password)
-	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		user, password, cfg.Database.Host, cfg.Database.Port,
-		url.PathEscape(cfg.Database.Name), cfg.Database.SSLMode)
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port,
+		pgQuote(cfg.Database.User), pgQuote(cfg.Database.Password),
+		pgQuote(cfg.Database.Name), cfg.Database.SSLMode)
 }
 
 // NewDatabase connects, applies any pending migrations (AUDIT-044 versioned
