@@ -425,7 +425,16 @@ func (d *Database) GetConnectionDetail(connID uint) (*ConnectionDetailResult, er
 	// the byte KPIs from one endpoint (avoids in/out double-count), and skip the
 	// tunnel-matching path entirely.
 	if result.Family == "direct" {
-		result.Interfaces = d.resolveConnectionInterfaces(&conn)
+		// Port-level links (L2-inferred) resolve each SIDE precisely —
+		// source port on the source device, dest port on the dest device.
+		// The legacy name-list resolution matches TunnelNames on EITHER
+		// device, and FortiGates share hardware port names (internal1, dmz):
+		// a FW↔FW link would pair unrelated same-named interfaces from both
+		// boxes into one segment card with mismatched IPs/subnets.
+		result.Interfaces = d.resolveL2EndpointInterfaces(&conn)
+		if len(result.Interfaces) == 0 {
+			result.Interfaces = d.resolveConnectionInterfaces(&conn)
+		}
 		primary := interfacesForDevice(result.Interfaces, conn.SourceDeviceID)
 		if len(primary) == 0 {
 			primary = interfacesForDevice(result.Interfaces, conn.DestDeviceID)
@@ -1252,4 +1261,77 @@ func (d *Database) buildConnectionEvidence(conn *models.DeviceConnection) []L2Ev
 		})
 	}
 	return out
+}
+
+// resolveL2EndpointInterfaces resolves a port-level connection's interfaces
+// side-precisely: the source port on the SOURCE device and the dest port on
+// the DEST device (ifIndex first, normalized name fallback). Returns nil for
+// connections without port endpoints (legacy rows fall back to the
+// TunnelNames name-list resolution).
+func (d *Database) resolveL2EndpointInterfaces(conn *models.DeviceConnection) []ConnInterfaceRef {
+	type side struct {
+		deviceID uint
+		device   *models.Device
+		ifIndex  int
+		ifName   string
+	}
+	sides := []side{
+		{conn.SourceDeviceID, conn.SourceDevice, conn.SourceIfIndex, conn.SourceIfName},
+		{conn.DestDeviceID, conn.DestDevice, conn.DestIfIndex, conn.DestIfName},
+	}
+
+	var refs []ConnInterfaceRef
+	for _, s := range sides {
+		if s.ifIndex == 0 && s.ifName == "" {
+			continue // that end's port is unknown (one-sided evidence)
+		}
+		var match *models.InterfaceStats
+		ifaces := d.latestInterfacesForDevice(s.deviceID)
+		for i := range ifaces {
+			if s.ifIndex > 0 && ifaces[i].Index == s.ifIndex {
+				match = &ifaces[i]
+				break
+			}
+		}
+		if match == nil && s.ifName != "" {
+			nn := normalizeIfName(s.ifName)
+			for i := range ifaces {
+				if normalizeIfName(ifaces[i].Name) == nn {
+					match = &ifaces[i]
+					break
+				}
+			}
+		}
+		if match == nil {
+			continue
+		}
+
+		var addr models.InterfaceAddress
+		d.db.Where("device_id = ? AND if_index = ?", s.deviceID, match.Index).
+			Order("timestamp DESC").Limit(1).First(&addr)
+
+		deviceName := ""
+		if s.device != nil {
+			deviceName = s.device.Name
+		}
+		refs = append(refs, ConnInterfaceRef{
+			DeviceID:   s.deviceID,
+			DeviceName: deviceName,
+			IfName:     match.Name,
+			IfIndex:    match.Index,
+			IPAddress:  addr.IPAddress,
+			Subnet:     computeNetworkCIDR(addr.IPAddress, addr.NetMask),
+			Kind:       match.TypeName,
+			VlanID:     match.VLANID,
+			Speed:      match.Speed,
+			Status:     match.Status,
+			InBytes:    match.InBytes,
+			OutBytes:   match.OutBytes,
+			InErrors:   match.InErrors,
+			OutErrors:  match.OutErrors,
+		})
+	}
+	// Only meaningful when at least one end resolved to a REAL interface;
+	// otherwise let the legacy path try the name list.
+	return refs
 }

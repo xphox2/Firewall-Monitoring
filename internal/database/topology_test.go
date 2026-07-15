@@ -234,3 +234,83 @@ func TestGetConnectionDetail_L2Evidence(t *testing.T) {
 		t.Error("no evidence row from the source device")
 	}
 }
+
+// TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision pins the live
+// finding: FortiGates share hardware port names (internal1, dmz), so the
+// legacy name-list resolution paired UNRELATED same-named interfaces from
+// both boxes into one segment (mismatched IPs under one title). Port-level
+// links must resolve each side on its own device only.
+func TestResolveL2EndpointInterfaces_NoCrossDeviceNameCollision(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+
+	site := &models.Site{Name: "DC2"}
+	if err := db.CreateSite(site); err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	mk := func(name, ip string) models.Device {
+		d := models.Device{Name: name, IPAddress: ip, Vendor: "fortigate", Enabled: true, SiteID: &site.ID}
+		if err := db.CreateDevice(&d); err != nil {
+			t.Fatalf("create device %s: %v", name, err)
+		}
+		return d
+	}
+	fw2 := mk("FW-TECHNICAL_LABS", "192.168.5.1")
+	fw1 := mk("FW-HOME", "192.168.5.2")
+
+	now := time.Now()
+	// BOTH FortiGates have an interface named internal1 — different roles.
+	if err := db.SaveInterfaceStats([]models.InterfaceStats{
+		{DeviceID: fw2.ID, Index: 4, Name: "internal1", TypeName: "ethernet", Status: "up", Timestamp: now},
+		{DeviceID: fw1.ID, Index: 23, Name: "port23", TypeName: "ethernet", Status: "up", Timestamp: now},
+		{DeviceID: fw1.ID, Index: 4, Name: "internal1", TypeName: "ethernet", Status: "up", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save interfaces: %v", err)
+	}
+	// FW1's internal1 carries an unrelated subnet — the legacy resolver
+	// would have dragged it into the link's interface list by name.
+	if err := db.SaveInterfaceAddresses([]models.InterfaceAddress{
+		{DeviceID: fw1.ID, IfIndex: 4, IPAddress: "10.10.10.1", NetMask: "255.255.255.0", Timestamp: now},
+	}); err != nil {
+		t.Fatalf("save addresses: %v", err)
+	}
+
+	if err := db.UpsertAutoL2Connection(L2LinkUpsert{
+		SourceID: fw2.ID, DestID: fw1.ID, Status: "up",
+		Name: "FW-TECHNICAL_LABS:internal1 ↔ FW-HOME:port23", ConnType: "ethernet",
+		MatchMethod:   "lldp_neighbor",
+		SourceIfIndex: 4, SourceIfName: "internal1",
+		DestIfIndex: 23, DestIfName: "port23",
+		TunnelNames: "internal1, port23",
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	conns, _ := db.GetAllConnections()
+	if len(conns) != 1 {
+		t.Fatalf("got %d connections, want 1", len(conns))
+	}
+
+	detail, err := db.GetConnectionDetail(conns[0].ID)
+	if err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if len(detail.Interfaces) != 2 {
+		t.Fatalf("got %d interface refs, want exactly the 2 endpoints: %+v", len(detail.Interfaces), detail.Interfaces)
+	}
+	for _, r := range detail.Interfaces {
+		if r.DeviceID == fw1.ID && r.IfName == "internal1" {
+			t.Fatalf("FW1's unrelated internal1 leaked into the link's interfaces (cross-device name collision): %+v", detail.Interfaces)
+		}
+	}
+	var sawFW2Internal1, sawFW1Port23 bool
+	for _, r := range detail.Interfaces {
+		if r.DeviceID == fw2.ID && r.IfName == "internal1" && r.IfIndex == 4 {
+			sawFW2Internal1 = true
+		}
+		if r.DeviceID == fw1.ID && r.IfName == "port23" && r.IfIndex == 23 {
+			sawFW1Port23 = true
+		}
+	}
+	if !sawFW2Internal1 || !sawFW1Port23 {
+		t.Fatalf("endpoint interfaces missing (fw2:internal1=%v fw1:port23=%v): %+v", sawFW2Internal1, sawFW1Port23, detail.Interfaces)
+	}
+}

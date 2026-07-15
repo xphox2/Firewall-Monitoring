@@ -290,7 +290,7 @@
                 if (countLabel) countLabel.textContent = 'Interfaces';
                 document.getElementById('pkpi-tunnels').textContent = ifaces.length;
                 renderPanelInterfaceTab(ifaces, c, srcName, dstName);
-                renderPanelL2Evidence(c, data.evidence || []);
+                renderPanelL2Evidence(c, data.evidence || [], srcName, dstName);
                 if (p2Tab) p2Tab.style.display = 'none';
             } else if (family === 'overlay') {
                 // Overlay (VXLAN/L3VLAN): show config + SNMP-derived overlay
@@ -614,6 +614,26 @@
         const onSrc = f => f.device_id === srcId;
         const onDst = f => f.device_id === dstId;
 
+        // Port-level (L2-inferred) links: the API already resolved EXACTLY
+        // the two endpoint interfaces — render them as one link card and
+        // skip the subnet/VLAN pairing heuristics below (an L2 link can
+        // truthfully join interfaces in different subnets, or one with no
+        // IP at all — e.g. a FortiGate DMZ jack bridged into a LAN).
+        if (c.source_if_name || c.dest_if_name) {
+            const s = ifaces.filter(onSrc), dd = ifaces.filter(onDst);
+            const subnets = [...new Set(ifaces.map(f => f.subnet).filter(Boolean))];
+            const l3note = subnets.length > 1
+                ? `<span style="font-size:0.7rem;color:var(--fwmon-sig-warn);">L3 subnets differ across this L2 link (${subnets.map(x => window.escapeHtml(x)).join(' vs ')})</span>`
+                : (subnets.length === 1 ? `<span style="font-size:0.72rem;color:var(--fwmon-text-mute);">${window.escapeHtml(subnets[0])}</span>` : '');
+            const header = `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                    <span style="font-size:0.7rem;color:var(--fwmon-text-mute);text-transform:uppercase;letter-spacing:0.3px;">Link endpoints</span>
+                    ${l3note}
+                </div>`;
+            container.innerHTML = ifaceSegmentCard(header, srcName, dstName, s, dd, 'l2ends');
+            return;
+        }
+
         // Union-find: merge interfaces that are the same logical segment. Signals:
         //  - same normalized interface name (separator diffs / same name on both ends)
         //  - a sub-interface with its parent, but ONLY when the parent interface is
@@ -684,14 +704,16 @@
     // the discovery-evidence list around the interface cards in the direct
     // tab. EVERY rendered value is neighbor-/network-controlled (LLDP sysnames,
     // port strings, MACs) — all go through escapeHtml.
-    function renderPanelL2Evidence(c, evidence) {
+    function renderPanelL2Evidence(c, evidence, srcName, dstName) {
         const container = document.getElementById('ptab-tunnels');
         if (!container) return;
         const esc = window.escapeHtml;
 
-        // Summary line: port pair + method chip + VLANs (only for L2 links).
+        // Summary line: DEVICE-QUALIFIED port pair + method chip + VLANs —
+        // "dmz ↔ dtsec1" left ownership ambiguous (whose dmz?).
         if (c.source_if_name || c.dest_if_name || L2_METHOD_LABELS[c.match_method]) {
-            const ports = `${esc(c.source_if_name || '?')} <span style="color:#2dd4bf;">&harr;</span> ${esc(c.dest_if_name || '?')}`;
+            const side = (dev, port) => `<span style="color:var(--fwmon-text-faint);">${esc(dev || '?')}:</span>${esc(port || '?')}`;
+            const ports = `${side(srcName, c.source_if_name)} <span style="color:#2dd4bf;">&harr;</span> ${side(dstName, c.dest_if_name)}`;
             const chip = L2_METHOD_LABELS[c.match_method]
                 ? `<span class="badge info" style="font-size:0.68rem;">${esc(L2_METHOD_LABELS[c.match_method])}</span>` : '';
             const vlans = c.vlan_ids ? `<span style="font-size:0.72rem;color:var(--fwmon-text-mute);">VLAN ${esc(c.vlan_ids)}</span>` : '';
